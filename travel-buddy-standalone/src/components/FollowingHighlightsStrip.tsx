@@ -12,13 +12,14 @@
  */
 import React, { useState } from 'react';
 import {
-  View, Text, Image, ScrollView, StyleSheet, Pressable,
+  View, Text, ScrollView, StyleSheet, Pressable,
 } from 'react-native';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { color, space } from '../theme/tokens.ts';
 import type { HighlightFeedUser } from '../services/highlights.ts';
 import { useSession } from '../context/SessionContext.tsx';
+import { DisplayMediaImage } from './ui/DisplayMediaImage.tsx';
 
 const AVATAR_SIZE = 52;
 
@@ -88,9 +89,25 @@ export function FollowingHighlightsStrip({ users, sessionViewedIds, onMarkViewed
             >
               <HighlightRing hasActive allViewed={allViewed} size={AVATAR_SIZE} mediaType={mediaType}>
                 {posterUri ? (
-                  <Image
-                    source={{ uri: posterUri }}
+                  // posterUri may be a profile-media avatar or a post-media
+                  // highlight thumbnail/still — both are private buckets, so
+                  // this must go through the signed-URL hydration layer
+                  // (DisplayMediaImage/useHydratedMedia) rather than binding
+                  // straight to <Image>.
+                  <DisplayMediaImage
+                    uri={posterUri}
+                    width={AVATAR_SIZE}
+                    height={AVATAR_SIZE}
                     style={styles.avatar}
+                    resizeMode="cover"
+                    fallback={
+                      <View style={[styles.avatar, styles.avatarFallback]}>
+                        <Text style={styles.avatarInitial}>
+                          {(u.name ?? u.handle ?? '?')[0].toUpperCase()}
+                        </Text>
+                      </View>
+                    }
+                    testID={`following-highlight-avatar-${u.userId}`}
                   />
                 ) : (
                   <View style={[styles.avatar, styles.avatarFallback]}>

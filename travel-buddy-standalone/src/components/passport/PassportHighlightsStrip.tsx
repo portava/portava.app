@@ -5,10 +5,11 @@
  */
 import React from 'react';
 import {
-  View, Text, Pressable, StyleSheet, ScrollView, Image,
+  View, Text, Pressable, StyleSheet, ScrollView,
 } from 'react-native';
 import { Plus } from 'lucide-react-native';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
+import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 
 interface Highlight {
   id: string;
@@ -40,7 +41,7 @@ function HighlightBubble({
   isUnviewed: boolean;
   onPress?: () => void;
 }) {
-  const src = highlight.thumbnailUrl ?? highlight.mediaUrl;
+  const src = highlight.thumbnailUrl ?? highlight.mediaUrl ?? null;
   return (
     <Pressable
       style={({ pressed }) => [b.outer, pressed && { opacity: 0.8 }]}
@@ -49,13 +50,19 @@ function HighlightBubble({
     >
       {/* Ring */}
       <View style={[b.ring, isUnviewed ? b.ringActive : b.ringViewed]} />
-      {/* Bubble */}
+      {/* Bubble — src is post-media, a private bucket, so it must go through
+          the signed-URL hydration layer (DisplayMediaImage/useHydratedMedia)
+          rather than binding straight to <Image>. */}
       <View style={b.bubble}>
-        {src ? (
-          <Image source={{ uri: src }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-        ) : (
-          <View style={[StyleSheet.absoluteFill, b.placeholderBg]} />
-        )}
+        <DisplayMediaImage
+          uri={src}
+          width={BUBBLE_SIZE}
+          height={BUBBLE_SIZE}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          fallback={<View style={[StyleSheet.absoluteFill, b.placeholderBg]} />}
+          testID="highlight-bubble-image"
+        />
       </View>
     </Pressable>
   );

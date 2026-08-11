@@ -14,8 +14,7 @@
  */
 import React from 'react';
 import {
-  View, Text, Pressable, Image, StyleSheet, ActivityIndicator,
-  type ImageStyle,
+  View, Text, Pressable, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { Search, Clock } from 'lucide-react-native';
 import { TypeIcon } from './searchNav.tsx';
@@ -23,6 +22,7 @@ import type { SuggestGroup } from '../../services/discovery.ts';
 import type { UnifiedSearchResult, SearchHistoryEntry } from '../../services/discovery.ts';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { PlainBottomFiller } from '../../hooks/useBottomInset.ts';
+import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 
 interface Props {
   query: string;
@@ -37,11 +37,8 @@ interface Props {
 }
 
 function SuggestionAvatar({ item }: { item: UnifiedSearchResult }) {
-  const uri = item.avatarUrl ?? item.imageUrl;
-  if (uri) {
-    return <Image source={{ uri }} style={styles.avatar as ImageStyle} />;
-  }
-  return (
+  const uri = item.avatarUrl ?? item.imageUrl ?? null;
+  const fallback = (
     <View style={styles.avatarFallback}>
       {item.fallbackInitials ? (
         <Text style={styles.avatarInitials}>{item.fallbackInitials}</Text>
@@ -49,6 +46,21 @@ function SuggestionAvatar({ item }: { item: UnifiedSearchResult }) {
         <TypeIcon type={item.type} size={13} tint={color.mute} />
       )}
     </View>
+  );
+  // avatarUrl (profile-media) and imageUrl for people/place results can both
+  // point into a private bucket, so this must go through the signed-URL
+  // hydration layer (DisplayMediaImage/useHydratedMedia) rather than binding
+  // straight to <Image>.
+  return (
+    <DisplayMediaImage
+      uri={uri}
+      width={avatar.s28}
+      height={avatar.s28}
+      style={styles.avatar}
+      resizeMode="cover"
+      fallback={fallback}
+      testID={`suggestion-avatar-${item.type}-${item.id}`}
+    />
   );
 }
 
