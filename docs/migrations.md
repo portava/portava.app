@@ -1093,3 +1093,39 @@ The following tables existed in the live DB before or were created by this wave.
   - **NOT pinned — the remaining 7, inventoried.** `add_owner_as_member` and `handle_new_user` (both SECURITY DEFINER triggers that **write** — to `trip_members` and `profiles` respectively; a shadowed target would misdirect the write, so these are the **recommended next** to pin), `increment_distribution_stats`, `increment_hashtag_usage_count`, `upsert_hashtag_usage_and_increment`, `purge_old_ranking_debug_samples`, and `enforce_is_official_service_role` (superseded by 2079, bound to no trigger — dead code; dropping it is the better cleanup). Excluded to keep 0201 to a single reviewable claim: authorization predicates resolve against `public`, always.
 
 - **Correction to `2079`'s "DRIFT NOTE" (prose only, nothing applied changed).** 2079 claimed `profiles.is_official`, `enforce_is_official_trigger` and `enforce_is_official_service_role()` "appear in **no migration file**" and called it real drift. That is wrong: `supabase/migrations/0106_profiles_is_official.sql` creates the function (line 14), the trigger (lines 28–30) and `idx_profiles_is_official`. 2079's follow-on "correction" of 2078's `(migration 0106)` citation is wrong for the same reason — 2078 cited the right number in a different directory; two unrelated files share the `0106` prefix across roots. Corrected in the 2079 header and in `artifacts/api-server/docs/migrations.md`. **Lesson worth keeping:** a "tree-wide search" that covers only `artifacts/api-server/src/migrations` manufactures drift that does not exist. There are five migration roots.
+
+## 2026-08-11 — Schema drift reconcile: `post_event_links`, 6 missing indexes, and 2070's RLS enable (hand-applied, no new migration file)
+
+- **Applied 2026-08-11 to production Supabase, project `ajrurzioarfkagpuxfnb`**, by hand in the SQL editor as a single `BEGIN … COMMIT` transaction. **No new migration file was created**, deliberately: this closes the gap between three already-committed migrations and live, so the record of the apply is this entry, per the convention that applying is recorded here rather than by adding a file to `src/migrations/`. The exact SQL is kept as a one-off apply record at `_incoming/prod-drift-apply.sql` with its verification query at `_incoming/prod-drift-verify.sql`; `_incoming/` is gitignored (`.gitignore:87`), so neither is a migration and neither is in version control. **If you need the SQL later, it is in this entry, not in the repo.**
+- **Nine objects applied, all `IF NOT EXISTS`.** These are exactly the objects `audit:schema` reported missing for these three files:
+
+| File | Objects applied |
+|---|---|
+| `20260731_post_event_links.sql` | table `post_event_links`; `idx_post_event_links_post_id`; `idx_post_event_links_event_id` |
+| `0186_geo_indexes.sql` | `user_location_state_geo_idx`; `events_geo_idx`; `posts_geo_idx`; `hidden_gems_geo_idx`; `hidden_gems_approx_geo_idx` |
+| `2044_hidden_gems_canonical_place_id.sql` | `hidden_gems_canonical_place_idx` |
+
+  All three files are **now applied**. Their `ADD COLUMN IF NOT EXISTS` statements were **deliberately omitted** from the applied block — 0186's six geo columns were verified present live, and `hidden_gems.canonical_place_id` was already live (the audit reported only 2044's index, never its column). Omitting proven no-ops kept the write surface to exactly the missing objects. Consequence worth knowing: a column that had turned out to be absent would have failed its `CREATE INDEX` and rolled the whole transaction back, which is the intended failure mode.
+- **2070's RLS enable for `post_event_links` was applied BY HAND in the same transaction** — `ALTER TABLE public.post_event_links ENABLE ROW LEVEL SECURITY`, unconditional, no policies (deny-all; `lib/eventPostsDiscovery.ts` reads the table through the service-role client, which bypasses RLS). **This is the part that would not have happened on its own.** `2070_rls_hardening.sql:89-94` wraps the enable in `IF to_regclass('public.post_event_links') IS NOT NULL`; 2070 had already run at a time when the table did not exist, so that branch no-opped, and a one-shot migration never re-runs. Creating the table without the enable would have left it live with RLS off — readable and writable by anyone holding the anon key the mobile app ships. The create and the enable are in one transaction for exactly that reason.
+- **Plain `CREATE INDEX`, not `CONCURRENTLY`.** `CONCURRENTLY` cannot run inside a transaction, and at production row counts (104 / 17 / 6 / 4 across the four indexed tables) atomicity is worth far more than lock duration. This is a deliberate departure from the advice in `0186_geo_indexes.sql:46-49`, which recommends `CONCURRENTLY` and notes the Supabase editor runs statements un-wrapped — correct for large tables, wrong at this scale.
+- **Verification, post-`COMMIT`, 2026-08-11, project `ajrurzioarfkagpuxfnb`:**
+  - Object-presence query: **ten rows, `present = true` on every one** — the table (`relkind` `r`), all eight indexes (`relkind` `i`), and `post_event_links.relrowsecurity`.
+  - **`post_event_links.relrowsecurity = true`.** This is the check that mattered. `false` would have meant the table was live without RLS.
+  - `pnpm run audit:schema` — **exit 0**, **4021 claimed objects, no missing objects** (`✔ Live schema contains every object claimed by the migrations.`). Before the apply it exited 1 with 9 missing across the three files above.
+  - Re-verify at any time:
+
+        SELECT to_regclass('public.post_event_links') IS NOT NULL AS tbl,
+               (SELECT relrowsecurity FROM pg_class
+                 WHERE oid = to_regclass('public.post_event_links')) AS rls;
+        -- expect: t, t
+
+        SELECT indexname FROM pg_indexes WHERE schemaname = 'public'
+          AND indexname IN ('idx_post_event_links_post_id','idx_post_event_links_event_id',
+            'user_location_state_geo_idx','events_geo_idx','posts_geo_idx',
+            'hidden_gems_geo_idx','hidden_gems_approx_geo_idx','hidden_gems_canonical_place_idx')
+          ORDER BY 1;
+        -- expect: 8 rows
+
+- **Why `audit:schema` reads 0 and not 1 afterwards.** `auditMigrationsVsLive.ts:730` suppresses an `rls:` claim whose relation is absent ("declared for a table nobody created" is not drift), so `rls:post_event_links` was **not** among the 9 reported — it becomes a reported gap the instant the table exists without RLS. Creating the table promotes that claim from suppressed to live-checked. The count went 9 → 0 *because* the enable was included; it would have gone 9 → 1 had it been omitted. The audit would have caught it, but only after the table had already sat unprotected.
+- **Three declared RLS policies were NOT applied and remain deliberately unapplied** — `media_assets_public_select`, `media_attachments_public_select` (`20260811_media_rls.sql`) and `users_view_highlight_replies` (`0026_highlights.sql` / `2033_rls_hardening.sql`). They are allowlisted at `auditMigrationsVsLive.ts:221-236` with the reasoning written out in full there; all three are pure widenings or superseded declarations, and their absence is the restrictive direction. Of the twelve objects the 2026-08-10 production audit found declared-but-absent (`docs/schema-reconciliation-2026-08-08.md` §2), **nine are now applied and three are deliberately not**.
+- **Provenance, stated plainly given this file's own header warning.** The apply and the verification were executed by the operator in the Supabase SQL editor and reported back; this session composed the SQL, checked its structure offline, and recorded the outcome. Nothing here was observed by the session that wrote it. The two queries above are the way to re-establish it independently — do that before relying on this row.
