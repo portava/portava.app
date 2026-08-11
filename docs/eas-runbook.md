@@ -311,8 +311,28 @@ The `db-triggers` pre-release check (`scripts/check-db-triggers.sh`) queries the
 
 | Context | Token | Notes |
 |---------|-------|-------|
-| **CI / GitHub Actions** | `SUPABASE_PROJECT_TOKEN` | Project-scoped, read-only. Safe to store as a repo secret — not tied to any developer account. Rotate independently from developer tokens. **Preferred.** |
+| **CI / GitHub Actions** | `SUPABASE_PROJECT_TOKEN` | Project-scoped. **Not read-only — see below.** Stored as a repo secret and not tied to any developer account, so it rotates independently of developer tokens. **Preferred for CI.** |
 | **Local developer run** | `SUPABASE_ACCESS_TOKEN` | Personal access token from https://supabase.com/dashboard/account/tokens. Never commit or store this in CI. |
+
+> **⚠️ Corrected 2026-08-11 — this token is NOT read-only.** Earlier revisions of
+> this table described `SUPABASE_PROJECT_TOKEN` as "read-only"; that was wrong and
+> is retracted. **What it actually is: a Supabase Management API token that can
+> write.** Nothing about the credential restricts it to reads. Per
+> `docs/ci/README.md:469-470` — *"it does not make the credential read-only. The
+> Management API token in the environment can write; the mode constrains what the
+> **process** does"* — the read-only property of these checks comes from two places,
+> **neither of which is the credential**:
+>
+> 1. **What the process does** — the audit entry points issue `SELECT`s only, and
+>    which files may do so is enforced by `check-guard-coverage.mjs`, not assumed.
+> 2. **The target allowlist** — `.github/scripts/assert-nonprod-supabase.sh` pins
+>    which project may be contacted at all.
+>
+> Treat the token as a write-capable credential when deciding where to store it,
+> who may read it, and how fast to rotate it after exposure. (This correction is
+> about the token's **capability** only. Whether it is genuinely project-scoped is a
+> separate, still-open question — see `docs/ci/README.md` and do not read this note
+> as settling it.)
 
 The script checks `SUPABASE_PROJECT_TOKEN` first; if absent it falls back to `SUPABASE_ACCESS_TOKEN`. Both use the same Supabase Management API endpoint so no other config change is needed.
 
@@ -321,7 +341,7 @@ The script checks `SUPABASE_PROJECT_TOKEN` first; if absent it falls back to `SU
 1. Go to the [Supabase dashboard](https://supabase.com/dashboard) and open this project.
 2. Navigate to **Project Settings → API → Project API tokens**.
 3. Click **Generate new token**.
-4. Give it a name (e.g. `github-ci-trigger-check`) and set the scope to **Read** — the check never writes.
+4. Give it a name (e.g. `github-ci-trigger-check`). Select the narrowest scope the dashboard offers. **Do not treat that scope as a safety property:** the credential this endpoint accepts can write (`docs/ci/README.md:469-470`), so the check's read-only behaviour comes from the check itself — it issues `SELECT`s only — and from the target allowlist, not from the token.
 5. Copy the generated token value.
 
 ### Storing the token as a GitHub Actions secret
@@ -373,7 +393,7 @@ Missing indexes cause the `GET /api/engagement/likes` endpoint to degrade to seq
 
 | Context | Token | Notes |
 |---------|-------|-------|
-| **CI / GitHub Actions** | `SUPABASE_PROJECT_TOKEN` | Project-scoped, read-only. Safe as a repo secret. **Preferred.** |
+| **CI / GitHub Actions** | `SUPABASE_PROJECT_TOKEN` | Project-scoped. **Not read-only — the token can write** (`docs/ci/README.md:469-470`); see the corrected note under "DB triggers check in CI" above. Stored as a repo secret. **Preferred for CI.** |
 | **Local developer run** | `SUPABASE_ACCESS_TOKEN` | Personal access token from https://supabase.com/dashboard/account/tokens. Never commit. |
 
 The `check-engagement-indexes.sh` script checks `SUPABASE_PROJECT_TOKEN` first; if absent it falls back to `SUPABASE_ACCESS_TOKEN`. Both reach the same Supabase Management API endpoint.
@@ -383,7 +403,7 @@ The `check-engagement-indexes.sh` script checks `SUPABASE_PROJECT_TOKEN` first; 
 1. Go to the [Supabase dashboard](https://supabase.com/dashboard) and open this project.
 2. Navigate to **Project Settings → API → Project API tokens**.
 3. Click **Generate new token**.
-4. Give it a name (e.g. `github-ci-engagement-check`) and set the scope to **Read** — the check never writes.
+4. Give it a name (e.g. `github-ci-engagement-check`). Select the narrowest scope the dashboard offers. **Do not treat that scope as a safety property:** the credential this endpoint accepts can write (`docs/ci/README.md:469-470`); the check's read-only behaviour comes from the check and the target allowlist, not from the token.
 5. Copy the generated token value.
 6. In your GitHub repository, go to **Settings → Secrets and variables → Actions**.
 7. Click **New repository secret**.

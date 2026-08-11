@@ -15,8 +15,16 @@
 #                            CI).  Create one in the Supabase dashboard under
 #                            Project Settings → API → Project API tokens, then
 #                            store it as a repo secret (e.g. SUPABASE_PROJECT_TOKEN
-#                            in GitHub Actions secrets).  Scope it to "read"
-#                            access — this check never writes to the project.
+#                            in GitHub Actions secrets).
+#                            NOT READ-ONLY (corrected 2026-08-11).  This is a
+#                            Management API token and it CAN WRITE; earlier text
+#                            here told you to "scope it to read" and treated that
+#                            as the safety property.  It is not.  Per
+#                            docs/ci/README.md:469-470, this check is read-only
+#                            because of what the CHECK does and because the target
+#                            allowlist pins the project — never because of the
+#                            credential.  Store and rotate it as a write-capable
+#                            secret.
 #                            See docs/eas-runbook.md → "DB triggers check in CI"
 #                            for full setup instructions.
 #

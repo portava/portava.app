@@ -7,7 +7,9 @@
 #
 # Required secrets:
 #   SUPABASE_URL          — the Supabase project URL
-#   SUPABASE_PROJECT_TOKEN — project-scoped read-only Supabase token (CI)
+#   SUPABASE_PROJECT_TOKEN — project-scoped Supabase Management API token (CI).
+#                            NOT read-only: this token can write. See
+#                            docs/ci/README.md:469-470.
 #   EXPO_TOKEN            — Expo account token (eas-build job only)
 #
 # See docs/eas-runbook.md → "DB triggers check in CI" for full instructions.
@@ -45,7 +47,10 @@ printf '  ── Secret 2: SUPABASE_PROJECT_TOKEN ──────────
 printf '  Create at:\n'
 printf '    Supabase dashboard → Project Settings → API → Project API tokens\n'
 printf '    Click "Generate new token" → name it "github-ci-trigger-check"\n'
-printf '    Scope: Read-only.  Copy the generated value.\n'
+printf '    Pick the narrowest scope offered.  Copy the generated value.\n'
+printf '    NOTE: this token is NOT read-only — it can write.  The checks are\n'
+printf '    read-only because of what they do and the target allowlist, not the\n'
+printf '    credential.  See docs/ci/README.md:469-470.\n'
 printf '\n'
 printf '    Alternatively, a personal access token from:\n'
 printf '    https://supabase.com/dashboard/account/tokens\n'

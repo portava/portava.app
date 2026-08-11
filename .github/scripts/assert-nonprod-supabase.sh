@@ -31,13 +31,34 @@
 # This gate used to be a denylist of exactly one ref (production, copied out of
 # .replit). A denylist answers "is this the one project I thought to forbid?".
 # The question that matters is "is this the one project I sanctioned?" — and a
-# denylist answers that wrongly for every ref nobody listed: a second production
-# project, a colleague's personal project, a customer's project, a typo that
-# happens to resolve. All of those passed the denylist. These jobs create and
-# delete real auth users, promote and demote a test victim's role and
-# is_official flag, and attempt a real INSERT into public.rank_events. Pointing
-# them at an unsanctioned project is not a lesser failure than pointing them at
-# production.
+# denylist answers that wrongly for every ref nobody listed. That used to be
+# argued from hypotheticals (a colleague's project, a customer's project, a typo
+# that happens to resolve). It no longer needs to be. The demonstrated case is
+# stronger than any of them:
+#
+#   Enumerating GET https://api.supabase.com/v1/projects with the CI credential
+#   on 2026-08-11 returned THREE projects, all reachable by that one token:
+#
+#     zheztcvfhkwbouspesew   travel-buddy
+#     hwokxgbmezheskbzskfr   portava-ci
+#     ajrurzioarfkagpuxfnb   travel-buddy
+#
+# Two of the three carry the SAME display name. So this is not merely a case
+# where an allowlist is safer than a denylist — A NAME-BASED ALLOWLIST COULD NOT
+# HAVE WORKED AT ALL. "Allow the project called travel-buddy" resolves to two
+# different databases, one of which is pinned below as production. Only a ref
+# discriminates. That is why every comparison in this script is on the ref and
+# never on a name, and why the same rule binds any human instruction that tells
+# an operator which project to open.
+#
+# The same enumeration settled what the credential is: the token is account-level
+# (sbp_ prefix, three projects returned), so it constrains nothing about which
+# project is reached. The target check is the only thing on this axis.
+#
+# These jobs create and delete real auth users, promote and demote a test
+# victim's role and is_official flag, and attempt a real INSERT into
+# public.rank_events. Pointing them at an unsanctioned project is not a lesser
+# failure than pointing them at production.
 #
 # So: CI runs if and only if the resolved project ref EQUALS the expected CI
 # ref. Everything else — including an unset expectation, including an
