@@ -246,7 +246,7 @@ export function GenerateHeaderSheet({ visible, entityType, entityId, onDismiss, 
       mountRef.current = false;
       stopPoll();
     };
-  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps — only trigger when sheet opens
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps -- only trigger when sheet opens
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 

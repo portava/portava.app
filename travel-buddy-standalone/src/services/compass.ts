@@ -687,7 +687,7 @@ export interface CompassAskResponse {
  * @deprecated Legacy shape — kept for types that reference it.
  * New code should use CompassAskResponse.
  */
-export interface CompassAskRecommendation extends CompassAskResponse {}
+export type CompassAskRecommendation = CompassAskResponse;
 
 export async function postCompassAsk(
   prompt:  string,
