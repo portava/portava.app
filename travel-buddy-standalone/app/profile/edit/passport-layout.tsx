@@ -16,8 +16,9 @@ import { GripVertical, RotateCcw, Eye, EyeOff } from 'lucide-react-native';
 import {
   SettingsScreen, SettingsSection, SaveBar, useUnsavedGuard, useSavedThenBack, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
-import { PP, PP_LABEL } from '../../../src/theme/passportTokens';
+import { PP } from '../../../src/theme/passportTokens';
 import { space, radius, type as t, icon } from '../../../src/theme/tokens';
+import { PassportReorderRowIndex } from '../../../src/components/passport/PassportReorderRowIndex';
 import { getMyProfile, updateMyProfile } from '../../../src/services/profile';
 import { resolveProfileSaveOutcome } from '../../../src/services/profileSaveFlow';
 import {
@@ -207,9 +208,7 @@ export default function PassportLayoutScreen() {
                   },
                 ]}
               >
-                <View style={sx.rowIndex}>
-                  <Text style={sx.rowIndexText}>{index + 1}</Text>
-                </View>
+                <PassportReorderRowIndex index={index} />
                 <Text style={[sx.rowLabel, isHidden && sx.rowLabelHidden]}>
                   {SECTION_LABELS[key]}{isHidden ? ' (Hidden)' : ''}
                 </Text>
@@ -296,11 +295,7 @@ const sx = StyleSheet.create({
     backgroundColor: '#FFFDF7',
   },
   rowHidden: { opacity: 0.45 },
-  rowIndex: {
-    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
-    backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
-  },
-  rowIndexText: { ...PP_LABEL, fontSize: 11, color: PP.inkMuted },
+
   rowLabel: { ...t.bodyStrong, color: PP.ink, fontSize: 15, flex: 1 },
   rowLabelHidden: { color: PP.inkMuted },
   eyeBtn: { paddingVertical: 10, paddingHorizontal: 6, width: 34, alignItems: 'center' },

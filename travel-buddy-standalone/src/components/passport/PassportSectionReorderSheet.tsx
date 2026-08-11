@@ -19,8 +19,9 @@ import {
   NON_HIDEABLE_SECTIONS, resolveHiddenSections,
   type PassportSectionKey,
 } from './passportSections.ts';
-import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
-import { space, radius, type as t, icon } from '../../theme/tokens.ts';
+import { PP } from '../../theme/passportTokens.ts';
+import { space, radius, type as t } from '../../theme/tokens.ts';
+import { PassportReorderRowIndex } from './PassportReorderRowIndex.tsx';
 
 const ROW_HEIGHT = 56;
 
@@ -161,9 +162,7 @@ export function PassportSectionReorderSheet({ visible, initialOrder, initialHidd
                   },
                 ]}
               >
-                <View style={rs.rowIndex}>
-                  <Text style={rs.rowIndexText}>{index + 1}</Text>
-                </View>
+                <PassportReorderRowIndex index={index} />
                 <Text style={[rs.rowLabel, isHidden && rs.rowLabelHidden]}>
                   {SECTION_LABELS[key]}{isHidden ? ' (Hidden)' : ''}
                 </Text>
@@ -240,11 +239,7 @@ const rs = StyleSheet.create({
     backgroundColor: PP.paper,
   },
   rowHidden: { opacity: 0.45 },
-  rowIndex: {
-    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
-    backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
-  },
-  rowIndexText: { ...PP_LABEL, fontSize: 11, color: PP.inkMuted },
+
   rowLabel: { ...t.bodyStrong, color: PP.ink, fontSize: 15, flex: 1 },
   rowLabelHidden: { color: PP.inkMuted },
   eyeBtn: { paddingVertical: 10, paddingHorizontal: 6, width: 34, alignItems: 'center' },

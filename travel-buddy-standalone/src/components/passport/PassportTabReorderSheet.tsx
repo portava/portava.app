@@ -19,7 +19,8 @@ import {
   type PassportTabKey,
 } from './passportTabs.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
-import { space, radius, type as t, icon } from '../../theme/tokens.ts';
+import { space, radius, type as t } from '../../theme/tokens.ts';
+import { PassportReorderRowIndex } from './PassportReorderRowIndex.tsx';
 
 const ROW_HEIGHT = 56;
 
@@ -162,9 +163,7 @@ export function PassportTabReorderSheet({ visible, initialOrder, onClose, onSave
                   },
                 ]}
               >
-                <View style={rs.rowIndex}>
-                  <Text style={rs.rowIndexText}>{index + 1}</Text>
-                </View>
+                <PassportReorderRowIndex index={index} />
                 <Text style={rs.rowLabel}>{TAB_LABELS[key]}</Text>
 
                 {/* Accessible move buttons */}
@@ -269,11 +268,7 @@ const rs = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: PP.borderLight,
     backgroundColor: PP.paper,
   },
-  rowIndex: {
-    width: icon.s24, height: icon.s24, borderRadius: icon.s24 / 2,
-    backgroundColor: PP.paperDeep, alignItems: 'center', justifyContent: 'center',
-  },
-  rowIndexText: { ...PP_LABEL, fontSize: 11, color: PP.inkMuted },
+
   rowLabel: { ...t.bodyStrong, color: PP.ink, fontSize: 15, flex: 1 },
   arrowBtn: {
     paddingVertical: 10, paddingHorizontal: 4,
