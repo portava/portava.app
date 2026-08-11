@@ -261,8 +261,8 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
     paddingTop: 12,
     zIndex: 3,
-    backgroundImage: undefined, // RN doesn't support gradient in StyleSheet
-    backgroundColor: SCRIM_BOTTOM, // flat scrim fallback
+    // RN doesn't support gradients in StyleSheet, so this is a flat scrim.
+    backgroundColor: SCRIM_BOTTOM,
   },
   viewCount: {
     flexDirection: 'row',

@@ -507,6 +507,18 @@ describe('sync-standalone.sh --fix-lockfile', () => {
         ...process.env,
         SYNC_STANDALONE_REPO_ROOT: repoRoot,
         PORTAVA_ENABLE_LEGACY_SYNC: '1',
+        // Step 2 runs a bare `pnpm install`, and pnpm turns on
+        // --frozen-lockfile whenever CI is set. The persistent-drift fixture is
+        // deliberately a lockfile that disagrees with its package.json — that
+        // mismatch IS the scenario under test — so on a runner pnpm refused the
+        // install with ERR_PNPM_OUTDATED_LOCKFILE, `set -euo pipefail` aborted
+        // the script at step 2, and step 3 never ran to print the guidance the
+        // test asserts. Green locally, red in CI.
+        //
+        // Clearing CI is what actually works here; npm_config_frozen_lockfile
+        // is not honoured for this. Scoped to this one spawn, against a temp
+        // fixture, so nothing else in the job sees it.
+        CI: '',
       },
       timeout: 60_000,
     });
