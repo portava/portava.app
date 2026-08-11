@@ -1041,8 +1041,25 @@ jobs:
             for p in "${PATTERNS[@]}"; do
               # grep -n gives LINE:content; drop lines whose content is a
               # comment (YAML comments and bash comments inside run: blocks).
-              HITS="$(grep -nE "$p" "$f" | grep -vE '^[0-9]+:[[:space:]]*#')"
-              if [ -n "$HITS" ]; then
+              #
+              # THE ASSIGNMENT IS THE `if` CONDITION, AND THAT IS THE WHOLE
+              # POINT. `shell: bash` runs this as `bash --noprofile --norc -e
+              # -o pipefail`, and the `set -uo pipefail` above never clears
+              # that `-e`. Written as a bare assignment, a grep that matches
+              # NOTHING exits 1, the assignment inherits that status, and `-e`
+              # kills the step instantly with no output — so this check died on
+              # its first clean file and reported red for every commit from
+              # 2026-08-10 onward. It failed *because* the tree was clean.
+              # A command in an `if` condition is exempt from `-e`.
+              #
+              # `[ -n "$HITS" ]` is not needed here and is not a safe
+              # substitute: the pipeline exits 0 only when the comment filter
+              # left at least one line, which is exactly the condition wanted.
+              #
+              # Do NOT "fix" this with the two obvious idioms for discarding a
+              # non-zero exit: both spellings are on this check's own PATTERNS
+              # list above, so it would flag its own repair.
+              if HITS="$(grep -nE "$p" "$f" | grep -vE '^[0-9]+:[[:space:]]*#')"; then
                 echo "::error file=$f::Forbidden soft-fail construct in $f"
                 echo "$HITS" | sed "s|^|  $f:|"
                 BAD=1
