@@ -96,6 +96,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: preflight
+    # test:truncate-guard applies migration 0074's DDL to a real database and
+    # asserts TRUNCATE saved_places actually raises. It targets a Replit-local
+    # host ("helium") that does not exist on a runner, so CI supplies its own
+    # postgres and points TRUNCATE_GUARD_DATABASE_URL at it below.
+    #
+    # A throwaway container, not the project database: the test creates and
+    # drops its own schema, and must never be able to reach real data.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: truncate_guard_test
+        ports:
+          - 5432:5432
+        # Without a healthcheck the job races the container and psql fails on
+        # connection refused rather than on anything the test is about.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -259,6 +282,8 @@ jobs:
       - name: 'scripts: test:truncate-guard'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
+        env:
+          TRUNCATE_GUARD_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/truncate_guard_test
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:truncate-guard
 
       - name: 'scripts: test:fixture-guard'

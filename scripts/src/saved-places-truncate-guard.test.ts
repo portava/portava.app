@@ -42,7 +42,23 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const LOCAL_PSQL_URL = 'postgresql://postgres@helium:5432/heliumdb';
+/**
+ * Where to run the DDL smoke test.
+ *
+ * Defaults to the Replit-local instance so `pnpm test:truncate-guard` keeps
+ * working unchanged on a dev box. CI has no host called `helium`, so the
+ * unwired workflow runs a postgres:16 service container and points
+ * TRUNCATE_GUARD_DATABASE_URL at it.
+ *
+ * There is deliberately NO skip-when-unset branch. This test exists because a
+ * catalog check cannot tell a working guard from a malformed one, so a silent
+ * skip would restore exactly the blind spot it was written to close — the suite
+ * would go green while proving nothing about whether saved_places is
+ * protected. If the database is unreachable the test fails, loudly.
+ */
+const LOCAL_PSQL_URL =
+  process.env['TRUNCATE_GUARD_DATABASE_URL']?.trim() ||
+  'postgresql://postgres@helium:5432/heliumdb';
 
 const MIGRATION_FILE = resolve(
   new URL(
