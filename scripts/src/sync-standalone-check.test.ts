@@ -472,6 +472,26 @@ describe('sync-standalone.sh --fix-lockfile', () => {
   // metro.config.js: read as plain text; regex extracts config.<key> references.
   const MINIMAL_METRO = `// minimal metro stub\nconst { getDefaultConfig } = require('expo/metro-config');\nconst config = getDefaultConfig(__dirname);\nmodule.exports = config;\n`;
 
+  /**
+   * Opt the fixture out of frozen-lockfile installs.
+   *
+   * Step 2 of --fix-lockfile runs a bare `pnpm install`, and pnpm turns
+   * --frozen-lockfile on by itself in CI. The persistent-drift fixture is
+   * deliberately a lockfile that disagrees with its package.json — that
+   * mismatch IS the scenario under test — so on a runner pnpm refused with
+   * ERR_PNPM_OUTDATED_LOCKFILE, `set -euo pipefail` aborted the script at step
+   * 2, and step 3 never ran to print the guidance the test asserts. Green
+   * locally, red in CI.
+   *
+   * A project .npmrc rather than an env var: pnpm infers CI from several
+   * variables (GITHUB_ACTIONS as well as CI), so clearing one is not enough,
+   * and npm_config_frozen_lockfile is not honoured for this setting. The file
+   * lives in the temp fixture, so it cannot affect any real install.
+   */
+  function writeNpmrc(dir: string): void {
+    writeFileSync(join(dir, '.npmrc'), 'frozen-lockfile=false\n');
+  }
+
   function writeConfigStubs(dir: string): void {
     writeFileSync(join(dir, 'tsconfig.json'), MINIMAL_TSCONFIG);
     writeFileSync(join(dir, 'babel.config.js'), MINIMAL_BABEL);
@@ -487,6 +507,7 @@ describe('sync-standalone.sh --fix-lockfile', () => {
     // The main sync flow hard-exits if any of these config files are missing.
     writeConfigStubs(srcDir);
     writeConfigStubs(standaloneDir);
+    writeNpmrc(standaloneDir);
     return { root, srcDir, standaloneDir };
   }
 
@@ -507,18 +528,6 @@ describe('sync-standalone.sh --fix-lockfile', () => {
         ...process.env,
         SYNC_STANDALONE_REPO_ROOT: repoRoot,
         PORTAVA_ENABLE_LEGACY_SYNC: '1',
-        // Step 2 runs a bare `pnpm install`, and pnpm turns on
-        // --frozen-lockfile whenever CI is set. The persistent-drift fixture is
-        // deliberately a lockfile that disagrees with its package.json — that
-        // mismatch IS the scenario under test — so on a runner pnpm refused the
-        // install with ERR_PNPM_OUTDATED_LOCKFILE, `set -euo pipefail` aborted
-        // the script at step 2, and step 3 never ran to print the guidance the
-        // test asserts. Green locally, red in CI.
-        //
-        // Clearing CI is what actually works here; npm_config_frozen_lockfile
-        // is not honoured for this. Scoped to this one spawn, against a temp
-        // fixture, so nothing else in the job sees it.
-        CI: '',
       },
       timeout: 60_000,
     });
