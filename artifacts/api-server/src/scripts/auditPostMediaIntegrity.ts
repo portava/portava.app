@@ -86,6 +86,7 @@ interface PostRow {
   pm_ready: number | null;
   post_status: string | null;
   status: string | null;
+  url_shapes: string | null;
 }
 
 // One statement. `media_urls` element classification is done in SQL so the
@@ -106,7 +107,26 @@ const SQL = `
             and pm.processing_status = 'ready'
             and coalesce(pm.moderation_status,'') not in ('rejected','flagged')) as pm_ready,
          p.post_status,
-         p.status
+         p.status,
+         (select string_agg(
+                   case
+                     when pm.public_url ~ '/storage/v1/object/public/' then 'ABSOLUTE-PUBLIC(dead: bucket is private)'
+                     when pm.public_url ~ '/storage/v1/object/sign/'   then 'SIGNED'
+                     when pm.public_url ~ '^https?://'                 then 'ABSOLUTE-OTHER'
+                     when pm.public_url ~ '^(post-media|profile-media)/' then 'BARE-KEY'
+                     when pm.public_url is null                        then 'NULL'
+                     else 'OTHER'
+                   end
+                   || case when pm.thumbnail_url is null then ' thumb=NULL' else ' thumb=set' end
+                   || ' bucket=' || coalesce(pm.storage_bucket,'NULL')
+                   || ' storage_path='
+                   || case
+                        when pm.storage_path is null then 'NULL'
+                        when pm.storage_path ~ '^(post-media|profile-media)/' then 'HAS-BUCKET-PREFIX'
+                        else 'bare-path'
+                      end,
+                   ' | ' order by pm.sort_order)
+            from post_media pm where pm.post_id = p.id)                            as url_shapes
     from posts p
    where p.media_count > 0
       or coalesce(array_length(p.media_urls, 1), 0) > 0
@@ -162,7 +182,8 @@ const show = (r: PostRow) =>
   `  ${r.id}  author=${(r.author_id ?? "—").slice(0, 8)}  ` +
   `media_count=${n(r.media_count)}  urls=${n(r.url_count)} ` +
   `(ext ${n(r.external_count)}, storage-shaped ${n(r.storage_shaped_count)})  ` +
-  `post_media=${n(r.pm_total)} (ready ${n(r.pm_ready)})  ${r.post_status ?? "—"}/${r.status ?? "—"}`;
+  `post_media=${n(r.pm_total)} (ready ${n(r.pm_ready)})  ${r.post_status ?? "—"}/${r.status ?? "—"}` +
+  (r.url_shapes ? `\n      url shape: ${r.url_shapes}` : "");
 
 for (const [b, list] of [...buckets.entries()].sort()) {
   if (b === "ok") continue;
