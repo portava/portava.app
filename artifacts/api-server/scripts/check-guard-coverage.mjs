@@ -214,6 +214,22 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'the point: the cache-dominance figure it reports is meaningless against an empty CI project.',
   },
   {
+    file: 'src/scripts/checkMediaUrlsExternalOnly.ts',
+    reason:
+      'ENFORCES the 2026-08-12 ruling that posts.media_urls holds EXTERNAL references only, post_media being ' +
+      'canonical for storage-backed media (2083_backfill_storage_backed_post_media.sql). Everything it sends, ' +
+      'in full: TWO Management API statements, both SELECTs over public.posts. POPULATION_SQL is ' +
+      '`SELECT count(*) FROM posts, LATERAL unnest(media_urls)` — the total element count, read so that a ' +
+      'zero-violation result can be told apart from an empty column. VIOLATION_SQL is a SELECT over the same ' +
+      'unnest, filtered to elements matching a storage-backed shape in either spelling (the bare ' +
+      '`post-media/`|`profile-media/` key, and the pre-2081 absolute /storage/v1/object/public/ URL), LIMIT 200. ' +
+      'No INSERT/UPDATE/DELETE, no .insert/.update/.upsert/.delete/.rpc anywhere in the file. It reports and ' +
+      'exits non-zero; it never repairs what it finds, because the remedy is fixing whatever wrote the value. ' +
+      'Auditing PRODUCTION is the point: the column it guards is a production data shape, and the CI project ' +
+      'holds no posts, so a CI-only run proves only that there is nothing there to violate the rule — which ' +
+      'the script says out loud rather than reporting a clean pass.',
+  },
+  {
     file: 'src/scripts/auditMediaUrlShapes.ts',
     reason:
       'URL-SHAPE HISTOGRAM of the durable media URL columns, for the upload-consolidation question of whether ' +

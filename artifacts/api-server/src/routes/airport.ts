@@ -35,6 +35,7 @@ import { getServiceClient } from "../lib/supabase.js";
 // shadow is behaviour-neutral there and only changes the unhealthy-DB case,
 // which now stays closed like every other capability gate in the codebase.
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
   resolveByIata,
@@ -1476,6 +1477,10 @@ router.get("/airport/pulse", async (req, res) => {
   const authorIds = [...new Set(rows.map((r: any) => r.author_id as string))];
   const allowedNames = await nameVisibilitySet(sc, authorIds);
 
+  // post_media is canonical for storage-backed media; posts.media_urls holds
+  // external references only (ruled 2026-08-12). One query per page, then a
+  // pure merge — see lib/postMediaResolve.ts.
+  const mediaByPost = await resolveMediaForPosts(sc, rows);
   const posts = rows.map((row: any) => {
     const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
     const nameAllowed = profile && (profile.id === user.id || allowedNames.has(profile.id as string));
@@ -1483,7 +1488,7 @@ router.get("/airport/pulse", async (req, res) => {
       id:          row.id,
       authorId:    row.author_id,
       content:     row.content,
-      mediaUrls:   row.media_urls ?? [],
+      mediaUrls:   mediaByPost.get(row.id) ?? row.media_urls ?? [],
       createdAt:   row.created_at,
       locationCity:    row.location_city ?? null,
       locationCountry: row.location_country ?? null,

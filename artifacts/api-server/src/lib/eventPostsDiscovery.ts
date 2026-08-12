@@ -17,6 +17,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fetchPostMediaMap, mergePostMedia } from "./postMediaResolve.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -262,6 +263,12 @@ async function fetchPathA(
 
     if (error || !data) return [];
 
+    // post_media is canonical for storage-backed media; posts.media_urls holds
+    // external references only (ruled 2026-08-12).
+    const storageMedia = await fetchPostMediaMap(
+      db,
+      (data as any[]).map((r: any) => r.posts?.id).filter(Boolean),
+    );
     const results: RawPost[] = [];
     for (const row of data as any[]) {
       const post = row.posts;
@@ -274,7 +281,7 @@ async function fetchPathA(
         id: post.id,
         authorId: post.author_id,
         content: post.content ?? "",
-        mediaUrls: Array.isArray(post.media_urls) ? post.media_urls : [],
+        mediaUrls: mergePostMedia(post, storageMedia),
         venueName: event.location_name ?? post.location_name ?? null,
         locationCity: post.location_city ?? null,
         publicLat: post.public_lat ?? null,
@@ -352,6 +359,12 @@ async function fetchPathB(
     const { data, error } = await query;
     if (error || !data) return [];
 
+    // post_media is canonical for storage-backed media; posts.media_urls holds
+    // external references only (ruled 2026-08-12).
+    const storageMedia = await fetchPostMediaMap(
+      db,
+      (data as any[]).map((r: any) => r.posts?.id).filter(Boolean),
+    );
     const results: RawPost[] = [];
     for (const post of data as any[]) {
       const place = Array.isArray(post.discovery_places)
@@ -372,7 +385,7 @@ async function fetchPathB(
         id: post.id,
         authorId: post.author_id,
         content: post.content ?? "",
-        mediaUrls: Array.isArray(post.media_urls) ? post.media_urls : [],
+        mediaUrls: mergePostMedia(post, storageMedia),
         venueName: place.name ?? null,
         locationCity: post.location_city ?? place.city ?? null,
         publicLat: post.public_lat ?? null,

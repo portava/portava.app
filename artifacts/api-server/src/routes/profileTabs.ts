@@ -18,6 +18,7 @@
 import { Router } from "express";
 import { sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import {
   resolveProfileVisibility,
@@ -166,10 +167,14 @@ router.get("/users/:username/posts", async (req, res) => {
   }
 
   const rows = data ?? [];
+  // post_media is canonical for storage-backed media; posts.media_urls holds
+  // external references only (ruled 2026-08-12). One query per page, then a
+  // pure merge — see lib/postMediaResolve.ts.
+  const mediaByPost = await resolveMediaForPosts(sc, rows.slice(0, limit) as any[]);
   const items = rows.slice(0, limit).map((r: any) => ({
     id: r.id,
     content: r.content ?? null,
-    mediaUrls: r.media_urls ?? [],
+    mediaUrls: mediaByPost.get(r.id) ?? r.media_urls ?? [],
     locationCity: r.location_city ?? null,
     locationCountry: r.location_country ?? null,
     tripId: r.trip_id ?? null,

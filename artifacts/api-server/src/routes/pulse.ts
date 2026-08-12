@@ -17,6 +17,7 @@ import { buildCompassContext, defaultSignals } from "../compass/CompassContextEn
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
 import { excludePrivateAuthorPosts } from '../lib/privacyFilter';
+import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
 
 /**
  * Pulse feed routes
@@ -309,6 +310,11 @@ router.get("/pulse", async (req, res) => {
   // Universal display-name rule: authors show @handle unless they opted in.
   const allowedAuthorNames = await nameVisibilitySet(sc, rows.map((r: any) => r.author_id));
 
+  // post_media is canonical for storage-backed media; posts.media_urls holds
+  // external references only (ruled 2026-08-12). One query per page, then a
+  // pure merge — see lib/postMediaResolve.ts.
+  const mediaByPost = await resolveMediaForPosts(sc, rows as any[]);
+
   // Shape responses — NEVER include exact coords
   const posts = rows.map((row: any) => {
     const geoTag = Array.isArray(row.pulse_geo_tags)
@@ -323,7 +329,7 @@ router.get("/pulse", async (req, res) => {
       authorId:    row.author_id,
       tripId:      row.trip_id ?? null,
       content:     row.content,
-      mediaUrls:   row.media_urls ?? [],
+      mediaUrls:   mediaByPost.get(row.id) ?? row.media_urls ?? [],
       visibility:  row.visibility,
       createdAt:   row.created_at,
       updatedAt:   row.updated_at ?? undefined,

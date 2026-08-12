@@ -1,4 +1,5 @@
 import { enrichSpans } from '../lib/enrichSpans';
+import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
 
 /**
  * Hashtag routes
@@ -585,11 +586,14 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
       user.id,
     );
 
+    // post_media is canonical for storage-backed media; posts.media_urls holds
+    // external references only (ruled 2026-08-12). See lib/postMediaResolve.ts.
+    const mediaByPost = await resolveMediaForPosts(sc, visiblePosts as any[]);
     const items = visiblePosts.map((p: any) => {
       const pr    = profileMap[p.author_id];
       const spans = spansMap[p.id] ?? { tags: [], hashtagUsages: [] };
       return {
-        id: p.id, type: 'post', content: p.content, mediaUrls: p.media_urls ?? [],
+        id: p.id, type: 'post', content: p.content, mediaUrls: mediaByPost.get(p.id) ?? p.media_urls ?? [],
         createdAt: p.created_at, likeCount: p.like_count ?? 0, commentCount: p.comment_count ?? 0,
         author: pr
           ? {

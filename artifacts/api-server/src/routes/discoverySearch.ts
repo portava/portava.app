@@ -47,6 +47,7 @@ import { Router } from "express";
 import { DiscoverySearchQueryParams } from "@workspace/api-zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
+import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
 import { checkRateLimit } from "../lib/rateLimit";
 import { logger as rootLogger } from "../lib/logger";
 import {
@@ -803,6 +804,10 @@ async function searchPosts(
     const authorIds = [...new Set(rows.map((p: any) => p.author_id as string))];
     const activeAuthorSet = await fetchActiveOwnerSet(sc, authorIds);
 
+    // post_media is canonical for storage-backed media; posts.media_urls holds
+    // external references only (ruled 2026-08-12). See lib/postMediaResolve.ts.
+    const mediaByPost = await resolveMediaForPosts(sc, rows as any[]);
+
     return rows
       .filter((p: any) => activeAuthorSet.has(p.author_id as string))
       .map((p: any): SearchResult => {
@@ -813,7 +818,7 @@ async function searchPosts(
           title: preview || "(media post)",
           subtitle: null,
           avatarUrl: null,
-          imageUrl: ((p.media_urls as string[] | null)?.[0]) ?? null,
+          imageUrl: (mediaByPost.get(p.id) ?? (p.media_urls as string[] | null) ?? [])[0] ?? null,
           fallbackInitials: "P",
           locationPreview: null,
           matchedReason: null,
