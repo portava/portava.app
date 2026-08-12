@@ -83,9 +83,40 @@ function makeClient(state: FakeState = {}) {
         filters.push((r) => Array.isArray(r[col]) && vals.every((v) => r[col].includes(v)));
         return b;
       },
+      // Array overlap: true when the row's array shares ANY element with vals.
+      // (`contains` above is the all-of variant; PostgREST spells them cs/ov.)
+      overlaps(col: string, vals: any[]) {
+        filters.push((r) => Array.isArray(r[col]) && vals.some((v) => r[col].includes(v)));
+        return b;
+      },
+      // Splits on TOP-LEVEL commas only, so an `in.("a","b")` list is not torn
+      // apart by the comma inside its own parentheses. The previous parser split
+      // on every comma and silently produced garbage filters for any operand
+      // carrying one — which is why mediaAccess's message branch could not be
+      // tested with an `in` list until now.
       or(expr: string) {
-        const parts = expr.split(",").map((p) => p.trim().match(/^(\w+)\.(\w+)\.(.*)$/)).filter(Boolean) as RegExpMatchArray[];
-        filters.push((r) => parts.some((m) => String(r[m[1]]) === m[3]));
+        const clauses: string[] = [];
+        let depth = 0, cur = "";
+        for (const ch of expr) {
+          if (ch === "(") depth++;
+          if (ch === ")") depth--;
+          if (ch === "," && depth === 0) { clauses.push(cur); cur = ""; continue; }
+          cur += ch;
+        }
+        if (cur.trim()) clauses.push(cur);
+
+        const preds = clauses.map((c) => {
+          const m = c.trim().match(/^(\w+)\.(\w+)\.(.*)$/);
+          if (!m) return () => false;
+          const [, col, op, rawVal] = m;
+          if (op === "in") {
+            const vals = (rawVal.match(/"((?:[^"\\]|\\.)*)"/g) ?? [])
+              .map((q) => q.slice(1, -1).replace(/\\"/g, '"'));
+            return (r: any) => vals.includes(String(r[col]));
+          }
+          return (r: any) => String(r[col]) === rawVal;
+        });
+        filters.push((r) => preds.some((f) => f(r)));
         return b;
       },
       limit() { return b; }, not() { return b; }, order() { return b; },
@@ -124,6 +155,91 @@ describe("ownerFromPath", () => {
     assert.equal(ownerFromPath(`stories/${OWNER}/x.jpg`), OWNER);
     assert.equal(ownerFromPath(`memories/${OWNER}/y.jpg`), OWNER);
     assert.equal(ownerFromPath("weird/prefix/z.jpg"), null);
+  });
+});
+
+// ── Canonicalized (bare-key) column values ───────────────────────────────────
+//
+// RED-PROOF for the regression that 2081_canonicalize_absolute_storage_urls.sql
+// caused and that this suite did not catch.
+//
+// Branches 3b-3f decide access by finding the object's URL in a column. They
+// matched only the ABSOLUTE `<origin>/storage/v1/object/public/<bucket>/<path>`
+// form. 2081 rewrote those durable columns to the canonical BARE KEY
+// `<bucket>/<path>`, so the lookups stopped matching, every branch fell
+// through, and the deny-by-default at the end of the chain took over.
+//
+// The effect on production was narrow and total: three live PUBLIC posts whose
+// media loaded for their author (branch 1's path-owner shortcut fires before
+// any of this) and for nobody else. Every existing test in this file stored the
+// absolute form via pub(), so the whole matrix stayed green.
+//
+// Each test below is paired: the absolute form (the pre-2081 encoding, which a
+// database without that migration still holds) and the bare key (post-2081).
+// Both must authorize, because both name the same object.
+describe("authorizeMediaAccess — bare-key column values (post-2081)", () => {
+  const path = `${OWNER}/1785019420319.jpg`;
+  const bare = `post-media/${path}`;
+  const publicPost = (urls: string[]) => ({
+    author_id: OWNER, visibility: "public", status: "active",
+    post_status: "published", trip_id: null, media_urls: urls,
+  });
+
+  it("3b posts.media_urls — absolute form authorizes", async () => {
+    const sc = makeClient({ posts: [publicPost([pub(path)])] });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+  });
+
+  it("3b posts.media_urls — BARE KEY authorizes", async () => {
+    const sc = makeClient({ posts: [publicPost([bare])] });
+    assert.equal(
+      await authorizeMediaAccess(sc, VIEWER, "post-media", path), true,
+      "a post whose media_urls holds the canonical bare key must still authorize its viewers",
+    );
+  });
+
+  it("3b — a bare key in a PRIVATE post still denies", async () => {
+    // The fix must widen which encodings are recognised, never which objects
+    // are reachable. If this ever passes, the fix has become a fail-open.
+    const sc = makeClient({
+      posts: [{ ...publicPost([bare]), visibility: "private" }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+  });
+
+  it("3d stories.media_url — bare key authorizes a public story", async () => {
+    const sc = makeClient({
+      stories: [{ owner_id: OWNER, state: "active", visibility: "public", close_friends_only: false, expires_at: null, media_url: bare }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+  });
+
+  it("3e highlights.media_url — bare key authorizes a public highlight", async () => {
+    const sc = makeClient({
+      highlights: [{ owner_id: OWNER, visibility: "public", expires_at: null, media_url: bare }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+  });
+
+  it("3f trips.cover_url — bare key authorizes a trip member", async () => {
+    const sc = makeClient({
+      trips: [{ id: TRIP, owner_id: OWNER, cover_url: bare }],
+      tripMembers: [{ trip_id: TRIP, user_id: VIEWER, role: "member" }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+  });
+
+  it("3c messages.media_url — bare key authorizes a thread member", async () => {
+    const sc = makeClient({
+      messages: [{ thread_id: THREAD, media_url: bare, media_thumbnail_url: null }],
+      threadMembers: [{ thread_id: THREAD, user_id: VIEWER, left_at: null }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+  });
+
+  it("an object referenced by nothing is still denied in either encoding", async () => {
+    const sc = makeClient({});
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
   });
 });
 

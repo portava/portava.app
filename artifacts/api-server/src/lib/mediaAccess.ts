@@ -209,6 +209,39 @@ async function decide(
   const publicUrl = publicUrlFor(bucket, path);
   if (!publicUrl) return false;
 
+  /**
+   * EVERY SPELLING OF THIS ONE OBJECT.
+   *
+   * Branches 3b–3f below decide access by finding the object's URL in a column.
+   * They used to match `publicUrl` alone — the absolute
+   * `<origin>/storage/v1/object/public/<bucket>/<path>` form — because that is
+   * what upload paths used to store.
+   *
+   * The durable columns have since been canonicalized to the BARE KEY
+   * (`<bucket>/<path>`) by 2081_canonicalize_absolute_storage_urls.sql, and the
+   * upload endpoints already returned that form after the bucket-privacy
+   * cutover. A lookup that knows only the absolute form stops matching those
+   * rows, every branch falls through, and §4 denies. That is not a theoretical
+   * risk: rewriting posts.media_urls made exactly that happen to three live
+   * public posts, whose media then loaded for their owner (branch 1, path-owner
+   * shortcut) and for nobody else.
+   *
+   * THIS DOES NOT WIDEN AUTHORIZATION. Both spellings denote the same
+   * (bucket, path) pair — the pair this function was called with and has
+   * already block-checked. Matching more spellings of the caller's own argument
+   * cannot authorize a different object; it can only stop failing to recognise
+   * this one. The set of objects reachable is unchanged; the set of column
+   * encodings recognised is what grows.
+   *
+   * Both forms are kept rather than the new one alone: a database where 2081
+   * has not been applied still holds absolute URLs, and this file must be
+   * correct on both.
+   */
+  const bareKey = `${bucket}/${path}`;
+  const urlForms = [publicUrl, bareKey];
+  /** PostgREST `in.(…)` list — values are quoted and commas escaped. */
+  const inList = `(${urlForms.map((u) => `"${u.replace(/"/g, '\\"')}"`).join(",")})`;
+
   // 3a. Postcard media (post_media.storage_path → parent post rules).
   try {
     const { data: pm } = await sc
@@ -240,7 +273,7 @@ async function decide(
     const { data: posts } = await sc
       .from("posts")
       .select("author_id, visibility, status, post_status, trip_id")
-      .contains("media_urls", [publicUrl])
+      .overlaps("media_urls", urlForms)
       .limit(1);
     const post = (posts as any[])?.[0];
     if (post) {
@@ -256,7 +289,7 @@ async function decide(
     const { data: msgs } = await sc
       .from("messages")
       .select("thread_id")
-      .or(`media_url.eq.${publicUrl},media_thumbnail_url.eq.${publicUrl}`)
+      .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
       .limit(1);
     const msg = (msgs as any[])?.[0];
     if (msg) {
@@ -277,7 +310,7 @@ async function decide(
     const { data: stories } = await sc
       .from("stories")
       .select("owner_id, state, visibility, close_friends_only, expires_at")
-      .eq("media_url", publicUrl)
+      .in("media_url", urlForms)
       .limit(1);
     const story = (stories as any[])?.[0];
     if (story) {
@@ -301,7 +334,7 @@ async function decide(
     const { data: hs } = await sc
       .from("highlights")
       .select("owner_id, visibility, expires_at")
-      .eq("media_url", publicUrl)
+      .in("media_url", urlForms)
       .limit(1);
     const h = (hs as any[])?.[0];
     if (h) {
@@ -316,7 +349,7 @@ async function decide(
     const { data: trips } = await sc
       .from("trips")
       .select("id")
-      .eq("cover_url", publicUrl)
+      .in("cover_url", urlForms)
       .limit(1);
     const trip = (trips as any[])?.[0];
     if (trip) return isTripMember(sc, trip.id, viewerId);
