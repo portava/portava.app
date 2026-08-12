@@ -617,12 +617,35 @@ A schema-only restore carries the `feature_flags` TABLE and none of its ROWS.
 environment where the migration itself was replayed — which, per §1, this project
 deliberately is not.
 
-**Why this is not cosmetic.** `isFlagEnabled` (`lib/featureFlags.ts`) returns
-false on a missing row, so every one of these reads `false` on an unseeded
-project. Nothing errors and nothing goes red — the notification system is simply
-off, and any CI test that touches it passes by exercising the disabled path. It
-is the §0 failure mode exactly: a green run that verified the feature is
-switched off.
+**Why this is not cosmetic — for one of the five.** `isFlagEnabled`
+(`lib/featureFlags.ts`) returns false on a missing row, so an unseeded flag reads
+`false`. Nothing errors and nothing goes red — the feature is simply off, and any
+CI test that touches it passes by exercising the disabled path. That is the §0
+failure mode exactly: a green run that verified the feature is switched off.
+
+> **Corrected 2026-08-12.** This paragraph used to say "every one of these reads
+> `false` on an unseeded project", which reads as though all five gate something.
+> They do not. Only **`push_notifications_enabled`** has a reader — it is checked
+> in `lib/pushWithRetry.ts`, `NotificationRouter.sendPush()` and
+> `StampAwardEngine`'s milestone push. The other four —
+> `notifications_enabled`, `notification_digests_enabled`,
+> `realtime_activity_enabled`, `safety_notifications_enabled` — are read by
+> nothing under `src/`. Their only code reference is `routes/notifications.ts`
+> :641–645, where they are **write** targets in the admin
+> `PUT /admin/notification-defaults` flagMap.
+>
+> So the fail-closed default is exercised by exactly one of the five, and seeding
+> the other four changes no code path in CI or anywhere else. Seed them anyway —
+> the rows should exist and match the declared seed — but do not expect their
+> values to alter behaviour, and do not treat a green notification test as
+> evidence that they are working.
+>
+> All four are now declared in `check-flag-polarity.mjs`'s `INERT_SEEDED_FLAGS`
+> with disposition `owner-decision-pending`. They were invisible to that check
+> until 2026-08-12, because its seed scanner matched only the unqualified
+> `INSERT INTO feature_flags` and 0062 writes `INSERT INTO public.feature_flags`
+> — the same schema qualifier used in the snippet below. Whether each should gain
+> a reader or lose its row is an open product question, not a CI-bootstrap one.
 
 In the CI project's SQL editor:
 
@@ -642,6 +665,15 @@ production:** live `notification_digests_enabled` is `true`, the migration says
 to mirror production's behaviour rather than the migration's, flip that row and
 record why.
 
+How production came to diverge, established 2026-08-12: it was **not** an
+operator toggling the flag. All five rows in the live table share the timestamp
+`2026-06-28 10:54:37.333397+00` and all five are `TRUE`, so prod was seeded by a
+hand-written variant of this statement with a uniform `TRUE`, and this one row
+did not match the written value. `ON CONFLICT DO NOTHING` means replaying 0062
+will never correct it. Given that nothing reads the flag (see the correction
+above), the divergence changes no behaviour on either side — which is why it is
+recorded here rather than fixed.
+
 **Verify** — 5 rows, and compare against production rather than eyeballing:
 
 ```sql
@@ -655,7 +687,8 @@ select flag, enabled from public.feature_flags
 This is the general shape of the problem, not a one-off: any `feature_flags` row
 the app expects is absent on a schema-only restore, and `isFlagEnabled`'s
 fail-closed default converts each absence into a silently disabled feature rather
-than an error. These five are the set that had been identified as of 2026-08-10.
+than an error — **for the rows that something actually reads.** These five are
+the set that had been identified as of 2026-08-10; of them, one is read.
 
 ### Step 7 — Configure the workflow's environment
 

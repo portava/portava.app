@@ -1,0 +1,185 @@
+/**
+ * check-flag-polarity.mjs — the seed scanner sees every seeding statement.
+ *
+ * RED-PROOF for the `public.` prefix fix.
+ *
+ * The script's seeded-flag population is built by matching `INSERT INTO
+ * feature_flags` across src/migrations. Until 2026-08-12 that matcher required
+ * the table name to be unqualified, so it silently skipped both migrations that
+ * write `INSERT INTO public.feature_flags` — 0051_compass_foundation.sql and
+ * 0062_notifications_schema.sql, 14 seeded flags, 10 of them read by nothing.
+ *
+ * The damage from that class of bug is not a wrong answer, it is a confident
+ * right-looking one: rule R6 ("every seeded flag is either read or declared
+ * inert") cannot fail on a flag it never saw, so the check reported a clean
+ * population precisely because it was blind. The script's own preamble names
+ * this — "a broken scan here reports 'every seeded flag has a reader', which is
+ * the most comfortable possible lie".
+ *
+ * A test that hard-codes "the scanner must find 49 statements" would rot on the
+ * next migration. So this test re-derives the answer instead: it scans the same
+ * directory with a DELIBERATELY BROADER matcher — any schema qualifier, quoted
+ * or not, plus optional whitespace around the dot — and asserts the script's own
+ * reported totals match. It stays true as migrations are added, and goes red for
+ * any seeding form the narrower matcher misses, not just the `public.` one that
+ * prompted it.
+ *
+ * Run: node --import tsx/esm --test src/test/flagPolaritySeedScan.test.ts
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const MIGRATIONS_DIR = join(PKG_ROOT, "src", "migrations");
+const SCRIPT = join(PKG_ROOT, "scripts", "check-flag-polarity.mjs");
+
+/**
+ * Broader than the script's matcher on purpose. If the script ever needs to be
+ * narrower than this for a good reason, this test should fail and the reason
+ * should be written down here — that argument is the point of the test.
+ */
+const BROAD_INSERT = /INSERT\s+INTO\s+(?:"?[A-Za-z_][A-Za-z0-9_]*"?\s*\.\s*)?"?feature_flags"?\b/gi;
+const ROW_LITERAL = /\(\s*'([A-Za-z0-9_]+)'\s*,/g;
+
+/** Independently scan the migrations, mirroring the script's dedupe rule
+ *  (first seeding of a name wins, files visited in sorted order). */
+function independentScan(): { statements: number; flags: Set<string> } {
+  const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort();
+  const flags = new Set<string>();
+  let statements = 0;
+
+  for (const f of files) {
+    const text = readFileSync(join(MIGRATIONS_DIR, f), "utf8");
+    for (const m of text.matchAll(BROAD_INSERT)) {
+      statements++;
+      const rest = text.slice(m.index);
+      const semi = rest.indexOf(";");
+      const stmt = semi > 0 ? rest.slice(0, semi) : rest;
+      for (const row of stmt.matchAll(ROW_LITERAL)) flags.add(row[1]);
+    }
+  }
+  return { statements, flags };
+}
+
+/** Run the check once, keeping stdout and exit status. */
+let _run: { ok: boolean; out: string } | null = null;
+function runCheck(): { ok: boolean; out: string } {
+  if (_run) return _run;
+  try {
+    _run = { ok: true, out: execFileSync("node", [SCRIPT], { cwd: PKG_ROOT, encoding: "utf8" }) };
+  } catch (e: any) {
+    _run = { ok: false, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+  }
+  return _run;
+}
+
+/** Pull the script's self-reported totals out of its summary line:
+ *  "Seeded population: 139 flags seeded across 265 migrations (49 INSERT statements)"
+ *  The summary is printed only on a clean run, which is why the exit-status test
+ *  below runs first and explains the likely cause. */
+function reportedTotals(): { statements: number; flags: number } {
+  const { out } = runCheck();
+  const m = out.match(/Seeded population:\s*(\d+)\s+flags seeded across\s+\d+\s+migrations\s*\((\d+)\s+INSERT statements\)/);
+  assert.ok(
+    m,
+    "no seeded-population summary in check-flag-polarity's output — it is printed only when the check " +
+      "passes, so the check is failing. Full output:\n" + out,
+  );
+  return { flags: Number(m![1]), statements: Number(m![2]) };
+}
+
+// Lazily memoized so a broken scan surfaces as a failing assertion inside an
+// it() rather than as an exception at suite-construction time, which node:test
+// reports as zero tests run — indistinguishable at a glance from a suite that
+// was never wired up.
+let _independent: ReturnType<typeof independentScan> | null = null;
+const scan = () => (_independent ??= independentScan());
+
+describe("check-flag-polarity seed scanner", () => {
+  // Vacuity: a scan of nothing agrees with a scan of nothing.
+  it("the independent scan has a subject", () => {
+    const independent = scan();
+    assert.ok(independent.statements > 0, "no INSERT INTO feature_flags found at all — the test's own matcher broke");
+    assert.ok(independent.flags.size > 0, "no seeded flag names extracted — the row matcher broke");
+  });
+
+  it("check-flag-polarity itself passes", () => {
+    const { ok, out } = runCheck();
+    assert.ok(
+      ok,
+      "check-flag-polarity exited non-zero. If the failures are STALE INERT ENTRY lines naming the ten " +
+        "flags below, the cause is the seed matcher having been re-narrowed: the entries describe flags " +
+        "the scanner can no longer see, so the script correctly reports its own declarations as orphaned. " +
+        "That is the fix from 2026-08-12 being undone.\n" + out,
+    );
+  });
+
+  it("the two schema-qualified migrations are in scope", () => {
+    // Named explicitly so that deleting or rewriting them is a visible event
+    // rather than a silent shrink of what this test covers.
+    for (const f of ["0051_compass_foundation.sql", "0062_notifications_schema.sql"]) {
+      const text = readFileSync(join(MIGRATIONS_DIR, f), "utf8");
+      assert.match(
+        text,
+        /INSERT\s+INTO\s+public\.feature_flags/i,
+        `${f} no longer seeds via INSERT INTO public.feature_flags — if that is intended, this test's ` +
+          "premise changed and the reasoning above needs revisiting",
+      );
+    }
+  });
+
+  it("the script counts every seeding statement the broad matcher finds", () => {
+    assert.equal(
+      reportedTotals().statements,
+      scan().statements,
+      "check-flag-polarity's seed scanner missed a seeding statement. The most likely cause is its " +
+        "INSERT matcher being narrower than the SQL actually in the tree (this is exactly how " +
+        "`INSERT INTO public.feature_flags` went unseen until 2026-08-12). A missed statement does not " +
+        "make R6 fail — it makes R6 pass on a population it cannot see.",
+    );
+  });
+
+  it("the script sees every seeded flag name the broad matcher finds", () => {
+    assert.equal(
+      reportedTotals().flags,
+      scan().flags.size,
+      "check-flag-polarity's seeded-flag population is smaller than an independent scan of the same " +
+        "directory. Every name it cannot see is a flag R6 can never report as unread.",
+    );
+  });
+
+  // The specific ten that the fix surfaced. If a future edit re-narrows the
+  // matcher, the counts above catch it; this catches a re-narrowing that happens
+  // to be compensated elsewhere.
+  it("the flags the blind spot hid are in the population", () => {
+    const hidden = [
+      "COMPASS_FRONTLOAD_ENABLED",
+      "COMPASS_ACTIVE_REWARD_ENABLED",
+      "COMPASS_EXPLAIN_WHY_ENABLED",
+      "COMPASS_ADMIN_CONTROLS_ENABLED",
+      "COMPASS_ABUSE_DEFENSE_ENABLED",
+      "COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED",
+      "notifications_enabled",
+      "notification_digests_enabled",
+      "realtime_activity_enabled",
+      "safety_notifications_enabled",
+    ];
+    const script = readFileSync(SCRIPT, "utf8");
+    for (const flag of hidden) {
+      assert.ok(
+        scan().flags.has(flag),
+        `${flag} is no longer seeded by any migration — if the row was dropped, remove its ` +
+          "INERT_SEEDED_FLAGS entry too (the script's R7 will say so).",
+      );
+      assert.ok(
+        script.includes(`'${flag}'`),
+        `${flag} is seeded but has no declaration in check-flag-polarity.mjs. It was invisible to the ` +
+          "scanner until 2026-08-12; a declaration is what keeps it visible.",
+      );
+    }
+  });
+});
