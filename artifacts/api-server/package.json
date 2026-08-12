@@ -18,6 +18,7 @@
     "check:media-objects": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkMediaObjects.ts",
     "audit:storage-exif": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditStorageExif.ts",
     "audit:unreferenced-objects": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditUnreferencedObjects.ts",
+    "audit:staging-boundary-grant": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditStagingBoundaryGrant.ts",
     "audit:media-url-shapes": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditMediaUrlShapes.ts",
     "check:media-urls-external-only": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkMediaUrlsExternalOnly.ts",
     "backfill:feed-variants": "node --env-file-if-exists=.env --import tsx/esm src/scripts/backfillFeedVariants.ts",

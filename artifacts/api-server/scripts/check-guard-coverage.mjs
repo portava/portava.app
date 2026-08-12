@@ -243,6 +243,27 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'no objects, so a CI-only run proves nothing, which the script says out loud rather than reporting clean.',
   },
   {
+    file: 'src/scripts/auditStagingBoundaryGrant.ts',
+    reason:
+      'THE STEP 01 GATE of the upload staging boundary, as an instrument. Step 01 drops two live storage ' +
+      'policies — post_media_storage_memories_stories_insert and post_media_memories_stories_delete — which ' +
+      'are declared by NO migration and appear NOWHERE in git history (verified by `git log --all -S` on both ' +
+      'names, which returns only prose documents). They were applied out of band, and the fact layer records ' +
+      'their cmd and role but not their qual/with_check. So the LIVE CATALOG IS THE ONLY SURVIVING COPY of ' +
+      'what these policies say: drop them without capturing the body first and the rollback does not exist, ' +
+      'which is discovered at the moment someone needs it. Everything it sends, in full: FIVE Management API ' +
+      'statements, all SELECTs. (1) pg_policies filtered to schemaname=storage, tablename=objects and the two ' +
+      'policy names, reading policyname/cmd/permissive/roles/qual/with_check — this is the rollback, and the ' +
+      'script prints the re-CREATE. (2) and (3) count(*) over storage.objects for bucket post-media under the ' +
+      "memories/ and stories/ prefixes — the precondition, measured rather than trusted because the orphan " +
+      'count has already moved since the packet was written (28 → 30), which is proof the bucket is not ' +
+      'static. (4) count(*) over stories and (5) count(*) over storage.objects for post-media, reported as ' +
+      'context because "stories has no production data" is load-bearing in the packet and should be visible ' +
+      'rather than asserted. No INSERT/UPDATE/DELETE, no DDL — it never drops the policies it reads; applying ' +
+      'the change is a separate deliberate migration. Exits 1 if a prefix is non-empty or a policy is absent, ' +
+      'so the gate fails closed. Auditing PRODUCTION is the entire point: the policies exist only there.',
+  },
+  {
     file: 'src/scripts/auditMediaUrlShapes.ts',
     reason:
       'URL-SHAPE HISTOGRAM of the durable media URL columns, for the upload-consolidation question of whether ' +
