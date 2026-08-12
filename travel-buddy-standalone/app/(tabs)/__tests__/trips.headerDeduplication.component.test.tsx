@@ -33,7 +33,7 @@
  * the tree would contain TWO AppHeader sentinels. The assertion
  * `expect(headers).toHaveLength(1)` would then fail with Received: 2.
  *
- * We confirm this red-proof at the bottom of this file.
+ * See red-proof documentation at the bottom of this file.
  *
  * Run with:
  *   cd travel-buddy-standalone
@@ -42,7 +42,7 @@
  */
 
 import React from 'react';
-import { act, fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
 // ── Safe-area ─────────────────────────────────────────────────────────────────
 jest.mock('react-native-safe-area-context', () => ({
@@ -175,7 +175,7 @@ jest.mock('../../../src/components/ui/DisplayMediaImage',     () => ({ AvatarIma
 // bespoke <Text style={styles.compactBarTitle}> instead. So exactly one
 // <AppHeader variant="primary"> should appear in the tree when
 // activeTab === 'trips'. This mock makes every AppHeader instance queryable
-// by getAllByTestId('app-header-primary').
+// by screen.queryAllByTestId('app-header-primary').
 jest.mock('../../../src/components/ui/AppHeader', () => {
   const { View } = require('react-native');
   return {
@@ -197,44 +197,6 @@ jest.mock('../../../src/components/ui', () => ({ Stamp: () => null }));
 // ── Import subject AFTER all mocks are registered ─────────────────────────────
 import Trips from '../trips.tsx';
 
-// ── Tree-walking helpers ───────────────────────────────────────────────────────
-
-/** Recursively collect all nodes whose testID starts with `prefix`. */
-function findByTestIDPrefix(node: any, prefix: string): any[] {
-  if (!node || typeof node !== 'object') return [];
-  const results: any[] = [];
-  const id: string = node.props?.testID ?? '';
-  if (id.startsWith(prefix)) results.push(node);
-  for (const child of node.children ?? []) {
-    results.push(...findByTestIDPrefix(child, prefix));
-  }
-  return results;
-}
-
-/** Find all nodes with a given accessibilityRole="tab" and accessibilityLabel. */
-function findTabButton(node: any, label: string): any[] {
-  if (!node || typeof node !== 'object') return [];
-  const found: any[] = [];
-  const nodeLabel: string = node.props?.accessibilityLabel ?? '';
-  const nodeRole: string = node.props?.accessibilityRole ?? '';
-  if (nodeLabel === label && nodeRole === 'tab') found.push(node);
-  for (const child of node.children ?? []) {
-    found.push(...findTabButton(child, label));
-  }
-  return found;
-}
-
-/** Find all nodes with a given accessibilityLabel (any role). */
-function findByLabel(node: any, label: string): any[] {
-  if (!node || typeof node !== 'object') return [];
-  const found: any[] = [];
-  if ((node.props?.accessibilityLabel ?? '') === label) found.push(node);
-  for (const child of node.children ?? []) {
-    found.push(...findByLabel(child, label));
-  }
-  return found;
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('Trips screen — exactly one header after notification-dismiss mid-switch', () => {
@@ -244,13 +206,11 @@ describe('Trips screen — exactly one header after notification-dismiss mid-swi
    * uses its own bespoke title Text/View — it does NOT render an AppHeader.
    */
   it('renders exactly one AppHeader on initial load (activeTab = trips)', async () => {
-    const { toJSON } = await render(<Trips />);
+    await render(<Trips />);
     await act(async () => { await Promise.resolve(); });
 
-    const tree = toJSON() as any;
-    const headers = findByTestIDPrefix(tree, 'app-header-primary');
+    const headers = screen.queryAllByTestId('app-header-primary');
     expect(headers).toHaveLength(1);
-    expect(headers[0].props.testID).toBe('app-header-primary');
   });
 
   /**
@@ -266,117 +226,137 @@ describe('Trips screen — exactly one header after notification-dismiss mid-swi
    * (setActiveTab + setAddTarget) to confirm no duplicate header appears.
    */
   it('renders exactly one AppHeader after dismiss-banner mid-tab-switch race', async () => {
-    const { toJSON } = await render(<Trips />);
+    await render(<Trips />);
 
     // Wait for initial effects (addEventId → setAddTarget via useEffect)
     await act(async () => { await Promise.resolve(); });
 
-    let tree = toJSON() as any;
-
     // Confirm the addBanner is visible — "Cancel adding event" button present
-    const cancelBtns = findByLabel(tree, 'Cancel adding event');
-    expect(cancelBtns.length).toBeGreaterThan(0);
+    const cancelBtn = screen.getByLabelText('Cancel adding event');
+    expect(cancelBtn).toBeTruthy();
 
     // Step 1: switch inner tab to 'events'
-    const eventsTabBtns = findTabButton(tree, 'Events');
-    expect(eventsTabBtns.length).toBeGreaterThan(0);
-    await act(async () => { fireEvent.press(eventsTabBtns[0]); });
+    // The segmented control renders two Pressables with accessibilityRole="tab":
+    // one for 'Trips' and one for 'Events'. getAllByRole('tab') returns both.
+    const tabBtns = screen.getAllByRole('tab');
+    const eventsTabBtn = tabBtns.find((b: any) => {
+      const lbl: string = b.props?.accessibilityLabel ?? '';
+      return lbl === 'Events';
+    });
+    expect(eventsTabBtn).toBeTruthy();
+    await act(async () => { fireEvent.press(eventsTabBtn!); });
 
     // Step 2: simultaneously fire the banner dismiss and switch back to 'trips'.
     // Both state updates (setAddTarget(null) + setActiveTab('trips')) land in
     // the same React batched commit — the final render must still show exactly
     // one AppHeader.
     await act(async () => {
-      // cancelBtn was found before the switch — still valid ref in the tree
-      fireEvent.press(cancelBtns[0]);
-      // Re-find 'Trips' tab button in the current tree (might have changed)
-      const currentTree = toJSON() as any;
-      const tripsTabBtns = findTabButton(currentTree, 'Trips');
-      if (tripsTabBtns.length > 0) fireEvent.press(tripsTabBtns[0]);
+      fireEvent.press(cancelBtn);
+      // Re-fetch the Trips tab button after the inner switch (tree may differ)
+      const allTabBtns = screen.getAllByRole('tab');
+      const tripsTabBtn = allTabBtns.find((b: any) => {
+        const lbl: string = b.props?.accessibilityLabel ?? '';
+        return lbl === 'Trips';
+      });
+      if (tripsTabBtn) fireEvent.press(tripsTabBtn);
       await Promise.resolve();
     });
 
-    tree = toJSON() as any;
-    const headers = findByTestIDPrefix(tree, 'app-header-primary');
+    const headers = screen.queryAllByTestId('app-header-primary');
     expect(headers).toHaveLength(1);
   });
 
   /**
    * Simple toggle: switch inner tab events → trips without a concurrent
-   * banner dismiss. Must still result in exactly one AppHeader.
+   * banner dismiss. Must still result in exactly one AppHeader after returning.
    */
   it('renders exactly one AppHeader after switching events → trips', async () => {
-    const { toJSON } = await render(<Trips />);
+    await render(<Trips />);
     await act(async () => { await Promise.resolve(); });
 
-    let tree = toJSON() as any;
-
     // Switch to events inner tab
-    const eventsTabBtns = findTabButton(tree, 'Events');
-    expect(eventsTabBtns.length).toBeGreaterThan(0);
-    await act(async () => { fireEvent.press(eventsTabBtns[0]); });
-
-    // No AppHeader while on events sub-tab
-    tree = toJSON() as any;
-    expect(findByTestIDPrefix(tree, 'app-header-primary')).toHaveLength(0);
+    let tabBtns = screen.getAllByRole('tab');
+    const eventsTabBtn = tabBtns.find((b: any) => b.props?.accessibilityLabel === 'Events');
+    expect(eventsTabBtn).toBeTruthy();
+    await act(async () => { fireEvent.press(eventsTabBtn!); });
 
     // Switch back to trips inner tab
-    const tripsTabBtns = findTabButton(tree, 'Trips');
-    expect(tripsTabBtns.length).toBeGreaterThan(0);
-    await act(async () => { fireEvent.press(tripsTabBtns[0]); });
+    tabBtns = screen.getAllByRole('tab');
+    const tripsTabBtn = tabBtns.find((b: any) => b.props?.accessibilityLabel === 'Trips');
+    expect(tripsTabBtn).toBeTruthy();
+    await act(async () => { fireEvent.press(tripsTabBtn!); });
 
     // Exactly one AppHeader restored
-    tree = toJSON() as any;
-    const headers = findByTestIDPrefix(tree, 'app-header-primary');
+    const headers = screen.queryAllByTestId('app-header-primary');
     expect(headers).toHaveLength(1);
   });
 
   /**
-   * While activeTab === 'events', NO AppHeader should appear.
+   * While activeTab === 'events', NO AppHeader should be in the tree.
+   * The events branch only renders the segmented control + EventsTabScreen stub.
+   *
+   * NOTE: This test verifies the structural invariant that the AppHeader is
+   * CONDITIONALLY rendered only when activeTab === 'trips'. If the AppHeader
+   * were present in both branches, this would fail with Received length: 1.
    */
   it('renders NO AppHeader while activeTab = events (between switches)', async () => {
-    const { toJSON } = await render(<Trips />);
+    await render(<Trips />);
     await act(async () => { await Promise.resolve(); });
 
-    let tree = toJSON() as any;
-    const eventsTabBtns = findTabButton(tree, 'Events');
-    expect(eventsTabBtns.length).toBeGreaterThan(0);
-    await act(async () => { fireEvent.press(eventsTabBtns[0]); });
+    // Switch to events inner tab
+    const tabBtns = screen.getAllByRole('tab');
+    const eventsTabBtn = tabBtns.find((b: any) => b.props?.accessibilityLabel === 'Events');
+    expect(eventsTabBtn).toBeTruthy();
+    await act(async () => { fireEvent.press(eventsTabBtn!); });
 
-    tree = toJSON() as any;
-    expect(findByTestIDPrefix(tree, 'app-header-primary')).toHaveLength(0);
+    // AppHeader is guarded by `activeTab === 'trips'` condition — must be absent
+    const headers = screen.queryAllByTestId('app-header-primary');
+    expect(headers).toHaveLength(0);
   });
 });
 
 // ── Red-proof documentation ───────────────────────────────────────────────────
 //
-// CONFIRMED-NO-REDPROOF: there is no plausible code path in the CURRENT
-// trips.tsx implementation that would produce a second AppHeader, because the
-// compact sticky bar is a structurally distinct <Animated.View> that renders
-// a bespoke <Text style={styles.compactBarTitle}>Trips</Text> — never an
-// <AppHeader>. The activeTab conditional also cleanly gate-keeps the ScrollView
-// (which contains the only <AppHeader>) so a concurrent dismiss + switch-back
-// cannot interleave mid-JSX to duplicate the element.
+// STATUS: CONFIRMED-NO-REDPROOF
 //
-// To manually prove the tests would catch a regression:
+// The current trips.tsx implementation has a correct structural guard:
 //
-//   1. In src/components/ui/AppHeader mock (above), change the mock to return
-//      two Views with testID="app-header-primary":
+//   {activeTab === 'trips' ? (
+//     <>
+//       <Animated.View …compact bar…/>     ← bespoke title Text (NOT AppHeader)
+//       <ScrollView>
+//         <AppHeader variant="primary" />  ← THE only AppHeader in the tree
+//       </ScrollView>
+//     </>
+//   ) : (
+//     <>
+//       {/* segControl + EventsTabScreen — NO AppHeader */}
+//     </>
+//   )}
 //
-//         AppHeader: () => (
-//           <React.Fragment>
-//             <View testID="app-header-primary" />
-//             <View testID="app-header-primary" />
-//           </React.Fragment>
-//         )
+// There is no code path that produces a second AppHeader. The conditional
+// rendering means the events branch physically cannot contain an AppHeader,
+// and concurrent state updates (setAddTarget + setActiveTab) both target the
+// same React fiber — batched into a single synchronous commit under React 18.
 //
-//   2. Run the test suite — every test that calls findByTestIDPrefix(tree,
-//      'app-header-primary') will now find 2 elements and fail with:
+// To manually verify the tests are non-tautological (would catch a real bug):
 //
-//        Expected length: 1
-//        Received length: 2   (or more)
+//   1. In the AppHeader mock above, change it to render TWO sentinels:
 //
-//   3. Restore the original mock → all tests pass green.
+//        AppHeader: () => (
+//          <>
+//            <View testID="app-header-primary" />
+//            <View testID="app-header-primary" />
+//          </>
+//        )
 //
-// This proves the assertion is load-bearing (not a tautology) and would catch
-// the intended bug class (duplicate AppHeader in the rendered tree).
+//   2. Run the suite: every assertion `toHaveLength(1)` fails with Received: 2.
+//
+//   3. Restore the mock → all tests pass green.
+//
+// Alternatively, in trips.tsx temporarily add inside the <Animated.View compact bar>:
+//
+//   <AppHeader variant="primary" title="Trips" />
+//
+// This makes `screen.queryAllByTestId('app-header-primary')` return 2 elements
+// and the first three tests fail. Restoring the original code → green.
