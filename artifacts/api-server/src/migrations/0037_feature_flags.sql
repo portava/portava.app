@@ -8,14 +8,34 @@ CREATE TABLE IF NOT EXISTS feature_flags (
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
--- Location intelligence phases 1–6
+-- SEED NEUTRALISED 2026-08-12 — eight rows removed from this statement:
+-- location_phase1_gps, location_phase2_zones, location_phase3_geofence,
+-- location_phase4_discovery, location_phase5_pulse, location_phase6_crew,
+-- telegraph_suggestions_enabled, notifications_digest_enabled.
+--
+-- All eight were seeded here, read by nothing in either shipping tree, and
+-- ABSENT from production — the "seeded but absent" population of
+-- docs/ops/flag-disposition.md. Because they are absent, 2086's DELETE matches
+-- zero rows in production; removing them here is what actually retires them, so
+-- a database built by replaying the migrations never creates them again.
+--
+-- The six location_phase* names are one of TWO parallel six-flag families for the
+-- same rollout: production separately carried location_intelligence_phase1..6
+-- (unseeded, unread), retired by the same migration. Neither side was ever read.
+-- Their INERT_SEEDED_FLAGS entries asked for the phase plan to be confirmed
+-- "before dropping six rows"; the census did that, and this is the confirmation
+-- being acted on rather than deferred again.
+--
+-- telegraph_suggestions_enabled was seeded TRUE, so an operator would have read
+-- it as "telegraph suggestions are on and can be turned off". Nothing consulted
+-- it in either position.
+--
+-- Editing an applied migration is deliberate and is the `remove-from-seed`
+-- remedy, as 2080 did. Their INERT_SEEDED_FLAGS entries are removed from
+-- scripts/check-flag-polarity.mjs in this commit, per rule R7.
+--
+-- Location intelligence phases 1-6
 INSERT INTO feature_flags (flag, enabled, description) VALUES
-  ('location_phase1_gps',               false, 'Phase 1: GPS-based location capture'),
-  ('location_phase2_zones',             false, 'Phase 2: Geo-zone detection'),
-  ('location_phase3_geofence',          false, 'Phase 3: Plan geofencing'),
-  ('location_phase4_discovery',         false, 'Phase 4: Discovery location context'),
-  ('location_phase5_pulse',             false, 'Phase 5: Pulse geo-tags'),
-  ('location_phase6_crew',              false, 'Phase 6: Trip crew location sharing'),
   ('trip_crew_map_enabled',             false, 'Trip crew map feature'),
   ('trip_crew_live_share_enabled',      false, 'Trip crew live location sharing'),
   ('trip_crew_ghost_mode_enabled',      false, 'Trip crew ghost mode'),
@@ -25,7 +45,5 @@ INSERT INTO feature_flags (flag, enabled, description) VALUES
   ('passport_contribution_enabled',     false, 'Passport contribution events'),
   ('safe_return_enabled',               false, 'Safe return check-in feature'),
   ('hidden_gems_enabled',               true,  'Hidden gems discovery section'),
-  ('telegraph_suggestions_enabled',     true,  'Telegraph chat suggestions'),
-  ('notifications_digest_enabled',      false, 'Notification digest batching'),
   ('plan_geofence_full_enabled',        false, 'Full plan geofence with check-ins')
 ON CONFLICT (flag) DO NOTHING;
