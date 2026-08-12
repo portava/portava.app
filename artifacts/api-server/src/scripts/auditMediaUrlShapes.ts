@@ -91,11 +91,24 @@ const SHAPE_CASE = `
   END`;
 
 /**
- * Five statements, one per durable column. Kept separate rather than UNIONed
- * into one so that a column that does not exist live fails on its own and the
- * other four still report — a single UNION would lose the whole census to one
- * missing column, and `post_media.feed_url` (0208) is exactly the column whose
- * live existence is worth learning from this run.
+ * DISCOVERY IS DYNAMIC AS OF 2026-08-12. This list used to be five hand-written
+ * statements naming five columns, and that sample was mistaken for the
+ * population: "the six absolute_storage_PUBLIC rows" was really "the six in the
+ * five columns this file happens to scan". A full census found 39 more, of
+ * which 15 sat in private buckets and carried the identical defect, in six
+ * columns nobody had looked at.
+ *
+ * So the column list is now derived from information_schema at run time. A new
+ * URL-bearing column is censused the day it is created, and the instrument can
+ * no longer under-report by being out of date with the schema.
+ *
+ * The five original statements are kept below as SEED_COLUMNS purely so their
+ * labels stay stable in output diffs; discovery is what decides coverage.
+ *
+ * Each column is still queried as its OWN statement rather than UNIONed, for
+ * the original reason: a column that does not exist live fails on its own and
+ * the rest still report. A single UNION would lose the whole census to one
+ * missing column.
  */
 const STATEMENTS: Array<{ label: string; sql: string }> = [
   {
@@ -125,6 +138,61 @@ const STATEMENTS: Array<{ label: string; sql: string }> = [
           FROM (SELECT unnest(COALESCE(media_urls, '{}')) AS v FROM posts) t GROUP BY 1,2 ORDER BY 3 DESC`,
   },
 ];
+
+/**
+ * BUCKETS WHOSE ABSOLUTE `/object/public/` URLs ARE CORRECT AND MUST NOT BE
+ * "FIXED".
+ *
+ * `stamp-artwork` is `public = true`. For a genuinely public bucket the
+ * absolute URL is the working form, and rewriting it to a bare key would BREAK
+ * it: `stamp-artwork` appears in neither ALLOWED_BUCKETS (lib/mediaUrl.ts) nor
+ * APP_MEDIA_BUCKETS (lib/postSchemas.ts), so `stamp-artwork/<path>` fails both
+ * the parser and the validator.
+ *
+ * This list exists so that a non-zero absolute_storage_PUBLIC count is not read
+ * as "24 rows still to fix". The reason is written down rather than implied by
+ * the count being stable — a future reader comparing two runs cannot infer
+ * intent from a number that did not move.
+ *
+ * ⚠ Adding a bucket here EXEMPTS it from the finding. Only a bucket that is
+ * actually public belongs, and its public-ness is a property of the bucket in
+ * Storage, not of this list.
+ */
+const PUBLIC_BUCKET_EXEMPTIONS: Array<{ bucket: string; reason: string }> = [
+  {
+    bucket: "stamp-artwork",
+    reason:
+      "public = true in Storage, verified 2026-08-12. Absolute /object/public/ URLs are the working " +
+      "form for a public bucket. Not in ALLOWED_BUCKETS or APP_MEDIA_BUCKETS, so a bare key would " +
+      "fail both appStorageUrlInfo and appMediaRef — canonicalizing these would be a regression, " +
+      "not a fix.",
+  },
+];
+
+const EXEMPT_BUCKETS = new Set(PUBLIC_BUCKET_EXEMPTIONS.map((e) => e.bucket));
+
+/** Every text/varchar/array column whose name looks like it carries a URL. */
+const DISCOVERY_SQL = `
+  SELECT table_name, column_name, data_type
+    FROM information_schema.columns
+   WHERE table_schema = 'public'
+     AND (column_name LIKE '%url%' OR column_name LIKE '%_urls')
+     AND data_type IN ('text', 'character varying', 'ARRAY')
+   ORDER BY table_name, column_name`;
+
+/** Build one census statement for a discovered column. */
+function statementFor(table: string, column: string, dataType: string): { label: string; sql: string } {
+  const label = `${table}.${column}`;
+  const src =
+    dataType === "ARRAY"
+      ? `unnest(COALESCE("${column}", '{}'))`
+      : `"${column}"`;
+  return {
+    label,
+    sql: `SELECT '${label}' AS col, ${SHAPE_CASE} AS url_shape, count(*)::text AS n
+          FROM (SELECT ${src} AS v FROM public."${table}") t GROUP BY 1,2 ORDER BY 3 DESC`,
+  };
+}
 
 function abort(headline: string, detail: string, code: number): never {
   console.error(`✖ auditMediaUrlShapes: ${headline}`);
@@ -193,8 +261,64 @@ async function main(): Promise<void> {
 
   let anyFailed = false;
   let absolutePublicTotal = 0;
+  let exemptPublicTotal = 0;
 
-  for (const { label, sql } of STATEMENTS) {
+  // Discover every URL-bearing column, then census each one. The five original
+  // hand-written statements are a subset of what this finds; discovery is what
+  // makes the count a population rather than a sample.
+  let discovered: Array<{ table_name: string; column_name: string; data_type: string }>;
+  try {
+    discovered = await liveQuery(DISCOVERY_SQL);
+  } catch (e) {
+    abort(
+      "column discovery failed, so nothing was measured",
+      `       ${e instanceof Error ? e.message.slice(0, 300) : String(e)}`,
+      EXIT_CANNOT_RUN,
+    );
+  }
+  if (discovered.length === 0) {
+    abort(
+      "column discovery returned zero URL-bearing columns",
+      "       That is not credible for this schema; the discovery query or the\n" +
+        "       connection is broken, and a census over nothing reports clean.",
+      EXIT_CANNOT_RUN,
+    );
+  }
+  const statements = discovered.map((c) => statementFor(c.table_name, c.column_name, c.data_type));
+  console.log(`Discovered ${statements.length} URL-bearing column(s) in information_schema.\n`);
+
+  // Per-bucket breakdown of every absolute public URL found, so an exempt
+  // bucket's rows can be separated from the ones that are a finding.
+  const bucketCounts = new Map<string, number>();
+  try {
+    const perBucket = await liveQuery<{ col: string; bucket: string; n: string }>(
+      `SELECT col, split_part(substring(v FROM position('/storage/v1/object/public/' IN v)
+              + length('/storage/v1/object/public/')), '/', 1) AS bucket, count(*)::text AS n
+         FROM ( ${discovered
+           .map(
+             (c) =>
+               `SELECT '${c.table_name}.${c.column_name}' AS col, ${
+                 c.data_type === "ARRAY"
+                   ? `unnest(COALESCE("${c.column_name}", '{}'))`
+                   : `"${c.column_name}"`
+               } AS v FROM public."${c.table_name}"`,
+           )
+           .join(" UNION ALL ")} ) t
+        WHERE v ~ '/storage/v1/object/public/'
+        GROUP BY 1, 2`,
+    );
+    for (const r of perBucket) {
+      bucketCounts.set(r.bucket, (bucketCounts.get(r.bucket) ?? 0) + Number(r.n));
+    }
+  } catch (e) {
+    console.log(`   per-bucket breakdown UNREADABLE: ${e instanceof Error ? e.message.slice(0, 160) : String(e)}\n`);
+    anyFailed = true;
+  }
+  for (const [bucket, n] of bucketCounts) {
+    if (EXEMPT_BUCKETS.has(bucket)) exemptPublicTotal += n;
+  }
+
+  for (const { label, sql } of statements) {
     let rows: Array<{ col: string; url_shape: string; n: string }>;
     try {
       rows = await liveQuery(sql);
@@ -222,15 +346,36 @@ async function main(): Promise<void> {
   }
 
   console.log("─".repeat(60));
+  const actionable = absolutePublicTotal - exemptPublicTotal;
   console.log(`absolute_storage_PUBLIC across all columns: ${absolutePublicTotal}`);
+
+  if (bucketCounts.size > 0) {
+    console.log("\n  by bucket:");
+    for (const [bucket, n] of [...bucketCounts].sort((a, b) => b[1] - a[1])) {
+      const ex = PUBLIC_BUCKET_EXEMPTIONS.find((e) => e.bucket === bucket);
+      console.log(`   ${bucket.padEnd(20)} ${String(n).padStart(6)}  ${ex ? "EXEMPT (public bucket)" : "ACTIONABLE"}`);
+    }
+  }
+
+  if (exemptPublicTotal > 0) {
+    console.log(`\n  ${exemptPublicTotal} of those are EXEMPT and must not be canonicalized:`);
+    for (const e of PUBLIC_BUCKET_EXEMPTIONS) {
+      const n = bucketCounts.get(e.bucket) ?? 0;
+      if (n === 0) continue;
+      console.log(`   ${e.bucket} (${n}) — ${e.reason}`);
+    }
+  }
+
+  console.log(`\nACTIONABLE (private-bucket) absolute public URLs: ${actionable}`);
   console.log(
-    absolutePublicTotal > 0
-      ? "→ Durable rows depend on the public URL shape. Converting the two writers is\n" +
-          "  NECESSARY BUT NOT SUFFICIENT: the consolidation also needs a backfill or a\n" +
-          "  read-time rewrite for these rows. Note the app hydrator rescues them on\n" +
-          "  authenticated surfaces only — routes/og.ts, routes/featured.ts and\n" +
-          "  routes/placeLiving.ts do not hydrate."
-      : "→ No durable public-URL rows. Converting the two writers is the whole job.",
+    actionable > 0
+      ? "→ Durable rows in a PRIVATE bucket depend on the public URL shape, which bakes\n" +
+          "  the project ref into a column. They stop resolving on any environment whose\n" +
+          "  SUPABASE_URL differs. Canonicalize them to bare `<bucket>/<path>` keys, as\n" +
+          "  2081 and 2082 did, and remember that lib/mediaAccess must understand the\n" +
+          "  encoding BEFORE the column is rewritten — doing it the other way round is\n" +
+          "  what broke three public posts on 2026-08-12."
+      : "→ No private-bucket public-URL rows remain. Any count above is exempt by design.",
   );
   if (anyFailed) {
     console.log("\n⚠ At least one column was UNREADABLE (see above). The totals above are\n" +
