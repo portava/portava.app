@@ -8,10 +8,30 @@ survives a workspace restart. Read-only against project `ajrurzioarfkagpuxfnb`,
 | Measure | Count |
 |---|---|
 | Live flags | 168 |
-| Seeded by a migration | 129 |
+| Seeded by a migration (repo side) | 129 |
 | **Live, never seeded** | **49** |
+| Seeded **and** live | 119 |
+| Seeded but absent from production | 10 |
 | No code consumer | 25 |
 | Read TRUE, gate nothing | 9 |
+
+### Read the two denominators carefully
+
+`129` is a **repo-side** count — distinct flag names appearing in an
+`INSERT INTO feature_flags` statement under `src/migrations/`. Verified
+2026-08-12 by replicating the matcher in `check-flag-polarity.mjs:1200-1212`
+(269 migration files, 54 INSERT statements, 129 distinct names).
+
+The other counts are **live-side**. Mixing them is easy and wrong:
+
+- 129 + 49 = 178 ≠ 168. That subtraction does not mean anything.
+- The identity that holds is **119 + 49 = 168**: seeded-and-live, plus
+  live-but-never-seeded, equals live.
+- And **129 − 119 = 10**: the seeded-but-absent, which is unit 3's population.
+
+So the ten are a strict subset of the 129 names the repo seeds. The seeded set
+is fully known from the repo alone; the live read only has to say which ten of
+those 129 are missing.
 
 ## Why this is drift, not a guard defect
 
@@ -105,11 +125,23 @@ same rollout under two naming schemes, **and neither side is read by anything.**
 Reconciling the 49 and the 10 separately would produce two different answers for
 one decision.
 
+Both halves of that claim are now verified repo-side: the migrations do seed
+`location_phase1_gps`, `location_phase2_zones`, `location_phase3_geofence`,
+`location_phase4_discovery`, `location_phase5_pulse`, `location_phase6_crew` —
+and those six are the only `location_*` names the migrations seed.
+
 ### The other four seeded-but-absent are not yet identified
 
-The artifact names six of the ten. The remaining four require the live read to
-determine (seeded set from migrations, minus what production actually holds).
-Establish them before starting unit 3.
+The artifact names six of the ten. The remaining four are a subset of the 129
+seeded names and require one live read to pin down:
+
+```sql
+-- the ten = seeded names minus what production holds
+select key from feature_flags;   -- then diff against the 129
+```
+
+Establish them before starting unit 3. The candidate list is bounded and known,
+so this is a diff, not a search.
 
 ## Method and limits
 
