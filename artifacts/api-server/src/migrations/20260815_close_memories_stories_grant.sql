@@ -1,0 +1,91 @@
+-- 20260815: close the armed memories/stories INSERT grant on post-media.
+--
+-- Step 01 of the upload staging boundary. Decision D3A.
+--
+-- ── WHAT THIS CLOSES ────────────────────────────────────────────────────────
+--
+-- post_media_storage_memories_stories_insert grants ANY authenticated caller
+-- INSERT into the durable `post-media` bucket under `memories/{their-uid}/…`
+-- or `stories/{their-uid}/…`, for nine file extensions. The bytes land raw:
+-- no sniff, no decode, no EXIF strip, no re-encode, and no row recording that
+-- the object exists.
+--
+-- The client code that used this grant was removed on 2026-08-11 (7aa65b61b
+-- rewrote uploadStoryMedia/uploadMemoryMedia to POST /api/media/upload). The
+-- grant was not removed. Anything holding a user JWT — the mobile app's own
+-- key, a script, a rebuilt older client still in someone's hands — can still
+-- use it. The fix closed the caller and left the door.
+--
+-- This matters more than "an unused policy" because a staging boundary
+-- enforced in application code is bypassed by a GRANT, not by a bug. No
+-- refactor of the upload path can close this; only dropping the policy can.
+--
+-- The DELETE policy is dropped alongside it. Both are scoped to the same two
+-- prefixes, and zero objects exist under either (see preconditions), so no
+-- live delete can be operating there. That reasoning does NOT extend to the
+-- owner-prefix policies (post_media_storage_owner_insert /
+-- post_media_storage_owner_delete), which decision D3B covers and which this
+-- migration deliberately LEAVES ALONE — D3B still needs the delete-path trace.
+--
+-- ── PRECONDITIONS, MEASURED ─────────────────────────────────────────────────
+--
+-- Verified 2026-08-12 against production ajrurzioarfkagpuxfnb, read-only,
+-- by `npm run audit:staging-boundary-grant` (artifacts/api-server). Full
+-- output in docs/media/staging-boundary-step01-evidence.md.
+--
+--   post-media objects under memories/ : 0
+--   post-media objects under stories/  : 0
+--   stories rows                       : 0
+--   post-media objects, total          : 35
+--
+-- Re-run that script before applying. It exits 1 if either prefix is non-empty
+-- or either policy is absent, so it fails closed rather than reporting a
+-- comfortable pass.
+--
+-- ── WHY THE ROLLBACK IS SPELLED OUT IN FULL ─────────────────────────────────
+--
+-- These two policies are declared by NO migration and appear NOWHERE in git
+-- history — verified by `git log --all -S` on both names, which returns only
+-- prose documents. They were applied out of band. The live catalog was the
+-- ONLY surviving copy of what they say.
+--
+-- So the DOWN section below is not boilerplate. It was captured verbatim from
+-- pg_policies before this migration was written, and it is the only reason a
+-- rollback exists at all. Do not "tidy" it: the expressions are pg's own
+-- deparsed form and re-CREATE exactly what was there.
+--
+-- ── NOTE ON PROVING THIS ────────────────────────────────────────────────────
+--
+-- A test asserting "an authenticated credential cannot INSERT under these
+-- prefixes" passes VACUOUSLY against any project that never had the grant.
+-- The CI project is exactly that project: no migration declares these
+-- policies, so CI has never had them, and such a test is green there before
+-- and after this migration. It proves nothing.
+--
+-- The non-vacuous proof is the before/after production run of
+-- audit:staging-boundary-grant: it exits 0 with both bodies printed before
+-- apply, and exits 1 with "policy is NOT present live" after. See the
+-- evidence doc.
+
+BEGIN;
+
+DROP POLICY IF EXISTS "post_media_storage_memories_stories_insert" ON storage.objects;
+DROP POLICY IF EXISTS "post_media_memories_stories_delete" ON storage.objects;
+
+COMMIT;
+
+-- ── DOWN — captured verbatim from live pg_policies, 2026-08-12 ──────────────
+--
+-- Not executed by this migration. To roll back, run exactly this:
+--
+-- CREATE POLICY "post_media_storage_memories_stories_insert" ON storage.objects
+--   AS PERMISSIVE
+--   FOR INSERT
+--   TO authenticated
+--   WITH CHECK (((bucket_id = 'post-media'::text) AND ((storage.foldername(name))[1] = ANY (ARRAY['memories'::text, 'stories'::text])) AND ((storage.foldername(name))[2] = (auth.uid())::text) AND (lower(storage.extension(name)) = ANY (ARRAY['jpg'::text, 'jpeg'::text, 'png'::text, 'webp'::text, 'heic'::text, 'mp4'::text, 'mov'::text, 'webm'::text, '3gp'::text]))));
+--
+-- CREATE POLICY "post_media_memories_stories_delete" ON storage.objects
+--   AS PERMISSIVE
+--   FOR DELETE
+--   TO authenticated
+--   USING (((bucket_id = 'post-media'::text) AND ((storage.foldername(name))[1] = ANY (ARRAY['memories'::text, 'stories'::text])) AND ((storage.foldername(name))[2] = (auth.uid())::text)));
