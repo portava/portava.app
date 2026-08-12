@@ -617,19 +617,42 @@ router.get('/admin/notification-delivery-attempts', async (req, res) => {
   res.json({ attempts: data ?? [], total: count ?? 0 });
 });
 
-/** PUT /admin/notification-defaults — update default preferences for all new users */
+/**
+ * PUT /admin/notification-defaults — toggle the notification feature flags.
+ *
+ * ONLY pushNotificationsEnabled REMAINS, AND THAT IS THE WHOLE POINT.
+ * ==================================================================
+ *
+ * This handler used to accept five fields and write five flag rows. Four of
+ * those rows were read by nothing: `notifications_enabled` (described in 0062
+ * as the "Master switch for the in-app notification system"),
+ * `notification_digests_enabled`, `realtime_activity_enabled` and
+ * `safety_notifications_enabled`. An admin could set any of them, receive
+ * `ok: true`, and change no code path — the surface each one named ran exactly
+ * as before, in either position. They were retired on 2026-08-12 by
+ * 2080_retire_inert_seeded_flags.sql after a wire-or-drop pass found no live
+ * reader for any of them.
+ *
+ * `push_notifications_enabled` is genuinely wired and stays: it is read in
+ * lib/pushWithRetry.ts, lib/pushRetryQueue.ts,
+ * services/notifications/NotificationRouter.ts and
+ * services/passport/StampAwardEngine.ts. So push delivery keeps a working
+ * operator kill switch, which is the capability the four removed fields
+ * appeared to offer and did not.
+ *
+ * The four fields are now rejected rather than silently ignored. Zod's default
+ * strip behaviour would accept and discard them, which would preserve the exact
+ * defect being removed: a caller sending `safetyNotificationsEnabled: false`
+ * would still get `ok: true` back and still change nothing. `.strict()` makes
+ * that a 400 naming the field.
+ */
 router.put('/admin/notification-defaults', async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
 
-  // For now: update feature flags to toggle the system
   const schema = z.object({
-    notificationsEnabled:       z.boolean().optional(),
-    pushNotificationsEnabled:   z.boolean().optional(),
-    notificationDigestsEnabled: z.boolean().optional(),
-    realtimeActivityEnabled:    z.boolean().optional(),
-    safetyNotificationsEnabled: z.boolean().optional(),
-  });
+    pushNotificationsEnabled: z.boolean().optional(),
+  }).strict();
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -638,11 +661,7 @@ router.put('/admin/notification-defaults', async (req, res) => {
   }
 
   const flagMap: Record<string, string> = {
-    notificationsEnabled:       'notifications_enabled',
-    pushNotificationsEnabled:   'push_notifications_enabled',
-    notificationDigestsEnabled: 'notification_digests_enabled',
-    realtimeActivityEnabled:    'realtime_activity_enabled',
-    safetyNotificationsEnabled: 'safety_notifications_enabled',
+    pushNotificationsEnabled: 'push_notifications_enabled',
   };
 
   const updated: Record<string, boolean> = {};

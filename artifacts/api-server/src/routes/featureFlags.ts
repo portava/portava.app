@@ -29,7 +29,25 @@ router.get("/feature-flags", asyncHandler(async (req, res) => {
 
   // Inert seeded flags (seeded but no readers anywhere) are excluded so client
   // bundles don't expose toggles that produce no observable effect.
-  const INERT_FLAGS = new Set(["freeze_city", "freeze_event", "freeze_circle", "freeze_booking"]);
+  // The ten added 2026-08-12 are the wire-or-drop retirements of
+  // 2080_retire_inert_seeded_flags.sql — see HIDDEN_INERT_FLAGS in routes/admin.ts
+  // for why each was dropped rather than wired. They are filtered here as well as
+  // there because this endpoint is what the mobile app's FeatureFlagsContext
+  // fetches: an inert name reaching the client is a toggle a future screen could
+  // gate on, believing it works.
+  const INERT_FLAGS = new Set([
+    "freeze_city", "freeze_event", "freeze_circle", "freeze_booking",
+    "COMPASS_FRONTLOAD_ENABLED",
+    "COMPASS_ACTIVE_REWARD_ENABLED",
+    "COMPASS_EXPLAIN_WHY_ENABLED",
+    "COMPASS_ADMIN_CONTROLS_ENABLED",
+    "COMPASS_ABUSE_DEFENSE_ENABLED",
+    "COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED",
+    "notifications_enabled",
+    "notification_digests_enabled",
+    "realtime_activity_enabled",
+    "safety_notifications_enabled",
+  ]);
 
   const flags: Record<string, boolean> = {};
   for (const row of data ?? []) {

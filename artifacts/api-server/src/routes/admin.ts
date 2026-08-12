@@ -552,6 +552,37 @@ const HIDDEN_INERT_FLAGS = new Set([
   "freeze_event",
   "freeze_circle",
   "freeze_booking",
+
+  // Retired 2026-08-12 by 2080_retire_inert_seeded_flags.sql. Every one of the
+  // ten was seeded by an `INSERT INTO public.feature_flags`, which the seed
+  // scanner in scripts/check-flag-polarity.mjs did not match until 2026-08-12 —
+  // so none of them was ever subject to the "seeded flags must be read or
+  // declared" rule, and all ten reached an operator-visible toggle surface
+  // gating nothing.
+  //
+  // The wire-or-drop pass required a LIVE READ to keep a flag: a branch that
+  // consults it and changes behaviour. None of the ten has one. For the six
+  // COMPASS_* that is despite compass/flags.ts loading every `COMPASS_%` row
+  // into a Record on each request — being loaded is not being read, and no
+  // caller asks isEnabled() for these six names. For the four notification
+  // flags the only reference is the admin write-map below in
+  // routes/notifications.ts, which sets them and never reads them.
+  //
+  // They stay in this set after the rows are deleted, for the same reason the
+  // freeze_* entries do: a PATCH for a deleted flag would otherwise fall
+  // through to generic not-found handling, reading as "wrong URL" rather than
+  // "this control does not exist", and these guards keep behaviour identical on
+  // a database where the migration has not been applied yet.
+  "COMPASS_FRONTLOAD_ENABLED",
+  "COMPASS_ACTIVE_REWARD_ENABLED",
+  "COMPASS_EXPLAIN_WHY_ENABLED",
+  "COMPASS_ADMIN_CONTROLS_ENABLED",
+  "COMPASS_ABUSE_DEFENSE_ENABLED",
+  "COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED",
+  "notifications_enabled",
+  "notification_digests_enabled",
+  "realtime_activity_enabled",
+  "safety_notifications_enabled",
 ]);
 
 /**
