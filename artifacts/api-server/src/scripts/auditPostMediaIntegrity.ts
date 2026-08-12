@@ -86,6 +86,7 @@ interface PostRow {
   pm_ready: number | null;
   post_status: string | null;
   status: string | null;
+  visibility: string | null;
   url_shapes: string | null;
   media_urls_raw: string | null;
 }
@@ -109,6 +110,7 @@ const SQL = `
             and coalesce(pm.moderation_status,'') not in ('rejected','flagged')) as pm_ready,
          p.post_status,
          p.status,
+         p.visibility,
          (select string_agg(
                    case
                      when pm.public_url ~ '/storage/v1/object/public/' then 'ABSOLUTE-PUBLIC(dead: bucket is private)'
@@ -125,6 +127,22 @@ const SQL = `
                         when pm.storage_path is null then 'NULL'
                         when pm.storage_path ~ '^(post-media|profile-media)/' then 'HAS-BUCKET-PREFIX'
                         else 'bare-path'
+                      end
+                   || ' path_owner='
+                   || case
+                        when pm.storage_path is null then 'n/a'
+                        when split_part(pm.storage_path,'/',1) = p.author_id::text then 'MATCHES-AUTHOR'
+                        else 'not-author(' || left(split_part(pm.storage_path,'/',1), 12) || ')'
+                      end
+                   || ' OBJECT='
+                   || case
+                        when pm.storage_path is null then 'n/a'
+                        when exists (
+                               select 1 from storage.objects o
+                                where o.bucket_id = coalesce(pm.storage_bucket,'post-media')
+                                  and o.name = pm.storage_path
+                             ) then 'PRESENT'
+                        else 'MISSING'
                       end,
                    ' | ' order by pm.sort_order)
             from post_media pm where pm.post_id = p.id)                            as url_shapes,
@@ -184,7 +202,7 @@ const show = (r: PostRow) =>
   `  ${r.id}  author=${(r.author_id ?? "—").slice(0, 8)}  ` +
   `media_count=${n(r.media_count)}  urls=${n(r.url_count)} ` +
   `(ext ${n(r.external_count)}, storage-shaped ${n(r.storage_shaped_count)})  ` +
-  `post_media=${n(r.pm_total)} (ready ${n(r.pm_ready)})  ${r.post_status ?? "—"}/${r.status ?? "—"}` +
+  `post_media=${n(r.pm_total)} (ready ${n(r.pm_ready)})  ${r.post_status ?? "—"}/${r.status ?? "—"}/vis=${r.visibility ?? "—"}` +
   (r.url_shapes ? `\n      url shape: ${r.url_shapes}` : "") +
   (n(r.external_count) > 0 && r.media_urls_raw
     ? `\n      media_urls: ${r.media_urls_raw.split(" ~~ ").join("\n                  ")}`
