@@ -114,17 +114,28 @@ export function CachedImage({
   const { resolved: hydrated } = useHydratedMedia(uri ? [uri] : []);
   const [failed, setFailed] = useState(false);
 
-  const prevUri = useRef(uri);
-  if (prevUri.current !== uri) {
-    prevUri.current = uri;
-    setFailed(false);
-  }
-
   // Initialised with the plain URI so the common case paints without waiting
   // on the async resolve; useHydratedMedia swaps in the signed URL.
   const [resolvedSource, setResolvedSource] = useState<{ uri: string } | null>(
     uri ? { uri } : null,
   );
+
+  // When `uri` changes to a different value (e.g. a caller that pre-hydrates
+  // before handing us a URL — see PostcardsTab — settling from a raw storage
+  // path to a signed URL across renders), resync BOTH `failed` and
+  // `resolvedSource` together in the same render. Resetting only `failed`
+  // here left `resolvedSource` pinned to the stale prior URI for one extra
+  // render; if that stale URI failed to load (e.g. an unsigned private-bucket
+  // path), it re-latched `failed = true` and the flag was never cleared again
+  // once `uri` stabilized — even after this component's own hydration below
+  // resolved the correct signed URL, permanently blanking the tile.
+  const prevUri = useRef(uri);
+  if (prevUri.current !== uri) {
+    prevUri.current = uri;
+    setFailed(false);
+    setResolvedSource(uri ? { uri } : null);
+  }
+
   useEffect(() => {
     if (!uri) { setResolvedSource(null); return; }
     const next = hydrated[uri];
