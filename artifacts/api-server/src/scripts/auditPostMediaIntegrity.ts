@@ -214,6 +214,42 @@ for (const [b, list] of [...buckets.entries()].sort()) {
   for (const r of list) console.log(show(r));
 }
 
+// ── passport_postcards linkage ───────────────────────────────────────────────
+//
+// The Passport -> Postcards tile reads `card.media`, which the endpoint builds
+// by keying post_media on passport_postcards.post_id. If no postcard row links
+// to the post, or its post_id is null, the tile gets media: [] and — with the
+// legacy media_url also null — no URI at all, so NO image request fires. That
+// is a different cause from "the tile reads the wrong field", and only this
+// join separates them.
+const linkage = await liveQuery<{
+  post_id: string | null; pc_id: string | null; media_url_null: boolean | null;
+  pc_status: string | null; pc_visibility: string | null;
+}>(`
+  select p.id as post_id,
+         pc.id as pc_id,
+         (pc.media_url is null) as media_url_null,
+         pc.status as pc_status,
+         pc.visibility as pc_visibility
+    from posts p
+    left join passport_postcards pc on pc.post_id = p.id
+   where p.media_count > 0
+     and coalesce(array_length(p.media_urls, 1), 0) = 0
+   order by p.created_at
+`);
+
+console.log(`\n${line}`);
+console.log("PASSPORT_POSTCARDS LINKAGE — for posts with media_count>0 and empty media_urls");
+console.log(line);
+for (const l of linkage) {
+  console.log(
+    `  ${l.post_id}  postcard_row=${l.pc_id ? "PRESENT" : "ABSENT"}` +
+      (l.pc_id
+        ? `  media_url=${l.media_url_null ? "NULL" : "set"}  ${l.pc_status ?? "—"}/${l.pc_visibility ?? "—"}`
+        : "  → tile would receive media: [] and no legacy mediaUrl"),
+  );
+}
+
 if (focusIds.length > 0) {
   console.log(`\n${line}\nFOCUS — ${focusIds.length} id(s) named on the command line\n${line}`);
   for (const id of focusIds) {
