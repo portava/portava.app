@@ -33,10 +33,13 @@
  *   - toggleSingle (line 203): sets a single key to null or the new value;
  *     no side-effect to any DOB field.
  *
- * The tests below are .skip'd because the described behavior is absent.
- * They are left as living documentation of the EXPECTED behaviour so that
- * if the link is ever intentionally implemented, the tests can be unskipped
- * and the STATUS comment removed.
+ * The described behaviour is absent, and the tests below ASSERT its absence
+ * rather than skipping. An earlier revision carried three `it.skip` cases
+ * encoding the expected-but-nonexistent linkage; they were exact inverses of
+ * the three "actual behaviour" cases below and asserted nothing, which the
+ * node:test skipped<=0 gate correctly rejected. If the linkage is ever
+ * intentionally implemented, invert the three "actual behaviour" assertions
+ * and remove this STATUS comment.
  *
  * Run:
  *   node --import tsx/esm --test src/services/__tests__/travelPaceBudgetClearDob.test.ts
@@ -128,100 +131,6 @@ function makeForm(overrides: Partial<ProfileForm> = {}): ProfileForm {
     ...overrides,
   };
 }
-
-// ── SKIPPED tests — STATUS: BUG-FOUND (behavior does not exist) ──────────────
-//
-// These tests encode the behaviour described in the task. They are ALL
-// skipped because the described behaviour is absent from the current code.
-// See the STATUS comment at the top of this file for the full explanation.
-
-describe('travel-profile patch builder — clearing travelPace to null also strips DOB fields', () => {
-  /**
-   * STATUS: BUG-FOUND — This test is skipped because clearing travelPace in
-   * travel-profile.tsx does NOT null out dateOfBirth. The ProfileForm type
-   * does not even contain a dateOfBirth key, so there is no mechanism by
-   * which the travel-profile save flow could ever include dateOfBirth in its
-   * patch.
-   *
-   * Crash site: app/profile/edit/travel-profile.tsx
-   *   interface ProfileForm (line 102) — no dateOfBirth field present.
-   *   buildTravelProfilePatch (lines 225-249) — iterates only the keys that
-   *   exist in ProfileForm; dateOfBirth is never set.
-   */
-  it.skip('clearing travelPace to null also sets dateOfBirth: null in the patch', () => {
-    const original = makeForm({ travelPace: 'slow' });
-    // User taps the currently-selected 'slow' chip → toggleSingle sets travelPace to null.
-    const updated = toggleSingle(original, 'travelPace', 'slow');
-    assert.equal(updated.travelPace, null, 'travelPace must be cleared to null');
-
-    const patch = buildTravelProfilePatch(updated, original);
-    assert.equal(patch.travelPace, null, 'patch must include travelPace: null');
-
-    // --- THIS ASSERTION FAILS: dateOfBirth is not in the patch at all ---
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(patch, 'dateOfBirth'),
-      'BUG: patch must contain dateOfBirth when travelPace is cleared — it does not',
-    );
-    assert.equal(
-      patch.dateOfBirth,
-      null,
-      'BUG: dateOfBirth must be null in the patch when travelPace is cleared — it is not',
-    );
-  });
-
-  /**
-   * STATUS: BUG-FOUND — This test is skipped because clearing budgetStyle in
-   * travel-profile.tsx does NOT null out dateOfBirth. Same root cause as the
-   * travelPace case above.
-   *
-   * Crash site: app/profile/edit/travel-profile.tsx
-   *   interface ProfileForm (line 102) — no dateOfBirth field present.
-   */
-  it.skip('clearing budgetStyle to null also sets dateOfBirth: null in the patch', () => {
-    const original = makeForm({ budgetStyle: 'luxury' });
-    // User taps the currently-selected 'luxury' chip → toggleSingle sets budgetStyle to null.
-    const updated = toggleSingle(original, 'budgetStyle', 'luxury');
-    assert.equal(updated.budgetStyle, null, 'budgetStyle must be cleared to null');
-
-    const patch = buildTravelProfilePatch(updated, original);
-    assert.equal(patch.budgetStyle, null, 'patch must include budgetStyle: null');
-
-    // --- THIS ASSERTION FAILS: dateOfBirth is not in the patch at all ---
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(patch, 'dateOfBirth'),
-      'BUG: patch must contain dateOfBirth when budgetStyle is cleared — it does not',
-    );
-    assert.equal(
-      patch.dateOfBirth,
-      null,
-      'BUG: dateOfBirth must be null in the patch when budgetStyle is cleared — it is not',
-    );
-  });
-
-  /**
-   * STATUS: BUG-FOUND — This test is skipped because clearing BOTH
-   * travelPace and budgetStyle does NOT null out dateOfBirth.
-   */
-  it.skip('clearing both travelPace and budgetStyle to null nulls out dateOfBirth in the patch', () => {
-    const original = makeForm({ travelPace: 'packed', budgetStyle: 'budget' });
-    let updated = toggleSingle(original, 'travelPace', 'packed');
-    updated = toggleSingle(updated, 'budgetStyle', 'budget');
-
-    assert.equal(updated.travelPace, null);
-    assert.equal(updated.budgetStyle, null);
-
-    const patch = buildTravelProfilePatch(updated, original);
-    assert.equal(patch.travelPace, null);
-    assert.equal(patch.budgetStyle, null);
-
-    // --- THIS ASSERTION FAILS ---
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(patch, 'dateOfBirth'),
-      'BUG: patch must contain dateOfBirth when both enum fields are cleared',
-    );
-    assert.equal(patch.dateOfBirth, null);
-  });
-});
 
 // ── Evidence tests: demonstrate current actual behaviour ─────────────────────
 //
