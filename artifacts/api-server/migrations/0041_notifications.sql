@@ -170,12 +170,35 @@ END $$;
 
 -- ── Feature flags for notifications ──────────────────────────────────────────
 
+-- RETIRED 2026-08-12: four flags removed from this statement —
+-- notifications_enabled, notification_digests_enabled, realtime_activity_enabled
+-- and safety_notifications_enabled. See src/migrations/0062_notifications_schema.sql
+-- for the full reasoning; they had no reader and are deleted from live databases
+-- by src/migrations/2080_retire_inert_seeded_flags.sql.
+--
+-- ⚠ TWO THINGS ABOUT THIS FILE, BOTH UNRESOLVED AND BOTH DELIBERATE.
+--
+-- 1. This directory (artifacts/api-server/migrations/) is a SECOND migration
+--    tree, overlapping artifacts/api-server/src/migrations/. Which is canonical
+--    is an open reconciliation question — docs/INTERACTION_BUILD_LOG.md:28
+--    records it as unfinished. The seed scanner only reads src/migrations/, so
+--    this statement is outside every guard in the repo.
+--
+-- 2. It targets a `key` column. The live table's primary key is `flag` (0037
+--    onward), so this statement would fail against the production schema as
+--    written — it is near-certainly NOT what seeded production. That is a
+--    reason to doubt this file is applied anywhere, not a reason to leave the
+--    rows in it: the cost of neutralising a statement that never runs is zero,
+--    and the cost of missing a live seeding site is that a fresh environment
+--    re-creates the exact rows the retirement exists to remove.
+--
+-- activity_center_enabled is left alone: it is not part of this retirement and
+-- was never in the ten. It is seeded only here, so it is invisible to the
+-- polarity check for reason 1 above — worth its own look, not folded into this
+-- pass without evidence.
+
 INSERT INTO feature_flags (key, enabled, description)
 VALUES
-  ('notifications_enabled',        true,  'Master switch for the notification system'),
   ('activity_center_enabled',      true,  'Enables the Activity Center screen in the mobile app'),
-  ('push_notifications_enabled',   true,  'Enables push notification delivery via Expo'),
-  ('notification_digests_enabled', false, 'Enables daily digest emails (requires email provider setup)'),
-  ('realtime_activity_enabled',    true,  'Broadcasts notification events over the SSE realtime bus'),
-  ('safety_notifications_enabled', true,  'Enables safety-priority notifications (safe return, trust)')
+  ('push_notifications_enabled',   true,  'Enables push notification delivery via Expo')
 ON CONFLICT (key) DO NOTHING;

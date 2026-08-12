@@ -118,7 +118,44 @@ INSERT INTO public.compass_intent_modes (mode, display_name, description, icon) 
   ('private_mode', 'Private Mode', 'Low-visibility session — privacy-first feed',       '🔒')
 ON CONFLICT (mode) DO NOTHING;
 
--- ── Seed all 9 Compass feature flags ─────────────────────────────────────────
+-- ── Seed the Compass feature flags that are actually read ────────────────────
+--
+-- RETIRED 2026-08-12: six of the nine flags seeded here have been removed from
+-- this statement. They were:
+--
+--   COMPASS_FRONTLOAD_ENABLED                  COMPASS_ADMIN_CONTROLS_ENABLED
+--   COMPASS_ACTIVE_REWARD_ENABLED              COMPASS_ABUSE_DEFENSE_ENABLED
+--   COMPASS_EXPLAIN_WHY_ENABLED                COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED
+--
+-- None had a reader. compass/flags.ts loadFlags() selects every row matching
+-- `COMPASS_%` into a Record on each request, so all six were LOADED on every
+-- Compass call — but no caller ever asked isEnabled() for these six names, and
+-- being loaded is not being read. Every isEnabled() argument in the tree is a
+-- string literal, and the only COMPASS names among them are COMPASS_ENABLED,
+-- COMPASS_V1_RULE_BASED_ENABLED and COMPASS_TELEGRAPH.
+--
+-- Four of the six read TRUE in production while the engine each one named ran
+-- unconditionally: an operator reading the admin list would have concluded that
+-- frontloading, explanation cards, admin controls and Compass abuse defence
+-- were switched on by these rows. They were not switched by anything.
+--
+-- Why they were invisible for so long: this statement writes
+-- `INSERT INTO public.feature_flags`, and the seed scanner in
+-- scripts/check-flag-polarity.mjs matched only the unqualified
+-- `INSERT INTO feature_flags` until 2026-08-12. Its rule "every seeded flag is
+-- either read or declared inert" cannot fail on a flag it never saw.
+--
+-- They are removed HERE so a fresh database never creates them, and deleted
+-- from existing databases by src/migrations/2080_retire_inert_seeded_flags.sql.
+-- Editing this applied migration is deliberate: it is the `remove-from-seed`
+-- remedy, and leaving the INSERT in place would mean a new environment
+-- re-creates the exact rows 2080 exists to remove. Same reasoning, same shape,
+-- as the freeze_* retirement in 0065_phase7_safety.sql / 0209.
+--
+-- ⚠ NOTE THE CONFLICT CLAUSE BELOW. Unlike most seeds in this tree it is
+-- `DO UPDATE SET description`, not `DO NOTHING` — re-running this migration
+-- rewrites descriptions of existing rows. That is unchanged and intentional;
+-- it is called out because it means this statement is not inert on re-run.
 
 INSERT INTO public.feature_flags (flag, enabled, description) VALUES
   ('COMPASS_ENABLED',
@@ -127,25 +164,7 @@ INSERT INTO public.feature_flags (flag, enabled, description) VALUES
   ('COMPASS_V1_RULE_BASED_ENABLED',
    TRUE,
    'Use rule-based intent-mode detection (Phase 1 baseline)'),
-  ('COMPASS_FRONTLOAD_ENABLED',
-   FALSE,
-   'Pre-compute Compass profiles for active users on a background schedule'),
-  ('COMPASS_ACTIVE_REWARD_ENABLED',
-   FALSE,
-   'Boost active-user scores in Compass ranking'),
-  ('COMPASS_EXPLAIN_WHY_ENABLED',
-   FALSE,
-   'Surface explanation cards alongside Compass results'),
-  ('COMPASS_ADMIN_CONTROLS_ENABLED',
-   FALSE,
-   'Enable admin cockpit and testing sandbox'),
   ('COMPASS_FALLBACK_MODE_ENABLED',
    TRUE,
-   'Return safe fallback response when Compass logic fails or flag is off'),
-  ('COMPASS_ABUSE_DEFENSE_ENABLED',
-   FALSE,
-   'Activate rate-limiting and abuse-pattern detection in Compass'),
-  ('COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED',
-   FALSE,
-   'Personalise push-notification timing via Compass signals')
+   'Return safe fallback response when Compass logic fails or flag is off')
 ON CONFLICT (flag) DO UPDATE SET description = EXCLUDED.description;

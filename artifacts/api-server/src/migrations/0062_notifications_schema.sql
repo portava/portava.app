@@ -293,6 +293,48 @@ END $$;
 -- ── Feature flags ─────────────────────────────────────────────────────────────
 -- Guard: only insert if the feature_flags table actually exists in this DB.
 -- ON CONFLICT DO NOTHING means re-running never overwrites existing flag states.
+--
+-- RETIRED 2026-08-12: four of the five flags seeded here have been removed from
+-- this statement. They were:
+--
+--   notifications_enabled          'Master switch for the in-app notification system'
+--   notification_digests_enabled   'Enable daily notification digest batching'
+--   realtime_activity_enabled      'Enable SSE realtime activity stream'
+--   safety_notifications_enabled   'Enable safety-critical notification delivery'
+--
+-- None had a reader. Their only reference anywhere in the tree was
+-- routes/notifications.ts, where they were WRITE targets of the admin
+-- PUT /admin/notification-defaults flag map — an admin could set any of them,
+-- get ok:true, and change no code path. The digest feature they appear to gate
+-- is real (services/notifications/NotificationDigestService.ts, reachable via
+-- POST /internal/notifications/digest) and is enforced per user through
+-- notification_preferences.digests_enabled; none of that path consults these
+-- rows. Those four fields are removed from the admin handler in the same
+-- commit, and it now rejects them with .strict() rather than accepting and
+-- discarding them.
+--
+-- push_notifications_enabled STAYS and is the reason the others could go: it is
+-- genuinely wired at four sites (lib/pushWithRetry.ts, lib/pushRetryQueue.ts,
+-- services/notifications/NotificationRouter.ts,
+-- services/passport/StampAwardEngine.ts), so push delivery keeps a working
+-- operator kill switch.
+--
+-- Why they were invisible: this statement writes `INSERT INTO
+-- public.feature_flags`, and the seed scanner in
+-- scripts/check-flag-polarity.mjs matched only the unqualified
+-- `INSERT INTO feature_flags` until 2026-08-12.
+--
+-- ⚠ ON CONFLICT DO NOTHING is also why production diverged from this file and
+-- stayed diverged. All five live rows share the timestamp
+-- 2026-06-28 10:54:37.333397+00 and all five are TRUE, so production was seeded
+-- by a hand-written variant of this statement with a uniform TRUE —
+-- notification_digests_enabled reads TRUE live while the line above said FALSE.
+-- Re-running this migration would never have corrected it. The retirement
+-- migration deletes the rows outright, which resolves the divergence by
+-- removing both sides of it.
+--
+-- Removed HERE so a fresh database never creates them; deleted from existing
+-- databases by src/migrations/2080_retire_inert_seeded_flags.sql.
 
 DO $$ BEGIN
   IF EXISTS (
@@ -300,11 +342,7 @@ DO $$ BEGIN
     WHERE schemaname = 'public' AND tablename = 'feature_flags'
   ) THEN
     INSERT INTO public.feature_flags (flag, enabled, description) VALUES
-      ('notifications_enabled',        TRUE,  'Master switch for the in-app notification system'),
-      ('push_notifications_enabled',   TRUE,  'Enable Expo push delivery via notification_devices table'),
-      ('notification_digests_enabled', FALSE, 'Enable daily notification digest batching'),
-      ('realtime_activity_enabled',    TRUE,  'Enable SSE realtime activity stream'),
-      ('safety_notifications_enabled', TRUE,  'Enable safety-critical notification delivery')
+      ('push_notifications_enabled',   TRUE,  'Enable Expo push delivery via notification_devices table')
     ON CONFLICT (flag) DO NOTHING;
   END IF;
 END $$;

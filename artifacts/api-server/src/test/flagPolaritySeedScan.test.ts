@@ -45,6 +45,30 @@ const SCRIPT = join(PKG_ROOT, "scripts", "check-flag-polarity.mjs");
 const BROAD_INSERT = /INSERT\s+INTO\s+(?:"?[A-Za-z_][A-Za-z0-9_]*"?\s*\.\s*)?"?feature_flags"?\b/gi;
 const ROW_LITERAL = /\(\s*'([A-Za-z0-9_]+)'\s*,/g;
 
+/** Quote-aware comment strip, written independently of the script's own. */
+function stripComments(sql: string): string {
+  let out = "";
+  let inStr = false;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i], d = sql[i + 1];
+    if (inStr) {
+      out += c;
+      if (c === "'" && d === "'") { out += sql[++i]; } else if (c === "'") { inStr = false; }
+      continue;
+    }
+    if (c === "'") { inStr = true; out += c; continue; }
+    if (c === "-" && d === "-") { while (i < sql.length && sql[i] !== "\n") { out += " "; i++; } out += "\n"; continue; }
+    if (c === "/" && d === "*") {
+      i += 2;
+      while (i < sql.length && !(sql[i] === "*" && sql[i + 1] === "/")) { out += sql[i] === "\n" ? "\n" : " "; i++; }
+      i++; out += "  ";
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
 /** Independently scan the migrations, mirroring the script's dedupe rule
  *  (first seeding of a name wins, files visited in sorted order). */
 function independentScan(): { statements: number; flags: Set<string> } {
@@ -53,7 +77,12 @@ function independentScan(): { statements: number; flags: Set<string> } {
   let statements = 0;
 
   for (const f of files) {
-    const text = readFileSync(join(MIGRATIONS_DIR, f), "utf8");
+    // Strip comments for the same reason the script does: a migration that
+    // explains a seeding statement in its header would otherwise have its prose
+    // counted as SQL. Written independently of the script's helper so the two
+    // can disagree — an agreement produced by sharing one implementation would
+    // prove nothing.
+    const text = stripComments(readFileSync(join(MIGRATIONS_DIR, f), "utf8"));
     for (const m of text.matchAll(BROAD_INSERT)) {
       statements++;
       const rest = text.slice(m.index);
@@ -152,11 +181,36 @@ describe("check-flag-polarity seed scanner", () => {
     );
   });
 
-  // The specific ten that the fix surfaced. If a future edit re-narrows the
-  // matcher, the counts above catch it; this catches a re-narrowing that happens
-  // to be compensated elsewhere.
-  it("the flags the blind spot hid are in the population", () => {
-    const hidden = [
+  // The counts above are the general guard. This is the named one: the flags
+  // that only a schema-qualified matcher can see. It caught a re-narrowing that
+  // happens to be compensated elsewhere in the totals.
+  //
+  // These four are what REMAINS of the two `public.`-qualified seeding
+  // statements after the 2026-08-12 wire-or-drop retirement removed the other
+  // ten. All four have live readers, which is why they were kept — so this list
+  // is also the assertion that the retirement did not take a wired flag with it.
+  it("the schema-qualified seeds are in the population", () => {
+    const qualifiedSeeds = [
+      "COMPASS_ENABLED",
+      "COMPASS_V1_RULE_BASED_ENABLED",
+      "COMPASS_FALLBACK_MODE_ENABLED",
+      "push_notifications_enabled",
+    ];
+    for (const flag of qualifiedSeeds) {
+      assert.ok(
+        scan().flags.has(flag),
+        `${flag} is seeded by a \`public.\`-qualified INSERT and the scan cannot see it. Either the ` +
+          "matcher was re-narrowed, or this flag was retired — and if it was retired, check that was " +
+          "intended: all four of these have live readers.",
+      );
+    }
+  });
+
+  // The ten that were retired must stay gone from the seed. A migration that
+  // re-adds one would restore an operator-visible toggle over nothing, which is
+  // the exact defect 2080 removed.
+  it("the retired flags are not seeded by anything", () => {
+    const retired = [
       "COMPASS_FRONTLOAD_ENABLED",
       "COMPASS_ACTIVE_REWARD_ENABLED",
       "COMPASS_EXPLAIN_WHY_ENABLED",
@@ -168,18 +222,32 @@ describe("check-flag-polarity seed scanner", () => {
       "realtime_activity_enabled",
       "safety_notifications_enabled",
     ];
-    const script = readFileSync(SCRIPT, "utf8");
-    for (const flag of hidden) {
+    for (const flag of retired) {
       assert.ok(
-        scan().flags.has(flag),
-        `${flag} is no longer seeded by any migration — if the row was dropped, remove its ` +
-          "INERT_SEEDED_FLAGS entry too (the script's R7 will say so).",
-      );
-      assert.ok(
-        script.includes(`'${flag}'`),
-        `${flag} is seeded but has no declaration in check-flag-polarity.mjs. It was invisible to the ` +
-          "scanner until 2026-08-12; a declaration is what keeps it visible.",
+        !scan().flags.has(flag),
+        `${flag} was retired on 2026-08-12 by 2080_retire_inert_seeded_flags.sql and is seeded again. ` +
+          "A fresh database would re-create a toggle that gates nothing. If it has since been WIRED, " +
+          "that is fine — remove it from this list and say where the reader is.",
       );
     }
+  });
+
+  // Comment stripping is load-bearing: the retirement migrations explain
+  // themselves at length and quote the statement shape they removed. Without
+  // stripping, that prose is counted as SQL.
+  it("prose in a migration header is not counted as a seeding statement", () => {
+    const raw = readFileSync(join(MIGRATIONS_DIR, "2080_retire_inert_seeded_flags.sql"), "utf8");
+    assert.match(
+      raw,
+      /--[^\n]*INSERT INTO public\.feature_flags/,
+      "2080's header no longer mentions the statement shape in a comment — this test's subject is gone",
+    );
+    const stripped = stripComments(raw);
+    assert.equal(
+      (stripped.match(BROAD_INSERT) ?? []).length,
+      0,
+      "2080 seeds nothing; every match in it is prose. If this counts above zero, comment stripping broke " +
+        "and the reported seeded-statement total is inflated.",
+    );
   });
 });

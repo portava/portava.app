@@ -457,4 +457,79 @@ describe("GET /admin/feature-flags — last_change merge", () => {
       assert.deepEqual(names, ["stamps_enabled"], "only the operational flag remains");
     });
   });
+
+  // ── The 2026-08-12 wire-or-drop retirement ────────────────────────────────
+  //
+  // Ten flags were retired by 2080_retire_inert_seeded_flags.sql after a pass
+  // found no live read for any of them. The DB rows are deleted by that
+  // migration; these tests cover the guards that must hold REGARDLESS of
+  // whether it has been applied, which is the case that matters on any database
+  // still carrying the rows.
+
+  const RETIRED = [
+    "COMPASS_FRONTLOAD_ENABLED",
+    "COMPASS_ACTIVE_REWARD_ENABLED",
+    "COMPASS_EXPLAIN_WHY_ENABLED",
+    "COMPASS_ADMIN_CONTROLS_ENABLED",
+    "COMPASS_ABUSE_DEFENSE_ENABLED",
+    "COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED",
+    "notifications_enabled",
+    "notification_digests_enabled",
+    "realtime_activity_enabled",
+    "safety_notifications_enabled",
+  ];
+
+  describe("HIDDEN_INERT_FLAGS — the ten retired 2026-08-12", () => {
+    it("omits all ten from the admin list even when the rows still exist", async () => {
+      const client = makeFakeClient({
+        flagRows: [
+          ...RETIRED.map((flag) => ({
+            flag, enabled: true, description: "inert", updated_at: "2026-08-01T00:00:00Z",
+          })),
+          // The wired sibling. Shares a prefix with two of the ten and MUST
+          // survive: it gates push delivery at four call sites.
+          { flag: "push_notifications_enabled", enabled: true, description: "Push", updated_at: "2026-08-01T00:00:00Z" },
+        ],
+      });
+      _setTestClient(client, true);
+      _setTestServiceClient(client);
+
+      const r = await req("GET", "/admin/feature-flags");
+      assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+
+      const names = (r.body?.flags ?? []).map((f: any) => f.flag);
+      for (const flag of RETIRED) {
+        assert.ok(!names.includes(flag), `${flag} must not appear in the admin list`);
+      }
+      assert.deepEqual(
+        names,
+        ["push_notifications_enabled"],
+        "push_notifications_enabled is the one flag of the family with live readers and must remain visible",
+      );
+    });
+
+    it("refuses to toggle each of the ten with 400 not_operational", async () => {
+      for (const flag of RETIRED) {
+        const client = makeFakeClient({ flagRows: [] });
+        _setTestClient(client, true);
+        _setTestServiceClient(client);
+
+        const r = await req("PATCH", `/admin/feature-flags/${flag}`, { enabled: true });
+        assert.equal(r.status, 400, `${flag}: expected 400, got ${r.status}`);
+        assert.equal(r.body?.error, "not_operational", `${flag}: wrong error code`);
+      }
+    });
+
+    it("still allows toggling the wired sibling", async () => {
+      const client = makeFakeClient({
+        flagRows: [{ flag: "push_notifications_enabled", enabled: false, description: "Push", updated_at: "2026-08-01T00:00:00Z" }],
+      });
+      _setTestClient(client, true);
+      _setTestServiceClient(client);
+
+      const r = await req("PATCH", "/admin/feature-flags/push_notifications_enabled", { enabled: true });
+      assert.notEqual(r.status, 400, "push_notifications_enabled must stay operable — it is a real kill switch");
+      assert.notEqual(r.body?.error, "not_operational");
+    });
+  });
 });
