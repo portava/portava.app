@@ -208,11 +208,25 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // artCol drift is harmless to the checker regardless).
   ["src/routes/mediaFeed.ts|select|payload partially resolvable", 3],
   ["src/routes/passport.ts|select|payload partially resolvable", 2],
-  // 4 sites: POST_MEDIA_FEED_COLUMNS + await stampOverlayCol (×3) and
+  // 5 sites: POST_MEDIA_FEED_COLUMNS + await stampOverlayCol (×4) and
   // "id, media_type, …" + await stampOverlayCol (×1).  The stamp_overlay
   // column is additive — its presence in the DB is verified separately.
   // 2 additional sites use OWNER_POSTCARD_COLUMNS (partially resolved).
-  ["src/routes/posts.ts|select|payload partially resolvable", 6],
+  //
+  // The 4th POST_MEDIA_FEED_COLUMNS site is withPostMedia() (#3585), which
+  // attaches post_media to the mutation and pending responses. It is the same
+  // shape as the three feed reads beside it and unresolvable for the same
+  // reason: the optional-column probes stampOverlayCol/feedVariantCol are
+  // resolved at runtime because those columns may not exist yet in every
+  // environment (0129 / 0208).
+  //
+  // Deliberately allowlisted rather than rewritten. Dropping the probes would
+  // make the select statically resolvable, but it would also drop stamp_overlay
+  // and feed_url from every mutation response — so editing a post would strip
+  // its stamp overlay until the next refetch, which is a worse bug than the one
+  // being fixed. This is the "cannot be made resolvable without losing
+  // behaviour" case the list exists for, not an unexamined addition.
+  ["src/routes/posts.ts|select|payload partially resolvable", 7],
   ["src/routes/pulse.ts|select|payload partially resolvable", 1],
   // rentABuddy: select lists that mix static columns with awaited sub-selects.
   ["src/routes/rentABuddy.ts|select|payload partially resolvable", 4],
