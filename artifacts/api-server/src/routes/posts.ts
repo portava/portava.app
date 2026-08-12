@@ -310,6 +310,57 @@ export function filterPostMedia(items: any[]): Array<Record<string, unknown>> {
 }
 
 /**
+ * Attach the resolved `media` array to post rows that are returned raw.
+ *
+ * WHY THIS EXISTS — the shape-B regression (#3585)
+ * ------------------------------------------------
+ * 2083 made post_media canonical for storage-backed media and STRIPPED those
+ * entries out of posts.media_urls. The feed endpoints were converted to read
+ * post_media, but the mutation and pending endpoints still returned the raw
+ * posts row: `media_urls` now empty, and no `media` key at all.
+ *
+ * The client's mapPost() reads exactly those two fields, so a storage-backed
+ * post came back as `mediaUrls: []` and `media: undefined` — a post model with
+ * no media whatsoever. Editing or publishing a post with uploaded photos blanked
+ * its tile until the next refetch. Before 2083 the same code worked, because
+ * media_urls still carried the storage URL; the strip is what exposed it.
+ *
+ * So this is not defensive padding — these responses are a render source, and
+ * the field they rendered from was deliberately emptied.
+ *
+ * Fails OPEN, matching the feed endpoints: a post_media read failure omits the
+ * media rather than failing the mutation the caller actually asked for. The
+ * mutation has already been committed by the time this runs.
+ */
+async function withPostMedia(sc: any, rows: any[]): Promise<any[]> {
+  if (!Array.isArray(rows)) return [];
+  const ids = rows.map((r) => r?.id).filter((id): id is string => Boolean(id));
+  const byPost: Record<string, any[]> = {};
+  if (ids.length > 0) {
+    try {
+      const { data } = await sc
+        .from("post_media")
+        .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(sc)) + (await feedVariantCol(sc)))
+        .in("post_id", ids);
+      for (const m of (data ?? []) as any[]) {
+        (byPost[m.post_id] ??= []).push(m);
+      }
+    } catch {
+      /* fail-open — see the note above */
+    }
+  }
+  // filterPostMedia applies the ready/rejected/flagged rules and the sort, so
+  // the projection here is identical to what the feed endpoints emit.
+  return rows.map((r) => ({ ...r, media: filterPostMedia(byPost[r?.id ?? ""] ?? []) }));
+}
+
+/** Single-row convenience wrapper for withPostMedia. */
+async function withPostMediaOne(sc: any, row: any): Promise<any> {
+  const [out] = await withPostMedia(sc, [row]);
+  return out;
+}
+
+/**
  * Author-only column set for GET /posts/pending.  Extends POST_COLUMNS with
  * private fields safe to serve exclusively to the post owner:
  *   - location_lat / location_lng — used by the mobile geofence watcher
@@ -1493,7 +1544,7 @@ router.get("/posts/pending", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-  res.status(200).json({ posts: data ?? [] });
+  res.status(200).json({ posts: await withPostMedia(getServiceClient() ?? client, data ?? []) });
 });
 
 /* ===========================================================================
@@ -1775,7 +1826,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
     }
   }
 
-  res.status(200).json(updated);
+  res.status(200).json(await withPostMediaOne(getServiceClient() ?? client, updated));
 });
 
 /* ===========================================================================
@@ -1839,7 +1890,7 @@ router.post("/posts/:postId/publish-now-without-location", async (req, res) => {
     }
   }
 
-  res.status(200).json(updated);
+  res.status(200).json(await withPostMediaOne(getServiceClient() ?? client, updated));
 });
 
 /* ===========================================================================
@@ -1881,7 +1932,7 @@ router.post("/posts/:postId/cancel-delayed-publish", async (req, res) => {
     await invalidateCompassCache(sc, user.id, "delayed_post_cancel");
   }
 
-  res.status(200).json(updated);
+  res.status(200).json(await withPostMediaOne(getServiceClient() ?? client, updated));
 });
 
 /* ===========================================================================
@@ -2016,7 +2067,7 @@ router.patch("/posts/:postId", async (req, res) => {
     }
   }
 
-  res.status(200).json(data);
+  res.status(200).json(await withPostMediaOne(getServiceClient() ?? client, data));
 });
 
 /* ===========================================================================
