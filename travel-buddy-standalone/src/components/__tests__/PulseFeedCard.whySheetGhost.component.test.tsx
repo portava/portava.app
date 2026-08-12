@@ -190,13 +190,19 @@ jest.mock('../../lib/batchSignMedia.ts', () => ({
 }));
 
 // ── Stubs for heavy sub-components ────────────────────────────────────────────
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior (this test
+// only exercises why-sheet open/close lifecycle).
 jest.mock('../ui/DisplayMediaImage.tsx', () => ({ AvatarImage: () => null }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../../hooks/useHighlightRingState.ts', () => ({
   useHighlightRingState: () => null,
 }));
+// NOTE: only the display-name formatting is needed by the card header;
+// unrelated to why-sheet behavior.
 jest.mock('../../lib/displayIdentity.ts', () => ({
   primaryIdentityText: ({ username }: { username?: string | null }) => username ?? '',
 }));
+// NOTE: fire-and-forget navigation stub, unrelated to why-sheet behavior.
 jest.mock('../../lib/navigateToProfile.ts', () => ({ navigateToProfile: jest.fn() }));
 jest.mock('../HighlightRing.tsx', () => {
   const React = require('react');
@@ -206,10 +212,19 @@ jest.mock('../HighlightRing.tsx', () => {
       React.createElement(View, null, children),
   };
 });
+// NOTE: this test only exercises why-sheet open/close lifecycle; every prop
+// these subcomponents could render is irrelevant to that behavior, so each is
+// stubbed to a no-op/null rather than spreading jest.requireActual (most pull
+// in native modules — video, maps, sheets — that aren't needed here).
 jest.mock('../HighlightViewer.tsx', () => ({ HighlightViewer: () => null }));
+// NOTE: see above — presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../ReportSheet.tsx', () => ({ ReportSheet: () => null }));
+// NOTE: see above — presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../SaveButton.tsx', () => ({ SaveButton: () => null }));
+// NOTE: see above — presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../PostEngagementBar.tsx', () => ({ PostEngagementBar: () => null }));
+// NOTE: only onWhyPress is exercised by this test; every other prop is
+// intentionally omitted since the why-sheet lifecycle is the sole concern.
 jest.mock('../compass/CompassFeedbackMenu.tsx', () => ({
   // Renders a pressable testID so we can simulate "Why this?" taps.
   CompassFeedbackMenu: ({
@@ -225,20 +240,34 @@ jest.mock('../compass/CompassFeedbackMenu.tsx', () => ({
     });
   },
 }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior (see block above).
 jest.mock('../StampOverlayBadge.tsx', () => ({ MediaStampOverlay: () => null }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../ui/VideoThumbnail.tsx', () => ({ VideoThumbnail: () => null }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../LocationChip.tsx', () => ({ LocationChip: () => null }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../RichText.tsx', () => ({ RichText: () => null }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../OfficialBadge.tsx', () => ({ OfficialBadge: () => null }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../ui/VerifiedStamp.tsx', () => ({ VerifiedStamp: () => null }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../PlaceQuickActions.tsx', () => ({ PlaceQuickActions: () => null }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../PostWrongPlaceSheet.tsx', () => ({ PostWrongPlaceSheet: () => null }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../cards/PostCard.tsx', () => ({ PostCard: () => null }));
+// NOTE: only pass-through children are needed; identity-link chrome is unrelated
+// to why-sheet behavior.
 jest.mock('../interaction/UserIdentityLink.tsx', () => ({
   UserIdentityLink: ({ children }: { children?: React.ReactNode }) => children ?? null,
 }));
+// NOTE: presentational no-op stub, unrelated to why-sheet behavior.
 jest.mock('../FeaturedBadge.tsx', () => ({ FeaturedBadge: () => null }));
+// NOTE: fire-and-forget service stubs; this test never triggers delete/hide.
 jest.mock('../../services/postEngagement.ts', () => ({ deletePost: jest.fn() }));
+// NOTE: see above.
 jest.mock('../../services/posts.ts', () => ({ hidePost: jest.fn() }));
 
 // ── Component under test ───────────────────────────────────────────────────────

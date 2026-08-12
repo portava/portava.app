@@ -106,6 +106,9 @@ const KNOWN_BROKEN = [
   // auth.ts imports supabase.ts → SecureStoreAdapter → react-native (esbuild "Unexpected typeof")
   // Uses Jest syntax (jest.mock/describe/expect) — run via `pnpm test:component`
   'src/services/__tests__/auth.requestPasswordReset.test.ts',
+  // getPublicPostcards → profile.ts → apiToken.ts → supabase.ts → SecureStoreAdapter
+  // → react-native (esbuild "Unexpected typeof"). Uses Jest syntax — run via `pnpm test:component`
+  'src/services/__tests__/postcardWall.blockGate.test.ts',
   // discovery.ts → supabase.ts → SecureStoreAdapter → react-native esbuild "Unexpected typeof"
   'src/services/__tests__/discovery.searchSignal.test.ts',
   // Jest-syntax (describe/it/expect) test — not converted to node:test yet

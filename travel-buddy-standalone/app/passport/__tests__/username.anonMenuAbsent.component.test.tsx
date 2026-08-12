@@ -84,14 +84,18 @@ jest.mock('../../../src/services/stampShowcase', () => ({
   getPublicShowcase: jest.fn().mockResolvedValue([]),
 }));
 
+// NOTE: intentionally exhaustive — this test never calls blockUser; only its
+// presence as an importable module matters for the menu-gating check.
 jest.mock('../../../src/services/blocks', () => ({
   blockUser: jest.fn().mockResolvedValue({ ok: true }),
 }));
 
+// NOTE: intentionally exhaustive — same as above, unrelated to menu gating.
 jest.mock('../../../src/services/messaging', () => ({
   openDirectThread: jest.fn().mockResolvedValue({ ok: false }),
 }));
 
+// NOTE: intentionally exhaustive — same as above, unrelated to menu gating.
 jest.mock('../../../src/services/reports', () => ({
   submitReport: jest.fn().mockResolvedValue({ ok: true }),
 }));
