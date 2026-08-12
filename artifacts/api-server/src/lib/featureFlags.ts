@@ -103,8 +103,6 @@ export const LIVE_PLACES_REQUIREMENTS: Record<string, readonly string[]> = {
   shared_moments_clustering_enabled: ["external_places_enabled", "live_places_enabled", "place_days_enabled", "shared_moments_enabled"],
   place_recaps_enabled: ["external_places_enabled", "live_places_enabled", "place_days_enabled"],
   moment_recaps_enabled: ["external_places_enabled", "live_places_enabled", "place_days_enabled", "shared_moments_enabled"],
-  live_places_world_feed_enabled: ["external_places_enabled", "live_places_enabled"],
-  place_chat_enabled: ["external_places_enabled", "live_places_enabled"],
   shared_moments_chat_enabled: ["external_places_enabled", "live_places_enabled", "place_days_enabled", "shared_moments_enabled"],
 };
 
