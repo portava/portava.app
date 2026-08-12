@@ -481,34 +481,6 @@ describe('PulseFeedCard — CompassWhySheet ghost-sheet lifecycle', () => {
 // is the living proof: it passes with the current cleanup-returning implementation
 // and would fail the moment the cleanup is removed.
 //
-// We `.skip` the broken-variant simulation so it does not pollute CI results,
-// while keeping it as an auditable record.
-describe('PulseFeedCard — ghost-sheet red-proof (broken variant, skipped)', () => {
-  // STATUS: This test is intentionally skipped. It documents what the assertion
-  // failure looks like when the useFocusEffect cleanup is omitted. The currently
-  // live code (with the cleanup) makes this assertion PASS, meaning the real
-  // test above — which asserts the opposite (false) — correctly catches the bug.
-  it.skip(
-    '[broken variant] without the cleanup, sheet stays visible after focus loss',
-    async () => {
-      // If useFocusEffect returned no cleanup, simulateBlur() would be a no-op
-      // and isSheetVisible() would remain true. This test documents that failure.
-      const item = makeCompassItem({ recommendationId: 'rec-broken' });
-      await render(<PulseFeedCard item={item} />);
-
-      await act(async () => {
-        fireEvent.press(screen.getByTestId('why-this-trigger'));
-      });
-      expect(isSheetVisible()).toBe(true);
-
-      await act(async () => {
-        simulateBlur();
-      });
-
-      // In the broken variant this would be true (sheet stays open).
-      // The real code makes this false, so the real test passes and the
-      // broken variant test would fail here:
-      expect(isSheetVisible()).toBe(true); // <-- fails with real code (correctly)
-    },
-  );
-});
+// The broken-variant simulation that used to sit here was removed: CI enforces
+// `jest skipped <= 0`, and a skipped test asserts nothing. The record it kept is
+// the comment above; the enforcement is scenario 2's green assertion.
