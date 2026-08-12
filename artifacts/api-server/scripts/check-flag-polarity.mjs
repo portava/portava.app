@@ -529,6 +529,39 @@ const INERT_SEEDED_FLAGS = [
       'Seeded true by the event flag block in 0080 (:420-428) as "Convenience join/leave shortcuts". No reader: the capability is unconditionally ON in code, and the flag records an intention rather than a gate. Because it is seeded TRUE the admin list agrees with observed behaviour today, which is exactly why this has gone unnoticed — the disagreement only appears the first time someone toggles it OFF during an incident and nothing changes. OWNER DECISION: wire the reader if the capability is meant to be switchable, or drop the row so the admin list stops offering a switch that does nothing.',
   },
 
+  // ── Surfaced 2026-08-12 by fixing the seed-scanner's statement terminator. ─
+  //
+  // All four were seeded all along; the scan could not see them because a
+  // semicolon inside a description truncated the statement that seeds them. They
+  // are NOT new flags and nothing about them changed — only the check's ability
+  // to ask about them. Each was then read in context by the census
+  // (docs/ops/flag-disposition.md), which is why these carry `remove-from-seed`
+  // rather than `owner-decision-pending`: they were examined on discovery.
+  {
+    flag: 'RENT_BUDDY_CASH_BALANCE_ENABLED', seededIn: '0090_rent_buddy_rollout_tables.sql:201', kind: 'CAPABILITY',
+    disposition: 'remove-from-seed',
+    reason:
+      'Seeded false by 0090 in the same VALUES list as the six rollout flags that ARE read through getFlag() in routes/rentABuddyRollout.ts. This one is never passed to it, and appears nowhere else in either shipping tree. A cash-balance surface that was planned, seeded and never built. Retirement migration to follow the 2026-08-12 census.',
+  },
+  {
+    flag: 'RENT_BUDDY_DELAYED_POSTING_REQUIRED', seededIn: '0090_rent_buddy_rollout_tables.sql:204', kind: 'CAPABILITY',
+    disposition: 'remove-from-seed',
+    reason:
+      'Seeded false by 0090 alongside the six read rollout flags; never passed to getFlag() and absent from both shipping trees. Note the name is a REQUIREMENT rather than a capability — "delayed posting required" reads as a policy switch, so an operator could reasonably believe turning it on imposes a delay. Nothing consults it in either position. Retirement migration to follow the 2026-08-12 census.',
+  },
+  {
+    flag: 'live_places_world_feed_enabled', seededIn: '2068_live_places_rollout_flags.sql:5', kind: 'CAPABILITY',
+    disposition: 'remove-from-seed',
+    reason:
+      'Seeded by 2068 and present as a KEY in LIVE_PLACES_REQUIREMENTS (lib/featureFlags.ts:106) and in the app\'s mirror of that map, but never passed to isLivePlacesCapabilityEnabled() and never queried by the app. Being a key in a requirements map is not being read: resolveFeatureFlags() recomputes it for the public endpoint, and no caller consumes the result. Retirement migration to follow the 2026-08-12 census.',
+  },
+  {
+    flag: 'place_chat_enabled', seededIn: '2068_live_places_rollout_flags.sql:6', kind: 'CAPABILITY',
+    disposition: 'remove-from-seed',
+    reason:
+      'Seeded by 2068; same shape as live_places_world_feed_enabled above — a key in LIVE_PLACES_REQUIREMENTS (lib/featureFlags.ts:107) and its client mirror, never passed as a capability. Its sibling shared_moments_chat_enabled IS read (routes/sharedMoments.ts:109), so this is a two-surface chat rollout where only one surface was wired. Retirement migration to follow the 2026-08-12 census.',
+  },
+
   // ── location_phase*: the oldest rows in the table, from 0037. ────────────
   {
     flag: 'location_phase1_gps', seededIn: '0037_feature_flags.sql:13', kind: 'CAPABILITY',
@@ -868,8 +901,24 @@ const DIRECT_READS = [
   { file: 'routes/adminCompass.ts',       shape: 'management', reason: `Admin upsert of Compass flags by variable. A write. ${V}.` },
   { file: 'routes/circle.ts',             shape: 'management', reason: `POST /admin/circle/kill-switch — the OPERATOR'S CONTROL SURFACE for find_your_circle_disabled. It upserts the stop; it does not read it to gate. Fails LOUDLY (db_error) on write failure, which is correct: an operator flipping a stop must learn if it did not take. ${V}.` },
   { file: 'routes/rentABuddyRollout.ts',  shape: 'var',
-    covers: ['RENT_BUDDY_MVP_MODE'],
-    reason: `Local getFlag(sc, flag) helper reading rollout flags by parameter. ${V}: no try/catch, \`!!data?.enabled\`; reads only rent_buddy_* CAPABILITY flags from admin rollout routes.` },
+    covers: [
+      'RENT_BUDDY_MVP_MODE',
+      // Added 2026-08-12. These six were ALWAYS read through this same helper —
+      // getFlag(sc, "<literal>") at :171, :245, :258, :271, :304 and :410, each
+      // gating a 403 — but they were never listed here because the seed scanner
+      // could not see them being seeded (0090:197-203, behind a semicolon in a
+      // description) and so R6 never asked. Fixing the matcher surfaced them as
+      // "seeded but never read", which was wrong in the informative direction:
+      // they are read, by a helper this check cannot follow, which is exactly
+      // what a `covers` list is for.
+      'RENT_BUDDY_ADMIN_ONLY_MODE',       // :171  admin-only rollout gate
+      'RENT_BUDDY_BETA_ONLY_MODE',        // :410  beta-only rollout gate
+      'RENT_BUDDY_GROUP_BOOKINGS_ENABLED',// :245  403 group_bookings_unavailable
+      'RENT_BUDDY_PACKAGES_ENABLED',      // :258  403 packages_unavailable
+      'RENT_BUDDY_OFFERS_ENABLED',        // :271  403 offers_unavailable
+      'RENT_BUDDY_NIGHTLIFE_ENABLED',     // :304  403 when off
+    ],
+    reason: `Local getFlag(sc, flag) helper reading rollout flags by parameter. ${V}: no try/catch, \`!!data?.enabled\`; reads only rent_buddy_* CAPABILITY flags from admin rollout routes. Every name in \`covers\` was verified at its call site by the 2026-08-12 census (docs/ops/flag-disposition.md), which read each one in context rather than trusting the string match.` },
   { file: 'routes/notifications.ts',     shape: 'var', reason: `Admin update of notification flags by loop variable (\`.update({enabled}).eq("flag", flagName)\`). A write, not a gate. ${V}.` },
   { file: 'routes/admin.ts',             shape: 'var', reason: `Admin bulk toggle: \`.update({enabled}).eq("flag", key)\` over a submitted map. A write, not a gate. ${V}.` },
   { file: 'routes/adminRankingConfig.ts', shape: 'var', reason: `Admin read-then-update of one ranking flag by variable; the update's error is checked and surfaced as db_error. A write. ${V}.` },
@@ -890,6 +939,58 @@ const DIRECT_READS = [
   { file: 'scripts/set-media-buckets-private.ts',  flag: 'media_private_buckets_enabled', reason: `Bucket-privacy migration script preflight; refuses to run unless the flag is on or --force is passed. ${V}. Fail-closed.` },
   { file: 'scripts/stamp-smoke-check.ts',          flag: 'stamp_system_v2_enabled',      reason: `Smoke-check script. ${V}: an \`error\` fails the smoke check loudly. Fail-closed.` },
   { file: 'scripts/seed-demo-buddies.ts',          shape: 'management', reason: `Demo seeder upserting a rollout flag. A write, in throwaway seed tooling. ${V}.` },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// APP_TREE_READS — seeded flags whose only reader is in the MOBILE APP tree.
+//
+// This check walks api-server/src (SRC, above) and nothing else. That is the
+// right scope for everything else it does, but it leaves rule R6 — "every seeded
+// flag is either read or declared inert" — unable to tell two very different
+// situations apart:
+//
+//   (a) a flag nothing reads, anywhere; and
+//   (b) a flag read by the mobile app, which fetches GET /api/feature-flags and
+//       branches on the value client-side.
+//
+// Before this list there was no honest way to record (b). INERT_SEEDED_FLAGS
+// asserts a flag is unread, which would be FALSE here and would park a live gate
+// on a "wire or drop" list forever. An UNRESOLVABLE or DIRECT_READS `covers`
+// entry is equally untrue: those are keyed to an api-server file and expression,
+// and no such file exists for an app-tree read.
+//
+// The declaration is MACHINE-CHECKED, not trusted: rule R8 below opens the named
+// app file and fails if the flag literal is not in it. If the read is deleted or
+// the component moves, this check fails rather than continuing to vouch for a
+// reader that is gone — the same argument the UNRESOLVABLE `covers` arrays make
+// for being lists rather than prose.
+//
+// WHAT THIS LIST DOES NOT DO
+// ==========================
+//
+// It does not verify the failure direction, because it cannot see the call
+// site's error handling from here. An app-read flag is fail-closed by the shape
+// of the transport — FeatureFlagsContext defaults a missing or unfetched flag to
+// falsy — not by anything this list checks.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const APP_TREE_ROOT = resolve(PKG_ROOT, '..', 'travel-buddy');
+
+const APP_TREE_READS = [
+  {
+    flag: 'city_launch_mode',
+    file: 'src/screens/admin/featureFlags.machine.ts',
+    line: 34,
+    reason:
+      'getActiveKillSwitches() reads its value and drives the red "kill switch active" banner on the admin ' +
+      'Feature Flags screen. ⚠ THAT IS ITS ONLY READER. It sits in KILL_SWITCH_FLAGS beside disable_posting, ' +
+      'disable_messaging, disable_rent_buddy_booking and invite_only_beta, every one of which ALSO has a ' +
+      'server-side isKillSwitchEngaged() call; this one has none, so switching it on announces that a kill ' +
+      'switch is engaged while restricting nothing. That is the safety_notifications_enabled failure mode of ' +
+      '2080 in a different costume. Recorded here as an app-tree read because that is what it is — declaring ' +
+      'it inert would be false, and deleting the row would remove a control an operator can currently see. ' +
+      'The remedy (write-reader, or retire) is an owner decision, argued in docs/ops/flag-disposition.md.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1201,8 +1302,29 @@ if (!existsSync(MIGRATIONS_DIR)) {
       seedStatementCount++;
       // The statement runs to its terminating semicolon. Row literals look like
       // ('flag_name', true|false, 'description').
+      //
+      // The terminator must be found OUTSIDE a quoted string. This was a plain
+      // indexOf(';') until 2026-08-12, which is the same class of bug as the
+      // missing schema qualifier above and had the same consequence: a
+      // description containing a semicolon truncated the statement mid-VALUES
+      // and every row after it vanished from the seeded population. 0090
+      // (rent_buddy rollout) and 2068 (live places) each seed a flag whose
+      // description contains one, which is why 23 seeded flags — including eight
+      // that no code reads — were invisible to rule R6. Once again the scan did
+      // not report a gap; it reported that the population was clean, and R6
+      // cannot ask about a seed it cannot see.
+      //
+      // SQL escapes a quote by doubling it ('' inside a literal). Toggling on
+      // every quote handles that correctly: the pair toggles off then on and
+      // lands back inside the string.
       const rest = text.slice(m.index);
-      const semi = rest.indexOf(';');
+      let semi = -1;
+      let inQuote = false;
+      for (let i = 0; i < rest.length; i++) {
+        const ch = rest[i];
+        if (ch === "'") inQuote = !inQuote;
+        else if (ch === ';' && !inQuote) { semi = i; break; }
+      }
       const stmt = semi > 0 ? rest.slice(0, semi) : rest;
       for (const row of stmt.matchAll(/\(\s*'([A-Za-z0-9_]+)'\s*,/g)) {
         const flag = row[1];
@@ -1357,10 +1479,14 @@ const coveredByDeclaration = new Set();
 for (const e of [...UNRESOLVABLE, ...DIRECT_READS]) {
   for (const f of e.covers ?? []) coveredByDeclaration.add(f);
 }
+// Read in the mobile app tree, which this check does not walk. Verified against
+// the app source by rule R8 below rather than taken on trust.
+const appTreeRead = new Set(APP_TREE_READS.map((e) => e.flag));
 
 for (const [flag, where] of seeded) {
   if (inventory.has(flag)) continue;          // read somewhere — first population covers it
   if (coveredByDeclaration.has(flag)) continue; // read through a declared unresolvable name
+  if (appTreeRead.has(flag)) continue;        // read in the app tree — declared and verified by R8
   if (inertByFlag.has(flag)) continue;        // declared inert, with a reason
   fail(
     `SEEDED BUT NEVER READ: "${flag}" is seeded at ${where} and is read by nothing under src/.\n` +
@@ -1425,6 +1551,54 @@ for (const e of DIRECT_READS) {
   const key = e.flag ? `${e.file}::${e.flag}` : `${e.file}::<${e.shape}>`;
   if (!seenReadKeys.has(key)) fail(`STALE DIRECT_READS ENTRY: ${key} no longer exists under src/. Remove the entry.`);
   if (!existsSync(join(SRC, e.file))) fail(`STALE DIRECT_READS ENTRY: ${e.file} does not exist.`);
+}
+
+// R8 — an APP_TREE_READS entry must be seeded, must not also be declared inert
+// or read under src/, and the app file it names must actually contain the flag.
+// That last clause is the whole point: without it this list would be a way to
+// silence R6 by assertion, which is precisely what INERT_SEEDED_FLAGS is careful
+// not to be.
+if (APP_TREE_READS.length > 0 && !existsSync(APP_TREE_ROOT)) {
+  fail(
+    `CANNOT VERIFY APP_TREE_READS: no app tree at ${APP_TREE_ROOT}, but ${APP_TREE_READS.length} entr(ies) claim ` +
+    `a reader lives there. Those flags are exempted from R6 on the strength of that claim, so an unverifiable ` +
+    `claim must FAIL rather than pass quietly. If this is a partial checkout, check out the app tree too — do ` +
+    `not delete the entries to make this pass.`,
+  );
+}
+for (const e of APP_TREE_READS) {
+  if (!hasReason(e)) {
+    fail(`NO REASON: APP_TREE_READS entry for "${e.flag}" has no reason. The entry exempts a flag from R6; without a reason it exempts it for nothing.`);
+    continue;
+  }
+  if (!seeded.has(e.flag)) {
+    fail(
+      `STALE APP_TREE_READS ENTRY: "${e.flag}" is declared as read in the app tree but is not seeded by any ` +
+      `migration, so R6 never asks about it and this entry exempts nothing. Remove it.`,
+    );
+  }
+  if (inertByFlag.has(e.flag)) {
+    fail(`CONTRADICTORY DECLARATION: "${e.flag}" is declared INERT and also declared as read in the app tree. It cannot be both. Delete whichever is false.`);
+  }
+  if (inventory.has(e.flag)) {
+    fail(
+      `RESOLVED APP_TREE_READS ENTRY: "${e.flag}" now has a reader under src/ as well, so this entry is no longer ` +
+      `what exempts it from R6. Delete it so the list keeps meaning "app tree ONLY".`,
+    );
+  }
+  if (!existsSync(APP_TREE_ROOT)) continue; // already failed loudly above
+  const appFile = join(APP_TREE_ROOT, e.file);
+  if (!existsSync(appFile)) {
+    fail(`STALE APP_TREE_READS ENTRY: "${e.flag}" names ${e.file}, which does not exist in the app tree.`);
+    continue;
+  }
+  if (!readFileSync(appFile, 'utf8').includes(e.flag)) {
+    fail(
+      `UNVERIFIED APP_TREE_READS ENTRY: "${e.flag}" is declared as read at ${e.file}:${e.line}, but that file does ` +
+      `not contain the flag name. Either the read was removed — in which case the flag is now inert and this entry ` +
+      `is a false exemption — or it moved and the entry must be updated.`,
+    );
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

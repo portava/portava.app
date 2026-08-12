@@ -1,3 +1,18 @@
+> ## ⚠ SUPERSEDED 2026-08-12 — the numbers below are wrong
+>
+> Read [`flag-disposition.md`](./flag-disposition.md) instead.
+>
+> Every count in this file was derived from `check-flag-polarity.mjs`'s seed
+> scanner, which truncated an `INSERT` statement at the first semicolon —
+> including one inside a quoted description. Two migrations do that, hiding 23
+> seeded flags. The true populations are **152 seeded / 30 live-unseeded / 14
+> seeded-absent**, not 129 / 49 / 10.
+>
+> The reasoning here about *why* the drift matters, and the disposition rule
+> itself, still hold. Only the arithmetic and the group membership are wrong —
+> 19 of the "unseeded 49" are in fact seeded. Kept unedited as the record of what
+> was believed before the scanner was fixed.
+
 # The unseeded forty-nine — flag drift inventory
 
 **Inventory only.** No flag was created, deleted, toggled or seeded in producing

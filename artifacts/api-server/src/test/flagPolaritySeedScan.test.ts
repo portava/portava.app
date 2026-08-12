@@ -69,6 +69,31 @@ function stripComments(sql: string): string {
   return out;
 }
 
+/**
+ * Index of the statement-terminating semicolon — the first one that is NOT
+ * inside a quoted string.
+ *
+ * This was `rest.indexOf(";")` in both the script and this test until
+ * 2026-08-12, and the duplication is the lesson: this file exists to check the
+ * script with an independent implementation, but it had independently
+ * reproduced the same bug, so the two agreed and the agreement proved nothing.
+ * A description containing a semicolon — 0090:201 and 2068:5 both have one —
+ * truncated the statement mid-VALUES, and 23 seeded flags, 8 of them read by
+ * nothing, were invisible to rule R6 on both sides of the comparison.
+ *
+ * "Independent" has to mean independent of the FAILURE MODE, not just of the
+ * source text.
+ */
+function statementEnd(sql: string): number {
+  let inStr = false;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (c === "'") inStr = !inStr;       // a doubled '' toggles off then on: still inside
+    else if (c === ";" && !inStr) return i;
+  }
+  return sql.length;
+}
+
 /** Independently scan the migrations, mirroring the script's dedupe rule
  *  (first seeding of a name wins, files visited in sorted order). */
 function independentScan(): { statements: number; flags: Set<string> } {
@@ -86,8 +111,7 @@ function independentScan(): { statements: number; flags: Set<string> } {
     for (const m of text.matchAll(BROAD_INSERT)) {
       statements++;
       const rest = text.slice(m.index);
-      const semi = rest.indexOf(";");
-      const stmt = semi > 0 ? rest.slice(0, semi) : rest;
+      const stmt = rest.slice(0, statementEnd(rest));
       for (const row of stmt.matchAll(ROW_LITERAL)) flags.add(row[1]);
     }
   }
@@ -189,6 +213,39 @@ describe("check-flag-polarity seed scanner", () => {
   // statements after the 2026-08-12 wire-or-drop retirement removed the other
   // ten. All four have live readers, which is why they were kept — so this list
   // is also the assertion that the retirement did not take a wired flag with it.
+  // RED-PROOF for the 2026-08-12 statement-terminator fix. The counts above are
+  // a general guard and would go red for this too, but only while the tree
+  // happens to contain a semicolon-bearing description. This test carries its
+  // own fixture, so it keeps failing against the old `indexOf(";")` even if
+  // every such description is later reworded away.
+  it("a semicolon inside a description does not truncate the statement", () => {
+    const fixture = `
+      INSERT INTO feature_flags (flag, enabled, description) VALUES
+        ('flag_before_the_semicolon', false, 'plain description'),
+        ('flag_with_semicolon',       false, 'requires an invite; checked at signup'),
+        ('flag_after_the_semicolon',  true,  'would be invisible to a naive scan')
+      ON CONFLICT (flag) DO NOTHING;
+    `;
+    const stmt = fixture.slice(0, statementEnd(fixture));
+    const found = [...stmt.matchAll(ROW_LITERAL)].map((m) => m[1]);
+
+    assert.deepEqual(
+      found,
+      ["flag_before_the_semicolon", "flag_with_semicolon", "flag_after_the_semicolon"],
+      "the statement was cut at the semicolon inside a description, so every row after it vanished. " +
+        "That is the bug fixed on 2026-08-12: R6 cannot report a seeded flag it never saw, so the " +
+        "check reports a clean population precisely because it is blind.",
+    );
+
+    // And the naive version must actually be wrong, or this test proves nothing.
+    const naive = fixture.slice(0, fixture.indexOf(";"));
+    assert.ok(
+      [...naive.matchAll(ROW_LITERAL)].length < found.length,
+      "the naive indexOf(';') scan found just as much, so this fixture no longer reproduces the bug " +
+        "and the assertion above is vacuous",
+    );
+  });
+
   it("the schema-qualified seeds are in the population", () => {
     const qualifiedSeeds = [
       "COMPASS_ENABLED",
