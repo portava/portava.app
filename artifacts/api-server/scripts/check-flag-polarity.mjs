@@ -323,11 +323,26 @@ const CLASSIFIED = [
 // whoever is looking at the admin list.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Allowed values for an INERT_SEEDED_FLAGS entry's `disposition`. */
+/**
+ * Allowed values for an INERT_SEEDED_FLAGS entry's `disposition`.
+ *
+ * `owner-decision` and `owner-decision-pending` are NOT synonyms, and the
+ * difference is the whole reason the second one exists. `owner-decision` means
+ * someone read the flag, read the code around it, formed a view of what the
+ * remedy probably is, and handed the call to an owner — the reason field on
+ * those entries argues a position. `owner-decision-pending` means the flag was
+ * INVISIBLE to this check until the day it was discovered, so nobody has looked
+ * at it yet and the entry records only that fact.
+ *
+ * Collapsing the two would let a never-examined flag inherit the credibility of
+ * an examined one. That is the same class of error as the seed scan itself:
+ * declared state that reads as more resolved than it is.
+ */
 const DISPOSITIONS = new Set([
-  'write-reader',      // the flag should gate something; the reader is missing
-  'remove-from-seed',  // the flag should not exist; the seed row should go
-  'owner-decision',    // genuinely unknown to the author of the entry; needs an owner
+  'write-reader',           // the flag should gate something; the reader is missing
+  'remove-from-seed',       // the flag should not exist; the seed row should go
+  'owner-decision',         // examined, remedy argued, call handed to an owner
+  'owner-decision-pending', // never examined — surfaced by a scanner fix, awaiting a first look
 ]);
 
 const INERT_SEEDED_FLAGS = [
@@ -618,6 +633,114 @@ const INERT_SEEDED_FLAGS = [
     disposition: 'owner-decision',
     reason:
       'Seeded TRUE by 0037, no reader — so telegraph suggestions are unconditionally on and this switch cannot turn them off. Same shape as the events_* family: agreement with reality today, divergence the first time it is used. OWNER DECISION: wire or drop.',
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // DISCOVERED 2026-08-12 BY FIXING THE SEED SCANNER — disposition
+  // `owner-decision-pending`, which is NOT the same as `owner-decision` above.
+  //
+  // Every entry above records a judgment somebody made. The ten below record
+  // that nobody has yet had the chance to. They were seeded by
+  // `INSERT INTO public.feature_flags`, and until 2026-08-12 the seed scanner
+  // matched only the unqualified `INSERT INTO feature_flags` — so these ten,
+  // plus four siblings that do have readers, were absent from the seeded
+  // population entirely. Rule R6 could not fail on a flag it had never seen.
+  // The check reported a clean population for as long as the blind spot lasted.
+  //
+  // Two things are true of all ten and are NOT independent findings per entry:
+  //
+  //   * `kind: CAPABILITY` is convention, from the `*_ENABLED` suffix, not a
+  //     read of the surrounding code. For an examined entry that convention has
+  //     been checked against what the flag actually does. Here it has not. If
+  //     any of these is really a stop wearing a capability's name, this field is
+  //     wrong and the entry is the reason someone will find out.
+  //   * The production value is recorded because it is what an operator sees in
+  //     the admin list, and for a flag with no reader the gap between that value
+  //     and the code path it appears to control IS the defect. Read-only SELECT
+  //     against the live project on 2026-08-12.
+  //
+  // These entries are a declaration of unexamined state. They are not a remedy
+  // and must not be read as one.
+  //
+  // RULED 2026-08-12, same day: this list is a WORK LIST, not a resting state.
+  // The disposition of each of the ten is wire-or-drop, decided by evidence, and
+  // the evidence required is a LIVE READ — an actual branch that consults the
+  // flag and changes behaviour as a result. Specifically NOT sufficient:
+  // compass/flags.ts's `loadFlags` selects every row matching `COMPASS_%` into a
+  // Record, so all six COMPASS_* names below are "loaded" on every Compass
+  // request. Being loaded is not being read. The question is whether any code
+  // then asks isEnabled() for that name and branches on the answer.
+  //
+  // Live branch found -> the flag stays, and the entry is replaced by a record
+  // of where the branch is. None found -> the flag is dropped the way the
+  // freeze_* family was: retirement migration, seed neutralized, entry removed
+  // (R7 above enforces that removal), dead scaffolding deleted.
+  //
+  // Until that pass runs, every entry below remains true as written: nobody had
+  // looked when it was filed. Deleting an entry without doing the pass would
+  // restore the blind spot in a more durable form, since the flag would then be
+  // both unseen AND undeclared.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  {
+    flag: 'COMPASS_FRONTLOAD_ENABLED', seededIn: '0051_compass_foundation.sql:130', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded FALSE by 0051, live value TRUE, read by nothing under src/. Compass reads its flags through compass/flags.ts isEnabled(), and COMPASS_ENABLED / COMPASS_V1_RULE_BASED_ENABLED / COMPASS_FALLBACK_MODE_ENABLED from the same INSERT ARE read through it — so the suite was seeded wholesale and wired selectively, and an operator looking at this row sees a frontload scheduler switched ON that schedules nothing. UNEXAMINED: no view is offered here on whether the remedy is to wire CompassFrontLoadEngine to it or to drop the row.',
+  },
+  {
+    flag: 'COMPASS_ACTIVE_REWARD_ENABLED', seededIn: '0051_compass_foundation.sql:133', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded FALSE by 0051, live value FALSE, read by nothing under src/. Carries an extra hazard the others do not: the live table ALSO holds COMPASS_ACTIVE_REWARDS_ENABLED (plural), value TRUE, seeded by no migration under src/migrations and likewise read by nothing. Two near-identical names, opposite values, neither wired. UNEXAMINED: which of the pair was intended, and whether either should exist, is exactly the kind of call this entry exists to hand over rather than guess at.',
+  },
+  {
+    flag: 'COMPASS_EXPLAIN_WHY_ENABLED', seededIn: '0051_compass_foundation.sql:136', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded FALSE by 0051, live value TRUE, read by nothing under src/. CompassExplanationEngine.ts exists and runs; it does not consult this flag. So the surface it names is on, the switch reads on, and the two facts are unrelated — the switch would read on just the same if the engine had never shipped. UNEXAMINED.',
+  },
+  {
+    flag: 'COMPASS_ADMIN_CONTROLS_ENABLED', seededIn: '0051_compass_foundation.sql:139', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded FALSE by 0051, live value TRUE, read by nothing under src/. routes/adminCompass.ts ships and is gated by requireAdmin, not by this flag — the same shape as stamp_admin_award_enabled above, whose entry argues for remove-from-seed on the ground that the authorization check is the real gate. That parallel is noted, NOT adopted: nobody has checked whether it holds here. UNEXAMINED.',
+  },
+  {
+    flag: 'COMPASS_ABUSE_DEFENSE_ENABLED', seededIn: '0051_compass_foundation.sql:145', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded FALSE by 0051, live value TRUE, read by nothing under src/. The one of the ten where the CAPABILITY-by-convention default is most worth distrusting: 0051 describes it as "Activate rate-limiting and abuse-pattern detection in Compass", so a reader of the admin list sees abuse defenses reading ON. Whether they are in fact running (by some other gate, or ungated), or not running at all, was NOT determined here. UNEXAMINED, and the first of the ten worth examining.',
+  },
+  {
+    flag: 'COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED', seededIn: '0051_compass_foundation.sql:148', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded FALSE by 0051, live value TRUE, read by nothing under src/. CompassNotificationEngine.ts ships and does not consult it. UNEXAMINED.',
+  },
+  {
+    flag: 'notifications_enabled', seededIn: '0062_notifications_schema.sql:303', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded TRUE by 0062, live value TRUE, read by nothing under src/. Its only code reference is routes/notifications.ts:641, where it is a WRITE target in the admin PUT /admin/notification-defaults flagMap — an admin can set it and gets ok:true back. It is described in 0062 as the "Master switch for the in-app notification system"; nothing consults it, so the master switch does not switch. Same shape as telegraph_suggestions_enabled above: agreement with reality while the value stays TRUE, divergence the first time someone uses it. UNEXAMINED.',
+  },
+  {
+    flag: 'notification_digests_enabled', seededIn: '0062_notifications_schema.sql:305', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded FALSE by 0062, live value TRUE, read by nothing under src/ (write-only at routes/notifications.ts:643). This is the flag docs/ci/BOOTSTRAP.md records as diverging between migration and production. The divergence is real but is NOT an operator toggle: all five flags in 0062\'s INSERT share the live timestamp 2026-06-28 10:54:37.333397+00 and all five are TRUE, so prod was seeded by a hand-written variant of the statement with a uniform TRUE and this one row did not match the written value. ON CONFLICT DO NOTHING means replaying 0062 will never correct it. Note also the near-twin notifications_digest_enabled (0037:29), declared owner-decision above and absent from the live table entirely. The digest feature itself IS built — NotificationDigestService, reachable via POST /internal/notifications/digest, enforced per user through notification_preferences.digests_enabled — and none of that path reads this flag. UNEXAMINED: wire, drop, or align is product scope.',
+  },
+  {
+    flag: 'realtime_activity_enabled', seededIn: '0062_notifications_schema.sql:306', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded TRUE by 0062, live value TRUE, read by nothing under src/ (write-only at routes/notifications.ts:644). The SSE realtime stream it names ships and runs ungated by it. UNEXAMINED.',
+  },
+  {
+    flag: 'safety_notifications_enabled', seededIn: '0062_notifications_schema.sql:307', kind: 'CAPABILITY',
+    disposition: 'owner-decision-pending',
+    reason:
+      'INVISIBLE UNTIL 2026-08-12 — seeded by `INSERT INTO public.feature_flags`, which the seed scanner did not match. Seeded TRUE by 0062, live value TRUE, read by nothing under src/ (write-only at routes/notifications.ts:645). Second of the ten where CAPABILITY-by-convention deserves distrust, for the opposite reason to COMPASS_ABUSE_DEFENSE_ENABLED: safety-critical delivery is the one path that must not be switchable by accident, and an unread flag named for it means the admin list offers a control over safety notifications that does nothing in either position. UNEXAMINED.',
   },
 ];
 
@@ -1106,7 +1229,17 @@ if (!existsSync(MIGRATIONS_DIR)) {
       fail(`UNPARSEABLE: could not read migration ${f}: ${e.message}`);
       continue;
     }
-    for (const m of text.matchAll(/INSERT\s+INTO\s+feature_flags\b/gi)) {
+    // The schema qualifier is OPTIONAL. This matcher used to be
+    // /INSERT\s+INTO\s+feature_flags\b/gi, which silently skipped every
+    // `INSERT INTO public.feature_flags` — 0062_notifications_schema.sql and
+    // 0051_compass_foundation.sql, 14 seeded flags, 10 of them read by nothing.
+    // A scan that misses a seed does not report a gap; it reports that the
+    // population is clean, which is the failure this file's own preamble names
+    // as "the most comfortable possible lie". Guarded by
+    // src/test/flagPolaritySeedScan.test.ts, which counts the statements
+    // independently with a deliberately broader matcher and fails if this one
+    // finds fewer.
+    for (const m of text.matchAll(/INSERT\s+INTO\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?feature_flags\b/gi)) {
       seedStatementCount++;
       // The statement runs to its terminating semicolon. Row literals look like
       // ('flag_name', true|false, 'description').
