@@ -87,6 +87,7 @@ interface PostRow {
   post_status: string | null;
   status: string | null;
   url_shapes: string | null;
+  media_urls_raw: string | null;
 }
 
 // One statement. `media_urls` element classification is done in SQL so the
@@ -126,7 +127,8 @@ const SQL = `
                         else 'bare-path'
                       end,
                    ' | ' order by pm.sort_order)
-            from post_media pm where pm.post_id = p.id)                            as url_shapes
+            from post_media pm where pm.post_id = p.id)                            as url_shapes,
+         array_to_string(coalesce(p.media_urls,'{}'), ' ~~ ')                       as media_urls_raw
     from posts p
    where p.media_count > 0
       or coalesce(array_length(p.media_urls, 1), 0) > 0
@@ -183,7 +185,10 @@ const show = (r: PostRow) =>
   `media_count=${n(r.media_count)}  urls=${n(r.url_count)} ` +
   `(ext ${n(r.external_count)}, storage-shaped ${n(r.storage_shaped_count)})  ` +
   `post_media=${n(r.pm_total)} (ready ${n(r.pm_ready)})  ${r.post_status ?? "—"}/${r.status ?? "—"}` +
-  (r.url_shapes ? `\n      url shape: ${r.url_shapes}` : "");
+  (r.url_shapes ? `\n      url shape: ${r.url_shapes}` : "") +
+  (n(r.external_count) > 0 && r.media_urls_raw
+    ? `\n      media_urls: ${r.media_urls_raw.split(" ~~ ").join("\n                  ")}`
+    : "");
 
 for (const [b, list] of [...buckets.entries()].sort()) {
   if (b === "ok") continue;
