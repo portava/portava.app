@@ -224,11 +224,20 @@ for (const [b, list] of [...buckets.entries()].sort()) {
 // join separates them.
 const linkage = await liveQuery<{
   post_id: string | null; pc_id: string | null; media_url_null: boolean | null;
-  pc_status: string | null; pc_visibility: string | null;
+  pc_status: string | null; pc_visibility: string | null; media_url_shape: string | null; media_url_origin: string | null;
 }>(`
   select p.id as post_id,
          pc.id as pc_id,
          (pc.media_url is null) as media_url_null,
+         case
+           when pc.media_url is null then 'NULL'
+           when pc.media_url ~ '/storage/v1/object/public/' then 'ABSOLUTE-PUBLIC(dead endpoint)'
+           when pc.media_url ~ '/storage/v1/object/sign/'   then 'ABSOLUTE-SIGNED'
+           when pc.media_url ~ '^(post-media|profile-media)/' then 'BARE-KEY'
+           when pc.media_url ~ '^https?://'                 then 'ABSOLUTE-OTHER'
+           else 'OTHER'
+         end as media_url_shape,
+         split_part(pc.media_url, '/storage/', 1) as media_url_origin,
          pc.status as pc_status,
          pc.visibility as pc_visibility
     from posts p
@@ -245,8 +254,36 @@ for (const l of linkage) {
   console.log(
     `  ${l.post_id}  postcard_row=${l.pc_id ? "PRESENT" : "ABSENT"}` +
       (l.pc_id
-        ? `  media_url=${l.media_url_null ? "NULL" : "set"}  ${l.pc_status ?? "—"}/${l.pc_visibility ?? "—"}`
+        ? `  media_url=${l.media_url_shape}  origin=${l.media_url_origin || "—"}  ${l.pc_status ?? "—"}/${l.pc_visibility ?? "—"}`
         : "  → tile would receive media: [] and no legacy mediaUrl"),
+  );
+}
+
+// ── Postcard grid size ───────────────────────────────────────────────────────
+//
+// The media_sign endpoint rate-limits 60 REQUESTS per user per minute. Sign
+// calls are per-tile, not one batch per grid (PostcardsTab hydrates per tile and
+// CachedImage hydrates again inside), so the reachable request count is roughly
+// 2x the number of tiles a passport renders. Whether a grid can cross 60 is an
+// arithmetic question about grid size, and it decides whether the rate-limit
+// explanation is even available.
+const grids = await liveQuery<{ user_id: string; n: number }>(`
+  select user_id, count(*)::int as n
+    from passport_postcards
+   where status = 'active'
+   group by user_id
+   order by count(*) desc
+   limit 10
+`);
+console.log(`\n${line}`);
+console.log("POSTCARD GRID SIZE — top users by active postcard count");
+console.log(line);
+console.log("  media_sign limit is 60 REQUESTS/user/minute; hydration is per-tile (~2 calls/tile).");
+for (const g of grids) {
+  const calls = n(g.n) * 2;
+  console.log(
+    `  user=${g.user_id.slice(0, 8)}  postcards=${String(n(g.n)).padStart(3)}  ` +
+      `~sign calls=${String(calls).padStart(3)}  ${calls > 60 ? "CAN exceed 60/min" : "cannot reach 60/min"}`,
   );
 }
 
