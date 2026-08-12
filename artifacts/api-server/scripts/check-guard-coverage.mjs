@@ -230,6 +230,19 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'the script says out loud rather than reporting a clean pass.',
   },
   {
+    file: 'src/scripts/auditUnreferencedObjects.ts',
+    reason:
+      'Step 02 of the upload staging boundary: a census of storage objects that no column references — the ' +
+      '"abandoned upload" half of the invariant, which checkMediaObjects is structurally blind to because it ' +
+      'walks post_media ROWS. Everything it sends, in full: TWO Management API statements, both SELECTs. ' +
+      'DISCOVERY_SQL reads information_schema.columns for candidate reference columns. The census statement is ' +
+      'a WITH-prefixed SELECT joining storage.objects (names, sizes, created_at — never bytes) against a ' +
+      'UNION ALL of those columns. No INSERT/UPDATE/DELETE, no .insert/.update/.upsert/.delete/.rpc, and no ' +
+      'storage remove/move call anywhere in the file: it reports and exits 0 whatever it finds. Auditing ' +
+      'PRODUCTION is the point — the orphan population is a production fact, and the CI project holds almost ' +
+      'no objects, so a CI-only run proves nothing, which the script says out loud rather than reporting clean.',
+  },
+  {
     file: 'src/scripts/auditMediaUrlShapes.ts',
     reason:
       'URL-SHAPE HISTOGRAM of the durable media URL columns, for the upload-consolidation question of whether ' +
