@@ -1,0 +1,194 @@
+/**
+ * auditPostMediaIntegrity — where does a post's media actually live?
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * Three different defects share one symptom — a blank/fallback tile — and
+ * folding them together produces a fix for the wrong one:
+ *
+ *   A. MUTATION ECHO      the response to a PATCH/publish carried the raw posts
+ *                         row: media_urls stripped by 2083 and no `media` key.
+ *                         Fixed in the #3585 PR. RESPONSE SHAPE ONLY — it
+ *                         cannot affect a persisted row.
+ *
+ *   B. READ-PATH GAP      the row is fine (post_media rows exist) but some
+ *                         surface reads only media_urls, which 2083 emptied.
+ *                         Fix is in the reader.
+ *
+ *   C. ORPHANED COUNT     media_count > 0, media_urls empty, AND no post_media
+ *                         row. The count claims media that exists nowhere. This
+ *                         is a DATA INTEGRITY gap; no response-shape change
+ *                         touches it.
+ *
+ * B and C are indistinguishable from the client — both render the designed
+ * fallback — and indistinguishable from `media_count > 0 AND media_urls = '{}'`
+ * alone, which is why that condition is not a diagnosis. The only thing that
+ * separates them is whether post_media rows exist, which is what this reads.
+ *
+ * It also reports posts whose media_urls hold EXTERNAL references, because
+ * "external media does not render" is a fourth, genuinely separate question and
+ * must not be answered with B's or C's evidence.
+ *
+ * READ-ONLY. Two SELECTs over public.posts and public.post_media. It reports;
+ * it repairs nothing — the remedy differs per bucket and each is a decision.
+ *
+ * USAGE
+ *   npm run audit:post-media-integrity            — whole corpus
+ *   npm run audit:post-media-integrity -- <id>…   — plus a focus list, always
+ *                                                   printed even if clean
+ *
+ * EXIT CODES
+ *   0  report produced (findings are reported, not failed — this is a census)
+ *   2  environment / API error — cannot run
+ *
+ * See src/lib/ciProdReadOnlyAuditGuard.mjs and docs/ci/BOOTSTRAP.md.
+ */
+import "../lib/ciProdReadOnlyAuditGuard.mjs";
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const ACCESS_TOKEN =
+  process.env.SUPABASE_PROJECT_TOKEN || process.env.SUPABASE_ACCESS_TOKEN;
+
+if (!SUPABASE_URL || !ACCESS_TOKEN) {
+  console.error("ERROR: SUPABASE_URL and a Supabase token must be set.");
+  process.exit(2);
+}
+
+const projectRef = new URL(SUPABASE_URL).hostname.split(".")[0];
+
+async function liveQuery<T = Record<string, unknown>>(query: string): Promise<T[]> {
+  const res = await fetch(
+    `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query }),
+    },
+  );
+  if (!res.ok) throw new Error(`Management API ${res.status}: ${await res.text()}`);
+  return (await res.json()) as T[];
+}
+
+/** UUIDs passed after `--`. Validated so nothing unquoted reaches the SQL. */
+const focusIds = process.argv.slice(2).filter((a) => /^[0-9a-fA-F-]{36}$/.test(a));
+
+interface PostRow {
+  id: string;
+  author_id: string | null;
+  media_count: number | null;
+  url_count: number | null;
+  external_count: number | null;
+  storage_shaped_count: number | null;
+  pm_total: number | null;
+  pm_ready: number | null;
+  post_status: string | null;
+  status: string | null;
+}
+
+// One statement. `media_urls` element classification is done in SQL so the
+// external-vs-storage split is computed from the same row the counts come from.
+const SQL = `
+  select p.id,
+         p.author_id,
+         p.media_count,
+         coalesce(array_length(p.media_urls, 1), 0)                       as url_count,
+         (select count(*) from unnest(coalesce(p.media_urls,'{}')) u
+           where u ~ '^https?://'
+             and u !~ '/storage/v1/object/public/(post-media|profile-media)/') as external_count,
+         (select count(*) from unnest(coalesce(p.media_urls,'{}')) u
+           where u ~ '^(post-media|profile-media)/'
+              or u ~ '/storage/v1/object/public/(post-media|profile-media)/')  as storage_shaped_count,
+         (select count(*) from post_media pm where pm.post_id = p.id)          as pm_total,
+         (select count(*) from post_media pm where pm.post_id = p.id
+            and pm.processing_status = 'ready'
+            and coalesce(pm.moderation_status,'') not in ('rejected','flagged')) as pm_ready,
+         p.post_status,
+         p.status
+    from posts p
+   where p.media_count > 0
+      or coalesce(array_length(p.media_urls, 1), 0) > 0
+      or exists (select 1 from post_media pm where pm.post_id = p.id)
+   order by p.created_at
+`;
+
+const rows = await liveQuery<PostRow>(SQL);
+
+if (rows.length === 0) {
+  console.error(
+    "VACUOUS: no post carries media_count, media_urls or a post_media row. " +
+      "Refusing to report 'no integrity gaps' against an empty subject.",
+  );
+  process.exit(2);
+}
+
+const n = (v: number | null | undefined) => Number(v ?? 0);
+
+/** The bucket a row falls in. Deliberately exhaustive — no default 'ok'. */
+function classify(r: PostRow): string {
+  const count = n(r.media_count);
+  const urls = n(r.url_count);
+  const ready = n(r.pm_ready);
+  const total = n(r.pm_total);
+  const ext = n(r.external_count);
+
+  if (count > 0 && urls === 0 && total === 0) return "C · ORPHANED COUNT";
+  if (count > 0 && urls === 0 && ready > 0) return "B · READ-PATH (post_media present)";
+  if (count > 0 && urls === 0 && total > 0 && ready === 0) return "C· post_media present but NONE ready";
+  if (ext > 0 && total === 0) return "EXTERNAL-ONLY (the #3586 question)";
+  if (ready > 0 || urls > 0) return "ok";
+  return "UNCLASSIFIED — investigate";
+}
+
+const buckets = new Map<string, PostRow[]>();
+for (const r of rows) {
+  const b = classify(r);
+  if (!buckets.has(b)) buckets.set(b, []);
+  buckets.get(b)!.push(r);
+}
+
+const line = "═".repeat(78);
+console.log(line);
+console.log("POST MEDIA INTEGRITY CENSUS");
+console.log(line);
+console.log(`  posts carrying any media signal : ${rows.length}`);
+for (const [b, list] of [...buckets.entries()].sort()) {
+  console.log(`  ${b.padEnd(46)} ${list.length}`);
+}
+
+const show = (r: PostRow) =>
+  `  ${r.id}  author=${(r.author_id ?? "—").slice(0, 8)}  ` +
+  `media_count=${n(r.media_count)}  urls=${n(r.url_count)} ` +
+  `(ext ${n(r.external_count)}, storage-shaped ${n(r.storage_shaped_count)})  ` +
+  `post_media=${n(r.pm_total)} (ready ${n(r.pm_ready)})  ${r.post_status ?? "—"}/${r.status ?? "—"}`;
+
+for (const [b, list] of [...buckets.entries()].sort()) {
+  if (b === "ok") continue;
+  console.log(`\n${line}\n${b} — ${list.length}\n${line}`);
+  for (const r of list) console.log(show(r));
+}
+
+if (focusIds.length > 0) {
+  console.log(`\n${line}\nFOCUS — ${focusIds.length} id(s) named on the command line\n${line}`);
+  for (const id of focusIds) {
+    const r = rows.find((x) => x.id === id);
+    if (!r) {
+      // Not "clean" — a post carrying no media signal at all cannot be the one
+      // rendering a media tile, and that is a finding, not an absence.
+      console.log(`  ${id}  NOT FOUND among posts carrying any media signal`);
+      continue;
+    }
+    console.log(`  bucket: ${classify(r)}`);
+    console.log(show(r));
+  }
+}
+
+console.log(`\n${line}`);
+console.log("Census only. Nothing repaired — the remedy differs per bucket:");
+console.log("  B  fix the reader; the row is intact.");
+console.log("  C  the count claims media that exists nowhere; decide whether to");
+console.log("     re-derive media_count or to recover the objects.");
+console.log("  EXTERNAL-ONLY  a separate question from both.");
+process.exit(0);

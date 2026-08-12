@@ -243,6 +243,23 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'no objects, so a CI-only run proves nothing, which the script says out loud rather than reporting clean.',
   },
   {
+    file: 'src/scripts/auditPostMediaIntegrity.ts',
+    reason:
+      'POST MEDIA INTEGRITY CENSUS — separates three defects that share one symptom (a fallback tile): the '
+      + 'MUTATION ECHO response shape fixed by the #3585 PR, a READ-PATH gap where post_media rows exist but a '
+      + 'surface reads only the 2083-emptied media_urls, and an ORPHANED media_count where the count claims '
+      + 'media that exists in neither store. The last two are indistinguishable from the client and from the '
+      + '`media_count > 0 AND media_urls = {}` condition alone, so that condition is not a diagnosis; only the '
+      + 'presence of post_media rows separates them. Everything it sends, in full: ONE Management API '
+      + 'statement, a SELECT over public.posts with correlated sub-SELECTs over public.post_media and over '
+      + 'unnest(media_urls) to classify elements as external vs storage-shaped. No INSERT/UPDATE/DELETE, no '
+      + 'DDL, no .insert/.update/.upsert/.delete/.rpc anywhere in the file — it reports and repairs nothing, '
+      + 'because the remedy differs per bucket and each is a decision. Any post ids passed after `--` are '
+      + 'regex-validated as UUIDs before reaching the query. Auditing PRODUCTION is the point: the buckets are '
+      + 'a statement about production rows, and the CI project holds almost no posts. Refuses to report rather '
+      + 'than reporting clean when its subject is empty: zero posts carrying any media signal exits 2.',
+  },
+  {
     file: 'src/scripts/auditFlagDrift.ts',
     reason:
       'FEATURE FLAG DRIFT CENSUS — reconciles the feature_flags table against what the migrations seed, in both ' +
