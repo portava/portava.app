@@ -57,10 +57,17 @@
 -- ── NOTE ON PROVING THIS ────────────────────────────────────────────────────
 --
 -- A test asserting "an authenticated credential cannot INSERT under these
--- prefixes" passes VACUOUSLY against any project that never had the grant.
--- The CI project is exactly that project: no migration declares these
--- policies, so CI has never had them, and such a test is green there before
--- and after this migration. It proves nothing.
+-- prefixes" proves nothing about production, because NO MIGRATION DECLARES
+-- these policies. Whether such a test is red or green in CI depends entirely
+-- on what state a previous run happened to leave behind, not on anything this
+-- migration changes.
+--
+-- That is not hypothetical. On 2026-08-12 the CI project was found already
+-- holding both policies, left over from an earlier proof-run — a naive apply
+-- errored `already exists`. An earlier revision of this comment asserted CI
+-- "has never had them"; that was wrong as a statement of fact, and the way it
+-- was wrong is the point: a CI red-proof here would have been measuring
+-- residue.
 --
 -- The non-vacuous proof is the before/after production run of
 -- audit:staging-boundary-grant: it exits 0 with both bodies printed before

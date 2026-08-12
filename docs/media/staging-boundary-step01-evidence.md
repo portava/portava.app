@@ -171,6 +171,61 @@ about, and Step A is what rules it out.
 
 Record both outputs against this document when done.
 
+## Execution record — before-state plus rollback-proven
+
+Operator-executed 2026-08-12 through the sanctioned path. **Step C (the
+production DROP) is HELD and has not run.**
+
+### Step A — before (read-only, production `ajrurzioarfkagpuxfnb`) — exit 0
+
+| Measure | Value |
+|---|---|
+| `post-media` under `memories/` | **0** |
+| `post-media` under `stories/` | **0** |
+| `stories` rows | 0 |
+| `post-media` objects, total | 35 |
+
+Both policy bodies captured. **Gate satisfied.**
+
+### Step B — rollback validation — PROVEN
+
+Applied the captured re-CREATE to the CI project, deparsed, diffed against
+production live: **identical, character-for-character on `qual` and `with_check`
+for both policies.** CI copies dropped again; CI left clean.
+
+Two findings from the run:
+
+1. **The premise is confirmed.** No forward migration creates the grant. The
+   only migration referencing either name is the DROP itself
+   (`20260815_close_memories_stories_grant.sql`, which embeds the re-CREATE as
+   its rollback). The grant is genuine undeclared production drift.
+
+2. **Correction — the CI project was not clean.** It already held both policies
+   from a prior proof-run, so a naive apply errored `already exists`. That is
+   leftover state, **not a declaration**. It is also why a plain CI red-proof
+   *looked* feasible earlier: the policies were present in CI for a reason
+   unrelated to any migration.
+
+   This corrects a statement made when the migration was written — that CI "has
+   never had them." That was wrong as a factual claim about the project's state.
+   The reasoning it supported is unaffected and still holds: because **no
+   migration declares these policies**, a CI-based red-proof asserts nothing
+   about production drift, and its result would depend on whatever residue a
+   previous run left behind. Which is precisely what was found. The dirty CI
+   state makes the argument for the before/after production proof *stronger*,
+   not weaker.
+
+### Step C — HELD
+
+The production DROP has **not** been applied. It is a live security-policy
+removal that will begin rejecting direct video/HEIC inserts into the durable
+bucket — an outward-facing behaviour change — and production writes are the
+user's own explicit release. Awaiting their authorisation.
+
+### Step D — pending
+
+Runs immediately after C. Expect **exit 1** naming both policies absent.
+
 ## What this evidence does not establish
 
 - **Whether the DELETE policy backs a live user-facing delete.** The packet's
