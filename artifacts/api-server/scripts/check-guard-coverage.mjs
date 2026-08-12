@@ -243,6 +243,21 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'no objects, so a CI-only run proves nothing, which the script says out loud rather than reporting clean.',
   },
   {
+    file: 'src/scripts/auditFlagDrift.ts',
+    reason:
+      'FEATURE FLAG DRIFT CENSUS — reconciles the feature_flags table against what the migrations seed, in both ' +
+      'directions at once. Everything it sends, in full: ONE Management API statement, a SELECT — ' +
+      '`select flag, enabled from feature_flags order by flag`. No INSERT/UPDATE/DELETE, no DDL, no ' +
+      '.insert/.update/.upsert/.delete/.rpc anywhere in the file; the seeded half is computed by reading .sql ' +
+      'files off disk, not from any database. It reports and exits 0 whatever it finds — drift is the subject, ' +
+      'not a failure, and every remedy is a deliberate migration. Auditing PRODUCTION is the entire point: ' +
+      '"live, never seeded" is a statement about the production table specifically, and the CI project is ' +
+      'seeded from the migrations by construction, so a CI-only run would report near-zero drift and mean ' +
+      'nothing. Refuses to report rather than reporting clean when its subject is empty: zero migration files, ' +
+      'zero INSERT statements, zero extracted names, or zero live rows each exit 2, and it exits 2 if the ' +
+      'seeded-and-live plus live-only identity does not equal the live count.',
+  },
+  {
     file: 'src/scripts/auditStagingBoundaryGrant.ts',
     reason:
       'THE STEP 01 GATE of the upload staging boundary, as an instrument. Step 01 drops two live storage ' +
