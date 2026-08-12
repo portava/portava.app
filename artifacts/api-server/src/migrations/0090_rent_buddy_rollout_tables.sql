@@ -192,14 +192,37 @@ INSERT INTO feature_flags (flag, enabled, description) VALUES
 ON CONFLICT (flag) DO UPDATE SET enabled = TRUE;
 
 -- Remaining MVP flags — insert only; do not overwrite operator choices.
+--
+-- SEED NEUTRALISED 2026-08-12 — two rows removed from this statement:
+-- RENT_BUDDY_CASH_BALANCE_ENABLED and RENT_BUDDY_DELAYED_POSTING_REQUIRED.
+--
+-- Both were seeded here, live in production, and read by NOTHING in either
+-- shipping tree. The seven that remain are all genuinely read: RENT_BUDDY_MVP_MODE
+-- and the six gates consulted through getFlag() in routes/rentABuddyRollout.ts,
+-- each returning a 403 when off.
+--
+-- This is the REMOVE-FROM-SEED outcome of docs/ops/flag-disposition.md: the
+-- concept may still be wanted, but the seed path must not auto-create the row.
+-- 2086_retire_unread_flags.sql deletes it from databases that already ran this
+-- migration; removing it here is the other half, so a fresh database never
+-- creates it again. Deleting without neutralising would have the next restore
+-- re-create exactly what 2086 removed. Editing an applied migration is
+-- deliberate and is the same remedy 2080 applied to the COMPASS_* rows.
+--
+-- RENT_BUDDY_DELAYED_POSTING_REQUIRED is worth a note: the name is a
+-- REQUIREMENT, not a capability, so an operator could reasonably read it as a
+-- policy switch that imposes a posting delay. It imposed nothing in either
+-- position.
+--
+-- Their INERT_SEEDED_FLAGS entries are removed from
+-- scripts/check-flag-polarity.mjs in this commit, as rule R7 requires once a
+-- flag is no longer seeded.
 INSERT INTO feature_flags (flag, enabled, description) VALUES
   ('RENT_BUDDY_MVP_MODE',                FALSE, 'MVP mode: restrict categories to city/language/arrival/shopping/content; block nightlife, group, concierge, packages, bidding, instant buddy, cash balance in high-risk cities, private meetup, unverified users'),
   ('RENT_BUDDY_ADMIN_ONLY_MODE',         FALSE, 'Admin-only mode: only users with admin role can access Rent a Buddy'),
   ('RENT_BUDDY_BETA_ONLY_MODE',          FALSE, 'Beta-only mode: only users with active beta access can use Rent a Buddy'),
   ('RENT_BUDDY_NIGHTLIFE_ENABLED',       FALSE, 'Enable nightlife category bookings'),
   ('RENT_BUDDY_GROUP_BOOKINGS_ENABLED',  FALSE, 'Enable group bookings (group_size > 4)'),
-  ('RENT_BUDDY_CASH_BALANCE_ENABLED',    FALSE, 'Enable deposit+cash payment mode globally'),
   ('RENT_BUDDY_PACKAGES_ENABLED',        FALSE, 'Enable pre-built packages in booking flow'),
-  ('RENT_BUDDY_OFFERS_ENABLED',          FALSE, 'Enable buddy offers/bidding system'),
-  ('RENT_BUDDY_DELAYED_POSTING_REQUIRED',FALSE, 'Require delayed posting for all location-tagged content during bookings')
+  ('RENT_BUDDY_OFFERS_ENABLED',          FALSE, 'Enable buddy offers/bidding system')
 ON CONFLICT (flag) DO NOTHING;

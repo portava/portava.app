@@ -254,12 +254,70 @@ a declaration list, not an exemption switch — the same argument the
 seeded at all, so R6 never asks about it and it gets no entry. R8 enforces that:
 an `APP_TREE_READS` entry for an unseeded flag is reported as stale.
 
-## Remedy plan — migrations deferred to a follow-up
+## Implementation — built, CI-verified, production staged
 
-This commit lands **evidence and guard only**. No `feature_flags` row is created,
-deleted or toggled anywhere, and no migration is added. The table below is the
-plan the follow-up implements, and it is materially different from what the old
-numbers implied.
+Owner approved the classification on 2026-08-12. The migrations are committed and
+verified against the CI project; **production is untouched and waits on the
+owner's explicit go.**
+
+| Outcome | Population | Count | Migration / action | CI result |
+|---|---|---|---|---|
+| **KEEP** — codify | live, unseeded, read | 9 | `2084` idempotent `INSERT … ON CONFLICT DO NOTHING` at live value | 9/9 present |
+| **KEEP** — apply existing seed | seeded, absent, read | 6 | `2085` idempotent `INSERT`, all `false` | 6/6 present |
+| **DROP** — delete row | live, unseeded, unread | 21 | `2086` `DELETE` | 0/21 remain |
+| **DROP** — neutralise seed | seeded, absent, unread | 8 | seed removed from `0037`; `2086` `DELETE` is a zero-row no-op in prod | 0/8 remain |
+| **REMOVE-FROM-SEED** | seeded **and** live, unread | 4 | row deleted by `2086` **and** seed removed from `0090`/`2068` | 0/4 remain |
+
+**Production effect when applied: 168 → 149 rows.** `2084` inserts nothing (all
+nine already exist — it reconciles the repository, not production), `2085`
+inserts 6, `2086` deletes 25 of its 33 names (the other 8 are already absent).
+
+### CI verification (`hwokxgbmezheskbzskfr`)
+
+A fixture mirroring production was seeded first — the 25 DROP rows at their live
+values, the 9 KEEP-A rows at their live values, and the 3 wired siblings — so the
+migrations ran against representative state rather than an empty table.
+
+- All three applied in order, cleanly; every post-condition passed.
+- KEEP-A live values **byte-identical before and after**: `ON CONFLICT DO
+  NOTHING` confirmed a genuine no-op, not an overwrite.
+- `rent_buddy_allow_bookings_without_kyc` reads **false** after convergence.
+- Re-applied a second time: row count unchanged. **Idempotent.**
+- **Audit-log guard red-proofed**: an audit row was planted, `2086` refused with
+  its `REFUSING` message, and the transaction rolled back leaving the flag
+  intact. The `ON DELETE CASCADE` protection is real, not decorative.
+- `check:flag-polarity` green throughout; seeded population 152 → 149
+  (−12 neutralised, +9 codified). 91 flag tests pass.
+
+Production apply block and per-block verification queries are staged, unversioned,
+at `_incoming/prod-apply-flag-reconciliation.sql`. It begins with a full-table
+snapshot step, because **the 25 deletes are the irreversible part** and no
+migration restores them.
+
+## Adjacent dead code — recorded, deliberately NOT touched
+
+The approved unit was the classification, not the cleanup it makes visible.
+Dropping these flags leaves the following orphaned; each is a follow-up, and none
+was changed:
+
+| Location | What is now dead | Why it was left |
+|---|---|---|
+| `api-server/src/lib/featureFlags.ts:106-107` | `live_places_world_feed_enabled` and `place_chat_enabled` keys in `LIVE_PLACES_REQUIREMENTS` | The flags are gone, so `resolveFeatureFlags()` will never find them in `rawFlags` and the entries are inert. Removing them is a code change to a shared helper, outside this unit. |
+| `travel-buddy/src/context/FeatureFlagsContext.tsx:95-96` | the client mirror of those same two keys | Same, in the app tree. The two maps must be changed together or they drift. |
+| `api-server/src/services/ranking/DiscoveryRankingService.ts:491,797` | two comments referencing `ACTIVITY_SCORE_MAX_BOOST` | Prose only — no code reads it. Left because editing comments is not a disposition. |
+| `routes/admin.ts` / `routes/featureFlags.ts` filter lists | the 33 retired names are **not** added | Those lists keep behaviour identical on databases where the retirement has not yet been applied. Adding 33 names is a code change outside this unit — see the staged block. |
+
+> **`ACTIVITY_SCORE_VERSION` is NOT dead code.** The flag of that name is
+> dropped, but the four references in `CreatorActivityScoreService.ts:50,310` and
+> `adminRankingMetrics.ts:44,507` are a TypeScript const `= "1.0"` that has
+> nothing to do with the flag row. It is live code and must not be removed. This
+> name collision is why the flag reported four "references" and still verdicts
+> DROP.
+
+## Original remedy plan (superseded by the table above)
+
+The plan as first drafted, kept for the record. It is what the implementation
+above executes.
 
 | Bucket | Count | Remedy |
 |---|---|---|

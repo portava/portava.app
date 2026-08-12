@@ -537,68 +537,8 @@ const INERT_SEEDED_FLAGS = [
   // to ask about them. Each was then read in context by the census
   // (docs/ops/flag-disposition.md), which is why these carry `remove-from-seed`
   // rather than `owner-decision-pending`: they were examined on discovery.
-  {
-    flag: 'RENT_BUDDY_CASH_BALANCE_ENABLED', seededIn: '0090_rent_buddy_rollout_tables.sql:201', kind: 'CAPABILITY',
-    disposition: 'remove-from-seed',
-    reason:
-      'Seeded false by 0090 in the same VALUES list as the six rollout flags that ARE read through getFlag() in routes/rentABuddyRollout.ts. This one is never passed to it, and appears nowhere else in either shipping tree. A cash-balance surface that was planned, seeded and never built. Retirement migration to follow the 2026-08-12 census.',
-  },
-  {
-    flag: 'RENT_BUDDY_DELAYED_POSTING_REQUIRED', seededIn: '0090_rent_buddy_rollout_tables.sql:204', kind: 'CAPABILITY',
-    disposition: 'remove-from-seed',
-    reason:
-      'Seeded false by 0090 alongside the six read rollout flags; never passed to getFlag() and absent from both shipping trees. Note the name is a REQUIREMENT rather than a capability — "delayed posting required" reads as a policy switch, so an operator could reasonably believe turning it on imposes a delay. Nothing consults it in either position. Retirement migration to follow the 2026-08-12 census.',
-  },
-  {
-    flag: 'live_places_world_feed_enabled', seededIn: '2068_live_places_rollout_flags.sql:5', kind: 'CAPABILITY',
-    disposition: 'remove-from-seed',
-    reason:
-      'Seeded by 2068 and present as a KEY in LIVE_PLACES_REQUIREMENTS (lib/featureFlags.ts:106) and in the app\'s mirror of that map, but never passed to isLivePlacesCapabilityEnabled() and never queried by the app. Being a key in a requirements map is not being read: resolveFeatureFlags() recomputes it for the public endpoint, and no caller consumes the result. Retirement migration to follow the 2026-08-12 census.',
-  },
-  {
-    flag: 'place_chat_enabled', seededIn: '2068_live_places_rollout_flags.sql:6', kind: 'CAPABILITY',
-    disposition: 'remove-from-seed',
-    reason:
-      'Seeded by 2068; same shape as live_places_world_feed_enabled above — a key in LIVE_PLACES_REQUIREMENTS (lib/featureFlags.ts:107) and its client mirror, never passed as a capability. Its sibling shared_moments_chat_enabled IS read (routes/sharedMoments.ts:109), so this is a two-surface chat rollout where only one surface was wired. Retirement migration to follow the 2026-08-12 census.',
-  },
 
   // ── location_phase*: the oldest rows in the table, from 0037. ────────────
-  {
-    flag: 'location_phase1_gps', seededIn: '0037_feature_flags.sql:13', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'One of the six rows seeded by 0037 under its "Location intelligence phases 1-6" comment (:11-18), the migration that CREATED the feature_flags table. Seeded false, no reader. These are the oldest flags in the table and the phased rollout they describe has since shipped under other names (safe_return_*, trip_crew_*, plan_geofence_enabled are all read), so this is very likely dead scaffolding rather than a missing gate. OWNER DECISION: most likely remove-from-seed, but confirm against the phase plan before dropping six rows.',
-  },
-  {
-    flag: 'location_phase2_zones', seededIn: '0037_feature_flags.sql:14', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'One of the six rows seeded by 0037 under its "Location intelligence phases 1-6" comment (:11-18), the migration that CREATED the feature_flags table. Seeded false, no reader. These are the oldest flags in the table and the phased rollout they describe has since shipped under other names (safe_return_*, trip_crew_*, plan_geofence_enabled are all read), so this is very likely dead scaffolding rather than a missing gate. OWNER DECISION: most likely remove-from-seed, but confirm against the phase plan before dropping six rows.',
-  },
-  {
-    flag: 'location_phase3_geofence', seededIn: '0037_feature_flags.sql:15', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'One of the six rows seeded by 0037 under its "Location intelligence phases 1-6" comment (:11-18), the migration that CREATED the feature_flags table. Seeded false, no reader. These are the oldest flags in the table and the phased rollout they describe has since shipped under other names (safe_return_*, trip_crew_*, plan_geofence_enabled are all read), so this is very likely dead scaffolding rather than a missing gate. OWNER DECISION: most likely remove-from-seed, but confirm against the phase plan before dropping six rows.',
-  },
-  {
-    flag: 'location_phase4_discovery', seededIn: '0037_feature_flags.sql:16', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'One of the six rows seeded by 0037 under its "Location intelligence phases 1-6" comment (:11-18), the migration that CREATED the feature_flags table. Seeded false, no reader. These are the oldest flags in the table and the phased rollout they describe has since shipped under other names (safe_return_*, trip_crew_*, plan_geofence_enabled are all read), so this is very likely dead scaffolding rather than a missing gate. OWNER DECISION: most likely remove-from-seed, but confirm against the phase plan before dropping six rows.',
-  },
-  {
-    flag: 'location_phase5_pulse', seededIn: '0037_feature_flags.sql:17', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'One of the six rows seeded by 0037 under its "Location intelligence phases 1-6" comment (:11-18), the migration that CREATED the feature_flags table. Seeded false, no reader. These are the oldest flags in the table and the phased rollout they describe has since shipped under other names (safe_return_*, trip_crew_*, plan_geofence_enabled are all read), so this is very likely dead scaffolding rather than a missing gate. OWNER DECISION: most likely remove-from-seed, but confirm against the phase plan before dropping six rows.',
-  },
-  {
-    flag: 'location_phase6_crew', seededIn: '0037_feature_flags.sql:18', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'One of the six rows seeded by 0037 under its "Location intelligence phases 1-6" comment (:11-18), the migration that CREATED the feature_flags table. Seeded false, no reader. These are the oldest flags in the table and the phased rollout they describe has since shipped under other names (safe_return_*, trip_crew_*, plan_geofence_enabled are all read), so this is very likely dead scaffolding rather than a missing gate. OWNER DECISION: most likely remove-from-seed, but confirm against the phase plan before dropping six rows.',
-  },
 
   // ── Individually-seeded flags with no reader. ────────────────────────────
   {
@@ -638,12 +578,6 @@ const INERT_SEEDED_FLAGS = [
       'Seeded false by 0194, no reader. Admin regeneration exists in routes/adminVisuals.ts but gates on ai_visual_admin_review_enabled instead, so this row is a duplicate intention that was never wired. OWNER DECISION: most likely remove-from-seed; confirm the admin path is the intended gate.',
   },
   {
-    flag: 'notifications_digest_enabled', seededIn: '0037_feature_flags.sql:29', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'Seeded false by 0037, no reader. Push delivery is gated elsewhere (push_notifications_enabled is seeded and the delivery path is in lib/push*), so the digest flag is scaffolding for a digest feature that did not ship. OWNER DECISION: wire or drop.',
-  },
-  {
     flag: 'passport_contribution_enabled', seededIn: '0037_feature_flags.sql:25', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
@@ -660,12 +594,6 @@ const INERT_SEEDED_FLAGS = [
     disposition: 'owner-decision',
     reason:
       'Seeded false by the stamp system v2 migration, no reader. Manual admin award exists in the admin stamp routes but is gated by requireAdmin rather than by this flag. OWNER DECISION: most likely remove-from-seed, since the authorization check is the real gate.',
-  },
-  {
-    flag: 'telegraph_suggestions_enabled', seededIn: '0037_feature_flags.sql:28', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'Seeded TRUE by 0037, no reader — so telegraph suggestions are unconditionally on and this switch cannot turn them off. Same shape as the events_* family: agreement with reality today, divergence the first time it is used. OWNER DECISION: wire or drop.',
   },
 
 
@@ -977,6 +905,19 @@ const DIRECT_READS = [
 const APP_TREE_ROOT = resolve(PKG_ROOT, '..', 'travel-buddy');
 
 const APP_TREE_READS = [
+  {
+    flag: 'MEDIA_HIDDEN_GEMS_CREATE_ENABLED',
+    file: 'src/components/media/MediaQuickCreateSheet.tsx',
+    line: 128,
+    reason:
+      "isEnabled('MEDIA_HIDDEN_GEMS_CREATE_ENABLED') from the app's FeatureFlagsContext gates whether the " +
+      'Add-a-Gem entry appears in the Media tab quick-create sheet. Entered this list on 2026-08-12 when ' +
+      '2084_codify_live_read_flags.sql codified the flag: it was live-but-unseeded before, so R6 never asked ' +
+      'about it, and seeding it is what makes the question arise. This flag is the precedent the whole ' +
+      'reconciliation rests on — it lived ONLY in production, so a restored environment got no row, read false ' +
+      'through the fail-closed helper, and the entry point was permanently invisible, which was mistaken for a ' +
+      'deliberate design choice rather than a missing row.',
+  },
   {
     flag: 'city_launch_mode',
     file: 'src/screens/admin/featureFlags.machine.ts',
