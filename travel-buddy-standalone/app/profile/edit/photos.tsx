@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Image, ActivityIndicator, Pressable, Alert, StyleSheet } from 'react-native';
 import { Camera, ImagePlus } from 'lucide-react-native';
-import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES } from '../../../src/lib/imageRender';
+import { renderAvatarImage, renderCoverImage, MAX_ORIGINAL_BYTES, ImageStripFailedError } from '../../../src/lib/imageRender';
 import {
   getMyProfile, updateMyProfile, uploadAvatar, uploadCover,
   deleteOrphanedAvatar, deleteOrphanedCover,
@@ -117,7 +117,15 @@ export default function PhotosScreen() {
 
       if (avatarUri) {
         setPhotoPhase('optimizing');
-        const rendered = await renderAvatarImage(avatarUri);
+        let rendered;
+        try {
+          rendered = await renderAvatarImage(avatarUri);
+        } catch (err) {
+          setSaveError(err instanceof ImageStripFailedError ? err.message : 'Photo upload failed. Try again.');
+          setSaveState('error');
+          saveLockRef.current = false;
+          return;
+        }
         setPhotoPhase('uploading');
         const upRes = await uploadAvatar(rendered.uri, rendered.mimeType);
         setPhotoPhase('idle');
@@ -135,7 +143,15 @@ export default function PhotosScreen() {
 
       if (coverUri) {
         setPhotoPhase('optimizing');
-        const rendered = await renderCoverImage(coverUri, coverOriginalWidthRef.current);
+        let rendered;
+        try {
+          rendered = await renderCoverImage(coverUri, coverOriginalWidthRef.current);
+        } catch (err) {
+          setSaveError(err instanceof ImageStripFailedError ? err.message : 'Photo upload failed. Try again.');
+          setSaveState('error');
+          saveLockRef.current = false;
+          return;
+        }
         setPhotoPhase('uploading');
         const upRes = await uploadCover(rendered.uri, rendered.mimeType);
         setPhotoPhase('idle');
