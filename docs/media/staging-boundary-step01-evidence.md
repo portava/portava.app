@@ -97,6 +97,80 @@ CREATE POLICY "post_media_memories_stories_delete" ON storage.objects
   USING (((bucket_id = 'post-media'::text) AND ((storage.foldername(name))[1] = ANY (ARRAY['memories'::text, 'stories'::text])) AND ((storage.foldername(name))[2] = (auth.uid())::text)));
 ```
 
+## Operator runbook — the proof, and applying the drop
+
+Ruling 2026-08-12: the red-proof is the **before/after production run**, and the
+rollback DDL is validated **once**, as an operator one-shot against the CI
+project. Neither becomes standing test machinery. The reasoning: options that
+bake this into a suite would grant tests Management API DDL power **forever**,
+to prove a one-time drift removal — durable machinery for a one-shot event.
+
+All four steps are operator-executed through the sanctioned path.
+
+### Step A — prove the grant is present (before)
+
+```
+cd artifacts/api-server
+PORTAVA_PROD_READ_ONLY_AUDIT='read-only-audit-against-production' \
+KNOWN_PROD_PROJECT_REF='ajrurzioarfkagpuxfnb' \
+npm run audit:staging-boundary-grant
+```
+
+Expect **exit 0**, both bodies printed, both prefixes reporting 0 objects.
+If it exits 1, stop — either a prefix is no longer empty, or a policy is
+already gone. Do not apply.
+
+### Step B — validate the rollback DDL, once, against the CI project
+
+One-shot. Not a test, not repeated. Against the **CI** project, never
+production.
+
+1. Apply the captured re-CREATE (both statements from "The rollback" above) to
+   the CI project.
+2. Read back pg's own deparsed form:
+
+```sql
+select policyname, cmd, permissive, roles::text, qual, with_check
+  from pg_policies
+ where schemaname = 'storage' and tablename = 'objects'
+   and policyname in ('post_media_storage_memories_stories_insert',
+                      'post_media_memories_stories_delete')
+ order by policyname;
+```
+
+3. Diff `qual` and `with_check` against the production bodies recorded above.
+   **They must match character for character.** A mismatch means the rollback
+   would restore something subtly different from what was there — which is the
+   whole failure this step exists to catch.
+4. Drop both policies from the CI project again, leaving it as found:
+
+```sql
+DROP POLICY IF EXISTS "post_media_storage_memories_stories_insert" ON storage.objects;
+DROP POLICY IF EXISTS "post_media_memories_stories_delete" ON storage.objects;
+```
+
+### Step C — apply the migration to production
+
+Apply `src/migrations/20260815_close_memories_stories_grant.sql` through the
+normal production migration path (`docs/production-migration-runbook.md`).
+
+### Step D — prove the grant is gone (after)
+
+Re-run the Step A command. Expect **exit 1**, reporting:
+
+```
+❌ policy post_media_storage_memories_stories_insert is NOT present live.
+❌ policy post_media_memories_stories_delete is NOT present live.
+```
+
+That inversion — exit 0 with bodies before, exit 1 with both absent after — is
+the red-proof. Its positive control is Step A itself: the same instrument, same
+run, demonstrably able to see the policies when they exist. An absence assertion
+that never showed it could detect presence is the vacuity the packet warns
+about, and Step A is what rules it out.
+
+Record both outputs against this document when done.
+
 ## What this evidence does not establish
 
 - **Whether the DELETE policy backs a live user-facing delete.** The packet's
