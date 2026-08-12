@@ -119,7 +119,7 @@ import {
   fetchTripEntryRequirements,
   listMyPassports,
   setTripPassport,
-} from '../../../services/entryRequirements';
+} from '../../../services/entryRequirements.ts';
 
 const mockFetchEntry   = fetchTripEntryRequirements as jest.Mock;
 const mockListPassports = listMyPassports            as jest.Mock;
