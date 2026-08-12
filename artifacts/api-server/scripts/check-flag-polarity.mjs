@@ -38,14 +38,22 @@
 //      string concatenation in CompassNotificationEngine) blocks a category.
 //      Neither contains "disable". A name-pattern rule never looks at them.
 //
-//   2. It is blind to who is actually reading. FIVE files under src/ define
-//      their OWN local function named `isFlagEnabled` — routes/airport.ts,
-//      routes/hiddenGems.ts, routes/passportStamps.ts, routes/safeReturn.ts,
-//      lib/safeReturnScheduler.ts — and they do not agree with the shared
-//      helper or with each other. routes/airport.ts's copy returns TRUE on a DB
-//      error, the exact opposite of lib/featureFlags.ts. A rule that greps for
-//      `isFlagEnabled(` scores all five as compliant with a contract they do
-//      not implement.
+//   2. It is blind to who is actually reading. Files under src/ define their
+//      OWN local function named `isFlagEnabled`, and they do not agree with the
+//      shared helper or with each other. A rule that greps for `isFlagEnabled(`
+//      scores every one of them as compliant with a contract they do not
+//      implement.
+//
+//      This paragraph used to name FIVE such files and assert that number in
+//      prose. It was wrong twice over, which is the argument for SHADOW_READERS
+//      below being the machine-checked inventory instead: it omitted
+//      lib/accountDeletionScheduler.ts (the population was SIX), and the sixth
+//      is precisely the one the Phase 0 report had already flagged as the
+//      shadow a call-site check would misread. routes/airport.ts's copy was the
+//      one that genuinely diverged — it returned TRUE on a DB error and TRUE on
+//      a missing row, the exact opposite of lib/featureFlags.ts. It has since
+//      been deleted in favour of the shared helper, leaving five declared
+//      shadows, all of them fail-closed.
 //
 // So the subject is the POPULATION OF FLAG NAMES, and the rule is that each
 // member is classified and read through a reader that matches. Same move as
@@ -621,17 +629,13 @@ const INERT_SEEDED_FLAGS = [
 // with each other.
 // ─────────────────────────────────────────────────────────────────────────────
 const SHADOW_READERS = [
-  {
-    file: 'routes/airport.ts',
-    fn: 'isFlagEnabled',
-    reason:
-      'SHADOW THAT FAILS OPEN — `if (error) return true; if (data == null) return true;`. The exact opposite ' +
-      'of lib/featureFlags.ts isFlagEnabled, under the same name, feeding ~18 call sites. Verified by hand at ' +
-      'c89f09a77: every flag it reads is a CAPABILITY (airport_mode_enabled, layover_*, airport_pulse_enabled), ' +
-      'so the blast radius is "airport features stay ON when the DB is unhealthy" — wrong, but not the ' +
-      'kill-switch class. It reads NO stop flag, which is what the check verifies. Left as-is deliberately: ' +
-      'changing it is a behaviour change to a dev-convenience default, out of scope for the polarity work.',
-  },
+  // routes/airport.ts had the one shadow that FAILED OPEN — `if (error) return
+  // true; if (data == null) return true;`, the exact inverse of the shared
+  // helper under the same name, feeding every gate in that router. It was
+  // deleted (not corrected in place) in favour of importing the shared helper,
+  // so there is no longer a shadow there to declare. Red-proofed by
+  // src/test/airportFlagPolarity.test.ts, which drives the real routes with a
+  // no-row and an erroring feature_flags table and asserts they stay closed.
   {
     file: 'routes/passportStamps.ts',
     fn: 'isFlagEnabled',

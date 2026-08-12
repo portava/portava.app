@@ -26,6 +26,15 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+// Capability gates are read through the SHARED fail-closed helper. This file
+// used to define its own `isFlagEnabled` under the same name that failed OPEN
+// (`if (error) return true; if (data == null) return true;`) as a dev-env
+// convenience — the exact inverse of the shared contract, feeding every gate in
+// this router. All five flags it reads (airport_mode_enabled, layover_*,
+// airport_pulse_enabled) are seeded and enabled in production, so deleting the
+// shadow is behaviour-neutral there and only changes the unhealthy-DB case,
+// which now stays closed like every other capability gate in the codebase.
+import { isFlagEnabled } from "../lib/featureFlags.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
   resolveByIata,
@@ -171,26 +180,6 @@ async function mirrorSessionToTrip(
       await sc.from("trip_plan_items").insert(record);
     }
   } catch { /* best-effort */ }
-}
-
-// ── Feature flag helper ────────────────────────────────────────────────────────
-
-async function isFlagEnabled(db: ReturnType<typeof getServiceClient>, flag: string): Promise<boolean> {
-  if (!db) return false;
-  try {
-    const { data, error } = await db
-      .from("feature_flags")
-      .select("enabled")
-      .eq("flag", flag)
-      .maybeSingle();
-    // DB error (table not yet migrated) → fail-open so dev env works.
-    if (error) return true;
-    // No row → flag not seeded yet, treat as enabled.
-    if (data == null) return true;
-    return Boolean((data as any).enabled);
-  } catch {
-    return true;
-  }
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
