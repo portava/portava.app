@@ -96,9 +96,10 @@ export function EventDiscoveryCard({ event, onPress, onHostPress, onRsvp, isSave
   const stateLabel = STATE_LABEL[displayState] ?? displayState;
   const catColor = event.category ? (CATEGORY_COLORS[event.category] ?? color.signal) : color.signal;
   const [imgFailed, setImgFailed] = useState(false);
-  // Route cover URLs through signed-URL hydration so this surface keeps working
-  // when the media_private_buckets_enabled flag is toggled ON.
-  const { resolved: coverResolved } = useHydratedMedia(event.coverUrl && !imgFailed ? [event.coverUrl] : []);
+  // Route cover URLs through signed-URL hydration.  Passing transform causes
+  // the server to issue a /render/image/sign/ URL resized to 600 px wide —
+  // the only resize path that works for private-bucket media.
+  const { resolved: coverResolved } = useHydratedMedia(event.coverUrl && !imgFailed ? [event.coverUrl] : [], { width: 600, quality: 80 });
   const hydratedCoverUrl = (event.coverUrl && coverResolved[event.coverUrl]) ?? event.coverUrl ?? undefined;
 
   // QA round 2, minor D: an ended event must not still offer RSVP. `displayState`

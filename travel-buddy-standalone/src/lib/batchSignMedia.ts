@@ -148,18 +148,37 @@ function _cacheGet(key: string, now: number): CacheEntry | undefined {
  * - Error/429: falls back to the original URL silently.
  * - No session: returns all originals (the caller renders its empty state).
  *
+ * @param transform  Optional image-transform options forwarded to the server.
+ *   When supplied, the server calls `createSignedUrl` with a `transform` block
+ *   so the resulting `/render/image/sign/` URL is resized at delivery time.
+ *   This is the only supported resize path for private-bucket media — appending
+ *   query params to an already-signed URL has no effect.
+ *   Cache keys include the transform dimensions so callers requesting the same
+ *   URL at different sizes get separate cached entries.
+ *
  * @returns Map from original URL → signed/relay URL (or original on fallback).
  */
-export async function batchSignUrls(urls: string[]): Promise<Map<string, string>> {
+export async function batchSignUrls(
+  urls: string[],
+  transform?: { width?: number; quality?: number },
+): Promise<Map<string, string>> {
   const result = new Map<string, string>();
   if (urls.length === 0) return result;
 
   const now = Date.now();
 
+  // Build a stable cache-key suffix that encodes the transform so that the
+  // same URL requested at different sizes gets separate cache entries.
+  const transformSuffix =
+    transform && (transform.width !== undefined || transform.quality !== undefined)
+      ? `\x00w${transform.width ?? ''}q${transform.quality ?? ''}`
+      : '';
+
   // Partition: cached vs. needs fetch
   const toFetch: string[] = [];
   for (const url of urls) {
-    const entry = _cacheGet(url, now);
+    const cacheKey = url + transformSuffix;
+    const entry = _cacheGet(cacheKey, now);
     if (entry) {
       result.set(url, entry.url);
     } else {
@@ -188,7 +207,12 @@ export async function batchSignUrls(urls: string[]): Promise<Map<string, string>
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ urls: batch }),
+        body: JSON.stringify({
+          urls: batch,
+          ...(transform && (transform.width !== undefined || transform.quality !== undefined)
+            ? { transform }
+            : undefined),
+        }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       // Server returns { signed: { [url]: string | null }, ttlSeconds: number }
@@ -207,9 +231,10 @@ export async function batchSignUrls(urls: string[]): Promise<Map<string, string>
         : FALLBACK_CACHE_TTL_MS;
       const expiresAt = now + cacheTtlMs;
       for (const url of batch) {
+        const cacheKey = url + transformSuffix;
         const signedUrl = body.signed?.[url] ?? null;
         if (signedUrl) {
-          _cacheSet(url, { url: signedUrl, expiresAt });
+          _cacheSet(cacheKey, { url: signedUrl, expiresAt });
           result.set(url, signedUrl);
         } else {
           // null = unauthorized or unrecognized — fall back to original per-URL

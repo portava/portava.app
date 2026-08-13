@@ -272,7 +272,9 @@ function PostCard({ item, onWhyPress, onDeleteSuccess, sessionId }: { item: Puls
   useEffect(() => {
     if (!rawMediaUrl) return;
     let cancelled = false;
-    batchSignUrls([rawMediaUrl]).then((signed) => {
+    // Pass transform so the server issues a /render/image/sign/ URL resized to
+    // 400 px wide — the only resize path that works for private-bucket media.
+    batchSignUrls([rawMediaUrl], { width: 400, quality: 80 }).then((signed) => {
       if (!cancelled) setSignedMediaUrl(signed.get(rawMediaUrl) ?? rawMediaUrl);
     });
     return () => { cancelled = true; };
