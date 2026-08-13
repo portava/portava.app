@@ -666,6 +666,18 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     phash:                  computedPhash,
   };
 
+  // Dimension guard: width and height must be present before we can flip the
+  // row to 'ready'. For images this is guaranteed — server-side processing
+  // always measures dimensions (and rejects on failure). For videos the values
+  // come from the client; if they are missing we must refuse rather than write
+  // a NULL-dimension row that the thumbnail pipeline (migration 0208) would
+  // silently skip on every future pass.
+  if (baseUpdate.width === null || baseUpdate.height === null) {
+    req.log.warn({ mediaId, mediaType: (mediaRow as any).media_type }, 'postcards: complete rejected — width/height required');
+    sendError(res, 'invalid_payload', 'width and height are required to complete this upload.');
+    return;
+  }
+
   // Feed-variant columns (0208) are added only when a variant was actually
   // built. Writing them unconditionally would set feed_url = NULL on videos and
   // on failed derives, which is the same result but says it less clearly; more

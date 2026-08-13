@@ -597,6 +597,23 @@ describe('POST /api/postcards/:id/media/:mediaId/complete', () => {
     assert.equal(row?.duration_seconds, 30);
   });
 
+  it('rejects a video complete without width — cannot reach ready with NULL dimensions', async () => {
+    // Simulates the legacy upload bug: client omits width/height. The server
+    // must refuse rather than write a NULL-dimension row that the thumbnail
+    // pipeline (migration 0208) would silently skip.
+    seedPendingImage(MEDIA_ID, 'video');
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'video/mp4', fileSizeBytes: 10_000_000, durationSeconds: 30 },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 400, 'should reject when width/height are absent');
+    assert.match(body.error ?? '', /invalid_payload/, 'error code should be invalid_payload');
+    // The row must remain pending — never promoted to ready
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID);
+    assert.equal(row?.processing_status, 'pending', 'media row must stay pending after rejection');
+  });
+
   it('auto-creates passport_postcard on first ready media when add_to_passport=true', async () => {
     seedPendingImage();
     assert.equal(allPostcards.length, 0, 'no postcard before complete');
@@ -1128,6 +1145,7 @@ describe('POST /api/postcards/:id/media/:mediaId/complete — stamp overlay', ()
       'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
       {
         mimeType: 'video/mp4', fileSizeBytes: 1_000_000, durationSeconds: 12,
+        width: 1920, height: 1080,
         stampOverlay: { stampDefinitionId: DEF_TOKYO_ID, x: 0.5, y: 0.5, scale: 0.2 },
       },
       TOKEN_OWNER,
