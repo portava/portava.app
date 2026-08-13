@@ -139,8 +139,15 @@ export function CachedImage({
   useEffect(() => {
     if (!uri) { setResolvedSource(null); return; }
     const next = hydrated[uri];
-    if (typeof next === 'string') setResolvedSource({ uri: next });
-    else if (next === null) { setResolvedSource(null); setFailed(true); }
+    if (typeof next === 'string') {
+      // Hydration resolved to a valid URL — apply it AND clear any prior error
+      // flag so ExpoImage retries with the signed URL. Without the setFailed(false)
+      // here, a fast 404/onError on the initial bare-path source (before the
+      // signed URL arrives) latches failed=true permanently; the signed URL update
+      // to resolvedSource is silently discarded and the tile stays blank.
+      setResolvedSource({ uri: next });
+      setFailed(false);
+    } else if (next === null) { setResolvedSource(null); setFailed(true); }
     // undefined = still resolving; keep the plain URI.
   }, [uri, hydrated]);
 
@@ -187,8 +194,21 @@ export function CachedImage({
 
 /**
  * Append Supabase image-transform query params to a storage URL if not
- * already present. Only modifies URLs containing 'supabase' so CDN,
- * Unsplash, or other third-party URLs are left unchanged.
+ * already present. Only modifies PUBLIC Supabase storage URLs so CDN,
+ * Unsplash, other third-party URLs, and SIGNED URLs are left unchanged.
+ *
+ * ## Why signed URLs are excluded
+ *
+ * Supabase image transforms require the render endpoint:
+ *   - Public:  /storage/v1/render/image/public/<bucket>/<path>?width=400
+ *   - Private: /storage/v1/render/image/sign/<bucket>/<path>?token=...&width=400
+ *
+ * Signed URLs returned by POST /api/media/sign use /storage/v1/object/sign/,
+ * NOT /render/image/sign/. Appending ?width=400 to an /object/sign/ URL causes
+ * Supabase to return an error (the object endpoint rejects unknown transform
+ * params), which makes expo-image fire onError and permanently blank the tile
+ * even though the image is healthy. The params must be included at sign time
+ * via createSignedUrl(path, ttl, { transform: { width } }) — not appended after.
  *
  * @example
  *   withStorageParams(avatarUrl, 'width=100&quality=80')
@@ -199,7 +219,12 @@ export function withStorageParams(
   params: string,
 ): string | undefined {
   if (!uri) return undefined;
-  // Leave non-Supabase URLs and already-transformed URLs untouched
+  // Leave non-Supabase URLs and already-transformed URLs untouched.
   if (!uri.includes('supabase') || uri.includes('width=')) return uri;
+  // Leave signed URLs untouched — transform params only work on the render
+  // endpoint (/render/image/sign/), not the object endpoint (/object/sign/).
+  // Signed URLs that arrive here were generated without transform options;
+  // appending params to them causes Supabase to return an error.
+  if (uri.includes('/sign/')) return uri;
   return uri.includes('?') ? `${uri}&${params}` : `${uri}?${params}`;
 }

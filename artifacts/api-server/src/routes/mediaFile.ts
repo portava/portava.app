@@ -106,15 +106,31 @@ async function isHeaderPrivate(
 /**
  * Sign a private-bucket object.  Returns null when Supabase storage rejects
  * the request (object not found, permissions, etc.).
+ *
+ * When `transform` is supplied, the signed URL is generated via the
+ * `/render/image/sign/` path which applies Supabase's on-the-fly image
+ * transformation (resize to the requested width/quality).  This is the only
+ * way to get a resized derivative from a private bucket — appending query
+ * params to a regular signed URL has no effect.
  */
 async function signUrl(
   sc: any,
   bucket: string,
   path: string,
+  transform?: { width?: number; quality?: number },
 ): Promise<string | null> {
+  const options = transform
+    ? {
+        transform: {
+          ...(transform.width   !== undefined && { width:   transform.width   }),
+          ...(transform.quality !== undefined && { quality: transform.quality }),
+          resize: "contain" as const,
+        },
+      }
+    : undefined;
   const { data, error } = await sc.storage
     .from(bucket)
-    .createSignedUrl(path, SIGNED_TTL_SECONDS);
+    .createSignedUrl(path, SIGNED_TTL_SECONDS, options);
   if (error || !data?.signedUrl) return null;
   return data.signedUrl as string;
 }
@@ -163,7 +179,20 @@ router.get(
       return;
     }
 
-    const signed = await signUrl(sc, bucket, path);
+    // Optional image-transform: ?width=<n> produces a /render/image/sign/ URL
+    // that Supabase resizes on the fly.  This is the only supported resize path
+    // for private-bucket media — transform params appended to a plain
+    // /object/sign/ URL have no effect.  Clamp to a sane range to prevent abuse.
+    let transform: { width?: number } | undefined;
+    const rawWidth = req.query.width;
+    if (rawWidth !== undefined && rawWidth !== null && rawWidth !== "") {
+      const parsedWidth = Number(rawWidth);
+      if (Number.isFinite(parsedWidth) && parsedWidth > 0) {
+        transform = { width: Math.round(Math.min(Math.max(parsedWidth, 1), 3000)) };
+      }
+    }
+
+    const signed = await signUrl(sc, bucket, path, transform);
     if (!signed) { sendError(res, "not_found", "Media unavailable"); return; }
 
     // no-store: the signed URL has a finite lifetime (SIGNED_TTL_SECONDS).
@@ -191,7 +220,8 @@ router.post(
       return;
     }
 
-    const urls: unknown = (req.body ?? {}).urls;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const urls: unknown = body.urls;
     if (!Array.isArray(urls) || urls.length === 0 || urls.length > 50) {
       sendError(
         res,
@@ -199,6 +229,21 @@ router.post(
         "urls must be an array of 1–50 app media URLs",
       );
       return;
+    }
+
+    // Optional image-transform options applied at sign time.  When supplied,
+    // createSignedUrl produces a /render/image/sign/ URL which Supabase's CDN
+    // resizes on the fly — the only supported resize path for private buckets.
+    // Values are clamped to sane ranges to prevent misuse.
+    let transform: { width?: number; quality?: number } | undefined;
+    const rawTransform = body.transform;
+    if (rawTransform !== null && rawTransform !== undefined && typeof rawTransform === "object" && !Array.isArray(rawTransform)) {
+      const t = rawTransform as Record<string, unknown>;
+      const width   = typeof t.width   === "number" ? Math.round(Math.min(Math.max(t.width,   1), 3000)) : undefined;
+      const quality = typeof t.quality === "number" ? Math.round(Math.min(Math.max(t.quality, 1),  100)) : undefined;
+      if (width !== undefined || quality !== undefined) {
+        transform = { width, quality };
+      }
     }
 
     const signed: Record<string, string | null> = {};
@@ -212,7 +257,7 @@ router.post(
         signed[url] = GENERIC_COVER_URL;
         continue;
       }
-      signed[url] = (await signUrl(sc, ref.bucket, ref.path)) ?? null;
+      signed[url] = (await signUrl(sc, ref.bucket, ref.path, transform)) ?? null;
     }
 
     res.json({ signed, ttlSeconds: SIGNED_TTL_SECONDS });

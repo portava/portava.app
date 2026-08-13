@@ -57,14 +57,19 @@ function extractBucket(url: string): string | null {
  * Resolve a list of URLs through the signed-URL layer.
  *
  * - Private-bucket URLs (`post-media`, `profile-media`) are forwarded to
- *   `batchSignUrls` when the `media_private_buckets_enabled` flag is ON.
- *   If the server returns `null` for a URL (unauthorized / unrecognised),
- *   the result entry is `null` — the caller must show the designed fallback.
+ *   `batchSignUrls`.  If the server returns `null` for a URL (unauthorized /
+ *   unrecognised), the result entry is `null` — the caller must show the
+ *   designed fallback.
  * - Non-private-bucket URLs and non-storage URLs are returned unchanged.
- * - Flag OFF: every URL is returned unchanged (no network calls).
+ *
+ * @param transform  Optional image-transform options forwarded to the sign
+ *   endpoint.  When supplied, the server generates a `/render/image/sign/` URL
+ *   that Supabase resizes on the fly — the only supported resize path for
+ *   private-bucket media.
  */
 export async function hydrateMediaUrls(
   urls: string[],
+  transform?: { width?: number; quality?: number },
 ): Promise<Record<string, string | null>> {
   const result: Record<string, string | null> = {};
   if (urls.length === 0) return result;
@@ -85,7 +90,7 @@ export async function hydrateMediaUrls(
   // Call batchSignUrls (handles chunking ≤50 per request + LRU cache).
   // batchSignUrls returns the original URL when the server returns null or on
   // error; compare to detect those cases and surface them as null to the caller.
-  const signed = await batchSignUrls(privateBucketUrls);
+  const signed = await batchSignUrls(privateBucketUrls, transform);
   for (const url of privateBucketUrls) {
     const signedUrl = signed.get(url);
     // signedUrl === url  →  server returned null or a network error occurred
@@ -105,9 +110,16 @@ export async function hydrateMediaUrls(
  * - Returns `{ resolved, loading }`:
  *     resolved  — Record<originalUrl, signedUrl | null>
  *     loading   — true while the first async call is in-flight
+ *
+ * @param transform  Optional image-transform options forwarded to the sign
+ *   endpoint.  When supplied, the server generates a `/render/image/sign/` URL
+ *   that Supabase resizes on the fly.  The transform is treated as stable for
+ *   the lifetime of the hook instance — changes to `transform` do NOT trigger a
+ *   re-fetch (use a new hook instance or a new component mount for that).
  */
 export function useHydratedMedia(
   urls: (string | null | undefined)[],
+  transform?: { width?: number; quality?: number },
 ): { resolved: Record<string, string | null>; loading: boolean } {
   const [resolved, setResolved] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(false);
@@ -118,6 +130,15 @@ export function useHydratedMedia(
     const unique = [...new Set(urls.filter((u): u is string => !!u))].sort();
     return unique.join('\0');
   }, [urls]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Capture transform options at hook definition time.  They are expected to
+  // be a stable literal (e.g. `{ width: 400, quality: 80 }`) at each call
+  // site, so no useMemo is needed.
+  const transformRef = useMemo(
+    () => transform,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [transform?.width, transform?.quality],
+  );
 
   useEffect(() => {
     // Reconstruct the URL list from the stable key (avoids stale-closure issues).
@@ -130,7 +151,7 @@ export function useHydratedMedia(
 
     let cancelled = false;
     setLoading(true);
-    hydrateMediaUrls(unique).then((result) => {
+    hydrateMediaUrls(unique, transformRef).then((result) => {
       if (!cancelled) {
         setResolved(result);
         setLoading(false);
@@ -139,7 +160,7 @@ export function useHydratedMedia(
     return () => {
       cancelled = true;
     };
-  }, [stableKey]);
+  }, [stableKey, transformRef]);
 
   return { resolved, loading };
 }

@@ -121,11 +121,24 @@ function ReportedBanner({
 
 // ── Minimal post detail card (renders a live PostRow) ────────────────────────
 
+/**
+ * Append a ?width=<n> param to a relay URL so the API server signs the image
+ * with a resize transform.  Non-relay URLs (direct Supabase URLs, CDN URLs,
+ * etc.) are returned unchanged.
+ */
+function withRelayWidth(url: string | null, targetWidth: number): string | null {
+  if (!url || !url.includes('/api/media/file/')) return url;
+  return url.includes('?') ? `${url}&width=${targetWidth}` : `${url}?width=${targetWidth}`;
+}
+
 function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: number }) {
   const { width } = useWindowDimensions();
   const { userId: currentUserId } = useSession();
   const mediaHeight = Math.min(Math.round(width * (5 / 4)), 560);
   const firstMediaItem = post.media?.[0] ?? null;
+  // Raw relay URL — used as-is for video so the relay issues a plain signed
+  // URL rather than redirecting through Supabase's image transform endpoint
+  // (which would break video playback).
   const firstMedia = firstMediaItem?.url ?? post.mediaUrls[0] ?? null;
   const loc = post.locationName ?? post.locationCity ?? null;
   const authorName = primaryIdentityText(post.author ?? undefined);
@@ -175,7 +188,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
           ) : (
             <>
               <DisplayMediaImage
-                uri={firstMedia}
+                uri={withRelayWidth(firstMedia, 1200)}
                 width={width}
                 height={mediaHeight}
                 resizeMode="cover"

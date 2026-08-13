@@ -211,9 +211,12 @@ function PostcardTile({
   const hasFailed = allMedia.length > 0 && !firstReady && allMedia.every((m) => m.processing_status === 'failed');
   const isCarousel = allMedia.length > 1;
 
-  // Route post-media URLs through the signed-URL hydration layer so this
-  // surface keeps working when media_private_buckets_enabled is toggled ON.
-  const { resolved: mediaResolved } = useHydratedMedia(displayUri ? [displayUri] : []);
+  // Route post-media URLs through the signed-URL hydration layer.  Passing
+  // transform here causes the server to call createSignedUrl with a transform
+  // block, producing a /render/image/sign/ URL that Supabase resizes to 400 px
+  // wide at delivery time.  This is the only resize path that works for private
+  // buckets — withStorageParams on an already-signed URL has no effect.
+  const { resolved: mediaResolved } = useHydratedMedia(displayUri ? [displayUri] : [], { width: 400, quality: 80 });
   const hydratedUri = (displayUri && mediaResolved[displayUri]) ?? displayUri;
   const hydratedWithParams = hydratedUri
     ? withStorageParams(hydratedUri, 'width=400&quality=80')
