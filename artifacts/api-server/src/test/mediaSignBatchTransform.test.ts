@@ -219,23 +219,44 @@ describe("POST /api/media/sign — transform clamping", () => {
     );
   });
 
-  it("transform: { quality: 0 } → clamped to 1 (Math.max(0,1)), /render/image/sign/ URL returned", async () => {
-    // quality=0 is below the minimum of 1.  Math.max(0, 1) → 1.
-    // Supabase must never receive quality=0, which could produce a blank image.
+  it("transform: { quality: 0 } → dropped entirely (mirrors width=0 guard), plain /object/sign/ URL returned", async () => {
+    // quality=0 is dropped entirely — same rule as width=0.  A caller that
+    // passes quality=0 must receive a plain /object/sign/ URL, not a
+    // /render/image/sign/ URL.  This prevents quality=0 from being silently
+    // promoted to quality=1 and forwarded as a transform.
     const r = await postSign({ urls: [mediaUrl], transform: { quality: 0 } });
     assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
 
     const signedUrl: string | null = r.body?.signed?.[mediaUrl];
     assert.ok(
-      typeof signedUrl === "string" && signedUrl.includes("/render/image/sign/"),
-      `expected /render/image/sign/ URL for quality=0 (clamped to 1), got: ${signedUrl}`,
+      typeof signedUrl === "string" && signedUrl.includes("/object/sign/"),
+      `expected plain /object/sign/ URL for quality=0 (dropped), got: ${signedUrl}`,
     );
 
-    assert.ok(lastSignArgs?.options?.transform, "expected transform options to be passed to createSignedUrl");
     assert.equal(
-      lastSignArgs?.options?.transform?.quality,
-      1,
-      `expected quality clamped to 1 (Math.max(0,1)), got: ${lastSignArgs?.options?.transform?.quality}`,
+      lastSignArgs?.options,
+      undefined,
+      "expected no transform options forwarded to createSignedUrl when quality=0",
+    );
+  });
+
+  it("transform: { quality: 0.1 } → rounds to 0, dropped entirely, plain /object/sign/ URL returned", async () => {
+    // A sub-unit fractional quality like 0.1 passes a naive > 0 check but
+    // rounds to 0 after Math.round.  The implementation rounds first and then
+    // guards, so 0.1 is dropped the same way as quality=0 — no transform URL.
+    const r = await postSign({ urls: [mediaUrl], transform: { quality: 0.1 } });
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+
+    const signedUrl: string | null = r.body?.signed?.[mediaUrl];
+    assert.ok(
+      typeof signedUrl === "string" && signedUrl.includes("/object/sign/"),
+      `expected plain /object/sign/ URL for quality=0.1 (rounds to 0, dropped), got: ${signedUrl}`,
+    );
+
+    assert.equal(
+      lastSignArgs?.options,
+      undefined,
+      "expected no transform options forwarded to createSignedUrl when quality=0.1 (rounds to 0)",
     );
   });
 
