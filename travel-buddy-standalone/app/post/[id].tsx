@@ -180,7 +180,7 @@ function PostDetailCard({ post, commentCount }: { post: PostRow; commentCount: n
           {firstMediaItem?.media_type === 'video' ? (
             <SharedVideoPlayer
               uri={firstMedia}
-              poster={firstMediaItem?.thumbnail_url ?? undefined}
+              poster={withRelayWidth(firstMediaItem?.thumbnail_url ?? null, 1200) ?? undefined}
               autoplay={false}
               muted
               style={StyleSheet.absoluteFill}
