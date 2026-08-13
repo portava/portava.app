@@ -200,7 +200,7 @@ disposition `remove-from-seed`, and their retirement follows.
 | `RENT_BUDDY_NIGHTLIFE_ENABLED` | **true** | `api:routes/rentABuddyRollout.ts:304` | **KEEP** | getFlag(); 403 when off |
 | `RENT_BUDDY_OFFERS_ENABLED` | **true** | `api:routes/rentABuddyRollout.ts:271` | **KEEP** | getFlag(); 403 offers_unavailable |
 | `RENT_BUDDY_PACKAGES_ENABLED` | **true** | `api:routes/rentABuddyRollout.ts:258` | **KEEP** | getFlag(); 403 packages_unavailable |
-| `city_launch_mode` | false | `app:src/screens/admin/featureFlags.machine.ts:34` | **KEEP** | APP-TREE ONLY — banner only, NO server enforcement |
+| `city_launch_mode` | false | `app:src/screens/admin/featureFlags.machine.ts:34` | **KEEP** → **RETIRED 2026-08-13** | APP-TREE ONLY — banner only, NO server enforcement; owner ruled, retired by `2087_retire_city_launch_mode.sql` |
 | `disable_messaging` | false | `api:routes/messaging.ts:1682` | **KEEP** | isKillSwitchEngaged, fail-CLOSED; also :1997 |
 | `disable_posting` | false | `api:routes/posts.ts:447` | **KEEP** | isKillSwitchEngaged, fail-CLOSED |
 | `disable_rent_buddy_booking` | false | `api:routes/rentABuddy.ts:1005` | **KEEP** | isKillSwitchEngaged |
@@ -233,6 +233,16 @@ This work does **not** resolve it in either direction: deleting the row would
 remove a control an operator can currently see, and wiring it is a product
 decision about what "city launch mode" should stop. It is recorded as
 KEEP-with-a-defect and left to the owner.
+
+**Resolved 2026-08-13 — owner ruling #4: RETIRE.** A banner-only kill switch
+with no server-side enforcement is misleading operational machinery.
+`2087_retire_city_launch_mode.sql` deletes the row (refusing on audit history,
+asserting the five real kill switches survive), the seed leaves `0117`, the
+app-tree reader leaves `KILL_SWITCH_FLAGS` and `KILL_SWITCH_LABELS`, and the
+`APP_TREE_READS` declaration is removed with it. The banner removal is
+red-proofed: the retirement-guard tests in `featureFlags.machine.test.ts` fail
+against the pre-change client (3 failures: still listed, still labelled, still
+lights the banner) and pass after.
 
 ### The polarity guard could not see the app tree
 

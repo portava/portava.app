@@ -24,6 +24,7 @@ import {
   KILL_SWITCH_FLAGS,
 } from '../featureFlags.machine.ts';
 import type { FeatureFlag } from '../featureFlags.machine.ts';
+import { KILL_SWITCH_LABELS } from '../../../constants/killSwitches.ts';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -415,10 +416,30 @@ describe('getActiveKillSwitches — multiple active kill switches', () => {
   it('does not include non-kill-switch flags even when the list is mixed', () => {
     const flags: FeatureFlag[] = [
       { flag: 'disable_rent_buddy_booking', enabled: true, description: null, updated_at: null },
-      { flag: 'city_launch_mode', enabled: true, description: null, updated_at: null },
+      { flag: 'disable_messaging', enabled: true, description: null, updated_at: null },
       { flag: 'some_other_feature', enabled: true, description: null, updated_at: null },
     ];
     const result = getActiveKillSwitches(flags);
-    assert.deepEqual(result.sort(), ['city_launch_mode', 'disable_rent_buddy_booking'].sort());
+    assert.deepEqual(result.sort(), ['disable_messaging', 'disable_rent_buddy_booking'].sort());
+  });
+});
+
+describe('getActiveKillSwitches — city_launch_mode is retired (2087)', () => {
+  // Owner ruling 2026-08-13: a banner-only kill switch with no server-side
+  // enforcement is misleading operational machinery. The flag row is deleted
+  // by 2087_retire_city_launch_mode.sql; the client must not announce it.
+  it('is not in KILL_SWITCH_FLAGS', () => {
+    assert.ok(!KILL_SWITCH_FLAGS.includes('city_launch_mode'));
+  });
+
+  it('has no banner label', () => {
+    assert.ok(!('city_launch_mode' in KILL_SWITCH_LABELS));
+  });
+
+  it('an enabled city_launch_mode row does not light the banner', () => {
+    const flags: FeatureFlag[] = [
+      { flag: 'city_launch_mode', enabled: true, description: null, updated_at: null },
+    ];
+    assert.deepEqual(getActiveKillSwitches(flags), []);
   });
 });

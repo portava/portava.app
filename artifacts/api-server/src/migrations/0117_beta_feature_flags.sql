@@ -8,8 +8,12 @@
 --   disable_posting              — block POST /posts app-wide
 --   disable_messaging            — block POST /threads/:id/messages app-wide
 --   disable_rent_buddy_booking   — block Rent a Buddy booking creation
---   city_launch_mode             — restrict access to launch cities only
 --   invite_only_beta             — require an invite code to register
+--
+-- city_launch_mode was seeded here until 2087_retire_city_launch_mode.sql
+-- retired it (owner ruling 2026-08-13: banner-only kill switch, no server
+-- enforcement). Its seed is removed so a replayed database never re-creates
+-- the row 2087 deletes.
 --
 -- Feature gates (default: enabled / true):
 --   compass_ai_enabled           — Compass AI recommendation engine
@@ -32,6 +36,5 @@ INSERT INTO feature_flags (flag, enabled, description) VALUES
   ('disable_posting',                 FALSE, 'Kill switch — blocks POST /posts app-wide'),
   ('disable_messaging',               FALSE, 'Kill switch — blocks POST /threads/:id/messages app-wide'),
   ('disable_rent_buddy_booking',       FALSE, 'Kill switch — blocks Rent a Buddy booking creation (POST /api/rent-a-buddy/bookings)'),
-  ('city_launch_mode',                FALSE, 'Kill switch/gate — restricts access to seeded launch cities only'),
   ('invite_only_beta',                FALSE, 'Kill switch/gate — requires invite code to register; checked by GET /auth/signup-status')
 ON CONFLICT (flag) DO NOTHING;

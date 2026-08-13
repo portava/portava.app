@@ -163,7 +163,6 @@ WHERE flag IN (\
 'disable_posting',\
 'disable_messaging',\
 'disable_rent_buddy_booking',\
-'city_launch_mode',\
 'invite_only_beta',\
 'compass_ai_enabled'\
 )"

@@ -918,20 +918,13 @@ const APP_TREE_READS = [
       'through the fail-closed helper, and the entry point was permanently invisible, which was mistaken for a ' +
       'deliberate design choice rather than a missing row.',
   },
-  {
-    flag: 'city_launch_mode',
-    file: 'src/screens/admin/featureFlags.machine.ts',
-    line: 34,
-    reason:
-      'getActiveKillSwitches() reads its value and drives the red "kill switch active" banner on the admin ' +
-      'Feature Flags screen. ⚠ THAT IS ITS ONLY READER. It sits in KILL_SWITCH_FLAGS beside disable_posting, ' +
-      'disable_messaging, disable_rent_buddy_booking and invite_only_beta, every one of which ALSO has a ' +
-      'server-side isKillSwitchEngaged() call; this one has none, so switching it on announces that a kill ' +
-      'switch is engaged while restricting nothing. That is the safety_notifications_enabled failure mode of ' +
-      '2080 in a different costume. Recorded here as an app-tree read because that is what it is — declaring ' +
-      'it inert would be false, and deleting the row would remove a control an operator can currently see. ' +
-      'The remedy (write-reader, or retire) is an owner decision, argued in docs/ops/flag-disposition.md.',
-  },
+  // city_launch_mode had an entry here from 2026-08-12 until 2026-08-13: an
+  // app-tree read whose banner was its ONLY reader, recorded as
+  // KEEP-with-a-defect pending an owner decision. The owner ruled (ruling #4):
+  // a banner-only kill switch with no server-side enforcement is misleading
+  // operational machinery. 2087_retire_city_launch_mode.sql retired the row,
+  // the seed left 0117, and the app-tree reader was removed in the same
+  // commit — so there is no read left for this list to declare.
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
