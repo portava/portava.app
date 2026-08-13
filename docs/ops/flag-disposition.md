@@ -244,6 +244,50 @@ red-proofed: the retirement-guard tests in `featureFlags.machine.test.ts` fail
 against the pre-change client (3 failures: still listed, still labelled, still
 lights the banner) and pass after.
 
+#### CI verification, 2026-08-13 — project `hwokxgbmezheskbzskfr`
+
+Applied and verified end-to-end against the CI project via the Management API,
+on a fixture holding `city_launch_mode` at its real `0117` values plus the five
+real kill switches.
+
+* **Audit-history guard RED-PROOFED FIRST.** An audit row was already planted
+  against the flag (`old_enabled` false → `new_enabled` true). The migration
+  **refused** with the `P0001 REFUSING: 1 feature_flag_audit_log row(s)…`
+  message and **rolled back**: the flag row was still present, at its original
+  value, with the audit row intact. The guard is real, not decorative. That
+  fixture row is archived at
+  `_incoming/evidence-preserve/city-launch-mode-ci-audit-row-20260813.json`
+  before it was cleared to let the run proceed.
+* **Applied cleanly** once the archived row was cleared: 24 → 23 flag rows.
+* `city_launch_mode` — **0 rows remain**.
+* The five real kill switches — **5/5 survive** (`disable_signups`,
+  `disable_posting`, `disable_messaging`, `disable_rent_buddy_booking`,
+  `invite_only_beta`). This is the post-condition that matters: a WHERE clause
+  that caught one of these would take real enforcement offline.
+* **Orphaned audit rows: 0.** The FK cascade did not fire.
+* **Idempotent.** Re-applied a second time: no error, still 23 rows, both
+  post-conditions still hold.
+
+**The `verify-db-beta-flags.mjs` change was necessary, not cosmetic — proved
+against that same post-2087 database.** The PRE-change verifier, run against it,
+reports `✘ MISSING feature flag: city_launch_mode not found in feature_flags
+table`: had the required-flags list not been updated in the same commit, this
+retirement would have turned the `live DB` CI job red the moment it was applied
+anywhere. The post-change verifier passes all five kill switches on the live CI
+response and never asks for `city_launch_mode`, and exits 0 once
+`compass_ai_enabled` is supplied. (`compass_ai_enabled` is absent from the CI
+fixture — a pre-existing gap in that fixture, seeded by neither this work nor
+2087, and the one flag the verifier still reports against CI.)
+
+**Production is NOT applied.** The block is staged for the shell operator at
+`_incoming/prod-apply-retire-city-launch-mode.sql`, with the step-0 snapshot, the
+audit-history pre-check, the migration path, and four post-apply verification
+queries. It deliberately asserts no production row total: the count must be
+`total_before − 1`, because production could not be re-queried when the block was
+written and `_incoming/prod-apply-flag-reconciliation.sql` (168 → 149) may land
+before or after it. The two are independent in either order —
+`city_launch_mode` is in none of 2084's, 2085's or 2086's lists.
+
 ### The polarity guard could not see the app tree
 
 `check-flag-polarity.mjs` walks `api-server/src` only (`SRC`, line 171), so R6
