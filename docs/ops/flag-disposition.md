@@ -279,14 +279,59 @@ response and never asks for `city_launch_mode`, and exits 0 once
 fixture — a pre-existing gap in that fixture, seeded by neither this work nor
 2087, and the one flag the verifier still reports against CI.)
 
-**Production is NOT applied.** The block is staged for the shell operator at
-`_incoming/prod-apply-retire-city-launch-mode.sql`, with the step-0 snapshot, the
-audit-history pre-check, the migration path, and four post-apply verification
-queries. It deliberately asserts no production row total: the count must be
-`total_before − 1`, because production could not be re-queried when the block was
-written and `_incoming/prod-apply-flag-reconciliation.sql` (168 → 149) may land
-before or after it. The two are independent in either order —
-`city_launch_mode` is in none of 2084's, 2085's or 2086's lists.
+#### APPLIED TO PRODUCTION 2026-08-13 — project `ajrurzioarfkagpuxfnb`
+
+Applied from the staged block at
+`_incoming/prod-apply-retire-city-launch-mode.sql`, on the owner's explicit
+delegation, after the block itself had been written and staged. The staged file's
+own step 0 and its four post-apply queries are what ran.
+
+Preflight, before touching anything:
+
+* **149 rows** — so `_incoming/prod-apply-flag-reconciliation.sql` (168 → 149)
+  had already landed. That is why the staged block asserts no absolute total,
+  only `total_before − 1`; the guess it declined to make would have been wrong.
+* `city_launch_mode` **present**, `enabled = false`, `updated_at`
+  2026-07-16T02:46:01Z.
+* **0** `feature_flag_audit_log` rows for the flag — nobody had ever toggled it
+  in production, so the audit guard had nothing to refuse and no real operator
+  history was at stake. Had it found rows, the archival decision was the
+  owner's, not the applier's.
+* Full 149-row snapshot captured to
+  `_incoming/flag-snapshot-pre-2087-20260813.json` (30,112 bytes) and confirmed
+  to contain the exact row being deleted **before** the apply. That file is the
+  rollback source; there is no migration that restores the row.
+
+Applied cleanly, no exception raised. All four verification queries:
+
+| Check | Expected | Actual |
+|---|---|---|
+| `city_launch_mode` rows | 0 | **0** |
+| Real kill switches surviving | 5 | **5** — all `false` |
+| `total_after` | 148 (`149 − 1`) | **148** |
+| Orphaned audit rows | 0 | **0** — cascade did not fire |
+
+Exactly one row left the table. The five flags that carry real
+`isKillSwitchEngaged()` enforcement — `disable_signups`, `disable_posting`,
+`disable_messaging`, `disable_rent_buddy_booking`, `invite_only_beta` — were
+each confirmed present and `false` by name, not by a count that could have read
+the same either way.
+
+Nothing was redeployed and nothing needed to be: the repository side landed in
+PR #27 before this apply, so `verify-db-beta-flags.mjs` and
+`check-db-triggers.sh` already expected six `0117` beta flags rather than seven.
+Had they not, this apply is the moment the `live DB` job would have gone red.
+
+To roll back — restoring the row does **not** restore the banner, because the
+client-side reader is gone from the shipping tree; a restored row is inert until
+someone re-adds `city_launch_mode` to `KILL_SWITCH_FLAGS` and
+`KILL_SWITCH_LABELS`:
+
+```sql
+INSERT INTO public.feature_flags (flag, enabled, description)
+VALUES ('city_launch_mode', FALSE,
+        'Kill switch/gate — restricts access to seeded launch cities only');
+```
 
 ### The polarity guard could not see the app tree
 
@@ -335,8 +380,20 @@ is precisely the case the pre-correction guard passed.
 ## Implementation — built, CI-verified, production staged
 
 Owner approved the classification on 2026-08-12. The migrations are committed and
-verified against the CI project; **production is untouched and waits on the
-owner's explicit go.**
+verified against the CI project; production was untouched and waiting on the
+owner's explicit go at the time this section was written.
+
+> **Stale as of 2026-08-13 — but not corrected here, because this session did
+> not witness the apply.** The `2087` preflight read production at **149
+> `feature_flags` rows**, which is precisely this table's predicted `168 → 149`
+> outcome, so the reconciliation appears to have been applied between 2026-08-12
+> and 2026-08-13. That is an inference from a row count, not an application
+> record: nobody has written down when it ran, who ran it, or what its
+> verification queries returned. Whoever applied it should replace this note with
+> that record. Do not assume the count alone confirms every block landed as
+> intended — a per-flag check against the tables above is the honest verification,
+> and `_incoming/flag-snapshot-pre-2087-20260813.json` holds all 149 rows as they
+> stood immediately before the `2087` apply.
 
 | Outcome | Population | Count | Migration / action | CI result |
 |---|---|---|---|---|
