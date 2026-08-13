@@ -221,6 +221,26 @@ describe("POST /api/media/sign — transform clamping", () => {
     );
   });
 
+  it("transform: { quality: 0 } → clamped to 1 (Math.max(0,1)), /render/image/sign/ URL returned", async () => {
+    // quality=0 is below the minimum of 1.  Math.max(0, 1) → 1.
+    // Supabase must never receive quality=0, which could produce a blank image.
+    const r = await postSign({ urls: [mediaUrl], transform: { quality: 0 } });
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+
+    const signedUrl: string | null = r.body?.signed?.[mediaUrl];
+    assert.ok(
+      typeof signedUrl === "string" && signedUrl.includes("/render/image/sign/"),
+      `expected /render/image/sign/ URL for quality=0 (clamped to 1), got: ${signedUrl}`,
+    );
+
+    assert.ok(lastSignArgs?.options?.transform, "expected transform options to be passed to createSignedUrl");
+    assert.equal(
+      lastSignArgs?.options?.transform?.quality,
+      1,
+      `expected quality clamped to 1 (Math.max(0,1)), got: ${lastSignArgs?.options?.transform?.quality}`,
+    );
+  });
+
   it("no transform field → no transform forwarded, plain /object/sign/ URLs returned", async () => {
     const r = await postSign({ urls: [mediaUrl] });
     assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
