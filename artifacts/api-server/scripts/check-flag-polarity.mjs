@@ -902,7 +902,29 @@ const DIRECT_READS = [
 // falsy — not by anything this list checks.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_TREE_ROOT = resolve(PKG_ROOT, '..', 'travel-buddy');
+// WHICH app tree. This matters more than it looks.
+//
+// There are two copies of the mobile app in this repository:
+//
+//   artifacts/travel-buddy    — FROZEN LEGACY. Not built, not shipped. Its
+//                               archival is a separate authorized unit.
+//   travel-buddy-standalone   — THE LIVE TREE. What actually ships, and where
+//                               the readers this list vouches for actually live.
+//
+// This resolved to `artifacts/travel-buddy` until 2026-08-13 (owner ruling #7).
+// The two trees hold byte-identical copies of MediaQuickCreateSheet.tsx, so R8
+// passed either way and the mistake was invisible — but it made the check
+// worthless in the one case it exists for: delete the live reader and R8 would
+// keep vouching for it on the strength of the frozen copy, exempting the flag
+// from R6 for a reader that no longer ships. Verified before correcting:
+// hiding travel-buddy-standalone's copy left the guard at 0 problems; hiding
+// artifacts/travel-buddy's copy is what produced a failure.
+//
+// It also had a shelf life. Archiving artifacts/travel-buddy would have made R8
+// fail with CANNOT VERIFY — pointing at a tree that had been deliberately
+// removed — and the tempting fix at that moment is to delete the entries, which
+// the message above expressly warns against.
+const APP_TREE_ROOT = resolve(PKG_ROOT, '..', '..', 'travel-buddy-standalone');
 
 const APP_TREE_READS = [
   {

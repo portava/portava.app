@@ -308,6 +308,30 @@ a declaration list, not an exemption switch — the same argument the
 seeded at all, so R6 never asks about it and it gets no entry. R8 enforces that:
 an `APP_TREE_READS` entry for an unseeded flag is reported as stale.
 
+**Corrected 2026-08-13 — owner ruling #7: R8 was reading the wrong app tree.**
+`APP_TREE_ROOT` resolved to `artifacts/travel-buddy`, the frozen legacy copy,
+not `travel-buddy-standalone`, the tree that ships. Because both hold
+byte-identical copies of `MediaQuickCreateSheet.tsx`, R8 passed either way and
+the mistake was invisible — while making the check worthless in the one case it
+exists for: delete the live reader and R8 would keep vouching for it on the
+strength of the frozen copy, exempting the flag from R6 for a reader that no
+longer ships. It also had a shelf life, since archiving `artifacts/travel-buddy`
+would have made R8 fail with `CANNOT VERIFY` against a tree deliberately
+removed, and the tempting fix at that moment is to delete the entries — exactly
+what that message warns against.
+
+Verified before and after, by hiding readers rather than by reading the code:
+
+| State | Live reader hidden | Frozen copy hidden |
+|---|---|---|
+| Before (`artifacts/travel-buddy`) | **exit 0 — passed** ⚠ the defect | exit 1 |
+| After (`travel-buddy-standalone`) | **exit 1** — `STALE APP_TREE_READS ENTRY` | exit 0 — correctly indifferent |
+
+And the content clause, not just file existence: with the frozen copy left
+holding both occurrences of the flag and only the **live** file's literal
+removed, the corrected guard fails with `UNVERIFIED APP_TREE_READS ENTRY`. That
+is precisely the case the pre-correction guard passed.
+
 ## Implementation — built, CI-verified, production staged
 
 Owner approved the classification on 2026-08-12. The migrations are committed and
