@@ -239,7 +239,10 @@ router.post(
     const rawTransform = body.transform;
     if (rawTransform !== null && rawTransform !== undefined && typeof rawTransform === "object" && !Array.isArray(rawTransform)) {
       const t = rawTransform as Record<string, unknown>;
-      const width   = typeof t.width   === "number" ? Math.round(Math.min(Math.max(t.width,   1), 3000)) : undefined;
+      // Mirrors the GET handler: width=0 is dropped entirely (no transform
+      // forwarded) rather than clamped to 1.  A caller that passes width=0
+      // receives a plain /object/sign/ URL, not a /render/image/sign/ URL.
+      const width   = typeof t.width   === "number" && t.width > 0 ? Math.round(Math.min(t.width,   3000)) : undefined;
       const quality = typeof t.quality === "number" ? Math.round(Math.min(Math.max(t.quality, 1),  100)) : undefined;
       if (width !== undefined || quality !== undefined) {
         transform = { width, quality };

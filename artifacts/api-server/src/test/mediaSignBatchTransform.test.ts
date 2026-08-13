@@ -7,11 +7,9 @@
  *
  *   1. transform: { width: 5000 }  → clamped to 3000; /render/image/sign/ URL.
  *   2. transform: { quality: 200 } → clamped to 100;  /render/image/sign/ URL.
- *   3. transform: { width: 0 }     → clamped to 1 (Math.max(0,1));
- *                                    transform IS forwarded; /render/image/sign/.
- *                                    Note: unlike the GET handler (which has an
- *                                    explicit parsedWidth > 0 guard), the POST
- *                                    handler clamps from 1, so width=0 → width=1.
+ *   3. transform: { width: 0 }     → dropped entirely (mirrors GET handler's
+ *                                    parsedWidth > 0 guard); no transform
+ *                                    forwarded; plain /object/sign/ URL returned.
  *   4. No transform field          → no transform forwarded; plain /object/sign/ URLs.
  *
  * Run:
@@ -200,24 +198,24 @@ describe("POST /api/media/sign — transform clamping", () => {
     );
   });
 
-  it("transform: { width: 0 } → clamped to 1 (Math.max(0,1)), transform forwarded, /render/image/sign/ URL returned", async () => {
-    // Unlike the GET handler (which has an explicit parsedWidth > 0 guard and
-    // drops width=0 entirely), the POST handler clamps with Math.max(width, 1),
-    // so width=0 becomes width=1 and the transform IS still forwarded.
+  it("transform: { width: 0 } → dropped entirely, no transform forwarded, plain /object/sign/ URL returned", async () => {
+    // Mirrors the GET handler's explicit parsedWidth > 0 guard: width=0 is not
+    // clamped to 1 but dropped entirely, so no transform is forwarded and the
+    // caller receives a plain /object/sign/ URL (same as if no transform was
+    // supplied at all).
     const r = await postSign({ urls: [mediaUrl], transform: { width: 0 } });
     assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
 
     const signedUrl: string | null = r.body?.signed?.[mediaUrl];
     assert.ok(
-      typeof signedUrl === "string" && signedUrl.includes("/render/image/sign/"),
-      `expected /render/image/sign/ URL for width=0 (clamped to 1), got: ${signedUrl}`,
+      typeof signedUrl === "string" && signedUrl.includes("/object/sign/"),
+      `expected plain /object/sign/ URL for width=0 (dropped), got: ${signedUrl}`,
     );
 
-    assert.ok(lastSignArgs?.options?.transform, "expected transform options to be passed to createSignedUrl");
     assert.equal(
-      lastSignArgs?.options?.transform?.width,
-      1,
-      `expected width clamped to 1 (Math.max(0,1)), got: ${lastSignArgs?.options?.transform?.width}`,
+      lastSignArgs?.options,
+      undefined,
+      "expected no transform options forwarded to createSignedUrl when width=0",
     );
   });
 
