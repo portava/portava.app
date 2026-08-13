@@ -20,7 +20,6 @@ export const KILL_SWITCH_FLAGS: readonly string[] = [
   'disable_messaging',
   'disable_signups',
   'disable_rent_buddy_booking',
-  'city_launch_mode',
   'invite_only_beta',
 ];
 

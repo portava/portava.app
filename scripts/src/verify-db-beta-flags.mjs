@@ -8,9 +8,11 @@
  *
  * Required flags (seeded by 0117):
  *   Kill switches  — disable_signups, disable_posting, disable_messaging,
- *                    disable_rent_buddy_booking, city_launch_mode,
- *                    invite_only_beta
+ *                    disable_rent_buddy_booking, invite_only_beta
  *   Feature gates  — compass_ai_enabled
+ *
+ * city_launch_mode was required here until 2087_retire_city_launch_mode.sql
+ * retired it (owner ruling 2026-08-13; see docs/ops/flag-disposition.md).
  *
  * Without these rows the kill switches always fail-open (feature allowed),
  * meaning an admin setting disable_posting = TRUE in the DB has no effect
@@ -31,7 +33,6 @@ const REQUIRED_FLAGS = [
   "disable_posting",
   "disable_messaging",
   "disable_rent_buddy_booking",
-  "city_launch_mode",
   "invite_only_beta",
   "compass_ai_enabled",
 ];
@@ -97,7 +98,7 @@ if (!allPresent) {
     "         WHERE flag IN ('disable_posting','disable_messaging','disable_signups',"
   );
   console.error(
-    "                        'invite_only_beta','compass_ai_enabled','city_launch_mode',"
+    "                        'invite_only_beta','compass_ai_enabled',"
   );
   console.error(
     "                        'disable_rent_buddy_booking');"

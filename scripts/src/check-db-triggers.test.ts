@@ -115,22 +115,23 @@ const PASSING_INVITE_LINK_FUNCS_RESPONSE = JSON.stringify([
   { check_type: 'function', name: 'cleanup_stale_invite_link_attempts' },
 ]);
 
-// All 7 rows seeded by migration 0117_beta_feature_flags.sql.
-const ALL_SEVEN_BETA_FLAGS = JSON.stringify([
+// All 6 beta-flag rows required by verify-db-beta-flags.mjs (seeded by
+// migration 0117_beta_feature_flags.sql; city_launch_mode left the set when
+// 2087_retire_city_launch_mode.sql retired it).
+const ALL_SIX_BETA_FLAGS = JSON.stringify([
   { flag: 'disable_signups',              enabled: 'false' },
   { flag: 'disable_posting',             enabled: 'false' },
   { flag: 'disable_messaging',           enabled: 'false' },
   { flag: 'disable_rent_buddy_booking',  enabled: 'false' },
-  { flag: 'city_launch_mode',            enabled: 'false' },
   { flag: 'invite_only_beta',            enabled: 'false' },
   { flag: 'compass_ai_enabled',          enabled: 'true' },
 ]);
 
-// Two flags present, five missing — verifier must exit 1.
+// Two flags present, four missing — verifier must exit 1.
 const PARTIAL_BETA_FLAGS = JSON.stringify([
   { flag: 'disable_signups', enabled: 'false' },
   { flag: 'disable_posting', enabled: 'false' },
-  // remaining 5 intentionally omitted
+  // remaining 4 intentionally omitted
 ]);
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -388,7 +389,7 @@ describe('check-db-triggers.sh + verify-db-triggers.mjs pipeline (mock curl)', (
       pushTokensResponse: PASSING_PUSH_TOKENS_RESPONSE,
       rentBuddyResponse: PASSING_RENT_BUDDY_RESPONSE,
       inviteLinkFuncsResponse: PASSING_INVITE_LINK_FUNCS_RESPONSE,
-      betaFlagsResponse: ALL_SEVEN_BETA_FLAGS,
+      betaFlagsResponse: ALL_SIX_BETA_FLAGS,
     });
 
     assert.equal(
@@ -540,7 +541,7 @@ describe('check-db-triggers.sh + verify-db-triggers.mjs pipeline (mock curl)', (
       pushTokensResponse: PASSING_PUSH_TOKENS_RESPONSE,
       rentBuddyResponse: PASSING_RENT_BUDDY_RESPONSE,
       inviteLinkFuncsResponse: PASSING_INVITE_LINK_FUNCS_RESPONSE,
-      betaFlagsResponse: ALL_SEVEN_BETA_FLAGS,
+      betaFlagsResponse: ALL_SIX_BETA_FLAGS,
     });
 
     assert.equal(
@@ -586,11 +587,10 @@ describe('check-db-triggers.sh + verify-db-triggers.mjs pipeline (mock curl)', (
       combined.includes('MISSING'),
       `Expected "MISSING" in failure output.\nCombined:\n${combined}`,
     );
-    // At least one of the five absent flags should be named in the output.
+    // At least one of the four absent flags should be named in the output.
     assert.ok(
       combined.includes('disable_messaging') ||
       combined.includes('disable_rent_buddy_booking') ||
-      combined.includes('city_launch_mode') ||
       combined.includes('invite_only_beta') ||
       combined.includes('compass_ai_enabled'),
       `Expected at least one missing flag name in failure output.\nCombined:\n${combined}`,
