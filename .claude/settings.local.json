@@ -6,7 +6,8 @@
       "Bash(env)",
       "Read(//home/runner/workspace/travel-buddy-standalone/assets/images/**)",
       "Read(//home/runner/workspace/travel-buddy-standalone/**)",
-      "Bash(grep -n \"^# \\\\|^## \\\\|^---$\" docs/admin/moderation-coverage.md)"
+      "Bash(grep -n \"^# \\\\|^## \\\\|^---$\" docs/admin/moderation-coverage.md)",
+      "Read(//tmp/**)"
     ]
   }
 }
