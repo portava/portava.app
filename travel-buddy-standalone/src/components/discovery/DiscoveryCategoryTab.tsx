@@ -330,6 +330,10 @@ const nd = StyleSheet.create({
   chipText: { ...t.small, color: color.ink, fontWeight: '600' },
 });
 
+// Sensible default when the `filters` prop is omitted — unfiltered state,
+// mirroring the shape a controlled caller (discovery.tsx) would otherwise pass.
+const DEFAULT_FILTERS: DiscoveryFilters = { radiusKm: 10, openNow: false, minRating: null };
+
 // ── Main tab component ────────────────────────────────────────────────────────
 
 interface DiscoveryCategoryTabProps {
@@ -349,8 +353,12 @@ interface DiscoveryCategoryTabProps {
   userLat?: number | null;
   userLng?: number | null;
   fallbackZoom?: number;
-  /** Controlled filters — passed from the parent (discovery.tsx owns the state). */
-  filters: DiscoveryFilters;
+  /**
+   * Controlled filters — passed from the parent (discovery.tsx owns the state).
+   * Optional for backward compat with callers written before this prop existed;
+   * an omitted prop falls back to DEFAULT_FILTERS (unfiltered state) below.
+   */
+  filters?: DiscoveryFilters;
   /** Kept for back-compat; no longer called by this component. */
   onFiltersChange?: (filters: DiscoveryFilters) => void;
   /** Called when the user pulls to refresh, after the re-fetch is initiated. */
@@ -377,7 +385,7 @@ export function DiscoveryCategoryTab({
   userLat,
   userLng,
   fallbackZoom,
-  filters,
+  filters = DEFAULT_FILTERS,
   listTopInset = 0,
   bottomInset,
   onRefresh,
