@@ -377,23 +377,55 @@ holding both occurrences of the flag and only the **live** file's literal
 removed, the corrected guard fails with `UNVERIFIED APP_TREE_READS ENTRY`. That
 is precisely the case the pre-correction guard passed.
 
-## Implementation — built, CI-verified, production staged
+## Implementation — built, CI-verified, APPLIED TO PRODUCTION 2026-08-13
 
 Owner approved the classification on 2026-08-12. The migrations are committed and
-verified against the CI project; production was untouched and waiting on the
-owner's explicit go at the time this section was written.
+verified against the CI project.
 
-> **Stale as of 2026-08-13 — but not corrected here, because this session did
-> not witness the apply.** The `2087` preflight read production at **149
-> `feature_flags` rows**, which is precisely this table's predicted `168 → 149`
-> outcome, so the reconciliation appears to have been applied between 2026-08-12
-> and 2026-08-13. That is an inference from a row count, not an application
-> record: nobody has written down when it ran, who ran it, or what its
-> verification queries returned. Whoever applied it should replace this note with
-> that record. Do not assume the count alone confirms every block landed as
-> intended — a per-flag check against the tables above is the honest verification,
-> and `_incoming/flag-snapshot-pre-2087-20260813.json` holds all 149 rows as they
-> stood immediately before the `2087` apply.
+### Production apply — `ajrurzioarfkagpuxfnb`, 2026-08-13 ~05:20–05:35Z
+
+Executed by the **shell operator via the Management API, owner-authorized in
+advance**. Reported by that operator; the independent confirmation below was
+reconstructed afterwards from the two snapshot files, not taken on trust.
+
+**Step 0 first.** All 168 rows saved to
+`_incoming/flag-table-snapshot-pre-apply-20260813.json` (33,544 bytes) **before
+anything ran**. That is the rollback source; no migration restores those rows.
+
+| Block | Returned | Row count after | Effect |
+|---|---|---|---|
+| **1** — `2084` codify 9 | `[]` | **168**, unchanged | All nine KEEP-A rows already existed. `ON CONFLICT DO NOTHING` proven a genuine no-op, not an overwrite. |
+| **2** — `2085` converge 6 | `[]` | **174** | `+6` exactly: the five `MEDIA_*` flags at `false`, plus `rent_buddy_allow_bookings_without_kyc` at `false`. |
+| **3** — `2086` retire 33 | `[]`, internal assertions passing | **149** | `−25`. The other 8 were already absent, so the `DELETE` was a zero-row no-op for them. |
+
+Wired survivors confirmed by name: `live_places_enabled`,
+`RENT_BUDDY_PACKAGES_ENABLED`, `shared_moments_chat_enabled`.
+
+#### Independently reconfirmed from the snapshots, not from the report
+
+Diffing the 168-row pre-apply snapshot against
+`_incoming/flag-snapshot-pre-2087-20260813.json` (the 149 rows captured
+immediately before the separate `2087` apply) reproduces every number above from
+the artefacts alone:
+
+* deleted set **exactly 25**, added set **exactly 6**, and `168 − 25 + 6 = 149`;
+* the added 6 are precisely the five `MEDIA_*` flags and
+  `rent_buddy_allow_bookings_without_kyc`, **all `false`** — `rent_buddy_allow_bookings_without_kyc`
+  reading `false` is the one that matters, since a `true` there would have opened
+  the KYC override;
+* **every one of the 25 deleted names appears in `2086`'s retirement list.**
+  Nothing was deleted that the migration did not name;
+* the three wired survivors are present, `RENT_BUDDY_PACKAGES_ENABLED` at `true`;
+* **Block 1's no-op is provable, not merely reported.** All nine KEEP-A rows are
+  byte-identical across the two snapshots including their `updated_at`
+  timestamps — e.g. `MEDIA_HIDDEN_GEMS_CREATE_ENABLED` still `true` at
+  `2026-08-06T05:11:50.818854Z`, the seven ranking flags still
+  `2026-07-26T07:47:59.313466Z`. An `INSERT` that had touched them would have
+  moved those timestamps. None moved.
+
+`city_launch_mode` was **not** part of this apply — it is in none of `2084`'s,
+`2085`'s or `2086`'s lists, and was retired separately by `2087`, which is why
+the `2087` preflight found 149 rather than 168.
 
 | Outcome | Population | Count | Migration / action | CI result |
 |---|---|---|---|---|
