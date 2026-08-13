@@ -5,31 +5,22 @@
  * prop (exactly as callers that predate the controlled-filters feature would
  * do) does NOT crash and instead displays its default, unfiltered content.
  *
- * The TypeScript interface marks `filters` as required, but JavaScript callers
- * that were written before the prop existed will pass `undefined` at runtime.
- * The component must fall back to sensible defaults rather than throwing a
- * TypeError on `filters.radiusKm` / `filters.openNow` / `filters.sortBy`.
+ * The TypeScript interface marks `filters` as optional now, and
+ * `DiscoveryCategoryTab` defaults it to `DEFAULT_FILTERS` (radiusKm: 10,
+ * openNow: false, minRating: null) when the prop is omitted, so a caller
+ * passing `undefined` mounts cleanly instead of throwing on
+ * `filters.radiusKm` / `filters.sortBy`.
  *
- * STATUS: BUG FOUND, NOT FIXED (reported, not silently patched — see project
- * task "Confirm the Discovery category tab still loads correctly when no
- * initial filters are passed"). `DiscoveryCategoryTab` destructures `filters`
- * with no default value, so a caller passing `undefined` crashes on mount:
- *   - with a destination set:   TypeError reading 'radiusKm' (DiscoveryCategoryTab.tsx ~line 506)
- *   - with no destination set:  TypeError reading 'sortBy'   (DiscoveryCategoryTab.tsx ~line 525)
- * The bug is NOT fixed here. An earlier revision `.skip`ped the three tests
- * below; CI enforces `jest skipped <= 0`, because a skipped test asserts
- * nothing. So they now assert the CURRENT behaviour — that mount throws —
- * which documents the gap AND enforces it: if someone adds a default without
- * updating this file, these tests fail and say why.
+ * STATUS: FIXED (see project task "Confirm the Discovery category tab still
+ * loads correctly when no initial filters are passed"). These tests were
+ * originally written to characterise the crash (`.not.toThrow()` inverted to
+ * assert the throw, per the project's no-skipped-tests policy); they now
+ * assert the fixed, desired behaviour directly.
  *
- * The fix is one line: give `filters` a default value mirroring
- * DEFAULT_FILTERS in discoveryFilterStorage.ts. When it lands, invert these
- * three assertions back to the desired behaviour (`.not.toThrow()`, one
- * getDiscoveryPlaces call, the "Pick a destination" prompt for the empty case).
- *
- * Live impact today is nil: the single caller, app/(tabs)/discovery.tsx:599,
- * passes `filters={activeFilters}`, and it is wrapped in a
- * SectionErrorBoundary. This is a robustness gap, not a live defect.
+ * Live impact was nil even before the fix: the single caller,
+ * app/(tabs)/discovery.tsx:616, always passes `filters={activeFilters}`, and
+ * is wrapped in a SectionErrorBoundary. This closes a robustness gap, not a
+ * live defect.
  *
  * Run with: pnpm test:component
  */
@@ -122,12 +113,12 @@ describe('DiscoveryCategoryTab — no filters prop (pre-filters-feature caller)'
     }) as any;
 
   /**
-   * The read of `filters` happens in a mount EFFECT, not during render, so
-   * `render()` itself returns normally and the TypeError escapes as an
-   * unhandled error during the effect flush. Catching it around an explicit
-   * `act` is therefore the only way to assert on it — `expect(render).toThrow()`
-   * does not see it, and leaving it uncaught fails the test as an unhandled
-   * rejection. That asymmetry is itself part of why this gap went unnoticed.
+   * The read of `filters` happens in a mount EFFECT, not during render, so a
+   * pre-fix `render()` itself returns normally and the TypeError escapes as
+   * an unhandled error during the effect flush. Catching it around an
+   * explicit `act` is therefore the only way to assert on it — this helper is
+   * red-proof: run against the pre-fix component (no default value on the
+   * `filters` destructure), it still catches and returns the TypeError.
    */
   const mountAndCaptureError = async (destination: string): Promise<Error | null> => {
     try {
@@ -140,28 +131,22 @@ describe('DiscoveryCategoryTab — no filters prop (pre-filters-feature caller)'
     }
   };
 
-  it('CURRENT: mount effect throws reading filters.radiusKm when a destination is set', async () => {
-    // Characterises the gap, not the desired behaviour. When the default
-    // filters value lands, this becomes `expect(err).toBeNull()` — see STATUS.
+  it('mounts without throwing when filters.radiusKm would be read, with a destination set', async () => {
     const err = await mountAndCaptureError('Paris');
-    expect(err).not.toBeNull();
-    expect(String(err)).toMatch(/radiusKm/);
+    expect(err).toBeNull();
   });
 
-  it('CURRENT: never reaches the data fetch, because the mount effect throws first', async () => {
-    // The desired behaviour is one getDiscoveryPlaces call with defaulted
-    // filters. Today the crash precedes the fetch, so the service is never
-    // called — which is why the gap is invisible to any network-level check.
+  it('reaches the data fetch with defaulted filters, because mount no longer throws first', async () => {
     await mountAndCaptureError('Paris');
-    expect(mockGetDiscoveryPlaces).not.toHaveBeenCalled();
+    expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(1);
+    // Defaulted filters (DEFAULT_FILTERS): unfiltered radius/rating/openNow.
+    // Call shape: getDiscoveryPlaces(destination, category, filters, ...).
+    const [, , filtersArg] = mockGetDiscoveryPlaces.mock.calls[0];
+    expect(filtersArg).toEqual({ radiusKm: 10, openNow: false, minRating: null });
   });
 
-  it('CURRENT: mount effect throws reading filters.sortBy when destination is empty', async () => {
-    // The no-destination view should render the "Pick a destination" prompt
-    // without touching filters at all. It does not: the read happens before
-    // that branch is reached.
+  it('mounts without throwing when filters.sortBy would be read, with no destination set', async () => {
     const err = await mountAndCaptureError('');
-    expect(err).not.toBeNull();
-    expect(String(err)).toMatch(/sortBy/);
+    expect(err).toBeNull();
   });
 });

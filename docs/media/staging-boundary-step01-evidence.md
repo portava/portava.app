@@ -217,12 +217,19 @@ Two findings from the run:
 
 ### Step C — HELD
 
+> **Superseded 2026-08-13:** the owner authorised the release and Step C was
+> applied. See "Execution record — Step 01 executed end to end (2026-08-13)"
+> below. The text that follows is the state as of 2026-08-12, kept as written.
+
 The production DROP has **not** been applied. It is a live security-policy
 removal that will begin rejecting direct video/HEIC inserts into the durable
 bucket — an outward-facing behaviour change — and production writes are the
 user's own explicit release. Awaiting their authorisation.
 
 ### Step D — pending
+
+> **Superseded 2026-08-13:** executed, exit 1 as expected. Verbatim output in
+> the 2026-08-13 execution record below.
 
 Runs immediately after C. Expect **exit 1** naming both policies absent.
 
@@ -236,3 +243,96 @@ Runs immediately after C. Expect **exit 1** naming both policies absent.
   covers and Step 01 leaves alone.
 - **Whether any of the 35 objects carries GPS.** Still unmeasured;
   `auditStorageExif` refuses production by design.
+
+## Execution record — Step 01 executed end to end (2026-08-13)
+
+Operator: the orchestrating session, through the sanctioned Management API
+path, 2026-08-13 ~04:30Z, following the owner's authorisation of the
+production release that the 2026-08-12 record was holding for. Steps A–D ran
+tonight as one sequence. This section is the record the runbook above asks
+for ("Record both outputs against this document when done").
+
+### Step A — before-proof — exit 0
+
+The runbook command, read-only against production `ajrurzioarfkagpuxfnb`
+through `ciProdReadOnlyAuditGuard`. Result: **exit 0**, both policy bodies
+present and printed, both prefixes reporting **0 objects**.
+
+Recorded honestly: the raw capture (`/tmp/stepA.txt`) was lost to a workspace
+container restart before this record could be committed. The result above is
+the orchestrating session's report of the run, consistent with the
+2026-08-12 capture earlier in this document (same instrument, same
+parameters, same bodies). The Step D output below is the surviving raw
+capture of the before/after pair — and Step A's positive-control role is
+unaffected, because the 2026-08-12 exit-0 capture already demonstrates the
+instrument detecting the policies when present.
+
+### Step B — rollback validation — PROVEN, fresh apply
+
+The captured re-CREATE (both statements from "The rollback" above) applied
+fresh to the CI project `hwokxgbmezheskbzskfr` — clean this time, as the
+2026-08-12 run left it. `pg_policies` deparse read back and diffed against
+the production live bodies: **character-identical on `qual` and
+`with_check` for both policies.** Both copies then dropped from CI, leaving
+it clean.
+
+### Step C — production DROP applied
+
+`20260815_close_memories_stories_grant.sql` applied to production
+`ajrurzioarfkagpuxfnb` through the sanctioned path. The apply returned `[]`
+— no rows, no errors.
+
+### Step D — after-proof — exit 1
+
+The Step A command re-run immediately after C. **Exit 1.** Both policies
+reported NOT present live, and a direct `pg_policies` count for the two
+names returned **0**. Verbatim output (preserved from `/tmp/stepD.txt`):
+
+```
+
+> @workspace/api-server@0.0.0 audit:staging-boundary-grant
+> node --env-file-if-exists=.env --import tsx/esm src/scripts/auditStagingBoundaryGrant.ts
+
+.env not found. Continuing without it.
+══════════════════════════════════════════════════════════════════════════
+[ciProdReadOnlyAuditGuard] READ-ONLY AUDIT OF PRODUCTION — PERMITTED
+══════════════════════════════════════════════════════════════════════════
+  requested by  : PORTAVA_PROD_READ_ONLY_AUDIT='read-only-audit-against-production'
+  resolved ref  : ajrurzioarfkagpuxfnb   (from SUPABASE_URL)
+  declared prod : ajrurzioarfkagpuxfnb   (KNOWN_PROD_PROJECT_REF)
+  CI markers    : none present — this mode is refused in CI
+
+  This process is about to read PRODUCTION data. It is one of the
+  audits permitted to do so, and it issues SELECTs only: no INSERT, no
+  UPDATE, no DELETE, no auth user is created or deleted, no row is
+  written. That is a property of these files, verified by reading
+  them, and enforced by scripts/check-guard-coverage.mjs, which fails if
+  any other file imports this front door.
+  It is NOT a property of the credential: the Management API token in
+  this environment can write. The mode constrains what this process
+  does, not what the token could do.
+══════════════════════════════════════════════════════════════════════════
+══════════════════════════════════════════════════════════════════════════
+STEP 01 — LIVE POLICY BODIES (the rollback)
+══════════════════════════════════════════════════════════════════════════
+❌ policy post_media_storage_memories_stories_insert is NOT present live. Either it was already dropped, or the name is wrong. Do not proceed until this is explained — a rollback cannot be written for a policy whose body was never captured.
+❌ policy post_media_memories_stories_delete is NOT present live. Either it was already dropped, or the name is wrong. Do not proceed until this is explained — a rollback cannot be written for a policy whose body was never captured.
+
+══════════════════════════════════════════════════════════════════════════
+STEP 01 — PRECONDITION: the prefixes must be unused
+══════════════════════════════════════════════════════════════════════════
+  ✅ post-media 'memories/*' — 0 objects
+  ✅ post-media 'stories/*' — 0 objects
+
+  context: stories rows = 0
+  context: post-media objects total = 35
+
+══════════════════════════════════════════════════════════════════════════
+STEP 01 GATE: ❌ NOT SATISFIED — do not apply the migration.
+```
+
+The inversion the runbook demands — exit 0 with both bodies before, exit 1
+with both absent after — is complete. **Step 01 is closed**: the undeclared
+grant is gone from production, and the rollback carried in
+`20260815_close_memories_stories_grant.sql` is proven to restore it
+character-for-character if ever needed.
