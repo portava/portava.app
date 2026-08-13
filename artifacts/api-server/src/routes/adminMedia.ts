@@ -35,6 +35,135 @@ import { resolveContentOwner } from "../lib/contentOwner.js";
 
 const router = Router();
 
+// ── Image dimension parsers ───────────────────────────────────────────────────
+// Each parser takes a Buffer containing the first 64 KB of the file and returns
+// { width, height } on success or null when the format is not recognised or the
+// header is incomplete.  Only the image-specific formats are handled here;
+// video objects (mp4, mov, …) return null from all parsers and are handled by
+// writing file_size_bytes only.
+
+/** JPEG — walk SOF (Start-Of-Frame) markers (FFC0–FFCB, excl. FFC4/FFC8). */
+function parseJpegDimensions(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 10) return null;
+  if (buf[0] !== 0xFF || buf[1] !== 0xD8) return null; // must start with SOI
+
+  let i = 2;
+  while (i < buf.length - 8) {
+    if (buf[i] !== 0xFF) { i++; continue; }
+    const type = buf[i + 1]!;
+    const isSOF =
+      (type >= 0xC0 && type <= 0xC3) ||
+      (type >= 0xC5 && type <= 0xC7) ||
+      (type >= 0xC9 && type <= 0xCB);
+    if (isSOF) {
+      // Layout: [FF][type(1)] [length(2)] [precision(1)] [height(2)] [width(2)]
+      const height = ((buf[i + 5]! << 8) | buf[i + 6]!) >>> 0;
+      const width  = ((buf[i + 7]! << 8) | buf[i + 8]!) >>> 0;
+      if (width > 0 && height > 0) return { width, height };
+    }
+    if (i + 3 >= buf.length) break;
+    const segLen = ((buf[i + 2]! << 8) | buf[i + 3]!) >>> 0;
+    if (segLen < 2) break;
+    i += 2 + segLen;
+  }
+  return null;
+}
+
+/**
+ * PNG — fixed IHDR chunk at offset 8.
+ * Signature (8 bytes): 89 50 4E 47 0D 0A 1A 0A
+ * IHDR layout: [length(4)] ["IHDR"(4)] [width(4)] [height(4)]
+ */
+function parsePngDimensions(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 24) return null;
+  if (
+    buf[0] !== 0x89 || buf[1] !== 0x50 || buf[2] !== 0x4E || buf[3] !== 0x47 ||
+    buf[4] !== 0x0D || buf[5] !== 0x0A || buf[6] !== 0x1A || buf[7] !== 0x0A
+  ) return null;
+  const width  = buf.readUInt32BE(16);
+  const height = buf.readUInt32BE(20);
+  return width > 0 && height > 0 ? { width, height } : null;
+}
+
+/**
+ * WebP — three sub-formats (VP8 lossy, VP8L lossless, VP8X extended).
+ * Container: RIFF[size(4)]WEBP[chunk-type(4)]…
+ */
+function parseWebpDimensions(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 30) return null;
+  if (
+    buf[0] !== 0x52 || buf[1] !== 0x49 || buf[2] !== 0x46 || buf[3] !== 0x46 || // RIFF
+    buf[8] !== 0x57 || buf[9] !== 0x45 || buf[10] !== 0x42 || buf[11] !== 0x50   // WEBP
+  ) return null;
+
+  const variant = buf.toString("ascii", 12, 16);
+  if (variant === "VP8 ") {
+    // Lossy: 3-byte sync (9D 01 2A) at byte 23, then width/height as 14-bit LE
+    if (buf.length < 30) return null;
+    const width  = (buf.readUInt16LE(26) & 0x3FFF) + 1;
+    const height = (buf.readUInt16LE(28) & 0x3FFF) + 1;
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  if (variant === "VP8L") {
+    // Lossless: signature byte 0x2F at offset 20, then 14-bit packed width/height
+    if (buf.length < 25 || buf[20] !== 0x2F) return null;
+    const bits   = buf.readUInt32LE(21);
+    const width  = (bits & 0x3FFF) + 1;
+    const height = ((bits >>> 14) & 0x3FFF) + 1;
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  if (variant === "VP8X") {
+    // Extended: width-1 (3 bytes LE) at offset 24, height-1 (3 bytes LE) at 27
+    if (buf.length < 30) return null;
+    const width  = (buf[24]! | (buf[25]! << 8) | (buf[26]! << 16)) + 1;
+    const height = (buf[27]! | (buf[28]! << 8) | (buf[29]! << 16)) + 1;
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  return null;
+}
+
+/**
+ * Try JPEG → PNG → WebP in order.  Returns null for unrecognised formats
+ * (HEIC, video, etc.) — those rows still receive file_size_bytes if available.
+ */
+function parseDimensions(buf: Buffer): { width: number; height: number } | null {
+  return parseJpegDimensions(buf) ?? parsePngDimensions(buf) ?? parseWebpDimensions(buf) ?? null;
+}
+
+/**
+ * Fetch up to maxBytes of a URL's body, even when the server ignores the Range
+ * header and returns the full file.  The stream is cancelled after maxBytes to
+ * avoid reading megabytes into memory.
+ */
+async function fetchBounded(url: string, maxBytes: number): Promise<Buffer> {
+  const resp = await fetch(url, { headers: { Range: `bytes=0-${maxBytes - 1}` } });
+  if (!resp.ok && resp.status !== 206) {
+    throw new Error(`HTTP ${resp.status}`);
+  }
+  if (!resp.body) throw new Error("No response body");
+
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done || !value) break;
+      const remaining = maxBytes - total;
+      if (value.length >= remaining) {
+        chunks.push(value.slice(0, remaining));
+        total += remaining;
+        break;
+      }
+      chunks.push(value);
+      total += value.length;
+    }
+  } finally {
+    reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks);
+}
+
 // ── Pagination helper ─────────────────────────────────────────────────────────
 
 function parsePagination(query: any): { page: number; limit: number; offset: number } {
@@ -215,6 +344,252 @@ router.get("/admin/media/ai-provenance", asyncHandler(async (req, res) => {
   res.json({
     items: (data as any[]) ?? [],
     pagination: { page, limit, total: count ?? 0, hasMore: (count ?? 0) > offset + limit },
+  });
+}));
+
+// ── POST /admin/media/backfill-dimensions ─────────────────────────────────────
+/**
+ * Paginated backfill: populate width, height, and/or file_size_bytes for
+ * post_media rows with processing_status='ready' that are still missing one or
+ * more of those fields.
+ *
+ * DESIGN
+ * ──────
+ * Supported image types (JPEG/PNG/WebP) need all three fields.
+ * Video/HEIC and any other format can only be backfilled for file_size_bytes
+ * (dimensions require a media decoder not available here).
+ *
+ * The candidate set is therefore composed of two non-overlapping groups:
+ *   A) Any media type where file_size_bytes IS NULL.
+ *   B) Supported image types where width IS NULL OR height IS NULL
+ *      AND file_size_bytes IS NOT NULL (already handled in a previous batch).
+ *
+ * Group B is image-only so that video/HEIC rows — which will always have NULL
+ * width/height after their file_size is written — never re-enter the set.
+ *
+ * BATCH CONTRACT
+ * ──────────────
+ * Body (optional): { limit?: 1–50, after_id?: string }
+ *   limit    — rows per call, default 20, max 50.
+ *   after_id — opaque cursor: the last id returned by the previous batch.
+ *              Omit on the first call.
+ * Response includes next_cursor (null when the backfill is complete).
+ *
+ * SECURITY
+ * ────────
+ * Only objects whose storage_path resolves to a trusted bucket/path are
+ * fetched.  The public_url column is never used as a fetch target to prevent
+ * SSRF.  fetchBounded() hard-caps the download at 64 KB regardless of whether
+ * the server honours the Range header, so no multi-megabyte original is ever
+ * buffered in this process.
+ */
+
+// Media types for which parseDimensions() can extract width/height.
+const DIMENSION_SUPPORTED_TYPES = new Set([
+  "image/jpeg", "image/jpg", "image/png", "image/webp",
+]);
+
+const backfillSchema = z.object({
+  limit:    z.number().int().min(1).max(50).optional().default(20),
+  after_id: z.string().uuid().optional(),
+});
+
+router.post("/admin/media/backfill-dimensions", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const parsed = backfillSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.errors[0]?.message ?? "Invalid body");
+    return;
+  }
+  const { limit, after_id: afterId } = parsed.data;
+
+  // ── Build candidate set ────────────────────────────────────────────────────
+  // Two queries, each keyset-paginated by id.  They are unioned client-side
+  // because PostgREST cannot express the compound type-conditional predicate in
+  // a single query without nested AND/OR that supabase-js does not support.
+
+  type Row = {
+    id: string;
+    storage_path: string | null;
+    storage_bucket: string | null;
+    media_type: string | null;
+    mime_type: string | null;
+    width: number | null;
+    height: number | null;
+    file_size_bytes: number | null;
+  };
+
+  // mime_type holds the MIME string (image/jpeg, image/png, image/webp, …).
+  // media_type is the coarse enum ('image' | 'video') — not suitable for
+  // MIME-specific filtering.
+  const COLS = "id, storage_path, storage_bucket, media_type, mime_type, width, height, file_size_bytes";
+
+  // Group A: any type missing file_size_bytes.
+  let qA = sc
+    .from("post_media")
+    .select(COLS)
+    .eq("processing_status", "ready")
+    .is("file_size_bytes", null)
+    .order("id", { ascending: true })
+    .limit(limit);
+  if (afterId) qA = qA.gt("id", afterId);
+
+  // Group B: supported image MIME types where dimensions are missing and
+  // file_size is already populated (avoids duplicates with Group A).
+  // Filtered on mime_type (the full MIME string), not media_type (coarse enum).
+  let qB = sc
+    .from("post_media")
+    .select(COLS)
+    .eq("processing_status", "ready")
+    .in("mime_type", [...DIMENSION_SUPPORTED_TYPES])
+    .or("width.is.null,height.is.null")
+    .not("file_size_bytes", "is", null)
+    .order("id", { ascending: true })
+    .limit(limit);
+  if (afterId) qB = qB.gt("id", afterId);
+
+  const [resA, resB] = await Promise.all([qA, qB]);
+  if (resA.error) { sendError(res, "db_error", resA.error.message); return; }
+  if (resB.error) { sendError(res, "db_error", resB.error.message); return; }
+
+  // Merge + dedup by id + sort + take first `limit` rows.
+  const merged = new Map<string, Row>();
+  for (const r of [...(resA.data ?? []), ...(resB.data ?? [])]) {
+    if (!merged.has(r.id)) merged.set(r.id, r as Row);
+  }
+  const candidates: Row[] = [...merged.values()]
+    .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+    .slice(0, limit);
+
+  // ── Process each candidate ─────────────────────────────────────────────────
+
+  const results: Array<{
+    id: string;
+    status: "ok" | "skip" | "error";
+    width?: number;
+    height?: number;
+    file_size_bytes?: number;
+    note?: string;
+    error?: string;
+  }> = [];
+
+  for (const row of candidates) {
+    try {
+      // ── Resolve a signed URL from our own Storage ────────────────────────
+      // public_url is deliberately not used — following caller-supplied URLs
+      // would be an SSRF risk.  Only objects we can sign from the trusted
+      // storage bucket are eligible.
+      const bucket = row.storage_bucket ?? "post-media";
+      const ref = resolveStoragePath(row.storage_path, bucket);
+
+      if (ref.kind !== "path") {
+        results.push({
+          id:     row.id,
+          status: "skip",
+          error:  `storage_path unresolvable (kind='${ref.kind}') — only trusted Storage objects are backfilled`,
+        });
+        continue;
+      }
+
+      const { data: signed, error: signErr } = await (sc.storage as any)
+        .from(bucket)
+        .createSignedUrl(ref.path, 300); // 5-minute TTL, single use
+      if (signErr || !(signed as any)?.signedUrl) {
+        results.push({
+          id:     row.id,
+          status: "error",
+          error:  `createSignedUrl failed: ${signErr?.message ?? "no URL returned"}`,
+        });
+        continue;
+      }
+      const signedUrl = (signed as any).signedUrl as string;
+
+      // ── HEAD → Content-Length (file_size_bytes) ──────────────────────────
+      let fileSize: number | null = null;
+      try {
+        const headResp = await fetch(signedUrl, { method: "HEAD" });
+        if (headResp.ok || headResp.status === 206) {
+          const cl = Number(headResp.headers.get("content-length") ?? "0");
+          if (cl > 0) fileSize = cl;
+        }
+      } catch {
+        // Non-fatal — carry on to dimension extraction.
+      }
+
+      // ── Bounded fetch → first 64 KB → dimensions (image types only) ──────
+      // fetchBounded() hard-caps at 64 KB even when the server ignores the
+      // Range header, so a 9 MB original is never fully buffered.
+      let dims: { width: number; height: number } | null = null;
+      // needDims is gated on mime_type (the full MIME string), not media_type
+      // (the coarse 'image'|'video' enum).  DIMENSION_SUPPORTED_TYPES contains
+      // MIME values, so checking media_type against it would always be false.
+      const needDims =
+        (row.width === null || row.height === null) &&
+        DIMENSION_SUPPORTED_TYPES.has(row.mime_type ?? "");
+      if (needDims) {
+        try {
+          const buf = await fetchBounded(signedUrl, 65536);
+          dims = parseDimensions(buf);
+        } catch (e: any) {
+          results.push({ id: row.id, status: "error", error: `Fetch failed: ${String(e?.message ?? e)}` });
+          continue;
+        }
+      }
+
+      // ── Build patch: only update fields that are currently NULL ───────────
+      const patch: Record<string, number> = {};
+      if (row.width           === null && dims)              patch.width           = dims.width;
+      if (row.height          === null && dims)              patch.height          = dims.height;
+      if (row.file_size_bytes === null && fileSize !== null) patch.file_size_bytes = fileSize;
+
+      if (Object.keys(patch).length === 0) {
+        results.push({ id: row.id, status: "skip", note: "Nothing to update after fetch" });
+        continue;
+      }
+
+      const { error: updateErr } = await sc
+        .from("post_media")
+        .update(patch)
+        .eq("id", row.id);
+
+      if (updateErr) {
+        results.push({ id: row.id, status: "error", error: updateErr.message });
+      } else {
+        const note = needDims && !dims
+          ? `Dimensions not parsed (unsupported format: ${row.mime_type ?? row.media_type ?? "unknown"})`
+          : undefined;
+        results.push({
+          id:     row.id,
+          status: "ok",
+          ...(patch.width           !== undefined ? { width:           patch.width }           : {}),
+          ...(patch.height          !== undefined ? { height:          patch.height }          : {}),
+          ...(patch.file_size_bytes !== undefined ? { file_size_bytes: patch.file_size_bytes } : {}),
+          ...(note ? { note } : {}),
+        });
+      }
+    } catch (e: any) {
+      results.push({ id: row.id, status: "error", error: String(e?.message ?? e) });
+    }
+  }
+
+  // ── Cursor ────────────────────────────────────────────────────────────────
+  // next_cursor is the id of the last row in this batch.  Pass it as after_id
+  // in the next call.  When null, the backfill is complete.
+  const lastId = candidates.length > 0
+    ? candidates[candidates.length - 1]!.id
+    : null;
+  const isComplete = candidates.length < limit;
+
+  res.json({
+    candidates:   candidates.length,
+    ok:           results.filter((r) => r.status === "ok").length,
+    skipped:      results.filter((r) => r.status === "skip").length,
+    failed:       results.filter((r) => r.status === "error").length,
+    next_cursor:  isComplete ? null : lastId,
+    results,
   });
 }));
 

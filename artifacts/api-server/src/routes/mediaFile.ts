@@ -183,7 +183,7 @@ router.get(
     // that Supabase resizes on the fly.  This is the only supported resize path
     // for private-bucket media — transform params appended to a plain
     // /object/sign/ URL have no effect.  Clamp to a sane range to prevent abuse.
-    let transform: { width?: number } | undefined;
+    let transform: { width?: number; quality?: number } | undefined;
     const rawWidth = req.query.width;
     if (rawWidth !== undefined && rawWidth !== null && rawWidth !== "") {
       const parsedWidth = Number(rawWidth);
@@ -192,13 +192,13 @@ router.get(
       }
     }
 
-    const signed = await signUrl(sc, bucket, path, transform);
-    if (!signed) { sendError(res, "not_found", "Media unavailable"); return; }
+    const signedUrl = await signUrl(sc, bucket, path, transform);
+    if (!signedUrl) { sendError(res, "not_found", "Media unavailable"); return; }
 
     // no-store: the signed URL has a finite lifetime (SIGNED_TTL_SECONDS).
     // Caching the redirect would allow the same URL to be reused near expiry.
     res.setHeader("Cache-Control", "no-store");
-    res.redirect(302, signed);
+    res.redirect(302, signedUrl);
   }),
 );
 
