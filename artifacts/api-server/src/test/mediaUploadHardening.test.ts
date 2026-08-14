@@ -191,6 +191,43 @@ describe("POST /api/media/upload — hardening", () => {
     assert.equal(r.body.error, "invalid_payload");
     assert.equal(client._uploads.length, 0);
   });
+
+  // Dimension guard — same path as postcards (task 3598 / migration 2088).
+  //
+  // The /media/upload route does NOT write post_media rows directly: it uploads
+  // to storage and returns metadata for the client to use when writing its own
+  // post_media row.  For IMAGES the server always measures dimensions
+  // (processImage() — reject on failure), so width/height are never null when
+  // this route succeeds.  For VIDEOS there is no server-side transcode tier, so
+  // the route returns width=null, height=null — the client must obtain
+  // dimensions itself before writing a 'ready' row.
+  //
+  // The authoritative enforcement is the DB-level CHECK constraint added by
+  // migration 2088 (post_media_ready_has_dimensions): ANY post_media INSERT or
+  // UPDATE that sets processing_status='ready' with null width/height is
+  // rejected at the database, covering both the postcards completion path and
+  // any future path that might use this route's storage URL directly.  This
+  // test confirms the route's null-dimension contract so the constraint stays
+  // as the only guard needed.
+  it("video upload: route returns null width/height — dimensions not server-measured (DB constraint is the backstop)", async () => {
+    const client = makeClient();
+    setClients(client);
+    // Minimal valid ftyp box recognised by sniffMedia() as video/mp4.
+    // Bytes 4-8 = "ftyp"; brand bytes 8-12 = "isom" (not "hei*"/"mif*"/"qt*").
+    const mp4Stub = Buffer.concat([
+      Buffer.from([0, 0, 0, 16]), // box size = 16 bytes
+      Buffer.from("ftyp"),        // box type
+      Buffer.from("isom"),        // major brand → video/mp4
+      Buffer.from([0, 0, 0, 0]),  // minor version
+    ]);
+    const r = await rawReq("POST", "/api/media/upload", mp4Stub, "video/mp4");
+    assert.equal(r.status, 201, `expected 201, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.processed, false, "videos must not report processed=true");
+    assert.equal(r.body.width,  null, "video width must be null — no server-side measurement");
+    assert.equal(r.body.height, null, "video height must be null — no server-side measurement");
+    // One storage upload (the video bytes); no thumbnail or feed variant for videos.
+    assert.equal(client._uploads.length, 1, "only the raw video should be stored");
+  });
 });
 
 describe("POST /api/events/:id/media — storage-origin validation", () => {
