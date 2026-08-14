@@ -165,4 +165,12 @@ so this is a diff, not a search.
 - A literal-string search misses a flag read through a computed key. Treat
   "no consumer" as strong evidence, not proof, before deleting a row.
 
-**Held and untouched:** `post_media` read policy, `content_stamps` retention.
+**Held and untouched:** ~~`post_media` read policy~~, `content_stamps` retention.
+
+> **Correction, 2026-08-14.** The `post_media` read policy is **no longer
+> held** — `post_media_storage_public_read` was REVOKED in production by
+> `artifacts/api-server/src/migrations/2089_revoke_post_media_public_read.sql:101`
+> (evidence: `docs/media/post-media-public-read-revocation-evidence.md`). Only
+> `content_stamps` retention remains on the hold list. This corrects the line
+> above; it changes no flag, no seeding decision, and no number in this
+> inventory, none of which depended on that policy's state.
