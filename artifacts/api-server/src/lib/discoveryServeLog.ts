@@ -61,20 +61,72 @@ export const DiscoveryServePoint = {
   CACHE_B_HIT:            4,
   COMPASS_FRESH_RANK:     5,
   COLD_FETCH_LEGACY_RANK: 6,
+  // Stage 0b — the rest of the discovery surface (ruling D4=C). None of these
+  // ranks or caches; they are instrumented because the baseline must describe
+  // everything users receive, not only what the flag will govern (D4=A).
+  FEED:                   7,
+  SEARCH:                 8,
+  SUGGEST:                9,
 } as const;
 
 export type DiscoveryServePointId =
   (typeof DiscoveryServePoint)[keyof typeof DiscoveryServePoint];
 
-/** Serve points that ran a ranker during THIS request. */
+/**
+ * Serve points that ran a ranker during THIS request.
+ *
+ * Serve points 7-9 are absent deliberately, and not by oversight: feed, search
+ * and suggest contain no ranker call at all. A grep of routes/discoverySearch.ts
+ * for rankCandidates / rankItemsForDiscovery / drsRankItems / logImpression
+ * returns nothing, and /discovery/feed merges Overpass and DB output with no
+ * scoring step (routes/discovery.ts:1667-1683).
+ */
 const RANKED_IN_REQUEST = new Set<number>([
   DiscoveryServePoint.COMPASS_FRESH_RANK,
   DiscoveryServePoint.COLD_FETCH_LEGACY_RANK,
 ]);
 
+/**
+ * The item_kind values the CHECK constraint accepts
+ * (0153_add_rank_events.sql:18). NULL is also accepted — 0197 dropped the NOT
+ * NULL — and is the correct value for a served entity that is none of these,
+ * such as a city, country, language or hashtag result from search.
+ */
+export type RankItemKind = "post" | "event" | "plan" | "buddy" | "place" | "gem";
+
 /** Minimal shape this module needs from a served item. */
 export interface ServedItem {
   id: string;
+  /**
+   * Explicit kind. When omitted the id is used to infer place-vs-gem, which is
+   * right for GET /discovery (every item there is a DiscoveryPlace) and wrong
+   * for search, whose results are heterogeneous — so search passes this.
+   */
+  kind?: RankItemKind | null;
+}
+
+/**
+ * Map a discovery search/suggest result `type` to an item_kind.
+ *
+ * Returns null for the taxonomic result types — hashtags, circles, stamps,
+ * activities, cities, countries, languages, interests, vibes. These are real
+ * served results and belong in the baseline, but none of them is one of the six
+ * kinds the constraint allows, and inventing a kind for them would corrupt
+ * every metric that groups by item_kind. NULL says "served, kind not
+ * applicable", which is exactly true.
+ */
+export function searchTypeToItemKind(type: string): RankItemKind | null {
+  switch (type) {
+    case "travelers":
+    case "buddies":     return "buddy";
+    case "events":      return "event";
+    case "trips":
+    case "plans":       return "plan";
+    case "places":      return "place";
+    case "hidden_gems": return "gem";
+    case "posts":       return "post";
+    default:            return null;
+  }
 }
 
 export interface DiscoveryServeLogParams {
@@ -149,7 +201,7 @@ export async function logDiscoveryServe(
     const rows = items.map((item, idx) => ({
       user_id:    userId,
       item_id:    item.id,
-      item_kind:  itemKindFor(item.id),
+      item_kind:  item.kind !== undefined ? item.kind : itemKindFor(item.id),
       position:   idx,
       features: {
         servePoint,

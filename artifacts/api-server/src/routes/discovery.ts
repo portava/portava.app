@@ -1737,6 +1737,22 @@ router.get("/discovery/feed", async (req, res) => {
         userCreatedCount: eventPosts.length,
       },
     });
+    // Stage 0b — serve point 7. This route ranks nothing and caches nothing;
+    // it is instrumented because the baseline must describe everything users
+    // receive (D4=C), not only what the flag governs (D4=A). Both the places
+    // page and the event posts are served, so both are logged.
+    if (viewerId) {
+      void logDiscoveryServe(getServiceClient(), {
+        userId: viewerId,
+        servePoint: DiscoveryServePoint.FEED,
+        route: "GET /discovery/feed",
+        items: [
+          ...slice.map((p) => ({ id: p.id })),
+          ...eventPosts.map((p: DiscoveryEventPost) => ({ id: String((p as any).id), kind: "post" as const })),
+        ],
+        context: { destination: destination ?? "", categories: effectiveCats.join(","), offset },
+      });
+    }
   } catch (err) {
     req.log.error({ err }, "discovery/feed failed");
     res.json({
