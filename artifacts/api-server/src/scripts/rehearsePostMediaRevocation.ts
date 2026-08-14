@@ -158,12 +158,47 @@ const FIXTURE_BUCKETS: Array<{ id: string; isPublic: boolean; path: string }> = 
   { id: "stamp-artwork", isPublic: true, path: "ci-rehearsal/fixture.png" },
 ];
 
+/**
+ * Ensure the bucket exists AND carries production's `public` flag.
+ *
+ * THE FLAG IS NOT COSMETIC, and the second rehearsal run proved it. CI's
+ * post-media bucket was public=true while production's is false. With a public
+ * bucket the Storage API serves objects without consulting RLS, so after the
+ * APPLY step dropped the policy an anonymous GET still returned 200 — and the
+ * audit correctly refused to call that a pass, reporting the case it exists to
+ * catch: "the policy is GONE but an anonymous caller can still read ... THIS IS
+ * THE DANGEROUS CASE: the change looks done and is not."
+ *
+ * In CI that was a fixture defect rather than a second grant. But a rehearsal
+ * whose bucket config differs from production's is not rehearsing production,
+ * and the direction of that error is the bad one: it would have gone green if
+ * the flag had differed the other way. So the flag is asserted, not assumed.
+ */
 async function ensureBucket(id: string, isPublic: boolean): Promise<void> {
   const get = await fetch(`${origin}/storage/v1/bucket/${id}`, {
     headers: { apikey: SERVICE_KEY!, Authorization: `Bearer ${SERVICE_KEY}` },
   });
   if (get.ok) {
-    console.log(`    bucket ${id.padEnd(14)} already exists`);
+    const current = (await get.json()) as { public?: boolean };
+    if (current.public === isPublic) {
+      console.log(`    bucket ${id.padEnd(14)} exists, public=${isPublic} (matches prod)`);
+      return;
+    }
+    const upd = await fetch(`${origin}/storage/v1/bucket/${id}`, {
+      method: "PUT",
+      headers: {
+        apikey: SERVICE_KEY!,
+        Authorization: `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ public: isPublic }),
+    });
+    if (!upd.ok) {
+      throw new Error(`could not set public=${isPublic} on ${id}: ${upd.status} ${await upd.text()}`);
+    }
+    console.log(
+      `    bucket ${id.padEnd(14)} public=${current.public} → ${isPublic} CORRECTED to match production`,
+    );
     return;
   }
   const create = await fetch(`${origin}/storage/v1/bucket`, {
