@@ -317,6 +317,25 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
       return null;
     }
 
+    // HEIC fail-soft guard — the server stored the raw bytes but could not decode
+    // the image (libvips without HEIF support). It returns processed=false with
+    // null width/height. The DB constraint (migration 2088) would block any
+    // subsequent 'ready' write with null dims, so we surface the error here
+    // instead of silently marking the item done and letting the post go through
+    // with no visible media.
+    // Videos always return processed=false (no server transcode) — scope to images.
+    if (result.processed === false && currentItem.type === 'image') {
+      const msg = "This photo format isn't supported — please re-upload as JPEG or PNG";
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === id
+            ? { ...it, uploadState: 'error', uploadProgress: 0, uploadError: msg }
+            : it,
+        ),
+      );
+      return null;
+    }
+
     setItems((prev) =>
       prev.map((it) =>
         it.id === id
