@@ -306,6 +306,21 @@ describe('MediaAttachmentTray — cancel upload', () => {
     );
     expect(queryByTestId('cancel-media-done1')).toBeNull();
   });
+
+  it('Cancel button is absent on error items — Retry button is present instead', async () => {
+    const item = makeItem('err-cancel1', {
+      uploadState: 'error',
+      uploadError: 'Network error',
+      uploadErrorKind: null,
+    });
+    const { queryByTestId, getByTestId } = await render(
+      <MediaAttachmentTray composer={makeComposer([item])} />,
+    );
+    // Cancel must not appear once the upload has left the uploading state
+    expect(queryByTestId('cancel-media-err-cancel1')).toBeNull();
+    // The Retry button must be present so the user has a recovery path
+    expect(getByTestId('retry-media-err-cancel1')).toBeTruthy();
+  });
 });
 
 describe('MediaAttachmentTray — upload progress', () => {
