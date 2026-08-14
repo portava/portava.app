@@ -240,6 +240,34 @@ describe("POST /api/media/sign — transform clamping", () => {
     );
   });
 
+  it("transform: { width: 400, quality: 0 } → width forwarded, quality dropped, /render/image/sign/ URL returned", async () => {
+    // The combo case: a valid width alongside quality=0.  The GET handler
+    // (?width=400&quality=0) drops quality but still forwards width — the batch
+    // POST must behave identically.  The caller must receive a
+    // /render/image/sign/ URL (width was forwarded) with no transform.quality
+    // (quality=0 was silently dropped, not promoted to 1).
+    const r = await postSign({ urls: [mediaUrl], transform: { width: 400, quality: 0 } });
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+
+    const signedUrl: string | null = r.body?.signed?.[mediaUrl];
+    assert.ok(
+      typeof signedUrl === "string" && signedUrl.includes("/render/image/sign/"),
+      `expected /render/image/sign/ URL (width forwarded), got: ${signedUrl}`,
+    );
+
+    assert.ok(lastSignArgs?.options?.transform, "expected transform options to be passed to createSignedUrl");
+    assert.equal(
+      lastSignArgs?.options?.transform?.width,
+      400,
+      `expected width=400 forwarded, got: ${lastSignArgs?.options?.transform?.width}`,
+    );
+    assert.equal(
+      lastSignArgs?.options?.transform?.quality,
+      undefined,
+      `expected quality to be absent (quality=0 dropped), got: ${lastSignArgs?.options?.transform?.quality}`,
+    );
+  });
+
   it("transform: { quality: 0.1 } → rounds to 0, dropped entirely, plain /object/sign/ URL returned", async () => {
     // A sub-unit fractional quality like 0.1 passes a naive > 0 check but
     // rounds to 0 after Math.round.  The implementation rounds first and then
