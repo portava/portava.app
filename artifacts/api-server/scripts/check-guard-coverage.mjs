@@ -462,6 +462,7 @@ const EXEMPT = [
     'src/test/mediaAccess.test.ts',
     'src/test/mediaFileWidthTransform.test.ts',
     'src/test/mediaLib.test.ts',
+    'src/test/mediaSignBatchTransform.test.ts',
     'src/test/mediaUploadHardening.test.ts',
     'src/test/messaging.test.ts',
     'src/test/stamps.test.ts',
