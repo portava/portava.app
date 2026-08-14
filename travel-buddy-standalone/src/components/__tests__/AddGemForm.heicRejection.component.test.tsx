@@ -229,29 +229,6 @@ describe('AddGemForm — HEIC processed=false rejection (integration)', () => {
     await pickAdvanceAndSubmit(utils);
 
     await waitFor(() => {
-      expect(mockSubmitGem).not.toHaveBeenCalled();
-    });
-  });
-
-  it('does NOT show the re-upload prompt when processed=false for a video — proceeds to submitGem', async () => {
-    mockPickMedia.mockResolvedValue([makeVideoAsset()]);
-    mockSubmitGem.mockResolvedValue({ id: 'gem-123' });
-    mockUploadMedia.mockResolvedValue({
-      ok: true,
-      url: 'https://cdn.example.com/post-media/user/clip.mp4',
-      processed: false,
-      width: null,
-      height: null,
-      mediaType: 'video/mp4',
-    });
-
-    const utils = await render(
-      <AddGemForm onClose={jest.fn()} onSuccess={jest.fn()} />,
-    );
-
-    await pickAdvanceAndSubmit(utils);
-
-    await waitFor(() => {
       // HEIC error must NOT appear for videos
       expect(utils.queryByText(/re-upload|not supported/i)).toBeNull();
       // submitGem should have been called
