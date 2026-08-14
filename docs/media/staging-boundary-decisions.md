@@ -13,7 +13,7 @@ The invariant the boundary serves, verbatim from the packet:
 
 | # | Decision | Ruling | Ruled by |
 |---|----------|--------|----------|
-| D1 | Separate bucket vs reserved prefix | **A — separate bucket `media-staging`** | Forced by the `post_media` read-policy hold. B requires editing the held policy, so it is not available. |
+| D1 | Separate bucket vs reserved prefix | **A — separate bucket `media-staging`** | Was forced by the `post_media` read-policy hold. **That hold ended 2026-08-14 (see below); the ruling stands but is no longer forced.** |
 | D2 | Postcard upload path | **A — signed upload URL into staging, then server-side promote** | User, 2026-08-12 |
 | D3 | How the durable namespace is made unwritable | **A — drop the two `memories/stories` policies, leave the owner policies** | Packet's closable-today subset; 3B still needs the delete-path trace. |
 | D5 | The 28 existing orphans | **B — quarantine first, sweep after a defined window** | User, 2026-08-12 |
@@ -53,8 +53,13 @@ chosen with both in view.
 
 ## Held — do not touch
 
-- `post_media_storage_public_read` (the read policy). The boundary is designed
-  to hold whether or not it changes.
+- ~~`post_media_storage_public_read` (the read policy).~~ **No longer held — the
+  policy was REVOKED in production on 2026-08-14** by
+  `artifacts/api-server/src/migrations/2089_revoke_post_media_public_read.sql:101`
+  (evidence: `docs/media/post-media-public-read-revocation-evidence.md`). The
+  sentence that followed still holds and is why nothing here changes: the
+  boundary was designed to hold whether or not the policy changed, and it does.
+  See the note under D1 — the ruling is unchanged, only its justification moved.
 - `content_stamps` retention.
 
 ## Sequence (packet section 06)
@@ -66,6 +71,19 @@ chosen with both in view.
 05. Give `/api/media/upload` a lifecycle record (fixes V1, the largest violation).
 06. Quarantine the existing 28 (D5).
 07. Delete the frozen violators under `artifacts/travel-buddy/`. — DONE 2026-08-14: satisfied wholesale by archiving the tree (`bc1bef404`), not by individual edits.
+
+## Note added 2026-08-14 — the D1 premise is un-forced
+
+`post_media_storage_public_read` was revoked in production on 2026-08-14
+(`2089_revoke_post_media_public_read.sql:101`). D1 was recorded as **forced**:
+option B required editing a held policy, so it "is not available". That
+constraint no longer exists, and B is now available.
+
+**The ruling is unchanged.** D1 stays **A — separate bucket `media-staging`**
+until the owner revisits it. This note records only that A is now a *choice*
+rather than a *consequence*, so that anyone re-reading the table does not treat
+a lapsed constraint as a live one. Nothing in the sequence below changes, and no
+step is reopened by this note.
 
 Every red-proof asserts an **absence** — no durable object, no row, no EXIF.
 Absence tests pass vacuously when the thing under test never ran. So each red-
