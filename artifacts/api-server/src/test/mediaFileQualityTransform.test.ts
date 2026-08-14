@@ -223,6 +223,29 @@ describe("GET /api/media/file — ?quality transform guard", () => {
     );
   });
 
+  it("?quality=80 (no width) → forwarded; /render/image/sign/; transform.width absent", async () => {
+    // The primary quality-only positive assertion: a caller that sends only
+    // ?quality=80 (no ?width) must receive a /render/image/sign/ URL and the
+    // createSignedUrl call must carry transform.quality=80 with no transform.width.
+    const r = await req("GET", `/api/media/file/post-media/${mediaPath}?quality=80`);
+    assert.equal(r.status, 302, `expected 302, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(
+      r.location?.includes("/render/image/sign/"),
+      `expected /render/image/sign/ URL for quality=80 (no width), got: ${r.location}`,
+    );
+    assert.ok(lastSignArgs?.options?.transform, "expected transform options for quality=80");
+    assert.equal(
+      lastSignArgs?.options?.transform?.quality,
+      80,
+      `expected transform.quality=80, got: ${lastSignArgs?.options?.transform?.quality}`,
+    );
+    assert.equal(
+      lastSignArgs?.options?.transform?.width,
+      undefined,
+      "expected transform.width to be absent when no ?width param is sent",
+    );
+  });
+
   it("?width=400&quality=0 → width forwarded, quality dropped; /render/image/sign/ without quality", async () => {
     // When width is valid but quality=0, only the width transform is forwarded.
     // The redirect must be a /render/image/sign/ URL (because width is set),
