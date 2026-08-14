@@ -458,8 +458,33 @@
 <hr class="div">
 
 <section>
-  <h2><span class="num">04 — For the owner</span>Decision points</h2>
-  <p class="lede">Eight rulings. Each carries a recommendation; none is implemented until ruled.</p>
+  <h2><span class="num">04 — Ruled</span>Decision points</h2>
+  <p class="lede">All eight ruled 2026-08-14 by the delegated operator, matching the recommendation in every case. Owner may audit or override.</p>
+
+  <div class="callout">
+    <h4>Rulings of record — operator, 2026-08-14</h4>
+    <div class="scroller" style="margin-bottom:14px">
+      <table>
+        <thead><tr><th>#</th><th>Ruling</th><th>Operator reasoning</th></tr></thead>
+        <tbody>
+          <tr><td class="n">D1</td><td><strong>B</strong> — <code>DISCOVERY_ENGINE_MODE</code> via <code>lib/featureFlags.ts</code></td><td>The Phase −1 flag-trap finding exists precisely to prevent A; a three-valued mode needs the only helper that reads <code>metadata</code>, and <code>COMPASS_</code> naming would misdescribe two of the three modes.</td></tr>
+          <tr><td class="n">D2</td><td><strong>A</strong> — one row, <code>metadata.mode</code></td><td>Uses what exists and cannot express contradiction; the untyped-JSON cost is exactly what D3 exists to handle.</td></tr>
+          <tr><td class="n">D3</td><td><strong>B</strong> — all failures → <code>legacy</code>, plus <code>disable_discovery_pde</code></td><td>A kill switch that survives an unhealthy database is the entire point of a kill switch; the inverted-polarity helper is the proven tool.</td></tr>
+          <tr><td class="n">D4</td><td><strong>A</strong> for the flag, <strong>C</strong> for the baseline</td><td>The flag governs only what has a ranker to switch; the baseline covers everything users receive, and anything narrower reproduces the directive's named error.</td></tr>
+          <tr><td class="n">D5</td><td><strong>B</strong> — user-independent candidates, rank every request <em>(revisit clause below)</em></td><td>Separates what today's design conflates and fixes one-user-per-city-per-two-hours without touching external call volume.</td></tr>
+          <tr><td class="n">D6</td><td><strong>A then B</strong> as staged escalation</td><td>Internal accounts prove the harness, then a fixed user-id-hashed percentage produces real divergence data. C only with the owner.</td></tr>
+          <tr><td class="n">D7</td><td><strong>A</strong> — new <code>discovery_shadow_serves</code> table</td><td><code>rank_events</code> is mutable state with a client-input surface; one contaminated row corrupting the comparison funnel is disqualifying. Append-only-by-construction plus 90-day retention cover is the clean shape.</td></tr>
+          <tr><td class="n">D8</td><td><strong>A</strong> — real impression rows at every serve point</td><td>The announced dated discontinuity in <code>adminRankingMetrics</code> beats permanent blindness on cache-served traffic, which is most traffic. Cutover date annotated in the metrics doc in the same PR.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-bottom:0"><strong>D5 revisit clause, binding:</strong> if Stage 0's measured Cache&nbsp;A hit rate materially contradicts the TTL-implied rate, <strong>D5 implementation pauses</strong> and the numbers go to the owner before proceeding.</p>
+  </div>
+
+  <div class="callout warn">
+    <h4>Live-corpus corroboration found after the rulings</h4>
+    <p style="margin-bottom:0">Migration <code>0202_rank_events_living_page_watch_feed_surfaces.sql:17‑21</code> records that a live <code>SELECT surface, count(*) FROM rank_events</code> returned <strong>only pulse / compass / events</strong> — with <code>discovery</code> named among the surfaces "written by the code but ZERO rows present". Unlike <code>living_page</code> and <code>live_pulse</code>, <code>discovery</code> was <strong>already permitted</strong> by the CHECK constraint (<code>0199:60</code>, <code>0202:77</code>), so its absence is not rejection — it is the serve-point-#6 path scarcely ever executing. This is independent production evidence for the caches-in-series finding, and it strengthens D8=A: the baseline being replaced is not merely narrow, it is empty.</p>
+  </div>
 
   <div class="decision">
     <span class="tag">D1 · Naming and loader</span>
