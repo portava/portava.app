@@ -347,6 +347,36 @@ describe('MediaAttachmentTray — cancel upload', () => {
     // Cancel must be gone — no stale button should linger after the transition
     expect(queryByTestId('cancel-media-trans1')).toBeNull();
   });
+
+  it('Cancel button disappears and Retry appears when an item transitions from uploading → error mid-session', async () => {
+    const uploadingItem = makeItem('trans-err1', {
+      uploadState: 'uploading',
+      uploadProgress: 0.7,
+    });
+    const { queryByTestId, rerender } = await render(
+      <MediaAttachmentTray composer={makeComposer([uploadingItem])} />,
+    );
+
+    // Cancel must be present while the upload is in progress
+    expect(queryByTestId('cancel-media-trans-err1')).toBeTruthy();
+    // Retry must not yet be present
+    expect(queryByTestId('retry-media-trans-err1')).toBeNull();
+
+    // Simulate a network failure — same item id, state now 'error'
+    const errorItem = makeItem('trans-err1', {
+      uploadState: 'error',
+      uploadError: 'Upload failed. Please try again.',
+      uploadErrorKind: null,
+    });
+    await rerender(
+      <MediaAttachmentTray composer={makeComposer([errorItem])} />,
+    );
+
+    // Cancel must be gone after the transition to error
+    expect(queryByTestId('cancel-media-trans-err1')).toBeNull();
+    // Retry must now be present so the user has a recovery path
+    expect(queryByTestId('retry-media-trans-err1')).toBeTruthy();
+  });
 });
 
 describe('MediaAttachmentTray — upload progress', () => {
