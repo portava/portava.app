@@ -54,6 +54,13 @@ export interface MediaItem {
   uploadedUrl: string | null;
   /** Human-readable error set when uploadState === 'error'. */
   uploadError: string | null;
+  /**
+   * Set to 'format_unsupported' when the server rejected the image because it
+   * could not decode the format (e.g. HEIC without libvips HEIF support).
+   * Retrying the same file will always produce the same failure — the tray
+   * shows a Remove action instead of a generic Retry for these items.
+   */
+  uploadErrorKind: 'format_unsupported' | null;
 }
 
 export interface UseMediaComposerReturn {
@@ -135,6 +142,7 @@ function assetToMediaItem(
     uploadProgress: 0,
     uploadedUrl: null,
     uploadError: null,
+    uploadErrorKind: null,
   };
 }
 
@@ -310,7 +318,7 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
       setItems((prev) =>
         prev.map((it) =>
           it.id === id
-            ? { ...it, uploadState: 'error', uploadProgress: 0, uploadError: msg }
+            ? { ...it, uploadState: 'error', uploadProgress: 0, uploadError: msg, uploadErrorKind: null }
             : it,
         ),
       );
@@ -325,11 +333,17 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
     // with no visible media.
     // Videos always return processed=false (no server transcode) — scope to images.
     if (result.processed === false && currentItem.type === 'image') {
-      const msg = "This photo format isn't supported — please re-upload as JPEG or PNG";
+      const msg = "This photo format isn't supported — please remove and pick a JPEG or PNG";
       setItems((prev) =>
         prev.map((it) =>
           it.id === id
-            ? { ...it, uploadState: 'error', uploadProgress: 0, uploadError: msg }
+            ? {
+                ...it,
+                uploadState: 'error',
+                uploadProgress: 0,
+                uploadError: msg,
+                uploadErrorKind: 'format_unsupported',
+              }
             : it,
         ),
       );
@@ -360,9 +374,15 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
   }, [uploadItem]);
 
   const retryUpload = useCallback(async (id: string): Promise<MediaUploadResult | null> => {
+    // Format-unsupported items will always fail with the same result — retrying
+    // the identical file is pointless. The tray renders a Remove action for these
+    // items instead of Retry, but guard here too in case the caller bypasses the UI.
+    const currentItem = itemsRef.current.find((it) => it.id === id);
+    if (currentItem?.uploadErrorKind === 'format_unsupported') return null;
+
     setItems((prev) =>
       prev.map((it) =>
-        it.id === id ? { ...it, uploadState: 'idle', uploadError: null } : it,
+        it.id === id ? { ...it, uploadState: 'idle', uploadError: null, uploadErrorKind: null } : it,
       ),
     );
     return uploadItem(id);
@@ -405,6 +425,7 @@ export function useMediaComposer(policyKey: ContentPolicyKey): UseMediaComposerR
         uploadProgress: 1,
         uploadedUrl: url,
         uploadError: null,
+        uploadErrorKind: null,
       }));
     });
   }, [policy.maxItems]);

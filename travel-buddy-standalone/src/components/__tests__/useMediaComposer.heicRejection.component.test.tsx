@@ -3,8 +3,11 @@
  *
  * When the server returns { ok: true, url, processed: false } for an image
  * upload (HEIC fail-soft: bytes stored but not decoded), uploadItem must:
- *   1. Set the item to uploadState='error' with a user-visible re-upload prompt.
+ *   1. Set the item to uploadState='error' with uploadErrorKind='format_unsupported'.
  *   2. Return null so callers know not to include the URL in a submit payload.
+ *
+ * retryUpload must short-circuit for format_unsupported items — retrying the
+ * identical file will always produce the same failure.
  *
  * Videos legitimately return processed=false and must NOT be treated as errors.
  */
@@ -115,6 +118,41 @@ function UploadHarness({
       {item?.uploadError != null && (
         <Text testID="item-error">{item.uploadError}</Text>
       )}
+      {item?.uploadErrorKind != null && (
+        <Text testID="item-error-kind">{item.uploadErrorKind}</Text>
+      )}
+    </>
+  );
+}
+
+// Harness that also exposes retryUpload so we can test the short-circuit.
+function RetryHarness({
+  asset,
+}: {
+  asset: ImagePickerNS.ImagePickerAsset;
+}) {
+  const { items, onPickResult, uploadItem, retryUpload } = useMediaComposer('pulse');
+
+  React.useEffect(() => {
+    onPickResult(asset);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const item = items[0] ?? null;
+  return (
+    <>
+      <TouchableOpacity
+        testID="upload"
+        onPress={() => { if (item) uploadItem(item.id); }}
+      />
+      <TouchableOpacity
+        testID="retry"
+        onPress={() => { if (item) retryUpload(item.id); }}
+      />
+      {item && <Text testID="item-state">{item.uploadState}</Text>}
+      {item?.uploadErrorKind != null && (
+        <Text testID="item-error-kind">{item.uploadErrorKind}</Text>
+      )}
     </>
   );
 }
@@ -167,7 +205,9 @@ describe('useMediaComposer — HEIC processed=false rejection', () => {
 
     const errorText = view.getByTestId('item-error').props.children as string;
     expect(errorText).toMatch(/JPEG|PNG/i);
-    expect(errorText).toMatch(/re-upload|not supported/i);
+    // Message guides the user to remove the file and pick a new one — "re-upload"
+    // was replaced with "remove" to match the new tray action.
+    expect(errorText).toMatch(/remove|re-upload|not supported|isn't supported/i);
   });
 
   it('uploadItem returns null so the URL is never submitted as part of the post', async () => {
@@ -203,6 +243,62 @@ describe('useMediaComposer — HEIC processed=false rejection', () => {
     });
 
     expect(capturedResult.value).toBeNull();
+  });
+
+  it('sets uploadErrorKind to format_unsupported on a HEIC image rejection', async () => {
+    mockUploadMedia.mockResolvedValue({
+      ok: true,
+      url: STORED_URL,
+      processed: false,
+      width: null,
+      height: null,
+    });
+
+    const view = await render(
+      <UploadHarness asset={makeImageAsset()} onResult={jest.fn()} />,
+    );
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('upload'));
+      await new Promise<void>((r) => setTimeout(r, 30));
+    });
+
+    expect(view.getByTestId('item-error-kind').props.children).toBe('format_unsupported');
+  });
+
+  it('retryUpload does NOT call uploadMedia again for a format_unsupported item', async () => {
+    mockUploadMedia.mockResolvedValue({
+      ok: true,
+      url: STORED_URL,
+      processed: false,
+      width: null,
+      height: null,
+    });
+
+    const view = await render(
+      <RetryHarness asset={makeImageAsset()} />,
+    );
+
+    // First: upload the item so it lands in format_unsupported error state.
+    await act(async () => {
+      fireEvent.press(view.getByTestId('upload'));
+      await new Promise<void>((r) => setTimeout(r, 30));
+    });
+
+    expect(view.getByTestId('item-state').props.children).toBe('error');
+    expect(view.getByTestId('item-error-kind').props.children).toBe('format_unsupported');
+
+    const callCountAfterUpload = mockUploadMedia.mock.calls.length;
+
+    // Now call retry — it must short-circuit without hitting the network.
+    await act(async () => {
+      fireEvent.press(view.getByTestId('retry'));
+      await new Promise<void>((r) => setTimeout(r, 30));
+    });
+
+    expect(mockUploadMedia.mock.calls.length).toBe(callCountAfterUpload);
+    // Item must remain in error state — not reset to idle.
+    expect(view.getByTestId('item-state').props.children).toBe('error');
   });
 
   it('does NOT treat processed=false as an error for video uploads', async () => {

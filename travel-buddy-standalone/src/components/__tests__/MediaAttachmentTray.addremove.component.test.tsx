@@ -37,6 +37,7 @@ function makeItem(id: string, overrides: Partial<MediaItem> = {}): MediaItem {
     uploadProgress: 0,
     uploadedUrl: null,
     uploadError: null,
+    uploadErrorKind: null,
     ...overrides,
   };
 }
@@ -163,10 +164,11 @@ describe('MediaAttachmentTray — reorder', () => {
 
 describe('MediaAttachmentTray — error state', () => {
   it('renders the uploadError message text when an item is in error state', async () => {
-    const HEIC_MSG = "This photo format isn't supported — please re-upload as JPEG or PNG";
+    const HEIC_MSG = "This photo format isn't supported — please remove and pick a JPEG or PNG";
     const item = makeItem('err1', {
       uploadState: 'error',
       uploadError: HEIC_MSG,
+      uploadErrorKind: 'format_unsupported',
     });
     const { getByText } = await render(
       <MediaAttachmentTray composer={makeComposer([item])} />,
@@ -188,6 +190,7 @@ describe('MediaAttachmentTray — error state', () => {
     const item = makeItem('retry1', {
       uploadState: 'error',
       uploadError: 'Network error',
+      uploadErrorKind: null,
     });
     const { getByTestId } = await render(
       <MediaAttachmentTray composer={makeComposer([item], { retryUpload })} />,
@@ -206,5 +209,50 @@ describe('MediaAttachmentTray — error state', () => {
       <MediaAttachmentTray composer={makeComposer([item])} />,
     );
     expect(queryByTestId('retry-media-uploading1')).toBeNull();
+  });
+});
+
+describe('MediaAttachmentTray — error overlay: Retry vs Remove', () => {
+  it('shows Retry (not Remove) for a generic network error', async () => {
+    const retryUpload = jest.fn();
+    const removeItem = jest.fn();
+    const item = makeItem('net-err', {
+      uploadState: 'error',
+      uploadError: 'Upload failed. Please try again.',
+      uploadErrorKind: null,
+    });
+    const { queryByLabelText } = await render(
+      <MediaAttachmentTray composer={makeComposer([item], { retryUpload, removeItem })} />,
+    );
+    // No "Remove unsupported file" label — this is a generic error
+    expect(queryByLabelText('Remove unsupported file')).toBeNull();
+    // Press the Retry button via testID — retryUpload should be called
+    const { getByTestId } = await render(
+      <MediaAttachmentTray composer={makeComposer([item], { retryUpload, removeItem })} />,
+    );
+    fireEvent.press(getByTestId('retry-media-net-err'));
+    expect(retryUpload).toHaveBeenCalledWith('net-err');
+    expect(removeItem).not.toHaveBeenCalled();
+  });
+
+  it('shows Remove (not Retry) for a format_unsupported error', async () => {
+    const retryUpload = jest.fn();
+    const removeItem = jest.fn();
+    const item = makeItem('fmt-err', {
+      uploadState: 'error',
+      uploadError: "This photo format isn't supported — please remove and pick a JPEG or PNG",
+      uploadErrorKind: 'format_unsupported',
+    });
+    const { getByLabelText, queryByText } = await render(
+      <MediaAttachmentTray composer={makeComposer([item], { retryUpload, removeItem })} />,
+    );
+    // Remove action must be present with the correct accessibility label
+    const removeBtn = getByLabelText('Remove unsupported file');
+    // Retry text must NOT appear in the error overlay
+    expect(queryByText('Retry')).toBeNull();
+    // Pressing Remove calls removeItem, not retryUpload
+    fireEvent.press(removeBtn);
+    expect(removeItem).toHaveBeenCalledWith('fmt-err');
+    expect(retryUpload).not.toHaveBeenCalled();
   });
 });

@@ -105,6 +105,7 @@ function MediaCardContent({
 }) {
   const isUploading = item.uploadState === 'uploading';
   const isError = item.uploadState === 'error';
+  const isFormatError = isError && item.uploadErrorKind === 'format_unsupported';
 
   return (
     <>
@@ -132,10 +133,24 @@ function MediaCardContent({
         {/* Error overlay */}
         {isError && (
           <View style={s.errorOverlay}>
-            <Pressable style={s.retryBtn} onPress={onRetry} hitSlop={8} testID={`retry-media-${item.id}`}>
-              <RefreshCw size={14} color="#fff" />
-              <Text style={s.retryText}>Retry</Text>
-            </Pressable>
+            {isFormatError ? (
+              /* Format errors can't be retried — the file will always fail.
+                 Guide the user to remove and pick a different file. */
+              <Pressable
+                style={s.retryBtn}
+                onPress={onRemove}
+                hitSlop={8}
+                accessibilityLabel="Remove unsupported file"
+              >
+                <X size={14} color="#fff" />
+                <Text style={s.retryText}>Remove</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={s.retryBtn} onPress={onRetry} hitSlop={8} testID={`retry-media-${item.id}`}>
+                <RefreshCw size={14} color="#fff" />
+                <Text style={s.retryText}>Retry</Text>
+              </Pressable>
+            )}
           </View>
         )}
 
