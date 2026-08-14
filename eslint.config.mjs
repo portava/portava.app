@@ -11,7 +11,6 @@ export default tseslint.config(
       '**/android/**',
       '**/ios/**',
       '**/.tsbuildinfo',
-      'artifacts/travel-buddy/**',
     ],
   },
 

@@ -8,7 +8,7 @@
  * the "some fields couldn't be saved" message instead of plain success.
  *
  * Run:
- *   cd artifacts/travel-buddy
+ *   cd travel-buddy-standalone
  *   node --import tsx --test src/services/__tests__/profilePartialSave.test.ts
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';

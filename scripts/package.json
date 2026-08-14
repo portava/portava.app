@@ -9,7 +9,6 @@
     "routes:guard": "tsx ./src/guard-expo-router-duplicates.ts",
     "routes:self-heal": "SELF_HEAL_EXPO_ROUTES=1 tsx ./src/guard-expo-router-duplicates.ts",
     "test:routes-guard": "node --import tsx/esm --test ./src/guard-expo-router-duplicates.test.ts",
-    "test:sync-check": "node --import tsx/esm --test ./src/sync-standalone-check.test.ts",
     "test:workflow-paths": "node --import tsx/esm --test ./src/workflow-paths.test.ts",
     "test:db-triggers": "node --import tsx/esm --test ./src/check-db-triggers.test.ts",
     "test:engagement-indexes": "node --import tsx/esm --test ./src/check-engagement-indexes.test.ts",

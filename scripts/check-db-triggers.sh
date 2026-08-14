@@ -55,8 +55,8 @@ WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Allow tests to redirect the workspace root without touching the real repo.
 # Set CHECK_TRIGGERS_WORKSPACE_ROOT to a temp directory in tests; leave unset
-# in production. Mirrors the SYNC_STANDALONE_REPO_ROOT pattern in
-# scripts/sync-standalone.sh.
+# in production. (This pattern was borrowed from SYNC_STANDALONE_REPO_ROOT in
+# scripts/sync-standalone.sh, which retired with artifacts/travel-buddy.)
 if [[ -n "${CHECK_TRIGGERS_WORKSPACE_ROOT:-}" ]]; then
   WORKSPACE_ROOT="$CHECK_TRIGGERS_WORKSPACE_ROOT"
 fi

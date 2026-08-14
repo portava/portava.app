@@ -130,7 +130,7 @@ the sweeper — `uploadStoryMedia` and `uploadMemoryMedia` now POST to
 `/api/media/upload`, the processing path.
 
 ⚠ **Only in `travel-buddy-standalone/`.** The unfixed copies remain in
-`artifacts/travel-buddy/`, which `replit.md` marks LEGACY-FROZEN. The canonical
+`artifacts/travel-buddy/`, which `replit.md` marked LEGACY-FROZEN and which was archived on 2026-08-14 at `bc1bef404`. The canonical
 tree ships the fix; the frozen tree is what a grep finds first. §1.2 of the fact
 layer already warns that the frozen tree exists — this is what that warning is
 for.

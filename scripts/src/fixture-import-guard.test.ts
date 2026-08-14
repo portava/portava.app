@@ -18,10 +18,11 @@ import path from 'node:path';
 const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../../');
 
 /** Directories containing production screen files to guard. */
-const SCREEN_ROOTS = [
-  path.join(WORKSPACE_ROOT, 'artifacts/travel-buddy/app'),
-  path.join(WORKSPACE_ROOT, 'travel-buddy-standalone/app'),
-];
+// Was two roots until artifacts/travel-buddy was archived (bc1bef404). The
+// guard asserts each root yields at least one screen file, so a stale root here
+// fails loudly rather than silently scanning nothing — which is how this entry
+// was caught.
+const SCREEN_ROOTS = [path.join(WORKSPACE_ROOT, 'travel-buddy-standalone/app')];
 
 /**
  * Patterns that are NOT allowed in production screen imports.

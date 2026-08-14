@@ -81,31 +81,33 @@ function globToRegExp(pattern: string): RegExp {
 // ── glob matcher unit tests ───────────────────────────────────────────────────
 
 describe('globToRegExp — unit tests', () => {
+  // These are pure string-matching tests — no path is ever resolved on disk —
+  // but they use paths that exist on this line so a reader can check them.
   test('literal path matches exactly', () => {
-    const re = globToRegExp('scripts/sync-standalone.sh');
-    assert.ok(re.test('scripts/sync-standalone.sh'));
-    assert.ok(!re.test('scripts/sync-standalone.sh.bak'));
-    assert.ok(!re.test('other/sync-standalone.sh'));
+    const re = globToRegExp('scripts/pre-release-check.sh');
+    assert.ok(re.test('scripts/pre-release-check.sh'));
+    assert.ok(!re.test('scripts/pre-release-check.sh.bak'));
+    assert.ok(!re.test('other/pre-release-check.sh'));
   });
 
   test('** matches across directory boundaries', () => {
-    const re = globToRegExp('artifacts/travel-buddy/src/**');
-    assert.ok(re.test('artifacts/travel-buddy/src/screens/Home.tsx'));
-    assert.ok(re.test('artifacts/travel-buddy/src/lib/supabase.ts'));
-    assert.ok(re.test('artifacts/travel-buddy/src/index.ts'));
+    const re = globToRegExp('travel-buddy-standalone/src/**');
+    assert.ok(re.test('travel-buddy-standalone/src/services/calendar.ts'));
+    assert.ok(re.test('travel-buddy-standalone/src/lib/supabase.ts'));
+    assert.ok(re.test('travel-buddy-standalone/src/index.ts'));
     assert.ok(!re.test('artifacts/api-server/src/routes/trips.ts'));
-    assert.ok(!re.test('artifacts/travel-buddy/app/index.tsx'));
+    assert.ok(!re.test('travel-buddy-standalone/app/index.tsx'));
   });
 
   test('* does not cross directory boundaries', () => {
-    const re = globToRegExp('artifacts/travel-buddy/*.json');
-    assert.ok(re.test('artifacts/travel-buddy/package.json'));
-    assert.ok(!re.test('artifacts/travel-buddy/src/config.json'));
+    const re = globToRegExp('travel-buddy-standalone/*.json');
+    assert.ok(re.test('travel-buddy-standalone/package.json'));
+    assert.ok(!re.test('travel-buddy-standalone/src/config.json'));
   });
 
   test('a literal workflow-file pattern matches exactly', () => {
-    const re = globToRegExp('.github/workflows/sync-standalone-check.yml');
-    assert.ok(re.test('.github/workflows/sync-standalone-check.yml'));
-    assert.ok(!re.test('.github/workflows/standalone-drift.yml'));
+    const re = globToRegExp('.github/workflows/unwired-checks.yml');
+    assert.ok(re.test('.github/workflows/unwired-checks.yml'));
+    assert.ok(!re.test('.github/workflows/ci.yml'));
   });
 });

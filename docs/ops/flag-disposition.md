@@ -360,7 +360,7 @@ byte-identical copies of `MediaQuickCreateSheet.tsx`, R8 passed either way and
 the mistake was invisible — while making the check worthless in the one case it
 exists for: delete the live reader and R8 would keep vouching for it on the
 strength of the frozen copy, exempting the flag from R6 for a reader that no
-longer ships. It also had a shelf life, since archiving `artifacts/travel-buddy`
+longer ships. It also had a shelf life, since archiving `artifacts/travel-buddy` (done 2026-08-14, `bc1bef404`)
 would have made R8 fail with `CANNOT VERIFY` against a tree deliberately
 removed, and the tempting fix at that moment is to delete the entries — exactly
 what that message warns against.

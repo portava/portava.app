@@ -124,10 +124,7 @@ EOF
 declare -A EXPECTED_HINTS=(
   [typecheck]="fix: pnpm run typecheck"
   [typecheck-standalone]="fix: cd travel-buddy-standalone && pnpm typecheck"
-  [dependency-drift]="fix: bash scripts/sync-standalone.sh --apply-deps && pnpm install"
-  [source-drift]="fix: bash scripts/sync-standalone.sh --fix-source"
   [api-server-build]="fix: pnpm --filter @workspace/api-server run build"
-  [lockfile-drift]="fix: bash scripts/sync-standalone.sh --fix-lockfile"
   [bundle-id-placeholder]="fix: update ios.bundleIdentifier and android.package in travel-buddy-standalone/app.json"
   [version-bump]="fix: increment ios.buildNumber and android.versionCode in travel-buddy-standalone/app.json"
   [db-triggers]="fix: apply missing migrations via Supabase dashboard or psql:"
@@ -208,7 +205,7 @@ sep
 printf '  Pre-release fix-hint assertions\n'
 sep
 
-for check_name in typecheck typecheck-standalone dependency-drift source-drift api-server-build lockfile-drift bundle-id-placeholder version-bump db-triggers engagement-indexes schema-audit migration-prefixes; do
+for check_name in typecheck typecheck-standalone api-server-build bundle-id-placeholder version-bump db-triggers engagement-indexes schema-audit migration-prefixes; do
   expected="${EXPECTED_HINTS[$check_name]}"
   output="$(run_summary_for "$check_name")"
   assert_contains "$check_name" "$expected" "$output"

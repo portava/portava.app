@@ -23,7 +23,7 @@
  *     7. An earnSample with all rows having non-null user_id is returned correctly.
  *
  * Run:
- *   cd artifacts/travel-buddy
+ *   cd travel-buddy-standalone
  *   node --import tsx/esm --test \
  *     src/services/__tests__/catalogDetail.earnNullUserId.test.ts
  */

@@ -23,7 +23,7 @@
  *        versions array, so the UI receives the data and can filter it itself.
  *
  * Run:
- *   cd artifacts/travel-buddy
+ *   cd travel-buddy-standalone
  *   node --import tsx/esm --test \
  *     src/services/__tests__/catalogDetail.archivedVersions.test.ts
  */

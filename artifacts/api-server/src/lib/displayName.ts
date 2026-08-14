@@ -2,7 +2,7 @@
  * Server-side display-name length rules.
  *
  * Mirrors the mobile client's identity helpers
- * (artifacts/travel-buddy/src/utils/identity.ts): onboarding and the identity
+ * (travel-buddy-standalone/src/utils/identity.ts): onboarding and the identity
  * editor enforce a 40-character display-name limit, but legacy accounts
  * created before the limit may still have longer names stored in the DB.
  * Any server-composed text that interpolates a user's display name — push

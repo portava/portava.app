@@ -10,7 +10,7 @@
  * condition exactly) plus the service-layer pass-through of the field.
  *
  * Run:
- *   cd artifacts/travel-buddy
+ *   cd travel-buddy-standalone
  *   node --import tsx/esm --test \
  *     src/services/__tests__/catalogDetail.approvedStale.test.ts
  */

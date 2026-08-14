@@ -11,7 +11,7 @@ description: Key decisions and gotchas from E-0/E-1/E-2 end-to-end encryption im
 **Why:** v11 never shipped; 17.1.2 is the current stable. The API changed between major versions.
 
 ## `__mocks__/` must be excluded from the mobile tsconfig
-`artifacts/travel-buddy/tsconfig.json` includes `**/*.ts` which picks up `__mocks__/`. Mock files use `jest.fn()`, but `@types/jest` is not in scope for the app typecheck, causing TS2708.
+(Historical — `artifacts/travel-buddy` archived at `bc1bef404`.) `artifacts/travel-buddy/tsconfig.json` includes `**/*.ts` which picks up `__mocks__/`. Mock files use `jest.fn()`, but `@types/jest` is not in scope for the app typecheck, causing TS2708.
 
 Fix: add `"__mocks__/**"` to the tsconfig `exclude` array.
 
@@ -33,7 +33,7 @@ New error codes must be added to BOTH the union type AND the `STATUS` map in `ar
 `packages/expo-openmls` lives in `packages/`. The workspace file must list `- 'packages/*'` or the package is invisible to pnpm resolution. Added in this session.
 
 ## EAS Rust pre-build hook
-`scripts/eas-install-rust.sh` installs rustup + cross-compilation targets for OpenMLS. Referenced in `eas.json` `development` and `preview` profiles as `prebuildCommand`. Path relative to `artifacts/travel-buddy/` must be `bash ../../scripts/eas-install-rust.sh`.
+`scripts/eas-install-rust.sh` installs rustup + cross-compilation targets for OpenMLS. Referenced in `eas.json` `development` and `preview` profiles as `prebuildCommand`. Path is relative to the app tree; it was `bash ../../scripts/eas-install-rust.sh` from `artifacts/travel-buddy/` (archived at `bc1bef404`). From `travel-buddy-standalone/` the correct depth is one level: `bash ../scripts/eas-install-rust.sh`.
 
 ## Solicitation scanner must be guarded for E2EE
 `messaging.ts` solicitation scanner (`OFF_APP_PATTERNS`) reads `body`. For E2EE threads `body` is `null` — the guard is `if (!isE2ee && body && ...)`. Without the guard, `p.test(null)` throws.

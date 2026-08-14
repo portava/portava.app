@@ -17,8 +17,9 @@
  * ignores every other rule and all warnings, so it stays a hard gate that can
  * be trusted rather than a noisy one people learn to skip.
  *
- * Scope is travel-buddy-standalone/{app,src} — the canonical mobile tree.
- * artifacts/travel-buddy is legacy-frozen and intentionally excluded.
+ * Scope is travel-buddy-standalone/{app,src} — the only mobile tree.
+ * (artifacts/travel-buddy was legacy-frozen and intentionally excluded; it was
+ * archived at bc1bef404, so the exclusion is now moot.)
  */
 import { ESLint } from 'eslint';
 import { fileURLToPath } from 'node:url';

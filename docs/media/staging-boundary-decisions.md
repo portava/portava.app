@@ -65,7 +65,7 @@ chosen with both in view.
 04. Wire the sweeper.
 05. Give `/api/media/upload` a lifecycle record (fixes V1, the largest violation).
 06. Quarantine the existing 28 (D5).
-07. Delete the frozen violators under `artifacts/travel-buddy/`.
+07. Delete the frozen violators under `artifacts/travel-buddy/`. — DONE 2026-08-14: satisfied wholesale by archiving the tree (`bc1bef404`), not by individual edits.
 
 Every red-proof asserts an **absence** — no durable object, no row, no EXIF.
 Absence tests pass vacuously when the thing under test never ran. So each red-

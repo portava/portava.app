@@ -10,7 +10,7 @@
  * success state.
  *
  * Run:
- *   cd artifacts/travel-buddy
+ *   cd travel-buddy-standalone
  *   node --import tsx --test src/services/__tests__/profileSaveFlow.partialSave.test.ts
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';

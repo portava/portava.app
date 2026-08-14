@@ -1047,7 +1047,7 @@ So: no Android SDK, no Xcode, no emulator, no Maestro. Specifically excluded:
 
 Also not covered:
 
-- **`scripts/pre-release-check.sh`** — 600 lines aggregating 12 checks, invoked
+- **`scripts/pre-release-check.sh`** — 600 lines aggregating 9 checks (was 12 until the three sync-standalone drift checks retired with `artifacts/travel-buddy` on 2026-08-14), invoked
   by nothing. It is *not* reused, because it soft-skips exactly the way this
   effort forbids: its own comments say engagement-indexes is "Skipped
   gracefully (warning only, not failure) when neither `SUPABASE_PROJECT_TOKEN`
@@ -1173,7 +1173,7 @@ green result cannot be mistaken for "every test in this tree runs":
   its ghost-path assertion, and the registered-file floor of 392.
 - **`e2e/maestro` flows** — no script invokes them; CI runs no device tests at
   all. Out of scope by design, not by oversight.
-- **The frozen legacy tree `artifacts/travel-buddy`.**
+- **The frozen legacy tree `artifacts/travel-buddy`.** ARCHIVED 2026-08-14 (`bc1bef404`); no longer an uncovered surface.
 - **Tests that do run but assert nothing meaningful.** No static check sees that.
 
 ### Ghost paths in the curated test list
@@ -1319,7 +1319,9 @@ Every check in that workflow is real, committed, maintained code that no
 `typecheck`, `lint` and `check:hook-order`, api-server's `check:api-prefix`,
 eight `@workspace/scripts` suites, and two `travel-buddy-standalone` guards that
 — note the asymmetry — **do** run in the frozen legacy tree
-`artifacts/travel-buddy` but not in the tree everyone actually edits.
+`artifacts/travel-buddy` but not in the tree everyone actually edits. RESOLVED by the
+2026-08-14 archival (`bc1bef404`): the asymmetry is gone, and the two guards now run only
+as explicit steps in unwired-checks.yml.
 
 Their current pass/fail status is **unknown**. They could not be executed while
 this was written (no `node_modules`, no database). Some will likely be red on
@@ -1342,7 +1344,7 @@ read from each `package.json`:
 | --- | --- |
 | `@workspace/api-server` (`artifacts/api-server`) | `@workspace/api-client-react` (`lib/api-client-react`) |
 | `@workspace/mockup-sandbox` (`artifacts/mockup-sandbox`) | `@workspace/api-spec` (`lib/api-spec`) — has no `tsconfig.json` either |
-| `@workspace/travel-buddy` (`artifacts/travel-buddy`, the frozen legacy tree) | `@workspace/api-zod` (`lib/api-zod`) |
+| ~~`@workspace/travel-buddy`~~ (archived 2026-08-14, `bc1bef404`) | `@workspace/api-zod` (`lib/api-zod`) |
 | `@workspace/scripts` (`scripts`) | `@workspace/db` (`lib/db`) |
 | `expo-openmls` (`packages/expo-openmls`) | |
 

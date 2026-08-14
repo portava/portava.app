@@ -6,7 +6,8 @@
  * detail screen shows "Afternoon (12–17) · date TBD" instead of the
  * unhelpful "No date set" that was shown before the fix.
  *
- * The fix lives in `artifacts/travel-buddy/app/meetup/[id].tsx` line ~702:
+ * The fix landed in `artifacts/travel-buddy/app/meetup/[id].tsx` line ~702
+ * (tree archived at bc1bef404); the live equivalent is `app/meetup/[id].tsx` here:
  *   `{(meetup.startsAt ?? meetup.approximateDate ?? meetup.timeBlock) ? ...}`
  *
  * Before the fix, `meetup.timeBlock` was not included in the truthiness check,

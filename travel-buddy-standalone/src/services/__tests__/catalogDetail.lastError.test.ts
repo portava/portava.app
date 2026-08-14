@@ -21,7 +21,7 @@
  *      queue payload intact — the service layer never throws on it.
  *
  * Run:
- *   cd artifacts/travel-buddy
+ *   cd travel-buddy-standalone
  *   node --import tsx/esm --test \
  *     src/services/__tests__/catalogDetail.lastError.test.ts
  */

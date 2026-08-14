@@ -1,6 +1,6 @@
 # Travel Buddy — Architecture & Feature Map
 
-> **SOURCE OF TRUTH (updated 2026-08-05):** `travel-buddy-standalone/` is the canonical app tree. `artifacts/travel-buddy` was deleted on 2026-08-04 and **resurrected on 2026-08-05 in a LEGACY-FROZEN state** — it exists on disk again but must not be edited; the artifacts→standalone sync is disabled by default (`PORTAVA_ENABLE_LEGACY_SYNC=1` guard) and the tree is slated for archival. References to it below (system map, workflows, sync/mirror notes) are historical. The API server remains canonical at `artifacts/api-server`.
+> **SOURCE OF TRUTH (updated 2026-08-14):** `travel-buddy-standalone/` is the only app tree. `artifacts/travel-buddy` was **archived on 2026-08-14** and no longer exists on disk — its last state is at commit `bc1bef404`. The artifacts→standalone sync retired with it. References to it below (system map, workflows, sync/mirror notes) are historical and describe a two-tree world that no longer exists. The API server remains canonical at `artifacts/api-server`.
 
 _Generated for beta-readiness testing. This is a snapshot as of 2026-07-28. Where a feature's status could not be confirmed by direct testing (only by reading code), that is called out explicitly — treat those as "needs manual verification," not "confirmed working."_
 
@@ -26,8 +26,8 @@ _Generated for beta-readiness testing. This is a snapshot as of 2026-07-28. Wher
 
 - **Client → API**: every authenticated call must attach `Authorization: Bearer <supabase JWT>`. A handful of "public" reads (e.g. passport, profile lookups) work anonymously too, but silently degrade to anonymous-viewer behavior if the token is missing — this exact bug (missing header in `getPublicPassport`) was just fixed. **When testing, watch for any screen that seems to ignore your relationship to another user/entity — a missing auth header is a plausible root cause pattern, not a one-off.**
 - **API → DB**: the API server almost always uses the **service-role client** (bypasses RLS) and enforces authorization itself in route code, not via RLS. Bugs here look like "wrong data returned to the wrong viewer," not DB errors.
-- **Standalone tree**: `travel-buddy-standalone` mirrors `artifacts/travel-buddy` and auto-syncs after every merge, EXCEPT files listed in the `STANDALONE_OWNED_FILES` ledger, which require manual porting. If you find a bug only in one tree, check the ledger before assuming it's fixed everywhere.
-- **Dev servers** (for reference while testing): API server workflow `artifacts/api-server: API Server`; app workflow `artifacts/travel-buddy: expo`; standalone has its own `travel-buddy-standalone: dev`.
+- **App tree**: `travel-buddy-standalone` is the only app tree. It used to be a mirror of `artifacts/travel-buddy`, auto-synced after every merge except for files in the `STANDALONE_OWNED_FILES` ledger — that tree was archived at `bc1bef404` and the sync, the ledger and the two-tree bug-hunting rule all retired with it. A bug is now fixed in exactly one place.
+- **Dev servers** (for reference while testing): API server workflow `artifacts/api-server: API Server`; app workflow `travel-buddy-standalone: dev`.
 
 ---
 
@@ -166,7 +166,7 @@ For each: what it does, key files, status. **Status labels reflect code-reading 
 5. **Trips: Before-You-Go and layover mode** may exist as components without full flow integration — check whether they're reachable through normal navigation, not just present in the codebase.
 6. **"Gems" currency vs "Hidden Gems" places** — naming may be overloaded; confirm in the UI whether there's supposed to be a separate reward-currency system, or if all "gems" UI refers to the places feature.
 7. **Analytics screen** — three fresh open tasks (#3203, #3204, #3205) target the profile analytics screen: no error state on API failure, tapping the views count doesn't navigate, and zero-data states may render as broken empty cards instead of proper empty states. These are open/unfixed as of this doc.
-8. **Standalone-tree drift** — if a bug is fixed in `artifacts/travel-buddy` but you're testing against `travel-buddy-standalone`, check the file isn't in `STANDALONE_OWNED_FILES` (which blocks the auto-sync) before assuming both trees match.
+8. **Standalone-tree drift** — RETIRED. This said: if a bug is fixed in `artifacts/travel-buddy` but you're testing against `travel-buddy-standalone`, check the file isn't in `STANDALONE_OWNED_FILES` before assuming both trees match. There is one tree since the 2026-08-14 archival (`bc1bef404`), so this class of confusion is structurally gone.
 9. **Route inventory caveat** — the two independent screen scans used to build §2 disagreed slightly; treat the table as thorough but re-verify unusual/rare screens against the live route registry check if you hit a path that seems to not exist.
 
 ---

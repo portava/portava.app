@@ -29,7 +29,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// From src/lib/__tests__/ back to artifacts/travel-buddy/
+// From src/lib/__tests__/ back to the travel-buddy-standalone root.
 const ROOT = resolve(__dirname, '../../..');
 
 function read(rel: string): string {

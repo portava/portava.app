@@ -5,6 +5,8 @@ description: replit.md's SOURCE OF TRUTH banner for artifacts/travel-buddy vs tr
 
 # Canonical-tree identity is not stable — re-check replit.md every session
 
+RESOLVED 2026-08-14: the flip-flopping ended by removing one side. `artifacts/travel-buddy` is archived at `bc1bef404`, so there is nothing left to flip to — but the second half of this memory (never trust a remembered pass/fail baseline without re-measuring) still stands. Historical detail follows.
+
 `replit.md` carries a live "SOURCE OF TRUTH" declaration for which of `artifacts/travel-buddy` / `travel-buddy-standalone` is canonical. It flipped within a single day (2026-08-05): `artifacts/travel-buddy` was deleted, then resurrected the same day as a LEGACY-FROZEN/do-not-edit archival copy, with `travel-buddy-standalone` promoted to sole canonical tree.
 
 **Why:** a task file or instructions written even hours earlier can describe a tree as canonical that is no longer canonical by the time you execute it. Trusting an earlier-session (or earlier-paragraph) conclusion about tree identity causes real edits to land in the wrong tree.

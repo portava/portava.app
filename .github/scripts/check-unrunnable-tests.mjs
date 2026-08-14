@@ -59,7 +59,6 @@
 //     ghost-path assertion, and the registered-file floor in ci.yml.
 //   * e2e/maestro flows — no package.json script invokes them and CI runs no
 //     device tests at all. Out of scope by design, not by oversight.
-//   * the frozen legacy tree artifacts/travel-buddy.
 //   * a file that IS executed but whose assertions are vacuous. No static check
 //     can see that.
 
@@ -355,7 +354,6 @@ const LIMITS = [
   '  * other jest testPathIgnorePatterns entries',
   '  * artifacts/api-server (covered by check:test-registration and the registered-file floor)',
   '  * e2e/maestro flows, which no script invokes and which CI deliberately does not run',
-  '  * the frozen legacy tree artifacts/travel-buddy',
   '  * tests that DO run but assert nothing meaningful',
 ];
 

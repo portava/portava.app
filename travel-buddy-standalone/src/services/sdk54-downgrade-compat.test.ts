@@ -3,8 +3,7 @@
  *
  * Verifies that the five packages downgraded to match Expo SDK 54 are:
  *   1. Pinned to the correct SDK-54-compatible versions in package.json
- *   2. In sync between artifacts/travel-buddy and travel-buddy-standalone
- *   3. API-compatible with production code — exercised by importing and calling
+ *   2. API-compatible with production code — exercised by importing and calling
  *      REAL production service functions with mock native deps injected via the
  *      same test-slot pattern used by the rest of this codebase.
  *
@@ -67,10 +66,13 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dir = dirname(__filename);
 
-// Locate the workspace root regardless of which tree this file lives in
-// (artifacts/travel-buddy or travel-buddy-standalone — the file is kept in
-// sync between both).  Walk up from this file's directory until we find the
-// directory that contains both `artifacts` and `travel-buddy-standalone`.
+// Locate the workspace root by walking up from this file's directory until we
+// find the directory containing both `artifacts` and `travel-buddy-standalone`.
+// This used to exist so the same file worked from either of two trees; the
+// monorepo tree is archived and this file now lives in one place only. The walk
+// is kept because it is still the correct way to find the root from a nested
+// service directory without hardcoding a `../../../..` depth — the exact class
+// of brittle path the cross-tree guard exists to catch.
 function findWorkspaceRoot(startDir: string): string {
   let dir = startDir;
   for (let i = 0; i < 10; i++) {
@@ -89,7 +91,7 @@ function findWorkspaceRoot(startDir: string): string {
 
 const WORKSPACE_ROOT = findWorkspaceRoot(__dir);
 
-// Resolve paths from the workspace root so the same file works from either tree.
+// Resolve paths from the workspace root rather than from this file's depth.
 function readPkg(rootRelPath: string): Record<string, any> {
   return JSON.parse(readFileSync(pathResolve(WORKSPACE_ROOT, rootRelPath), 'utf8'));
 }
@@ -99,12 +101,16 @@ function versionContains(field: string | undefined, ver: string): boolean {
 }
 
 // ── 1. Package version pins ───────────────────────────────────────────────────
+//
+// RETIRED CROSS-TREE HALF. Until artifacts/travel-buddy was archived these pins
+// were read out of THAT tree's package.json, and a companion test asserted the
+// two trees agreed. There is one tree now, so the pins are asserted where they
+// actually take effect — travel-buddy-standalone/package.json, the manifest EAS
+// builds from — and the "in sync" test is gone rather than left comparing a file
+// to itself.
 
 describe('SDK 54 downgrade — package version pins', () => {
-  // This file lives in the monorepo tree, so ../../package.json (2 levels up
-  // from src/services) is artifacts/travel-buddy/package.json — the monorepo
-  // copy whose pins are asserted below.
-  const pkg = readPkg('artifacts/travel-buddy/package.json');
+  const pkg = readPkg('travel-buddy-standalone/package.json');
   const deps: Record<string, string> = {
     ...pkg.dependencies,
     ...pkg.devDependencies,
@@ -144,39 +150,17 @@ describe('SDK 54 downgrade — package version pins', () => {
       `Expected expo-clipboard ~8.x, got: ${deps['expo-clipboard']}`,
     );
   });
-
-  it('versions are in sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-    // travel-buddy-standalone/package.json is 4 levels up from src/services
-    // (artifacts/travel-buddy/src/services → workspace root → travel-buddy-standalone).
-    const standalone = readPkg('travel-buddy-standalone/package.json');
-    const saDeps: Record<string, string> = {
-      ...standalone.dependencies,
-      ...standalone.devDependencies,
-    };
-    const toCheck = [
-      'expo-notifications',
-      'expo-dev-client',
-      'react-native-view-shot',
-      'expo-calendar',
-      'expo-clipboard',
-    ];
-    for (const name of toCheck) {
-      assert.equal(
-        deps[name],
-        saDeps[name],
-        `${name} version mismatch: artifacts/travel-buddy="${deps[name]}" travel-buddy-standalone="${saDeps[name]}"`,
-      );
-    }
-  });
 });
 
-// ── 1b. Peer dep sync — transitive Expo SDK 54 peer deps ─────────────────────
+// ── 1b. Peer deps of the SDK 54 downgraded packages ──────────────────────────
 //
 // The five downgraded packages declare peer dependencies on react-native, expo,
-// and react.  A drift in any of those peer deps can cause silent runtime
-// breakage even when the pinned-package versions are identical.  This section
-// ensures that the key peer deps are also kept in sync between the two
-// package.json files.
+// and react. This section used to assert those peer deps were IN SYNC between
+// artifacts/travel-buddy and travel-buddy-standalone; with the monorepo tree
+// archived there is nothing to compare against, so what survives is the half
+// that still has a subject: each peer dep must actually be DECLARED in the
+// surviving manifest. An undeclared peer dep is the failure that a version
+// comparison never caught anyway — it resolves transitively and silently.
 //
 // Packages and their key peer deps:
 //   expo-notifications  → react-native, expo, react
@@ -185,100 +169,45 @@ describe('SDK 54 downgrade — package version pins', () => {
 //   expo-clipboard      → react-native, expo, react
 //   react-native-view-shot → react-native, react
 
-describe('SDK 54 downgrade — peer dep sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
-  const tb = readPkg('artifacts/travel-buddy/package.json');
-  const tbAll: Record<string, string> = {
-    ...tb.dependencies,
-    ...tb.devDependencies,
-  };
-
-  // travel-buddy-standalone/package.json is 4 levels up from src/services.
+describe('SDK 54 downgrade — peer deps of the downgraded packages are declared', () => {
   const sa = readPkg('travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
   };
 
-  // Key peer deps shared by all five downgraded packages.
-  const peerDepsToCheck: Array<{ pkg: string; peerDep: string }> = [
-    // react-native — primary peer dep for every Expo package
-    { pkg: 'expo-notifications',   peerDep: 'react-native' },
-    { pkg: 'expo-dev-client',      peerDep: 'react-native' },
-    { pkg: 'expo-calendar',        peerDep: 'react-native' },
-    { pkg: 'expo-clipboard',       peerDep: 'react-native' },
-    { pkg: 'react-native-view-shot', peerDep: 'react-native' },
-
-    // expo — SDK version gate for all expo-* packages
-    { pkg: 'expo-notifications',   peerDep: 'expo' },
-    { pkg: 'expo-dev-client',      peerDep: 'expo' },
-    { pkg: 'expo-calendar',        peerDep: 'expo' },
-    { pkg: 'expo-clipboard',       peerDep: 'expo' },
-
-    // react — required by all packages that render React components
-    { pkg: 'expo-notifications',   peerDep: 'react' },
-    { pkg: 'expo-dev-client',      peerDep: 'react' },
-    { pkg: 'expo-calendar',        peerDep: 'react' },
-    { pkg: 'expo-clipboard',       peerDep: 'react' },
-    { pkg: 'react-native-view-shot', peerDep: 'react' },
-  ];
-
-  // Deduplicate to one test per peer dep (all downgraded packages share the same
-  // react-native / expo / react version in a given project, so testing per peer
-  // dep is sufficient and produces clearer failure messages).
-  const uniquePeerDeps = [...new Set(peerDepsToCheck.map(e => e.peerDep))];
+  // Key peer deps shared by all five downgraded packages. Deduplicated to one
+  // test per peer dep (all downgraded packages share the same react-native /
+  // expo / react version in a given project).
+  const uniquePeerDeps = ['react-native', 'expo', 'react'];
 
   for (const peerDep of uniquePeerDeps) {
-    it(`${peerDep} is in sync between artifacts/travel-buddy and travel-buddy-standalone (peer dep of SDK 54 downgraded packages)`, () => {
-      const tbVer = tbAll[peerDep];
-      const saVer = saAll[peerDep];
-
+    it(`${peerDep} is declared (peer dep of the SDK 54 downgraded packages)`, () => {
       assert.ok(
-        tbVer !== undefined,
-        `${peerDep} is missing from artifacts/travel-buddy/package.json — required as a peer dep of the SDK 54 downgraded packages`,
-      );
-      assert.ok(
-        saVer !== undefined,
-        `${peerDep} is missing from travel-buddy-standalone/package.json — required as a peer dep of the SDK 54 downgraded packages`,
-      );
-      assert.equal(
-        tbVer,
-        saVer,
-        `${peerDep} peer dep mismatch: artifacts/travel-buddy="${tbVer}" travel-buddy-standalone="${saVer}" — a drift here can cause silent SDK 54 runtime breakage`,
+        saAll[peerDep] !== undefined,
+        `${peerDep} is missing from travel-buddy-standalone/package.json — it is a peer dep of the SDK 54 downgraded packages and must be pinned explicitly, not resolved transitively`,
       );
     });
   }
 });
 
-// ── 1c. Other explicitly pinned Expo SDK 54 packages — cross-tree sync ────────
+// ── 1c. Other explicitly pinned Expo SDK 54 packages ─────────────────────────
 //
 // Several Expo packages beyond the five intentionally downgraded ones are
-// pinned to exact or narrow versions in both package trees.  A drift in any of
-// them causes the standalone and monorepo builds to behave differently in ways
-// that are only caught at runtime.  Each test below compares the version string
-// in artifacts/travel-buddy/package.json against the version string in
-// travel-buddy-standalone/package.json and fails with the package name and both
-// version strings so the divergence is immediately obvious.
+// pinned to exact or narrow versions. This section used to compare each version
+// string across the two package trees; with artifacts/travel-buddy archived the
+// comparison has no second operand. What remains enforced is that each package
+// is still explicitly pinned in the surviving manifest — dropping a pin lets
+// the Expo SDK resolve it to whatever the lockfile happens to allow, which is
+// the drift the cross-tree test was a proxy for.
 
-describe('SDK 54 — other explicitly pinned Expo packages sync between artifacts/travel-buddy and travel-buddy-standalone', () => {
-  // artifacts/travel-buddy/package.json is 2 levels up from src/services.
-  const tb = readPkg('artifacts/travel-buddy/package.json');
-  const tbAll: Record<string, string> = {
-    ...tb.dependencies,
-    ...tb.devDependencies,
-  };
-
-  // travel-buddy-standalone/package.json is 4 levels up from src/services in
-  // the artifacts tree (artifacts/travel-buddy/src/services → workspace root →
-  // travel-buddy-standalone).
+describe('SDK 54 — other explicitly pinned Expo packages are still pinned', () => {
   const sa = readPkg('travel-buddy-standalone/package.json');
   const saAll: Record<string, string> = {
     ...sa.dependencies,
     ...sa.devDependencies,
   };
 
-  // All Expo-ecosystem packages that are explicitly pinned in both package trees
-  // but not already covered by the five-downgrade or peer-dep sync tests above.
   const pinnedPackages: string[] = [
     '@expo/cli',
     'expo',
@@ -305,22 +234,10 @@ describe('SDK 54 — other explicitly pinned Expo packages sync between artifact
   ];
 
   for (const name of pinnedPackages) {
-    it(`${name} version is in sync between artifacts/travel-buddy and travel-buddy-standalone`, () => {
-      const tbVer = tbAll[name];
-      const saVer = saAll[name];
-
+    it(`${name} is explicitly pinned`, () => {
       assert.ok(
-        tbVer !== undefined,
-        `${name} is missing from artifacts/travel-buddy/package.json — add it or remove the pin from travel-buddy-standalone`,
-      );
-      assert.ok(
-        saVer !== undefined,
-        `${name} is missing from travel-buddy-standalone/package.json — add it or remove the pin from artifacts/travel-buddy`,
-      );
-      assert.equal(
-        tbVer,
-        saVer,
-        `${name} version mismatch: artifacts/travel-buddy="${tbVer}" travel-buddy-standalone="${saVer}" — a drift here can cause silent SDK 54 build or runtime breakage`,
+        saAll[name] !== undefined,
+        `${name} is missing from travel-buddy-standalone/package.json — it was an explicitly pinned Expo SDK 54 package; either restore the pin or remove it from pinnedPackages with a reason`,
       );
     });
   }
@@ -667,29 +584,33 @@ describe('expo-clipboard ~8.0.8 — setStringAsync call contract (mirrors GroupC
 
 // ── 7. Lockfile-resolved peer dep versions ────────────────────────────────────
 //
-// The semver ranges in package.json only constrain what pnpm may resolve;
+// The semver ranges in package.json only constrain what pnpm MAY resolve;
 // transitive peer deps like @expo/config-plugins, expo-modules-core, and the
-// metro bundler family (metro, metro-resolver, @expo/metro-config) are not
-// declared directly in either package.json — their pinned resolved versions live
-// only in the pnpm lockfile.  If those resolved versions drift between the two
-// lockfiles, runtime breakage can occur silently even when the declared ranges
-// match.  Metro bundler version gaps in particular only surface at Expo build
-// time with confusing stack traces.
+// metro bundler family are not declared directly in package.json — their pinned
+// resolved versions live only in the pnpm lockfile.
 //
-// @babel/core is also checked here: both trees pin ^7.25.2 in package.json but
-// the resolved version is only locked in each pnpm-lock.yaml.  A drift (e.g.
-// after `pnpm update` in only one tree) can silently produce different
-// JSX/TS transpilation output or cause Babel plugin-version mismatches at
-// build time.
+// RETIRED CROSS-LOCKFILE HALF. Until artifacts/travel-buddy was archived, each
+// package here was looked up in BOTH travel-buddy-standalone/pnpm-lock.yaml and
+// the monorepo root pnpm-lock.yaml, and the two resolutions were required to
+// agree. The archival deleted the workspace member that pulled the entire Expo
+// and metro dependency graph into the root lockfile, so the root operand is
+// simply gone: after regenerating it, @expo/config-plugins, metro,
+// metro-resolver and @expo/metro-config appear in it zero times. Those
+// comparisons did not become wrong — they became unanswerable, and an assertion
+// with one operand missing fails for a reason that has nothing to do with the
+// drift it was written to catch.
 //
-// This section reads both lockfiles and asserts that each package resolves to
-// exactly one version and that version is identical in both trees.
+// What survives is the half that never needed a second tree: within the ONE
+// lockfile that now builds the app, a package that must resolve to a single
+// version must not have resolved to several. That is the real hazard — two
+// copies of @babel/core or expo-modules-core in one tree produce transpilation
+// and native-module mismatches at build time.
 
-describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/config-plugins, expo-modules-core, and metro bundler family', () => {
-  // travel-buddy-standalone/pnpm-lock.yaml is 4 levels up from src/services/ in artifacts/travel-buddy/
-  const standaloneLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
-  // monorepo root pnpm-lock.yaml is also 4 levels up from src/services/ in artifacts/travel-buddy/
-  const monoLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'pnpm-lock.yaml'), 'utf8');
+describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/config-plugins, expo-modules-core', () => {
+  const standaloneLockText = readFileSync(
+    pathResolve(WORKSPACE_ROOT, 'travel-buddy-standalone/pnpm-lock.yaml'),
+    'utf8',
+  );
 
   /**
    * Scan a lockfile text for all resolved base versions of a given package.
@@ -700,11 +621,7 @@ describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/
    * Returns a sorted, deduplicated list of version strings.
    */
   function resolvedVersions(lockText: string, pkgName: string): string[] {
-    // Escape special regex metacharacters in the package name.
     const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, (c) => '\\' + c).replace(/\//g, (c) => '\\' + c);
-    // pnpm v9 lockfile: package entries are indented by 2 spaces at the top level
-    // of the `packages:` section.  Scoped names are wrapped in single/double
-    // quotes; unscoped names are bare.  Both forms appear here.
     const re = new RegExp(`^  ['"]?${escaped}@([\\d][\\d.]+)`, 'gm');
     const found = new Set<string>();
     let m: RegExpExecArray | null;
@@ -717,44 +634,17 @@ describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/
   const pkgsToCheck = ['@babel/core', '@expo/config-plugins', 'expo-modules-core'];
 
   for (const pkg of pkgsToCheck) {
-    it(`${pkg} — resolved to exactly one version in each lockfile`, () => {
+    it(`${pkg} — resolved to exactly one version in the standalone lockfile`, () => {
       const saVersions = resolvedVersions(standaloneLockText, pkg);
-      const monoVersions = resolvedVersions(monoLockText, pkg);
 
       assert.ok(
         saVersions.length > 0,
         `${pkg} not found in travel-buddy-standalone/pnpm-lock.yaml — lockfile may be out of date`,
       );
-      assert.ok(
-        monoVersions.length > 0,
-        `${pkg} not found in root pnpm-lock.yaml — lockfile may be out of date`,
-      );
       assert.equal(
         saVersions.length,
         1,
         `${pkg} resolved to multiple versions in travel-buddy-standalone/pnpm-lock.yaml: ${saVersions.join(', ')} — version conflict`,
-      );
-      assert.equal(
-        monoVersions.length,
-        1,
-        `${pkg} resolved to multiple versions in root pnpm-lock.yaml: ${monoVersions.join(', ')} — version conflict`,
-      );
-    });
-
-    it(`${pkg} — resolved version matches between travel-buddy-standalone and monorepo lockfiles`, () => {
-      const saVersions = resolvedVersions(standaloneLockText, pkg);
-      const monoVersions = resolvedVersions(monoLockText, pkg);
-
-      const saVer = saVersions[0] ?? '(not found)';
-      const monoVer = monoVersions[0] ?? '(not found)';
-
-      assert.equal(
-        saVer,
-        monoVer,
-        `${pkg} lockfile version mismatch:\n` +
-        `  travel-buddy-standalone/pnpm-lock.yaml resolved: ${saVer}\n` +
-        `  root pnpm-lock.yaml resolved:                    ${monoVer}\n` +
-        `A drift here can cause silent SDK 54 runtime breakage even when package.json ranges match.`,
       );
     });
   }
@@ -763,20 +653,23 @@ describe('Lockfile-resolved transitive peer dep versions — @babel/core, @expo/
 // ── 8. Lockfile-resolved metro bundler family versions ────────────────────────
 //
 // metro, metro-resolver, and @expo/metro-config are resolved purely as
-// transitive deps in both lockfiles — they are never declared directly in
-// either package.json.  A version gap here causes bundler incompatibilities
-// that only surface silently at Expo build time with confusing stack traces.
+// transitive deps — never declared directly in package.json. A version gap here
+// causes bundler incompatibilities that only surface at Expo build time with
+// confusing stack traces.
 //
-// Unlike @expo/config-plugins / expo-modules-core, the metro family can
-// legitimately resolve at multiple versions when different packages in the
-// dependency tree require different sub-versions.  The check below therefore
-// compares the complete sorted set of resolved versions (not requiring a single
-// version), so any drift between the two lockfiles fails with a clear diff.
+// The cross-lockfile set comparison retired with artifacts/travel-buddy for the
+// reason given in section 7. Unlike @expo/config-plugins / expo-modules-core the
+// metro family can LEGITIMATELY resolve at several versions at once, so there is
+// no single-tree "exactly one version" assertion to fall back on — the only
+// claim left that is both true and checkable is presence. That is a weaker check
+// than what was here before, and it is recorded as weaker rather than dressed up:
+// a metro drift inside the one remaining tree is no longer caught by this file.
 
 describe('Lockfile-resolved metro bundler family versions — metro, metro-resolver, @expo/metro-config', () => {
-  // Reuse the same lockfile texts read in section 7.
-  const standaloneLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'travel-buddy-standalone/pnpm-lock.yaml'), 'utf8');
-  const monoLockText = readFileSync(pathResolve(WORKSPACE_ROOT, 'pnpm-lock.yaml'), 'utf8');
+  const standaloneLockText = readFileSync(
+    pathResolve(WORKSPACE_ROOT, 'travel-buddy-standalone/pnpm-lock.yaml'),
+    'utf8',
+  );
 
   function resolvedVersions(lockText: string, pkgName: string): string[] {
     const escaped = pkgName.replace(/[.*+?^${}()|[\]\\]/g, (c) => '\\' + c).replace(/\//g, (c) => '\\' + c);
@@ -792,31 +685,12 @@ describe('Lockfile-resolved metro bundler family versions — metro, metro-resol
   const metroPkgs = ['metro', 'metro-resolver', '@expo/metro-config'];
 
   for (const pkg of metroPkgs) {
-    it(`${pkg} — resolved in both lockfiles (not missing)`, () => {
+    it(`${pkg} — resolved in the standalone lockfile (not missing)`, () => {
       const saVersions = resolvedVersions(standaloneLockText, pkg);
-      const monoVersions = resolvedVersions(monoLockText, pkg);
 
       assert.ok(
         saVersions.length > 0,
         `${pkg} not found in travel-buddy-standalone/pnpm-lock.yaml — lockfile may be out of date`,
-      );
-      assert.ok(
-        monoVersions.length > 0,
-        `${pkg} not found in root pnpm-lock.yaml — lockfile may be out of date`,
-      );
-    });
-
-    it(`${pkg} — resolved version set matches between travel-buddy-standalone and monorepo lockfiles`, () => {
-      const saVersions = resolvedVersions(standaloneLockText, pkg);
-      const monoVersions = resolvedVersions(monoLockText, pkg);
-
-      assert.equal(
-        saVersions.join(', '),
-        monoVersions.join(', '),
-        `${pkg} lockfile version mismatch:\n` +
-        `  travel-buddy-standalone/pnpm-lock.yaml resolved: ${saVersions.join(', ')}\n` +
-        `  root pnpm-lock.yaml resolved:                    ${monoVersions.join(', ')}\n` +
-        `A version gap here can cause bundler incompatibilities that only surface at Expo build time.`,
       );
     });
   }

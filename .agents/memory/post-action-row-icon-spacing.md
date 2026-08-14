@@ -3,7 +3,7 @@ name: Post action row icon-spacing pattern
 description: Where the shared Stamp/Comment/Share/Save/More action row primitives live, and which surfaces were deliberately excluded.
 ---
 
-`artifacts/travel-buddy/src/components/PostActionRow.tsx` (`PostActionGroup` + `PostActionRow` + `actionSlot()`) is the shared primitive for the post action row: fixed 4px icon/counter gap, 44x44 touch target via hitSlop, compact K/M/B counter text with the exact count in the accessibility label (via `src/lib/counterFormat.ts`), and a left-cluster + flexible-spacer + right-cluster layout with a proportional 14-24px gap (`src/lib/actionRowGap.ts`).
+`travel-buddy-standalone/src/components/PostActionRow.tsx` (was `artifacts/travel-buddy/...`, archived at `bc1bef404`) (`PostActionGroup` + `PostActionRow` + `actionSlot()`) is the shared primitive for the post action row: fixed 4px icon/counter gap, 44x44 touch target via hitSlop, compact K/M/B counter text with the exact count in the accessibility label (via `src/lib/counterFormat.ts`), and a left-cluster + flexible-spacer + right-cluster layout with a proportional 14-24px gap (`src/lib/actionRowGap.ts`).
 
 `PostEngagementBar.tsx` (used by PulseFeedCard's PostCard variants and QuestionCard) is the only literal Stamp/Comment/Share/Save/More row and is the one built on these primitives; it accepts a `right` prop so callers compose Save/More into the same row instead of a sibling row with an ad hoc spacer.
 

@@ -7,7 +7,7 @@ description: How to actually browser-test travel-buddy-standalone's web build (n
 container and is **not a registered artifact** — it has no default
 browser-facing preview URL. If a testing subagent is given no explicit URL, it
 will default to the Expo tunnel/preview domain, which serves the legacy-frozen
-`artifacts/travel-buddy` tree instead. This causes fixes made in
+`artifacts/travel-buddy` tree instead (that tree is archived at `bc1bef404`, so this failure mode is now impossible). This causes fixes made in
 `travel-buddy-standalone` to appear not to work — cache clears, workflow
 restarts, and "new browser context" all fail to help because the tester was
 never hitting the right tree.

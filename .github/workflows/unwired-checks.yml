@@ -169,7 +169,6 @@ jobs:
       #
       #     @workspace/api-server      artifacts/api-server
       #     @workspace/mockup-sandbox  artifacts/mockup-sandbox
-      #     @workspace/travel-buddy    artifacts/travel-buddy   (frozen legacy tree)
       #     @workspace/scripts         scripts
       #     expo-openmls               packages/expo-openmls
       #
@@ -269,11 +268,6 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:routes-guard
 
-      - name: 'scripts: test:sync-check'
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:sync-check
-
       - name: 'scripts: test:workflow-paths'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
@@ -349,13 +343,17 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile
 
-      # THE ASYMMETRY WORTH KNOWING ABOUT: both of the guards below ARE chained
-      # into `typecheck` in the LEGACY, frozen tree (artifacts/travel-buddy),
-      # but the canonical tree's typecheck dropped them. So two guards run in
-      # the tree nobody edits and not in the tree everybody edits.
+      # THE ASYMMETRY IS GONE, AND THAT MAKES THESE TWO STEPS LOAD-BEARING.
+      # Both guards below used to be chained into `typecheck` in the legacy
+      # frozen tree (artifacts/travel-buddy) while the canonical tree's
+      # typecheck had dropped them — so they ran in the tree nobody edited and
+      # not in the tree everybody edits. That tree is archived (see the PR that
+      # removed it), which removes the only other place either guard ran.
+      # These two steps are now the ONLY thing invoking them anywhere. Deleting
+      # a step here does not move a check, it deletes the check.
       #
       # check-close-then-navigate has a package.json script
-      # ("lint:close-then-navigate") that nothing calls.
+      # ("lint:close-then-navigate") that nothing else calls.
       - name: 'standalone: lint:close-then-navigate'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash

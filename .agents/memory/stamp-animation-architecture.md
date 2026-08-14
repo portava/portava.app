@@ -45,7 +45,7 @@ Content screens wire the callback to `triggerStamp()` from the context + a share
 - `INK_HOLD_MS = 620` ms, `INK_FADE_MS = 380` ms
 
 ## Files changed
-Both trees (`artifacts/travel-buddy/` + `travel-buddy-standalone/`):
+`travel-buddy-standalone/` (this listed both trees until `artifacts/travel-buddy` was archived at `bc1bef404`):
 - `src/context/StampAnimationContext.tsx` — NEW
 - `src/components/stamps/DoubleTapStampable.tsx` — NEW
 - `src/hooks/useStampAnimation.ts` — stripped to bounce + count pop only

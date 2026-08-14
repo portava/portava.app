@@ -50,9 +50,9 @@ Four fixes are applied so EAS cloud builds detect pnpm and use the correct node-
 | Fix | File | What it does |
 |-----|------|--------------|
 | `packageManager` field | `package.json` | Forces EAS/corepack to detect `pnpm@10.26.1` instead of guessing npm (eas-cli #2978 workaround) |
-| `eas-build-pre-install` hook | `artifacts/travel-buddy/package.json` scripts | Runs `corepack enable` before install so pnpm is available on the EAS build server |
+| `eas-build-pre-install` hook | `travel-buddy-standalone/package.json` scripts (was `artifacts/travel-buddy/...`, archived at `bc1bef404`) | Runs `corepack enable` before install so pnpm is available on the EAS build server |
 | `node-linker=hoisted` | `.npmrc` | Uses the hoisted linker so React Native native modules (MapLibre, etc.) resolve correctly; the isolated linker (pnpm default) breaks native module lookup |
-| Metro config | `artifacts/travel-buddy/metro.config.js` | Already uses `getDefaultConfig` from `expo/metro-config` with only a blocklist and web shims — safe for monorepo, no changes needed |
+| Metro config | `travel-buddy-standalone/metro.config.js` (was `artifacts/travel-buddy/...`, archived at `bc1bef404`) | Already uses `getDefaultConfig` from `expo/metro-config` with only a blocklist and web shims — safe for monorepo, no changes needed |
 
 > **Note:** The hoisted linker takes effect on the next fresh `pnpm install`. The existing Replit dev environment continues to work as-is.
 

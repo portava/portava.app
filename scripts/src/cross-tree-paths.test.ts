@@ -27,13 +27,13 @@
  *   silently missing a broken path.
  *
  * SCOPE:
- *   Both canonical trees:
- *     artifacts/travel-buddy/src/**\/*.test.ts
- *     artifacts/travel-buddy/src/**\/__fixtures__\/*.ts
- *     artifacts/travel-buddy/src/**\/__mocks__\/*.ts
- *     artifacts/travel-buddy/src/**\/__helpers__\/*.ts
- *     artifacts/travel-buddy/src/**\/__testUtils__\/*.ts
- *     artifacts/travel-buddy/src/**\/__support__\/*.ts
+ *   The canonical tree. There used to be two — artifacts/travel-buddy was
+ *   scanned here as well until it was archived and the cross-tree sync retired
+ *   with it. "Cross-tree" now means "reaching outside travel-buddy-standalone/src"
+ *   (the workspace root, the lockfile, sibling packages), which is still worth
+ *   resolving statically, and the perspective guard below still catches a file
+ *   restored out of the archived tree.
+ *
  *     travel-buddy-standalone/src/**\/*.test.ts
  *     travel-buddy-standalone/src/**\/__fixtures__\/*.ts
  *     travel-buddy-standalone/src/**\/__mocks__\/*.ts
@@ -53,21 +53,14 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  MONOREPO_PERSPECTIVE_MARKERS,
-  STANDALONE_PERSPECTIVE_MARKERS,
-  markerToRegExp,
-} from './perspective-markers.js';
+import { MONOREPO_PERSPECTIVE_MARKERS, markerToRegExp } from './perspective-markers.js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../../');
 
-/** Both trees to scan. */
-const TEST_ROOTS = [
-  path.join(WORKSPACE_ROOT, 'artifacts', 'travel-buddy', 'src'),
-  path.join(WORKSPACE_ROOT, 'travel-buddy-standalone', 'src'),
-];
+/** The tree to scan. (Was two until artifacts/travel-buddy was archived.) */
+const TEST_ROOTS = [path.join(WORKSPACE_ROOT, 'travel-buddy-standalone', 'src')];
 
 /**
  * Patterns for statically-resolvable cross-tree path reads.
@@ -509,37 +502,28 @@ interface PerspectiveViolation {
 }
 
 /**
- * Scan file content for path strings that belong to the OTHER tree's
- * perspective. `perspective` is the tree the file lives in.
+ * Scan standalone-tree file content for path strings written from the ARCHIVED
+ * monorepo tree's perspective.
+ *
+ * The marker strings live in perspective-markers.ts. Each regex includes the
+ * opening quote/backtick so '../../pnpm-lock.yaml' does not match inside
+ * '../../../../pnpm-lock.yaml'.
+ *
+ * This used to take a `perspective` argument because there were two trees to
+ * check in both directions. Only one tree is left, so there is only one
+ * direction: a monorepo-perspective path appearing in the standalone tree.
  */
-export function findPerspectiveViolations(
-  content: string,
-  perspective: 'monorepo' | 'standalone',
-): PerspectiveViolation[] {
-  // The marker strings live in perspective-markers.ts — the SINGLE SOURCE OF
-  // TRUTH shared (via a parity test below) with scripts/sync-standalone.sh.
-  // Each regex includes the opening quote/backtick so '../../pnpm-lock.yaml'
-  // does not match inside '../../../../pnpm-lock.yaml'.
-  const describeMarker = (m: string, label: string) =>
-    m.endsWith('/') ? `'${m}...' (${label})` : `'${m}' (${label})`;
-  const FORBIDDEN: Record<'monorepo' | 'standalone', Array<{ re: RegExp; marker: string }>> = {
-    // In the standalone copy, monorepo-perspective paths are forbidden.
-    standalone: MONOREPO_PERSPECTIVE_MARKERS.map((m) => ({
-      re: markerToRegExp(m),
-      marker: describeMarker(m, 'monorepo-perspective'),
-    })),
-    // In the monorepo copy, standalone-perspective paths are forbidden.
-    monorepo: STANDALONE_PERSPECTIVE_MARKERS.map((m) => ({
-      re: markerToRegExp(m),
-      marker: describeMarker(m, 'standalone-perspective'),
-    })),
-  };
+export function findPerspectiveViolations(content: string): PerspectiveViolation[] {
+  const FORBIDDEN = MONOREPO_PERSPECTIVE_MARKERS.map((m) => ({
+    re: markerToRegExp(m),
+    marker: m.endsWith('/') ? `'${m}...' (monorepo-perspective)` : `'${m}' (monorepo-perspective)`,
+  }));
 
   const violations: PerspectiveViolation[] = [];
   const lines = content.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
-    for (const { re, marker } of FORBIDDEN[perspective]) {
+    for (const { re, marker } of FORBIDDEN) {
       if (re.test(line)) {
         violations.push({ line: i + 1, text: line.trim(), marker });
       }
@@ -548,62 +532,66 @@ export function findPerspectiveViolations(
   return violations;
 }
 
-const SDK54_COPIES: Array<{ file: string; perspective: 'monorepo' | 'standalone' }> = [
-  {
-    file: path.join(WORKSPACE_ROOT, 'artifacts', 'travel-buddy', 'src', 'services', 'sdk54-downgrade-compat.test.ts'),
-    perspective: 'monorepo',
-  },
-  {
-    file: path.join(WORKSPACE_ROOT, 'travel-buddy-standalone', 'src', 'services', 'sdk54-downgrade-compat.test.ts'),
-    perspective: 'standalone',
-  },
-];
+const SDK54_COPY = path.join(
+  WORKSPACE_ROOT,
+  'travel-buddy-standalone',
+  'src',
+  'services',
+  'sdk54-downgrade-compat.test.ts',
+);
 
-describe('SDK 54 compat test copies — perspective-mismatch guard', () => {
-  for (const { file, perspective } of SDK54_COPIES) {
-    const relFile = path.relative(WORKSPACE_ROOT, file);
+describe('SDK 54 compat test — perspective-mismatch guard', () => {
+  const relFile = path.relative(WORKSPACE_ROOT, SDK54_COPY);
 
-    it(`${relFile} exists (update SDK54_COPIES if it moved)`, () => {
-      assert.ok(fs.existsSync(file), `${relFile} not found — update SDK54_COPIES in cross-tree-paths.test.ts`);
-    });
+  it(`${relFile} exists (update SDK54_COPY if it moved)`, () => {
+    assert.ok(
+      fs.existsSync(SDK54_COPY),
+      `${relFile} not found — update SDK54_COPY in cross-tree-paths.test.ts`,
+    );
+  });
 
-    it(`${relFile} contains no ${perspective === 'standalone' ? 'monorepo' : 'standalone'}-perspective paths`, () => {
-      const content = fs.readFileSync(file, 'utf8');
-      const violations = findPerspectiveViolations(content, perspective);
-      if (violations.length > 0) {
-        assert.fail(
-          `${violations.length} perspective-mismatched path(s) in ${relFile}.\n` +
-          `This usually means a cross-tree sync overwrote the ${perspective} copy with the other tree's copy —\n` +
-          `its relative paths resolve OUTSIDE the workspace when run from the ${perspective} tree and fail with ENOENT.\n` +
-          `Re-port the change into the ${perspective} copy using ${perspective}-perspective paths instead of copying the file verbatim.\n\n` +
-          violations
-            .map((v) => `  line ${v.line}: found ${v.marker}\n    ${v.text}`)
-            .join('\n\n'),
-        );
-      }
-    });
-  }
+  it(`${relFile} contains no monorepo-perspective paths`, () => {
+    const content = fs.readFileSync(SDK54_COPY, 'utf8');
+    const violations = findPerspectiveViolations(content);
+    if (violations.length > 0) {
+      assert.fail(
+        `${violations.length} perspective-mismatched path(s) in ${relFile}.\n` +
+        `A monorepo-perspective path here means the file was restored or copied out of the\n` +
+        `ARCHIVED artifacts/travel-buddy tree — those relative paths resolve OUTSIDE the\n` +
+        `workspace when run from the standalone tree and fail with ENOENT.\n` +
+        `Re-port the change using standalone-perspective paths instead of copying verbatim.\n\n` +
+        violations
+          .map((v) => `  line ${v.line}: found ${v.marker}\n    ${v.text}`)
+          .join('\n\n'),
+      );
+    }
+  });
 });
 
-describe('findPerspectiveViolations — swapped-copy detection', () => {
-  // Synthetic perspective-specific content. The live sdk54 copies may be
-  // perspective-neutral (they can compute the workspace root dynamically), so
-  // the detector is exercised against representative content instead.
-  const monoContent = [
-    "const saPkg = readPkg('../../../../travel-buddy-standalone/package.json');",
-    'const rootLock = readFileSync(`${__dir}/../../../../pnpm-lock.yaml`, "utf8");',
-  ].join('\n');
+describe('findPerspectiveViolations — restored-from-archive detection', () => {
+  // Synthetic monorepo-perspective content. The live sdk54 copy may be
+  // perspective-neutral (it can compute the workspace root dynamically), so the
+  // detector is exercised against representative content instead.
+  //
+  // NOTE on anchoring: the markers match only when the opening quote/backtick
+  // sits immediately before the path, so a template literal of the form
+  // `${__dir}/../../../../pnpm-lock.yaml` is deliberately NOT matched — the
+  // sigil breaks the anchor. The quoted readPkg form below is what the guard
+  // actually catches, and that is the form these files use.
+  const monoTreeReach =
+    "const saPkg = readPkg('../../../../travel-buddy-standalone/package.json');";
+  const monoLockReach = "const rootLock = readPkg('../../../../pnpm-lock.yaml');";
+
   const saContent = [
-    "const monoPkg = readPkg('../../../artifacts/travel-buddy/package.json');",
+    "const ownPkg = readPkg('../../package.json');",
     'const ownLock = readFileSync(`${__dir}/../../pnpm-lock.yaml`, "utf8");',
-    'const rootLock = readFileSync(`${__dir}/../../../pnpm-lock.yaml`, "utf8");',
   ].join('\n');
 
-  it('flags the monorepo copy content when checked as the standalone copy (bad sync direction 1)', () => {
-    const violations = findPerspectiveViolations(monoContent, 'standalone');
+  it('flags a monorepo-perspective reach at the standalone tree', () => {
+    const violations = findPerspectiveViolations(monoTreeReach);
     assert.ok(
       violations.length > 0,
-      'a monorepo-perspective file placed in the standalone tree must be rejected — the guard would miss a bad sync',
+      'a file restored out of the archived monorepo tree must be rejected — the guard would miss it',
     );
     assert.ok(
       violations.some((v) => v.marker.includes('travel-buddy-standalone')),
@@ -611,122 +599,16 @@ describe('findPerspectiveViolations — swapped-copy detection', () => {
     );
   });
 
-  it('flags the standalone copy content when checked as the monorepo copy (bad sync direction 2)', () => {
-    const violations = findPerspectiveViolations(saContent, 'monorepo');
+  it('flags a monorepo-perspective reach at the root lockfile', () => {
+    const violations = findPerspectiveViolations(monoLockReach);
     assert.ok(
-      violations.length > 0,
-      'a standalone-perspective file placed in the monorepo tree must be rejected — the guard would miss a bad sync',
-    );
-    assert.ok(
-      violations.some((v) => v.marker.includes('artifacts/travel-buddy')),
-      `expected a '../../../artifacts/travel-buddy/...' violation; got: ${JSON.stringify(violations)}`,
+      violations.some((v) => v.marker.includes('pnpm-lock.yaml')),
+      `expected a '../../../../pnpm-lock.yaml' violation; got: ${JSON.stringify(violations)}`,
     );
   });
 
-  it('accepts each copy under its own perspective', () => {
-    assert.deepEqual(findPerspectiveViolations(monoContent, 'monorepo'), []);
-    assert.deepEqual(findPerspectiveViolations(saContent, 'standalone'), []);
-  });
-});
-
-// ── Parity guard: sync-standalone.sh bash regexes vs shared marker list ──────
-//
-// scripts/sync-standalone.sh refuses to copy perspective-divergent files using
-// two bash ERE patterns (MONO_PERSPECTIVE_RE / SA_PERSPECTIVE_RE). Those
-// patterns cannot import perspective-markers.ts, so this test parses them out
-// of the script and asserts they expand to EXACTLY the shared marker strings.
-// If someone adds a marker to one side and forgets the other, this fails.
-
-describe('sync-standalone.sh perspective-regex parity with perspective-markers.ts', () => {
-  const SYNC_SCRIPT = path.join(WORKSPACE_ROOT, 'scripts', 'sync-standalone.sh');
-
-  /** Extract the raw (bash-unescaped) value of VAR="..." from the script. */
-  function extractBashVar(scriptContent: string, varName: string): string {
-    const m = new RegExp('^' + varName + '="(.*)"\\s*$', 'm').exec(scriptContent);
-    assert.ok(m, `${varName}=... assignment not found in scripts/sync-standalone.sh`);
-    // Undo bash double-quote escaping: \" -> ", \` -> `, \\ -> \, \$ -> $
-    return m![1]!.replace(/\\(["`$\\])/g, '$1');
-  }
-
-  /**
-   * Expand a perspective ERE of the shape
-   *   ['"`]<prefix>(alt1|alt2|...)   or   ['"`](alt1|alt2|...)   or   ['"`]<literal>
-   * into the list of literal marker strings it matches after the opening
-   * quote/backtick. Regex escapes (\. \/) are unescaped. Fails loudly when the
-   * pattern does not start with the quote anchor or contains constructs this
-   * expander does not understand.
-   */
-  function expandPerspectiveRegex(source: string, varName: string): string[] {
-    const QUOTE_CLASS = "['\"`]";
-    assert.ok(
-      source.startsWith(QUOTE_CLASS),
-      `${varName} must anchor on the opening quote class ${QUOTE_CLASS} — got: ${source}`,
-    );
-    const body = source.slice(QUOTE_CLASS.length);
-    const unescape = (s: string) => s.replace(/\\(.)/g, '$1');
-
-    const groupMatch = /^(.*?)\(([^)]*)\)(.*)$/.exec(body);
-    if (!groupMatch) {
-      assert.ok(
-        !/[()|[\]+*?{}]/.test(body.replace(/\\./g, '')),
-        `${varName} contains regex constructs the parity expander does not understand: ${body}`,
-      );
-      return [unescape(body)];
-    }
-    const [, prefix, alternation, suffix] = groupMatch;
-    assert.equal(suffix, '', `${varName} has content after the alternation group — update the parity expander: ${body}`);
-    assert.ok(
-      !/[()|[\]+*?{}]/.test(prefix!.replace(/\\./g, '')),
-      `${varName} prefix contains regex constructs the parity expander does not understand: ${prefix}`,
-    );
-    return alternation!.split('|').map((alt) => {
-      assert.ok(
-        !/[()|[\]+*?{}]/.test(alt.replace(/\\./g, '')),
-        `${varName} alternative contains regex constructs the parity expander does not understand: ${alt}`,
-      );
-      return unescape(prefix!) + unescape(alt);
-    });
-  }
-
-  const scriptContent = fs.readFileSync(SYNC_SCRIPT, 'utf8');
-
-  it('MONO_PERSPECTIVE_RE covers exactly the monorepo-perspective markers', () => {
-    const bashMarkers = expandPerspectiveRegex(
-      extractBashVar(scriptContent, 'MONO_PERSPECTIVE_RE'),
-      'MONO_PERSPECTIVE_RE',
-    );
-    assert.deepEqual(
-      [...bashMarkers].sort(),
-      [...MONOREPO_PERSPECTIVE_MARKERS].sort(),
-      'MONO_PERSPECTIVE_RE in scripts/sync-standalone.sh and MONOREPO_PERSPECTIVE_MARKERS in scripts/src/perspective-markers.ts have drifted apart — update both sides together',
-    );
-  });
-
-  it('SA_PERSPECTIVE_RE covers exactly the standalone-perspective markers', () => {
-    const bashMarkers = expandPerspectiveRegex(
-      extractBashVar(scriptContent, 'SA_PERSPECTIVE_RE'),
-      'SA_PERSPECTIVE_RE',
-    );
-    assert.deepEqual(
-      [...bashMarkers].sort(),
-      [...STANDALONE_PERSPECTIVE_MARKERS].sort(),
-      'SA_PERSPECTIVE_RE in scripts/sync-standalone.sh and STANDALONE_PERSPECTIVE_MARKERS in scripts/src/perspective-markers.ts have drifted apart — update both sides together',
-    );
-  });
-
-  it('every shared marker string is actually matched by the corresponding bash regex', () => {
-    // Sanity: the ERE semantics bash grep -E uses agree with JS RegExp for
-    // these simple patterns — run each marker through the extracted pattern.
-    const mono = new RegExp(extractBashVar(scriptContent, 'MONO_PERSPECTIVE_RE'));
-    const sa = new RegExp(extractBashVar(scriptContent, 'SA_PERSPECTIVE_RE'));
-    for (const marker of MONOREPO_PERSPECTIVE_MARKERS) {
-      assert.ok(mono.test(`'${marker}`), `MONO_PERSPECTIVE_RE does not match quoted marker ${marker}`);
-      assert.ok(markerToRegExp(marker).test(`'${marker}`), `guard regex does not match its own marker ${marker}`);
-    }
-    for (const marker of STANDALONE_PERSPECTIVE_MARKERS) {
-      assert.ok(sa.test(`'${marker}`), `SA_PERSPECTIVE_RE does not match quoted marker ${marker}`);
-      assert.ok(markerToRegExp(marker).test(`'${marker}`), `guard regex does not match its own marker ${marker}`);
-    }
+  it('accepts genuine standalone-perspective content', () => {
+    assert.deepEqual(findPerspectiveViolations(saContent), []);
   });
 });
 
