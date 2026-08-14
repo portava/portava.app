@@ -49,7 +49,15 @@
  * Usage:
  *   pnpm run report:discovery-serve-points [-- --days 7]
  */
+
+// Read-only audit front door. Imported for its side effect and hoisted, so it
+// runs before any client is constructed whatever its textual position.
+// See src/lib/ciProdReadOnlyAuditGuard.mjs and docs/ci/BOOTSTRAP.md.
+import "../lib/ciProdReadOnlyAuditGuard.mjs";
+
 import { getServiceClient } from "../lib/supabase.js";
+
+export {};
 
 const SERVE_POINT_LABEL: Record<number, string> = {
   1: "Cache A — L1 hit",

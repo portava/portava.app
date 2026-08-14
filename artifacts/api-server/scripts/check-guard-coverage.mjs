@@ -183,6 +183,15 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'on disk. Auditing production is its purpose: the drift list in docs/migrations.md came from it.',
   },
   {
+    file: 'src/scripts/reportDiscoveryServePoints.ts',
+    reason:
+      'One SELECT on rank_events (features, session_id, served_at) filtered to surface=discovery, ' +
+      'outcome=impression and a served_at window, tallied in memory. It answers the question P1 Stage 0 ' +
+      'exists to answer — what fraction of discovery serves reached a ranker — and that is a question about ' +
+      'production, since the whole finding is that the ranked path scarcely runs there. It writes nothing and ' +
+      'prints a verdict for a human to act on; the D5 revisit clause is the action it feeds.',
+  },
+  {
     file: 'src/scripts/checkMissingLiveColumns.ts',
     reason:
       'Two SELECTs — information_schema.columns and pg_class — diffed against columns parsed out of migration ' +
