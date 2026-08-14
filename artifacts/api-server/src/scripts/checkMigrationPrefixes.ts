@@ -63,6 +63,29 @@ const DOCUMENTED_COLLISIONS: Record<string, readonly string[]> = {
     "2059_content_distribution_stats.sql",
     "2059_stamp_artwork_generation_source_placeholder.sql",
   ],
+  // Both applied live on 2026-08-14, within hours of each other, by two agents
+  // working the same branch concurrently — neither could see the other's file
+  // until both had merged.
+  //
+  // VERIFIED APPLIED BEFORE DOCUMENTING, because the rule this script prints is
+  // "renumber the one that has NOT been applied", and renumbering is only wrong
+  // when both have:
+  //   * 2089_revoke_post_media_public_read      — pg_policies shows
+  //     post_media_storage_public_read ABSENT; the audit exits 3 (AFTER state).
+  //   * 2089_media_assets_ready_requires_dimensions — pg_constraint shows
+  //     media_assets_ready_has_dimensions present with convalidated=false,
+  //     which is exactly what its NOT VALID clause produces.
+  //
+  // The two files touch unrelated objects — a storage.objects RLS policy vs. a
+  // CHECK constraint on public.media_assets — so their relative order is
+  // immaterial on a fresh replay. Renaming either would break the
+  // correspondence between the filename and what was actually run against
+  // production, which is the only record that a migration WAS run: there is no
+  // schema_migrations table here. See docs/migrations.md "Prefix collisions".
+  "2089": [
+    "2089_media_assets_ready_requires_dimensions.sql",
+    "2089_revoke_post_media_public_read.sql",
+  ],
 };
 
 /** True when `names` is exactly the documented file set for `prefix`. */

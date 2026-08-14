@@ -85,3 +85,15 @@ fix-*.sh
 drop*.zip
 ci-drop.zip
 _incoming/
+
+# artifacts/travel-buddy was ARCHIVED on 2026-08-14 (tree at bc1bef404).
+# Expo/EAS tooling in the workspace still recreates a handful of files under
+# that path — expo-env.d.ts, .expo/, .tsbuildinfo, an ios/ scaffold, node_modules
+# and .env files. Most were already covered by the individual rules above, but
+# two (expo-env.d.ts and ios/PortavaNSE/NotificationService.swift) were not, and
+# this workspace auto-commits: they would have been swept back into git under a
+# path the archival deliberately removed, partially resurrecting the tree in the
+# record without anyone deciding to.
+# Ignoring the path outright. If the tree is ever genuinely restored, delete
+# this rule in the same change that restores it.
+/artifacts/travel-buddy/
