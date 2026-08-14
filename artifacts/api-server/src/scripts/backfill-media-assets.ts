@@ -47,7 +47,15 @@ async function upsertAsset(owner: string, publicUrl: string, sourceType = "user"
         mime_type: mediaType === "video" ? "video/mp4" : "image/jpeg",
         size_bytes: 0, // unknown for legacy rows — honest zero, not a guess
         source_type: sourceType,
-        processing_status: "ready",
+        // Dimension constraint (migration 2089): processing_status='ready'
+        // requires non-null width AND height.  Legacy backfill rows have no
+        // dimension data — the original upload never measured them — so we
+        // stage them as 'processing'.  A follow-on dimension sweep (or
+        // completeVideoTranscode()) must transition them to 'ready' once real
+        // dimensions are known.  Until then the rows are created but not served
+        // to clients (feed filters out non-ready rows), which is the correct
+        // safe default.
+        processing_status: "processing",
         moderation_status: "approved", // pre-existing, already-served content
       },
       { onConflict: "storage_bucket,storage_path" },

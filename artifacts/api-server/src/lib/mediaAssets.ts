@@ -80,6 +80,64 @@ export async function recordMediaAsset(
   }
 }
 
+// ── Post-transcode status transition ─────────────────────────────────────────
+
+export interface CompleteTranscodeInput {
+  /** Required: server-measured pixel dimensions from the transcoder output. */
+  width: number;
+  height: number;
+  thumbnailPath?: string | null;
+  thumbnailUrl?: string | null;
+  durationSeconds?: number | null;
+}
+
+/**
+ * Transition a media_assets row from 'processing' → 'ready' after a video
+ * transcode (or any async processing step) completes.
+ *
+ * Width and height are REQUIRED — the DB constraint added in migration 2089
+ * rejects ready rows with null dimensions.  We enforce that here so the caller
+ * gets a clear Error rather than a cryptic DB constraint violation.
+ *
+ * Fail-soft: returns false on a Supabase error so the caller can log and
+ * schedule a retry rather than crashing.  The row stays in 'processing' and
+ * can be re-attempted by the worker or an admin sweep.
+ *
+ * @throws {Error} when width or height is not supplied (programming mistake —
+ *   the caller MUST measure dimensions before calling this function).
+ */
+export async function completeVideoTranscode(
+  sc: SupabaseClient,
+  assetId: string,
+  input: CompleteTranscodeInput,
+): Promise<boolean> {
+  // Hard guard — never write a ready+null-dimension row.  The DB constraint
+  // would catch it anyway, but surfacing it here gives callers a clear stack
+  // trace rather than an opaque PGRST204 from deep inside Supabase.
+  if (input.width == null || input.height == null) {
+    throw new Error(
+      `completeVideoTranscode: width and height are required to mark asset ${assetId} as ready`,
+    );
+  }
+  try {
+    const { error } = await sc
+      .from("media_assets")
+      .update({
+        processing_status: "ready",
+        width: input.width,
+        height: input.height,
+        thumbnail_path: input.thumbnailPath ?? null,
+        thumbnail_url: input.thumbnailUrl ?? null,
+        duration_seconds: input.durationSeconds ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", assetId);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
 /** Attach an asset to an entity (idempotent). Fail-soft: returns false on error. */
 export async function attachMediaAsset(
   sc: SupabaseClient,
