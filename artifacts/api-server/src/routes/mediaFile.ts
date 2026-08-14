@@ -179,16 +179,35 @@ router.get(
       return;
     }
 
-    // Optional image-transform: ?width=<n> produces a /render/image/sign/ URL
-    // that Supabase resizes on the fly.  This is the only supported resize path
-    // for private-bucket media — transform params appended to a plain
-    // /object/sign/ URL have no effect.  Clamp to a sane range to prevent abuse.
+    // Optional image-transform: ?width=<n> and/or ?quality=<n> produce a
+    // /render/image/sign/ URL that Supabase resizes on the fly.  This is the
+    // only supported resize path for private-bucket media — transform params
+    // appended to a plain /object/sign/ URL have no effect.  Values are
+    // clamped to sane ranges to prevent abuse.
+    //
+    // width=0 is dropped entirely (not clamped to 1) — same as the batch POST
+    // handler.  quality=0 is also dropped entirely (mirrors width=0 rule): a
+    // caller that passes ?quality=0 receives a plain /object/sign/ URL, not a
+    // /render/image/sign/ URL with quality=1 silently promoted.
     let transform: { width?: number; quality?: number } | undefined;
     const rawWidth = req.query.width;
     if (rawWidth !== undefined && rawWidth !== null && rawWidth !== "") {
       const parsedWidth = Number(rawWidth);
       if (Number.isFinite(parsedWidth) && parsedWidth > 0) {
         transform = { width: Math.round(Math.min(Math.max(parsedWidth, 1), 3000)) };
+      }
+    }
+    const rawQuality = req.query.quality;
+    if (rawQuality !== undefined && rawQuality !== null && rawQuality !== "") {
+      const parsedQuality = Number(rawQuality);
+      if (Number.isFinite(parsedQuality)) {
+        // Round first so that sub-unit fractions like 0.1 don't slip through
+        // the > 0 guard only to land as quality=0 after rounding inside
+        // createSignedUrl.  Clamp to [0, 100], then drop if rounded to 0.
+        const qualityRounded = Math.round(Math.min(Math.max(parsedQuality, 0), 100));
+        if (qualityRounded > 0) {
+          transform = { ...transform, quality: qualityRounded };
+        }
       }
     }
 
