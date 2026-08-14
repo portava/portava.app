@@ -1,0 +1,710 @@
+<title>Discovery Engine Mode</title>
+<style>
+  :root {
+    --ground:  #F6F7F9;
+    --surface: #FFFFFF;
+    --sunk:    #EFF1F5;
+    --ink:     #131720;
+    --muted:   #5C6672;
+    --faint:   #8A929C;
+    --line:    #DDE1E7;
+    --rule:    #C6CCD4;
+    --signal:  #1F5F8B;
+    --signal-soft: #E6EEF4;
+    --decide:  #B4690E;
+    --decide-soft: #F7EEDF;
+    --confirm: #2E6F5E;
+    --refute:  #A33A32;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #101318;
+      --surface: #171B22;
+      --sunk:    #1D222B;
+      --ink:     #E6E9ED;
+      --muted:   #A0A8B3;
+      --faint:   #78808B;
+      --line:    #2A303A;
+      --rule:    #3A424E;
+      --signal:  #7FB3D5;
+      --signal-soft: #1B2A36;
+      --decide:  #D9A047;
+      --decide-soft: #2C2417;
+      --confirm: #6FBFA3;
+      --refute:  #E08A80;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:  #101318;
+    --surface: #171B22;
+    --sunk:    #1D222B;
+    --ink:     #E6E9ED;
+    --muted:   #A0A8B3;
+    --faint:   #78808B;
+    --line:    #2A303A;
+    --rule:    #3A424E;
+    --signal:  #7FB3D5;
+    --signal-soft: #1B2A36;
+    --decide:  #D9A047;
+    --decide-soft: #2C2417;
+    --confirm: #6FBFA3;
+    --refute:  #E08A80;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    margin: 0;
+    padding: 0 20px 120px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; }
+  .col  { max-width: 68ch; }
+
+  /* ── Masthead ─────────────────────────────────────────── */
+  header.mast {
+    padding: 72px 0 28px;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 8px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--signal);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(2.1rem, 5.5vw, 3.1rem);
+    line-height: 1.08;
+    letter-spacing: -.015em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-family: var(--serif);
+    font-size: 1.16rem;
+    line-height: 1.55;
+    color: var(--muted);
+    margin: 0;
+    max-width: 62ch;
+  }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 6px 26px;
+    font-family: var(--mono); font-size: 11.5px;
+    color: var(--faint);
+    padding: 14px 0 0;
+    margin-bottom: 44px;
+  }
+  .meta b { color: var(--muted); font-weight: 500; }
+
+  /* ── Sections ─────────────────────────────────────────── */
+  section { margin: 0 0 60px; }
+  h2 {
+    font-family: var(--serif);
+    font-size: 1.62rem;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    line-height: 1.2;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 400;
+    letter-spacing: .1em;
+    color: var(--signal);
+    display: block;
+    margin-bottom: 9px;
+  }
+  h3 {
+    font-family: var(--sans);
+    font-size: 1rem;
+    font-weight: 650;
+    letter-spacing: -.005em;
+    margin: 32px 0 4px;
+    text-wrap: balance;
+  }
+  h4 {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 26px 0 8px;
+  }
+  p { margin: 0 0 15px; }
+  .lede { color: var(--muted); margin-bottom: 26px; }
+  ul, ol { margin: 0 0 15px; padding-left: 22px; }
+  li { margin-bottom: 7px; }
+  strong { font-weight: 650; }
+  code {
+    font-family: var(--mono);
+    font-size: .855em;
+    background: var(--sunk);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: .09em .34em;
+    white-space: nowrap;
+  }
+  a { color: var(--signal); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 2px; }
+
+  /* ── Directive pull-quote ─────────────────────────────── */
+  blockquote.directive {
+    margin: 0 0 30px;
+    padding: 24px 0 24px 26px;
+    border-left: 3px solid var(--signal);
+    background: var(--signal-soft);
+    border-radius: 0 5px 5px 0;
+    padding-right: 24px;
+    max-width: 66ch;
+  }
+  blockquote.directive p {
+    font-family: var(--serif);
+    font-size: 1.1rem;
+    line-height: 1.55;
+    margin: 0;
+  }
+  blockquote.directive cite {
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+    font-style: normal;
+    color: var(--signal);
+    margin-top: 14px;
+  }
+
+  /* ── Tables ───────────────────────────────────────────── */
+  .scroller {
+    overflow-x: auto;
+    margin: 0 0 18px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td {
+    text-align: left;
+    padding: 9px 13px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    line-height: 1.45;
+  }
+  thead th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    font-weight: 500;
+    color: var(--faint);
+    background: var(--sunk);
+    white-space: nowrap;
+    border-bottom: 1px solid var(--rule);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+  td code, th code { white-space: nowrap; }
+
+  .yes { color: var(--confirm); font-weight: 650; }
+  .no  { color: var(--refute);  font-weight: 650; }
+  .dim { color: var(--faint); }
+
+  /* ── Decision blocks ──────────────────────────────────── */
+  .decision {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--decide);
+    border-radius: 0 6px 6px 0;
+    padding: 20px 22px;
+    margin: 0 0 16px;
+  }
+  .decision .tag {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--decide);
+    display: block;
+    margin-bottom: 7px;
+  }
+  .decision h3 { margin: 0 0 10px; font-size: 1.06rem; }
+  .decision p:last-child { margin-bottom: 0; }
+  .opts { list-style: none; padding: 0; margin: 0 0 13px; }
+  .opts li {
+    padding: 7px 0 7px 30px;
+    position: relative;
+    border-top: 1px solid var(--line);
+    font-size: 14.5px;
+  }
+  .opts li:first-child { border-top: none; }
+  .opts .k {
+    position: absolute; left: 0; top: 7px;
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    color: var(--muted);
+  }
+  .rec {
+    background: var(--decide-soft);
+    border-radius: 4px;
+    padding: 11px 14px;
+    font-size: 14.5px;
+    margin: 0;
+  }
+  .rec b {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--decide);
+    display: block; margin-bottom: 4px; font-weight: 500;
+  }
+
+  /* ── Mechanic rows ────────────────────────────────────── */
+  .mech {
+    display: grid;
+    grid-template-columns: 46px 1fr;
+    gap: 0 16px;
+    padding: 15px 0;
+    border-top: 1px solid var(--line);
+    align-items: start;
+  }
+  .mech:last-of-type { border-bottom: 1px solid var(--line); }
+  .mech .k {
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    color: var(--signal); padding-top: 2px;
+  }
+  .mech p { margin: 0; font-size: 14.8px; }
+  .mech p + p { margin-top: 7px; color: var(--muted); }
+
+  /* ── Callout ──────────────────────────────────────────── */
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 20px 22px;
+    margin: 0 0 22px;
+  }
+  .callout.warn { border-left: 3px solid var(--refute); border-radius: 0 6px 6px 0; }
+  .callout > :last-child { margin-bottom: 0; }
+  .callout h4 { margin-top: 0; }
+
+  /* ── Stages ───────────────────────────────────────────── */
+  .stage {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 0 18px;
+    padding: 17px 0;
+    border-top: 1px solid var(--line);
+  }
+  .stage:last-of-type { border-bottom: 1px solid var(--line); }
+  .stage .s {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+    color: var(--signal);
+    font-weight: 600;
+  }
+  .stage h3 { margin: 0 0 5px; }
+  .stage p { margin: 0 0 7px; font-size: 14.8px; }
+  .stage .exit {
+    font-size: 13.5px; color: var(--muted);
+    border-left: 2px solid var(--rule); padding-left: 11px; margin: 0;
+  }
+  .stage .exit b {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--faint); font-weight: 500;
+  }
+
+  hr.div { border: none; border-top: 1px solid var(--rule); margin: 0 0 44px; }
+
+  footer {
+    border-top: 2px solid var(--ink);
+    padding-top: 20px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--faint);
+    line-height: 1.75;
+  }
+  @media (max-width: 620px) {
+    header.mast { padding-top: 44px; }
+    .mech, .stage { grid-template-columns: 1fr; gap: 6px; }
+  }
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">Portava · P1 Discovery · Design packet</p>
+  <h1>Discovery Engine Mode</h1>
+  <p class="standfirst">A request-level switch over which discovery execution path serves a request — not a wrapper around the ranker. Eight decisions for the owner, the mechanics that follow from them, and the costs stated at full size.</p>
+</header>
+
+<div class="meta">
+  <span><b>Flag</b> DISCOVERY_ENGINE_MODE</span>
+  <span><b>Modes</b> legacy / shadow / pde</span>
+  <span><b>Verified at</b> HEAD 93523f4fb</span>
+  <span><b>Status</b> design only — no implementation until ruled</span>
+</div>
+
+<div class="col">
+
+<section>
+  <h2><span class="num">The directive</span>What the flag has to be</h2>
+  <blockquote class="directive">
+    <p>The flag must control which overall discovery execution path handles the request, not merely wrap the ranker, because the production cache path can bypass ranking entirely, and the old-vs-new comparison must measure actual behaviour users receive rather than new-ranker-vs-old-ranker on traffic that never reaches either ranker.</p>
+    <cite>Owner directive, verbatim</cite>
+  </blockquote>
+  <p>Phase&nbsp;−1 verified this directive against the tree rather than assuming it. It holds, and the mechanism behind it is sharper than the wording suggests. The rest of this packet is built on the verified topology, recorded in full at <code>docs/discovery/phase-minus-1-repository-proof.md</code>.</p>
+</section>
+
+<hr class="div">
+
+<section>
+  <h2><span class="num">01 — Established</span>Why wrapping the ranker cannot work</h2>
+  <p class="lede">Three verified facts, in the order that makes the conclusion unavoidable.</p>
+
+  <h3>The two caches are in series, not in parallel</h3>
+  <p>The Cache&nbsp;A check at <code>routes/discovery.ts:1113</code> returns <em>before</em> the Compass block at <code>:1211</code> is reached. There is no fork. Cache&nbsp;A gates everything downstream of it, including both rankers.</p>
+
+  <h3>Cache A is shared between users; the ranked output is not</h3>
+  <p>Cache&nbsp;A's key is <code>cacheKey(destination, category, radiusKm)</code> (<code>:159‑161</code>, used at <code>:1025</code>) — no user term. On a cold fetch the <strong>raw, pre-ranking</strong> Overpass list is written to that shared key at <code>:1204</code>. The personalised ranking that happens afterwards at <code>:1242</code> is stored only under the requesting user's own Cache&nbsp;B key at <code>:1263</code>.</p>
+
+  <div class="callout warn">
+    <h4>The consequence</h4>
+    <p>For a given city, category and radius, the Compass ranker runs <strong>at most once every two hours</strong>, its output is served to <strong>exactly one user</strong> — the one who happened to trigger the cold fetch — and every other user for the next two hours receives the unranked Overpass order.</p>
+    <p style="margin-bottom:0">A flag that wraps the ranker therefore switches an engine that almost no request reaches. It would report a clean A/B result computed over roughly one request per city per two hours.</p>
+  </div>
+
+  <h3>Cache B is close to vestigial</h3>
+  <p>Cache&nbsp;B's TTL is 10 minutes (<code>:152</code>); Cache&nbsp;A's is 2 hours. Cache&nbsp;B is only consulted <em>after</em> Cache&nbsp;A misses, so in steady state its entry is dead 1h50m before the next miss can occur. It is reachable only when Cache&nbsp;A is not written — both writes sit inside one <code>if (enrichedOsm.length > 0)</code> guard at <code>:1203</code> — or on concurrency, invalidation, or process restart. Instrumenting Cache&nbsp;B to measure the ranker would measure almost nothing.</p>
+
+  <h3>And a related trap: only one serve point logs</h3>
+  <p><code>GET /discovery</code> has six serve points. Exactly one of them writes a <code>rank_events</code> row (<code>:1433</code>). Both Compass branches respond and return before it. So today's <code>surface='discovery'</code> data describes only authenticated cold fetches that did <em>not</em> take the Compass branch — the narrowest and least representative slice of served traffic.</p>
+</section>
+
+<hr class="div">
+</div>
+
+<section>
+  <h2 class="col"><span class="num">02 — Established</span>The serve topology</h2>
+  <p class="col lede">Ten serve points across five routes. Two rank. One logs.</p>
+
+  <h4 class="col">GET /discovery — <code>routes/discovery.ts:890</code></h4>
+  <div class="scroller">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Serve point</th><th>Line</th><th>Served by</th><th>Ranks in-request</th><th>Writes rank_events</th><th>Order origin</th>
+      </tr></thead>
+      <tbody>
+        <tr><td class="n">1</td><td>Cache A — L1 hit</td><td class="n">:1114 → :1105</td><td>in-process <code>Map</code></td><td class="no">No</td><td class="no">No</td><td class="dim">raw Overpass</td></tr>
+        <tr><td class="n">2</td><td>Cache A — L2 fresh</td><td class="n">:1130 → :1105</td><td><code>discovery_cache</code></td><td class="no">No</td><td class="no">No</td><td class="dim">raw Overpass</td></tr>
+        <tr><td class="n">3</td><td>Cache A — L2 stale (SWR)</td><td class="n">:1151 → :1105</td><td><code>discovery_cache</code> + bg revalidate</td><td class="no">No</td><td class="no">No</td><td class="dim">raw Overpass</td></tr>
+        <tr><td class="n">4</td><td>Cache B hit</td><td class="n">:1228</td><td><code>_compassCandidateCache</code></td><td class="no">No</td><td class="no">No</td><td class="dim">Compass, ≤10 min old</td></tr>
+        <tr><td class="n">5</td><td>Compass fresh rank</td><td class="n">:1270</td><td><code>rankItemsForDiscovery</code> :1242</td><td class="yes">Yes</td><td class="no">No</td><td class="dim">Compass</td></tr>
+        <tr><td class="n">6</td><td>Cold fetch — legacy rank</td><td class="n">:1441</td><td><code>rankCandidates</code> :1339 + DRS :1398</td><td class="yes">Yes</td><td class="yes">Yes :1433</td><td class="dim">legacy</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="col" style="font-size:14px;color:var(--muted)">Three further exits return no places and are not serve points: <code>:954</code> (400, no destination), <code>:1161</code> (geocode failed), <code>:1447</code> (handler threw).</p>
+
+  <h4 class="col">The rest of the discovery surface</h4>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Route</th><th>Line</th><th>Ranks</th><th>Logs</th><th>Relationship to Cache A</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /discovery/feed</code></td><td class="n">discovery.ts:1560</td><td class="no">No</td><td class="no">No</td><td>Bypasses it — calls <code>queryOverpass</code> directly at <code>:1640</code></td></tr>
+        <tr><td><code>GET /discovery/counts</code></td><td class="n">discovery.ts:1503</td><td class="no">No</td><td class="no">No</td><td><strong>Writes it</strong> — <code>cache.set</code> at <code>:1542</code>, same key shape, L1 only</td></tr>
+        <tr><td><code>GET /discovery/search</code></td><td class="n">discoverySearch.ts:1321</td><td class="no">No</td><td class="no">No</td><td>None</td></tr>
+        <tr><td><code>GET /discovery/suggest</code></td><td class="n">discoverySearch.ts:1570</td><td class="no">No</td><td class="no">No</td><td>None</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="col"><code>/discovery/counts</code> deserves particular notice: it primes the very cache the main route serves from, using the same key. A category-count request — which the UI issues on city open — can be what causes the next <code>for_you</code> request to serve unranked.</p>
+</section>
+
+<hr class="div">
+
+<div class="col">
+<section>
+  <h2><span class="num">03 — Placement</span>Above the cache fork</h2>
+  <p>The dispatch belongs immediately after request parameters resolve and <strong>before</strong> the Cache&nbsp;A check — between <code>:1026</code> (where <code>key</code> and <code>cached</code> are computed) and <code>:1113</code>. That is the only position from which a mode can claim a request that would otherwise be answered from cache without ranking.</p>
+  <p>Placing it anywhere below <code>:1113</code> reproduces exactly the defect the directive names. Placing it above <code>:1025</code> means the mode cannot see the cache key, which shadow mode needs for attribution.</p>
+
+  <h3>The three modes</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Mode</th><th>Who serves the user</th><th>What else runs</th><th>What is written</th></tr></thead>
+      <tbody>
+        <tr><td><code>legacy</code></td><td>Today's path, unchanged — all six serve points intact</td><td class="dim">Nothing</td><td>Whatever today writes, plus a serve-point observation (Stage&nbsp;0)</td></tr>
+        <tr><td><code>shadow</code></td><td><strong>Legacy, always.</strong> The user's response is byte-identical to <code>legacy</code></td><td>PDE computes a result after the response is flushed</td><td>Both orders, the legacy serve-point id, and both timings — to a separate table</td></tr>
+        <tr><td><code>pde</code></td><td>The new engine, including its own caching policy</td><td>Legacy is not run</td><td>Real impressions on the PDE path</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><code>shadow</code> is the mode that makes the directive's second half achievable: it observes what users <em>actually received</em> on every serve point — including the four that run no ranker — instead of comparing two rankers on traffic that reaches neither.</p>
+</section>
+
+<hr class="div">
+
+<section>
+  <h2><span class="num">04 — Ruled</span>Decision points</h2>
+  <p class="lede">All eight ruled 2026-08-14 by the delegated operator, matching the recommendation in every case. Owner may audit or override.</p>
+
+  <div class="callout">
+    <h4>Rulings of record — operator, 2026-08-14</h4>
+    <div class="scroller" style="margin-bottom:14px">
+      <table>
+        <thead><tr><th>#</th><th>Ruling</th><th>Operator reasoning</th></tr></thead>
+        <tbody>
+          <tr><td class="n">D1</td><td><strong>B</strong> — <code>DISCOVERY_ENGINE_MODE</code> via <code>lib/featureFlags.ts</code></td><td>The Phase −1 flag-trap finding exists precisely to prevent A; a three-valued mode needs the only helper that reads <code>metadata</code>, and <code>COMPASS_</code> naming would misdescribe two of the three modes.</td></tr>
+          <tr><td class="n">D2</td><td><strong>A</strong> — one row, <code>metadata.mode</code></td><td>Uses what exists and cannot express contradiction; the untyped-JSON cost is exactly what D3 exists to handle.</td></tr>
+          <tr><td class="n">D3</td><td><strong>B</strong> — all failures → <code>legacy</code>, plus <code>disable_discovery_pde</code></td><td>A kill switch that survives an unhealthy database is the entire point of a kill switch; the inverted-polarity helper is the proven tool.</td></tr>
+          <tr><td class="n">D4</td><td><strong>A</strong> for the flag, <strong>C</strong> for the baseline</td><td>The flag governs only what has a ranker to switch; the baseline covers everything users receive, and anything narrower reproduces the directive's named error.</td></tr>
+          <tr><td class="n">D5</td><td><strong>B</strong> — user-independent candidates, rank every request <em>(revisit clause below)</em></td><td>Separates what today's design conflates and fixes one-user-per-city-per-two-hours without touching external call volume.</td></tr>
+          <tr><td class="n">D6</td><td><strong>A then B</strong> as staged escalation</td><td>Internal accounts prove the harness, then a fixed user-id-hashed percentage produces real divergence data. C only with the owner.</td></tr>
+          <tr><td class="n">D7</td><td><strong>A</strong> — new <code>discovery_shadow_serves</code> table</td><td><code>rank_events</code> is mutable state with a client-input surface; one contaminated row corrupting the comparison funnel is disqualifying. Append-only-by-construction plus 90-day retention cover is the clean shape.</td></tr>
+          <tr><td class="n">D8</td><td><strong>A</strong> — real impression rows at every serve point</td><td>The announced dated discontinuity in <code>adminRankingMetrics</code> beats permanent blindness on cache-served traffic, which is most traffic. Cutover date annotated in the metrics doc in the same PR.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-bottom:0"><strong>D5 revisit clause, binding:</strong> if Stage 0's measured Cache&nbsp;A hit rate materially contradicts the TTL-implied rate, <strong>D5 implementation pauses</strong> and the numbers go to the owner before proceeding.</p>
+  </div>
+
+  <div class="callout warn">
+    <h4>Live-corpus corroboration found after the rulings</h4>
+    <p style="margin-bottom:0">Migration <code>0202_rank_events_living_page_watch_feed_surfaces.sql:17‑21</code> records that a live <code>SELECT surface, count(*) FROM rank_events</code> returned <strong>only pulse / compass / events</strong> — with <code>discovery</code> named among the surfaces "written by the code but ZERO rows present". Unlike <code>living_page</code> and <code>live_pulse</code>, <code>discovery</code> was <strong>already permitted</strong> by the CHECK constraint (<code>0199:60</code>, <code>0202:77</code>), so its absence is not rejection — it is the serve-point-#6 path scarcely ever executing. This is independent production evidence for the caches-in-series finding, and it strengthens D8=A: the baseline being replaced is not merely narrow, it is empty.</p>
+  </div>
+
+  <div class="decision">
+    <span class="tag">D1 · Naming and loader</span>
+    <h3>Which flag system reads the mode</h3>
+    <p>Phase&nbsp;−1 confirmed the trap: <code>compass/flags.ts:29</code> loads flags with <code>.like("flag", "COMPASS_%")</code>, and <code>isEnabled</code> returns <code>flags[flag] ?? false</code> at <code>:53</code>. A <code>DISCOVERY_</code>-named flag read through it returns <strong>false with no error, no warning and no log line</strong>, and the 30-second cache keeps it false. This is a genuinely binary choice.</p>
+    <ul class="opts">
+      <li><span class="k">A</span>Rename to <code>COMPASS_DISCOVERY_ENGINE_MODE</code> and use the existing <code>isEnabled</code>. Inherits the 30&nbsp;s cache. But the name misdescribes a switch that governs paths where Compass never runs, and <code>enabled</code> is boolean-only.</li>
+      <li><span class="k">B</span>Keep <code>DISCOVERY_ENGINE_MODE</code> and read it through <code>lib/featureFlags.ts</code>, which queries <code>.eq("flag", flag)</code> with no prefix constraint and whose <code>getFlagRow</code> (<code>:73‑91</code>) is the only helper at HEAD that reads the <code>metadata</code> column. No caching of its own.</li>
+    </ul>
+    <p class="rec"><b>Recommendation — B</b>The mode is three-valued and <code>metadata</code> is the only place a third value can live. Naming a discovery-wide execution switch <code>COMPASS_</code> would be actively misleading, since two of its three modes govern requests Compass never touches. The missing cache is a mechanic, not an obstacle (M5).</p>
+  </div>
+
+  <div class="decision">
+    <span class="tag">D2 · Representation</span>
+    <h3>How three values are carried on a boolean column</h3>
+    <p><code>feature_flags.enabled</code> is <code>boolean</code> (<code>lib/database.types.ts:5745</code>). The table also has <code>metadata Json | null</code> (<code>:5747</code>).</p>
+    <ul class="opts">
+      <li><span class="k">A</span>One row. <code>enabled</code> is the master on/off; <code>metadata.mode ∈ {legacy, shadow, pde}</code> selects the path. Unreadable or unknown values fall back per D3.</li>
+      <li><span class="k">B</span>Two boolean rows with a precedence rule. No schema surface needed, but two rows can express a contradictory state and someone must define which wins.</li>
+      <li><span class="k">C</span>A dedicated column. Cleanest to read, but a migration on the flags table for one consumer.</li>
+    </ul>
+    <p class="rec"><b>Recommendation — A</b>Uses only what exists and cannot express a contradictory state. Cost stated plainly: <code>metadata</code> is untyped JSON, so the parse needs a defined fallback and that fallback is D3.</p>
+  </div>
+
+  <div class="decision">
+    <span class="tag">D3 · Failure polarity</span>
+    <h3>What an unreadable or unknown mode means</h3>
+    <p>Phase&nbsp;−1 confirmed the two existing polarities: <code>isFlagEnabled</code> returns false on any error, while <code>isKillSwitchEngaged</code> (<code>lib/featureFlags.ts:55‑67</code>) returns <strong>true</strong> on a genuine error and <strong>false</strong> on a missing row — deliberately, so an unreadable stop engages.</p>
+    <ul class="opts">
+      <li><span class="k">A</span>Missing row, unparseable metadata, unknown mode string, or DB error all resolve to <code>legacy</code>. One rule, no second read.</li>
+      <li><span class="k">B</span>A, plus a separate <code>disable_discovery_pde</code> stop read through <code>isKillSwitchEngaged</code>, so an <em>unreadable</em> stop halts PDE rather than leaving it running.</li>
+    </ul>
+    <p class="rec"><b>Recommendation — B</b>A alone is sound for the mode but gives PDE no emergency stop with the correct polarity. B costs one extra flag read on the PDE path only, and reuses a helper whose polarity is already reasoned about in the tree.</p>
+  </div>
+
+  <div class="decision">
+    <span class="tag">D4 · Scope</span>
+    <h3>Which serve points the flag governs</h3>
+    <ul class="opts">
+      <li><span class="k">A</span><code>GET /discovery</code> only — the six serve points where ranking exists to be replaced.</li>
+      <li><span class="k">B</span>Add <code>/discovery/feed</code>, which serves places today with no ranking and no caching at all.</li>
+      <li><span class="k">C</span>All ten serve points across all five routes.</li>
+    </ul>
+    <p class="rec"><b>Recommendation — A for the flag, C for Stage 0 instrumentation.</b>Search and suggest have no ranker to switch; making them PDE-aware is a different project. But the baseline must cover everything users receive, or "actual behaviour users receive" is measured on a subset again — the exact error the directive warns against.</p>
+  </div>
+
+  <div class="decision">
+    <span class="tag">D5 · Architecture</span>
+    <h3>What PDE caches — the consequential one</h3>
+    <p>This decision determines whether PDE fixes the defect or reproduces it. Everything else in the packet is plumbing by comparison.</p>
+    <ul class="opts">
+      <li><span class="k">A</span><strong>Cache post-ranking, per user.</strong> Correct personalisation. The user-independent cache disappears, so the Overpass hit rate collapses and external call volume rises steeply against a rate-limited dependency.</li>
+      <li><span class="k">B</span><strong>Cache the candidate set user-independently; rank on every request.</strong> Keeps the expensive external call cached exactly as today. Moves ranking CPU from once-per-city-per-2h to every request.</li>
+      <li><span class="k">C</span><strong>Keep today's structure.</strong> Cheapest, and reproduces the defect verbatim.</li>
+    </ul>
+    <p class="rec"><b>Recommendation — B</b>It separates the two things today's design conflates: <em>candidate retrieval</em>, which is expensive, external, rate-limited and genuinely user-independent, and <em>ranking</em>, which is cheap, internal and inherently per-user. Cache&nbsp;A is currently used for both, which is why personalisation reaches one user in N. B keeps the cache where it earns its keep and removes it from where it does harm.</p>
+  </div>
+
+  <div class="decision">
+    <span class="tag">D6 · Cost ceiling</span>
+    <h3>How much traffic shadow mode runs on</h3>
+    <p>Shadow doubles ranking work on every request it covers. If PDE also fetches its own candidates it doubles Overpass load, which is both the dominant latency and a rate-limited external dependency (M3 avoids this, but the ceiling is still the owner's call).</p>
+    <ul class="opts">
+      <li><span class="k">A</span>Internal accounts only. Near-zero risk, and a sample too small to characterise divergence across cities.</li>
+      <li><span class="k">B</span>A fixed small percentage of authenticated traffic, hashed on user id so a user's experience is stable.</li>
+      <li><span class="k">C</span>All traffic. Fastest signal, full cost.</li>
+    </ul>
+    <p class="rec"><b>Recommendation — A then B</b>A proves the harness end to end at no risk; B produces the actual comparison. C buys speed the rollout does not need.</p>
+  </div>
+
+  <div class="decision">
+    <span class="tag">D7 · Where observations go</span>
+    <h3>Shadow rows must not enter the impression funnel</h3>
+    <p>Phase&nbsp;−1 confirmed <code>rank_events</code> is mutable state: an outcome UPDATEs the impression row in place (<code>routes/rankEvents.ts:158‑161</code>), the finder filters <code>.eq("outcome","impression")</code> at <code>:137</code>, and a second outcome for the same item 404s at <code>:153</code> — returning before the analytics insert, so the second event produces <strong>no row at all</strong>.</p>
+    <ul class="opts">
+      <li><span class="k">A</span>A new table, <code>discovery_shadow_serves</code>. Append-only by construction, joined to outcomes offline.</li>
+      <li><span class="k">B</span><code>rank_events</code> with a new <code>surface</code> value. Requires widening a CHECK constraint (precedent: <code>0199_rank_events_live_pulse_surface.sql</code>) — and because <code>POST /rank-events/outcome</code> validates <code>surface</code> from <strong>client input</strong> (<code>:99</code>, <code>:107</code>), shadow rows would become client-updatable.</li>
+    </ul>
+    <p class="rec"><b>Recommendation — A</b>B lets a shadow impression absorb a real outcome, permanently, with no way to tell afterwards. A also lets the 90-day retention policy cover the new table explicitly from the start.</p>
+  </div>
+
+  <div class="decision">
+    <span class="tag">D8 · Baseline</span>
+    <h3>Whether Stage 0 writes real impressions for cache-served traffic</h3>
+    <p>Five of six serve points write nothing today. Without a baseline there is nothing to compare PDE against — but creating one is not free.</p>
+    <ul class="opts">
+      <li><span class="k">A</span>Real <code>rank_events</code> impression rows on every serve point. Outcomes attach normally and the funnel becomes meaningful for the first time. Insert volume rises by roughly the cache-hit multiplier, and <code>adminRankingMetrics</code>' historical series becomes <strong>incomparable across the cutover date</strong>.</li>
+      <li><span class="k">B</span>Write the baseline to the D7 table instead. Historical metrics stay intact; outcomes do not attach, so engagement stays unmeasurable on cache-served traffic.</li>
+    </ul>
+    <p class="rec"><b>Recommendation — A, with the discontinuity announced in advance.</b>B preserves a metric series whose value is precisely that it describes one unrepresentative serve point. The break is a one-time cost; the blindness is permanent.</p>
+  </div>
+</section>
+
+<hr class="div">
+
+<section>
+  <h2><span class="num">05 — Mechanics</span>Not decisions</h2>
+  <p class="lede">These follow from the rulings above. Recorded so the packet is complete, not to be ruled on.</p>
+
+  <div class="mech"><span class="k">M1</span><div>
+    <p>The dispatch is a single resolution point between <code>:1026</code> and <code>:1113</code>, returning one of three values. Nothing below it changes shape in <code>legacy</code>.</p>
+  </div></div>
+  <div class="mech"><span class="k">M2</span><div>
+    <p><code>legacy</code> is the existing code reached by falling through — not a copy of it.</p>
+    <p>A duplicated legacy path would drift from the original and quietly invalidate every comparison the flag exists to produce.</p>
+  </div></div>
+  <div class="mech"><span class="k">M3</span><div>
+    <p>Shadow computes after the response is flushed and reuses the candidate set the legacy path already assembled.</p>
+    <p>This keeps shadow off the response path entirely and holds Overpass volume flat, which is what makes D6 a question about CPU rather than about an external rate limit.</p>
+  </div></div>
+  <div class="mech"><span class="k">M4</span><div>
+    <p>A PDE error inside <code>pde</code> mode falls back to the legacy path within the same request and increments a counter. Users never see a mode failure.</p>
+  </div></div>
+  <div class="mech"><span class="k">M5</span><div>
+    <p>The flag read is wrapped in a 30-second TTL cache with an explicit invalidator, mirroring <code>compass/flags.ts:9,42‑47</code>, so D1=B costs no per-request round trip.</p>
+  </div></div>
+  <div class="mech"><span class="k">M6</span><div>
+    <p>Every observation row records the resolved mode <em>and</em> the serve-point id (1–6) that answered.</p>
+    <p>Without the serve-point id the data reproduces today's blindness: a row saying only "legacy served this" cannot distinguish a ranked cold fetch from an unranked cache hit, which is the entire distinction under study.</p>
+  </div></div>
+  <div class="mech"><span class="k">M7</span><div>
+    <p>The unreachable <code>scoreWithContext</code> else-branch at <code>routes/discovery.ts:1423</code> <strong>stays in the code, untouched</strong>, and is recorded here instead.</p>
+    <p>It is a pure dead branch: <code>discoveryCtx</code> is assigned only at <code>:942</code>, inside the same <code>if (authData?.user)</code> block that assigns <code>callerUserId</code> at <code>:925</code>. So <code>discoveryCtx</code> non-null implies <code>callerUserId</code> non-null, and inside the <code>else</code> of <code>if (callerUserId)</code> the ternary can only ever take <code>: places</code>. Removing it would nonetheless orphan the whole <code>scoreWithContext</code> function — <code>:1423</code> is its only call site — and the resulting diff would read as <em>"removed context scoring from discovery"</em>, which is exactly the ranking change it is not. It is left alone on that ground alone, not because the analysis is uncertain.</p>
+    <p>Consequence to carry into the rollout: the <strong>unauthenticated cold-fetch serve is entirely unranked</strong>, so the legacy path has no anonymous ranking behaviour for PDE to preserve or be compared against. Whoever implements PDE should decide deliberately whether anonymous traffic is in scope rather than inheriting this by accident.</p>
+  </div></div>
+</section>
+
+<hr class="div">
+
+<section>
+  <h2><span class="num">06 — Costs</span>Stated at full size</h2>
+
+  <div class="callout warn">
+    <h4>What shadow mode cannot do</h4>
+    <p>Shadow mode <strong>cannot measure engagement.</strong> Users never see the PDE order, so no click, save or dwell can ever be attributed to it. Shadow answers two questions honestly — <em>would PDE have served something different, and how different</em>, and <em>what does PDE cost in latency and CPU</em> — and it cannot answer <em>would users have engaged more</em>. Only <code>pde</code> mode on real traffic answers that.</p>
+    <p style="margin-bottom:0">This is a property of shadow deployment in general, not of this design. It is stated here because a rollout plan that promises an engagement verdict from shadow mode is promising something the mechanism cannot deliver.</p>
+  </div>
+
+  <h3>The engagement signal is lossy before anyone touches it</h3>
+  <p>Because a second outcome for the same impression 404s before writing anything (<code>routes/rankEvents.ts:153</code>), each impression yields <strong>at most one</strong> outcome — whichever the client reports first. A user who taps and then saves produces a <code>tap</code>; the save is discarded entirely. Any engagement comparison inherits this, and it biases toward whichever outcome the client happens to emit earliest rather than the most valuable one. Fixing it is out of P1 scope, but no measurement built on this table should be read as if it were complete.</p>
+
+  <h3>The rest</h3>
+  <ul>
+    <li><strong>Insert volume.</strong> D8=A multiplies <code>rank_events</code> writes by roughly the cache-hit ratio. At 90-day retention this is a standing storage cost, not a spike.</li>
+    <li><strong>Metric discontinuity.</strong> <code>adminRankingMetrics</code> reads <code>rank_events</code>. Its series breaks at the Stage&nbsp;0 cutover and cannot be back-filled.</li>
+    <li><strong>Ranking CPU.</strong> D5=B moves ranking from once per city per two hours to every request — the single largest recurring cost in the proposal, and the one being knowingly bought.</li>
+    <li><strong>Latency.</strong> Cache&nbsp;A hits are currently the fastest path in discovery precisely because they skip everything. Under D5=B they gain a ranking pass.</li>
+    <li><strong>Blast radius.</strong> The dispatch sits in the hottest handler in discovery. M2 keeps <code>legacy</code> byte-identical, which is what makes Stage&nbsp;1 provable rather than merely tested.</li>
+  </ul>
+</section>
+
+<hr class="div">
+
+<section>
+  <h2><span class="num">07 — Rollout</span>Sequence and exit criteria</h2>
+
+  <div class="stage"><span class="s">0</span><div>
+    <h3>Instrument every serve point</h3>
+    <p>Per D4=C and D8. No behaviour change, no flag yet — every serve point across all five routes records what it served and which point served it. This is the prerequisite for everything: today there is no baseline to compare against on five of six serve points.</p>
+    <p class="exit"><b>Exit</b> Every serve point emits an observation; the serve-point distribution is published. That distribution is itself the first real answer to how much traffic reaches a ranker.</p>
+  </div></div>
+
+  <div class="stage"><span class="s">1</span><div>
+    <h3>Add the flag, default legacy</h3>
+    <p>Dispatch in place per M1, resolving to <code>legacy</code> for every request. PDE is not written yet.</p>
+    <p class="exit"><b>Exit</b> Serve-point distribution is unchanged from Stage 0 within noise, and response bodies are byte-identical. A no-op that cannot be shown to be a no-op has not passed this stage.</p>
+  </div></div>
+
+  <div class="stage"><span class="s">2</span><div>
+    <h3>Shadow on internal accounts</h3>
+    <p>D6=A. Proves the harness end to end — that PDE runs, that observations land in the D7 table, that M3 keeps it off the response path.</p>
+    <p class="exit"><b>Exit</b> Shadow rows appear with both orders and both timings; p99 on the response path is unmoved.</p>
+  </div></div>
+
+  <div class="stage"><span class="s">3</span><div>
+    <h3>Shadow at sample scale</h3>
+    <p>D6=B. Produces the divergence measurement across real cities and real cache states.</p>
+    <p class="exit"><b>Exit</b> Divergence characterised per serve point — and specifically on serve points 1–4, where no ranker runs today and where the difference will be largest.</p>
+  </div></div>
+
+  <div class="stage"><span class="s">4</span><div>
+    <h3>PDE on a small share, stop armed</h3>
+    <p>First traffic where users actually receive PDE output, with the D3=B kill switch live. This is the first stage that can measure engagement at all.</p>
+    <p class="exit"><b>Exit</b> Engagement compared against the Stage-0 baseline on matched serve points, with the stop demonstrated to work before the share is raised.</p>
+  </div></div>
+
+  <div class="stage"><span class="s">5</span><div>
+    <h3>Ramp</h3>
+    <p>Staged increase, each step held long enough for the two-hour Cache&nbsp;A cycle to turn over several times.</p>
+    <p class="exit"><b>Exit</b> Owner ruling on full cutover, and a decision on whether <code>legacy</code> is retired or kept as the fallback M4 falls back to.</p>
+  </div></div>
+</section>
+
+<hr class="div">
+
+<section>
+  <h2><span class="num">08 — Notes</span>Carried forward</h2>
+
+  <h3>The post-media hold is gone, and it touched one earlier ruling</h3>
+  <p>Anonymous read on <code>post-media</code> is revoked (<code>src/migrations/2089_revoke_post_media_public_read.sql:101</code>). <strong>This has no load-bearing effect on discovery:</strong> neither cache stores media bytes or signed URLs, and the ranking path reads <code>headerImageUrl</code> only as a boolean (<code>routes/discovery.ts:1360</code>) plus a completeness weight (<code>:1361</code>). Revocation cannot change discovery ordering, cache contents, or cache keys.</p>
+  <p>It does bear elsewhere. The staging boundary's <strong>D1</strong> was recorded as <em>"Forced by the <code>post_media</code> read-policy hold. B requires editing the held policy, so it is not available."</em> That forcing constraint no longer exists, so D1=A is no longer forced — it may still be the right answer, but it is now a choice rather than a consequence. Two documents also still describe the policy as held and are stale prose: <code>docs/media/staging-boundary-decisions.md:55‑57</code> and <code>docs/ops/unseeded-flag-inventory.md:168</code>. Flagged, not fixed here.</p>
+
+  <h3>Found in passing, not P1 work</h3>
+  <ul>
+    <li><code>scoreWithContext</code> (<code>routes/discovery.ts:817</code>) is <strong>unreachable</strong>. Its call site at <code>:1423</code> requires <code>discoveryCtx</code> to be non-null inside the <code>else</code> branch of <code>if (callerUserId)</code>, but <code>discoveryCtx</code> is only assigned where <code>callerUserId</code> is also assigned (<code>:925</code>, <code>:942</code>). The unauthenticated cold-fetch serve is entirely unranked.</li>
+    <li>A third cache exists — <code>compass_feed_cache</code>, per-user, via <code>compass/CompassCacheEngine.ts</code>. It backs Compass feed surfaces and is not imported by <code>GET /discovery</code>. Named here only so its "L1 Map + L2 table" shape is not mistaken for Cache&nbsp;A.</li>
+  </ul>
+
+  <h3>What would make this packet wrong</h3>
+  <ul>
+    <li>If Cache&nbsp;A's hit rate in production is far lower than its 2-hour TTL implies — heavy invalidation, frequent restarts, or many empty-Overpass keys — then more traffic reaches a ranker than section 01 concludes, and D5 gets cheaper. <strong>Stage 0 measures this directly</strong>, which is why it comes before the flag rather than after it.</li>
+    <li>If the owner's intended comparison is narrower than "behaviour users receive" — a ranker-quality question rather than a delivered-experience question — then D4 and D8 are over-scoped and the packet should shrink accordingly.</li>
+  </ul>
+</section>
+
+<footer>
+  Phase −1 proof: docs/discovery/phase-minus-1-repository-proof.md<br>
+  Verified at HEAD 93523f4fb · branch bughunt-20260805 · every file:line re-confirmed at that commit<br>
+  Design only. No implementation until the owner rules.
+</footer>
+
+</div>
+</div>
