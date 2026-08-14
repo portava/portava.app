@@ -41,8 +41,13 @@
  * production apply is a separate operator action outside this file.
  *
  * PHASES
- *   seed   ensure post_media_storage_public_read EXISTS (idempotent).
- *          Prints whether it created it or found it.
+ *   seed   ensure the three fixture buckets exist with production's public
+ *          flags, upsert one 67-byte PNG into each, and ensure
+ *          post_media_storage_public_read EXISTS. All idempotent; prints what
+ *          it had to create. The fixtures are not decoration — the CI project
+ *          has no media objects of its own, and without them the reachability
+ *          probes have nothing to read and the rehearsal degrades to "the SQL
+ *          parses". That was discovered by running this job, not predicted.
  *   apply  run the migration's statement: DROP POLICY IF EXISTS.
  *
  * EXIT CODES
@@ -116,11 +121,105 @@ async function policyExists(): Promise<boolean> {
   return (rows[0]?.n ?? 0) > 0;
 }
 
+// ── Storage fixtures ────────────────────────────────────────────────────────
+//
+// WHY THIS IS HERE, discovered by the first run of this job rather than assumed.
+//
+// The CI project is built from the migrations, so it genuinely holds the
+// POLICIES. It holds no OBJECTS: nobody uploads media to it. The first rehearsal
+// run therefore reported "no objects in post-media — the exposure probe has
+// nothing to read", and both controls that need a real object failed with -1.
+// The audit script refused to report a pass, which is the correct behaviour and
+// is why the gap was visible at all.
+//
+// Without fixtures the rehearsal could only prove the catalog half — policy
+// present, DROP, policy absent — which is "the SQL parses", not "the SQL closes
+// the hole". The reachability transition is the part worth rehearsing, so the
+// seed phase creates exactly enough state for the probes to be meaningful:
+// three buckets with production's public flags, and one tiny object in each.
+//
+// Everything here is idempotent and additive. The fixture objects are left in
+// place between runs — they are 67 bytes each, they are the fixture, and
+// deleting them would make the next run's before-proof fail for the same reason
+// this one did.
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const origin = new URL(SUPABASE_URL).origin;
+
+/** 1x1 transparent PNG, 67 bytes. */
+const FIXTURE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/** bucket → { public flag production uses, fixture object path }. */
+const FIXTURE_BUCKETS: Array<{ id: string; isPublic: boolean; path: string }> = [
+  { id: "post-media", isPublic: false, path: "ci-rehearsal/fixture.png" },
+  { id: "profile-media", isPublic: false, path: "ci-rehearsal/fixture.png" },
+  { id: "stamp-artwork", isPublic: true, path: "ci-rehearsal/fixture.png" },
+];
+
+async function ensureBucket(id: string, isPublic: boolean): Promise<void> {
+  const get = await fetch(`${origin}/storage/v1/bucket/${id}`, {
+    headers: { apikey: SERVICE_KEY!, Authorization: `Bearer ${SERVICE_KEY}` },
+  });
+  if (get.ok) {
+    console.log(`    bucket ${id.padEnd(14)} already exists`);
+    return;
+  }
+  const create = await fetch(`${origin}/storage/v1/bucket`, {
+    method: "POST",
+    headers: {
+      apikey: SERVICE_KEY!,
+      Authorization: `Bearer ${SERVICE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ id, name: id, public: isPublic }),
+  });
+  if (!create.ok) {
+    throw new Error(`could not create bucket ${id}: ${create.status} ${await create.text()}`);
+  }
+  console.log(`    bucket ${id.padEnd(14)} CREATED (public=${isPublic})`);
+}
+
+async function ensureFixtureObject(bucket: string, path: string): Promise<void> {
+  const res = await fetch(`${origin}/storage/v1/object/${bucket}/${path}`, {
+    method: "POST",
+    headers: {
+      apikey: SERVICE_KEY!,
+      Authorization: `Bearer ${SERVICE_KEY}`,
+      "Content-Type": "image/png",
+      "x-upsert": "true",
+    },
+    body: new Uint8Array(FIXTURE_PNG),
+  });
+  if (!res.ok) {
+    throw new Error(
+      `could not upload fixture to ${bucket}/${path}: ${res.status} ${await res.text()}`,
+    );
+  }
+  console.log(`    object ${(bucket + "/" + path).padEnd(38)} upserted`);
+}
+
 console.log("═".repeat(74));
 console.log(`REHEARSAL ${phase.toUpperCase()} — project ${projectRef}`);
 console.log("═".repeat(74));
 
 if (phase === "seed") {
+  if (!SERVICE_KEY) {
+    console.error(
+      "ERROR: SUPABASE_SERVICE_ROLE_KEY must be set — the seed phase uploads the\n" +
+        "       fixture objects the reachability probes read.",
+    );
+    process.exit(2);
+  }
+
+  console.log("\n  Storage fixtures (idempotent):\n");
+  for (const b of FIXTURE_BUCKETS) {
+    await ensureBucket(b.id, b.isPublic);
+    await ensureFixtureObject(b.id, b.path);
+  }
+  console.log("");
+
   if (await policyExists()) {
     console.log(
       `\n  ${POLICY} was already present.\n` +
