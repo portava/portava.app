@@ -13,7 +13,7 @@
  * children to confirm there is no non-overlay View sibling above the scroll
  * container.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

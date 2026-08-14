@@ -1,7 +1,7 @@
 /**
  * SearchScreen — session-location (city picker) override flow-through test.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --testPathPattern=search.sessionLocationCoords
+ * Run with: pnpm --dir travel-buddy-standalone test -- --testPathPattern=search.sessionLocationCoords
  *
  * ## What's covered
  *

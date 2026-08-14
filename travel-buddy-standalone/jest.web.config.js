@@ -9,7 +9,8 @@
 // Only *.webrender.test.{ts,tsx} files run under this config; the main
 // jest.config.js ignores them. Wired into `pnpm run test:component`.
 // NOTE: preserved-by-design mirror file (flat node_modules layout) — the
-// canonical twin lives at artifacts/travel-buddy/jest.web.config.js.
+// canonical twin lived at artifacts/travel-buddy/jest.web.config.js, archived
+// at bc1bef404. There is no twin now; this file is the only one.
 const base = require('./jest.config.js');
 
 module.exports = {

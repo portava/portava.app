@@ -209,7 +209,7 @@ const ALLOWLIST = new Set([
   //     no user-scoped (RLS-bound) client path to either table.
   //   * NEITHER mobile app references either table: zero hits for
   //     `media_assets` / `media_attachments` across travel-buddy-standalone/src
-  //     and artifacts/travel-buddy/src.
+  //     and travel-buddy-standalone/src.
   //   * So the migration's stated motivation ("needed for the public feed,
   //     profile cards, place cards") describes a direct-from-client read
   //     pattern that does not exist here. Applying it would grant read access

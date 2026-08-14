@@ -27,7 +27,7 @@
  *               production profiles
  *   - .env.example  EXPO_PUBLIC_WEB_ORIGIN, annotated "must match app.json"
  *   - .replit [userenv.production]  ALLOWED_ORIGINS
- *   - artifacts/travel-buddy/.replit-artifact/artifact.toml — the deployment's
+ *   - artifacts/travel-buddy/.replit-artifact/artifact.toml (archived at bc1bef404) — the deployment's
  *     production build/run commands point exclusively at
  *     travel-buddy-standalone/scripts/build.js and .../server/serve.js
  *

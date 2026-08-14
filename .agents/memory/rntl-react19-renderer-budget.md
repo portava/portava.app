@@ -6,7 +6,8 @@ description: Hard per-file limits of the jest-expo + RNTL v14 + React 19 rendere
 # RNTL + React 19 renderer budget (both mobile trees)
 
 Empirically proven limits of the component-test renderer (jest-expo, RNTL v14,
-React 19) in `artifacts/travel-buddy` and `travel-buddy-standalone`. These are
+React 19) in `travel-buddy-standalone` (and formerly `artifacts/travel-buddy`,
+archived at `bc1bef404`). These are
 renderer facts, not flaky-test noise — tests must be STRUCTURED around them.
 
 ## The rules

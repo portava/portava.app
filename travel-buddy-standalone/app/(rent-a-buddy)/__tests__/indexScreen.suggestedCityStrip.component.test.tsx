@@ -10,7 +10,7 @@
  *   - The "See all Buddies in …" link also names Miami, NOT Cebu.
  *   - Pressing the link navigates to the Miami search page.
  *
- * Run: pnpm --filter @workspace/travel-buddy run test:component
+ * Run: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

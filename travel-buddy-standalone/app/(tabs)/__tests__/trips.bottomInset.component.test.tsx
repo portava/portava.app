@@ -8,7 +8,7 @@
  * this test verifies the filler element is present in the rendered tree with
  * a height that satisfies the minimum contract.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

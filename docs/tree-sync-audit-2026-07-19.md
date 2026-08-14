@@ -1,5 +1,12 @@
 # Tree synchronization audit — 2026-07-19
 
+> **CLOSED 2026-08-14.** This document is the authority for a two-tree world that no
+> longer exists. `artifacts/travel-buddy` was archived at `bc1bef404`; `scripts/sync-standalone.sh`,
+> its `STANDALONE_OWNED_FILES` ledger (the ~84 entries this audit inventories), the
+> post-merge sync and the three drift checks were all deleted with it. Nothing here is
+> actionable. It is kept because the ledger records WHY each file was allowed to diverge,
+> which is the only surviving explanation for some shapes in `travel-buddy-standalone`.
+
 **Decision: `artifacts/travel-buddy` is the single canonical mobile source tree.**
 `travel-buddy-standalone` is a generated EAS build mirror — never edited directly.
 

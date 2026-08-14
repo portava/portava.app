@@ -24,7 +24,7 @@
  *      existing content stays visible while the refetch is in flight
  *      (this is the whole point of pull-to-refresh).
  *
- * Run: pnpm --filter @workspace/travel-buddy run test:component -- --testPathPattern=usePublicPassport
+ * Run: pnpm --dir travel-buddy-standalone run test:component -- --testPathPattern=usePublicPassport
  */
 
 import { renderHook, act, waitFor, cleanup } from '@testing-library/react-native';

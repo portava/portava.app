@@ -16,7 +16,7 @@
  *   - Available Now empty-state text agrees with the amber banner (both
  *     surfaces reflect the same zero count, so they never contradict each other)
  *
- * Run: pnpm --filter @workspace/travel-buddy run test:component
+ * Run: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

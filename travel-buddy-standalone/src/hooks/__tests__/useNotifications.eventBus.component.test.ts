@@ -1,7 +1,7 @@
 /**
  * useNotifications event-bus integration tests.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test:component -- --testPathPattern=useNotifications.eventBus
+ * Run with: pnpm --dir travel-buddy-standalone test:component -- --testPathPattern=useNotifications.eventBus
  *
  * The in-app notification event bus (src/services/notificationEvents.ts) is fed
  * by the SSE stream. These tests confirm that the polling hooks also react to

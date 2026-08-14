@@ -17,7 +17,7 @@
  * mode-chip-gems) rather than by text, because the overlay AppHeader also renders
  * the current mode name as its title — making getByText ambiguous.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

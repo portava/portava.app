@@ -4,7 +4,7 @@ description: MapStoreProvider, useMapStore, actionCapabilities/detailRoute on Ma
 ---
 
 ## MapStoreProvider pattern
-- File: `artifacts/travel-buddy/src/stores/mapStore.tsx` (note: .tsx not .ts — JSX in provider)
+- File: `travel-buddy-standalone/src/stores/mapStore.tsx` (was `artifacts/travel-buddy/...`, archived at `bc1bef404`) (note: .tsx not .ts — JSX in provider)
 - Pattern: Context + useReducer matching AttachmentStore/AvailabilityStore
 - **No root provider needed** — `FullScreenMapScreen` wraps inner impl with `MapStoreProvider` via a two-component split (outer = wrapper, inner = `FullScreenMapScreenInner`)
 - `initialEnabledLayers` prop seeds the correct mode preset at store init time

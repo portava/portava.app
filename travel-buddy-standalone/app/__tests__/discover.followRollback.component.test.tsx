@@ -10,7 +10,7 @@
  *   2. Follow succeeds ({ ok: true }) → user is removed from the suggestions list.
  *   3. Unfollow fails ({ ok: false }) → button reverts to "Following".
  *
- * Run: pnpm --filter @workspace/travel-buddy run test:component
+ * Run: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

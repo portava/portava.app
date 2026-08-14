@@ -13,7 +13,7 @@
  *   global switch — so the real blocker was never reachable and the screen
  *   appeared stuck after going back.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test:component
+ * Run with: pnpm --dir travel-buddy-standalone test:component
  */
 
 import React from 'react';

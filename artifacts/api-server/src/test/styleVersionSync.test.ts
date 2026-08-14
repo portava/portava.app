@@ -2,9 +2,18 @@
  * Style-version sync guard.
  *
  * CURRENT_STYLE_VERSION in the mobile admin service
- * (artifacts/travel-buddy/src/services/adminStamps.ts) is a manually
+ * (travel-buddy-standalone/src/services/adminStamps.ts) is a manually
  * maintained copy of STYLE_VERSION from the API server
  * (artifacts/api-server/src/lib/stamps/artDirection.ts).
+ *
+ * WHICH APP TREE. This pointed at artifacts/travel-buddy — the FROZEN LEGACY
+ * tree — until that tree was archived. Both trees held byte-identical copies
+ * ("v1.0"), so the guard passed either way and the mistake was invisible; but
+ * it made the check worthless in the case it exists for. Bumping the LIVE
+ * tree's constant would not have been noticed, and the guard would have gone
+ * on vouching for a file that is not shipped. It now reads the live tree.
+ * (Same class of defect, and same correction, as APP_TREE_ROOT in
+ * artifacts/api-server/scripts/check-flag-polarity.mjs.)
  *
  * If either is bumped without bumping the other the stale-style badge
  * silently stops working: reviewers see no warning even though the artwork
@@ -28,7 +37,7 @@ import { STYLE_VERSION } from "../lib/stamps/artDirection.js";
 const repoRoot = new URL("../../../../", import.meta.url).pathname;
 const mobileServicePath = resolve(
   repoRoot,
-  "artifacts/travel-buddy/src/services/adminStamps.ts",
+  "travel-buddy-standalone/src/services/adminStamps.ts",
 );
 
 const mobileSource = readFileSync(mobileServicePath, "utf-8");
@@ -53,7 +62,7 @@ describe("STYLE_VERSION sync — API server ↔ mobile admin service", () => {
     const mobileVersion = extractMobileStyleVersion(mobileSource);
     assert.ok(
       mobileVersion !== null,
-      "Could not find CURRENT_STYLE_VERSION in artifacts/travel-buddy/src/services/adminStamps.ts. " +
+      "Could not find CURRENT_STYLE_VERSION in travel-buddy-standalone/src/services/adminStamps.ts. " +
         "The constant must be declared as:\n" +
         '  export const CURRENT_STYLE_VERSION = "<version>";',
     );
@@ -68,7 +77,7 @@ describe("STYLE_VERSION sync — API server ↔ mobile admin service", () => {
         `  API server  STYLE_VERSION         = "${STYLE_VERSION}"\n` +
         `  Mobile      CURRENT_STYLE_VERSION  = "${mobileVersion}"\n\n` +
         `When bumping STYLE_VERSION in artifacts/api-server/src/lib/stamps/artDirection.ts\n` +
-        `also bump CURRENT_STYLE_VERSION in artifacts/travel-buddy/src/services/adminStamps.ts\n` +
+        `also bump CURRENT_STYLE_VERSION in travel-buddy-standalone/src/services/adminStamps.ts\n` +
         `(and vice-versa) so the stale-style badge on the admin review screen stays accurate.`,
     );
   });

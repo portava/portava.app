@@ -5,7 +5,7 @@
  * sheet and navigates to its route (no dead-end); "Soon" entries are
  * disabled and never navigate.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 import React from 'react';
 import { screen, render, fireEvent, waitFor, act } from '@testing-library/react-native';

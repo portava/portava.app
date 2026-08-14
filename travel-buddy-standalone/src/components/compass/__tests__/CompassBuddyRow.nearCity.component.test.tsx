@@ -10,7 +10,7 @@
  *   3. When `headerSuffix` is undefined for a null/unknown city, nothing crashes
  *      and no suffix is shown during loading.
  *
- * Run: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

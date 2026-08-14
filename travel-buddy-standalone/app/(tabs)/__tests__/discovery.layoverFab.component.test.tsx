@@ -6,7 +6,7 @@
  *   2. FAB disappears when the place detail sheet opens (detailVisible=true).
  *   3. FAB reappears after the sheet is closed (detailVisible=false).
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

@@ -6,7 +6,7 @@
  *   (b) single enabled mode — selector hidden but correct mode renders
  *   (c) persisted disabled mode in AsyncStorage — store reconciles on restore
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import { test } from 'node:test';

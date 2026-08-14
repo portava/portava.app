@@ -7,7 +7,7 @@
  *   2. When `onBook` is omitted the internal fallback also navigates to checkout
  *      with `buddyId` set — not to the old request-buddy form.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

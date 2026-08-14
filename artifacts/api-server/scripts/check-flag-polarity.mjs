@@ -904,10 +904,10 @@ const DIRECT_READS = [
 
 // WHICH app tree. This matters more than it looks.
 //
-// There are two copies of the mobile app in this repository:
+// There used to be two copies of the mobile app in this repository:
 //
-//   artifacts/travel-buddy    — FROZEN LEGACY. Not built, not shipped. Its
-//                               archival is a separate authorized unit.
+//   artifacts/travel-buddy    — FROZEN LEGACY. Not built, not shipped.
+//                               ARCHIVED; the tree no longer exists on disk.
 //   travel-buddy-standalone   — THE LIVE TREE. What actually ships, and where
 //                               the readers this list vouches for actually live.
 //
@@ -920,10 +920,12 @@ const DIRECT_READS = [
 // hiding travel-buddy-standalone's copy left the guard at 0 problems; hiding
 // artifacts/travel-buddy's copy is what produced a failure.
 //
-// It also had a shelf life. Archiving artifacts/travel-buddy would have made R8
-// fail with CANNOT VERIFY — pointing at a tree that had been deliberately
-// removed — and the tempting fix at that moment is to delete the entries, which
-// the message above expressly warns against.
+// It also had a shelf life, and the shelf life expired: artifacts/travel-buddy
+// was archived on 2026-08-14. Had this still pointed there, R8 would now fail
+// with CANNOT VERIFY against a tree that had been deliberately removed — and
+// the tempting fix at that moment is to delete the entries, which the message
+// above expressly warns against. Correcting it a day early is why the archival
+// did not have to touch this file's behaviour at all.
 const APP_TREE_ROOT = resolve(PKG_ROOT, '..', '..', 'travel-buddy-standalone');
 
 const APP_TREE_READS = [

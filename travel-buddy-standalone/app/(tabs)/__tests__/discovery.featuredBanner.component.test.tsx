@@ -6,7 +6,7 @@
  *   2. Pressing the banner fires router.push('/featured').
  *   3. The banner is present in both authenticated and unauthenticated states.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

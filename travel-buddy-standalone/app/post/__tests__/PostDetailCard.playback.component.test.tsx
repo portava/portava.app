@@ -5,7 +5,7 @@
  * mounting path with autoplay=false, then asserts that pressing the
  * "Play video" tap zone calls playAsync on the Video ref.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

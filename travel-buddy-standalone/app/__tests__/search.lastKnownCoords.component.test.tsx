@@ -1,7 +1,7 @@
 /**
  * SearchScreen — last-known GPS coords flow-through test.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --testPathPattern=search.lastKnownCoords
+ * Run with: pnpm --dir travel-buddy-standalone test -- --testPathPattern=search.lastKnownCoords
  *
  * ## What's covered
  *

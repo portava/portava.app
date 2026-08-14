@@ -8,7 +8,7 @@
  * Strategy: render the screen, walk the toJSON tree to find all ScrollView
  * nodes, then check that key text lives within at least one of them.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

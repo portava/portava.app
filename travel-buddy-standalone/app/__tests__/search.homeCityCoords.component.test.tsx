@@ -1,7 +1,7 @@
 /**
  * SearchScreen — home-city coords flow-through test.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --testPathPattern=search.homeCityCoords
+ * Run with: pnpm --dir travel-buddy-standalone test -- --testPathPattern=search.homeCityCoords
  *
  * ## What's covered
  *

@@ -28,7 +28,7 @@
  *   - explicit "routes are distinct" cross-check
  *   - file-system existence assertions (so a typo or deleted file is caught)
  *
- * Run: pnpm --filter @workspace/travel-buddy run test:component
+ * Run: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import path from 'path';

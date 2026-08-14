@@ -265,7 +265,9 @@ fi
 # Tool      Why needed
 # -------   -----------------------------------------------------------------
 # bash      explicit sub-shell calls in run_check (bash -c / bash scripts/…)
-# git       sync-standalone.sh uses git diff for source-drift checks
+# (git was required only by sync-standalone.sh's source-drift diff; that script
+#  retired with artifacts/travel-buddy, and no remaining check shells out to git,
+#  so it is no longer preflighted here.)
 # node      pnpm runs on Node; also used directly by build scripts
 # pnpm      all package installs and workspace script execution
 # eas       EAS build / submit commands (eas-cli, must be installed globally)
@@ -275,14 +277,13 @@ fi
 
 declare -A tool_fix=(
   [bash]="install Bash 4+ (macOS: brew install bash; Linux: apt-get install bash)"
-  [git]="install Git (https://git-scm.com/downloads or your OS package manager)"
   [node]="use Node Version Manager (nvm) or actions/setup-node in CI"
   [pnpm]="corepack enable && corepack prepare pnpm@latest --activate"
   [eas]="npm install -g eas-cli  (or pnpm add -g eas-cli)"
   [expo]="npm install -g expo-cli  (or pnpm add -g expo-cli)"
 )
 
-tools_to_check=(bash git node pnpm)
+tools_to_check=(bash node pnpm)
 
 if [[ "${SKIP_EAS_PREFLIGHT:-0}" == "1" ]]; then
   printf '\n⚠️   SKIP_EAS_PREFLIGHT=1 — skipping eas/expo tool checks.\n'
@@ -343,27 +344,18 @@ run_check "typecheck-standalone" \
   "TypeScript — travel-buddy-standalone" \
   bash -c 'cd travel-buddy-standalone && pnpm typecheck'
 
-# ── 3. Dependency drift ──────────────────────────────────────────────────────
-run_check "dependency-drift" \
-  "Dependency drift (artifacts/travel-buddy vs standalone)" \
-  bash scripts/sync-standalone.sh --check-deps
-
-# ── 4. Source drift ──────────────────────────────────────────────────────────
-run_check "source-drift" \
-  "Source drift (synced directories)" \
-  bash scripts/sync-standalone.sh --check-source
-
-# ── 5. API server build ───────────────────────────────────────────────────────
+# ── 3. API server build ───────────────────────────────────────────────────────
 run_check "api-server-build" \
   "API server esbuild bundle (artifacts/api-server)" \
   pnpm --filter @workspace/api-server run build
 
-# ── 6. Lockfile drift ────────────────────────────────────────────────────────
-run_check "lockfile-drift" \
-  "Lockfile drift (resolved versions: monorepo vs standalone)" \
-  bash scripts/sync-standalone.sh --check-lockfile
+# The dependency-drift, source-drift and lockfile-drift checks that used to sit
+# here were the three read-only modes of scripts/sync-standalone.sh. All three
+# compared travel-buddy-standalone against artifacts/travel-buddy, which is
+# archived — there is no second tree left to drift from, and the script is gone.
+# Nothing replaces them: a one-tree repo cannot fall out of sync with itself.
 
-# ── 7. Placeholder bundle ID guard ───────────────────────────────────────────
+# ── 4. Placeholder bundle ID guard ───────────────────────────────────────────
 # Fails if travel-buddy-standalone/app.json still contains the placeholder
 # bundle identifier com.travelbuddy.app. A release build submitted with this
 # value will be rejected by Apple (and Google) review.
@@ -398,7 +390,7 @@ run_check "bundle-id-placeholder" \
     exit $ok
   '
 
-# ── 8. DB protection triggers + schema presence ──────────────────────────────
+# ── 5. DB protection triggers + schema presence ──────────────────────────────
 # Confirms the BEFORE DELETE / BEFORE TRUNCATE triggers that protect the
 # collections and collection_items tables (migrations 0071–0074) are present in
 # the Supabase production database, and that the profile_emergency_contacts
@@ -419,7 +411,7 @@ run_check "db-triggers" \
   "DB protection triggers + schema presence (migrations 0040, 0041, 0071–0074, 0076, 0090, 0109–0111, 0117)" \
   bash scripts/check-db-triggers.sh
 
-# ── 9. Engagement index presence check ───────────────────────────────────────
+# ── 6. Engagement index presence check ───────────────────────────────────────
 # Confirms the five engagement indexes added by migration 0106 are present in
 # pg_indexes.  Missing indexes cause the GET /api/engagement/likes endpoint to
 # degrade to sequential scans on posts_likes, post_reactions, comment_likes,
@@ -432,7 +424,7 @@ run_check "engagement-indexes" \
   "Engagement index presence (migration 0106 — five pg_indexes)" \
   bash scripts/check-engagement-indexes.sh
 
-# ── 10. Migrations-vs-live schema audit ──────────────────────────────────────
+# ── 7. Migrations-vs-live schema audit ──────────────────────────────────────
 # Diffs every migration file's claimed objects (tables, columns, functions,
 # indexes, policies, enums, triggers, views) against the LIVE Supabase schema
 # via the Management API, catching never-applied migrations before a release.
@@ -446,7 +438,7 @@ run_check "schema-audit" \
   "Migrations-vs-live schema audit (auditMigrationsVsLive.ts)" \
   bash scripts/check-schema-audit.sh
 
-# ── 11. Version / build-number floor guard ────────────────────────────────────
+# ── 8. Version / build-number floor guard ────────────────────────────────────
 # Fails if ios.buildNumber or android.versionCode still equal 1, which is the
 # first-submission default that Apple and Google have already seen.  Both
 # stores reject a binary whose build number is not strictly greater than the
@@ -488,7 +480,7 @@ run_check "version-bump" \
     exit $ok
   '
 
-# ── 12. Migration prefix-collision guard ─────────────────────────────────────
+# ── 9. Migration prefix-collision guard ─────────────────────────────────────
 # Fails when two files in artifacts/api-server/src/migrations share the same
 # numeric prefix — migration runners apply files in lexicographic order, so a
 # shared prefix produces an ambiguous apply sequence. Needs no DB credentials.
@@ -521,17 +513,8 @@ for entry in "${results[@]}"; do
       typecheck-standalone)
         printf '     fix: cd travel-buddy-standalone && pnpm typecheck\n'
         ;;
-      dependency-drift)
-        printf '     fix: bash scripts/sync-standalone.sh --apply-deps && pnpm install\n'
-        ;;
-      source-drift)
-        printf '     fix: bash scripts/sync-standalone.sh --fix-source\n'
-        ;;
       api-server-build)
         printf '     fix: pnpm --filter @workspace/api-server run build\n'
-        ;;
-      lockfile-drift)
-        printf '     fix: bash scripts/sync-standalone.sh --fix-lockfile\n'
         ;;
       bundle-id-placeholder)
         printf '     fix: update ios.bundleIdentifier and android.package in travel-buddy-standalone/app.json\n'

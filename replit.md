@@ -1,6 +1,6 @@
 # Travel Buddy
 
-> **SOURCE OF TRUTH (updated 2026-08-05):** `travel-buddy-standalone/` is THE canonical mobile app tree — make all mobile app edits directly there. The old canonical tree `artifacts/travel-buddy` was deleted on 2026-08-04 and **resurrected on 2026-08-05 in a LEGACY-FROZEN state**: it exists on disk again, but do not edit it; the artifacts→standalone auto-sync is disabled by default (`PORTAVA_ENABLE_LEGACY_SYNC=1` guard in `scripts/post-merge.sh` and `scripts/sync-standalone.sh`) and the tree is slated for archival. Any instructions or docs below (or elsewhere in this repo) that call `artifacts/travel-buddy` canonical or describe the canonical→mirror sync workflow are historical. The API server remains canonical at `artifacts/api-server`.
+> **SOURCE OF TRUTH (updated 2026-08-14):** `travel-buddy-standalone/` is THE ONLY mobile app tree — make all mobile app edits there. The former canonical tree `artifacts/travel-buddy` was **archived on 2026-08-14 and no longer exists on disk**; its last state is `artifacts/travel-buddy` at commit `bc1bef404`, recoverable with `git show bc1bef404:artifacts/travel-buddy/<path>`. The legacy artifacts→standalone sync retired with it: `scripts/sync-standalone.sh`, `scripts/post-merge.sh`, the `PORTAVA_ENABLE_LEGACY_SYNC` machinery and the `STANDALONE_OWNED_FILES` ledger are all gone. Any instructions or docs below (or elsewhere in this repo) that call `artifacts/travel-buddy` canonical, or describe a canonical→mirror sync workflow, are historical. The API server remains canonical at `artifacts/api-server`.
 
 [![Pre-release checks](https://github.com/passporttravelbuddy-ops/travel-buddy/actions/workflows/pre-release.yml/badge.svg?branch=main)](https://github.com/passporttravelbuddy-ops/travel-buddy/actions/workflows/pre-release.yml)
 
@@ -9,15 +9,15 @@ A social travel passport mobile app — log trips, track destinations, and share
 ## Canonical mobile tree (single source of truth)
 
 ```
-~/workspace/travel-buddy-standalone      ← CANONICAL — all mobile dev work happens here
-~/workspace/artifacts/travel-buddy       ← LEGACY-FROZEN (resurrected 2026-08-05) — do not edit; slated for archival
+~/workspace/travel-buddy-standalone      ← THE mobile tree — all mobile dev work happens here
+(artifacts/travel-buddy                   ← ARCHIVED 2026-08-14; gone from disk, see bc1bef404)
 ```
 
-**The rule (updated 2026-08-05):** `travel-buddy-standalone` is the single canonical mobile source tree — every mobile code change lands there directly, and EAS builds run from it. `artifacts/travel-buddy` is the pre-2026-08-04 canonical tree: deleted 2026-08-04, resurrected 2026-08-05, now legacy-frozen. Do not edit it, and do not sync from it. The API server is unaffected — it remains canonical at `artifacts/api-server`.
+**The rule (updated 2026-08-14):** `travel-buddy-standalone` is the only mobile source tree — every mobile code change lands there, and EAS builds run from it. `artifacts/travel-buddy` was the pre-2026-08-04 canonical tree; it is archived at `bc1bef404` and there is nothing to sync from any more. The API server is unaffected — it remains canonical at `artifacts/api-server`.
 
-- **Legacy sync disabled by default** — the old artifacts→standalone auto-sync (`scripts/post-merge.sh` → `scripts/sync-standalone.sh`) is hard-gated behind `PORTAVA_ENABLE_LEGACY_SYNC=1`; without it the scripts print a warning and exit 0. Running the sync would overwrite standalone-owned branding/config (`app.json`, `assets/images/icon.png`, adaptive-icon/splash/favicon, share icons) with stale legacy copies — that is why the default is off.
-- **Read-only drift checks still work** — `sync-standalone.sh --check-source / --check-deps / --check-lockfile` are not gated (they write nothing) and still run in the pre-release checks; they report how far the frozen legacy tree has fallen behind.
-- **`STANDALONE_OWNED_FILES` ledger** in `scripts/sync-standalone.sh` — the mirror-era divergence inventory (see [docs/tree-sync-audit-2026-07-19.md](docs/tree-sync-audit-2026-07-19.md)); still consulted by the drift checks and by the opt-in legacy sync as a protection list.
+- **The legacy sync is gone, not disabled.** `scripts/post-merge.sh`, `scripts/sync-standalone.sh`, `scripts/test-sync-standalone.sh`, `scripts/src/sync-standalone-check.test.ts` and the `PORTAVA_ENABLE_LEGACY_SYNC` gate were deleted with the tree they synced. Nothing replaces them: a one-tree repo cannot fall out of sync with itself.
+- **The three drift checks retired with it** — `--check-source / --check-deps / --check-lockfile` were the read-only modes of that script, and all three compared against the archived tree. `scripts/pre-release-check.sh` now runs 9 checks, not 12.
+- **The `STANDALONE_OWNED_FILES` ledger is gone.** It was the mirror-era divergence inventory (history in [docs/tree-sync-audit-2026-07-19.md](docs/tree-sync-audit-2026-07-19.md)); with no mirror there is nothing for it to protect. Its ~84 entries are recoverable from `bc1bef404` if the rationale is ever needed.
 - **Web + native output** — the Replit workflows (dev server, tests, typecheck) and EAS builds all run from the standalone tree — see [docs/eas-runbook.md](docs/eas-runbook.md).
 
 Physical-device dev loop (Metro serves the canonical standalone tree — edit it directly and Metro hot-reloads):
@@ -57,7 +57,7 @@ Every location selection in the app flows through `GlobalPlacePicker` (`src/comp
 ## Run & Operate
 
 - API server auto-starts: port 8080
-- `pnpm run typecheck` — full typecheck across all packages, including `@workspace/travel-buddy` (whose script also runs the import-extension guard `scripts/check-import-extensions.mjs`). The old `--filter !@workspace/travel-buddy` exclusion was removed in July 2026: the package's tsc passes cleanly and quickly (~4 s warm), so the exclusion only served to silently skip the guard.
+- `pnpm run typecheck` — recursive typecheck across the workspace members that define one: `@workspace/api-server`, `@workspace/mockup-sandbox`, `@workspace/scripts`, `expo-openmls` (8 of 9 projects; no `lib/*` member defines a typecheck script). `@workspace/travel-buddy` was in this set until it was archived at `bc1bef404`. The mobile tree typechecks separately: `pnpm --dir travel-buddy-standalone run typecheck`, whose script also runs the import-extension guard `scripts/check-import-extensions.mjs`. The membership of this set is enforced by `REQUIRED_RECURSIVE_TYPECHECK` in `.github/scripts/assert-ci-scripts.mjs` — a member that silently drops out fails the CI preflight rather than quietly going uncovered.
 - `pnpm --filter @workspace/api-server run dev` — run API server manually
 - Standalone typecheck: `cd travel-buddy-standalone && pnpm typecheck`
 
@@ -89,7 +89,6 @@ To verify the check scripts themselves are not broken (i.e. they correctly detec
 ## Where things live
 
 - `travel-buddy-standalone/` — **CANONICAL Expo mobile app** (`app/`, `src/services/`, `src/lib/supabase.ts`, `src/context/SessionContext.tsx`) — all mobile edits happen here
-- `artifacts/travel-buddy/` — **LEGACY-FROZEN** former canonical tree (resurrected 2026-08-05) — do not edit; sync disabled by default (`PORTAVA_ENABLE_LEGACY_SYNC` guard); slated for archival
 - `artifacts/api-server/` — Express API server, **canonical** (`src/routes/trips.ts`, `src/lib/supabase.ts`, `.env`)
 
 ## Architecture decisions
@@ -113,7 +112,7 @@ Users sign in with Supabase Auth (email/password) to create and manage trips (de
 - `DAILY_BRIEF_RETENTION_DAYS` (default `60`, days) and `DAILY_BRIEF_CLEANUP_INTERVAL_HOURS` (default `24`) — set in `artifacts/api-server/.env` to tune without a deploy.
 - `INVITE_SLOT_RECONCILE_INTERVAL_HOURS` (default `1`, hours) — how often the API server calls `reconcile_invite_link_slots` to fix stranded invite-link slots. Set to `0` in `artifacts/api-server/.env` to disable. `INVITE_SLOT_RECONCILE_MIN_AGE_MINUTES` (default `5`) controls the minimum slot age before a stranded entry is fixed (must be > 0 to avoid touching in-flight requests).
 - `INVITE_SLOT_SWEEP_INTERVAL_HOURS` (default `1`, hours) — how often the complementary sweeper runs the same reconcile function. `INVITE_SLOT_SWEEP_TTL_HOURS` (default `24`) sets the minimum age in hours before a stranded attempt row is cleaned up. The sweeper targets older orphaned rows (pre-0110 crash survivors); the reconciler targets recent ones. Both use `FOR UPDATE SKIP LOCKED` so concurrent runs are safe. Set `INVITE_SLOT_SWEEP_INTERVAL_HOURS=0` to disable the sweeper.
-- `EXPO_PUBLIC_API_BASE_URL` in `artifacts/travel-buddy/.env` must point to the Replit dev domain (not the Expo domain).
+- `EXPO_PUBLIC_API_BASE_URL` in `travel-buddy-standalone/.env` must point to the Replit dev domain (not the Expo domain).
 - Feature-flag routes in `routes/*.ts` use paths without the `/api` prefix (the router is mounted at `app.use("/api", router)`).
 - `rent_buddy_city_rollouts`: when the table has no rows at `public_mvp` or `beta_testing` status, all city-specific calls return `city_not_available`. Apply migration `0092_seed_rent_buddy_launch_cities.sql` (seeds Cebu, Manila, Davao City at `public_mvp`) or add rows via `POST /api/admin/rent-buddy/rollout/cities`. The `db-triggers` pre-release check now verifies at least one live city exists.
 

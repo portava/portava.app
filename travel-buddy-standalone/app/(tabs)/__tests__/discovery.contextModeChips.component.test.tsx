@@ -5,7 +5,7 @@
  * none of the context mode chips call setContextMode when pressed — they are
  * disabled and visually dimmed.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';
@@ -218,7 +218,8 @@ describe('DiscoveryHub — context mode chips', () => {
   // A second press (or even a direct handler call) after the expand never
   // renders, so the press-switches-mode scenario is NOT testable in this
   // tree's panel-gated layout.  Chip-press mode switching is covered in the
-  // mobile tree (artifacts/travel-buddy), where the chips render un-gated.
+  // mobile tree (artifacts/travel-buddy, archived at bc1bef404), where the chips
+  // rendered un-gated.
   it('expanding filters reveals always-enabled chips wired to contextMode', async () => {
     const ACTIVE_BG = color.signal + '14';
 

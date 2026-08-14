@@ -1,7 +1,16 @@
 ---
-name: Standalone tree = generated mirror (SUPERSEDED 2026-08-06)
+name: Standalone tree = generated mirror (SUPERSEDED 2026-08-06; CLOSED 2026-08-14)
 description: Canonical-tree rule between artifacts/travel-buddy and travel-buddy-standalone, sanctioned divergence ledger, and how propagation works
 ---
+
+# ⚠ CLOSED 2026-08-14 — the second tree no longer exists
+
+`artifacts/travel-buddy` was archived on 2026-08-14; its last state is at commit
+`%s`. `scripts/sync-standalone.sh`, `scripts/post-merge.sh`, the
+`PORTAVA_ENABLE_LEGACY_SYNC` gate and the `STANDALONE_OWNED_FILES` ledger were
+deleted with it. Nothing below is actionable — not the old direction, not the
+flipped one. There is one tree, `travel-buddy-standalone`, and no propagation
+step of any kind. Kept for porting forensics only.
 
 # ⚠ SUPERSEDED 2026-08-06 — direction flipped
 

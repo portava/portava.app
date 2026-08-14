@@ -47,7 +47,7 @@ that claim:
 
    Everything else is smaller: `supabase/migrations/` 14, `docs/sql/` 13, the repo
    root itself 10, `files/…` 6, `docs/migrations/` 5, `db/migrations/` 4,
-   `travel-buddy-standalone/migrations/` 3, `artifacts/travel-buddy/migrations/` 3,
+   `travel-buddy-standalone/migrations/` 3, `artifacts/travel-buddy/migrations/` 3 (that tree archived at `bc1bef404`),
    plus 1–2-file handoff/patch drops (`portava-stamp-wave*-files/`,
    `*-backend/migrations/`, `composer-pkg/`, …). Every count here rots, and an
    enumeration re-creates the exact failure this entry exists to prevent, so

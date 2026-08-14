@@ -10,7 +10,7 @@
  *   - The FlatList's ListHeaderComponent (containing AppHeader, LivePulseRail,
  *     fits, etc.) is rendered INSIDE the ScrollView subtree.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

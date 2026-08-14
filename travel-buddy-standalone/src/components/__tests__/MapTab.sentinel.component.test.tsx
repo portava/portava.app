@@ -4,7 +4,7 @@
  * Verifies that when a `sentinel` prop is provided, MapTab renders the
  * appropriate message and does NOT render the map.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

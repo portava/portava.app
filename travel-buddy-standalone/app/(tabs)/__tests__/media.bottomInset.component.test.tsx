@@ -12,7 +12,7 @@
  * shell-level value so a future hook swap that accidentally returns < 120
  * is caught at the boundary rather than during manual QA.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

@@ -9,7 +9,7 @@
  *   1. status='active' + past endDate → badge shows "Completed"
  *   2. status='active' + future endDate → badge shows "Active"
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  *
  * ## Mock strategy
  *

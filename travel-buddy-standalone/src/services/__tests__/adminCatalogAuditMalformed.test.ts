@@ -21,7 +21,7 @@
  *   5. notes fallback (`?? ''`) works when notes is null or absent
  *
  * Run:
- *   pnpm --filter @workspace/travel-buddy test
+ *   pnpm --dir travel-buddy-standalone test
  */
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';

@@ -5,7 +5,7 @@
  * 1. A featured trip with coverMediaType='video' renders VideoThumbnail — play badge visible.
  * 2. A featured trip with coverMediaType='image' renders a plain Image — no play badge.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  *
  * ## Mock strategy
  *

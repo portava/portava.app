@@ -22,11 +22,16 @@ import path from 'node:path';
 
 const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../../');
 
-/** Source roots to scan (both the canonical standalone dir and the artifact copy). */
-const SOURCE_ROOTS = [
-  path.join(WORKSPACE_ROOT, 'travel-buddy-standalone'),
-  path.join(WORKSPACE_ROOT, 'artifacts/travel-buddy'),
-];
+/**
+ * Source roots to scan.
+ *
+ * This listed artifacts/travel-buddy as a second root until that tree was
+ * archived (bc1bef404). Unlike the fixture-import guard, this one has no
+ * "at least one file found" floor, so the stale root did not fail — it scanned
+ * an absent directory and contributed zero findings, quietly. Removed rather
+ * than left as a root that can only ever return nothing.
+ */
+const SOURCE_ROOTS = [path.join(WORKSPACE_ROOT, 'travel-buddy-standalone')];
 
 /**
  * Routes that must not be reachable from any navigation path.

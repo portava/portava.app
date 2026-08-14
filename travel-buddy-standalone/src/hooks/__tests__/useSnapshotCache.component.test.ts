@@ -1,7 +1,7 @@
 /**
  * useSnapshotCache — user-isolation and transition tests.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test:component -- --testPathPattern=useSnapshotCache
+ * Run with: pnpm --dir travel-buddy-standalone test:component -- --testPathPattern=useSnapshotCache
  *
  * ## What's covered
  *

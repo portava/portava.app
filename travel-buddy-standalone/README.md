@@ -8,7 +8,7 @@ This folder (`travel-buddy-standalone/`) is a self-contained copy of the Travel 
 
 | Location | Purpose |
 |---|---|
-| `artifacts/travel-buddy/` | Former monorepo app — deleted 2026-08-04, **resurrected 2026-08-05 in a LEGACY-FROZEN state**: do not edit; artifacts→standalone sync is disabled by default (`PORTAVA_ENABLE_LEGACY_SYNC=1` guard); slated for archival |
+| `artifacts/travel-buddy/` | Former monorepo app — **ARCHIVED 2026-08-14**, no longer on disk. Last state at commit `bc1bef404`. The artifacts→standalone sync retired with it. |
 | `travel-buddy-standalone/` | **Canonical app tree** (as of 2026-08-04) and EAS build target — this folder |
 
 ---
@@ -46,7 +46,7 @@ eas build --profile production --platform all
 
 ```bash
 # Run the Expo dev server for the monorepo app (normal dev workflow)
-pnpm --filter @workspace/travel-buddy run dev
+pnpm --dir travel-buddy-standalone run dev
 
 # Full monorepo typecheck
 pnpm run typecheck
@@ -60,7 +60,7 @@ pnpm run typecheck
 
 **Sync runs automatically** after every task merge via `scripts/post-merge.sh` — no manual step required for routine feature additions.
 
-To run it manually from the **workspace root** (e.g. to preview upcoming changes or re-sync after a manual edit to `artifacts/travel-buddy/`):
+To run it manually from the **workspace root** (the sync itself is retired — `artifacts/travel-buddy` was archived at `bc1bef404`; this section is kept for historical reference only):
 
 ```bash
 # Preview what would change (no files written)
@@ -93,7 +93,7 @@ bash scripts/sync-standalone.sh
 
 ### After syncing — manual steps required
 
-1. **New dependencies**: diff `artifacts/travel-buddy/package.json` vs `travel-buddy-standalone/package.json`.
+1. **New dependencies**: historical — this diffed `artifacts/travel-buddy/package.json` vs `travel-buddy-standalone/package.json`. The former is archived at `bc1bef404`; there is one manifest now.
    Add any new `dependencies` or `devDependencies` to the standalone `package.json`,
    then run `pnpm install` inside `travel-buddy-standalone/`.
 2. **`tsconfig.json` changes**: apply the same change to the standalone copy, keeping
@@ -112,7 +112,7 @@ bash scripts/sync-standalone.sh
 | `eas.json` | Preserved from original — `development`, `preview`, `production` profiles |
 | `.env.example` | Preserved from original — documents all required env vars |
 | `pnpm-workspace.yaml` | Added (empty `packages: []`) — makes this folder a self-contained pnpm workspace root |
-| All source, assets, app/, config files | Copied verbatim from `artifacts/travel-buddy/` |
+| All source, assets, app/, config files | Originally copied verbatim from `artifacts/travel-buddy/` (archived at `bc1bef404`); authored directly here since |
 
 ---
 
@@ -141,12 +141,12 @@ These steps require the project owner to complete manually:
 | `pnpm-lock.yaml` present in standalone folder | ✅ Pass |
 | `node_modules` present in standalone folder | ✅ Pass |
 | `npx tsc --noEmit` | ✅ Pass |
-| `npx expo-doctor` | ⚠️ 2 checks failed (pre-existing version mismatches — same in `artifacts/travel-buddy`) |
+| `npx expo-doctor` | ⚠️ 2 checks failed (pre-existing version mismatches — were identical in `artifacts/travel-buddy`, archived at `bc1bef404`) |
 | Conflict-marker scan | ✅ No real conflict markers |
 
 ### expo-doctor version mismatches (pre-existing)
 
-These mismatches also exist in the original `artifacts/travel-buddy/package.json` and are not introduced by this standalone conversion. Run `npx expo install --check` to upgrade them when ready:
+These mismatches also existed in the original `artifacts/travel-buddy/package.json` (archived at `bc1bef404`) and were not introduced by this standalone conversion. Run `npx expo install --check` to upgrade them when ready:
 
 - `@react-native-community/datetimepicker` (expected 8.4.4, installed 9.1.0)
 - `expo-calendar`, `expo-clipboard`, `expo-dev-client`, `expo-image-manipulator`, `expo-notifications`, `expo-sharing`, `expo-task-manager` (expected `~15.x` / `~6.x`, installed `~56.x`)

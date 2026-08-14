@@ -8,7 +8,7 @@
  * screen in results mode (via params), flush async search, then call the
  * captured callback and assert the destination.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

@@ -14,7 +14,7 @@
  *      receives NO onScroll — confirming there is no scroll-driven collapse in
  *      this fork regardless of which tab is active.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

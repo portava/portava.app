@@ -4,7 +4,7 @@
  * Confirms that after Task #1519, the topBar (back-nav + "My Trip" label) is
  * rendered INSIDE the primary ScrollView — NOT as a sibling View pinned above.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

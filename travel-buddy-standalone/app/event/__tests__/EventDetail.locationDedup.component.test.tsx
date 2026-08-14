@@ -13,7 +13,7 @@
  * loading state, then walk the rendered text to count occurrences of the
  * city name in the location row.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test:component
+ * Run with: pnpm --dir travel-buddy-standalone test:component
  */
 
 import React from 'react';

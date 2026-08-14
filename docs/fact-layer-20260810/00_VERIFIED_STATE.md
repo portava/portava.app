@@ -94,7 +94,7 @@ server is canonical at `artifacts/api-server`. **[CLONE 13dcfe3]** —
 `replit.md:3` (SOURCE OF TRUTH banner, "updated 2026-08-05"), restated at
 `replit.md:16`, `replit.md:91-93`.
 
-**1.2** `artifacts/travel-buddy/` is LEGACY-FROZEN: deleted 2026-08-04,
+**1.2** SUPERSEDED 2026-08-14 — `artifacts/travel-buddy/` is now ARCHIVED (`bc1bef404`), not merely frozen. As recorded: LEGACY-FROZEN: deleted 2026-08-04,
 resurrected 2026-08-05, do not edit; artifacts→standalone sync disabled by
 default behind `PORTAVA_ENABLE_LEGACY_SYNC=1` in `scripts/post-merge.sh` and
 `scripts/sync-standalone.sh`. **[CLONE 13dcfe3]** — `replit.md:3`, `replit.md:92`.
@@ -1193,7 +1193,7 @@ finishes.** In the canonical client
 (`travel-buddy-standalone/src/components/PostcardComposer.tsx:317-321`), a failed
 `completeUpload` calls `setError(...)`, `setPhase('pick')` and **returns** —
 no cleanup call, no retry, no delete. **[CLONE 13dcfe3]**
-⚠ The legacy tree `artifacts/travel-buddy/` (§1.2) contains a near-identical copy;
+⚠ The legacy tree `artifacts/travel-buddy/` (§1.2) contained a near-identical copy (archived at `bc1bef404`);
 the two `PostcardComposer.tsx` files **differ**, at lines 29 and 779 only (a
 theme-token import and an avatar size constant). `src/services/postcards.ts` is
 byte-identical between the trees. Cite the standalone path.

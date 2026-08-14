@@ -14,7 +14,7 @@
  *   5. Fire the onTouchStart handler on the wrapping View.
  *   6. Assert fireRankOutcome received (itemId, 'pulse', 'tap', sessionId).
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';
