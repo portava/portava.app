@@ -160,3 +160,26 @@ describe('MediaAttachmentTray — reorder', () => {
     expect(reorderItems).toHaveBeenCalledWith(0, 1);
   });
 });
+
+describe('MediaAttachmentTray — error state', () => {
+  it('renders the uploadError message text when an item is in error state', async () => {
+    const HEIC_MSG = "This photo format isn't supported — please re-upload as JPEG or PNG";
+    const item = makeItem('err1', {
+      uploadState: 'error',
+      uploadError: HEIC_MSG,
+    });
+    const { getByText } = await render(
+      <MediaAttachmentTray composer={makeComposer([item])} />,
+    );
+    // The error message must be visible on-screen, not silently stuck in state
+    expect(getByText(HEIC_MSG)).toBeTruthy();
+  });
+
+  it('does not render an error message when uploadError is null', async () => {
+    const item = makeItem('ok1', { uploadState: 'idle', uploadError: null });
+    const { queryByText } = await render(
+      <MediaAttachmentTray composer={makeComposer([item])} />,
+    );
+    expect(queryByText(/re-upload|not supported/i)).toBeNull();
+  });
+});
