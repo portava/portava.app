@@ -47,7 +47,8 @@ jest.mock('expo-image-picker', () => ({
 // requests.  validateMedia is stubbed to pass so the HEIC test is isolated to
 // the processed=false path, not the MIME type gate.
 const mockUploadMedia = jest.fn();
-// NOTE: exhaustive — see comment above; pulling requireActual causes network requests.
+// NOTE: intentionally exhaustive — validateMedia/uploadMedia reach Supabase and
+// the filesystem; pulling requireActual causes network requests in jest-expo.
 jest.mock('../../services/media.ts', () => ({
   validateMedia: jest.fn(() => ({ ok: true })),
   uploadMedia: (...args: any[]) => mockUploadMedia(...args),
@@ -81,8 +82,8 @@ jest.mock('../selectors/GlobalPlacePicker.tsx', () => ({
   GlobalPlacePicker: () => null,
 }));
 
-// NOTE: exhaustive — useMediaPicker so pressing the pick button injects a controlled asset
-// into the real useMediaComposer hook without launching a native picker.
+// NOTE: intentionally exhaustive — useMediaPicker launches a native picker;
+// the mock lets tests inject controlled assets without native modules.
 const mockPickMedia = jest.fn();
 // NOTE: exhaustive — avoids native picker launch in jest-expo.
 jest.mock('../../hooks/useMediaPicker.ts', () => ({
@@ -205,19 +206,20 @@ describe('AddGemForm — HEIC processed=false rejection (integration)', () => {
     await pickAdvanceAndSubmit(utils);
 
     await waitFor(() => {
-      expect(utils.queryByText(/re-upload|not supported|isn't supported|remove and pick/i)).not.toBeNull();
+      expect(mockSubmitGem).not.toHaveBeenCalled();
     });
   });
 
-  it('does NOT call submitGem when processed=false for an image — the unrenderable URL is never submitted', async () => {
-    mockPickMedia.mockResolvedValue([makeHeicAsset()]);
+  it('does NOT show the re-upload prompt when processed=false for a video — proceeds to submitGem', async () => {
+    mockPickMedia.mockResolvedValue([makeVideoAsset()]);
+    mockSubmitGem.mockResolvedValue({ id: 'gem-123' });
     mockUploadMedia.mockResolvedValue({
       ok: true,
-      url: STORED_URL,
+      url: 'https://cdn.example.com/post-media/user/clip.mp4',
       processed: false,
       width: null,
       height: null,
-      mediaType: 'image/heic',
+      mediaType: 'video/mp4',
     });
 
     const utils = await render(

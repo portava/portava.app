@@ -307,3 +307,32 @@ describe('MediaAttachmentTray — cancel upload', () => {
     expect(queryByTestId('cancel-media-done1')).toBeNull();
   });
 });
+
+describe('MediaAttachmentTray — upload progress', () => {
+  it('shows the upload overlay and spinner while an item is uploading', async () => {
+    const item = makeItem('up1', {
+      uploadState: 'uploading',
+      uploadProgress: 0.5,
+    });
+    const { getByTestId } = await render(
+      <MediaAttachmentTray composer={makeComposer([item])} />,
+    );
+
+    // Upload overlay container must be present (wraps both spinner and bar)
+    expect(getByTestId('upload-overlay-up1')).toBeTruthy();
+
+    // ActivityIndicator spinner must be present inside the overlay
+    expect(getByTestId('upload-spinner-up1')).toBeTruthy();
+
+    // Progress fill width must reflect uploadProgress=0.5 → '50%'
+    const fill = getByTestId('progress-fill-up1');
+    const styleArray: unknown[] = Array.isArray(fill.props.style)
+      ? fill.props.style
+      : [fill.props.style];
+    const inlineStyle = styleArray.find(
+      (s): s is Record<string, unknown> =>
+        typeof s === 'object' && s !== null && 'width' in s,
+    );
+    expect(inlineStyle?.width).toBe('50%');
+  });
+});

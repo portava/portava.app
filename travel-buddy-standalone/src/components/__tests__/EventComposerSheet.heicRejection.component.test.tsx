@@ -47,10 +47,9 @@ jest.mock('../../context/FeatureFlagsContext.tsx', () => ({
   useFeatureFlags: () => ({ isEnabled: () => false }),
 }));
 
-// NOTE: exhaustive — captures onResult prop so tests inject assets directly without
-// the full native media picker flow.
+// NOTE: intentionally exhaustive — MediaSourceSheet launches a native picker;
+// the mock captures onResult so tests can inject assets directly.
 let capturedOnResult: ((asset: ImagePickerNS.ImagePickerAsset) => void) | null = null;
-// NOTE: exhaustive — MediaSourceSheet imports native picker modules unavailable in jest-expo.
 jest.mock('../ui/MediaSourceSheet.tsx', () => ({
   MediaSourceSheet: (props: { onResult: (asset: ImagePickerNS.ImagePickerAsset) => void }) => {
     capturedOnResult = props.onResult;
@@ -69,11 +68,13 @@ jest.mock('../visuals/GeneratedHeaderPicker.tsx', () => ({
 jest.mock('../selectors/GlobalCalendarPicker.tsx', () => ({
   GlobalCalendarPicker: () => null,
 }));
-// NOTE: exhaustive — imports native modal/gesture modules unavailable in jest-expo.
+// NOTE: intentionally exhaustive — picker components import native modal/gesture
+// modules unavailable in jest-expo.
 jest.mock('../selectors/GlobalTimePicker.tsx', () => ({
   GlobalTimePicker: () => null,
 }));
-// NOTE: exhaustive — imports native MapLibre modules unavailable in jest-expo.
+// NOTE: intentionally exhaustive — GlobalPlacePicker imports MapLibre native
+// modules unavailable in jest-expo.
 jest.mock('../selectors/GlobalPlacePicker.tsx', () => ({
   GlobalPlacePicker: () => null,
 }));
@@ -95,12 +96,14 @@ jest.mock('../ui/KeyboardSafeView.tsx', () => {
   };
 });
 
-// NOTE: exhaustive — formatEventLocation imports geo utilities; stub returns empty string.
+// NOTE: intentionally exhaustive — formatEventLocation imports Supabase/location
+// modules that are unreachable in the jest-expo environment.
 jest.mock('../../lib/location/formatEventLocation.ts', () => ({
   formatEventLocation: () => '',
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 const STORED_URL = 'https://cdn.example.com/post-media/user/photo.heic';
 

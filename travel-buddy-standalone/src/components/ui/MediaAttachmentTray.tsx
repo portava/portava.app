@@ -124,10 +124,10 @@ function MediaCardContent({
 
         {/* Upload progress overlay */}
         {isUploading && (
-          <View style={s.uploadOverlay}>
-            <ActivityIndicator size="small" color="#fff" />
+          <View style={s.uploadOverlay} testID={`upload-overlay-${item.id}`}>
+            <ActivityIndicator size="small" color="#fff" testID={`upload-spinner-${item.id}`} />
             <View style={s.progressBar}>
-              <View style={[s.progressFill, { width: `${Math.round(item.uploadProgress * 100)}%` }]} />
+              <View style={[s.progressFill, { width: `${Math.round(item.uploadProgress * 100)}%` }]} testID={`progress-fill-${item.id}`} />
             </View>
             <Pressable
               style={s.cancelBtn}
