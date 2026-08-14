@@ -149,13 +149,40 @@ const fail = (msg: string) => {
   console.error(`❌ ${msg}`);
 };
 
-/** Anonymous GET of one object through the RLS-governed object endpoint. */
-async function anonRead(bucket: string, name: string): Promise<number> {
+/**
+ * Anonymous GET of one object through the RLS-governed object endpoint.
+ *
+ * RETURNS THE CDN CACHE STATUS TOO, AND THAT IS NOT A DETAIL.
+ *
+ * Supabase serves storage objects through Cloudflare with
+ * `cache-control: public, max-age=3600`. A 200 can therefore be an EDGE CACHE
+ * HIT that never reached the origin and never consulted RLS. Measured on
+ * production 2026-08-14: a repeat anonymous GET returns `cf-cache-status: HIT`,
+ * and adding a `?cb=<random>` query does NOT bust it — the cache key ignores
+ * the query string for this route.
+ *
+ * The third CI rehearsal run is what surfaced this. After the policy was
+ * dropped, anonymous LIST correctly went to 0 while anonymous GET stayed 200,
+ * and the script reported "there is another grant". There was no other grant:
+ * the before-proof had just fetched that exact object and warmed the cache.
+ *
+ * So a cached 200 proves nothing about authorization, in either direction, and
+ * the caller must not read it as exposure.
+ */
+interface AnonReadResult {
+  status: number;
+  cache: string;
+}
+
+async function anonRead(bucket: string, name: string): Promise<AnonReadResult> {
   const res = await fetch(
     `${origin}/storage/v1/object/${bucket}/${encodeURI(name)}`,
     { headers: { apikey: ANON_KEY!, Authorization: `Bearer ${ANON_KEY}` } },
   );
-  return res.status;
+  return {
+    status: res.status,
+    cache: (res.headers.get("cf-cache-status") ?? "none").toUpperCase(),
+  };
 }
 
 /** Anonymous LIST of a bucket. Returns the number of entries returned. */
@@ -194,9 +221,18 @@ async function signedFetch(bucket: string, name: string): Promise<number> {
   return res.status;
 }
 
+/**
+ * Pick the NEWEST object in a bucket, not the oldest.
+ *
+ * The newest object is the one least likely to be sitting warm in the CDN from
+ * an earlier probe — and in the CI rehearsal it is the post-apply canary that
+ * the apply phase uploads precisely so the after-proof has an object no probe
+ * has ever fetched. Ordering by created_at ASC would keep re-reading the same
+ * warm object and keep getting cache hits.
+ */
 async function sampleObject(bucket: string): Promise<string | null> {
   const rows = await liveQuery<{ name: string }>(
-    `select name from storage.objects where bucket_id = '${bucket}' order by created_at limit 1`,
+    `select name from storage.objects where bucket_id = '${bucket}' order by created_at desc limit 1`,
   );
   return rows[0]?.name ?? null;
 }
@@ -244,16 +280,23 @@ if (!postSample) {
   );
 }
 
-const postRead = postSample ? await anonRead(TARGET_BUCKET, postSample) : -1;
+const postReadR = postSample
+  ? await anonRead(TARGET_BUCKET, postSample)
+  : { status: -1, cache: "none" };
+const postRead = postReadR.status;
 const postList = await anonList(TARGET_BUCKET);
-const profRead = profSample ? await anonRead(NEGATIVE_CONTROL_BUCKET, profSample) : -1;
+const profRead = profSample
+  ? (await anonRead(NEGATIVE_CONTROL_BUCKET, profSample)).status
+  : -1;
 const stampRead = stampSample
   ? await fetch(`${origin}/storage/v1/object/public/${POSITIVE_CONTROL_BUCKET}/${encodeURI(stampSample)}`).then((r) => r.status)
   : -1;
 const signOk = profSample ? await signedFetch(NEGATIVE_CONTROL_BUCKET, profSample) : -1;
 
 console.log("\n── REACHABILITY, measured with the app's publishable key ──────────────\n");
-console.log(`  ${TARGET_BUCKET} anon GET object   HTTP ${postRead}`);
+console.log(
+  `  ${TARGET_BUCKET} anon GET object   HTTP ${postRead}   (cf-cache-status: ${postReadR.cache})`,
+);
 console.log(`  ${TARGET_BUCKET} anon LIST         ${postList < 0 ? "denied" : postList + " entries"}`);
 console.log(`  ${NEGATIVE_CONTROL_BUCKET} anon GET object   HTTP ${profRead}   (negative control)`);
 console.log(`  ${POSITIVE_CONTROL_BUCKET} public GET object HTTP ${stampRead}   (positive control)`);
@@ -293,7 +336,13 @@ if (problems > 0) {
   process.exit(1);
 }
 
-const anonCanRead = postRead === 200 || postList > 0;
+// A 200 served from the edge cache never reached the origin and never consulted
+// RLS. It is evidence about Cloudflare, not about the policy. Only an
+// origin-served 200 (MISS / EXPIRED / DYNAMIC / no CDN header) counts as read
+// exposure; a HIT is discarded here and handled explicitly below.
+const readWasCached = postRead === 200 && postReadR.cache === "HIT";
+const originServedRead = postRead === 200 && !readWasCached;
+const anonCanRead = originServedRead || postList > 0;
 
 if (target && anonCanRead) {
   console.log(
@@ -314,6 +363,22 @@ if (!target && !anonCanRead) {
       `  ${TARGET_BUCKET} now behaves exactly like ${NEGATIVE_CONTROL_BUCKET}.\n`,
   );
   process.exit(3);
+}
+
+// A cached read with the policy already gone is the one case that is neither
+// state and is not a finding either — it is the probe being unable to see the
+// origin. Say that, rather than reporting a grant that may not exist.
+if (!target && readWasCached && postList === 0) {
+  fail(
+    `the policy is gone and anonymous LIST is correctly denied, but anonymous GET ` +
+      `returned 200 from the EDGE CACHE (cf-cache-status: HIT). That response never ` +
+      `reached the origin, so it says nothing about whether RLS still permits the ` +
+      `read. This is NOT evidence of another grant, and it is NOT evidence of ` +
+      `closure. Re-run against an object no probe has fetched — in CI the apply ` +
+      `phase uploads a post-apply canary for exactly this — or wait out the ` +
+      `max-age=3600 the objects are served with.`,
+  );
+  process.exit(1);
 }
 
 // Catalog and reachability disagree. This is the interesting failure.

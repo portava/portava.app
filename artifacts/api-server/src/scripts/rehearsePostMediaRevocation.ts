@@ -302,4 +302,42 @@ if (await policyExists()) {
 }
 
 console.log(`  Applied. ${POLICY} is gone from ${projectRef}.\n`);
+
+// ── The post-apply canary ───────────────────────────────────────────────────
+//
+// WHY THE AFTER-PROOF CANNOT REUSE THE BEFORE-PROOF'S OBJECT.
+//
+// Supabase serves storage objects through Cloudflare with
+// `cache-control: public, max-age=3600`. The before-proof's anonymous GET warms
+// that cache. A repeat GET of the same object then returns 200 from the edge
+// without reaching the origin and without consulting RLS — and a `?cb=<random>`
+// query does not bust it, because the cache key ignores the query string here.
+//
+// That is exactly what the third rehearsal run hit: after the drop, anonymous
+// LIST correctly fell to 0 while anonymous GET stayed 200, and the audit
+// reported "there is another grant". There was no other grant. It was reading a
+// cached copy of the object it had just fetched itself.
+//
+// So the apply phase uploads a canary with a name no probe has ever requested.
+// It cannot be in any cache, anywhere, because this is the first time the URL
+// has existed. auditPostMediaPublicRead.ts samples the NEWEST object in the
+// bucket, so this is the object the after-proof reads, and its answer comes
+// from the origin.
+if (!SERVICE_KEY) {
+  console.error(
+    "ERROR: SUPABASE_SERVICE_ROLE_KEY must be set — the apply phase uploads the\n" +
+      "       post-apply canary the after-proof depends on.",
+  );
+  process.exit(2);
+}
+
+const canaryPath = `ci-rehearsal/canary-${crypto.randomUUID()}.png`;
+await ensureFixtureObject("post-media", canaryPath);
+console.log(
+  `\n  Canary uploaded: post-media/${canaryPath}\n` +
+    `  Never requested by anything, so it cannot be served from a CDN cache.\n` +
+    `  The after-proof samples the newest object, which is this one, and therefore\n` +
+    `  measures the origin rather than Cloudflare.\n`,
+);
+
 process.exit(0);
