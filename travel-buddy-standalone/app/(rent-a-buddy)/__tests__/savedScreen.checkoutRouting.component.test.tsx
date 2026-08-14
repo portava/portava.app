@@ -5,7 +5,7 @@
  * `/(rent-a-buddy)/checkout` with the correct `buddyId` param — not to the
  * old request-buddy form.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

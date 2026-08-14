@@ -1,7 +1,7 @@
 /**
  * Deep-link path regression guards — 9 fixed navigation call sites.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  *
  * ## What's covered
  *

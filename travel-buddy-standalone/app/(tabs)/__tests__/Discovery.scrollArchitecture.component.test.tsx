@@ -16,7 +16,7 @@
  *   2. The "Discover" title renders in the tree as fixed header chrome.
  *   3. The tab content area is a distinct sibling below the header chrome.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

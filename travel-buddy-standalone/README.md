@@ -46,7 +46,7 @@ eas build --profile production --platform all
 
 ```bash
 # Run the Expo dev server for the monorepo app (normal dev workflow)
-pnpm --filter @workspace/travel-buddy run dev
+pnpm --dir travel-buddy-standalone run dev
 
 # Full monorepo typecheck
 pnpm run typecheck

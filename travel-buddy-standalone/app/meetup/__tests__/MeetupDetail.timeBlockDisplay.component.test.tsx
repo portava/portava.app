@@ -13,7 +13,7 @@
  * Before the fix, `meetup.timeBlock` was not included in the truthiness check,
  * so a meetup with only a timeBlock fell through to the "No date set" branch.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test:component
+ * Run with: pnpm --dir travel-buddy-standalone test:component
  */
 
 import React from 'react';

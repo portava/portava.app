@@ -1,7 +1,7 @@
 /**
  * Map Phase 2C — Three-detent preview sheet with reduce-motion
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  *
  * ## What's covered
  *

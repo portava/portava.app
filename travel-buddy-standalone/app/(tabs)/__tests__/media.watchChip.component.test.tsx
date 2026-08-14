@@ -17,7 +17,7 @@
  * .agents/memory/rntl-react19-renderer-budget.md) then applies to the tap
  * under test, not to an unrelated setup press.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

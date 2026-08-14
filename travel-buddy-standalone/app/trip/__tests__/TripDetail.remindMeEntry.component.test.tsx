@@ -9,7 +9,7 @@
  *   - tapping it pushes exactly one route, to /reminders/new, with
  *     targetType=trip, targetId=<trip id>, and targetLabel=<trip title>
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 import React from 'react';
 import { render, act, screen, fireEvent } from '@testing-library/react-native';

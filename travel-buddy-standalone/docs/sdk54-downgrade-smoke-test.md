@@ -42,7 +42,7 @@ the native `expo-calendar` binding.
 
 ### API surface — downgraded packages (5 tests)
 Recorded alongside the zero-error TypeScript typecheck result
-(`pnpm --filter @workspace/travel-buddy run typecheck`).
+(`pnpm --dir travel-buddy-standalone run typecheck`).
 
 | Package | Version | Call site | APIs verified compatible |
 |---|---|---|---|

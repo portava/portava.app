@@ -129,7 +129,7 @@ Also: `app/safety-number.tsx`, `app/safety-history.tsx`, `app/blocked-users.tsx`
 ### Auth & misc
 `app/(auth)/sign-in.tsx`, `app/(auth)/onboarding.tsx` (post-signup), `app/invite/[token].tsx` (deep link), `app/+not-found.tsx` (fallback).
 
-**Note on route inventory:** two independent scans produced overlapping but not identical lists (e.g. one found `app/gems/*`, the other didn't; one found `app/profile/edit/calling.tsx` and `who-can-see-me.tsx`, the other didn't). The table above merges both. Treat this as thorough, not necessarily 100% exhaustive — cross-check against `pnpm --filter @workspace/travel-buddy run typecheck`'s route-registry check (`check-route-registry.mjs`), which enforces every screen file is registered, as the authoritative count (152 screens + 9 layouts as of this writing).
+**Note on route inventory:** two independent scans produced overlapping but not identical lists (e.g. one found `app/gems/*`, the other didn't; one found `app/profile/edit/calling.tsx` and `who-can-see-me.tsx`, the other didn't). The table above merges both. Treat this as thorough, not necessarily 100% exhaustive — cross-check against `pnpm --dir travel-buddy-standalone run check:route-registry` (`check-route-registry.mjs`), which enforces every screen file is registered, as the authoritative count (152 screens + 9 layouts as of this writing).
 
 ---
 

@@ -10,7 +10,7 @@
  * (the established baseline for rendering PassportScreen in tests) with two
  * additions: a controlled useBottomInset mock and a layover-active service stub.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

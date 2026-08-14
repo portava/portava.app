@@ -1,7 +1,7 @@
 /**
  * MapCarousel — action-row integration tests
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  *
  * ## What's covered
  *

@@ -1,7 +1,7 @@
 /**
  * useMilestoneCelebration — once-per-threshold guard tests.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test:component -- --testPathPattern=useMilestoneCelebration
+ * Run with: pnpm --dir travel-buddy-standalone test:component -- --testPathPattern=useMilestoneCelebration
  *
  * ## What's covered
  *

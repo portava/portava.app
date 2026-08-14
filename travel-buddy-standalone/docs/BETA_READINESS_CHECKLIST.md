@@ -121,7 +121,7 @@ the first update.
 ---
 
 ## Next 5 Replit tasks (when cooldown ends)
-1. Run `pnpm --filter @workspace/travel-buddy run typecheck` and paste results — establish a clean baseline.
+1. Run `pnpm --dir travel-buddy-standalone run typecheck` and paste results — establish a clean baseline.
 2. Dispatch the **EAS dev-build setup** command (identifiers, eas.json, permission strings).
 3. Owner: `eas login` → `eas init` → `eas build --profile development --platform android`.
 4. Apply the **fixture/stub exposure plan** decisions (wire or label each).

@@ -9,7 +9,7 @@
  * We also stub BuddyCard to capture the `onBook` prop so we can call it and
  * assert the router.push destination without pressing through BuddyCard internals.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 
 import React from 'react';

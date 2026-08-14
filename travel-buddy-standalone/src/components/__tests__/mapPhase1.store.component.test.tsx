@@ -1,7 +1,7 @@
 /**
  * Map Phase 1 — store + extended MapEntity model tests.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  *
  * ## What's covered
  *

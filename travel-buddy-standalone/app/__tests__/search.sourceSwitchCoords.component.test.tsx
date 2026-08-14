@@ -1,7 +1,7 @@
 /**
  * SearchScreen — GPS coords reach search after source switches mid-session.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --testPathPattern=search.sourceSwitchCoords
+ * Run with: pnpm --dir travel-buddy-standalone test -- --testPathPattern=search.sourceSwitchCoords
  *
  * ## What's covered
  *

@@ -12,7 +12,7 @@
  *   4. Find the RefreshControl in the tree and fire its onRefresh callback.
  *   5. Assert fetchTripReadiness was subsequently called with (tripId, true).
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

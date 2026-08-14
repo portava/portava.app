@@ -6,7 +6,7 @@
  * private trips and null-coord entities are excluded.
  *
  * Run via the mobile-test workflow:
- *   pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ *   pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 import assert from 'node:assert/strict';
 import { describe, it, mock, beforeEach } from 'node:test';

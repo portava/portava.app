@@ -1785,7 +1785,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
 // ── Layout registry ───────────────────────────────────────────────────────────
 //
 // Every _layout.tsx under app/ must have a matching entry here.
-// Run `pnpm --filter @workspace/travel-buddy run lint:routes` to verify.
+// Run `pnpm --dir travel-buddy-standalone run lint:routes` to verify.
 
 export const PORTAVA_LAYOUT_FILES: PortavaLayoutDefinition[] = [
   {

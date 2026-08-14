@@ -1,7 +1,7 @@
 /**
  * FullScreenMapScreen — tab-switch stale-selection clear tests.
  *
- * Run with: pnpm --filter @workspace/travel-buddy test -- --watchAll=false
+ * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  *
  * ## What's covered
  *

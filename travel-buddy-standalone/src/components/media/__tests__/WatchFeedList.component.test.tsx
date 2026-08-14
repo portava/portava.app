@@ -8,7 +8,7 @@
  *   4. Overlay like action calls onLike when item is not yet liked.
  *   5. onLike is NOT called on mount (no spurious like on render).
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

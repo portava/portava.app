@@ -5,7 +5,7 @@
  * when a layover session is active and the list is non-empty (so the
  * ScrollView branch renders, not the empty-state branch).
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

@@ -12,7 +12,7 @@
  *      onScroll prop === spy (trips.tsx passes navScrollHandler directly).
  *   3. Fire the handler and confirm the spy is invoked.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

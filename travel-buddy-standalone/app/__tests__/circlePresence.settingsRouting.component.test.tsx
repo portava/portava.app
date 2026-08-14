@@ -11,7 +11,7 @@
  * checks (not visual commits) so they survive the React 19 visual-commit wall.
  * No fake timers — per React 19 renderer budget rule.
  *
- * Run: pnpm --filter @workspace/travel-buddy run test:component
+ * Run: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

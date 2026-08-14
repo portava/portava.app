@@ -57,10 +57,17 @@ function problem(msg) {
 // typecheck script, this preflight will print it under "also covered" and the
 // list below can be extended.
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// '@workspace/travel-buddy' was removed from this list on 2026-08-14 when
+// artifacts/travel-buddy was archived (bc1bef404). This preflight is what
+// caught the omission: it fails when a member silently drops out of the
+// recursive run, which is exactly the decay it exists to prevent — a deleted
+// package does not fail `pnpm -r run typecheck`, it just stops being covered.
+// The coverage claims in unwired-checks.yml and docs/ci/README.md were updated
+// in the same PR, as the error message demands.
 const REQUIRED_RECURSIVE_TYPECHECK = [
   '@workspace/api-server',
   '@workspace/mockup-sandbox',
-  '@workspace/travel-buddy',
   '@workspace/scripts',
   'expo-openmls',
 ];

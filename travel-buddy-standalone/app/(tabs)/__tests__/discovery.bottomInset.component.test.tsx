@@ -11,7 +11,7 @@
  * at the boundary so a future refactor that drops the forwarding cannot go
  * unnoticed.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

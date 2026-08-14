@@ -22,7 +22,7 @@
  *   6. Assert: the stale "Local buddies available" text is absent; the
  *      city-C-specific "No buddies online right now in Gamma City" text is shown.
  *
- * Run with: pnpm --filter @workspace/travel-buddy run test:component
+ * Run with: pnpm --dir travel-buddy-standalone run test:component
  */
 
 import React from 'react';

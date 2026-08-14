@@ -57,7 +57,7 @@ Every location selection in the app flows through `GlobalPlacePicker` (`src/comp
 ## Run & Operate
 
 - API server auto-starts: port 8080
-- `pnpm run typecheck` — full typecheck across all packages, including `@workspace/travel-buddy` (whose script also runs the import-extension guard `scripts/check-import-extensions.mjs`). The old `--filter !@workspace/travel-buddy` exclusion was removed in July 2026: the package's tsc passes cleanly and quickly (~4 s warm), so the exclusion only served to silently skip the guard.
+- `pnpm run typecheck` — recursive typecheck across the workspace members that define one: `@workspace/api-server`, `@workspace/mockup-sandbox`, `@workspace/scripts`, `expo-openmls` (8 of 9 projects; no `lib/*` member defines a typecheck script). `@workspace/travel-buddy` was in this set until it was archived at `bc1bef404`. The mobile tree typechecks separately: `pnpm --dir travel-buddy-standalone run typecheck`, whose script also runs the import-extension guard `scripts/check-import-extensions.mjs`. The membership of this set is enforced by `REQUIRED_RECURSIVE_TYPECHECK` in `.github/scripts/assert-ci-scripts.mjs` — a member that silently drops out fails the CI preflight rather than quietly going uncovered.
 - `pnpm --filter @workspace/api-server run dev` — run API server manually
 - Standalone typecheck: `cd travel-buddy-standalone && pnpm typecheck`
 
