@@ -28,6 +28,7 @@
     "rehearse:post-media-revocation:apply": "node --env-file-if-exists=.env --import tsx/esm src/scripts/rehearsePostMediaRevocation.ts apply",
     "check:media-urls-external-only": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkMediaUrlsExternalOnly.ts",
     "backfill:feed-variants": "node --env-file-if-exists=.env --import tsx/esm src/scripts/backfillFeedVariants.ts",
+    "report:discovery-serve-points": "node --env-file-if-exists=.env --import tsx/esm src/scripts/reportDiscoveryServePoints.ts",
     "check:rank-events-surfaces": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkRankEventsSurfaces.ts",
     "check:backfill-0200": "node --env-file-if-exists=.env scripts/verify-backfill-0200.mjs",
     "check:search-path-hazard": "node --env-file-if-exists=.env scripts/verify-search-path-hazard.mjs",
