@@ -263,6 +263,28 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'bucket" is only answerable against the project that actually holds the data.',
   },
   {
+    file: 'src/scripts/snapshotOrphanRows.ts',
+    reason:
+      'Retention snapshot for the orphaned-row backlog (docs/ops/retention-policy.md). Everything it ' +
+      'sends is a SELECT: one type-distribution GROUP BY and one to_jsonb(t) capture per population, ' +
+      'plus a matching count() it compares against the captured array so a PARTIAL snapshot exits 1 ' +
+      'rather than being written — a truncated restore source is worse than none, because it looks ' +
+      'like one. It writes exactly one LOCAL file and touches no row. Auditing production is the ' +
+      'purpose: the question "which rows dangle" is only answerable against the project holding the ' +
+      'data. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+  {
+    file: 'src/scripts/planStorageQuarantine.ts',
+    reason:
+      'D5 quarantine PLANNER and sweep-eligibility check. It has no --apply flag and no write path: ' +
+      'it re-derives the orphan census (information_schema for referencing columns, then storage.objects ' +
+      'joined outward), emits the source -> destination move list, and writes one LOCAL manifest. In ' +
+      'sweep mode it reads the quarantine prefix and reports which objects are past the 90-day window. ' +
+      'It moves nothing and deletes nothing. Execution against production is a separate owner-authorized ' +
+      'step, because this repo has two sanctioned doors — strict (CI only) and read-only audit — and ' +
+      'moving 34 real user objects is not a reason to invent a third. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+  {
     file: 'src/scripts/auditStagingBoundaryGrant.ts',
     reason:
       'THE STEP 01 GATE of the upload staging boundary, as an instrument. Step 01 drops two live storage ' +
