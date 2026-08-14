@@ -36,6 +36,7 @@ import { isEnabled } from "../compass/flags";
 import { rankCandidates } from "../lib/portavaRank";
 import type { RankCandidate, ViewerContext, ScoredCandidate } from "../lib/portavaRank";
 import { logImpression } from "../lib/rankLog";
+import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
 import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import { emitCreatorCapAnalytics } from "../services/ranking/CreatorCapEnforcer.js";
@@ -1107,6 +1108,19 @@ router.get("/discovery", async (req, res) => {
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: { cacheLevel, timings: { totalMs } },
     });
+    // Stage 0 instrumentation — serve points 1/2/3. Fire-and-forget, after the
+    // response. These three paths ran no ranker; before this they wrote nothing
+    // at all, which is why the 'discovery' surface had no rows.
+    if (callerUserId) {
+      const servePoint =
+        cacheLevel === "L1"       ? DiscoveryServePoint.CACHE_A_L1 :
+        cacheLevel === "L2_fresh" ? DiscoveryServePoint.CACHE_A_L2_FRESH :
+                                    DiscoveryServePoint.CACHE_A_L2_STALE;
+      void logDiscoveryServe(getServiceClient(), {
+        userId: callerUserId, servePoint, items: slice,
+        context: { destination: destination!, category, cacheLevel },
+      });
+    }
   }
 
   // ── L1: in-process memory (fastest — zero network) ─────────────────────────
@@ -1227,6 +1241,12 @@ router.get("/discovery", async (req, res) => {
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
               res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
                 sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+              // Stage 0 — serve point 4. Replays a stored Compass order; no
+              // ranker ran in this request, so rankedInRequest is false.
+              void logDiscoveryServe(compassSc, {
+                userId: callerUserId, servePoint: DiscoveryServePoint.CACHE_B_HIT, items: cSlice,
+                context: { destination, category, cacheLevel: "compass_candidate_hit" },
+              });
               return;
             }
 
@@ -1269,6 +1289,13 @@ router.get("/discovery", async (req, res) => {
             const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
             res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
               sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
+            // Stage 0 — serve point 5. The Compass ranker DID run here, but
+            // this path has never written a rank_events row: it returns before
+            // the logImpression call on the cold path below.
+            void logDiscoveryServe(compassSc, {
+              userId: callerUserId, servePoint: DiscoveryServePoint.COMPASS_FRESH_RANK, items: cSlice,
+              context: { destination, category, cacheLevel: "compass_fresh_rank" },
+            });
             return;
           }
         } catch { /* fall through to normal rule-based path */ }
@@ -1430,7 +1457,19 @@ router.get("/discovery", async (req, res) => {
       const servedScored = slice
         .map((p) => scoredByPlaceId.get(p.id))
         .filter((s): s is ScoredCandidate<RankCandidate> => s !== undefined);
-      void logImpression(servedScored, callerUserId, "discovery");
+      // Stage 0 — serve point 6. This is the ONLY serve point that already
+      // wrote a rank_events row; it keeps doing so through logImpression (which
+      // carries the real ranking features) and gains only the serve-point
+      // marker. It deliberately does NOT also call logDiscoveryServe — that
+      // would write a second impression row for every served item.
+      void logImpression(servedScored, callerUserId, "discovery", undefined, {
+        servePoint:      DiscoveryServePoint.COLD_FETCH_LEGACY_RANK,
+        route:           "GET /discovery",
+        rankedInRequest: true,
+        destination,
+        category,
+        cacheLevel:      "miss",
+      });
     }
     const totalMs = Date.now() - t0;
     req.log.info(

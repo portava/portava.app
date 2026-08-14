@@ -237,6 +237,90 @@ correct. That is the trade the first option avoids.
 
 ---
 
+## Resolution — 2026-08-14, P1 Stage 0
+
+This document's core finding is independently confirmed by the P1 Phase −1
+repository proof (`docs/discovery/phase-minus-1-repository-proof.md`), which
+reached the same structure from a different starting point: cache A gates cache
+B, both return before `logImpression`, and the ranker therefore runs at most
+once per (city, category, radius) per 2 h with its output reaching exactly one
+user. **The A-versus-B question this document left open is answered:** cache A
+gates cache B, so cache A necessarily dominates — cache B's 10-minute TTL sits
+behind cache A's 2-hour TTL and can only be reached past it. This is the
+"ranking bypass" row of the table above, not the telemetry-gap row.
+
+### The `rank_events` invariant is amended, deliberately
+
+The invariant stated at the top of this document — *rows must not be created for
+cached or unranked objects* — and the **"Do not"** verdict in the corrected
+options table are **superseded by operator ruling D8=A** (2026-08-14, recorded
+in the DISCOVERY_ENGINE_MODE design packet). Stage 0 writes an impression row at
+every serve point, including the unranked ones.
+
+**The objection is answered rather than overridden.** The stated harm was
+precise: *"Rows with empty `features` are indistinguishable at query time from
+ranked rows whose features were genuinely empty."* That is true of a
+feature-less row, and it is exactly why Stage 0 does not write one. Every row
+`lib/discoveryServeLog.ts` writes carries two markers:
+
+```
+features.servePoint       1..6   which of the six paths answered
+features.rankedInRequest  bool   whether a ranker ran during THIS request
+```
+
+and the pre-existing cold path at `routes/discovery.ts:1433` now carries the
+same two keys (`servePoint: 6, rankedInRequest: true`) alongside its real
+feature vector. So the mixture is separable by a `WHERE` clause, and the gap
+does not stop being visible — it becomes **measurable for the first time**,
+which is the whole purpose of Stage 0.
+
+The amended invariant, stated positively:
+
+> A `rank_events` impression row means **this item was served to this user at
+> this position**. Whether a ranker produced that order is recorded in
+> `features.rankedInRequest`, and which path served it in `features.servePoint`.
+> A row with neither key predates 2026-08-14 and carries no such guarantee.
+
+Note `rankedInRequest` is deliberately **false for serve point 4** (the cache-B
+replay): the order came from a ranker, but not from this request. The Phase −1
+proof corrected the count of unranked serve points from three to four on exactly
+this distinction.
+
+### Blast radius — verified, not assumed
+
+Every read of `rank_events` in the tree was checked against the new rows:
+
+| Reader | Filter | Sees Stage 0 rows? |
+|---|---|---|
+| `compass/CompassGraphEngine.ts:577` | `.neq("outcome","impression")` | **No** — excluded by construction |
+| `routes/mediaFeed.ts:1156`, `:1256` | `.eq("surface","watch_feed")` | **No** |
+| `services/ranking/MediaFeedRankingService.ts:936` | `.in("event_type",[watch_*])` | **No** — Stage 0 rows set no `event_type` |
+| Place-affinity boost (`lib/portavaRank.ts:95`, `compass/CompassScoringEngine.ts:518`) | `event_type='place_view'` | **No** — same reason |
+| `routes/rankEvents.ts:132` (outcome finder) | `surface` + `outcome='impression'` | **Yes — intended.** This is what makes engagement measurable on cache-served traffic |
+| `routes/adminRankingMetrics.ts:162`, `:309` | `served_at >= cutoff` only | **Yes — the accepted discontinuity** |
+
+**There is no ranking feedback loop.** No boost, cap, allocator or affinity
+signal reads impression rows, so Stage 0 cannot change what any ranker produces.
+The cost is exactly the one D8 weighed: the admin metrics series, plus intended
+outcome attachment. `DiscoveryRankingService:581`, `CreatorCapEnforcer:63` and
+`FeedSlotAllocator:72` are **inserts**, not reads.
+
+### Cutover date — for anyone reading `adminRankingMetrics`
+
+**2026-08-14** is the boundary. `surface='discovery'` holds **zero** rows before
+it (this document's own diagnostic: pulse 179 775 / compass 12 556 / events
+5 200 / discovery absent). Any discovery series that spans this date is
+comparing an empty set to a populated one. Impression counts, position
+distributions and per-user counts on that surface are **not comparable across
+it**, and no back-fill is possible.
+
+Stage 0 lands **inert**: every write is gated on `discovery_serve_log_enabled`,
+read through the fail-closed `isFlagEnabled`, and the flag row is deliberately
+not seeded by that change. The real cutover is the day the flag is turned on,
+which is a separate deliberate step.
+
+---
+
 ## Not verified here
 
 - **The A/B split.** Needs the production log counts above. Everything in this

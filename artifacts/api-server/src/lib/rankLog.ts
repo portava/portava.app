@@ -82,12 +82,18 @@ function stripCoordinateKeys(features: Record<string, number>): Record<string, n
  * @param userId    Authenticated viewer.
  * @param surface   "pulse" | "discovery" | "events"
  * @param sessionId Optional session UUID for grouping a single open.
+ * @param extraFeatures
+ *   Merged into each row's `features` alongside the ranking features. Added for
+ *   Stage 0 discovery instrumentation, which records which serve point answered
+ *   the request. Callers that log through lib/discoveryServeLog.ts must NOT also
+ *   call this function for the same serve — one impression row per served item.
  */
 export async function logImpression(
   scored: ScoredCandidate<RankCandidate>[],
   userId: string,
   surface: "pulse" | "discovery" | "events",
   sessionId?: string,
+  extraFeatures?: Record<string, string | number | boolean>,
 ): Promise<void> {
   try {
     const sc = getServiceClient();
@@ -113,7 +119,7 @@ export async function logImpression(
         item_id:    s.candidate.id,
         item_kind:  itemKind,
         position:   idx,
-        features:   stripCoordinateKeys(s.features),
+        features:   { ...stripCoordinateKeys(s.features), ...(extraFeatures ?? {}) },
         outcome:    "impression",
         served_at:  servedAt,
         surface,
