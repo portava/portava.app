@@ -580,6 +580,11 @@
     <p>Every observation row records the resolved mode <em>and</em> the serve-point id (1–6) that answered.</p>
     <p>Without the serve-point id the data reproduces today's blindness: a row saying only "legacy served this" cannot distinguish a ranked cold fetch from an unranked cache hit, which is the entire distinction under study.</p>
   </div></div>
+  <div class="mech"><span class="k">M7</span><div>
+    <p>The unreachable <code>scoreWithContext</code> else-branch at <code>routes/discovery.ts:1423</code> <strong>stays in the code, untouched</strong>, and is recorded here instead.</p>
+    <p>It is a pure dead branch: <code>discoveryCtx</code> is assigned only at <code>:942</code>, inside the same <code>if (authData?.user)</code> block that assigns <code>callerUserId</code> at <code>:925</code>. So <code>discoveryCtx</code> non-null implies <code>callerUserId</code> non-null, and inside the <code>else</code> of <code>if (callerUserId)</code> the ternary can only ever take <code>: places</code>. Removing it would nonetheless orphan the whole <code>scoreWithContext</code> function — <code>:1423</code> is its only call site — and the resulting diff would read as <em>"removed context scoring from discovery"</em>, which is exactly the ranking change it is not. It is left alone on that ground alone, not because the analysis is uncertain.</p>
+    <p>Consequence to carry into the rollout: the <strong>unauthenticated cold-fetch serve is entirely unranked</strong>, so the legacy path has no anonymous ranking behaviour for PDE to preserve or be compared against. Whoever implements PDE should decide deliberately whether anonymous traffic is in scope rather than inheriting this by accident.</p>
+  </div></div>
 </section>
 
 <hr class="div">

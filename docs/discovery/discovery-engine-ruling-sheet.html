@@ -1,0 +1,372 @@
+<title>Discovery Engine Rulings</title>
+<style>
+  :root {
+    --ground:  #F7F6F3;
+    --surface: #FFFFFF;
+    --sunk:    #F0EEE9;
+    --ink:     #191712;
+    --muted:   #635E54;
+    --faint:   #918B7E;
+    --line:    #E0DCD3;
+    --rule:    #C9C3B6;
+    --rule-c:  #8A5A0B;
+    --rule-soft: #F6EEDF;
+    --signal:  #1F5F8B;
+    --signal-soft: #E8EFF5;
+    --risk:    #9C3226;
+    --risk-soft: #F8EBE8;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #14130F;
+      --surface: #1C1A16;
+      --sunk:    #232019;
+      --ink:     #EDE9E1;
+      --muted:   #ABA496;
+      --faint:   #7E7768;
+      --line:    #302C24;
+      --rule:    #423C31;
+      --rule-c:  #D9A047;
+      --rule-soft: #2A2317;
+      --signal:  #7FB3D5;
+      --signal-soft: #1A2530;
+      --risk:    #E08A80;
+      --risk-soft: #2E1D1A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:  #14130F;
+    --surface: #1C1A16;
+    --sunk:    #232019;
+    --ink:     #EDE9E1;
+    --muted:   #ABA496;
+    --faint:   #7E7768;
+    --line:    #302C24;
+    --rule:    #423C31;
+    --rule-c:  #D9A047;
+    --rule-soft: #2A2317;
+    --signal:  #7FB3D5;
+    --signal-soft: #1A2530;
+    --risk:    #E08A80;
+    --risk-soft: #2E1D1A;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15.5px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 20px 110px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+
+  header.mast { padding: 64px 0 24px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--rule-c); margin: 0 0 16px;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 600;
+    font-size: clamp(2rem, 5vw, 2.85rem); line-height: 1.1;
+    letter-spacing: -.015em; margin: 0 0 16px; text-wrap: balance;
+  }
+  .standfirst {
+    font-family: var(--serif); font-size: 1.12rem; line-height: 1.55;
+    color: var(--muted); margin: 0 0 22px; max-width: 60ch;
+  }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 5px 24px;
+    font-family: var(--mono); font-size: 11px; color: var(--faint);
+    border-top: 1px solid var(--line); padding-top: 14px;
+  }
+  .meta b { color: var(--muted); font-weight: 500; }
+
+  h2.band {
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    letter-spacing: .15em; text-transform: uppercase; color: var(--faint);
+    margin: 54px 0 16px; padding-bottom: 9px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  p { margin: 0 0 13px; }
+  ul { margin: 0 0 13px; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+  code {
+    font-family: var(--mono); font-size: .85em; background: var(--sunk);
+    border: 1px solid var(--line); border-radius: 3px; padding: .08em .32em;
+    white-space: nowrap;
+  }
+  strong { font-weight: 650; }
+
+  /* ── Shaping facts ─────────────────────────────────── */
+  .shape {
+    background: var(--surface); border: 1px solid var(--rule);
+    border-left: 3px solid var(--signal);
+    border-radius: 0 7px 7px 0; padding: 22px 24px; margin: 0 0 14px;
+  }
+  .shape .lbl {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .13em;
+    text-transform: uppercase; color: var(--signal); display: block; margin-bottom: 9px;
+  }
+  .shape h3 {
+    font-family: var(--serif); font-size: 1.3rem; font-weight: 600;
+    margin: 0 0 11px; line-height: 1.25; text-wrap: balance;
+  }
+  .shape > :last-child { margin-bottom: 0; }
+
+  /* ── Proof timeline ────────────────────────────────── */
+  .proves { margin: 22px 0 0; }
+  .prow {
+    display: grid; grid-template-columns: 92px 1fr; gap: 0 18px;
+    padding: 12px 0; border-top: 1px solid var(--line); align-items: baseline;
+  }
+  .prow:last-child { border-bottom: 1px solid var(--line); }
+  .prow .st {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--signal); font-weight: 500;
+  }
+  .prow p { margin: 0; font-size: 14.5px; }
+  .prow b { font-weight: 650; }
+
+  /* ── Decision cards ────────────────────────────────── */
+  .d {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 8px; padding: 24px 26px; margin: 0 0 18px;
+  }
+  .dhead { display: flex; align-items: baseline; gap: 14px; margin-bottom: 13px; }
+  .dnum {
+    font-family: var(--mono); font-size: 1.5rem; font-weight: 600;
+    color: var(--rule-c); line-height: 1; letter-spacing: -.02em;
+  }
+  .dhead h3 {
+    font-family: var(--serif); font-size: 1.24rem; font-weight: 600;
+    margin: 0; line-height: 1.25; text-wrap: balance; flex: 1;
+  }
+  .q {
+    font-size: 15px; color: var(--ink); margin: 0 0 15px;
+    padding-left: 15px; border-left: 2px solid var(--rule-c);
+  }
+  h4 {
+    font-family: var(--mono); font-size: 10px; font-weight: 500;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--faint);
+    margin: 0 0 8px;
+  }
+  .opts { list-style: none; padding: 0; margin: 0 0 17px; }
+  .opts li {
+    padding: 8px 0 8px 27px; position: relative;
+    border-top: 1px solid var(--line); font-size: 14.5px; line-height: 1.5;
+  }
+  .opts li:first-child { border-top: none; padding-top: 2px; }
+  .opts .k {
+    position: absolute; left: 0; top: 8px;
+    font-family: var(--mono); font-size: 12px; font-weight: 650; color: var(--muted);
+  }
+  .opts li:first-child .k { top: 2px; }
+  .opts li.pick { }
+  .opts li.pick .k { color: var(--rule-c); }
+
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 640px) { .pair { grid-template-columns: 1fr; } }
+  .box { border-radius: 6px; padding: 14px 16px; font-size: 14.3px; line-height: 1.52; }
+  .box p { margin: 0; }
+  .box .lbl {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .13em;
+    text-transform: uppercase; display: block; margin-bottom: 6px; font-weight: 500;
+  }
+  .box.rec { background: var(--rule-soft); }
+  .box.rec .lbl { color: var(--rule-c); }
+  .box.rec .pickline {
+    font-family: var(--sans); font-weight: 650; font-size: 15px;
+    display: block; margin-bottom: 5px;
+  }
+  .box.cost { background: var(--risk-soft); }
+  .box.cost .lbl { color: var(--risk); }
+
+  footer {
+    margin-top: 54px; border-top: 1px solid var(--rule); padding-top: 18px;
+    font-family: var(--mono); font-size: 11px; color: var(--faint); line-height: 1.75;
+  }
+  a { color: var(--signal); text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 2px; }
+  @media (max-width: 620px) {
+    header.mast { padding-top: 40px; }
+    .prow { grid-template-columns: 1fr; gap: 3px; }
+  }
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">Portava · P1 Discovery · For the owner</p>
+  <h1>Discovery Engine Rulings</h1>
+  <p class="standfirst">Eight decisions on <code>DISCOVERY_ENGINE_MODE</code>. Each one: the question, the options, a recommendation with its reasoning, and what a wrong ruling costs. Nothing is implemented until these are ruled.</p>
+  <div class="meta">
+    <span><b>Companion to</b> the design packet</span>
+    <span><b>Verified at</b> HEAD 93523f4fb</span>
+    <span><b>Status</b> awaiting ruling</span>
+  </div>
+</header>
+
+<h2 class="band">Read first — what the rollout can and cannot prove</h2>
+
+<div class="shape">
+  <span class="lbl">Shaping fact 1</span>
+  <h3>Shadow mode cannot tell you whether users like the new engine better</h3>
+  <p>Users never see the PDE order in shadow mode, so no tap, save or dwell can ever be attributed to it. Shadow answers two questions honestly — <strong>would the new engine have served something different, and how different</strong>, and <strong>what does it cost in latency and CPU</strong>. It cannot answer <em>would users have engaged more</em>.</p>
+  <p>That question is only answerable at <strong>Stage 4</strong>, when real traffic actually receives PDE output. This is a property of shadow deployment generally, not a flaw in this design — but it means any plan promising an engagement verdict from shadow is promising something the mechanism cannot deliver.</p>
+</div>
+
+<div class="shape">
+  <span class="lbl">Shaping fact 2</span>
+  <h3>There is no baseline today, so instrumentation has to come before the flag</h3>
+  <p>Five of the six serve points in <code>GET /discovery</code> write nothing at all. The only <code>rank_events</code> data that exists describes authenticated cold fetches that did not take the Compass branch — the narrowest and least representative slice of what users receive.</p>
+  <p>So <strong>Stage 0 is instrumentation, before the flag exists</strong>. It is also where the first genuinely new number arrives: what fraction of discovery traffic reaches a ranker at all. If that fraction is far higher than the two-hour cache TTL implies, <strong>D5 gets cheaper and this packet's central argument weakens</strong> — which is precisely why measuring comes first.</p>
+</div>
+
+<div class="proves">
+  <div class="prow"><span class="st">Stage 0</span><p>Proves <b>reach</b> — how much traffic reaches a ranker, per serve point. No flag yet.</p></div>
+  <div class="prow"><span class="st">Stage 1</span><p>Proves the flag is a <b>genuine no-op</b> at <code>legacy</code>.</p></div>
+  <div class="prow"><span class="st">Stages 2–3</span><p>Prove <b>divergence and cost</b> — how differently PDE would order, and what it costs.</p></div>
+  <div class="prow"><span class="st">Stage 4</span><p>Proves <b>engagement</b>. The first stage that can, and not before.</p></div>
+</div>
+
+<h2 class="band">The eight rulings</h2>
+
+<div class="d">
+  <div class="dhead"><span class="dnum">D1</span><h3>Naming and loader</h3></div>
+  <p class="q">Should the mode carry a <code>COMPASS_</code> prefix so the existing Compass flag loader can see it, or keep the name <code>DISCOVERY_ENGINE_MODE</code> and be read through the general flag helper instead?</p>
+  <h4>Options</h4>
+  <ul class="opts">
+    <li><span class="k">A</span><code>COMPASS_DISCOVERY_ENGINE_MODE</code>, read by <code>compass/flags.ts</code>. Inherits a 30-second cache. Boolean only.</li>
+    <li class="pick"><span class="k">B</span><code>DISCOVERY_ENGINE_MODE</code>, read by <code>lib/featureFlags.ts</code>. Exact-match query, no prefix constraint, and the only helper at HEAD that reads the <code>metadata</code> column.</li>
+  </ul>
+  <div class="pair">
+    <div class="box rec"><span class="lbl">Recommend</span><span class="pickline">B</span><p>The mode is three-valued and <code>metadata</code> is the only place a third value can live, which option A forecloses. Naming a discovery-wide execution switch <code>COMPASS_</code> would also misdescribe it, since two of its three modes govern requests Compass never touches.</p></div>
+    <div class="box cost"><span class="lbl">If ruled the other way</span><p>A forces D2 onto its weaker options and hands the flag to a loader that returns <code>false</code> for every Compass flag on any database error. The prefix trap stays one well-meant rename away from silently disabling the switch with no error and no log line.</p></div>
+  </div>
+</div>
+
+<div class="d">
+  <div class="dhead"><span class="dnum">D2</span><h3>How three values ride a boolean column</h3></div>
+  <p class="q">Given that <code>feature_flags.enabled</code> is a boolean, how should a three-valued mode be represented?</p>
+  <h4>Options</h4>
+  <ul class="opts">
+    <li class="pick"><span class="k">A</span>One row: <code>enabled</code> as master on/off, <code>metadata.mode ∈ {legacy, shadow, pde}</code>.</li>
+    <li><span class="k">B</span>Two boolean rows with a precedence rule between them.</li>
+    <li><span class="k">C</span>A dedicated column on <code>feature_flags</code>.</li>
+  </ul>
+  <div class="pair">
+    <div class="box rec"><span class="lbl">Recommend</span><span class="pickline">A</span><p>It uses only what already exists in the schema and cannot express a contradictory state. The honest cost is that <code>metadata</code> is untyped JSON, so the parse needs a defined fallback — which is exactly what D3 settles.</p></div>
+    <div class="box cost"><span class="lbl">If ruled the other way</span><p>B can hold "shadow and pde both on" and someone has to remember the precedence rule during an incident. C means a migration on a table shared by 168 live flags to serve one consumer.</p></div>
+  </div>
+</div>
+
+<div class="d">
+  <div class="dhead"><span class="dnum">D3</span><h3>Failure polarity and the emergency stop</h3></div>
+  <p class="q">What should a missing row, unparseable metadata, an unknown mode string, or a database error resolve to — and should PDE get its own kill switch?</p>
+  <h4>Options</h4>
+  <ul class="opts">
+    <li><span class="k">A</span>All four cases resolve to <code>legacy</code>. One rule, no second flag read.</li>
+    <li class="pick"><span class="k">B</span>A, plus a separate <code>disable_discovery_pde</code> stop read through <code>isKillSwitchEngaged</code>, whose polarity engages on an unreadable state.</li>
+  </ul>
+  <div class="pair">
+    <div class="box rec"><span class="lbl">Recommend</span><span class="pickline">B</span><p>A is correct for the mode itself but leaves PDE with no stop that survives the database being unhealthy. B costs one extra read on the PDE path only, and reuses a helper whose inverted polarity is already reasoned about and documented in the tree.</p></div>
+    <div class="box cost"><span class="lbl">If ruled the other way</span><p>Under A alone, the moment you most want to halt PDE — something is wrong, the database is struggling — is the moment the flag read is least trustworthy, and the fallback quietly keeps PDE running rather than stopping it.</p></div>
+  </div>
+</div>
+
+<div class="d">
+  <div class="dhead"><span class="dnum">D4</span><h3>Scope of the flag versus scope of the baseline</h3></div>
+  <p class="q">Should the flag govern only <code>GET /discovery</code>, and should the Stage 0 baseline cover more ground than the flag does?</p>
+  <h4>Options</h4>
+  <ul class="opts">
+    <li class="pick"><span class="k">A</span>Flag on <code>GET /discovery</code> only — the six serve points where ranking exists to be replaced.</li>
+    <li><span class="k">B</span>Also <code>/discovery/feed</code>, which serves places with no ranking and no caching at all.</li>
+    <li><span class="k">C</span>All ten serve points across all five routes.</li>
+  </ul>
+  <div class="pair">
+    <div class="box rec"><span class="lbl">Recommend</span><span class="pickline">A for the flag, C for the baseline</span><p>Search and suggest have no ranker to switch, so putting them under the flag buys nothing. But the baseline must cover everything users receive, or the comparison is once again computed on a subset.</p></div>
+    <div class="box cost"><span class="lbl">If ruled the other way</span><p>Narrowing the baseline to match the flag reproduces the exact error the owner directive names — measuring on traffic that is not representative of what users get. Widening the flag to search and suggest takes on two routes with nothing to switch.</p></div>
+  </div>
+</div>
+
+<div class="d">
+  <div class="dhead"><span class="dnum">D5</span><h3>What PDE caches — the consequential one</h3></div>
+  <p class="q">Should the new engine cache post-ranking per user, cache the candidate set user-independently and rank on every request, or keep today's cache structure?</p>
+  <h4>Options</h4>
+  <ul class="opts">
+    <li><span class="k">A</span>Cache post-ranking, per user. Correct personalisation; the user-independent cache disappears.</li>
+    <li class="pick"><span class="k">B</span>Cache candidates user-independently, rank every request. External call volume unchanged; ranking CPU moves to every request.</li>
+    <li><span class="k">C</span>Keep today's structure.</li>
+  </ul>
+  <div class="pair">
+    <div class="box rec"><span class="lbl">Recommend</span><span class="pickline">B</span><p>It separates the two things today's design conflates: candidate retrieval, which is expensive, external, rate-limited and genuinely user-independent, and ranking, which is cheap, internal and inherently per-user. Cache A currently serves both, which is the precise mechanism by which personalisation reaches one user in N.</p></div>
+    <div class="box cost"><span class="lbl">If ruled the other way</span><p>A collapses the cache hit rate on a rate-limited external dependency and can leave discovery slower and more fragile than it is today. C reproduces the defect exactly — P1 would ship a new ranker with the same reach as the old one, and the whole exercise returns nothing.</p></div>
+  </div>
+</div>
+
+<div class="d">
+  <div class="dhead"><span class="dnum">D6</span><h3>How much traffic shadow runs on</h3></div>
+  <p class="q">Should shadow mode run on internal accounts, on a fixed sample of real traffic, or on everything?</p>
+  <h4>Options</h4>
+  <ul class="opts">
+    <li class="pick"><span class="k">A</span>Internal accounts only.</li>
+    <li class="pick"><span class="k">B</span>A fixed small percentage, hashed on user id so a user's experience is stable.</li>
+    <li><span class="k">C</span>All traffic.</li>
+  </ul>
+  <div class="pair">
+    <div class="box rec"><span class="lbl">Recommend</span><span class="pickline">A, then B</span><p>A proves the harness end to end at essentially no risk or cost; B is what actually produces the divergence measurement across real cities and real cache states. Shadow doubles ranking work on every request it covers, so the ceiling is worth setting deliberately rather than by default.</p></div>
+    <div class="box cost"><span class="lbl">If ruled the other way</span><p>C pays the full doubled cost before anyone has confirmed the harness works. Stopping at A leaves a sample too small to characterise divergence across cities and cache states, so Stage 4 would launch on a signal that does not generalise.</p></div>
+  </div>
+</div>
+
+<div class="d">
+  <div class="dhead"><span class="dnum">D7</span><h3>Where shadow observations are written</h3></div>
+  <p class="q">Should shadow rows go to a new table, or into <code>rank_events</code> under a new <code>surface</code> value?</p>
+  <h4>Options</h4>
+  <ul class="opts">
+    <li class="pick"><span class="k">A</span>A new append-only table, <code>discovery_shadow_serves</code>, joined to outcomes offline.</li>
+    <li><span class="k">B</span><code>rank_events</code> with a new <code>surface</code> value, widening a CHECK constraint.</li>
+  </ul>
+  <div class="pair">
+    <div class="box rec"><span class="lbl">Recommend</span><span class="pickline">A</span><p><code>rank_events</code> is mutable state, not a log: an outcome UPDATEs the impression row in place, and the outcome route takes <code>surface</code> from <strong>client input</strong>. A new table is append-only by construction and lets the 90-day retention policy cover it explicitly from day one.</p></div>
+    <div class="box cost"><span class="lbl">If ruled the other way</span><p>Under B a shadow impression can absorb a real user outcome, permanently, and afterwards there is no way to distinguish a contaminated row from a clean one. That corrupts the same funnel the comparison depends on.</p></div>
+  </div>
+</div>
+
+<div class="d">
+  <div class="dhead"><span class="dnum">D8</span><h3>Whether the baseline breaks the metrics series</h3></div>
+  <p class="q">Should Stage 0 write real <code>rank_events</code> impressions for cache-served traffic, accepting that the existing admin metrics series becomes incomparable across the cutover?</p>
+  <h4>Options</h4>
+  <ul class="opts">
+    <li class="pick"><span class="k">A</span>Real impression rows on every serve point. Outcomes attach normally. Insert volume rises by roughly the cache-hit multiplier.</li>
+    <li><span class="k">B</span>Write the baseline to the D7 table instead. History stays intact; outcomes do not attach.</li>
+  </ul>
+  <div class="pair">
+    <div class="box rec"><span class="lbl">Recommend</span><span class="pickline">A, with the discontinuity announced in advance</span><p>B preserves a metric series whose defining property is that it describes one unrepresentative serve point. The break is a one-time, dated cost; the blindness B preserves is permanent.</p></div>
+    <div class="box cost"><span class="lbl">If ruled the other way</span><p>Under B, no outcome can ever attach to cache-served traffic, so the engagement question stays unanswerable for the great majority of serves — including every serve point where PDE is expected to make the most difference.</p></div>
+  </div>
+</div>
+
+<h2 class="band">One thing that would change these recommendations</h2>
+<div class="shape">
+  <span class="lbl">The measurement that could overturn D5</span>
+  <h3>If Cache A's real hit rate is far lower than its TTL implies</h3>
+  <p>Heavy invalidation, frequent restarts, or many empty-Overpass keys would all mean more traffic reaches a ranker than the analysis concludes. In that case the "one user per city per two hours" figure is too pessimistic, D5 becomes materially cheaper, and option C stops being indefensible.</p>
+  <p><strong>Stage 0 measures this directly</strong>, which is why it is sequenced before the flag rather than after it. No ruling here is irreversible on the strength of an unmeasured assumption.</p>
+</div>
+
+<footer>
+  Companion to the DISCOVERY_ENGINE_MODE design packet · Phase −1 proof: docs/discovery/phase-minus-1-repository-proof.md<br>
+  Verified at HEAD 93523f4fb · branch bughunt-20260805<br>
+  No implementation, and no Stage 0, until these eight are ruled.
+</footer>
+
+</div>
