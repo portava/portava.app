@@ -171,6 +171,62 @@ async function main(): Promise<void> {
   console.log(`    of which cache B (4)    ${String(cacheBRows).padStart(9)}  ${pct(cacheBRows, marked)}`);
   console.log("");
 
+  // ── 2b. Stage 1 exit criterion ─────────────────────────────────────────────
+  //
+  // Stage 1 put the DISCOVERY_ENGINE_MODE dispatch above the cache fork and
+  // claimed it is a no-op. That claim is checkable in the same window rather
+  // than needing one of its own: every row should carry engineMode 'legacy'.
+  //
+  // `modeReason` matters as much as `engineMode`. "legacy because the flag says
+  // legacy" and "legacy because the flag was unreadable" are different facts,
+  // and a dispatch that silently fell back for a week would otherwise look
+  // exactly like one that resolved correctly.
+  const byMode   = new Map<string, number>();
+  const byReason = new Map<string, number>();
+  for (const r of rows) {
+    const sp = Number(r?.features?.servePoint);
+    if (!Number.isFinite(sp) || sp < 1 || sp > 6) continue;
+    const m  = String(r?.features?.engineMode ?? "(unrecorded)");
+    const rs = String(r?.features?.modeReason ?? "(unrecorded)");
+    byMode.set(m, (byMode.get(m) ?? 0) + 1);
+    byReason.set(rs, (byReason.get(rs) ?? 0) + 1);
+  }
+
+  console.log("── 2b. engine mode (Stage 1 exit criterion) ──");
+  for (const [m, n] of [...byMode.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${m.padEnd(14)} ${String(n).padStart(9)}  ${pct(n, marked)}`);
+  }
+  console.log("  reasons:");
+  for (const [rs, n] of [...byReason.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`    ${rs.padEnd(20)} ${String(n).padStart(9)}  ${pct(n, marked)}`);
+  }
+
+  const nonLegacy   = marked - (byMode.get("legacy") ?? 0);
+  const unrecorded  = byMode.get("(unrecorded)") ?? 0;
+  const fellBack    = (byReason.get("flag_unreadable") ?? 0)
+                    + (byReason.get("no_client") ?? 0)
+                    + (byReason.get("mode_invalid") ?? 0)
+                    + (byReason.get("kill_switch_engaged") ?? 0);
+
+  if (unrecorded === marked && marked > 0) {
+    console.log("\n  Stage 1 NOT YET OBSERVED — no row carries engineMode.");
+    console.log("  These rows predate the Stage 1 dispatch. Not a failure.");
+  } else if (nonLegacy > 0) {
+    console.log(`\n  ⚠ ${nonLegacy} row(s) were served under a NON-LEGACY mode.`);
+    console.log("  Stage 1's exit criterion is that every request resolves to legacy.");
+    console.log("  If a later stage has advanced the mode deliberately, this is expected;");
+    console.log("  if not, the dispatch is live earlier than intended.");
+  } else {
+    console.log("\n  Stage 1 exit criterion HOLDS: every marked serve resolved to legacy.");
+  }
+  if (fellBack > 0) {
+    console.log(`\n  ⚠ ${fellBack} resolution(s) reached legacy by FALLBACK, not by configuration`);
+    console.log("    (flag_unreadable / no_client / mode_invalid / kill_switch_engaged).");
+    console.log("    Behaviour was correct, but something is wrong with the flag path and");
+    console.log("    would stay invisible without this line.");
+  }
+  console.log("");
+
   // ── 3. D5 revisit clause ───────────────────────────────────────────────────
   //
   // The packet's argument is that cache A's 2h TTL makes ranked serves RARE.
