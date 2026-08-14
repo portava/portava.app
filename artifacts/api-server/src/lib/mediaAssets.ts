@@ -60,7 +60,14 @@ export async function recordMediaAsset(
           thumbnail_path: input.thumbnailPath ?? null,
           thumbnail_url: input.thumbnailUrl ?? null,
           source_type: input.sourceType ?? "user",
-          processing_status: input.processingStatus ?? "ready",
+          // Default to 'processing' (not 'ready') when dimensions are absent —
+          // a video upload has null width/height at upload time, and the DB
+          // constraint (2089) rejects ready rows with null dimensions. Callers
+          // that have already resolved dimensions can pass processingStatus
+          // explicitly to override.
+          processing_status:
+            input.processingStatus ??
+            (input.width != null && input.height != null ? "ready" : "processing"),
         },
         { onConflict: "storage_bucket,storage_path" },
       )
