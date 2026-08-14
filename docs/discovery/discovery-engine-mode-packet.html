@@ -481,6 +481,25 @@
     <p style="margin-bottom:0"><strong>D5 revisit clause, binding:</strong> if Stage 0's measured Cache&nbsp;A hit rate materially contradicts the TTL-implied rate, <strong>D5 implementation pauses</strong> and the numbers go to the owner before proceeding.</p>
   </div>
 
+  <div class="callout warn">
+    <h4>Where this stands — Stages 0 and 1 are LIVE, the sequence is parked at D5</h4>
+    <p><strong>Stage 0 (instrumentation) and Stage 1 (the dispatch) are merged and live in production.</strong> Nine PRs, #38 through #46, each merged on a full green verdict set; <code>bughunt-20260805</code> is green on the merge commit across CI, CI (live DB) and Unwired checks. No P1 PR is open.</p>
+    <p>Everything remaining on the sequence — Stage 2 shadow, Stage 3 sample scale, Stage 4 pde — requires the PDE engine, and the PDE engine <em>is</em> D5=B. <strong>D5 is gated on its own revisit clause, which is armed and unsatisfied.</strong> Building the engine now would mean building it on the assumption the clause exists to test.</p>
+    <h4 style="margin-top:22px">The documented next action</h4>
+    <p style="margin-bottom:10px">Run, no earlier than <strong>2026-08-15T23:05Z</strong> — a full day after the clock start, chosen because Cache A's TTL is 2 hours and a window shorter than several turnovers measures noise — or earlier only on the owner's explicit word:</p>
+    <div class="scroller" style="margin-bottom:14px">
+      <table>
+        <thead><tr><th>Command</th><th>Exit</th><th>Meaning</th><th>Next</th></tr></thead>
+        <tbody>
+          <tr><td rowspan="3"><code>pnpm run report:discovery-serve-points -- --days N</code></td><td class="n"><strong>0</strong></td><td>Ranked share is consistent with the packet's argument — cache A absorbs the traffic and personalisation rarely runs</td><td><strong>Proceed:</strong> D5=B stands, build the engine, resume at Stage 2</td></tr>
+          <tr><td class="n"><strong>3</strong></td><td>Ranked share <strong>exceeds one third</strong> — ranking is not as starved as argued</td><td><strong>PAUSE D5.</strong> Numbers go to the operator and the owner before any engine work</td></tr>
+          <tr><td class="n">0, "NOT ESTABLISHED"</td><td>Zero marked rows — the window predates instrumentation</td><td>No D5 conclusion may be drawn. Let a real window pass and re-run</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-bottom:0">The same run also verifies <strong>Stage 1's exit criterion</strong> — every serve should resolve to <code>legacy</code> — and separates "legacy by configuration" from "legacy by fallback" (<code>flag_unreadable</code>, <code>no_client</code>, <code>mode_invalid</code>, <code>kill_switch_engaged</code>). Those are behaviourally identical and diagnostically opposite, and a dispatch that had been silently falling back would otherwise look exactly like one resolving correctly.</p>
+  </div>
+
   <div class="callout">
     <h4>Operator actions of record</h4>
     <div class="scroller" style="margin-bottom:14px">
@@ -490,7 +509,9 @@
           <tr><td class="n">2026‑08‑14</td><td>PR #38 merged — the <code>2089</code> migration-prefix collision, which had <code>bughunt-20260805</code> red and made the three-green-verdicts gate unmeetable by any PR</td><td>Base green; every P1 PR since has merged on 32/32</td></tr>
           <tr><td class="n">2026‑08‑14</td><td>Migration <strong>2090</strong> applied to production — seeds <code>discovery_serve_log_enabled</code> false</td><td>Operator-confirmed</td></tr>
           <tr><td class="n">2026‑08‑14</td><td><code>discovery_serve_log_enabled</code> flipped <strong>true</strong>. Stage 0 instrumentation is live; the <code>surface='discovery'</code> series begins here</td><td>Verified by <code>RETURNING</code></td></tr>
-          <tr><td class="n"><strong>23:05:13Z</strong></td><td><strong>D5 measurement clock start</strong></td><td>Report runs after a representative window</td></tr>
+          <tr><td class="n"><strong>23:05:13Z</strong></td><td><strong>D5 measurement clock start</strong></td><td>Report runs after a representative window — not before 2026‑08‑15T23:05Z</td></tr>
+          <tr><td class="n">2026‑08‑14</td><td><strong>Stages 0 and 1 landed live.</strong> PRs #38–#46, all merged green; no P1 PR open</td><td><code>bughunt-20260805</code> green on the merge commit across all three workflows</td></tr>
+          <tr><td class="n">2026‑08‑14</td><td>Sequence <strong>parked at D5</strong> by the operator, stop ratified by the owner: the clause "exists to be tested by the measurement, not assumed past"</td><td>Owner is the only waiver; waiver declined</td></tr>
         </tbody>
       </table>
     </div>
