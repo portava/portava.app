@@ -66,6 +66,39 @@ file set**: a third file taking prefix `2059` fails the check like any other
 collision (proven, not assumed — see below). It excuses only the pair that was
 investigated.
 
+### `2089` — both files applied; documented, not renumbered
+
+Two agents worked `bughunt-20260805` concurrently on 2026-08-14 and both took
+prefix `2089` within hours of each other. Neither file could see the other until
+both had merged, so this was not a missed check — it was a genuine race that only
+becomes visible after the second merge.
+
+| File | Verified live 2026-08-14 | Applied by |
+|---|---|---|
+| `2089_revoke_post_media_public_read.sql` | **Applied.** `pg_policies` shows `post_media_storage_public_read` ABSENT on `storage.objects`, and `pnpm run audit:post-media-public-read` exits 3 (AFTER state) with anonymous GET 400 / LIST 0 and the signing control still 200. | Unit C, via the Management API |
+| `2089_media_assets_ready_requires_dimensions.sql` | **Applied.** `pg_constraint` shows `media_assets_ready_has_dimensions` on `public.media_assets` with `convalidated = false` — exactly what its `NOT VALID` clause produces, and distinguishable from a validated constraint that some other change might have added. | The other agent |
+
+**Both verified applied BEFORE documenting**, because the rule this repo prints
+is *"renumber the one that has NOT been applied"*, and documenting instead of
+renumbering is only correct when both have been. With no `schema_migrations`
+table, the filename is the only record that a migration ran; renaming an applied
+one would make that record wrong.
+
+The collision is harmless on replay: the two files touch entirely unrelated
+objects — an RLS policy on `storage.objects` versus a `CHECK` constraint on
+`public.media_assets` — and neither reads or depends on the other, so their
+relative order is immaterial.
+
+Prefix `2089` is recorded in `DOCUMENTED_COLLISIONS` in
+`src/scripts/checkMigrationPrefixes.ts`, which matches on the exact file set: a
+third file taking `2089` fails the check like any other collision.
+
+**The general lesson, since this is the second documented collision:** numeric
+prefixes allocated by two writers who cannot see each other's uncommitted work
+will collide, and no amount of care by either writer prevents it. The check
+catches it after the fact, which is the correct place to catch it — but a repo
+with concurrent agents should expect this class of entry to keep accumulating.
+
 ### The gate
 
 `check:migration-prefixes` was a registered script that **nothing ran** — it was
