@@ -687,6 +687,10 @@ const REQUIRED_CREDENTIAL_JOBS = [
   'api-server-check-all',
   'schema-drift',
   'live-db-security-suites',
+  // Added 2026-08-14 with the migration-2089 rehearsal. This job WRITES to the
+  // CI project — it creates a policy to establish the before-state and drops it
+  // again — so it is credential-bearing in the strongest sense on this list.
+  'post-media-revocation-rehearsal',
 ];
 
 // Names that ARE the Supabase credentials, or that select the database being

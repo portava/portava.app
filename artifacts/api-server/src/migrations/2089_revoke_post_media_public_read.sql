@@ -1,0 +1,118 @@
+-- 2089: revoke the unauthenticated read grant on the post-media bucket.
+--
+-- ── WHAT THIS CLOSES ────────────────────────────────────────────────────────
+--
+-- post_media_storage_public_read grants role `public` — which includes `anon` —
+-- SELECT on EVERY object in the durable `post-media` bucket, with no predicate
+-- beyond the bucket name:
+--
+--     FOR SELECT TO public USING (bucket_id = 'post-media')
+--
+-- It is declared by 0103_post_media.sql, whose comment describes these policies
+-- as "defence-in-depth for clients that attempt direct bucket access". That was
+-- true when the bucket was public and every read went through /object/public/
+-- anyway. It stopped being true on 2026-08-06, when
+-- 20260806_media_private_buckets.sql and set-media-buckets-private.ts set
+-- public=false on post-media and moved all rendering onto the signed-URL relay.
+--
+-- The cutover closed /object/public/. It did not drop this policy. The result
+-- is a bucket that is "private" only in the sense that ONE URL SHAPE 400s.
+--
+-- ── MEASURED, NOT ASSUMED ───────────────────────────────────────────────────
+--
+-- Against production ajrurzioarfkagpuxfnb on 2026-08-14, read-only, using only
+-- EXPO_PUBLIC_SUPABASE_ANON_KEY — the publishable key that ships inside the
+-- mobile client and is not a secret:
+--
+--   GET /storage/v1/object/public/post-media/<obj>   HTTP 400   (bucket private)
+--   GET /storage/v1/object/post-media/<obj>          HTTP 200   ← serves the bytes
+--   POST /storage/v1/object/list/post-media          HTTP 200   ← enumerates the
+--                                                    bucket, returning real user
+--                                                    UUID prefixes
+--
+-- So every one of the 35 objects in post-media is readable, and the bucket is
+-- listable, by anyone at all. Every authorization decision in lib/mediaAccess.ts
+-- — block checks, post visibility, show_header_publicly, the ownership
+-- shortcut — is bypassed entirely by not asking the API server in the first
+-- place.
+--
+-- This is the same shape as the memories/stories grant closed by
+-- 20260815_close_memories_stories_grant.sql: the caller was fixed and the door
+-- was left open. A read boundary enforced by "we stopped emitting that URL" is
+-- bypassed by a GRANT, not by a bug. No amount of relay hardening closes it;
+-- only dropping the policy does.
+--
+-- ── WHY THIS DOES NOT BREAK RENDERING ───────────────────────────────────────
+--
+-- Signed URLs are minted by the service role, which bypasses RLS, and the
+-- signed-URL fetch validates the token rather than consulting RLS. Dropping a
+-- SELECT policy therefore cannot affect the relay.
+--
+-- That is not a theory here, it is an observation. `profile-media` has ZERO
+-- storage.objects policies — not a restrictive one, none at all — and is
+-- already private. Its entire avatar and cover surface renders in production
+-- today, through the same signing path. Measured the same day:
+--
+--   GET /storage/v1/object/profile-media/<obj>  (anon)   HTTP 400   denied
+--   POST /object/list/profile-media             (anon)   []         empty
+--   signed URL for the same object, fetched with no credentials  HTTP 200, 85 KB
+--
+-- post-media is being moved to the state profile-media has been in all along.
+--
+-- ── THE RENDER PATHS THIS WAS CHECKED AGAINST ───────────────────────────────
+--
+-- Every surface that renders post-media or profile-media resolves through the
+-- signed-URL hydration layer before binding a URL to an <Image>:
+--
+--   server  GET  /api/media/file/:bucket/*path   302 → signed URL   (server proxy)
+--   server  POST /api/media/sign                 batch signed URLs  (signed hydration)
+--           both require an authenticated user (requireUser) and authorize via
+--           lib/mediaAccess.ts before signing.
+--   client  src/services/mediaUrl.ts             hydrateMediaUrls / useHydratedMedia
+--   client  src/components/CachedImage.tsx:114   calls useHydratedMedia internally,
+--           so every surface built on CachedImage is covered transitively.
+--
+-- One server path does construct a raw public URL: lib/mediaFeedItem.ts:664
+-- emits `/object/public/post-media/<path>` for PUBLIC posts when no stored
+-- public_url exists. That URL has been inert since the 2026-08-06 cutover — it
+-- 400s — and the client does not bind it directly: mediaUrl.ts accepts exactly
+-- that shape and exchanges it for a signed URL. It is a carrier format, not a
+-- working URL, and this migration does not change its behaviour in either
+-- direction.
+--
+-- ── PROOF ───────────────────────────────────────────────────────────────────
+--
+-- Unlike the Step 01 grant, this policy IS declared by a migration
+-- (0103_post_media.sql), so CI genuinely holds it and a CI apply genuinely
+-- removes it — a CI proof here is not measuring residue.
+--
+-- The instrument is `pnpm run audit:post-media-public-read` (read-only):
+--   exit 0 → BEFORE state: policy present AND anon read/list reachable
+--   exit 3 → AFTER state:  policy absent AND anon denied AND signing still 200
+--   exit 1 → a control failed, or catalog and reachability disagree
+--
+-- It carries a positive control (stamp-artwork must still read), a negative
+-- control (profile-media must still deny), and a signing control (a signed
+-- profile-media URL must still fetch 200). If the positive control ever fails,
+-- a "denied" result means the probe is broken, not that the bucket is safe.
+
+BEGIN;
+
+DROP POLICY IF EXISTS "post_media_storage_public_read" ON storage.objects;
+
+COMMIT;
+
+-- ── DOWN — captured verbatim from live pg_policies, 2026-08-14 ──────────────
+--
+-- Not executed by this migration. To roll back, run exactly this:
+--
+-- CREATE POLICY "post_media_storage_public_read" ON storage.objects
+--   AS PERMISSIVE
+--   FOR SELECT
+--   TO public
+--   USING ((bucket_id = 'post-media'::text));
+--
+-- Rolling this back restores unauthenticated read and enumeration of every
+-- object in post-media. It is the correct emergency action if media rendering
+-- breaks, and it should be followed by finding out WHY rendering depended on
+-- it — because per the evidence above, nothing in the current render path does.

@@ -234,6 +234,41 @@ const ALLOWLIST = new Set([
   // those columns above, and docs/migrations.md "Replay-fidelity breaks").
   // Nothing to create; the object is superseded, not missing.
   "policy:highlight_replies.users_view_highlight_replies",
+  //
+  // ── DELIBERATELY REVOKED (2026-08-14, migration 2089) ───────────────────────
+  //
+  // post_media_storage_public_read is declared by 0103_post_media.sql and
+  // REVOKED by 2089_revoke_post_media_public_read.sql. This audit asks "does
+  // every object a migration claims exist live", which is the right question
+  // for a create-only history and the wrong one the moment a later migration
+  // deliberately drops an earlier declaration. Without this entry, 2089 makes
+  // schema-drift permanently red — against production too, not just CI — and a
+  // permanently red check is one discarded exit code away from being no check
+  // at all.
+  //
+  // AN ALLOWLIST ENTRY MEANS THE POLICY DOES NOT EXIST, and here that absence
+  // IS the fix, not a gap. What 0103 declared was:
+  //
+  //     FOR SELECT TO public USING (bucket_id = 'post-media')
+  //
+  // — an unconditional read grant over every object in the bucket, to `public`,
+  // which includes `anon`. 0103's comment calls these policies
+  // "defence-in-depth for clients that attempt direct bucket access", accurate
+  // while the bucket was public. The 2026-08-06 bucket-privacy cutover set
+  // public=false and moved rendering onto the signed-URL relay; it closed
+  // /object/public/ and left this policy in place. Measured against production
+  // on 2026-08-14 with only the publishable key that ships in the mobile
+  // client: object GET 200, bucket LIST returned real user-UUID prefixes.
+  //
+  // Nothing needs it. Rendering goes through the relay (GET /api/media/file,
+  // POST /api/media/sign), which signs with the service role — signing does not
+  // consult RLS, so the drop cannot affect it. profile-media is the existence
+  // proof: zero storage.objects policies, private, and its whole avatar/cover
+  // surface renders in production today.
+  //
+  // If a direct-from-client read of post-media is ever required, restore the
+  // policy from 2089's DOWN block and delete this entry in the same change.
+  "policy:objects.post_media_storage_public_read",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

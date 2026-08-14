@@ -243,6 +243,26 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'no objects, so a CI-only run proves nothing, which the script says out loud rather than reporting clean.',
   },
   {
+    file: 'src/scripts/auditPostMediaPublicRead.ts',
+    reason:
+      'THE UNIT C GATE, as an instrument. It measures whether post_media_storage_public_read — SELECT TO ' +
+      'public USING (bucket_id = \'post-media\'), declared by 0103_post_media.sql — is present AND actually ' +
+      'reachable, and captures its body verbatim from pg_policies as the migration rollback. Everything it ' +
+      'sends: FOUR Management API statements, all SELECTs (pg_policies over schema=storage/table=objects; ' +
+      'three one-row `select name from storage.objects` samples for post-media, profile-media and ' +
+      'stamp-artwork), plus HTTP probes against the Storage API. The probes are the point — a policy listing ' +
+      'is a claim about the catalog, an HTTP 200 to an anonymous caller is a fact about exposure. It GETs one ' +
+      'object and LISTs one bucket using EXPO_PUBLIC_SUPABASE_ANON_KEY (the publishable key that ships in the ' +
+      'mobile client), does the same against profile-media as a negative control and stamp-artwork as a ' +
+      'positive control, and mints ONE 60-second signed URL with the service role for a profile-media object ' +
+      'and fetches it. THAT SIGNING CALL IS THE ONLY NON-SELECT THING IT DOES, and it is still read-only: ' +
+      'creating a signed URL mutates no row and no object — it returns a token. The signed fetch is a GET. ' +
+      'It DROPS NOTHING; applying the change is 2089_revoke_post_media_public_read.sql, a separate deliberate ' +
+      'migration. EXEMPTION MEANS UNGUARDED, NOT SAFE — but the read-only audit door is the correct one here ' +
+      'precisely because auditing production is the purpose: the question "can an anonymous caller read this ' +
+      'bucket" is only answerable against the project that actually holds the data.',
+  },
+  {
     file: 'src/scripts/auditStagingBoundaryGrant.ts',
     reason:
       'THE STEP 01 GATE of the upload staging boundary, as an instrument. Step 01 drops two live storage ' +

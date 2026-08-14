@@ -437,6 +437,162 @@ jobs:
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:media-objects
 
   # ───────────────────────────────────────────────────────────────────────────
+  # Migration 2089 rehearsal — before-proof, apply, after-proof.
+  #
+  # 2089_revoke_post_media_public_read.sql drops post_media_storage_public_read,
+  # which grants role `public` SELECT on every object in the post-media bucket.
+  # Measured against production on 2026-08-14 with nothing but the publishable
+  # key that ships in the mobile client: object GET 200, bucket LIST returned
+  # real user-UUID prefixes. This job runs that same drop against the SANCTIONED
+  # CI PROJECT first, so the production apply repeats something already executed.
+  #
+  # WHY THE SEED STEP EXISTS. auditStagingBoundaryGrant.ts documents, for its own
+  # change, that a CI proof would be "measuring residue" — its policies were
+  # declared by no migration, so whether CI held them depended on what an earlier
+  # run left behind. 2089's policy IS declared (0103_post_media.sql), so CI
+  # genuinely has it. That is a claim about history, not about right now, so the
+  # seed step establishes the precondition explicitly and says whether it had to.
+  # Without it a drop against a project that never had the policy would be a
+  # no-op reported as a change.
+  #
+  # THE PROOFS ARE THE POINT. A policy listing is a claim about the catalog; an
+  # HTTP 200 returned to an anonymous caller is a fact about exposure. The audit
+  # script carries three controls — stamp-artwork must still read (positive),
+  # profile-media must still deny (negative), and a signed profile-media URL must
+  # still fetch 200 (signing). If the positive control ever fails, a "denied"
+  # result means the probe is broken, not that the bucket is safe, and the script
+  # exits 1 rather than reporting a comfortable pass.
+  #
+  # This job WRITES to the CI project (seed creates a policy, apply drops one).
+  # rehearsePostMediaRevocation.ts therefore imports the STRICT guard
+  # ciSupabaseGuard.mjs, which permits only the sanctioned CI project and refuses
+  # production unconditionally. There is no variable that points it at
+  # production. The production apply is a separate, deliberate operator action.
+  # ───────────────────────────────────────────────────────────────────────────
+  post-media-revocation-rehearsal:
+    name: post-media revocation · before-proof, apply, after-proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: preflight
+    environment: ci-nonprod-supabase
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+    steps:
+      - name: Preflight — required secrets must be non-empty
+        shell: bash
+        run: |
+          set -uo pipefail
+          MISSING=0
+          for NAME in SUPABASE_URL SUPABASE_PROJECT_TOKEN SUPABASE_SERVICE_ROLE_KEY EXPO_PUBLIC_SUPABASE_ANON_KEY; do
+            if [ -z "${!NAME:-}" ]; then
+              echo "::error::Required secret $NAME is empty or not configured. This job fails rather than skips. The anon key in particular is not optional: it is the credential the exposure probe uses, and without it a pass would be vacuous. See docs/ci/README.md."
+              MISSING=1
+            else
+              echo "OK: $NAME is set (value not printed)."
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then exit 1; fi
+
+      - uses: actions/checkout@v4
+
+      # Fail-fast duplicate of the in-process assertion. Both scripts this job
+      # runs import a guard that runs this same script before any query.
+      - name: Preflight — Supabase target must be the sanctioned CI project
+        shell: bash
+        run: bash .github/scripts/assert-nonprod-supabase.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          echo "pnpm $(pnpm --version)"
+          node --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-
+
+      - name: Install (root workspace, frozen lockfile)
+        id: install
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      - name: 'Seed — establish the before-state (idempotent)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server rehearse:post-media-revocation:seed
+
+      # Exit contract, read from source: 0 = BEFORE state (policy present AND
+      # anonymous read/list reachable), 3 = AFTER state, 1 = a control failed or
+      # catalog and reachability disagree, 2 = cannot run. Here we require 0:
+      # anything else means the rehearsal is not starting from the state the
+      # production apply will start from.
+      - name: 'BEFORE-PROOF — expect exit 0 (grant present and reachable)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          # set +e IS LOAD-BEARING. GitHub runs `shell: bash` as `bash -e`, and
+          # this script's SUCCESS states are non-zero exit codes (0 = BEFORE,
+          # 3 = AFTER). Without +e the step dies the instant the audit exits 3 —
+          # before RC is read — so the after-proof reported failure while its own
+          # output said "AFTER state confirmed". `set -uo pipefail` does NOT
+          # clear -e; only `set +e` does.
+          set +e
+          set -uo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server audit:post-media-public-read
+          RC=$?
+          echo "audit exited $RC"
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::before-proof expected exit 0 (BEFORE state) and got $RC. 3 means the policy was already gone — the seed step should have prevented that. 1 means a control failed, so the probe cannot tell denied from broken. 2 means it could not run. In none of those cases has the drop below been rehearsed against anything."
+            exit 1
+          fi
+
+      - name: 'APPLY 2089 — drop the policy (CI project only)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server rehearse:post-media-revocation:apply
+
+      - name: 'AFTER-PROOF — expect exit 3 (denied, signing intact)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          # set +e IS LOAD-BEARING. GitHub runs `shell: bash` as `bash -e`, and
+          # this script's SUCCESS states are non-zero exit codes (0 = BEFORE,
+          # 3 = AFTER). Without +e the step dies the instant the audit exits 3 —
+          # before RC is read — so the after-proof reported failure while its own
+          # output said "AFTER state confirmed". `set -uo pipefail` does NOT
+          # clear -e; only `set +e` does.
+          set +e
+          set -uo pipefail
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server audit:post-media-public-read
+          RC=$?
+          echo "audit exited $RC"
+          if [ "$RC" -ne 3 ]; then
+            echo "::error::after-proof expected exit 3 (AFTER state: policy gone, anonymous read and list denied, signing control still 200) and got $RC. 0 would mean the drop did not take effect. 1 is the dangerous one: it includes the case where the policy is gone but an anonymous caller can STILL read, which means another grant exists and the change looks done without being done. Do not apply this to production until this is explained."
+            exit 1
+          fi
+
+  # ───────────────────────────────────────────────────────────────────────────
   # The three live-DB security suites.
   #
   # These are the ones that skip-and-exit-0 without credentials. The preflight
@@ -597,6 +753,7 @@ jobs:
       - api-server-check-all
       - schema-drift
       - live-db-security-suites
+      - post-media-revocation-rehearsal
     steps:
       - name: Every live-DB job must have run and succeeded
         shell: bash
@@ -605,6 +762,7 @@ jobs:
           R_CHECK_ALL: ${{ needs['api-server-check-all'].result }}
           R_SCHEMA_DRIFT: ${{ needs['schema-drift'].result }}
           R_SECURITY_SUITES: ${{ needs['live-db-security-suites'].result }}
+          R_REVOCATION_REHEARSAL: ${{ needs['post-media-revocation-rehearsal'].result }}
         run: |
           set -uo pipefail
           BAD=0
@@ -619,7 +777,8 @@ jobs:
             "preflight:$R_PREFLIGHT" \
             "api-server-check-all:$R_CHECK_ALL" \
             "schema-drift:$R_SCHEMA_DRIFT" \
-            "live-db-security-suites:$R_SECURITY_SUITES"
+            "live-db-security-suites:$R_SECURITY_SUITES" \
+            "post-media-revocation-rehearsal:$R_REVOCATION_REHEARSAL"
           do
             NAME="${PAIR%%:*}"
             RESULT="${PAIR#*:}"
