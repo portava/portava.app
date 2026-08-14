@@ -132,7 +132,7 @@ function MediaCardContent({
         {/* Error overlay */}
         {isError && (
           <View style={s.errorOverlay}>
-            <Pressable style={s.retryBtn} onPress={onRetry} hitSlop={8}>
+            <Pressable style={s.retryBtn} onPress={onRetry} hitSlop={8} testID={`retry-media-${item.id}`}>
               <RefreshCw size={14} color="#fff" />
               <Text style={s.retryText}>Retry</Text>
             </Pressable>

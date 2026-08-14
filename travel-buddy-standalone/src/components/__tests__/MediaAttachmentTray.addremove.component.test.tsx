@@ -182,4 +182,18 @@ describe('MediaAttachmentTray — error state', () => {
     );
     expect(queryByText(/re-upload|not supported/i)).toBeNull();
   });
+
+  it('pressing the Retry button calls retryUpload with the correct item id', async () => {
+    const retryUpload = jest.fn();
+    const item = makeItem('retry1', {
+      uploadState: 'error',
+      uploadError: 'Network error',
+    });
+    const { getByTestId } = await render(
+      <MediaAttachmentTray composer={makeComposer([item], { retryUpload })} />,
+    );
+    fireEvent.press(getByTestId('retry-media-retry1'));
+    expect(retryUpload).toHaveBeenCalledWith('retry1');
+    expect(retryUpload).toHaveBeenCalledTimes(1);
+  });
 });
