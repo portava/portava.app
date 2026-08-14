@@ -258,18 +258,26 @@ router.post(
     const rawTransform = body.transform;
     if (rawTransform !== null && rawTransform !== undefined && typeof rawTransform === "object" && !Array.isArray(rawTransform)) {
       const t = rawTransform as Record<string, unknown>;
-      // Mirrors the GET handler: width=0 is dropped entirely (no transform
-      // forwarded) rather than clamped to 1.  A caller that passes width=0
-      // receives a plain /object/sign/ URL, not a /render/image/sign/ URL.
-      const width   = typeof t.width   === "number" && t.width   > 0 ? Math.round(Math.min(t.width,   3000)) : undefined;
-      // quality=0 (and sub-unit fractions that round to 0) are dropped entirely
-      // — same rule as width=0.  Round first, then guard, so that e.g. 0.1
-      // doesn't slip through the > 0 check only to land as quality=0 after
-      // rounding.  Positive rounded values are clamped to [1, 100].
-      const qualityRounded = typeof t.quality === "number" ? Math.round(Math.min(Math.max(t.quality, 0), 100)) : undefined;
-      const quality = qualityRounded !== undefined && qualityRounded > 0 ? qualityRounded : undefined;
-      if (width !== undefined || quality !== undefined) {
-        transform = { width, quality };
+      // width=0 (or any non-positive number) is treated as an explicit "no resize"
+      // signal that drops the ENTIRE transform — including a concurrent valid
+      // quality value.  A caller that passes { width: 0, quality: 75 } receives
+      // a plain /object/sign/ URL (no transform forwarded at all), not a
+      // /render/image/sign/ URL with only quality forwarded.  This matches the
+      // intuition: width=0 means "I don't want a resized derivative", so
+      // forwarding quality alone would produce an unexpected transform URL.
+      if (typeof t.width === "number" && t.width <= 0) {
+        // Drop everything — no transform forwarded.
+      } else {
+        const width = typeof t.width === "number" && t.width > 0 ? Math.round(Math.min(t.width, 3000)) : undefined;
+        // quality=0 (and sub-unit fractions that round to 0) are dropped entirely
+        // — same rule as width=0.  Round first, then guard, so that e.g. 0.1
+        // doesn't slip through the > 0 check only to land as quality=0 after
+        // rounding.  Positive rounded values are clamped to [1, 100].
+        const qualityRounded = typeof t.quality === "number" ? Math.round(Math.min(Math.max(t.quality, 0), 100)) : undefined;
+        const quality = qualityRounded !== undefined && qualityRounded > 0 ? qualityRounded : undefined;
+        if (width !== undefined || quality !== undefined) {
+          transform = { width, quality };
+        }
       }
     }
 

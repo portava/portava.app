@@ -268,6 +268,30 @@ describe("POST /api/media/sign — transform clamping", () => {
     );
   });
 
+  it("transform: { width: 0, quality: 75 } → entire transform dropped (width=0 opt-out wins), plain /object/sign/ URL returned", async () => {
+    // The inverse of { width: 400, quality: 0 }: here width is the invalid field.
+    // width=0 is treated as an explicit "no resize" signal that drops the ENTIRE
+    // transform — even when quality is a perfectly valid 75.  A caller that
+    // provides width=0 alongside a valid quality receives a plain /object/sign/
+    // URL (no transform forwarded at all), not a /render/image/sign/ URL with
+    // only quality forwarded.  This prevents the combo from sneaking through as
+    // an unexpected quality-only transform.
+    const r = await postSign({ urls: [mediaUrl], transform: { width: 0, quality: 75 } });
+    assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
+
+    const signedUrl: string | null = r.body?.signed?.[mediaUrl];
+    assert.ok(
+      typeof signedUrl === "string" && signedUrl.includes("/object/sign/"),
+      `expected plain /object/sign/ URL for {width:0, quality:75} (entire transform dropped), got: ${signedUrl}`,
+    );
+
+    assert.equal(
+      lastSignArgs?.options,
+      undefined,
+      "expected no transform options forwarded to createSignedUrl when width=0 (even with valid quality)",
+    );
+  });
+
   it("transform: { quality: 0.1 } → rounds to 0, dropped entirely, plain /object/sign/ URL returned", async () => {
     // A sub-unit fractional quality like 0.1 passes a naive > 0 check but
     // rounds to 0 after Math.round.  The implementation rounds first and then
