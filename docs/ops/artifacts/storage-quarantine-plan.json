@@ -1,0 +1,253 @@
+{
+  "kind": "storage-quarantine-plan",
+  "version": 1,
+  "projectRef": "ajrurzioarfkagpuxfnb",
+  "stampDate": "2026-08-14",
+  "windowDays": 90,
+  "quarantinePrefix": "_quarantine",
+  "orphanCount": 34,
+  "totalBytes": 26760015,
+  "referencingColumnCount": 86,
+  "moves": [
+    {
+      "bucket": "post-media",
+      "from": "6a50a0c2-bf2d-4d9f-b6aa-4ff676ec13f5/1781940481789.png",
+      "to": "_quarantine/2026-08-14/6a50a0c2-bf2d-4d9f-b6aa-4ff676ec13f5/1781940481789.png",
+      "bytes": 70,
+      "createdAt": "2026-06-20 07:28:01.962722+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "fe890a8c-3fe1-43c2-9067-1ffdb9ac4df2/1781941342211.jpg",
+      "to": "_quarantine/2026-08-14/fe890a8c-3fe1-43c2-9067-1ffdb9ac4df2/1781941342211.jpg",
+      "bytes": 9609580,
+      "createdAt": "2026-06-20 07:42:23.425371+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "487e84d5-dc90-46a7-a1dd-155610174d41/1781946178116.png",
+      "to": "_quarantine/2026-08-14/487e84d5-dc90-46a7-a1dd-155610174d41/1781946178116.png",
+      "bytes": 70,
+      "createdAt": "2026-06-20 09:02:58.326308+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "9bf78385-0c8f-4e6a-abea-a1f725a0b67f/1781946709079.png",
+      "to": "_quarantine/2026-08-14/9bf78385-0c8f-4e6a-abea-a1f725a0b67f/1781946709079.png",
+      "bytes": 70,
+      "createdAt": "2026-06-20 09:11:49.380734+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "de4a22d6-69a6-4207-a735-afde17ff144e/1781947153429.jpg",
+      "to": "_quarantine/2026-08-14/de4a22d6-69a6-4207-a735-afde17ff144e/1781947153429.jpg",
+      "bytes": 5738831,
+      "createdAt": "2026-06-20 09:19:14.441717+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "edf446da-f455-4924-a980-fa9f1a3d3e18/1782161499682.png",
+      "to": "_quarantine/2026-08-14/edf446da-f455-4924-a980-fa9f1a3d3e18/1782161499682.png",
+      "bytes": 135790,
+      "createdAt": "2026-06-22 20:51:40.0023+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "edf446da-f455-4924-a980-fa9f1a3d3e18/1782269811396.png",
+      "to": "_quarantine/2026-08-14/edf446da-f455-4924-a980-fa9f1a3d3e18/1782269811396.png",
+      "bytes": 127087,
+      "createdAt": "2026-06-24 02:56:51.728659+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "edf446da-f455-4924-a980-fa9f1a3d3e18/1782465811253.png",
+      "to": "_quarantine/2026-08-14/edf446da-f455-4924-a980-fa9f1a3d3e18/1782465811253.png",
+      "bytes": 127087,
+      "createdAt": "2026-06-26 09:23:31.595098+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "edf446da-f455-4924-a980-fa9f1a3d3e18/1782468834634.png",
+      "to": "_quarantine/2026-08-14/edf446da-f455-4924-a980-fa9f1a3d3e18/1782468834634.png",
+      "bytes": 127087,
+      "createdAt": "2026-06-26 10:13:55.12313+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "edf446da-f455-4924-a980-fa9f1a3d3e18/1782468966992.png",
+      "to": "_quarantine/2026-08-14/edf446da-f455-4924-a980-fa9f1a3d3e18/1782468966992.png",
+      "bytes": 117288,
+      "createdAt": "2026-06-26 10:16:09.764076+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/b3b8d259-5a5b-4dc2-85eb-e635c1ff4073.jpg",
+      "to": "_quarantine/2026-08-14/avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/b3b8d259-5a5b-4dc2-85eb-e635c1ff4073.jpg",
+      "bytes": 85154,
+      "createdAt": "2026-07-02 22:31:32.344203+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/aa14c17e-7103-4001-9c5d-7f1964b860ac.jpg",
+      "to": "_quarantine/2026-08-14/avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/aa14c17e-7103-4001-9c5d-7f1964b860ac.jpg",
+      "bytes": 85154,
+      "createdAt": "2026-07-02 22:31:55.677797+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "92602b6c-0eca-433d-9ee2-a82696b3837f/1783031640891.jpg",
+      "to": "_quarantine/2026-08-14/92602b6c-0eca-433d-9ee2-a82696b3837f/1783031640891.jpg",
+      "bytes": 821875,
+      "createdAt": "2026-07-02 22:34:01.130646+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/d2f52d3c-91ed-4e3a-9c42-9211b6ea05d1.jpg",
+      "to": "_quarantine/2026-08-14/avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/d2f52d3c-91ed-4e3a-9c42-9211b6ea05d1.jpg",
+      "bytes": 14945,
+      "createdAt": "2026-07-03 01:29:06.936378+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/5fd9a654-b606-4f6a-95e2-84289100154b.jpg",
+      "to": "_quarantine/2026-08-14/avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/5fd9a654-b606-4f6a-95e2-84289100154b.jpg",
+      "bytes": 14945,
+      "createdAt": "2026-07-03 01:29:33.757289+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/db7161a6-de0c-44fd-85e3-2391adb1786d.jpg",
+      "to": "_quarantine/2026-08-14/avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/db7161a6-de0c-44fd-85e3-2391adb1786d.jpg",
+      "bytes": 15572,
+      "createdAt": "2026-07-04 10:50:26.310151+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/0aba9469-7775-4bd7-aa2b-aea2b1f2555e.jpg",
+      "to": "_quarantine/2026-08-14/avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/0aba9469-7775-4bd7-aa2b-aea2b1f2555e.jpg",
+      "bytes": 15572,
+      "createdAt": "2026-07-04 10:51:03.709969+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/de5ca27e-d147-4ccd-b0cc-cd958a8848e4.jpg",
+      "to": "_quarantine/2026-08-14/avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/de5ca27e-d147-4ccd-b0cc-cd958a8848e4.jpg",
+      "bytes": 65423,
+      "createdAt": "2026-07-04 12:42:42.439354+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/e35a26cc-8b91-4a25-94da-9995ecefd358.jpg",
+      "to": "_quarantine/2026-08-14/avatars/92602b6c-0eca-433d-9ee2-a82696b3837f/e35a26cc-8b91-4a25-94da-9995ecefd358.jpg",
+      "bytes": 17427,
+      "createdAt": "2026-07-04 12:43:37.663651+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/edf446da-f455-4924-a980-fa9f1a3d3e18/9cd907bd-fb18-4e97-9620-aa39940c0bf7.jpg",
+      "to": "_quarantine/2026-08-14/avatars/edf446da-f455-4924-a980-fa9f1a3d3e18/9cd907bd-fb18-4e97-9620-aa39940c0bf7.jpg",
+      "bytes": 53438,
+      "createdAt": "2026-07-04 16:00:28.298522+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "covers/edf446da-f455-4924-a980-fa9f1a3d3e18/cover.jpg",
+      "to": "_quarantine/2026-08-14/covers/edf446da-f455-4924-a980-fa9f1a3d3e18/cover.jpg",
+      "bytes": 1887401,
+      "createdAt": "2026-07-04 16:00:29.879495+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/edf446da-f455-4924-a980-fa9f1a3d3e18/315ced5e-4032-4a54-88e9-f47940576a0d.jpg",
+      "to": "_quarantine/2026-08-14/avatars/edf446da-f455-4924-a980-fa9f1a3d3e18/315ced5e-4032-4a54-88e9-f47940576a0d.jpg",
+      "bytes": 53438,
+      "createdAt": "2026-07-04 16:00:54.425725+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/edf446da-f455-4924-a980-fa9f1a3d3e18/3886cf8e-741a-499b-a3d0-4bbc4ba9c43e.jpg",
+      "to": "_quarantine/2026-08-14/avatars/edf446da-f455-4924-a980-fa9f1a3d3e18/3886cf8e-741a-499b-a3d0-4bbc4ba9c43e.jpg",
+      "bytes": 53438,
+      "createdAt": "2026-07-04 16:01:40.567065+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "edf446da-f455-4924-a980-fa9f1a3d3e18/1783192675106.png",
+      "to": "_quarantine/2026-08-14/edf446da-f455-4924-a980-fa9f1a3d3e18/1783192675106.png",
+      "bytes": 103208,
+      "createdAt": "2026-07-04 19:17:55.742781+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/dc6f3dcb-4ea3-4e6e-9ebd-c6d28df7bb4e/7cab9974-96d3-4c36-9457-f51eefc1999e.png",
+      "to": "_quarantine/2026-08-14/avatars/dc6f3dcb-4ea3-4e6e-9ebd-c6d28df7bb4e/7cab9974-96d3-4c36-9457-f51eefc1999e.png",
+      "bytes": 70,
+      "createdAt": "2026-07-15 18:56:37.96401+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "covers/dc6f3dcb-4ea3-4e6e-9ebd-c6d28df7bb4e/cover.png",
+      "to": "_quarantine/2026-08-14/covers/dc6f3dcb-4ea3-4e6e-9ebd-c6d28df7bb4e/cover.png",
+      "bytes": 70,
+      "createdAt": "2026-07-15 18:56:39.565683+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/06803c17-789a-4991-aeca-246e6eef6add/9854fbc2-e9e2-4f94-b594-338ed2d405af.png",
+      "to": "_quarantine/2026-08-14/avatars/06803c17-789a-4991-aeca-246e6eef6add/9854fbc2-e9e2-4f94-b594-338ed2d405af.png",
+      "bytes": 70,
+      "createdAt": "2026-07-15 18:58:47.599069+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "covers/06803c17-789a-4991-aeca-246e6eef6add/cover.png",
+      "to": "_quarantine/2026-08-14/covers/06803c17-789a-4991-aeca-246e6eef6add/cover.png",
+      "bytes": 70,
+      "createdAt": "2026-07-15 18:58:49.101768+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "avatars/578baf3b-a400-4036-9cdc-e93a9c0a4258/cd7a16fe-a4b4-43af-a231-beb67d8f5602.png",
+      "to": "_quarantine/2026-08-14/avatars/578baf3b-a400-4036-9cdc-e93a9c0a4258/cd7a16fe-a4b4-43af-a231-beb67d8f5602.png",
+      "bytes": 70,
+      "createdAt": "2026-07-15 19:01:30.063851+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "covers/578baf3b-a400-4036-9cdc-e93a9c0a4258/cover.png",
+      "to": "_quarantine/2026-08-14/covers/578baf3b-a400-4036-9cdc-e93a9c0a4258/cover.png",
+      "bytes": 70,
+      "createdAt": "2026-07-15 19:01:31.914669+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "92602b6c-0eca-433d-9ee2-a82696b3837f/1784471946520.jpg",
+      "to": "_quarantine/2026-08-14/92602b6c-0eca-433d-9ee2-a82696b3837f/1784471946520.jpg",
+      "bytes": 142178,
+      "createdAt": "2026-07-19 14:39:07.146295+00"
+    },
+    {
+      "bucket": "post-media",
+      "from": "92602b6c-0eca-433d-9ee2-a82696b3837f/1784471995477.jpg",
+      "to": "_quarantine/2026-08-14/92602b6c-0eca-433d-9ee2-a82696b3837f/1784471995477.jpg",
+      "bytes": 142178,
+      "createdAt": "2026-07-19 14:39:56.077383+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "covers/92602b6c-0eca-433d-9ee2-a82696b3837f/cover.png",
+      "to": "_quarantine/2026-08-14/covers/92602b6c-0eca-433d-9ee2-a82696b3837f/cover.png",
+      "bytes": 5756005,
+      "createdAt": "2026-07-25 15:59:17.875361+00"
+    },
+    {
+      "bucket": "profile-media",
+      "from": "covers/5f123260-976f-49f3-a102-52346b4fc0af/cover.png",
+      "to": "_quarantine/2026-08-14/covers/5f123260-976f-49f3-a102-52346b4fc0af/cover.png",
+      "bytes": 1449284,
+      "createdAt": "2026-07-28 06:26:57.472452+00"
+    }
+  ],
+  "restoreNote": "To restore an object, move it from `to` back to `from` within the same bucket. This manifest is the ONLY record of the original key — the quarantine prefix rewrites it, and the object's own metadata does not carry where it came from. Losing this file makes the quarantine irreversible in practice even though nothing was deleted.",
+  "executionNote": "This is a PLAN. Nothing has been moved. Execution against production is a separate, owner-authorized step; this repository has no sanctioned production-write door and this tool deliberately does not invent one."
+}
