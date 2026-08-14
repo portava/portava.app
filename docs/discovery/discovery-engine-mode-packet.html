@@ -481,6 +481,22 @@
     <p style="margin-bottom:0"><strong>D5 revisit clause, binding:</strong> if Stage 0's measured Cache&nbsp;A hit rate materially contradicts the TTL-implied rate, <strong>D5 implementation pauses</strong> and the numbers go to the owner before proceeding.</p>
   </div>
 
+  <div class="callout">
+    <h4>Operator actions of record</h4>
+    <div class="scroller" style="margin-bottom:14px">
+      <table>
+        <thead><tr><th>When</th><th>Action</th><th>Verification</th></tr></thead>
+        <tbody>
+          <tr><td class="n">2026‑08‑14</td><td>PR #38 merged — the <code>2089</code> migration-prefix collision, which had <code>bughunt-20260805</code> red and made the three-green-verdicts gate unmeetable by any PR</td><td>Base green; every P1 PR since has merged on 32/32</td></tr>
+          <tr><td class="n">2026‑08‑14</td><td>Migration <strong>2090</strong> applied to production — seeds <code>discovery_serve_log_enabled</code> false</td><td>Operator-confirmed</td></tr>
+          <tr><td class="n">2026‑08‑14</td><td><code>discovery_serve_log_enabled</code> flipped <strong>true</strong>. Stage 0 instrumentation is live; the <code>surface='discovery'</code> series begins here</td><td>Verified by <code>RETURNING</code></td></tr>
+          <tr><td class="n"><strong>23:05:13Z</strong></td><td><strong>D5 measurement clock start</strong></td><td>Report runs after a representative window</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-bottom:0"><strong>The D5 revisit clause is now armed, not satisfied.</strong> <code>report:discovery-serve-points</code> exits <strong>3</strong> — <em>PAUSE D5 AND REPORT</em> — if more than a third of serves already reach a ranker, and refuses to render any verdict on an empty window. Until it has run against a representative window, <strong>D5's engine work is not started</strong>: that is the clause operating as ruled, not a delay. Everything in the sequence that does not depend on D5's answer proceeds.</p>
+  </div>
+
   <div class="callout warn">
     <h4>Live-corpus corroboration found after the rulings</h4>
     <p style="margin-bottom:0">Migration <code>0202_rank_events_living_page_watch_feed_surfaces.sql:17‑21</code> records that a live <code>SELECT surface, count(*) FROM rank_events</code> returned <strong>only pulse / compass / events</strong> — with <code>discovery</code> named among the surfaces "written by the code but ZERO rows present". Unlike <code>living_page</code> and <code>live_pulse</code>, <code>discovery</code> was <strong>already permitted</strong> by the CHECK constraint (<code>0199:60</code>, <code>0202:77</code>), so its absence is not rejection — it is the serve-point-#6 path scarcely ever executing. This is independent production evidence for the caches-in-series finding, and it strengthens D8=A: the baseline being replaced is not merely narrow, it is empty.</p>
