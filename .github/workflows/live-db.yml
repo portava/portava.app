@@ -551,6 +551,13 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
         run: |
+          # set +e IS LOAD-BEARING. GitHub runs `shell: bash` as `bash -e`, and
+          # this script's SUCCESS states are non-zero exit codes (0 = BEFORE,
+          # 3 = AFTER). Without +e the step dies the instant the audit exits 3 —
+          # before RC is read — so the after-proof reported failure while its own
+          # output said "AFTER state confirmed". `set -uo pipefail` does NOT
+          # clear -e; only `set +e` does.
+          set +e
           set -uo pipefail
           bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server audit:post-media-public-read
           RC=$?
@@ -569,6 +576,13 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
         run: |
+          # set +e IS LOAD-BEARING. GitHub runs `shell: bash` as `bash -e`, and
+          # this script's SUCCESS states are non-zero exit codes (0 = BEFORE,
+          # 3 = AFTER). Without +e the step dies the instant the audit exits 3 —
+          # before RC is read — so the after-proof reported failure while its own
+          # output said "AFTER state confirmed". `set -uo pipefail` does NOT
+          # clear -e; only `set +e` does.
+          set +e
           set -uo pipefail
           bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server audit:post-media-public-read
           RC=$?
