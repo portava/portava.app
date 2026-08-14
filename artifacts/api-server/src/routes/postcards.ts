@@ -504,8 +504,12 @@ const completeSchema = z.object({
   mimeType:        z.string(),
   fileSizeBytes:   z.number().int().positive(),
   durationSeconds: z.number().positive().optional(),
-  width:           z.number().int().positive().optional(),
-  height:          z.number().int().positive().optional(),
+  // .nullish() — accepts number | null | undefined so a client that received
+  // null from /media/upload (HEIC fail-soft, unprocessed video) and passes
+  // those nulls through reaches the explicit dimension guard below rather than
+  // the generic Zod "Expected number, received null" message.
+  width:           z.number().int().positive().nullish(),
+  height:          z.number().int().positive().nullish(),
   thumbnailPath:   z.string().max(500).optional(),
   /** Optional stamp overlay — validated & pinned server-side (never trust client URLs). */
   stampOverlay:    stampOverlaySchema.optional(),

@@ -13,6 +13,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import postsRouter from "../routes/posts.js";
 import eventsRouter from "../routes/events.js";
+import postcardsRouter from "../routes/postcards.js";
 import { sweepExpiredStories } from "../routes/stories.js";
 import { FEED_DIM } from "../lib/mediaProcessing.js";
 
@@ -123,6 +124,7 @@ before(() => {
   app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
   app.use("/api", postsRouter);
   app.use("/api", eventsRouter);
+  app.use("/api", postcardsRouter);
   return new Promise<void>((resolve) => {
     server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); });
   });
@@ -228,6 +230,42 @@ describe("POST /api/media/upload — hardening", () => {
     // One storage upload (the video bytes); no thumbnail or feed variant for videos.
     assert.equal(client._uploads.length, 1, "only the raw video should be stored");
   });
+
+  // HEIC fail-soft path (posts.ts lines 179–190).
+  //
+  // When the server's HEIC decoder is unavailable (libvips build without HEIF
+  // support), processImage() throws on HEIC input.  The catch block recognises
+  // sniffed.mime === "image/heic" and stores the original bytes rather than
+  // returning a 4xx — older mobile clients that already sent HEIC would
+  // otherwise lose their upload.
+  //
+  // The critical safety property: this path MUST return processed=false and
+  // null dimensions.  A row that later claims processing_status='ready' with
+  // null width/height is blocked by the DB CHECK constraint added by migration
+  // 2088 (post_media_ready_has_dimensions).  The null dims in this response
+  // are the signal the client needs to know "do not write ready + null".
+  it("HEIC fail-soft: stores original bytes and returns processed=false, null width/height — DB constraint is the backstop", async () => {
+    const client = makeClient();
+    setClients(client);
+    // Minimal ftyp box that sniffMedia() classifies as image/heic.
+    // brand bytes "heic" → starts with "hei" → image/heic.
+    // These are NOT real HEIC payload bytes, so processImage() will throw,
+    // exercising the exact HEIC fail-soft catch branch.
+    const heicStub = Buffer.concat([
+      Buffer.from([0, 0, 0, 16]), // box size = 16 bytes
+      Buffer.from("ftyp"),        // box type
+      Buffer.from("heic"),        // major brand → image/heic
+      Buffer.from([0, 0, 0, 0]),  // minor version
+    ]);
+    const r = await rawReq("POST", "/api/media/upload", heicStub, "image/heic");
+    assert.equal(r.status, 201, `expected 201 (HEIC fail-soft stores as-is), got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.processed, false, "processed must be false — HEIC decode was unavailable");
+    assert.equal(r.body.width,  null, "width must be null — server cannot measure undecoded HEIC");
+    assert.equal(r.body.height, null, "height must be null — server cannot measure undecoded HEIC");
+    // One storage write (the raw HEIC bytes); no thumbnail or feed variant
+    // because those require a successfully-decoded image.
+    assert.equal(client._uploads.length, 1, "only the raw HEIC bytes should be stored — no thumbnail/feed variant");
+  });
 });
 
 describe("POST /api/events/:id/media — storage-origin validation", () => {
@@ -263,6 +301,141 @@ describe("POST /api/events/:id/media — storage-origin validation", () => {
       mediaUrl: `${SB}/storage/v1/object/public/post-media/${USER_ID}/123.jpg`,
     });
     assert.equal(r.body.error, "feature_disabled");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dimension guard — HEIC null-dim response is the upstream signal; the
+// postcards /complete endpoint is the downstream enforcement point.
+//
+// Full chain:
+//   1. /media/upload returns { processed: false, width: null, height: null }
+//      when HEIC decode fails (test above).
+//   2. The client must NOT write processing_status='ready' with those null dims.
+//   3. If it tries, the app-level guard in POST /postcards/:id/media/:id/complete
+//      rejects before hitting the DB.  The DB CHECK constraint (migration 2088,
+//      post_media_ready_has_dimensions) is the final backstop for any code path
+//      that bypasses the app guard.
+//
+// This test exercises step 3 directly: a completion request that omits
+// width+height is rejected with "invalid_payload" — the recognisable error code
+// a client (or API consumer) can act on.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rejects 'ready' writes with recognisable error", () => {
+  const POST_ID  = "d0000000-0000-4000-a000-000000000020";
+  const MEDIA_ID = "d0000000-0000-4000-a000-000000000021";
+
+  function makePostcardsClient() {
+    // A minimal fake that satisfies the postcards /complete endpoint:
+    //  - post_media lookup returns a video row owned by USER_ID in pending status.
+    //  - Any update call returns success (we expect the app-level guard to
+    //    fire BEFORE the update, so this path must never be reached in the
+    //    null-dim case).
+    let updateAttempted = false;
+    const client: any = {
+      from(table: string) {
+        const b: any = {
+          select() { return b; },
+          update(payload: any) {
+            updateAttempted = true;
+            b._updatePayload = payload;
+            return b;
+          },
+          insert() { return b; },
+          eq() { return b; },
+          neq() { return b; },
+          is() { return b; }, not() { return b; },
+          order() { return b; }, limit() { return b; },
+          maybeSingle() {
+            if (table === "post_media") {
+              return Promise.resolve({
+                data: {
+                  id:                MEDIA_ID,
+                  post_id:           POST_ID,
+                  user_id:           USER_ID,
+                  media_type:        "video",
+                  processing_status: "pending",
+                  storage_path:      `${USER_ID}/heic-test.heic`,
+                  storage_bucket:    "post-media",
+                },
+                error: null,
+              });
+            }
+            // feature_flags — no kill switch active
+            if (table === "feature_flags") {
+              return Promise.resolve({ data: null, error: null });
+            }
+            return Promise.resolve({ data: null, error: null });
+          },
+          then(onF: any, onR: any) {
+            // For queries that resolve without .maybeSingle / .single
+            return Promise.resolve({ data: [], error: null }).then(onF, onR);
+          },
+        };
+        return b;
+      },
+      storage: {
+        from() {
+          return {
+            async upload() { return { data: null, error: null }; },
+            getPublicUrl() { return { data: { publicUrl: "" } }; },
+            async download() { return { data: null, error: { message: "not implemented" } }; },
+          };
+        },
+      },
+      auth: {
+        getUser: async (t: string) => t === TOKEN
+          ? { data: { user: { id: USER_ID } }, error: null }
+          : { data: { user: null }, error: { message: "bad token" } },
+      },
+      _wasUpdateAttempted: () => updateAttempted,
+    };
+    return client;
+  }
+
+  it("completing a video upload without width+height is rejected with invalid_payload — DB constraint never reached", async () => {
+    // Simulate the exact scenario that follows a HEIC/video upload whose
+    // /media/upload response carried processed=false + null dims:
+    // the client calls /complete but omits the dimensions it did not receive.
+    const client = makePostcardsClient();
+    setClients(client);
+
+    const r = await jsonReq(
+      "POST",
+      `/api/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      {
+        // Exactly what the client passes after receiving { width: null,
+        // height: null } from /media/upload (HEIC fail-soft or unprocessed
+        // video).  Sending null explicitly — not just omitting the fields —
+        // ensures we exercise the app-level dimension guard rather than Zod's
+        // "Expected number, received null" fallback.
+        mimeType:      "video/mp4",
+        fileSizeBytes: 1024,
+        width:         null,
+        height:        null,
+      },
+    );
+
+    // The recognisable error code: invalid_payload.
+    // Message must clearly identify the missing dimension requirement so a
+    // client can display a meaningful "re-upload required" rather than a
+    // generic failure.
+    assert.equal(r.status, 400, `expected 400, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "invalid_payload",
+      "error code must be 'invalid_payload' so clients can branch on it");
+    assert.match(
+      String(r.body.message ?? r.body.detail ?? JSON.stringify(r.body)),
+      /width.*height|height.*width/i,
+      "message must mention width and height so the client can surface a useful prompt",
+    );
+
+    // The DB UPDATE must never have been attempted — the app-level guard must
+    // catch null dims before they can reach the database.  This ensures the
+    // DB constraint (migration 2088) is never relied upon as the *first* line
+    // of defence; it remains the backstop for any future code path that forgets
+    // to validate.
+    assert.equal(client._wasUpdateAttempted(), false,
+      "DB update must not be attempted when width/height are null — app guard fires first");
   });
 });
 
