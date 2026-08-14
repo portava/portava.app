@@ -92,6 +92,7 @@ function MediaCardContent({
   onCoverPress,
   onAltTextChange,
   onRetry,
+  onCancel,
   dragActive,
 }: {
   item: MediaItem;
@@ -101,6 +102,7 @@ function MediaCardContent({
   onCoverPress: () => void;
   onAltTextChange: (text: string) => void;
   onRetry: () => void;
+  onCancel: () => void;
   dragActive: boolean;
 }) {
   const isUploading = item.uploadState === 'uploading';
@@ -127,6 +129,15 @@ function MediaCardContent({
             <View style={s.progressBar}>
               <View style={[s.progressFill, { width: `${Math.round(item.uploadProgress * 100)}%` }]} />
             </View>
+            <Pressable
+              style={s.cancelBtn}
+              onPress={onCancel}
+              hitSlop={8}
+              testID={`cancel-media-${item.id}`}
+              accessibilityLabel="Cancel upload"
+            >
+              <X size={10} color="#fff" />
+            </Pressable>
           </View>
         )}
 
@@ -222,6 +233,7 @@ function TapMediaCard({
   onCoverPress,
   onAltTextChange,
   onRetry,
+  onCancel,
 }: {
   item: MediaItem;
   index: number;
@@ -235,6 +247,7 @@ function TapMediaCard({
   onCoverPress: () => void;
   onAltTextChange: (text: string) => void;
   onRetry: () => void;
+  onCancel: () => void;
 }) {
   return (
     <View style={s.card} testID={`media-card-${item.id}`}>
@@ -246,6 +259,7 @@ function TapMediaCard({
         onCoverPress={onCoverPress}
         onAltTextChange={onAltTextChange}
         onRetry={onRetry}
+        onCancel={onCancel}
         dragActive={false}
       />
 
@@ -297,6 +311,7 @@ function DraggableMediaCard({
   onCoverPress,
   onAltTextChange,
   onRetry,
+  onCancel,
   onDragStart,
   onDragEnd,
 }: {
@@ -311,6 +326,7 @@ function DraggableMediaCard({
   onCoverPress: () => void;
   onAltTextChange: (text: string) => void;
   onRetry: () => void;
+  onCancel: () => void;
   onDragStart: (fromIndex: number) => void;
   onDragEnd: (fromIndex: number, toIndex: number) => void;
 }) {
@@ -378,6 +394,7 @@ function DraggableMediaCard({
           onCoverPress={onCoverPress}
           onAltTextChange={onAltTextChange}
           onRetry={onRetry}
+          onCancel={onCancel}
           dragActive={false}
         />
       </Animated.View>
@@ -395,6 +412,7 @@ function DraggableMediaCard({
           onCoverPress={onCoverPress}
           onAltTextChange={onAltTextChange}
           onRetry={onRetry}
+          onCancel={onCancel}
           dragActive={isActive}
         />
       </Animated.View>
@@ -414,6 +432,7 @@ function DraggableTray({
   setCover,
   setAltText,
   retryUpload,
+  cancelUpload,
   testID,
 }: {
   items: MediaItem[];
@@ -423,6 +442,7 @@ function DraggableTray({
   setCover: (id: string) => void;
   setAltText: (id: string, text: string) => void;
   retryUpload: (id: string) => void;
+  cancelUpload: (id: string) => void;
   testID?: string;
 }) {
   const scrollRef = useRef<ScrollView>(null);
@@ -470,6 +490,7 @@ function DraggableTray({
           onCoverPress={() => setCover(item.id)}
           onAltTextChange={(text) => setAltText(item.id, text)}
           onRetry={() => retryUpload(item.id)}
+          onCancel={() => cancelUpload(item.id)}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         />
@@ -487,7 +508,7 @@ export function MediaAttachmentTray({
   showReorder,
   testID,
 }: MediaAttachmentTrayProps) {
-  const { policy, items, removeItem, reorderItems, setCover, setAltText, retryUpload } = composer;
+  const { policy, items, removeItem, reorderItems, setCover, setAltText, retryUpload, cancelUpload } = composer;
   const reduceMotion = useIsReduceMotionEnabled();
 
   if (items.length === 0) return null;
@@ -519,6 +540,7 @@ export function MediaAttachmentTray({
             onCoverPress={() => setCover(item.id)}
             onAltTextChange={(text) => setAltText(item.id, text)}
             onRetry={() => retryUpload(item.id)}
+            onCancel={() => cancelUpload(item.id)}
           />
         ))}
       </ScrollView>
@@ -535,6 +557,7 @@ export function MediaAttachmentTray({
       setCover={setCover}
       setAltText={setAltText}
       retryUpload={retryUpload}
+      cancelUpload={cancelUpload}
       testID={testID}
     />
   );
@@ -596,6 +619,16 @@ const s = StyleSheet.create({
     height: '100%',
     backgroundColor: '#fff',
     borderRadius: 2,
+  },
+  cancelBtn: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: icon.s20,
+    height: icon.s20,
+    borderRadius: icon.s20 / 2,
+    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   errorOverlay: {
     ...StyleSheet.absoluteFillObject,

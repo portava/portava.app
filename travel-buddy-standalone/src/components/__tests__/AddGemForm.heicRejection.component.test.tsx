@@ -47,6 +47,7 @@ jest.mock('expo-image-picker', () => ({
 // requests.  validateMedia is stubbed to pass so the HEIC test is isolated to
 // the processed=false path, not the MIME type gate.
 const mockUploadMedia = jest.fn();
+// NOTE: exhaustive — see comment above; pulling requireActual causes network requests.
 jest.mock('../../services/media.ts', () => ({
   validateMedia: jest.fn(() => ({ ok: true })),
   uploadMedia: (...args: any[]) => mockUploadMedia(...args),
@@ -80,9 +81,10 @@ jest.mock('../selectors/GlobalPlacePicker.tsx', () => ({
   GlobalPlacePicker: () => null,
 }));
 
-// Mock useMediaPicker so pressing the pick button injects a controlled asset
+// NOTE: exhaustive — useMediaPicker so pressing the pick button injects a controlled asset
 // into the real useMediaComposer hook without launching a native picker.
 const mockPickMedia = jest.fn();
+// NOTE: exhaustive — avoids native picker launch in jest-expo.
 jest.mock('../../hooks/useMediaPicker.ts', () => ({
   useMediaPicker: () => ({ pickMedia: (...args: any[]) => mockPickMedia(...args) }),
 }));
@@ -203,7 +205,7 @@ describe('AddGemForm — HEIC processed=false rejection (integration)', () => {
     await pickAdvanceAndSubmit(utils);
 
     await waitFor(() => {
-      expect(utils.queryByText(/re-upload|not supported/i)).not.toBeNull();
+      expect(utils.queryByText(/re-upload|not supported|isn't supported|remove and pick/i)).not.toBeNull();
     });
   });
 

@@ -47,9 +47,10 @@ jest.mock('../../context/FeatureFlagsContext.tsx', () => ({
   useFeatureFlags: () => ({ isEnabled: () => false }),
 }));
 
-// Capture the onResult prop so tests can call it directly without simulating
-// the full media picker flow.
+// NOTE: exhaustive — captures onResult prop so tests inject assets directly without
+// the full native media picker flow.
 let capturedOnResult: ((asset: ImagePickerNS.ImagePickerAsset) => void) | null = null;
+// NOTE: exhaustive — MediaSourceSheet imports native picker modules unavailable in jest-expo.
 jest.mock('../ui/MediaSourceSheet.tsx', () => ({
   MediaSourceSheet: (props: { onResult: (asset: ImagePickerNS.ImagePickerAsset) => void }) => {
     capturedOnResult = props.onResult;
@@ -68,9 +69,11 @@ jest.mock('../visuals/GeneratedHeaderPicker.tsx', () => ({
 jest.mock('../selectors/GlobalCalendarPicker.tsx', () => ({
   GlobalCalendarPicker: () => null,
 }));
+// NOTE: exhaustive — imports native modal/gesture modules unavailable in jest-expo.
 jest.mock('../selectors/GlobalTimePicker.tsx', () => ({
   GlobalTimePicker: () => null,
 }));
+// NOTE: exhaustive — imports native MapLibre modules unavailable in jest-expo.
 jest.mock('../selectors/GlobalPlacePicker.tsx', () => ({
   GlobalPlacePicker: () => null,
 }));
@@ -92,6 +95,7 @@ jest.mock('../ui/KeyboardSafeView.tsx', () => {
   };
 });
 
+// NOTE: exhaustive — formatEventLocation imports geo utilities; stub returns empty string.
 jest.mock('../../lib/location/formatEventLocation.ts', () => ({
   formatEventLocation: () => '',
 }));

@@ -256,3 +256,54 @@ describe('MediaAttachmentTray — error overlay: Retry vs Remove', () => {
     expect(retryUpload).not.toHaveBeenCalled();
   });
 });
+
+describe('MediaAttachmentTray — cancel upload', () => {
+  it('pressing the Cancel button calls cancelUpload with the correct item id', async () => {
+    const cancelUpload = jest.fn();
+    const item = makeItem('cancel1', {
+      uploadState: 'uploading',
+      uploadProgress: 0.4,
+    });
+    const { getByTestId } = await render(
+      <MediaAttachmentTray composer={makeComposer([item], { cancelUpload })} />,
+    );
+    fireEvent.press(getByTestId('cancel-media-cancel1'));
+    expect(cancelUpload).toHaveBeenCalledWith('cancel1');
+    expect(cancelUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it('pressing the Cancel button does NOT call retryUpload', async () => {
+    const cancelUpload = jest.fn();
+    const retryUpload = jest.fn();
+    const item = makeItem('cancel2', {
+      uploadState: 'uploading',
+      uploadProgress: 0.6,
+    });
+    const { getByTestId } = await render(
+      <MediaAttachmentTray composer={makeComposer([item], { cancelUpload, retryUpload })} />,
+    );
+    fireEvent.press(getByTestId('cancel-media-cancel2'));
+    expect(cancelUpload).toHaveBeenCalledWith('cancel2');
+    expect(retryUpload).not.toHaveBeenCalled();
+  });
+
+  it('Cancel button is only visible when uploadState is uploading — absent on idle items', async () => {
+    const item = makeItem('idle1', { uploadState: 'idle' });
+    const { queryByTestId } = await render(
+      <MediaAttachmentTray composer={makeComposer([item])} />,
+    );
+    expect(queryByTestId('cancel-media-idle1')).toBeNull();
+  });
+
+  it('Cancel button is only visible when uploadState is uploading — absent on done items', async () => {
+    const item = makeItem('done1', {
+      uploadState: 'done',
+      uploadProgress: 1,
+      uploadedUrl: 'https://example.com/img.jpg',
+    });
+    const { queryByTestId } = await render(
+      <MediaAttachmentTray composer={makeComposer([item])} />,
+    );
+    expect(queryByTestId('cancel-media-done1')).toBeNull();
+  });
+});
