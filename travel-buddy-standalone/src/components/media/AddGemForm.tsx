@@ -278,6 +278,11 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
       const uploadResults = await composer.uploadAll();
       const firstResult = uploadResults.values().next().value;
       if (!firstResult?.ok || !firstResult.url) {
+        // useMediaComposer.uploadItem already sets item.uploadError for all
+        // failure modes (including HEIC processed=false). Both that setItems
+        // call and this setGlobalError are batched into the same re-render, so
+        // the JSX can prefer the item-level error (specific) over globalError
+        // (generic fallback). See the `displayedError` derivation below.
         setGlobalError(firstResult?.message ?? 'Media upload failed. Please try again.');
         return;
       }
@@ -770,12 +775,20 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
           </Text>
         </View>
 
-        {/* Global error */}
-        {globalError && (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{globalError}</Text>
-          </View>
-        )}
+        {/* Global error — prefer per-item upload errors (e.g. HEIC format
+            rejection) that useMediaComposer commits in the same render batch
+            as the generic globalError fallback set by handleSubmit. */}
+        {(() => {
+          const composerUploadError =
+            composer.items.find((it) => it.uploadState === 'error' && it.uploadError)
+              ?.uploadError ?? null;
+          const displayedError = composerUploadError ?? globalError;
+          return displayedError ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{displayedError}</Text>
+            </View>
+          ) : null;
+        })()}
       </ScrollView>
 
       <View style={styles.footer}>

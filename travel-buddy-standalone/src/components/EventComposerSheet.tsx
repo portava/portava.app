@@ -193,6 +193,17 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
     );
     setUploadingCover(false);
 
+    // HEIC fail-soft guard: the server stored the raw bytes but could not decode
+    // the image (libvips without HEIF support). processed=false on a successful
+    // image upload means the media is unrenderable — treat it as a hard error.
+    // Videos always return processed=false (no server transcode), so scope to images.
+    if (uploadResult.ok && uploadResult.processed === false && pickedMediaType === 'image') {
+      setUploadError("This photo format isn't supported — please re-upload as JPEG or PNG");
+      setCoverLocalUri(null);
+      setCoverMediaType(null);
+      return;
+    }
+
     if (!uploadResult.ok || !uploadResult.url) {
       const uploadMsg =
         uploadResult.errorKind === 'rate_limited' ? 'Too many uploads — please wait a moment and try again.' :
