@@ -246,6 +246,23 @@ describe("GET /api/media/file — ?quality transform guard", () => {
     );
   });
 
+  it("?quality=0.4 → rounds to 0; dropped entirely; plain /object/sign/ URL", async () => {
+    // 0.4 is the highest sub-unit fraction that still rounds to 0.  It must be
+    // dropped, not forwarded as quality=0.  Mirrors the 0.1 case but makes the
+    // boundary explicit: anything in [0.0, 0.4] rounds to 0 and is dropped.
+    const r = await req("GET", `/api/media/file/post-media/${mediaPath}?quality=0.4`);
+    assert.equal(r.status, 302, `expected 302, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.ok(
+      r.location?.includes("/object/sign/"),
+      `expected plain /object/sign/ URL for quality=0.4 (rounds to 0), got: ${r.location}`,
+    );
+    assert.equal(
+      lastSignArgs?.options,
+      undefined,
+      "expected no transform options forwarded when quality=0.4 (rounds to 0)",
+    );
+  });
+
   it("?width=400&quality=0 → width forwarded, quality dropped; /render/image/sign/ without quality", async () => {
     // When width is valid but quality=0, only the width transform is forwarded.
     // The redirect must be a /render/image/sign/ URL (because width is set),
