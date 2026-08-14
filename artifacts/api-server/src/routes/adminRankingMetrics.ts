@@ -2,6 +2,22 @@
  * GET /api/admin/ranking/metrics
  *
  * Returns the §9 algorithm health metrics from rank_events for the past N days.
+ *
+ * ── SERIES DISCONTINUITY: surface='discovery', 2026-08-14 ────────────────────
+ * Before this date the 'discovery' surface held ZERO rows — the only path that
+ * wrote one (routes/discovery.ts:1433) is reached on a cache miss, and cache A
+ * absorbed effectively all authenticated traffic. P1 Stage 0 gives every one of
+ * the six serve points an impression row, so discovery impression counts,
+ * position distributions and per-user counts are NOT comparable across that
+ * boundary, and no back-fill is possible.
+ *
+ * Rows written from Stage 0 onward carry features.servePoint (1-6) and
+ * features.rankedInRequest (bool); filter on rankedInRequest when a metric is
+ * meant to describe ranker behaviour rather than delivered behaviour. Rows with
+ * neither key predate the cutover.
+ *
+ * Full reasoning and the verified blast radius:
+ * docs/algorithm/discovery-impression-gap.md § "Resolution — 2026-08-14".
  * Admin role required.
  *
  * Query params:
