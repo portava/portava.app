@@ -196,4 +196,15 @@ describe('MediaAttachmentTray — error state', () => {
     expect(retryUpload).toHaveBeenCalledWith('retry1');
     expect(retryUpload).toHaveBeenCalledTimes(1);
   });
+
+  it('does NOT render a Retry button when uploadState is uploading', async () => {
+    const item = makeItem('uploading1', {
+      uploadState: 'uploading',
+      uploadProgress: 0.5,
+    });
+    const { queryByTestId } = await render(
+      <MediaAttachmentTray composer={makeComposer([item])} />,
+    );
+    expect(queryByTestId('retry-media-uploading1')).toBeNull();
+  });
 });
