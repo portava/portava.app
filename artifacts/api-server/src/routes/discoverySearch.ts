@@ -65,6 +65,11 @@ import {
   type CanonicalRow,
 } from "../lib/canonicalLocations";
 import { nameVisibilitySet } from "../lib/publicIdentity";
+import {
+  logDiscoveryServe,
+  DiscoveryServePoint,
+  searchTypeToItemKind,
+} from "../lib/discoveryServeLog.js";
 
 const router = Router();
 const logger = rootLogger.child({ route: "discoverySearch" });
@@ -1440,9 +1445,23 @@ router.get("/discovery/search", async (req, res) => {
       fetchAgeRestrictedSet(sc),
     ]);
 
+    // Stage 0b — serve point 8. Search ranks nothing and logs nothing today; a
+    // grep of this file for rankCandidates / rankItemsForDiscovery /
+    // drsRankItems / logImpression returns nothing at all.
+    const logSearchServe = (results: SearchResult[]) => {
+      void logDiscoveryServe(sc, {
+        userId: user.id,
+        servePoint: DiscoveryServePoint.SEARCH,
+        route: "GET /discovery/search",
+        items: results.map((r) => ({ id: r.id, kind: searchTypeToItemKind(r.type) })),
+        context: { type, offset, resultCount: results.length },
+      });
+    };
+
     if (type === "all") {
       const { results, hasMore, nextCursor } = await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx);
       res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
+      logSearchServe(results);
     } else {
       // Fetch limit+1 to detect hasMore without false positives
       const fetchLimit = limit + 1;
@@ -1451,6 +1470,7 @@ router.get("/discovery/search", async (req, res) => {
       const results = raw.slice(0, limit);
       const nextCursor = hasMore ? encodeCursor(offset + limit) : null;
       res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
+      logSearchServe(results);
     }
   } catch (err) {
     logger.warn({ err, q: effectiveQ, type }, "discovery/search failed");
@@ -1651,9 +1671,21 @@ router.get("/discovery/suggest", async (req, res) => {
       if (items.length > 0) groups.push({ type: p.type, label: p.label, items });
     });
 
+    const servedGroups = orderSuggestGroups(groups, q).slice(0, MAX_SUGGEST_GROUPS);
     res.status(200).json({
       query: q,
-      groups: orderSuggestGroups(groups, q).slice(0, MAX_SUGGEST_GROUPS),
+      groups: servedGroups,
+    });
+    // Stage 0b — serve point 9. Flattened in the order the groups are served,
+    // so `position` reflects what the user actually saw top to bottom.
+    void logDiscoveryServe(sc, {
+      userId: user.id,
+      servePoint: DiscoveryServePoint.SUGGEST,
+      route: "GET /discovery/suggest",
+      items: servedGroups.flatMap((g) =>
+        g.items.map((it) => ({ id: it.id, kind: searchTypeToItemKind(g.type) })),
+      ),
+      context: { groupCount: servedGroups.length },
     });
   } catch (err) {
     logger.warn({ err, q }, "discovery/suggest failed");

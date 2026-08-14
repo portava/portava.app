@@ -29,6 +29,7 @@ import assert from "node:assert/strict";
 import {
   logDiscoveryServe,
   invalidateServeLogFlagCache,
+  searchTypeToItemKind,
   DiscoveryServePoint,
   DISCOVERY_SERVE_LOG_FLAG,
 } from "../lib/discoveryServeLog.js";
@@ -228,6 +229,69 @@ describe("discoveryServeLog — failure handling", () => {
         userId: USER_ID, servePoint: DiscoveryServePoint.CACHE_A_L1, items: ITEMS,
       }),
     );
+  });
+});
+
+describe("discoveryServeLog — Stage 0b, the rest of the discovery surface", () => {
+  beforeEach(() => invalidateServeLogFlagCache());
+
+  it("M. serve points 7-9 are never marked as having run a ranker", async () => {
+    for (const sp of [
+      DiscoveryServePoint.FEED,
+      DiscoveryServePoint.SEARCH,
+      DiscoveryServePoint.SUGGEST,
+    ]) {
+      invalidateServeLogFlagCache();
+      const { client, captured } = makeClient({ flagRow: { enabled: true } });
+      await logDiscoveryServe(client, {
+        userId: USER_ID, servePoint: sp, items: ITEMS, route: "GET /discovery/x",
+      });
+      assert.equal(
+        captured[0]!.rows[0].features.rankedInRequest, false,
+        `serve point ${sp} has no ranker call at all`,
+      );
+      assert.equal(captured[0]!.rows[0].features.route, "GET /discovery/x");
+    }
+  });
+
+  it("N. an explicit kind overrides the id-based inference", async () => {
+    const { client, captured } = makeClient({ flagRow: { enabled: true } });
+    await logDiscoveryServe(client, {
+      userId: USER_ID, servePoint: DiscoveryServePoint.SEARCH,
+      items: [
+        { id: "node/1", kind: "buddy" },
+        { id: "db/2",   kind: "post"  },
+        // null is a real, intended value — "served, kind not applicable".
+        { id: "city/3", kind: null    },
+      ],
+    });
+    const kinds = captured[0]!.rows.map((r: any) => r.item_kind);
+    assert.deepEqual(kinds, ["buddy", "post", null]);
+  });
+
+  it("O. search types map only onto kinds the CHECK constraint accepts", () => {
+    const allowed = new Set(["post", "event", "plan", "buddy", "place", "gem"]);
+    const expected: Record<string, string | null> = {
+      travelers: "buddy", buddies: "buddy", events: "event",
+      trips: "plan", plans: "plan", places: "place",
+      hidden_gems: "gem", posts: "post",
+    };
+    for (const [type, kind] of Object.entries(expected)) {
+      assert.equal(searchTypeToItemKind(type), kind, `${type} maps to ${kind}`);
+    }
+    // Taxonomic result types have no valid kind and must map to null rather
+    // than to an invented one, which would corrupt any item_kind grouping.
+    for (const type of [
+      "hashtags", "circles", "stamps", "activities",
+      "cities", "countries", "languages", "interests", "vibes",
+    ]) {
+      assert.equal(searchTypeToItemKind(type), null, `${type} has no valid item_kind`);
+    }
+    // Nothing may escape the constraint's vocabulary.
+    for (const type of [...Object.keys(expected), "cities", "unknown_future_type"]) {
+      const k = searchTypeToItemKind(type);
+      assert.ok(k === null || allowed.has(k), `${type} -> ${k} violates the CHECK`);
+    }
   });
 });
 
