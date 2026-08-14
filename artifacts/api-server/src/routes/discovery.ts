@@ -37,6 +37,7 @@ import { rankCandidates } from "../lib/portavaRank";
 import type { RankCandidate, ViewerContext, ScoredCandidate } from "../lib/portavaRank";
 import { logImpression } from "../lib/rankLog";
 import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
+import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import { emitCreatorCapAnalytics } from "../services/ranking/CreatorCapEnforcer.js";
@@ -1025,6 +1026,30 @@ router.get("/discovery", async (req, res) => {
 
   const key    = cacheKey(destination, category, radiusKm);
   const cached = cache.get(key);
+
+  // ── DISCOVERY_ENGINE_MODE dispatch ─────────────────────────────────────────
+  //
+  // THIS IS THE BRANCH POINT, AND ITS POSITION IS THE WHOLE DESIGN.
+  //
+  // It sits above the Cache A check at :1113 — which returns before the Compass
+  // block at :1211 — because Cache A and Cache B are in SERIES, not parallel.
+  // Cache A's key is user-independent, and on a cold fetch the raw pre-ranking
+  // list is written to it (:1204) while the ranked output goes only to the
+  // requesting user's Cache B entry (:1263). The consequence is that for a given
+  // (destination, category, radius) the ranker runs at most once per 2 h and its
+  // output reaches exactly one user.
+  //
+  // A mode resolved BELOW :1113 could therefore only ever claim the small
+  // minority of requests that miss the cache — which is precisely the failure
+  // the owner directive names: comparing rankers on traffic that reaches neither.
+  //
+  // Stage 1 resolves the mode and records it. It does not branch on it: every
+  // mode reaches the legacy path below by FALLING THROUGH this code, never by a
+  // copy of it (mechanic M2). The shadow and pde branches land HERE, at this
+  // point, in later stages. Nothing below this line changes in legacy mode, and
+  // Stage 1's exit criterion is exactly that: byte-identical responses and an
+  // unchanged serve-point distribution.
+  const engineMode = await resolveDiscoveryEngineMode(getServiceClient());
   /** Apply openNow / minRating / age filters to a set of places */
   function applyFilters(raw: DiscoveryPlace[]): DiscoveryPlace[] {
     let list = raw;
@@ -1118,7 +1143,10 @@ router.get("/discovery", async (req, res) => {
                                     DiscoveryServePoint.CACHE_A_L2_STALE;
       void logDiscoveryServe(getServiceClient(), {
         userId: callerUserId, servePoint, items: slice,
-        context: { destination: destination!, category, cacheLevel },
+        context: {
+          destination: destination!, category, cacheLevel,
+          engineMode: engineMode.mode, modeReason: engineMode.reason,
+        },
       });
     }
   }
@@ -1245,7 +1273,10 @@ router.get("/discovery", async (req, res) => {
               // ranker ran in this request, so rankedInRequest is false.
               void logDiscoveryServe(compassSc, {
                 userId: callerUserId, servePoint: DiscoveryServePoint.CACHE_B_HIT, items: cSlice,
-                context: { destination, category, cacheLevel: "compass_candidate_hit" },
+                context: {
+                  destination, category, cacheLevel: "compass_candidate_hit",
+                  engineMode: engineMode.mode, modeReason: engineMode.reason,
+                },
               });
               return;
             }
@@ -1294,7 +1325,10 @@ router.get("/discovery", async (req, res) => {
             // the logImpression call on the cold path below.
             void logDiscoveryServe(compassSc, {
               userId: callerUserId, servePoint: DiscoveryServePoint.COMPASS_FRESH_RANK, items: cSlice,
-              context: { destination, category, cacheLevel: "compass_fresh_rank" },
+              context: {
+                destination, category, cacheLevel: "compass_fresh_rank",
+                engineMode: engineMode.mode, modeReason: engineMode.reason,
+              },
             });
             return;
           }
@@ -1469,6 +1503,8 @@ router.get("/discovery", async (req, res) => {
         destination,
         category,
         cacheLevel:      "miss",
+        engineMode:      engineMode.mode,
+        modeReason:      engineMode.reason,
       });
     }
     const totalMs = Date.now() - t0;

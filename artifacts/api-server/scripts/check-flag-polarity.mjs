@@ -185,7 +185,21 @@ const STOP_READER = 'isKillSwitchEngaged';
 // missing from this list until the seeded-flag population reported
 // COMPASS_V1_RULE_BASED_ENABLED as unread; it is read at routes/discovery.ts:1215.
 // Four shared readers, not three.
-const CAP_READERS = ['isFlagEnabled', 'isLivePlacesCapabilityEnabled', 'isEnabled'];
+//
+// `getFlagRow` joined this list on 2026-08-14, when it acquired its first caller.
+// It is defined in lib/featureFlags.ts:73 alongside the other shared helpers and
+// had ZERO callers until lib/discoveryEngineMode.ts — this file's own note at
+// the DISCOVERY-era entry below records that state. It is the only helper that
+// reads feature_flags.metadata, which is what a three-valued mode requires, and
+// it returns null on any error, so a flag read through it is fail-closed and
+// CAPABILITY by the same argument as isFlagEnabled — not a stop.
+//
+// Adding it here rather than declaring its callers UNRESOLVABLE is deliberate:
+// the argument IS a resolvable literal-valued const, so an UNRESOLVABLE entry
+// would be stale the moment it was written (the check says so itself). The gap
+// was never in the call site; it was that a real shared reader was missing from
+// the vocabulary, which is the same defect the `isEnabled` note above records.
+const CAP_READERS = ['isFlagEnabled', 'isLivePlacesCapabilityEnabled', 'isEnabled', 'getFlagRow'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCAN SCOPE
@@ -238,6 +252,21 @@ const CLASSIFIED = [
     reason:
       'No suffix at all. `true` auto-approves generated stamp artwork; false routes it to human review. ' +
       'False-on-error means artwork goes to review, which is the conservative direction.',
+  },
+  {
+    flag: 'DISCOVERY_ENGINE_MODE',
+    kind: 'CONFIG',
+    reason:
+      'NOT A BOOLEAN GATE. Selects which discovery EXECUTION PATH handles a request — legacy | shadow | pde — ' +
+      'carried in feature_flags.metadata.mode, with `enabled` acting only as a master off switch. Neither ' +
+      'naming convention applies and neither polarity rule fits a three-valued setting, which is why it is ' +
+      'CONFIG rather than CAPABILITY. Read through getFlagRow (the only helper that reads metadata), and ' +
+      'EVERY unusable state resolves to `legacy` — absent row, enabled=false, missing mode, unrecognised ' +
+      'mode, unreadable row. Legacy is the current production path, so a failure here can only preserve what ' +
+      'users already get, which is the fail-closed direction for a setting whose other values change ' +
+      'behaviour. Its companion EMERGENCY STOP is a separate flag, disable_discovery_pde, classified by the ' +
+      'disable_* convention and read through isKillSwitchEngaged — deliberately NOT folded into this row, ' +
+      'because a stop must be readable and engageable independently of the setting it protects.',
   },
   {
     flag: 'SEARCH_SIGNAL_DECAY_DAYS',
