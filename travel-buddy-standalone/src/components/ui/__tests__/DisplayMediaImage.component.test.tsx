@@ -508,6 +508,100 @@ describe('DisplayMediaImage — 403 re-hydrate sequence', () => {
   });
 });
 
+// ── DisplayMediaImage — URI change after initial URL error ────────────────────
+//
+// Regression guard for the Discovery place card photo bug:
+//   1. PlaceCard renders an OSM place (no DB image) → DisplayMediaImage receives
+//      the category-fallback WebP as the initial URI.
+//   2. The fallback WebP 404s in the Expo web dev server (assets are served at
+//      hashed paths, not the raw relative path) → onError fires → phase='error'.
+//   3. 500 ms later, the FSQ proxy returns a real photo URL → PlaceCard re-renders
+//      → DisplayMediaImage receives the new FSQ URI.
+//   4. BUG (pre-fix): setPhase('loading') was called but resolvedSource still held
+//      the OLD fallback URL → ExpoImage tried the old URL → 404 again → stayed in
+//      error phase → FSQ photo never rendered.
+//   5. FIX: reset resolvedSource to the new URI in the same render-phase guard that
+//      resets phase, so ExpoImage loads the correct URL on the very next render.
+
+describe('DisplayMediaImage — real photo renders after initial fallback URL errors', () => {
+  it('loads the new URL when URI prop changes from an errored URL to a valid one', async () => {
+    const fallbackUrl = '/assets/fallbacks/generic-place.webp';
+    const fsqUrl     = 'https://fastly.4sqi.net/img/general/original/abc123.jpg';
+
+    let tr!: TestRenderer.ReactTestRenderer;
+
+    // Step 1: mount with the fallback URL.
+    await act(async () => {
+      tr = TestRenderer.create(
+        <DisplayMediaImage
+          uri={fallbackUrl}
+          width={300}
+          height={140}
+          fallbackLabel="🎉 Events"
+        />,
+      );
+      await Promise.resolve(); // let useHydratedMedia settle
+    });
+
+    // ExpoImage is mounted (loading phase — fallback hasn't errored yet).
+    expect(findExpoImages(tr.root).length).toBeGreaterThan(0);
+
+    // Step 2: simulate the fallback 404 / load error.
+    fireOnError(tr.root);
+
+    // Now in error phase — the emoji/label fallback is showing.
+    expect(textContent(tr.root)).toContain('🎉 Events');
+    expect(findExpoImages(tr.root).length).toBe(0);
+
+    // Step 3: FSQ photo URL arrives (simulating the 500 ms deferred lookup).
+    await act(async () => {
+      tr.update(
+        <DisplayMediaImage
+          uri={fsqUrl}
+          width={300}
+          height={140}
+          fallbackLabel="🎉 Events"
+        />,
+      );
+      await Promise.resolve(); // let useHydratedMedia settle
+    });
+
+    // Step 4 (post-fix assertion): ExpoImage must be mounted with the FSQ URL —
+    // NOT stuck in error phase showing the emoji fallback.
+    expect(textContent(tr.root)).not.toContain('🎉 Events');
+    const imgs = findExpoImages(tr.root);
+    expect(imgs.length).toBeGreaterThan(0);
+    const src = JSON.parse(imgs[0].props['data-source'] ?? 'null') as { uri: string } | null;
+    expect(src?.uri).toBe(fsqUrl);
+  });
+
+  it('shows the fallback again when URI changes from an errored URL back to null', async () => {
+    const fallbackUrl = '/assets/fallbacks/generic-place.webp';
+
+    let tr!: TestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tr = TestRenderer.create(
+        <DisplayMediaImage uri={fallbackUrl} width={300} height={140} fallbackLabel="No image" />,
+      );
+      await Promise.resolve();
+    });
+
+    // Error the initial URL.
+    fireOnError(tr.root);
+    expect(textContent(tr.root)).toContain('No image');
+
+    // Now change URI to null — should stay in error phase with fallback.
+    await act(async () => {
+      tr.update(
+        <DisplayMediaImage uri={null} width={300} height={140} fallbackLabel="No image" />,
+      );
+    });
+
+    expect(textContent(tr.root)).toContain('No image');
+    expect(findExpoImages(tr.root).length).toBe(0);
+  });
+});
+
 // ── DisplayMediaImage — hydrateMediaUrls loading (auth-window) ────────────────
 //
 // While useHydratedMedia is in-flight (e.g. feature-flag cache is cold on first
