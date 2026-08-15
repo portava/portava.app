@@ -10,6 +10,9 @@
  *  B. FOURSQUARE_API_KEY absent             → { photoUrl: null, reason: "no_foursquare_key" }
  *  C. Foursquare responds 401               → { photoUrl: null, reason: "foursquare_auth_error" }
  *  D. Foursquare responds 403               → { photoUrl: null, reason: "foursquare_auth_error" }
+ *  E. Photo entry has prefix: null          → { photoUrl: null, reason: "no_photo_found" }
+ *  F. Photo entry has suffix: null          → { photoUrl: null, reason: "no_photo_found" }
+ *  G. Photo entry has both prefix+suffix absent → { photoUrl: null, reason: "no_photo_found" }
  *
  * Runtime: node:test + supertest-style fetch, tsx/esm, no vitest.
  * Run:
@@ -312,6 +315,181 @@ describe("GET /api/places/fsq-photo — Foursquare 403 auth error", () => {
       body.reason,
       "foursquare_auth_error",
       `expected reason 'foursquare_auth_error' on 403, got '${body.reason as string}'`,
+    );
+  });
+});
+
+// ── E. Photo entry has prefix: null ──────────────────────────────────────────
+
+describe("GET /api/places/fsq-photo — photo entry has prefix: null", () => {
+  let server: Server;
+  let url: string;
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  beforeEach(() => {
+    process.env.FOURSQUARE_API_KEY = "test-fsq-key";
+    globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              {
+                photos: [
+                  { prefix: null, suffix: "/photo.jpg" },
+                ],
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return originalFetch(input, _init);
+    };
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  it("returns photoUrl: null when prefix is null", async () => {
+    const { body } = await getPhoto(url, { name: "Sagrada Familia", lat: 41.404, lng: 2.174 });
+    assert.equal(body.photoUrl, null, `expected null photoUrl, got ${JSON.stringify(body.photoUrl)}`);
+  });
+
+  it("returns reason: 'no_photo_found' when prefix is null", async () => {
+    const { body } = await getPhoto(url, { name: "Sagrada Familia", lat: 41.404, lng: 2.174 });
+    assert.equal(
+      body.reason,
+      "no_photo_found",
+      `expected reason 'no_photo_found', got '${body.reason as string}'`,
+    );
+  });
+});
+
+// ── F. Photo entry has suffix: null ──────────────────────────────────────────
+
+describe("GET /api/places/fsq-photo — photo entry has suffix: null", () => {
+  let server: Server;
+  let url: string;
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  beforeEach(() => {
+    process.env.FOURSQUARE_API_KEY = "test-fsq-key";
+    globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              {
+                photos: [
+                  { prefix: "https://fastly.4sqi.net/img/general/", suffix: null },
+                ],
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return originalFetch(input, _init);
+    };
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  it("returns photoUrl: null when suffix is null", async () => {
+    const { body } = await getPhoto(url, { name: "Alhambra", lat: 37.176, lng: -3.588 });
+    assert.equal(body.photoUrl, null, `expected null photoUrl, got ${JSON.stringify(body.photoUrl)}`);
+  });
+
+  it("returns reason: 'no_photo_found' when suffix is null", async () => {
+    const { body } = await getPhoto(url, { name: "Alhambra", lat: 37.176, lng: -3.588 });
+    assert.equal(
+      body.reason,
+      "no_photo_found",
+      `expected reason 'no_photo_found', got '${body.reason as string}'`,
+    );
+  });
+});
+
+// ── G. Photo entry has both prefix and suffix absent ─────────────────────────
+
+describe("GET /api/places/fsq-photo — photo entry has both prefix and suffix absent", () => {
+  let server: Server;
+  let url: string;
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  beforeEach(() => {
+    process.env.FOURSQUARE_API_KEY = "test-fsq-key";
+    globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              {
+                photos: [{}],
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return originalFetch(input, _init);
+    };
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  it("returns photoUrl: null when both prefix and suffix are absent", async () => {
+    const { body } = await getPhoto(url, { name: "Acropolis", lat: 37.971, lng: 23.726 });
+    assert.equal(body.photoUrl, null, `expected null photoUrl, got ${JSON.stringify(body.photoUrl)}`);
+  });
+
+  it("returns reason: 'no_photo_found' when both prefix and suffix are absent", async () => {
+    const { body } = await getPhoto(url, { name: "Acropolis", lat: 37.971, lng: 23.726 });
+    assert.equal(
+      body.reason,
+      "no_photo_found",
+      `expected reason 'no_photo_found', got '${body.reason as string}'`,
     );
   });
 });
