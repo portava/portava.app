@@ -20,6 +20,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
+import { osmNeighborhood } from "../src/lib/osmPlaceShape.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -174,7 +175,11 @@ function osmToPlace(el: any, city: string, appCategory: string): DiscoveryPlaceI
     });
   }
 
-  const neighborhood = tags.neighbourhood ?? tags.suburb ?? tags["addr:suburb"] ?? null;
+  // SHARED with the live Discovery route. The two paths had drifted -- this
+  // path missed addr:neighbourhood, the live one missed suburb -- so the same
+  // real place got a neighbourhood from one and none from the other, making a
+  // genuine defect indistinguishable from a path difference during QA.
+  const neighborhood = osmNeighborhood(tags);
   const rawStars     = parseFloat(tags.stars ?? "");
   const rating       = isNaN(rawStars) ? null : Math.min(5, Math.max(1, rawStars));
 
@@ -183,7 +188,7 @@ function osmToPlace(el: any, city: string, appCategory: string): DiscoveryPlaceI
     name:         name.trim(),
     place_type:   "traveler_pick",
     category:     appCategory,
-    neighborhood: neighborhood?.trim() ?? null,
+    neighborhood,
     blurb:        tags.description ?? tags.inscription ?? null,
     image_url:    null,
     submitted_by: null,
