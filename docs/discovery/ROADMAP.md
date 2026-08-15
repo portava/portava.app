@@ -401,12 +401,24 @@ working (the photo route proves it), so this is the **legacy**
 status body. **Places API (New) is enabled; the legacy Places API apparently is
 not.**
 
-This is a **user-facing defect in destination search**, and it is **not** caused
-by the drift — the clean tree is correctly on the legacy endpoint, and the drift
-is the tree that moved *off* it. `places.ts:289` documents the route as
-degrading to an empty list on non-OK, which is honest but silent: the caller
-cannot distinguish "no such city" from "the API is off". **Not yet filed. It is
-its own defect and does not belong to Phase B.**
+It is **not** caused by the drift — the clean tree is correctly on the legacy
+endpoint, and the drift is the tree that moved *off* it. `places.ts:289`
+documents the route as degrading to an empty list on non-OK, which is honest but
+silent: the caller cannot distinguish "no such city" from "the API is off".
+
+→ **FILED: `../places/google-legacy-places-api-returns-nothing.md`.** It is its
+own defect and **does not belong to Phase B** — folding it in would both delay
+Phase B and bury the defect.
+
+**Two corrections that investigation produced, recorded here because the
+short version above was wrong in both directions:**
+
+1. **`/places/google-details` fails too**, on the same legacy host, for a valid
+   real `place_id`. It is the legacy Places **API family**, not one endpoint.
+2. **It is degradation, not an outage.** `GlobalPlacePicker` composes several
+   sources and `/api/places/search` (Nominatim) works, so the picker still
+   returns results. What is lost is the whole Google-sourced contribution,
+   silently. *"Destination search is broken"* would have been wrong.
 
 #### Phase B status after all of the above
 
