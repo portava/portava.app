@@ -46,15 +46,15 @@ function uniqueName(): string {
 // ── setup ─────────────────────────────────────────────────────────────────────
 
 const originalFetch = globalThis.fetch;
-const originalEnv = process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY;
+const originalBase = process.env.EXPO_PUBLIC_API_BASE_URL;
 
 beforeEach(() => {
-  process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY = 'test-fsq-key';
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test.invalid';
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY = originalEnv;
+  process.env.EXPO_PUBLIC_API_BASE_URL = originalBase;
 });
 
 // ── concurrent dedup ──────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ afterEach(() => {
 describe('lookupFsqPhoto — concurrent dedup', () => {
   it('fires only one fetch when two calls for the same venue are made concurrently', async () => {
     const body = {
-      results: [{ photos: [{ prefix: 'https://fastly.4sqi.net/img/general/', suffix: '/venue.jpg' }] }],
+      photoUrl: 'https://fastly.4sqi.net/img/general/original/venue.jpg',
     };
     const { fetch: mockFetch, captured } = makeFetch(200, body);
     globalThis.fetch = mockFetch;
@@ -86,7 +86,7 @@ describe('lookupFsqPhoto — concurrent dedup', () => {
 
   it('both concurrent callers receive the same resolved photo URL', async () => {
     const body = {
-      results: [{ photos: [{ prefix: 'https://fastly.4sqi.net/img/general/', suffix: '/eiffel.jpg' }] }],
+      photoUrl: 'https://fastly.4sqi.net/img/general/original/eiffel.jpg',
     };
     const { fetch: mockFetch } = makeFetch(200, body);
     globalThis.fetch = mockFetch;
@@ -128,7 +128,7 @@ describe('lookupFsqPhoto — concurrent dedup', () => {
 
   it('two calls for DIFFERENT venues still each fire their own fetch', async () => {
     const body = {
-      results: [{ photos: [{ prefix: 'https://fastly.4sqi.net/img/general/', suffix: '/x.jpg' }] }],
+      photoUrl: 'https://fastly.4sqi.net/img/general/original/x.jpg',
     };
     const { fetch: mockFetch, captured } = makeFetch(200, body);
     globalThis.fetch = mockFetch;
@@ -153,7 +153,7 @@ describe('lookupFsqPhoto — concurrent dedup', () => {
 describe('lookupFsqPhoto — cache hit after resolution', () => {
   it('a sequential second call for the same venue hits the cache — no second fetch', async () => {
     const body = {
-      results: [{ photos: [{ prefix: 'https://fastly.4sqi.net/img/general/', suffix: '/cached.jpg' }] }],
+      photoUrl: 'https://fastly.4sqi.net/img/general/original/cached.jpg',
     };
     const { fetch: mockFetch, captured } = makeFetch(200, body);
     globalThis.fetch = mockFetch;

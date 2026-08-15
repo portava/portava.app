@@ -44,12 +44,11 @@ function uniqueName(): string {
 
 // ── setup ─────────────────────────────────────────────────────────────────────
 
-const FAKE_KEY = 'test-fsq-key-abc123';
 const originalFetch = globalThis.fetch;
-const originalEnv = process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY;
+const originalBase = process.env.EXPO_PUBLIC_API_BASE_URL;
 
 beforeEach(async () => {
-  process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY = FAKE_KEY;
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test.invalid';
   // Reset the once-per-session auth-failure guard so each test starts clean.
   const { _resetAuthStateForTest } = await import('../fsqPhotoLookup.ts');
   _resetAuthStateForTest();
@@ -57,14 +56,18 @@ beforeEach(async () => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY = originalEnv;
+  process.env.EXPO_PUBLIC_API_BASE_URL = originalBase;
 });
 
 // ── lookupFsqPhoto — request shape ────────────────────────────────────────────
 
-describe('lookupFsqPhoto — request URL', () => {
-  it('sends to the places-api.foursquare.com endpoint', async () => {
-    const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
+describe('lookupFsqPhoto — goes through the server proxy, never to Foursquare', () => {
+  // These are the tests that would have caught the original defect, so they are
+  // written as NEGATIVE assertions rather than only positive ones. "It calls
+  // the proxy" passes just as happily in a build that also calls Foursquare.
+
+  it('sends to the api-server proxy route', async () => {
+    const { fetch: mockFetch, captured } = makeFetch(200, { photoUrl: null });
     globalThis.fetch = mockFetch;
 
     await lookupFsqPhoto(uniqueName(), 1.23, 4.56);
@@ -72,13 +75,45 @@ describe('lookupFsqPhoto — request URL', () => {
     assert.ok(captured.length > 0, 'fetch was not called');
     assert.match(
       captured[0].url,
-      /^https:\/\/places-api\.foursquare\.com\/places\/search/,
-      'URL must start with the new places-api.foursquare.com base',
+      /^https:\/\/api\.test\.invalid\/api\/places\/fsq-photo/,
+      'URL must be the api-server proxy route',
     );
   });
 
-  it('includes the place name as the "query" query param', async () => {
-    const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
+  it('NEVER contacts a foursquare.com host', async () => {
+    // The CORS failure and the credential leak were the same call. A build that
+    // reintroduces it fails here regardless of whether the proxy is also used.
+    const { fetch: mockFetch, captured } = makeFetch(200, { photoUrl: null });
+    globalThis.fetch = mockFetch;
+
+    await lookupFsqPhoto(uniqueName(), 1.23, 4.56);
+
+    for (const c of captured) {
+      assert.ok(
+        !c.url.includes('foursquare.com'),
+        `client must not call Foursquare directly — it cannot succeed cross-origin and it would ship the key: ${c.url}`,
+      );
+    }
+  });
+
+  it('sends NO Authorization header and NO api key', async () => {
+    const { fetch: mockFetch, captured } = makeFetch(200, { photoUrl: null });
+    globalThis.fetch = mockFetch;
+
+    await lookupFsqPhoto(uniqueName(), null, null);
+
+    assert.ok(captured.length > 0, 'fetch was not called');
+    const headers = (captured[0].init?.headers ?? {}) as Record<string, string>;
+    assert.equal(headers['Authorization'], undefined, 'the credential belongs on the server');
+    const url = new URL(captured[0].url);
+    for (const [k, v] of url.searchParams) {
+      assert.ok(!/key|token|secret/i.test(k), `query param ${k} looks like a credential`);
+      assert.ok(v.length < 100, `query param ${k} is suspiciously long for a proxy call`);
+    }
+  });
+
+  it('passes the place name as the "name" query param', async () => {
+    const { fetch: mockFetch, captured } = makeFetch(200, { photoUrl: null });
     globalThis.fetch = mockFetch;
 
     const name = uniqueName();
@@ -86,146 +121,145 @@ describe('lookupFsqPhoto — request URL', () => {
 
     assert.ok(captured.length > 0, 'fetch was not called');
     const url = new URL(captured[0].url);
-    assert.equal(url.searchParams.get('query'), name.trim());
+    assert.equal(url.searchParams.get('name'), name.trim());
+  });
+
+  it('passes lat/lng as separate params when both are present', async () => {
+    const { fetch: mockFetch, captured } = makeFetch(200, { photoUrl: null });
+    globalThis.fetch = mockFetch;
+
+    await lookupFsqPhoto(uniqueName(), 1.5, -2.5);
+
+    const url = new URL(captured[0].url);
+    assert.equal(url.searchParams.get('lat'), '1.5');
+    assert.equal(url.searchParams.get('lng'), '-2.5');
   });
 });
 
-describe('lookupFsqPhoto — request headers', () => {
-  it('sends Authorization: Bearer <key>', async () => {
-    const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
+// ── lookupFsqPhoto — reading the proxy response ───────────────────────────────
+//
+// WHAT WAS HERE BEFORE, AND WHY IT IS RECORDED RATHER THAN QUIETLY REPLACED
+// ========================================================================
+// Two describe blocks stood here, and between them they asserted almost nothing
+// they claimed to.
+//
+//   "photo URL assembly" — five tests, NONE of which tested assembly. Every one
+//   fetched a 500 and asserted null. Three carried an orphaned
+//   `const body = { results: [{ photos: [] }] }` that was never passed to
+//   anything. Two were exact duplicates of each other by name.
+//
+//   "missing API key" — three tests. The first deleted the key and then
+//   asserted only that the result was null, which a 200 with no results would
+//   also produce. The other two were both named "caches the null result so a
+//   second call does not fetch again"; the first of them never made a second
+//   call and so tested no caching at all.
+//
+// That is VACUOUS COVERAGE, and it is worse than absent coverage: absent
+// coverage is visible in a list of test names, vacuous coverage reads as
+// reassurance. It is recorded here because "these tests were rewritten" and
+// "these tests never tested what they said" are different facts about how much
+// this file could previously be trusted.
+//
+// Assembly now happens on the server (lib/foursquarePlaces.ts), where the
+// prefix+suffix response shape is known. What this side must get right is
+// narrower: read `photoUrl` out of the proxy response, treat anything non-string
+// as null, cache, dedup, and never throw.
+
+describe('lookupFsqPhoto — reading the proxy response', () => {
+  it('returns the photoUrl the server resolved', async () => {
+    const { fetch: mockFetch } = makeFetch(200, { photoUrl: 'https://fastly.4sqi.net/img/general/original/abc.jpg' });
     globalThis.fetch = mockFetch;
 
-
-    await lookupFsqPhoto(uniqueName(), null, null);
-
-    assert.ok(captured.length > 0, 'fetch was not called');
-    const headers = captured[0].init?.headers as Record<string, string> | undefined;
-    assert.ok(headers, 'headers must be present');
     assert.equal(
-      (headers as Record<string, string>)['Authorization'],
-      `Bearer ${FAKE_KEY}`,
+      await lookupFsqPhoto(uniqueName(), 10.0, 20.0),
+      'https://fastly.4sqi.net/img/general/original/abc.jpg',
     );
   });
 
-  it('sends X-Places-Api-Version header', async () => {
-    const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
+  it('returns null when the server reports no photo', async () => {
+    const { fetch: mockFetch } = makeFetch(200, { photoUrl: null, reason: 'no_photo' });
     globalThis.fetch = mockFetch;
+    assert.equal(await lookupFsqPhoto(uniqueName(), 10.0, 20.0), null);
+  });
 
+  it('returns null when the server has no key configured', async () => {
+    // Not an error condition: the endpoint answers 200 with a reason, exactly
+    // like its Google-backed sibling, so a missing key degrades to category
+    // artwork rather than to a broken card.
+    const { fetch: mockFetch } = makeFetch(200, { photoUrl: null, reason: 'no_foursquare_key' });
+    globalThis.fetch = mockFetch;
+    assert.equal(await lookupFsqPhoto(uniqueName(), 10.0, 20.0), null);
+  });
 
-    await lookupFsqPhoto(uniqueName(), null, null);
+  it('returns null when photoUrl is present but not a string', async () => {
+    const { fetch: mockFetch } = makeFetch(200, { photoUrl: { nope: true } });
+    globalThis.fetch = mockFetch;
+    assert.equal(await lookupFsqPhoto(uniqueName(), 10.0, 20.0), null);
+  });
 
-    assert.ok(captured.length > 0, 'fetch was not called');
-    const headers = captured[0].init?.headers as Record<string, string> | undefined;
-    assert.ok(headers, 'headers must be present');
-    assert.ok(
-      typeof (headers as Record<string, string>)['X-Places-Api-Version'] === 'string' &&
-        (headers as Record<string, string>)['X-Places-Api-Version'].length > 0,
-      'X-Places-Api-Version must be a non-empty string',
-    );
+  it('returns null on a 500 without throwing', async () => {
+    const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
+    globalThis.fetch = mockFetch;
+    assert.equal(await lookupFsqPhoto(uniqueName(), 10.0, 20.0), null);
+  });
+
+  it('returns null when fetch itself rejects', async () => {
+    globalThis.fetch = (async () => { throw new Error('network down'); }) as typeof globalThis.fetch;
+    assert.equal(await lookupFsqPhoto(uniqueName(), 10.0, 20.0), null);
+  });
+
+  it('returns null without fetching when the name is blank', async () => {
+    let called = 0;
+    globalThis.fetch = (async () => { called += 1; return new Response('{}'); }) as typeof globalThis.fetch;
+
+    assert.equal(await lookupFsqPhoto('   ', 1, 2), null);
+    assert.equal(called, 0, 'a blank name must not reach the server');
   });
 });
 
-// ── lookupFsqPhoto — photo URL assembly ───────────────────────────────────────
+// ── lookupFsqPhoto — caching ──────────────────────────────────────────────────
 
-describe('lookupFsqPhoto — photo URL assembly', () => {
-  it('assembles prefix + original + suffix into the photo URL', async () => {
-    const body = { results: [{ photos: [] }] };
-      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
-    globalThis.fetch = mockFetch;
-
-
-    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
-
-    assert.equal(result, null);
-  });
-
-  it('returns null when the first result has no photos', async () => {
-    const body = { results: [{ photos: [] }] };
-      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
-    globalThis.fetch = mockFetch;
-
-
-    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
-
-    assert.equal(result, null);
-  });
-
-  it('returns null when the first result has no photos', async () => {
-    const body = { results: [{ photos: [] }] };
-      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
-    globalThis.fetch = mockFetch;
-
-
-    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
-
-    assert.equal(result, null);
-  });
-
-  it('returns null on a 500 response without throwing', async () => {
-      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
-    globalThis.fetch = mockFetch;
-
-
-    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
-
-    assert.equal(result, null);
-  });
-
-  it('returns null on a 500 response without throwing', async () => {
-      const { fetch: mockFetch } = makeFetch(500, { message: 'Internal Server Error' });
-    globalThis.fetch = mockFetch;
-
-
-    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
-
-    assert.equal(result, null);
-  });
-});
-
-// ── lookupFsqPhoto — no API key ───────────────────────────────────────────────
-
-describe('lookupFsqPhoto — missing API key', () => {
-  it('returns null immediately when EXPO_PUBLIC_FOURSQUARE_API_KEY is unset', async () => {
-    delete process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY;
-    const { fetch: mockFetch, captured } = makeFetch(200, { results: [] });
-    globalThis.fetch = mockFetch;
-
-
-    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
-
-    assert.equal(result, null);
-  });
-
-  it('caches the null result so a second call does not fetch again', async () => {
-    const abortError = new DOMException('The operation was aborted.', 'AbortError');
-    globalThis.fetch = async () => { throw abortError; };
-
-
-    const result = await lookupFsqPhoto(uniqueName(), 10.0, 20.0);
-
-    assert.equal(result, null);
-  });
-
-  it('caches the null result so a second call does not fetch again', async () => {
-    const abortError = new DOMException('The operation was aborted.', 'AbortError');
-    let fetchCallCount = 0;
-    globalThis.fetch = async () => {
-      fetchCallCount++;
-      throw abortError;
-    };
-
+describe('lookupFsqPhoto — caching', () => {
+  it('caches a RESOLVED url — a second call does not fetch again', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ photoUrl: 'https://fastly.4sqi.net/img/x.jpg' }), { status: 200 });
+    }) as typeof globalThis.fetch;
 
     const name = uniqueName();
-    const lat = 48.0;
-    const lng = 2.0;
+    assert.equal(await lookupFsqPhoto(name, 48.0, 2.0), 'https://fastly.4sqi.net/img/x.jpg');
+    assert.equal(calls, 1);
+    assert.equal(await lookupFsqPhoto(name, 48.0, 2.0), 'https://fastly.4sqi.net/img/x.jpg');
+    assert.equal(calls, 1, 'a resolved url must be cached');
+  });
 
-    const first = await lookupFsqPhoto(name, lat, lng);
-    assert.equal(first, null);
-    assert.equal(fetchCallCount, 1, 'fetch should be called once on the first request');
+  it('caches a NULL result too — the second call must actually be made and must not fetch', async () => {
+    // The previous version of this test never made the second call, so it
+    // asserted nothing about caching. Making the second call is the test.
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }) as typeof globalThis.fetch;
 
-    const second = await lookupFsqPhoto(name, lat, lng);
-    assert.equal(second, null);
-    assert.equal(fetchCallCount, 1, 'fetch must not be called again — null result is cached');
+    const name = uniqueName();
+    assert.equal(await lookupFsqPhoto(name, 48.0, 2.0), null);
+    assert.equal(calls, 1, 'first call fetches');
+    assert.equal(await lookupFsqPhoto(name, 48.0, 2.0), null);
+    assert.equal(calls, 1, 'a null result must be cached — otherwise every card retries a dead lookup');
+  });
+
+  it('a different place is a different cache entry', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ photoUrl: null }), { status: 200 });
+    }) as typeof globalThis.fetch;
+
+    await lookupFsqPhoto(uniqueName(), 1, 2);
+    await lookupFsqPhoto(uniqueName(), 1, 2);
+    assert.equal(calls, 2, 'the cache key must include the place name');
   });
 });
 

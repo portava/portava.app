@@ -12,7 +12,7 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 import { reverseGeocode } from "../services/geocodingService";
-import { searchFoursquare } from "../lib/foursquarePlaces";
+import { searchFoursquare, lookupFoursquarePhoto } from "../lib/foursquarePlaces";
 import {
   getLiveVenueStatus,
   makeConfidence,
@@ -491,6 +491,58 @@ router.get("/places/photo", async (req, res) => {
     logger.warn({ err, name }, "Google Places (New) photo lookup failed");
     res.json({ photoUrl: null, reason: "request_failed" });
   }
+});
+
+// ── GET /api/places/fsq-photo ─────────────────────────────────────────────────
+//
+// Server-side proxy for the Foursquare venue photo lookup that place cards use.
+//
+// WHY IT EXISTS — it replaces a call the BROWSER was making
+// ========================================================
+// travel-buddy-standalone/src/services/fsqPhotoLookup.ts used to call
+// places-api.foursquare.com directly, authenticated with a key compiled into
+// the client bundle as EXPO_PUBLIC_FOURSQUARE_API_KEY. That failed two ways:
+//
+//   1. CORS. The Foursquare API serves no browser CORS headers, so on web the
+//      request could not succeed at all. A live probe of the discovery surface
+//      surfaced exactly these blocked calls, on every place card.
+//   2. Credential exposure. EXPO_PUBLIC_* is compiled into the bundle, so the
+//      key was handed to every browser that loaded the app.
+//
+// Routing it through here makes the request same-origin AND keeps the
+// credential server-side. Both problems are the same fix.
+//
+// SHAPE — deliberately identical to GET /places/photo above
+// ========================================================
+// Same query parameters, same 200-with-null-and-reason response, never a 5xx
+// for "no photo". A photo that cannot be found is normal: callers fall back to
+// category artwork, and an error status would turn a cosmetic absence into a
+// broken card. The two endpoints are siblings (this one Foursquare-backed, that
+// one Google-backed) and a caller can try either without special-casing.
+//
+// NO AUTH, matching /places/photo. Discovery serves anonymous traffic and place
+// cards render for signed-out users, so requiring a session here would blank
+// the cards it exists to fill.
+//
+// ATTRIBUTION: any surface displaying the returned URL must show "Powered by
+// Foursquare". That obligation attaches to display rather than to fetching, so
+// moving the fetch here does not discharge it.
+router.get("/places/fsq-photo", async (req, res) => {
+  const name = String(req.query.name ?? "").trim();
+  const lat = req.query.lat != null ? Number(req.query.lat) : null;
+  const lng = req.query.lng != null ? Number(req.query.lng) : null;
+
+  if (!name || name.length > 200) {
+    res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
+    return;
+  }
+
+  const result = await lookupFoursquarePhoto(
+    name,
+    lat != null && Number.isFinite(lat) ? lat : null,
+    lng != null && Number.isFinite(lng) ? lng : null,
+  );
+  res.json(result);
 });
 
 // ── GET /api/places/live-status ───────────────────────────────────────────────

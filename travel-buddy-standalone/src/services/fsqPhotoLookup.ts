@@ -1,12 +1,39 @@
 /**
- * fsqPhotoLookup — client-side Foursquare photo lookup for place cards.
+ * fsqPhotoLookup — SERVER-PROXIED Foursquare photo lookup for place cards.
  *
- * Uses EXPO_PUBLIC_FOURSQUARE_API_KEY (already public) to search for a venue
- * by name + coordinates and return the first photo URL. Results are cached in
- * memory (24 h TTL) so the same place is only fetched once per app session.
- * Failures are silent — callers fall back to category artwork.
+ * Calls the api-server's GET /api/places/fsq-photo route, which holds
+ * FOURSQUARE_API_KEY server-side. Results are cached in memory (24 h TTL) so
+ * the same place is only fetched once per app session. Failures are silent —
+ * callers fall back to category artwork, then to googlePhotoLookup.
  *
- * ATTRIBUTION: any surface showing FSQ photos must display "Powered by Foursquare".
+ * WHY IT IS PROXIED NOW, WHEN IT USED TO CALL FOURSQUARE DIRECTLY
+ * ==============================================================
+ * It called https://places-api.foursquare.com/places/search from the browser,
+ * with a key compiled into the bundle. Two problems, and the second is the one
+ * that outlives the first:
+ *
+ *   1. CORS. That host serves no browser CORS headers, so on web the request
+ *      could not succeed at all. A live probe of the discovery surface found
+ *      exactly these blocked calls, on every place card. The photos were never
+ *      arriving.
+ *   2. CREDENTIAL EXPOSURE. EXPO_PUBLIC_* is compiled into the client bundle,
+ *      so the key was handed to every browser that loaded the app. This file's
+ *      previous header described it as "already public" — which states the
+ *      leak rather than justifying it. A key that has shipped in a bundle is
+ *      compromised regardless of what the code does afterwards, so ROTATING IT
+ *      is a separate and necessary operator action; removing this call site
+ *      only stops the bleeding.
+ *
+ * Both are fixed by the same move: the request becomes same-origin and the
+ * credential stays on the server.
+ *
+ * What deliberately did NOT change: the 24 h memory cache, the in-flight
+ * dedup, and the silent-failure contract. None of those was the bug, and the
+ * dedup still matters — the quota it protects is now the server's.
+ *
+ * ATTRIBUTION: any surface showing FSQ photos must display "Powered by
+ * Foursquare". That obligation attaches to DISPLAY, not to fetching, so moving
+ * the fetch to the server does not discharge it.
  */
 // Shared lazy Sentry accessor — defers require('@sentry/react-native') to
 // call-time so node:test runners can import this file without triggering the
@@ -45,11 +72,11 @@ function getSentry(): typeof import('@sentry/react-native') | null {
   return _getSentryBase();
 }
 
-const FSQ_SEARCH = 'https://places-api.foursquare.com/places/search';
+const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+const FSQ_PHOTO_PROXY = '/api/places/fsq-photo';
 
 /** Ensures the Sentry auth-failure event fires at most once per app session. */
 let authFailedReported = false;
-const FSQ_API_VERSION = '2025-06-17';
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface CacheEntry { url: string | null; ts: number }
@@ -86,8 +113,7 @@ export async function lookupFsqPhoto(
   lat: number | null | undefined,
   lng: number | null | undefined,
 ): Promise<string | null> {
-  const apiKey = process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY;
-  if (!apiKey || !name.trim()) return null;
+  if (!name.trim()) return null;
 
   const resolvedLat = lat ?? null;
   const resolvedLng = lng ?? null;
@@ -103,17 +129,13 @@ export async function lookupFsqPhoto(
 
   const request = (async (): Promise<string | null> => {
     try {
-      const params = new URLSearchParams({
-        query:  name.trim(),
-        limit:  '1',
-        fields: 'photos',
-      });
+      const params = new URLSearchParams({ name: name.trim() });
       if (resolvedLat != null && resolvedLng != null) {
-        params.set('ll', `${resolvedLat},${resolvedLng}`);
+        params.set('lat', String(resolvedLat));
+        params.set('lng', String(resolvedLng));
       }
 
-      const res = await fetch(`${FSQ_SEARCH}?${params}`, {
-        headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json', 'X-Places-Api-Version': FSQ_API_VERSION },
+      const res = await fetch(`${apiBase()}${FSQ_PHOTO_PROXY}?${params}`, {
         signal: AbortSignal.timeout(5000),
       });
 
@@ -128,7 +150,7 @@ export async function lookupFsqPhoto(
         });
         if (isAuthError && !authFailedReported) {
           authFailedReported = true;
-          sentry?.captureMessage('Foursquare photo lookup auth failure — check EXPO_PUBLIC_FOURSQUARE_API_KEY', {
+          sentry?.captureMessage('Foursquare photo proxy failed — check the api-server FOURSQUARE_API_KEY', {
             level: 'error',
             extra: { status: res.status, place: name },
           });
@@ -137,16 +159,11 @@ export async function lookupFsqPhoto(
         return null;
       }
 
-      const body = await res.json() as { results?: Array<{ photos?: Array<{ prefix?: string; suffix?: string }> }> };
-      const photos = body?.results?.[0]?.photos ?? [];
-      let photoUrl: string | null = null;
-
-      if (photos.length > 0) {
-        const p = photos[0];
-        if (typeof p?.prefix === 'string' && typeof p?.suffix === 'string') {
-          photoUrl = `${p.prefix}original${p.suffix}`;
-        }
-      }
+      // The server has already resolved prefix+suffix into a URL, so this side
+      // no longer models Foursquare's response shape at all — one fewer place
+      // for a provider change to break.
+      const body = (await res.json()) as { photoUrl?: string | null };
+      const photoUrl = typeof body.photoUrl === 'string' ? body.photoUrl : null;
 
       photoCache.set(cKey, { url: photoUrl, ts: Date.now() });
       return photoUrl;
