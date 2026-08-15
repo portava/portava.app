@@ -95,10 +95,12 @@ describe("GET /api/places/fsq-photo — happy path (photo returned)", () => {
   });
 
   beforeEach(() => {
+    // Clear the module-level FSQ photo cache so tests don't share cached results.
+    _setFsqPhotoCacheMaxForTest(Infinity);
     process.env.FOURSQUARE_API_KEY = "test-fsq-key";
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const reqUrl = String(input);
-      // Intercept Foursquare Places API search call
+      // Intercept Foursquare Places API search.
       if (reqUrl.includes("foursquare.com")) {
         return {
           ok: true,
@@ -114,7 +116,9 @@ describe("GET /api/places/fsq-photo — happy path (photo returned)", () => {
           }),
         } as Response;
       }
-      // Intercept the HEAD liveness check to the Foursquare CDN
+      // Intercept the HEAD liveness check that verifies the CDN URL is live
+      // before returning it to the client. Return 200 OK so the happy path
+      // completes without hitting the real network.
       if (reqUrl.includes("4sqi.net") && init?.method === "HEAD") {
         return { ok: true, status: 200 } as Response;
       }
@@ -413,6 +417,7 @@ describe("GET /api/places/fsq-photo — photo entry has prefix: null", () => {
   });
 
   beforeEach(() => {
+    _setFsqPhotoCacheMaxForTest(Infinity);
     process.env.FOURSQUARE_API_KEY = "test-fsq-key";
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
@@ -472,6 +477,7 @@ describe("GET /api/places/fsq-photo — photo entry has suffix: null", () => {
   });
 
   beforeEach(() => {
+    _setFsqPhotoCacheMaxForTest(Infinity);
     process.env.FOURSQUARE_API_KEY = "test-fsq-key";
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
@@ -531,6 +537,7 @@ describe("GET /api/places/fsq-photo — photo entry has both prefix and suffix a
   });
 
   beforeEach(() => {
+    _setFsqPhotoCacheMaxForTest(Infinity);
     process.env.FOURSQUARE_API_KEY = "test-fsq-key";
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
@@ -620,7 +627,7 @@ describe("GET /api/places/fsq-photo — HEAD check throws; result must NOT be ca
     };
   });
 
-  it("first request: returns photoUrl string AND reason 'unverified_url' (best-effort serve, client must not cache)", async () => {
+  it("first request: returns the photoUrl and reason 'head_check_failed' (best-effort serve, not cached)", async () => {
     const { body } = await getPhoto(url, { name: "Off-Grid Shack Head Throw", lat: 55.0, lng: -3.0 });
     // The URL is served optimistically even though the HEAD check threw.
     assert.equal(
@@ -628,13 +635,12 @@ describe("GET /api/places/fsq-photo — HEAD check throws; result must NOT be ca
       "string",
       `first call: expected a string photoUrl, got ${JSON.stringify(body.photoUrl)}`,
     );
-    // The reason signal tells the client NOT to cache this result. Without it
-    // the client cannot distinguish a verified URL from an unverified one and
-    // would pin the user to a potentially dead image for 24 h.
+    // reason must be 'head_check_failed' so the client knows NOT to cache this
+    // unverified URL — the CDN may be unreachable and the URL could be dead.
     assert.equal(
       body.reason,
-      "unverified_url",
-      `HEAD-timeout response must carry reason 'unverified_url'; got '${body.reason as string}'`,
+      "head_check_failed",
+      `first call: expected reason 'head_check_failed', got ${JSON.stringify(body.reason)}`,
     );
   });
 
@@ -956,7 +962,7 @@ describe("GET /api/places/fsq-photo — HEAD timeout: atomic photoUrl+reason + t
   // Request 1 — atomic assertion on a single response object.
   // Both properties are read from the same body, so there is no possibility of
   // photoUrl coming from one request and reason from another.
-  it("first request: same response has a non-empty photoUrl AND reason: 'unverified_url' (atomic)", async () => {
+  it("first request: same response has a non-empty photoUrl string AND reason 'head_check_failed' (atomic)", async () => {
     const { body } = await getPhoto(url, { name: "Timeout Shack Atomic", lat: 66.0, lng: -5.0 });
     assert.equal(
       typeof body.photoUrl,
@@ -967,13 +973,13 @@ describe("GET /api/places/fsq-photo — HEAD timeout: atomic photoUrl+reason + t
       body.photoUrl.length > 0,
       `expected a non-empty photoUrl, got an empty string`,
     );
-    // The "unverified_url" reason tells the client NOT to cache this result.
-    // Without it the client cannot distinguish a verified URL from an
-    // unverified one and would cache it for 24 h.
+    // reason must be 'head_check_failed' — the explicit label lets the client
+    // distinguish "HEAD threw, URL unverified" from a confirmed positive result
+    // (no reason) and skip client-side caching so the next mount retries.
     assert.equal(
       body.reason,
-      "unverified_url",
-      `expected reason 'unverified_url' on HEAD-timeout response; got ${JSON.stringify(body.reason)}`,
+      "head_check_failed",
+      `expected reason 'head_check_failed' when HEAD times out; got ${JSON.stringify(body.reason)}`,
     );
   });
 

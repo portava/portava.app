@@ -766,12 +766,12 @@ router.get("/places/fsq-photo", async (req, res) => {
         }
       } catch {
         // Liveness check itself failed (network blip, HEAD unsupported) — serve
-        // the URL so the client can attempt to load it, but signal it as
-        // unverified so the client does NOT cache it. Caching this would pin
-        // the client to a potentially dead URL for 24 h; with "unverified_url"
-        // the client retries on the next request rather than serving a broken
-        // image from its own cache.
-        return { photoUrl, reason: "unverified_url", cacheable: false };
+        // the URL so the client can attempt to load it, but do NOT cache: the
+        // URL is unverified and may be dead, so the next request must retry
+        // rather than being stranded on a broken URL for 24 h.
+        // The explicit reason lets the client tell this apart from a verified
+        // positive result (which has no reason) and skip client-side caching.
+        return { photoUrl, reason: "head_check_failed", cacheable: false };
       }
 
       // Positive result — verified loadable photo URL, cache for 24 h.
