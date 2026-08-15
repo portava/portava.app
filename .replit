@@ -95,6 +95,7 @@ outputType = "console"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd travel-buddy-standalone && PORT=3000 pnpm run dev"
+waitForPort = 3000
 
 [[workflows.workflow]]
 name = "api-checks"

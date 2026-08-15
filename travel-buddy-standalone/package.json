@@ -28,6 +28,7 @@
     "lint:ksv": "node scripts/check-ksv-inner-scroll.mjs",
     "lint:mocks": "node scripts/check-test-mocks.mjs",
     "lint:close-then-navigate": "node scripts/check-close-then-navigate.mjs",
+    "lint:dev-proxy-not-shipped": "node scripts/check-dev-proxy-not-shipped.mjs",
     "check:all": "bash scripts/run-all-checks.sh"
   },
   "dependencies": {
