@@ -292,7 +292,12 @@ function geocodeCached(location: string): Promise<{ lat: number; lng: number; di
 
 // ── Category → Overpass filter ────────────────────────────────────────────────
 
-function overpassFilter(cat: string, radius: number, lat: number, lng: number): string {
+/**
+ * Exported for the Tier 1 coverage report, so the measurement queries EXACTLY
+ * what production queries. A coverage number taken over a different filter is a
+ * number about a different population, and would be worse than none.
+ */
+export function overpassFilter(cat: string, radius: number, lat: number, lng: number): string {
   const r = radius;
   const c = `${lat},${lng}`;
 
@@ -532,7 +537,7 @@ function buildAddress(tags: Record<string, string>): string | null {
 
 // ── Overpass query ────────────────────────────────────────────────────────────
 
-type OsmElement = {
+export type OsmElement = {
   type: "node" | "way" | "relation";
   id: number;
   lat?: number;
