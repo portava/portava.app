@@ -1,125 +1,162 @@
-# Tier 1 OSM tag coverage — measured, not estimated
+# Tier 1 OSM tag coverage — the complete matrix
 
-**2026-08-15. Step 3 of the ruled Tier 1 order, and part of the unit rather than
-a follow-up.**
+**2026-08-15. Step 3 of the measurement-system rulings, which put it ahead of
+starting any new feature.**
 
-Tier 1 stopped discarding six Overpass tags. This is the answer to the question
-that makes that change legible: **on what share of real places is each one
-actually present?**
+> **The key outcome is NOT 33%. It is that you have now built a MEASUREMENT
+> SYSTEM capable of telling you where the information deficit actually is.**
 
-> **The rail this exists to satisfy:** *enumerate populations, do not estimate
-> them.* "1 of 464 rows" is a finding; "coverage seems good" is not. A mapping
-> change that lands without a measurement has delivered an unknown, and **an
-> unknown looks exactly like a success.**
+This is that system run to completion: **all 7 destinations × 4 categories, 28
+of 28 cells, zero failed queries, 2121 named places.**
 
-Instrument: [`reportOsmTagCoverage.ts`](../../artifacts/api-server/src/scripts/reportOsmTagCoverage.ts)
-(`pnpm run report:osm-coverage`). It uses the Discovery route's **own** Overpass
-filter and the route's **own** `mapOsmElementToPlace`, so what is counted is what
-a card would actually receive — not what the raw tag set happens to contain.
+> **PRESERVE THE PER-CITY AND PER-CATEGORY NUMBERS ALONGSIDE THE AGGREGATE. The
+> result must NOT be reduced to one percentage.**
+>
+> **That instruction was right, and this run proves it twice over** — see
+> "What completing the matrix changed" below. Two of the numbers the earlier
+> partial run produced were **artifacts of which cells happened to succeed**.
 
 ---
 
-## What was measured
+## Provenance
 
-**857 named places**, across three destinations and three Discovery categories,
-captured 2026-08-15 at a 1000 m radius, capped at 200 elements per
-destination+category.
+| | |
+|---|---|
+| **endpoint** | `https://overpass.kumi.systems/api/interpreter` — **NOT the production default** |
+| why | `overpass-api.de` returns HTTP 000 from this workspace while `api.github.com` returns 200. An egress condition, not an Overpass outage. Ruled: *use the mirror and pace it rather than treating the gap as blocking* |
+| validity | The mirror serves the **same OSM database**. Tag density is a property of the data, not the server |
+| radius | 1000 m |
+| cap | 200 elements per cell |
+| completeness | **28/28 cells succeeded.** No cell is unmeasured, so no share below is a network artifact |
+| pacing | 6 s between calls, up to 5 attempts, 25 s linear backoff. **11 of 28 cells needed a retry**; every one eventually succeeded |
 
-| destination | places | categories captured |
-|---|---|---|
-| Paris | 493 | food (200), nightlife (200), places (200 → 93 named) |
-| Berlin | 258 | food (200), nightlife (58) |
-| Cebu | 106 | food (103), nightlife (6) |
+Instrument: `pnpm run report:osm-coverage`. It uses the Discovery route's **own**
+`overpassFilter` and **own** `mapOsmElementToPlace`, so what is counted is what a
+card would actually receive.
 
-## Results
+---
+
+## Aggregate — 2121 named places
 
 | Field | Present | Share | |
 |---|---:|---:|---|
-| **chip: outdoor seating** | 283 | **33.0%** | **NEW in Tier 1** |
-| **chip: wheelchair** | 283 | **33.0%** | **NEW in Tier 1** |
-| **neighborhood** | 130 | **15.2%** | **NEW in Tier 1** |
-| **chip: internet access** | 57 | **6.7%** | **NEW in Tier 1** |
-| **wikidataId** | 27 | **3.2%** | **NEW in Tier 1** (carried, not rendered) |
-| **osmImageUrl** | 4 | **0.5%** | **NEW in Tier 1** (carried, not rendered) |
-| address | 426 | 49.7% | pre-existing |
-| openingHours | 390 | 45.5% | pre-existing |
-| phone | 304 | 35.5% | pre-existing |
-| website | 211 | 24.6% | pre-existing |
-| description | 29 | 3.4% | pre-existing |
+| chip: wheelchair | 481 | **22.7%** | NEW |
+| chip: outdoor seating | 318 | **15.0%** | NEW |
+| **wikidataId** | 254 | **12.0%** | NEW (carried) |
+| neighborhood | 151 | **7.1%** | NEW |
+| chip: internet access | 122 | **5.8%** | NEW |
+| osmImageUrl | 53 | **2.5%** | NEW (carried) |
+| address | 962 | 45.4% | pre-existing |
+| openingHours | 695 | 32.8% | pre-existing |
+| website | 572 | 27.0% | pre-existing |
+| phone | 556 | 26.2% | pre-existing |
+| description | 75 | 3.5% | pre-existing |
 
-## What this actually says
+## What completing the matrix changed — read this before acting on the old numbers
 
-**The change was worth making, and the two biggest wins are the accessibility
-and experiential attributes.** `outdoor_seating` and `wheelchair` each reach a
-third of all measured places — that is a higher hit rate than `website`, a field
-nobody would propose discarding. Before Tier 1 these were fetched and dropped on
-every single request.
+**Two headline figures moved substantially, and both moved because the partial
+run was category-skewed, not because anything about the world changed.**
 
-**Coverage is wildly uneven by region, and averaging hides it.** This is the
-finding with the most consequence for what gets built next:
+| Field | Partial (3 cities, mostly food/nightlife) | **Complete (7 × 4)** | |
+|---|---:|---:|---|
+| **wikidataId** | 3.2% | **12.0%** | **×3.75 — and this one has consequences** |
+| outdoor seating | 33.0% | **15.0%** | halved |
+| wheelchair | 33.0% | **22.7%** | down |
+| neighborhood | 15.2% | **7.1%** | halved |
 
-| | Paris | Berlin | Cebu |
-|---|---:|---:|---:|
-| neighborhood | **0.0%** | **50.0%** | 0.9% |
-| outdoor seating | 27.0% | 57.4% | 1.9% |
-| wheelchair | 27.8% | 55.8% | 1.9% |
-| internet | 4.7% | 11.6% | 3.8% |
-| wikidata | 4.7% | 1.6% | 0.0% |
-| image | 0.6% | 0.4% | 0.0% |
+The earlier run was heavy on `food` and `nightlife` — the categories where
+`wikidata` is near-zero — and missing `places` and `activities` almost entirely,
+which are where it concentrates. **The aggregate was not wrong; it was a
+measurement of a different population presented as if it were the corpus.**
 
-- **Berlin is exceptionally well mapped.** Half its places carry a neighbourhood
-  and over half carry both attribute tags. A measurement taken only there would
-  have reported Tier 1 as a transformative win.
-- **Cebu is close to bare** — ~2% on the attributes, 0% on wikidata and image.
-  Since Cebu is the app's own default test city, **a manual check there would
-  have shown almost no change and read as "Tier 1 did nothing".** It is not
-  representative in either direction.
-- **Paris returns 0.0% neighborhood** despite being densely mapped otherwise.
-  That is not sparse data, it is a **tagging-convention mismatch**: Paris
-  encodes location as arrondissements rather than `addr:neighbourhood` /
-  `neighbourhood` / `addr:suburb` / `suburb`, which is the chain the route and
-  `seed-discovery-places.ts` both use.
+## The three structures the aggregate hides
 
-**`osmImageUrl` at 0.5% retrospectively confirms a design decision.** Tier 1
-deliberately did *not* promote the OSM `image` tag to `headerImageUrl`. At four
-places in 857, promoting it would have risked replacing a working FSQ → Google
-chain on a handful of cards while doing nothing for the other 99.5%. **The
-measurement was taken after the decision, and it agrees with it** — which is
-worth recording precisely because it could have gone the other way.
+### 1. `wikidata` is a CATEGORY property, not a corpus property
 
-**`wikidata` at 3.2% is a real constraint on Tier 2.** The enumeration called
-`wikidata` the join key to free licensed structured data via Wikimedia and named
-it the highest-leverage tag in Tier 1. It is a genuine key — but it exists on
-roughly **one place in thirty**. Wikimedia enrichment is therefore a
-*deep-not-broad* win: excellent content for a small minority of places, and no
-effect at all on the rest. **That should be known before anyone budgets Tier 2,
-not after.**
+This is the most consequential finding in the run.
 
-## What was NOT measured, stated plainly
+| category | `wikidata` range across cities |
+|---|---|
+| **`activities`** | **23.5% – 65.6%** |
+| **`places`** (attractions, monuments, museums) | **13.1% – 52.4%** |
+| `food` | 0.0% – 2.5% |
+| `nightlife` | 0.0% – 3.5% |
 
-A report that silently truncates its own scope reads as "we covered everything".
+Peaks: **Paris `activities` 65.6%**, **Berlin `places` 52.4%**, **New York
+`places` 42.9%**, **Bangkok `places` 37.9%**.
 
-- **Only 3 of the 7 configured destinations.** New York, Bangkok, Nairobi and
-  Lima are unmeasured. The Overpass mirror returned HTTP 504 on several heavier
-  queries and the run was not retried indefinitely — chasing it would have been
-  the prerequisite chain the owner ruled against.
-- **Only 3 of 4 categories**, and `places` only for Paris. The `activities`
-  filter was never captured successfully.
-- **Not the production endpoint.** `overpass-api.de` is unreachable from this
-  workspace (HTTP 000 while `api.github.com` returns 200 — an egress condition,
-  not an Overpass outage). Captures came from `overpass.kumi.systems`, a mirror
-  of the same OSM database. Tag density is a property of the data, not the
-  server, so the shares hold — but this is a deviation and it is recorded as one.
-- **This is a census of these 857 places, not a sample of OSM.** No confidence
-  interval is claimed and none should be inferred.
+**This directly bears on the Tier 2 leverage study's premise.** The study was
+scoped because *"if only 3% of the corpus exposes the join key, perfect
+enrichment downstream of it still has a hard ceiling."* On the complete matrix
+that ceiling is **12% overall — and roughly 40–50% on exactly the categories a
+traveller browses for things to see and do.**
 
-**Re-running it where `overpass-api.de` is reachable is one command**
-(`pnpm run report:osm-coverage`) and would close all four gaps at once.
+The reasoning behind the ruling stands unchanged: **choose the source from
+evidence.** But the evidence is now different, and it points at a
+**category-scoped** enrichment question rather than a corpus-wide one. A
+Wikidata-keyed enrichment aimed at `places` and `activities` is not a 3%
+proposition.
 
-## What this does not authorise
+### 2. `neighborhood` is a NORMALISATION failure almost everywhere — not a Paris quirk
 
-Nothing here starts new work. In particular the Paris `neighbourhood` gap is
-**a finding, not a mandate** — extending the fallback chain to arrondissement-style
-tagging would be more Tier 1 factual mapping, and Tier 1's ruled order is
-complete. **Tier 3 remains gated on behavioural data**, and finishing Tier 1
-does not open that gate.
+| destination | neighborhood |
+|---|---|
+| **Berlin** | **32.4%** |
+| Cebu | 0.9% |
+| New York | 0.2% |
+| **Paris, Bangkok, Nairobi, Lima** | **0.0%** |
+
+**Berlin is the only city where this field works at all.** Six of seven sit at
+or near zero.
+
+Step 6 filed Paris as a *narrow* geography adapter. **The complete matrix says
+the scope was understated:** this is not a Paris-specific arrondissement quirk,
+it is that the key chain (`addr:neighbourhood → neighbourhood → addr:suburb →
+suburb`) matches **German** tagging convention and almost nothing else.
+
+**That does not change the classification — it is still normalisation, not
+missing data, and still not evidence for Tier 2.** But "narrow" is the wrong
+word for a field that returns nothing in 6 of 7 measured cities, and the adapter
+should be scoped against that fact. Recorded in
+[`paris-geography-adapter.md`](paris-geography-adapter.md).
+
+### 3. Attribute coverage collapses outside Western Europe
+
+| | outdoor seating | wheelchair |
+|---|---:|---:|
+| Berlin | 32.2% | 47.0% |
+| Paris | 23.9% | 25.5% |
+| New York | 3.9% | 20.1% |
+| Bangkok | 4.6% | 2.8% |
+| Nairobi | 2.5% | 4.3% |
+| Cebu | 1.8% | 1.8% |
+| Lima | 0.0% | 16.2% |
+
+**Berlin and Paris carry the aggregate.** Any decision calibrated on the 33%
+figure from the partial run was calibrated on those two cities.
+
+**`wheelchair` degrades more gracefully than `outdoor_seating`** — it holds
+16–20% in New York and Lima where outdoor seating is at 0–4%. If one accessibility
+signal is worth investing in, the data says it is that one.
+
+## Cebu, and why it stays
+
+Cebu is the flattest destination measured: **0.9% neighborhood, 1.8% on both
+attributes, 0.0% wikidata, 0.0% image.** Its `activities` and `places` cells
+returned **3 and 2 named places respectively.**
+
+That is precisely why it is kept as the **low-coverage fixture** rather than
+removed — *do not solve Cebu by hiding it.* It answers a question no
+well-mapped city can: **does the product degrade gracefully when the source has
+nothing?** See [`test-destination-fixtures.md`](test-destination-fixtures.md).
+
+## Honest limits
+
+- **A census of these 2121 places, not a sample of OSM.** No confidence interval
+  is claimed and none should be inferred.
+- **1000 m radius around one point per city** — a city-centre measurement.
+  Suburban tagging density is not represented.
+- **Cell sizes vary enormously** (Cebu `places` = 2; Berlin `food` = 200). A
+  percentage over 2 places is arithmetic, not evidence. **Cell `n` is printed
+  beside every share for exactly this reason.**
+- **Mirror, not the production endpoint** — recorded above.
