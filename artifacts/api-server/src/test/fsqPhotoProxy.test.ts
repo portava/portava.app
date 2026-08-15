@@ -25,6 +25,7 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
+import { _setFsqPhotoCacheMaxForTest } from "../routes/places.js";
 
 // ── Minimal fake Supabase client (route touches no DB tables) ─────────────────
 
@@ -95,9 +96,9 @@ describe("GET /api/places/fsq-photo — happy path (photo returned)", () => {
 
   beforeEach(() => {
     process.env.FOURSQUARE_API_KEY = "test-fsq-key";
-    globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const reqUrl = String(input);
-      // Only intercept Foursquare calls; pass through others
+      // Intercept Foursquare Places API search call
       if (reqUrl.includes("foursquare.com")) {
         return {
           ok: true,
@@ -113,7 +114,11 @@ describe("GET /api/places/fsq-photo — happy path (photo returned)", () => {
           }),
         } as Response;
       }
-      return originalFetch(input, _init);
+      // Intercept the HEAD liveness check to the Foursquare CDN
+      if (reqUrl.includes("4sqi.net") && init?.method === "HEAD") {
+        return { ok: true, status: 200 } as Response;
+      }
+      return originalFetch(input, init);
     };
   });
 
@@ -490,6 +495,227 @@ describe("GET /api/places/fsq-photo — photo entry has both prefix and suffix a
       body.reason,
       "no_photo_found",
       `expected reason 'no_photo_found', got '${body.reason as string}'`,
+    );
+  });
+});
+
+// ── H. HEAD check network failure — result not cached; next request retries FSQ ─
+//
+// When the CDN HEAD liveness check throws (timeout, network blip), the proxy
+// must serve the URL for the current request but NOT cache it. A subsequent
+// request for the same place must re-query FSQ rather than serving a cached
+// unverified URL that may be dead.
+
+describe("GET /api/places/fsq-photo — HEAD check throws; result must NOT be cached", () => {
+  let server: Server;
+  let url: string;
+  let fsqCallCount = 0;
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  before(() => {
+    process.env.FOURSQUARE_API_KEY = "test-fsq-key-head-throw";
+    // Unique name + coords to avoid collisions with other describe blocks.
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        fsqCallCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              { photos: [{ prefix: "https://fastly.4sqi.net/img/general/", suffix: "/cdnthrow.jpg" }] },
+            ],
+          }),
+        } as Response;
+      }
+      // HEAD check to the CDN throws (network blip / timeout)
+      if (reqUrl.includes("4sqi.net") && init?.method === "HEAD") {
+        throw new Error("network blip — HEAD check unavailable");
+      }
+      return originalFetch(input, init);
+    };
+  });
+
+  it("first request: returns the photoUrl despite the HEAD failure (best-effort serve)", async () => {
+    const { body } = await getPhoto(url, { name: "Off-Grid Shack Head Throw", lat: 55.0, lng: -3.0 });
+    // The URL is served optimistically even though the HEAD check threw.
+    assert.equal(
+      typeof body.photoUrl,
+      "string",
+      `first call: expected a string photoUrl, got ${JSON.stringify(body.photoUrl)}`,
+    );
+  });
+
+  it("second request for same place: FSQ is called again (result was not cached)", async () => {
+    await getPhoto(url, { name: "Off-Grid Shack Head Throw", lat: 55.0, lng: -3.0 });
+    // If the first result had been cached, fsqCallCount would still be 1.
+    assert.equal(
+      fsqCallCount,
+      2,
+      `expected 2 FSQ calls after 2 requests when HEAD check throws (no caching), got ${fsqCallCount}`,
+    );
+  });
+});
+
+// ── I. Negative-result caching — FSQ not called on second request ─────────────
+//
+// When Foursquare returns no photo for a place, the server caches the negative
+// result (24 h TTL). Subsequent requests for the same place must be served
+// from cache — the Foursquare API must NOT be called again.
+//
+// This is the core correctness guarantee of the fix: OSM places with no FSQ
+// record stop permanently hammering the proxy on every card impression.
+
+describe("GET /api/places/fsq-photo — negative result is cached (no second FSQ call)", () => {
+  let server: Server;
+  let url: string;
+  let fsqCallCount = 0;
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  before(() => {
+    process.env.FOURSQUARE_API_KEY = "test-fsq-key-cache";
+    // Unique name + coords so this describe's entries don't collide with
+    // any other describe block's cache entries.
+    globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        fsqCallCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ results: [] }), // no venues → no photo
+        } as Response;
+      }
+      return originalFetch(input, _init);
+    };
+  });
+
+  it("first request: returns photoUrl null and reason no_photo_found", async () => {
+    const { body } = await getPhoto(url, { name: "Niche Local Market", lat: 10.001, lng: 20.001 });
+    assert.equal(body.photoUrl, null, `first call: expected null photoUrl, got ${JSON.stringify(body.photoUrl)}`);
+    assert.equal(
+      body.reason,
+      "no_photo_found",
+      `first call: expected reason 'no_photo_found', got '${body.reason as string}'`,
+    );
+  });
+
+  it("second request for same place: still returns photoUrl null", async () => {
+    const { body } = await getPhoto(url, { name: "Niche Local Market", lat: 10.001, lng: 20.001 });
+    assert.equal(body.photoUrl, null, `second call: expected null photoUrl, got ${JSON.stringify(body.photoUrl)}`);
+    assert.equal(
+      body.reason,
+      "no_photo_found",
+      `second call: expected reason 'no_photo_found', got '${body.reason as string}'`,
+    );
+  });
+
+  it("Foursquare API was called exactly once for two requests (negative result cached)", async () => {
+    // Both previous `it` blocks have already run. fsqCallCount == 1 if the
+    // second request was served from the server-side negative cache.
+    assert.equal(
+      fsqCallCount,
+      1,
+      `expected exactly 1 FSQ API call for two requests to the same place, got ${fsqCallCount}`,
+    );
+  });
+});
+
+// ── J. Cache capacity eviction — oldest entry evicted when cap is reached ──────
+//
+// writeFsqPhotoCached evicts the oldest (Map insertion-order) entry whenever
+// the cache would exceed FSQ_PHOTO_CACHE_MAX. This test sets the max to 1,
+// caches one negative result, then makes a request for a different place —
+// after which the first entry must have been evicted and a subsequent request
+// for it must call FSQ again rather than being served from cache.
+
+describe("GET /api/places/fsq-photo — capacity cap: oldest entry evicted at max size", () => {
+  let server: Server;
+  let url: string;
+  // Track FSQ call counts per place name (keyed by the query param value).
+  const fsqCalls: Record<string, number> = {};
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+    // Cap at 1 entry so any second write evicts the first.
+    _setFsqPhotoCacheMaxForTest(1);
+  });
+
+  after(async () => {
+    _setFsqPhotoCacheMaxForTest(Infinity); // restore default (5 000)
+    _setTestClient(null, false);
+    await closeServer(server);
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  before(() => {
+    process.env.FOURSQUARE_API_KEY = "test-fsq-key-cap";
+    globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        const qs = new URL(reqUrl).searchParams;
+        const q = qs.get("query") ?? "unknown";
+        fsqCalls[q] = (fsqCalls[q] ?? 0) + 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ results: [] }), // no photo → negative result
+        } as Response;
+      }
+      return originalFetch(input, _init);
+    };
+  });
+
+  it("first request: Alpha is cached (1 FSQ call)", async () => {
+    await getPhoto(url, { name: "Cap Place Alpha", lat: 1.0, lng: 1.0 });
+    assert.equal(fsqCalls["Cap Place Alpha"] ?? 0, 1, "expected 1 FSQ call for Alpha");
+  });
+
+  it("second request for Alpha: served from cache (no new FSQ call)", async () => {
+    await getPhoto(url, { name: "Cap Place Alpha", lat: 1.0, lng: 1.0 });
+    assert.equal(
+      fsqCalls["Cap Place Alpha"],
+      1,
+      `expected Alpha still cached (1 FSQ call), got ${fsqCalls["Cap Place Alpha"]}`,
+    );
+  });
+
+  it("inserting Beta evicts Alpha (cap = 1); Alpha re-request now fires FSQ again", async () => {
+    // Cache Beta → Alpha evicted (cache at cap).
+    await getPhoto(url, { name: "Cap Place Beta", lat: 2.0, lng: 2.0 });
+    assert.equal(fsqCalls["Cap Place Beta"] ?? 0, 1, "expected 1 FSQ call for Beta");
+
+    // Alpha must have been evicted — a fresh request goes to FSQ (count → 2).
+    await getPhoto(url, { name: "Cap Place Alpha", lat: 1.0, lng: 1.0 });
+    assert.equal(
+      fsqCalls["Cap Place Alpha"],
+      2,
+      `expected 2 FSQ calls for Alpha after eviction (got ${fsqCalls["Cap Place Alpha"]})`,
     );
   });
 });

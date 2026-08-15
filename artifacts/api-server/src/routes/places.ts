@@ -168,12 +168,13 @@ router.get("/places/search", async (req, res) => {
     return;
   }
 
-  const countryCode =
-    typeof req.query.countryCode === "string" ? req.query.countryCode : undefined;
+  const countryCode = typeof req.query.countryCode === "string" ? req.query.countryCode : undefined;
   const latStr = typeof req.query.lat === "string" ? req.query.lat : undefined;
   const lngStr = typeof req.query.lng === "string" ? req.query.lng : undefined;
-  const lat = latStr != null ? parseFloat(latStr) : undefined;
-  const lng = lngStr != null ? parseFloat(lngStr) : undefined;
+  const lat = parseFloat(String(req.query.lat ?? ""));
+  const lng = parseFloat(String(req.query.lng ?? ""));
+
+  const cKey = fsqPhotoCacheKey(name, lat, lng);
 
   if (lat != null && (isNaN(lat) || lat < -90 || lat > 90)) {
     res.status(400).json({ error: "invalid_payload", message: "Invalid lat" });
@@ -187,8 +188,8 @@ router.get("/places/search", async (req, res) => {
   const typeParam = typeof req.query.type === "string" ? req.query.type : undefined;
 
   // Check server-side cache
-  const cacheKey = makeSearchCacheKey(q, countryCode, lat, lng, typeParam);
-  const cached = getSearchCached(cacheKey);
+  const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)}:${nameHint.toLowerCase()}`;
+  const cached = nearbyVenueCache.get(cacheKey);
   if (cached) {
     res.json({ places: cached });
     return;
@@ -201,7 +202,7 @@ router.get("/places/search", async (req, res) => {
         .finally(() => inFlightSearches.delete(cacheKey));
       inFlightSearches.set(cacheKey, promise);
     }
-    const places = await promise;
+    const places = (data ?? []).map((row: any) => row.place_snapshot);
     setSearchCached(cacheKey, places);
     res.json({ places });
   } catch (err) {
@@ -304,7 +305,9 @@ router.get("/places/google-autocomplete", async (req, res) => {
     return;
   }
 
-  const key = process.env.GOOGLE_MAPS_API_KEY;
+  const key = process.env.FOURSQUARE_API_KEY;
+
+  const existingFlight = fsqPhotoInFlight.get(cKey);
   if (!key) {
     res.json({ places: [], powered_by: "google" });
     return;
@@ -314,16 +317,26 @@ router.get("/places/google-autocomplete", async (req, res) => {
   const countryCode = typeof req.query.countryCode === "string" ? req.query.countryCode : undefined;
 
   try {
-    const params = new URLSearchParams({ input, key, language: "en" });
+    const params = new URLSearchParams({
+      limit: "1",
+      ll: `${lat},${lng}`,
+      fields: "fsq_place_id,name,tel,website,hours",
+    });
     if (type === "city") params.set("types", "(cities)");
     if (countryCode) params.set("components", `country:${countryCode}`);
 
-    const gRes = await fetch(
-      `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`,
-      { signal: AbortSignal.timeout(4000) },
-    );
-    if (!gRes.ok) throw new Error(`Google Places HTTP ${gRes.status}`);
-    const body = (await gRes.json()) as any;
+    const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": "places.id,places.photos",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!gRes.ok) throw new Error(`Google Place Details HTTP ${gRes.status}`);
+    const body: any = await fsqRes.json();
 
     if (body.status !== "OK" && body.status !== "ZERO_RESULTS") {
       logger.warn({ status: body.status as string, input }, "Google Places Autocomplete non-OK");
@@ -332,26 +345,7 @@ router.get("/places/google-autocomplete", async (req, res) => {
     }
 
     const predictions: any[] = body.predictions ?? [];
-    const places = predictions.slice(0, 5).map((pred: any) => {
-      const mainText: string = pred.structured_formatting?.main_text ?? pred.description;
-      const types: string[] = pred.types ?? [];
-      return {
-        id: `google-${pred.place_id as string}`,
-        type: inferGoogleType(types),
-        name: mainText,
-        displayName: String(pred.description ?? mainText),
-        country: null,
-        countryCode: null,
-        region: null,
-        city: null,
-        district: null,
-        lat: null,
-        lng: null,
-        timezone: null,
-        source: "google" as const,
-        formattedAddress: String(pred.description ?? mainText),
-      };
-    });
+    const places = (data ?? []).map((row: any) => row.place_snapshot);
 
     res.json({ places, powered_by: "google" });
   } catch (err) {
@@ -367,13 +361,15 @@ router.get("/places/google-autocomplete", async (req, res) => {
 // Place with coordinates before canonical resolution.
 
 router.get("/places/google-details", async (req, res) => {
-  const placeId = String(req.query.place_id ?? "").trim();
+  const placeId = req.params.id;
   if (!placeId || placeId.length > 500) {
     res.status(400).json({ error: "invalid_payload", message: "place_id is required (max 500 chars)" });
     return;
   }
 
-  const key = process.env.GOOGLE_MAPS_API_KEY;
+  const key = process.env.FOURSQUARE_API_KEY;
+
+  const existingFlight = fsqPhotoInFlight.get(cKey);
   if (!key) {
     res.json({ details: null });
     return;
@@ -381,17 +377,22 @@ router.get("/places/google-details", async (req, res) => {
 
   try {
     const params = new URLSearchParams({
-      place_id: placeId,
-      fields: "geometry,formatted_address,name,address_components",
-      key,
-      language: "en",
+      limit: "1",
+      ll: `${lat},${lng}`,
+      fields: "fsq_place_id,name,tel,website,hours",
     });
-    const gRes = await fetch(
-      `https://maps.googleapis.com/maps/api/place/details/json?${params}`,
-      { signal: AbortSignal.timeout(4000) },
-    );
+    const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": "places.id,places.photos",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(4000),
+    });
     if (!gRes.ok) throw new Error(`Google Place Details HTTP ${gRes.status}`);
-    const body = (await gRes.json()) as any;
+    const body: any = await fsqRes.json();
 
     if (body.status !== "OK" || !body.result?.geometry) {
       res.json({ details: null });
@@ -429,22 +430,26 @@ router.get("/places/google-details", async (req, res) => {
 const GOOGLE_PHOTO_DISABLED_LOGGED = { at: 0 };
 router.get("/places/photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
-  const lat = req.query.lat != null ? Number(req.query.lat) : null;
-  const lng = req.query.lng != null ? Number(req.query.lng) : null;
+  const lat = parseFloat(String(req.query.lat ?? ""));
+  const lng = parseFloat(String(req.query.lng ?? ""));
+
+  const cKey = fsqPhotoCacheKey(name, lat, lng);
 
   if (!name || name.length > 200) {
     res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
     return;
   }
 
-  const key = process.env.GOOGLE_MAPS_API_KEY;
+  const key = process.env.FOURSQUARE_API_KEY;
+
+  const existingFlight = fsqPhotoInFlight.get(cKey);
   if (!key) {
     res.json({ photoUrl: null, reason: "no_google_maps_key" });
     return;
   }
 
   try {
-    const body: Record<string, unknown> = { textQuery: name };
+    const body: any = await fsqRes.json();
     if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
       body.locationBias = { circle: { center: { latitude: lat, longitude: lng }, radius: 5000 } };
     }
@@ -512,10 +517,14 @@ const FSQ_PHOTO_SEARCH = "https://places-api.foursquare.com/places/search";
 const FSQ_PHOTO_API_VERSION = "2025-06-17";
 let fsqPhotoAuthLogged = false;
 
-router.get("/places/fsq-photo", async (req, res) => {
+const FSQ_PHOTO_CACHE_TTL_MS = 24 * 60 * 60 * 1_000; // 24 h
+
+let FSQ_PHOTO_CACHE_MAX = 5_000;
   const name = String(req.query.name ?? "").trim();
-  const lat = req.query.lat != null ? Number(req.query.lat) : null;
-  const lng = req.query.lng != null ? Number(req.query.lng) : null;
+  const lat = parseFloat(String(req.query.lat ?? ""));
+  const lng = parseFloat(String(req.query.lng ?? ""));
+
+  const cKey = fsqPhotoCacheKey(name, lat, lng);
 
   if (!name || name.length > 200) {
     res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
@@ -523,57 +532,34 @@ router.get("/places/fsq-photo", async (req, res) => {
   }
 
   const key = process.env.FOURSQUARE_API_KEY;
+
+  const existingFlight = fsqPhotoInFlight.get(cKey);
   if (!key) {
-    res.json({ photoUrl: null, reason: "no_foursquare_key" });
+    res.json({ details: null });
     return;
   }
 
   try {
     const params = new URLSearchParams({
-      query:  name,
-      limit:  "1",
-      fields: "photos",
+      limit: "1",
+      ll: `${lat},${lng}`,
+      fields: "fsq_place_id,name,tel,website,hours",
     });
-    if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
-      params.set("ll", `${lat},${lng}`);
-    }
+    if (nameHint) params.set("query", nameHint);
 
-    const fsqRes = await fetch(`${FSQ_PHOTO_SEARCH}?${params}`, {
-      headers: {
-        Authorization: `Bearer ${key}`,
-        Accept: "application/json",
-        "X-Places-Api-Version": FSQ_PHOTO_API_VERSION,
-      },
-      signal: AbortSignal.timeout(5000),
+    const fsqRes = await fetch(`https://places-api.foursquare.com/places/search?${params}`, {
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "X-Places-Api-Version": "2025-06-17" },
+      signal: AbortSignal.timeout(3_000),
     });
-
-    if (fsqRes.status === 401 || fsqRes.status === 403) {
-      if (!fsqPhotoAuthLogged) {
-        fsqPhotoAuthLogged = true;
-        logger.warn(
-          { status: fsqRes.status },
-          "Foursquare photo proxy auth failure — check FOURSQUARE_API_KEY",
-        );
-      }
-      res.json({ photoUrl: null, reason: "foursquare_auth_error" });
-      return;
-    }
 
     if (!fsqRes.ok) {
-      res.json({ photoUrl: null, reason: `foursquare_http_${fsqRes.status}` });
+      logger.warn({ status: fsqRes.status, lat, lng }, "nearby-venue FSQ lookup failed");
+      nearbyVenueCache.set(cacheKey, { venue: null, cachedAt: nowMs });
+      res.json({ venue: null });
       return;
     }
 
-    const body = (await fsqRes.json()) as {
-      results?: Array<{ photos?: Array<{ prefix?: string; suffix?: string }> }>;
-    };
-    const photos = body?.results?.[0]?.photos ?? [];
-    if (!photos.length) {
-      res.json({ photoUrl: null, reason: "no_photo_found" });
-      return;
-    }
-
-    const p = photos[0];
+    const body: any = await fsqRes.json();
     if (typeof p?.prefix !== "string" || typeof p?.suffix !== "string") {
       res.json({ photoUrl: null, reason: "no_photo_found" });
       return;
@@ -683,6 +669,8 @@ router.get("/places/nearby-venue", async (req, res) => {
   const lat = parseFloat(String(req.query.lat ?? ""));
   const lng = parseFloat(String(req.query.lng ?? ""));
 
+  const cKey = fsqPhotoCacheKey(name, lat, lng);
+
   if (isNaN(lat) || lat < -90 || lat > 90) {
     res.status(400).json({ error: "invalid_payload", message: "Valid lat is required" });
     return;
@@ -759,6 +747,8 @@ router.get("/places/reverse", async (req, res) => {
   const lat = parseFloat(String(req.query.lat ?? ""));
   const lng = parseFloat(String(req.query.lng ?? ""));
 
+  const cKey = fsqPhotoCacheKey(name, lat, lng);
+
   if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
     res.status(400).json({ error: "invalid_payload", message: "Valid lat and lng are required" });
     return;
@@ -766,6 +756,92 @@ router.get("/places/reverse", async (req, res) => {
 
   try {
     const result = await reverseGeocode(lat, lng);
+
+  const lookup = (async (): Promise<FsqPhotoLookupResult> => {
+    try {
+      const params = new URLSearchParams({
+        query:  name,
+        limit:  "1",
+        fields: "photos",
+      });
+      if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
+        params.set("ll", `${lat},${lng}`);
+      }
+
+      const fsqRes = await fetch(`${FSQ_PHOTO_SEARCH}?${params}`, {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          Accept: "application/json",
+          "X-Places-Api-Version": FSQ_PHOTO_API_VERSION,
+        },
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (fsqRes.status === 401 || fsqRes.status === 403) {
+        if (!fsqPhotoAuthLogged) {
+          fsqPhotoAuthLogged = true;
+          logger.warn(
+            { status: fsqRes.status },
+            "Foursquare photo proxy auth failure — check FOURSQUARE_API_KEY",
+          );
+        }
+        return { photoUrl: null, reason: "foursquare_auth_error", cacheable: false };
+      }
+
+      if (!fsqRes.ok) {
+        return { photoUrl: null, reason: `foursquare_http_${fsqRes.status}`, cacheable: false };
+      }
+
+      const body = (await fsqRes.json()) as {
+        results?: Array<{ photos?: Array<{ prefix?: string; suffix?: string }> }>;
+      };
+      const photos = body?.results?.[0]?.photos ?? [];
+      if (!photos.length) {
+        // FSQ has no photo record for this place — cache (24 h) so subsequent
+        // requests for the same OSM place are served without hitting FSQ.
+        return { photoUrl: null, reason: "no_photo_found", cacheable: true };
+      }
+
+      const p = photos[0];
+      if (typeof p?.prefix !== "string" || typeof p?.suffix !== "string") {
+        // Malformed photo entry — treat same as "no photo" and cache.
+        return { photoUrl: null, reason: "no_photo_found", cacheable: true };
+      }
+
+      const photoUrl = `${p.prefix}original${p.suffix}`;
+
+      // Foursquare's search index can return a photo reference whose CDN file
+      // has since been removed (404) — the client has no way to detect this
+      // itself and was rendering a permanent broken-image fallback for these.
+      // A quick HEAD check keeps the client contract honest: a returned
+      // photoUrl is guaranteed loadable, or the caller gets no_photo_found and
+      // falls through to category artwork exactly like the "no photo" case.
+      // Dead CDN links are NOT cached (transient CDN issue — might recover).
+      try {
+        const headRes = await fetch(photoUrl, {
+          method: "HEAD",
+          signal: AbortSignal.timeout(2500),
+        });
+        if (!headRes.ok) {
+          return { photoUrl: null, reason: "dead_photo_link", cacheable: false };
+        }
+      } catch {
+        // Liveness check itself failed (network blip, HEAD unsupported) — serve
+        // the URL so the client can attempt to load it, but do NOT cache: the
+        // URL is unverified and may be dead, so the next request must retry
+        // rather than being stranded on a broken URL for 24 h.
+        return { photoUrl, reason: undefined, cacheable: false };
+      }
+
+      // Positive result — verified loadable photo URL, cache for 24 h.
+      return { photoUrl, cacheable: true };
+    } catch (err) {
+      logger.warn({ err, name }, "Foursquare photo proxy lookup failed");
+      return { photoUrl: null, reason: "request_failed", cacheable: false };
+    } finally {
+      fsqPhotoInFlight.delete(cKey);
+    }
+  })();
     if (!result) {
       res.json({ place: null });
       return;
@@ -798,15 +874,17 @@ router.get("/me/recent-places", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
   const db = getServiceClient();
-  if (!db) { res.json({ places: [] }); return; }
+  if (!db) {
+    sendError(res, "server_not_configured", "Service client not ready");
+    return;
+  }
 
-  try {
-    const { data, error } = await db
-      .from("user_recent_places")
-      .select("id, place_snapshot, used_for, used_at")
-      .eq("user_id", user.id)
-      .order("used_at", { ascending: false })
-      .limit(10);
+  const { data, error } = await db
+    .from("media_dedup_groups")
+    .select("id, representative_media_id, member_count, sample_media_ids, bucket_key, updated_at")
+    .eq("canonical_place_id", placeId)
+    .order("member_count", { ascending: false })
+    .limit(10);
 
     if (error) throw error;
     const places = (data ?? []).map((row: any) => row.place_snapshot);
@@ -990,3 +1068,80 @@ router.get("/places/:id/dedup-groups", async (req, res) => {
 });
 
 export default router;
+
+interface FsqPhotoCacheEntry {
+  photoUrl: string | null;
+  ts: number;
+}
+
+  const cachedEntry = getFsqPhotoCached(cKey);
+
+const fsqPhotoCache = new Map<string, FsqPhotoCacheEntry>();
+
+/** Normalise a place name + coords into a stable cache key (mirrors client). */
+function fsqPhotoCacheKey(
+  name: string,
+  lat: number | null,
+  lng: number | null,
+): string {
+  const n = name.toLowerCase().trim().replace(/\s+/g, " ");
+  return `${n}|${lat != null ? lat.toFixed(3) : "_"}|${lng != null ? lng.toFixed(3) : "_"}`;
+}
+
+interface FsqPhotoLookupResult {
+  photoUrl: string | null;
+  reason?: string;
+  /** When true the result should be stored in the server-side cache. */
+  cacheable: boolean;
+}
+
+const fsqPhotoInFlight = new Map<string, Promise<FsqPhotoLookupResult>>();
+
+function getFsqPhotoCached(key: string): FsqPhotoCacheEntry | undefined {
+  const entry = fsqPhotoCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() - entry.ts > FSQ_PHOTO_CACHE_TTL_MS) {
+    fsqPhotoCache.delete(key);
+    return undefined;
+  }
+  return entry;
+}
+
+/**
+ * Write an entry to the FSQ photo cache with active eviction:
+ *   1. Sweep all expired entries on every write (prevent silent TTL pile-up).
+ *   2. If capacity is still at or above the limit after the sweep, evict the
+ *      oldest entries (Map insertion order) until there is room for the new one.
+ *
+ * Deleting the existing entry for `key` before re-inserting refreshes its
+ * position in insertion order so it won't be evicted by subsequent writers.
+ */
+function writeFsqPhotoCached(key: string, entry: FsqPhotoCacheEntry): void {
+  // Remove any existing entry for this key so the re-insert lands at the end.
+  fsqPhotoCache.delete(key);
+
+  // Sweep expired entries.
+  const now = Date.now();
+  for (const [k, v] of fsqPhotoCache) {
+    if (now - v.ts > FSQ_PHOTO_CACHE_TTL_MS) fsqPhotoCache.delete(k);
+  }
+
+  // Evict oldest entries until there is room for the new one.
+  while (fsqPhotoCache.size >= FSQ_PHOTO_CACHE_MAX) {
+    const oldest = fsqPhotoCache.keys().next().value;
+    if (oldest !== undefined) fsqPhotoCache.delete(oldest);
+    else break;
+  }
+
+  fsqPhotoCache.set(key, entry);
+}
+
+/**
+ * Override the FSQ photo cache capacity for tests.
+ * Clears the cache so tests start from a clean state.
+ * Must be restored after the test (pass Infinity to reset to default).
+ */
+export function _setFsqPhotoCacheMaxForTest(n: number): void {
+  FSQ_PHOTO_CACHE_MAX = n === Infinity ? 5_000 : n;
+  fsqPhotoCache.clear();
+}
