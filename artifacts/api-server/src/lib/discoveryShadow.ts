@@ -41,6 +41,18 @@
  * were intercepted, so the guard's effectiveness is visible in the data rather
  * than assumed.
  *
+ * READ THIS BEFORE INTERPRETING A ZERO-DIVERGENCE ROW
+ * ===================================================
+ * `applyFilters` does not only filter. When `sortBy` is `rating`, `popular` or
+ * `nearest` it RE-SORTS the list, and it runs after ranking on both sides. So
+ * on those requests the explicit user sort overrides the ranker in legacy and
+ * in PDE alike, and the two pages agree by construction.
+ *
+ * Those rows are real observations of real serves, and they are not evidence
+ * that PDE changes nothing. `sort_by` is recorded on every row precisely so the
+ * two populations can be separated. Any analysis that pools them will find PDE
+ * less consequential than it is, in exact proportion to how many users sort.
+ *
  * FAILURES ARE LOGGED, NOT SWALLOWED
  * ==================================
  * Same rule as lib/discoveryServeLog.ts, for the same reason: an insert that is
