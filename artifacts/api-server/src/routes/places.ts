@@ -420,12 +420,18 @@ router.get("/places/google-details", async (req, res) => {
 // autocomplete/details, via Places API (New) Text Search + Photo media,
 // which is the only Google endpoint that returns real photo URLs.
 //
+// Server-side cache: both positive (real URL) and negative (no photo found)
+// results are cached for 24 h so the same OSM place never triggers a second
+// Google Places call across sessions. Auth errors and transient failures are
+// NOT cached — the key or network may recover.
+//
+// In-flight dedup: concurrent card impressions for the same place join the
+// first in-flight Promise rather than each firing their own Google request.
+//
 // Degrades honestly: on ANY failure (missing key, SERVICE_DISABLED, no
 // photos found) this returns { photoUrl: null, reason } and NEVER throws —
 // the client falls through to category-appropriate artwork, never a bare
-// icon with no visual treatment. `reason` surfaces machine-readable detail
-// (e.g. "google_places_api_new_disabled") so we can tell exactly which
-// Google Cloud API needs enabling without guessing.
+// icon with no visual treatment.
 const GOOGLE_PHOTO_DISABLED_LOGGED = { at: 0 };
 router.get("/places/photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
@@ -443,54 +449,93 @@ router.get("/places/photo", async (req, res) => {
     return;
   }
 
-  try {
-    const body: Record<string, unknown> = { textQuery: name };
-    if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
-      body.locationBias = { circle: { center: { latitude: lat, longitude: lng }, radius: 5000 } };
-    }
+  const resolvedLat = lat != null && Number.isFinite(lat) ? lat : null;
+  const resolvedLng = lng != null && Number.isFinite(lng) ? lng : null;
+  const cKey = googlePhotoCacheKey(name, resolvedLat, resolvedLng);
 
-    const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": key,
-        "X-Goog-FieldMask": "places.id,places.photos",
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(4000),
-    });
-
-    if (!gRes.ok) {
-      const errBody = await gRes.json().catch(() => null) as any;
-      const reason = errBody?.error?.details?.[0]?.reason as string | undefined;
-      // Log once per process (not per request) to avoid log spam when the
-      // API is disabled project-wide — this fires on every card otherwise.
-      if (reason === "SERVICE_DISABLED" && Date.now() - GOOGLE_PHOTO_DISABLED_LOGGED.at > 10 * 60 * 1000) {
-        GOOGLE_PHOTO_DISABLED_LOGGED.at = Date.now();
-        logger.warn(
-          { reason, activationUrl: errBody?.error?.details?.[0]?.metadata?.activationUrl },
-          "Places API (New) is disabled on this Google Cloud project — enable it to get real Discovery place photos",
-        );
-      }
-      res.json({ photoUrl: null, reason: reason ? `google_places_api_new_${reason.toLowerCase()}` : "google_places_api_new_error" });
-      return;
-    }
-
-    const gBody = (await gRes.json()) as any;
-    const photoName = gBody?.places?.[0]?.photos?.[0]?.name as string | undefined;
-    if (!photoName) {
-      res.json({ photoUrl: null, reason: "no_photo_found" });
-      return;
-    }
-
-    // Photo media endpoint requires its own key param — resolve it here
-    // server-side so the client never needs the key.
-    const photoUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${key}`;
-    res.json({ photoUrl });
-  } catch (err) {
-    logger.warn({ err, name }, "Google Places (New) photo lookup failed");
-    res.json({ photoUrl: null, reason: "request_failed" });
+  // Serve from server-side cache when available (positive or negative).
+  const cachedEntry = getGooglePhotoCached(cKey);
+  if (cachedEntry) {
+    const { ts: _ts, ...body } = cachedEntry;
+    res.json(body);
+    return;
   }
+
+  // In-flight dedup: join an existing lookup rather than firing a second one.
+  const existingFlight = googlePhotoInFlight.get(cKey);
+  if (existingFlight) {
+    const result = await existingFlight;
+    const { cacheable: _c, ...body } = result;
+    res.json(body);
+    return;
+  }
+
+  const lookup = (async (): Promise<GooglePhotoLookupResult> => {
+    try {
+      const body: Record<string, unknown> = { textQuery: name };
+      if (resolvedLat !== null && resolvedLng !== null) {
+        body.locationBias = { circle: { center: { latitude: resolvedLat, longitude: resolvedLng }, radius: 5000 } };
+      }
+
+      const gRes = await fetch("https://places.googleapis.com/v1/places:searchText", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": key,
+          "X-Goog-FieldMask": "places.id,places.photos",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(4000),
+      });
+
+      if (!gRes.ok) {
+        const errBody = await gRes.json().catch(() => null) as any;
+        const reason = errBody?.error?.details?.[0]?.reason as string | undefined;
+        // Log once per process (not per request) to avoid log spam when the
+        // API is disabled project-wide — this fires on every card otherwise.
+        if (reason === "SERVICE_DISABLED" && Date.now() - GOOGLE_PHOTO_DISABLED_LOGGED.at > 10 * 60 * 1000) {
+          GOOGLE_PHOTO_DISABLED_LOGGED.at = Date.now();
+          logger.warn(
+            { reason, activationUrl: errBody?.error?.details?.[0]?.metadata?.activationUrl },
+            "Places API (New) is disabled on this Google Cloud project — enable it to get real Discovery place photos",
+          );
+        }
+        // Auth/config errors are NOT cached — key or API enablement may change.
+        return {
+          photoUrl: null,
+          reason: reason ? `google_places_api_new_${reason.toLowerCase()}` : "google_places_api_new_error",
+          cacheable: false,
+        };
+      }
+
+      const gBody = (await gRes.json()) as any;
+      const photoName = gBody?.places?.[0]?.photos?.[0]?.name as string | undefined;
+      if (!photoName) {
+        // Google has no photo for this place — cache so future requests skip the API.
+        return { photoUrl: null, reason: "no_photo_found", cacheable: true };
+      }
+
+      // Photo media endpoint requires its own key param — resolve it here
+      // server-side so the client never needs the key.
+      const photoUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${key}`;
+      return { photoUrl, cacheable: true };
+    } catch (err) {
+      logger.warn({ err, name }, "Google Places (New) photo lookup failed");
+      return { photoUrl: null, reason: "request_failed", cacheable: false };
+    } finally {
+      googlePhotoInFlight.delete(cKey);
+    }
+  })();
+
+  googlePhotoInFlight.set(cKey, lookup);
+
+  const result = await lookup;
+  if (result.cacheable) {
+    writeGooglePhotoCached(cKey, { photoUrl: result.photoUrl, reason: result.reason, ts: Date.now() });
+  }
+
+  const { cacheable: _c, ...responseBody } = result;
+  res.json(responseBody);
 });
 
 // ── GET /api/places/fsq-photo ─────────────────────────────────────────────────
@@ -1153,3 +1198,81 @@ router.get("/places/:id/dedup-groups", async (req, res) => {
 });
 
 export default router;
+
+// ── Google photo cache infrastructure ─────────────────────────────────────────
+//
+// Shared by the /places/photo route above. Placed after `export default router`
+// to keep the route declarations together; TypeScript hoists the declarations
+// correctly.
+
+const GOOGLE_PHOTO_CACHE_TTL_MS = 24 * 60 * 60 * 1_000; // 24 h
+
+let GOOGLE_PHOTO_CACHE_MAX = 5_000;
+
+interface GooglePhotoCacheEntry {
+  photoUrl: string | null;
+  reason?: string;
+  ts: number;
+}
+
+interface GooglePhotoLookupResult {
+  photoUrl: string | null;
+  reason?: string;
+  /** When true the result should be stored in the server-side cache. */
+  cacheable: boolean;
+}
+
+const googlePhotoCache = new Map<string, GooglePhotoCacheEntry>();
+const googlePhotoInFlight = new Map<string, Promise<GooglePhotoLookupResult>>();
+
+/** Stable cache key for a (name, lat, lng) triple — mirrors client-side cacheKey(). */
+function googlePhotoCacheKey(
+  name: string,
+  lat: number | null,
+  lng: number | null,
+): string {
+  const n = name.toLowerCase().trim().replace(/\s+/g, " ");
+  return `g|${n}|${lat != null ? lat.toFixed(3) : "_"}|${lng != null ? lng.toFixed(3) : "_"}`;
+}
+
+function getGooglePhotoCached(key: string): GooglePhotoCacheEntry | undefined {
+  const entry = googlePhotoCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() - entry.ts > GOOGLE_PHOTO_CACHE_TTL_MS) {
+    googlePhotoCache.delete(key);
+    return undefined;
+  }
+  return entry;
+}
+
+/**
+ * Write an entry to the Google photo cache with active eviction:
+ *   1. Sweep all expired entries on every write (prevent silent TTL pile-up).
+ *   2. Evict oldest entries (Map insertion order) until there is room.
+ *
+ * Deleting the existing entry for `key` before re-inserting refreshes its
+ * position in insertion order so it won't be evicted by subsequent writers.
+ */
+function writeGooglePhotoCached(key: string, entry: GooglePhotoCacheEntry): void {
+  googlePhotoCache.delete(key); // refresh insertion order on re-write
+  const now = Date.now();
+  for (const [k, v] of googlePhotoCache) {
+    if (now - v.ts > GOOGLE_PHOTO_CACHE_TTL_MS) googlePhotoCache.delete(k);
+  }
+  while (googlePhotoCache.size >= GOOGLE_PHOTO_CACHE_MAX) {
+    const oldest = googlePhotoCache.keys().next().value;
+    if (oldest !== undefined) googlePhotoCache.delete(oldest);
+    else break;
+  }
+  googlePhotoCache.set(key, entry);
+}
+
+/**
+ * Override the Google photo cache capacity for tests.
+ * Clears the cache so tests start from a clean state.
+ * Must be restored after the test (pass Infinity to reset to default).
+ */
+export function _setGooglePhotoCacheMaxForTest(n: number): void {
+  GOOGLE_PHOTO_CACHE_MAX = n === Infinity ? 5_000 : n;
+  googlePhotoCache.clear();
+}
