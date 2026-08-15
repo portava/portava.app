@@ -46,9 +46,11 @@
  *      its own: it would empty the table without firing either UPDATE trigger.
  *   2. NO CLIENT SURFACE. anon and authenticated hold no privilege at all.
  *   3. RLS is enabled.
- *   4. Both append-only triggers exist and are enabled — the row-level one and
- *      the statement-level one that makes `UPDATE ... WHERE false` fail, so the
- *      property is verifiable without writing to production.
+ *   4. All THREE append-only triggers exist and are enabled: the row-level
+ *      UPDATE trigger, the statement-level UPDATE trigger that makes
+ *      `UPDATE ... WHERE false` fail, and the statement-level TRUNCATE trigger
+ *      from 2093. The two statement-level ones exist so the property can be
+ *      verified without writing anything to production.
  *
  * WHAT IT CANNOT SEE
  * ==================
@@ -82,9 +84,23 @@ const TABLE = "discovery_shadow_serves";
 const ALLOWED_SERVICE_ROLE = new Set(["INSERT", "SELECT"]);
 /** Roles that must hold nothing at all. */
 const MUST_HOLD_NOTHING = ["anon", "authenticated"];
+/**
+ * Every trigger the append-only property rests on, across BOTH migrations that
+ * establish it. 2092 wrote the two UPDATE triggers; 2093 added the TRUNCATE one.
+ *
+ * The TRUNCATE entry is here because this script shipped without it, and that
+ * omission was the same defect it was written to catch, committed by the
+ * catcher: it would have printed "append-only as documented" while the one
+ * operation that empties the table in a single statement — firing neither
+ * UPDATE trigger and producing no DELETE — went unverified.
+ *
+ * A verifier is only worth its output if its own list is complete. When a
+ * migration adds a mechanism, it belongs here in the same change.
+ */
 const REQUIRED_TRIGGERS = [
-  "discovery_shadow_serves_no_update",
-  "discovery_shadow_serves_no_update_stmt",
+  "discovery_shadow_serves_no_update",       // 2092 — row level
+  "discovery_shadow_serves_no_update_stmt",  // 2092 — statement level
+  "discovery_shadow_serves_no_truncate",     // 2093 — statement level
 ];
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -219,7 +235,7 @@ async function main(): Promise<void> {
     console.log(
       `\n✔ ${TABLE} is append-only as documented.\n` +
       `  service_role: INSERT, SELECT only. anon/authenticated: nothing. RLS on.\n` +
-      `  Both UPDATE triggers present and enabled.\n`,
+      `  All ${REQUIRED_TRIGGERS.length} append-only triggers present and enabled.\n`,
     );
     return;
   }

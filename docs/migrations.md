@@ -116,23 +116,59 @@ Verified 2026-08-09 against the aggregate command, not the script in isolation:
 | Third file added at documented prefix `2059` | **exit 1** — allowlist does not mask it; names all three files |
 | Fixtures removed | **exit 0** |
 
-## Staged, NOT applied
+## What `audit:schema` can and cannot establish about privileges
 
-Files present in the canonical tree whose objects do **not** exist in production. `audit:schema` reports each one as drift, and that report is **correct** — it is the intended state until an operator applies the file. These are not allowlisted: an allowlist entry asserts *"reviewed and deliberately not applied"*, and these are the opposite.
+Recorded here because it was got wrong once, in writing, in two migration headers — and because the wrong version prescribed a fix that would have left the real gap open while looking addressed.
 
-### Apply order — three files, and the CI project needs them too
+**It DOES model table grants.** `auditMigrationsVsLive.ts:684-706` parses `GRANT <privs> ON <table> TO <role>` out of every migration and checks each claim against `information_schema.role_table_grants` (`isMissing` case `"grant"`, `:769`). Any statement that it "compares objects, not privileges" is false.
 
-`2092` → `2093` → `2094`. 2093 and 2094 both alter the table 2092 creates.
+**What it performs is a PRESENCE check, and the claim model is ONE-DIRECTIONAL BY CONSTRUCTION.** A migration states what it *grants*. It has no way to state what a role must **not** hold. So:
 
-**`2092` is applied to PRODUCTION only.** CI's `schema drift · migrations vs live` job runs against the **sanctioned CI project** (`CI_SUPABASE_PROJECT_REF`), not production — the read-only audit guard refuses production inside CI by design. Confirmed on run [31863060712](https://github.com/portava/portava.app/actions/runs/31863060712), which still reports `missing table discovery_shadow_serves` after the production apply. **All three files must be applied to the CI project as well before this PR can go green.**
+| | |
+|---|---|
+| can establish | every grant a migration claimed is present |
+| **cannot establish** | that no *other* privilege is held — **excess privilege is unrepresentable, not merely unchecked** |
+| does not model | `REVOKE` at all — the word appears in that script only inside comments |
 
-### `2092_discovery_shadow_serves.sql` — applied to PRODUCTION 2026-08-15, NOT to the CI project
+That distinction is the whole point. "Unchecked" implies a more thorough `audit:schema` would close it; **"unrepresentable" means no amount of thoroughness will**, because the input language has no sentence for the assertion.
+
+**The case that proved it.** Migration `2092` claimed `service_role.insert` and `service_role.select`. Both were present. `audit:schema` reported nothing and **was correct to**. The live catalog nonetheless read `DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE`, because Supabase's default privileges on `public` grant ALL at `CREATE TABLE` and `2092` never revoked from `service_role`. The append-only guarantee D7=A rests on was held up by the UPDATE trigger alone, and nothing in the system could say so.
+
+**Which is why `audit:shadow-append-only` is not redundant with a better `audit:schema`.** It asserts an **exact** privilege set — the only form of the question that answers *"can this table be mutated"*. Presence checks answer a different question, and answer it correctly.
+
+The general lesson, for the next table whose correctness is a privilege claim: **a migration comment asserting a constraint is not a constraint.** Either the catalog is asserted against directly, or the claim is decoration.
+
+## Discovery shadow table — 2092 / 2093 / 2094
+
+All applied. This section is kept because the apply exposed two things worth not re-learning: that the CI project needs its own apply, and that a migration comment asserting a privilege constraint is not a constraint. `audit:schema` reports each one as drift, and that report is **correct** — it is the intended state until an operator applies the file. These are not allowlisted: an allowlist entry asserts *"reviewed and deliberately not applied"*, and these are the opposite.
+
+### `2092` / `2093` / `2094` — ALL APPLIED, both projects, 2026-08-15
+
+Applied in order `2092` → `2093` → `2094`; 2093 and 2094 both alter the table 2092 creates. Operator-applied, each returning `[]`.
+
+| Project | Ref | Applied |
+|---|---|---|
+| Production | `ajrurzioarfkagpuxfnb` | `2092` (earlier), then `2093`, `2094` |
+| Sanctioned CI | `hwokxgbmezheskbzskfr` | `2092`, `2093`, `2094` |
+
+**Both projects were needed, and that is worth remembering.** CI's `schema drift · migrations vs live` job runs against the **sanctioned CI project**, never production — the read-only audit guard refuses production inside CI by design. A production-only apply leaves CI red, and the failure looks identical to "not applied anywhere". Run [31863060712](https://github.com/portava/portava.app/actions/runs/31863060712) is the recorded instance: it reported `missing table discovery_shadow_serves` *after* the production apply.
+
+**Verified 2026-08-15, both projects, exit 0 on both commands:**
+
+```
+pnpm run audit:schema                 # 280 files, 4063 claimed objects, no missing objects
+pnpm run audit:shadow-append-only     # service_role: INSERT, SELECT only; RLS on; 3/3 triggers
+```
+
+Production also verified by the operator directly: 0 rows, 27 columns (2094's cohort pair present), and `service_role` privileges reading **exactly** `[INSERT, SELECT]`. The `2092` grant discrepancy is closed — the file's claim and the live catalog now agree, and the append-only property no longer rests on the trigger alone.
+
+### `2092_discovery_shadow_serves.sql` — applied, with a corrected header
 
 P1 Stage 2, operator ruling **D7=A**. Creates the append-only table holding shadow-mode comparisons: what legacy served vs what PDE would have served, per request.
 
 | | |
 |---|---|
-| status | **Applied to production** 2026-08-15 (operator). Verified: table present, 0 rows, 25 columns, RLS on, 2 triggers. **Not applied to the CI project**, which is why `audit:schema` still reports its 9 objects missing there |
+| status | **Applied, both projects**, 2026-08-15 |
 | correction | ⚠ **The grants it documents did not land.** `service_role` held all seven privileges, not INSERT+SELECT — Supabase default privileges on `public` grant ALL at CREATE TABLE, and 2092 revoked from PUBLIC/anon/authenticated but never from `service_role`. anon and authenticated DID end up holding nothing. Repaired by **2093**; the file header carries a dated correction rather than a rewrite |
 | missing | table `discovery_shadow_serves`; function `discovery_shadow_serves_append_only`; indexes `_key_observed_at`, `_serve_point_observed_at`, `_user_id`; policies `service_role_insert_…`, `service_role_read_…`; triggers `discovery_shadow_serves_no_update`, `discovery_shadow_serves_no_update_stmt` |
 | effect of applying | **Behaviour-preserving.** It creates an empty table nothing currently reaches — `DISCOVERY_ENGINE_MODE` resolves to `legacy`, so no code path writes here |
@@ -158,39 +194,42 @@ UNION ALL
 SELECT 'trigger', tgname FROM pg_trigger
   WHERE tgrelid = to_regclass('public.discovery_shadow_serves') AND NOT tgisinternal
 ORDER BY 1, 2;
--- expect: 3 index + 2 policy + 2 trigger (the PK index also appears)
+-- expect: 3 index + 2 policy + 3 trigger (the PK index also appears; the third trigger is 2093's TRUNCATE guard)
 ```
 
-Then `pnpm run audit:schema` → **exit 0**, and append the applied row to this file.
+Confirmed 2026-08-15: `pnpm run audit:schema` → **exit 0** on both projects.
 
 **Verify the append-only property directly**, since it is the entire ground of D7=A. The statement-level trigger exists so this check writes nothing — `WHERE false` matches no row, and a row-level trigger alone would let it succeed silently:
 
 ```sql
 UPDATE discovery_shadow_serves SET category = 'x' WHERE false;
 -- expect: ERROR ... is append-only (operator ruling D7=A): UPDATE is not permitted
+
+TRUNCATE discovery_shadow_serves;
+-- expect: ERROR ... is append-only (operator ruling D7=A): TRUNCATE is not permitted
 ```
 
-A property that can only be verified by writing a row into production is a property nobody verifies. This one costs a single statement and touches nothing.
+Both write nothing. `WHERE false` matches no row, and `TRUNCATE` aborts before it empties anything — the statement-level triggers exist precisely so these checks cost nothing. **A property that can only be verified by writing into production is a property nobody verifies.**
 
-### `2093_discovery_shadow_serves_grants.sql` — staged 2026-08-15
+### `2093_discovery_shadow_serves_grants.sql` — applied 2026-08-15
 
 Repairs the privilege set 2092 claimed but did not establish.
 
 | | |
 |---|---|
-| status | **NOT APPLIED** anywhere |
+| status | **Applied, both projects**, 2026-08-15. Verified: `service_role` now reads exactly `INSERT, SELECT` |
 | what it does | `REVOKE ALL ... FROM service_role` then `GRANT INSERT, SELECT`; re-asserts the PUBLIC/anon/authenticated revokes; adds a `BEFORE TRUNCATE` trigger |
 | why the TRUNCATE trigger | TRUNCATE was in the leaked privilege set and it empties the table **without firing either UPDATE trigger and without producing a DELETE**. The grants now remove it; the trigger is there because the grants already drifted once, silently, from schema defaults, on this exact table |
 | not changed | `postgres` still holds ALL — it owns the table and can re-grant itself, so revoking buys the appearance of a constraint, not the constraint |
 | effect | None. 0 rows, mode is `legacy`. It narrows what a role may do to a table nothing writes to |
 
-### `2094_discovery_shadow_serves_cohort.sql` — staged 2026-08-15
+### `2094_discovery_shadow_serves_cohort.sql` — applied 2026-08-15
 
 Adds `cohort_reason text` and `cohort_bucket smallint` (both nullable).
 
 | | |
 |---|---|
-| status | **NOT APPLIED** anywhere |
+| status | **Applied, both projects**, 2026-08-15. Verified: production column count 25 → 27 |
 | why | D6=A rows (internal accounts) and D6=B rows (hashed sample) are **different populations** and must not be pooled. Without this column the only way to tell them apart is to remember what `metadata.cohort` said the day each row was written |
 | why now | The table holds 0 rows. Adding it later would create a NULL population that can never be attributed — the exact gap the column closes, introduced by closing it late |
 | why nullable | NULL has one meaning: written by a code path predating this column. Zero such rows exist, so NULL should never appear; a `NOT NULL` default would hide it behind a plausible value |
