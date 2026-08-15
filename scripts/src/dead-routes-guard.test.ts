@@ -26,18 +26,33 @@ const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '../../');
  * Source roots to scan.
  *
  * This listed artifacts/travel-buddy as a second root until that tree was
- * archived (bc1bef404). Unlike the fixture-import guard, this one has no
- * "at least one file found" floor, so the stale root did not fail — it scanned
- * an absent directory and contributed zero findings, quietly. Removed rather
- * than left as a root that can only ever return nothing.
+ * archived (bc1bef404). The stale root did not fail: it scanned an absent
+ * directory, contributed zero findings, and the guard went green. It was
+ * removed — but removing the entry fixed the instance and left the hole.
+ *
+ * THE HOLE, AND WHY IT IS CLOSED BELOW
+ * ====================================
+ * A conditional floor was added afterwards — `if (fs.existsSync(root))` around
+ * the at-least-one-file assertion — which floors a root that exists and is
+ * empty, and still passes a root that DOES NOT EXIST. That is the precise case
+ * that already happened once. The floor was guarding every scenario except the
+ * one from the incident.
+ *
+ * The sibling guard, fixture-import-guard.test.ts:118, asserts unconditionally.
+ * That contrast is the whole argument: two guards of the same shape, one of
+ * which cannot pass vacuously and one of which could.
+ *
+ * A configured root that does not exist is a CONFIGURATION DEFECT, not a pass.
+ * There is no reading of this file under which scanning nothing is the correct
+ * outcome, so the floor is now unconditional.
  */
-const SOURCE_ROOTS = [path.join(WORKSPACE_ROOT, 'travel-buddy-standalone')];
+export const SOURCE_ROOTS = [path.join(WORKSPACE_ROOT, 'travel-buddy-standalone')];
 
 /**
  * Routes that must not be reachable from any navigation path.
  * Each entry has a human-readable reason so the error message is actionable.
  */
-const DEAD_ROUTES: Array<{ route: string; reason: string }> = [
+export const DEAD_ROUTES: Array<{ route: string; reason: string }> = [
   {
     route: '/live-map',
     reason:
@@ -67,7 +82,7 @@ const SKIP_SUFFIXES = ['.test.ts', '.test.tsx', '.spec.ts', '.spec.tsx'];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function collectSourceFiles(dir: string): string[] {
+export function collectSourceFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   const results: string[] = [];
   function walk(d: string) {
@@ -114,20 +129,42 @@ function scanForLinks(files: string[], route: string): Violation[] {
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 describe('dead-routes guard', () => {
+  // The loops below generate one test per (root × route). Either list going
+  // empty would generate ZERO tests, and a describe block containing no tests
+  // passes. Vacuity is failure, so both lists are floored before the loops.
+  it('has something to check — SOURCE_ROOTS and DEAD_ROUTES are both non-empty', () => {
+    assert.ok(
+      SOURCE_ROOTS.length > 0,
+      'SOURCE_ROOTS is empty — this guard would generate no tests and pass.',
+    );
+    assert.ok(
+      DEAD_ROUTES.length > 0,
+      'DEAD_ROUTES is empty — this guard would generate no tests and pass. ' +
+        'If every dead route has genuinely shipped, delete the guard deliberately ' +
+        'rather than emptying its list and leaving a green check behind.',
+    );
+  });
+
   for (const root of SOURCE_ROOTS) {
     const label = path.relative(WORKSPACE_ROOT, root);
     const files = collectSourceFiles(root);
 
     for (const { route, reason } of DEAD_ROUTES) {
       it(`no source file in ${label} links to ${route}`, () => {
-        // Guard against false-pass when the directory doesn't exist.
-        // Only require files if the root directory exists.
-        if (fs.existsSync(root)) {
-          assert.ok(
-            files.length > 0,
-            `No source files found in ${label} — check SOURCE_ROOTS config`,
-          );
-        }
+        // UNCONDITIONAL floor. A root that does not exist, and a root that
+        // exists and is empty, are both configuration defects — in each case
+        // this guard scanned nothing and reported success, which is
+        // indistinguishable from having checked.
+        assert.ok(
+          fs.existsSync(root),
+          `SOURCE_ROOTS names ${label}, which does not exist. ` +
+            `A guard pointed at an absent directory scans nothing and passes — ` +
+            `fix the path or remove the root.`,
+        );
+        assert.ok(
+          files.length > 0,
+          `No source files found in ${label} — check SOURCE_ROOTS config`,
+        );
 
         const violations = scanForLinks(files, route);
 
