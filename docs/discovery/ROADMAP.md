@@ -34,6 +34,29 @@
 > as one rule because it is one rule, and because each face was discovered
 > separately at a cost that the general form would have avoided.
 >
+> #### The guard for face one has already earned its keep — 2026-08-15
+>
+> `artifacts/api-server/scripts/check-test-registration.mjs` fails CI when a
+> `.test.ts` exists under `src/` but is not in the curated `test` script:
+> *"they would silently never run."*
+>
+> In PR #64 it caught **`apiKeyEmptyVsAbsent.test.ts`** — a test written to make
+> an empty-but-present API key distinguishable from an absent one. It passed
+> locally, 11/11, and was registered in no CI job at all.
+>
+> **The commit whose entire purpose was making a silent failure observable
+> shipped a test whose own result would have been silent.** The author was
+> actively thinking about that exact failure mode and still missed it; the guard
+> caught it.
+>
+> Recorded here because it will otherwise read later as a coincidence or a tidy
+> anecdote. It is neither — it is the strongest available evidence that this
+> guard, the registered-file count floor, and the ghost-path check are load
+> bearing. **Do not soften them, allowlist around them, or treat a registration
+> failure as paperwork.** Adding a test under `artifacts/api-server/src/` is not
+> finished until it is in the `test` script; local green says nothing about
+> whether CI runs it.
+>
 > Recorded verbatim as governing. What follows from it:
 >
 > | | |

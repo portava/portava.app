@@ -20,6 +20,7 @@ import {
 } from "../lib/liveIntelligence";
 import { normalizeLocationName } from "../lib/canonicalLocations";
 import { logger as rootLogger } from "../lib/logger";
+import { classifyApiKey, apiKeyFailureReason, apiKeyFailureMessage } from "../lib/apiKeyState";
 
 const router = Router();
 const logger = rootLogger.child({ route: "places" });
@@ -427,6 +428,8 @@ router.get("/places/google-details", async (req, res) => {
 // (e.g. "google_places_api_new_disabled") so we can tell exactly which
 // Google Cloud API needs enabling without guessing.
 const GOOGLE_PHOTO_DISABLED_LOGGED = { at: 0 };
+const GOOGLE_KEY_STATE_LOGGED = { at: 0 };
+const FSQ_KEY_STATE_LOGGED = { at: 0 };
 router.get("/places/photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
   const lat = req.query.lat != null ? Number(req.query.lat) : null;
@@ -437,11 +440,30 @@ router.get("/places/photo", async (req, res) => {
     return;
   }
 
-  const key = process.env.GOOGLE_MAPS_API_KEY;
-  if (!key) {
-    res.json({ photoUrl: null, reason: "no_google_maps_key" });
+  // NOTE ON WHICH VARIABLE THIS IS. This route reads GOOGLE_MAPS_API_KEY, and
+  // that is the only name the repository uses for it — `GOOGLE_PLACES_API_KEY`
+  // appears nowhere in this codebase. Populating a secret by that name has no
+  // effect here, and would present as "I configured the key and nothing
+  // changed". If the Places key is ever separated from the Maps key, this line
+  // is the one that has to change with it.
+  const rawKey = process.env.GOOGLE_MAPS_API_KEY;
+  const keyState = classifyApiKey(rawKey);
+  if (keyState !== "present") {
+    // Absent and empty are DIFFERENT faults needing different fixes, and the
+    // old `!key` check reported both as "no key". An operator who has just
+    // added the secret is told the thing they know is untrue, so they doubt
+    // the report rather than the value.
+    if (Date.now() - GOOGLE_KEY_STATE_LOGGED.at > 10 * 60 * 1000) {
+      GOOGLE_KEY_STATE_LOGGED.at = Date.now();
+      logger.warn(
+        { envVar: "GOOGLE_MAPS_API_KEY", keyState },
+        apiKeyFailureMessage(keyState, "GOOGLE_MAPS_API_KEY"),
+      );
+    }
+    res.json({ photoUrl: null, reason: apiKeyFailureReason(keyState, "google") });
     return;
   }
+  const key = rawKey as string;
 
   try {
     const body: Record<string, unknown> = { textQuery: name };
@@ -607,11 +629,22 @@ router.get("/places/fsq-photo", async (req, res) => {
     return;
   }
 
-  const key = process.env.FOURSQUARE_API_KEY;
-  if (!key) {
-    res.json({ photoUrl: null, reason: "no_foursquare_key" });
+  // Same distinction as the Google route above, and the same reason for it: an
+  // empty-but-present secret is the case that looks configured and is not.
+  const rawKey = process.env.FOURSQUARE_API_KEY;
+  const keyState = classifyApiKey(rawKey);
+  if (keyState !== "present") {
+    if (Date.now() - FSQ_KEY_STATE_LOGGED.at > 10 * 60 * 1000) {
+      FSQ_KEY_STATE_LOGGED.at = Date.now();
+      logger.warn(
+        { envVar: "FOURSQUARE_API_KEY", keyState },
+        apiKeyFailureMessage(keyState, "FOURSQUARE_API_KEY"),
+      );
+    }
+    res.json({ photoUrl: null, reason: apiKeyFailureReason(keyState, "foursquare") });
     return;
   }
+  const key = rawKey as string;
 
   const cKey = fsqPhotoCacheKey(name, lat, lng);
 
