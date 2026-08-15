@@ -2,6 +2,49 @@
 
 **Filed 2026-08-15. Open. Not Phase B's, and deliberately filed separately.**
 
+> ## STATUS — 2026-08-15, two changes landed, neither confirmed as the remedy
+>
+> | | |
+> |---|---|
+> | **Observability** | **LANDED.** Both routes now return a machine-readable `reason` on every failure path, and propagate Google's own status instead of discarding it. |
+> | **Migration** | **LANDED.** Both routes moved from the legacy `maps.googleapis.com` Places API to **Places API (New)**, key in the `X-Goog-Api-Key` header. |
+>
+> ### Neither is confirmed to fix this, and the reason matters
+>
+> **Production still runs `a384e29fa`.** Neither change has been deployed, so
+> **the exact cause of the legacy failure is still unknown.** The migration was
+> chosen as the **best available move**, not as a confirmed resolution:
+>
+> - it targets an API **already enabled and demonstrably working** with this key,
+>   so it depends on nothing from the project owner; and
+> - the legacy API is being deprecated, so enabling it would buy a fix that has
+>   to be redone.
+>
+> **The case where migration does NOT fix it:** if the underlying fault is
+> **key-scoped or referer/IP-restricted** rather than API-enablement, it applies
+> to Places API (New) as well, and the symptom will simply reappear on the new
+> surface. That is not a remote possibility — it is one of the two live
+> hypotheses, and nothing available before a deploy can distinguish them.
+>
+> ### ⇒ AFTER THE NEXT REPUBLISH, READ THIS FIRST
+>
+> ```bash
+> curl -s 'https://portava.replit.app/api/places/google-autocomplete?input=Barcelona&type=city'
+> ```
+>
+> **That single `reason` value decides which story is true:**
+>
+> | Response | Meaning |
+> |---|---|
+> | `places` populated, **no `reason`** | **Migration was the remedy.** Close this; delete the legacy helpers per the note in `googlePlacesReason.ts`. |
+> | `reason: "google_places_new_service_disabled"` | Enablement fault, now **named**. Owner action: enable the API. |
+> | `reason: "google_places_new_..."` (key/referer/quota shaped) | **Migration was necessary but not sufficient** — the fault follows the key, not the API. This filing stays open and the real cause is here. |
+> | still `{"places":[]}` with **no `reason`** at all | The deploy did not carry these changes. Verify the build before concluding anything. |
+>
+> **Until that value is read, this defect's cause is UNKNOWN and should be
+> described that way** — including to the owner. The observability fix exists
+> precisely so the answer is one call away instead of a guess.
+
 Found while verifying the deploy for Phase B. It is **not** a Phase B blocker and
 must not be folded into it: doing so would both delay Phase B and bury this.
 

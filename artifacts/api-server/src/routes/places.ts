@@ -21,7 +21,7 @@ import {
 import { normalizeLocationName } from "../lib/canonicalLocations";
 import { logger as rootLogger } from "../lib/logger";
 import { classifyApiKey, apiKeyFailureReason, apiKeyFailureMessage } from "../lib/apiKeyState";
-import { legacyStatusReason, legacyHttpReason } from "../lib/googlePlacesReason";
+import { newApiErrorReason } from "../lib/googlePlacesReason";
 
 const router = Router();
 const logger = rootLogger.child({ route: "places" });
@@ -279,9 +279,27 @@ async function runUniversalSearch(
 
 // ── GET /api/places/google-autocomplete ───────────────────────────────────────
 //
-// Server-side proxy for the Google Places Autocomplete API. Keeping the call
+// Server-side proxy for Google Places Autocomplete, on **Places API (New)**
+// (`places.googleapis.com/v1/places:autocomplete`). Keeping the call
 // server-side avoids CORS restrictions on web and keeps GOOGLE_MAPS_API_KEY
 // out of the client bundle.
+//
+// MIGRATED 2026-08-15 from the legacy `maps.googleapis.com` Places API, which
+// was returning empty for every input on this project while the same key
+// succeeded against Places API (New). Two reasons, in order:
+//
+//   1. Places API (New) is ALREADY ENABLED and demonstrably working with this
+//      key, so the migration depends on nothing from the project owner.
+//   2. The legacy Places API is being deprecated by Google, so enabling it
+//      would buy a fix that has to be redone.
+//
+// NOT YET CONFIRMED AS THE REMEDY. The legacy failure's exact cause is still
+// unknown — the observability fix that would reveal it has not reached
+// production. If the underlying fault is key- or referer-scoped rather than
+// API-enablement, it applies to this surface too and this migration will not
+// fix it. See docs/places/google-legacy-places-api-returns-nothing.md.
+//
+// The key travels in the X-Goog-Api-Key HEADER, not the query string.
 //
 // Returns up to 5 normalized Place-shaped objects (no lat/lng — those come
 // from /places/google-details on selection) plus `powered_by: "google"` for
@@ -344,80 +362,104 @@ router.get("/places/google-autocomplete", async (req, res) => {
   const countryCode = typeof req.query.countryCode === "string" ? req.query.countryCode : undefined;
 
   try {
-    const params = new URLSearchParams({ input, key, language: "en" });
-    if (type === "city") params.set("types", "(cities)");
-    if (countryCode) params.set("components", `country:${countryCode}`);
+    // Places API (New). The key travels in the X-Goog-Api-Key HEADER, not the
+    // query string — the same shape already proven authorized for this key by
+    // /places/photo, and it keeps the secret out of any URL that might be
+    // logged by an intermediary.
+    const body: Record<string, unknown> = { input, languageCode: "en" };
+    // Legacy `types=(cities)` — the New API accepts the same type collection.
+    if (type === "city") body.includedPrimaryTypes = ["(cities)"];
+    // Legacy `components=country:XX` → CLDR region codes.
+    if (countryCode) body.includedRegionCodes = [countryCode.toLowerCase()];
 
-    const gRes = await fetch(
-      `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`,
-      { signal: AbortSignal.timeout(4000) },
-    );
+    const gRes = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(4000),
+    });
+
     if (!gRes.ok) {
-      // Previously `throw new Error(...)`, which landed in the catch below and
-      // was reported as an indistinguishable empty list. The HTTP code is the
-      // most useful thing we know at this point, so it reaches the caller.
-      logger.warn(
-        { httpStatus: gRes.status, input },
-        "Google Places Autocomplete HTTP error",
-      );
-      res.json({ places: [], powered_by: "google", reason: legacyHttpReason(gRes.status) });
-      return;
-    }
-    const body = (await gRes.json()) as any;
-
-    if (body.status !== "OK" && body.status !== "ZERO_RESULTS") {
-      // THE DEFECT THIS FIXES. This branch already logged Google's own status
-      // and then discarded it, returning a bare empty list. That log fired,
-      // unread, while destination search returned nothing for every input --
-      // see docs/places/google-legacy-places-api-returns-nothing.md.
-      const reason = legacyStatusReason(body.status as string | undefined);
-      logger.warn(
-        {
-          status: body.status as string,
-          // Google puts the actionable sentence here (e.g. which API to enable).
-          errorMessage: body.error_message as string | undefined,
-          input,
-        },
-        "Google Places Autocomplete non-OK",
-      );
+      const errBody = await gRes.json().catch(() => null);
+      const reason = newApiErrorReason(errBody, gRes.status);
+      if (Date.now() - GOOGLE_AUTOCOMPLETE_ERROR_LOGGED.at > 10 * 60 * 1000) {
+        GOOGLE_AUTOCOMPLETE_ERROR_LOGGED.at = Date.now();
+        logger.warn(
+          {
+            httpStatus: gRes.status,
+            reason,
+            // Google puts the actionable sentence here, including which API to
+            // enable and where.
+            message: (errBody as any)?.error?.message as string | undefined,
+            activationUrl: (errBody as any)?.error?.details?.find(
+              (d: any) => typeof d?.metadata?.activationUrl === "string",
+            )?.metadata?.activationUrl as string | undefined,
+          },
+          "Google Places (New) Autocomplete failed",
+        );
+      }
       res.json({ places: [], powered_by: "google", reason });
       return;
     }
 
-    const predictions: any[] = body.predictions ?? [];
-    const places = predictions.slice(0, 5).map((pred: any) => {
-      const mainText: string = pred.structured_formatting?.main_text ?? pred.description;
-      const types: string[] = pred.types ?? [];
-      return {
-        id: `google-${pred.place_id as string}`,
-        type: inferGoogleType(types),
-        name: mainText,
-        displayName: String(pred.description ?? mainText),
-        country: null,
-        countryCode: null,
-        region: null,
-        city: null,
-        district: null,
-        lat: null,
-        lng: null,
-        timezone: null,
-        source: "google" as const,
-        formattedAddress: String(pred.description ?? mainText),
-      };
-    });
+    const gBody = (await gRes.json()) as any;
+    const suggestions: any[] = gBody?.suggestions ?? [];
+
+    // An empty suggestion list is the New API's ZERO_RESULTS: Google answered,
+    // and the answer is "nothing matches". That is NOT a fault and carries no
+    // reason — see googlePlacesReason.ts.
+    const places = suggestions
+      .map((sg: any) => sg?.placePrediction)
+      .filter((pred: any) => pred && typeof pred.placeId === "string")
+      .slice(0, 5)
+      .map((pred: any) => {
+        const description: string = pred.text?.text ?? "";
+        const mainText: string = pred.structuredFormat?.mainText?.text ?? description;
+        const types: string[] = pred.types ?? [];
+        return {
+          id: `google-${pred.placeId as string}`,
+          type: inferGoogleType(types),
+          name: mainText,
+          displayName: String(description || mainText),
+          country: null,
+          countryCode: null,
+          region: null,
+          city: null,
+          district: null,
+          lat: null,
+          lng: null,
+          timezone: null,
+          source: "google" as const,
+          formattedAddress: String(description || mainText),
+        };
+      });
 
     res.json({ places, powered_by: "google" });
   } catch (err) {
-    logger.warn({ err, input }, "Google Places Autocomplete failed — returning empty");
+    logger.warn({ err, input }, "Google Places (New) Autocomplete failed — returning empty");
     res.json({ places: [], powered_by: "google", reason: "request_failed" });
   }
 });
 
 // ── GET /api/places/google-details ────────────────────────────────────────────
 //
-// Returns geometry (lat/lng) and formatted_address for a Google place_id.
+// Returns geometry (lat/lng) and formattedAddress for a Google place_id.
 // Called after the user selects a Google autocomplete result to enrich the
 // Place with coordinates before canonical resolution.
+//
+// MIGRATED 2026-08-15 to Places API (New), alongside the autocomplete route
+// above and for the same reasons.
+//
+// WHY `GET /v1/places/{id}` AND NOT `places:searchText`. This route is handed
+// an EXACT place id by the autocomplete route. `searchText` resolves free text
+// and can legitimately return a different place, so using it here would let a
+// user's chosen destination silently become a nearby one — a wrong answer that
+// looks entirely normal. Place Details is the correct mapping for a lookup by
+// id; searchText is the correct mapping for the photo route, which genuinely
+// starts from a name.
 
 router.get("/places/google-details", async (req, res) => {
   const placeId = String(req.query.place_id ?? "").trim();
@@ -442,54 +484,60 @@ router.get("/places/google-details", async (req, res) => {
   const key = rawKey as string;
 
   try {
-    const params = new URLSearchParams({
-      place_id: placeId,
-      fields: "geometry,formatted_address,name,address_components",
-      key,
-      language: "en",
-    });
+    // Places API (New) Place Details is a GET on the place resource, NOT
+    // places:searchText. searchText resolves a free-text QUERY; we already have
+    // an exact place id from autocomplete, and round-tripping it through a text
+    // search would be able to return a DIFFERENT place. The field mask is
+    // mandatory here — omitting it is an error, not a default.
     const gRes = await fetch(
-      `https://maps.googleapis.com/maps/api/place/details/json?${params}`,
-      { signal: AbortSignal.timeout(4000) },
+      `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
+      {
+        headers: {
+          "X-Goog-Api-Key": key,
+          "X-Goog-FieldMask": "location,formattedAddress,displayName,addressComponents",
+        },
+        signal: AbortSignal.timeout(4000),
+      },
     );
-    if (!gRes.ok) {
-      logger.warn({ httpStatus: gRes.status, placeId }, "Google Place Details HTTP error");
-      res.json({ details: null, reason: legacyHttpReason(gRes.status) });
-      return;
-    }
-    const body = (await gRes.json()) as any;
 
-    if (body.status !== "OK" || !body.result?.geometry) {
-      // Two DIFFERENT conditions were folded together here and both returned a
-      // bare null: the API declining to answer, and a place that genuinely
-      // carries no geometry. They need different fixes, so they get different
-      // reasons.
-      const statusReason = legacyStatusReason(body.status as string | undefined);
-      const reason = statusReason ?? "no_geometry";
-      if (statusReason) {
+    if (!gRes.ok) {
+      const errBody = await gRes.json().catch(() => null);
+      const reason = newApiErrorReason(errBody, gRes.status);
+      if (Date.now() - GOOGLE_DETAILS_ERROR_LOGGED.at > 10 * 60 * 1000) {
+        GOOGLE_DETAILS_ERROR_LOGGED.at = Date.now();
         logger.warn(
           {
-            status: body.status as string,
-            errorMessage: body.error_message as string | undefined,
+            httpStatus: gRes.status,
+            reason,
+            message: (errBody as any)?.error?.message as string | undefined,
             placeId,
           },
-          "Google Place Details non-OK",
+          "Google Places (New) Place Details failed",
         );
       }
       res.json({ details: null, reason });
       return;
     }
 
-    const { lat, lng } = body.result.geometry.location as { lat: number; lng: number };
+    const body = (await gRes.json()) as any;
+    const loc = body?.location as { latitude?: number; longitude?: number } | undefined;
+
+    if (typeof loc?.latitude !== "number" || typeof loc?.longitude !== "number") {
+      // Google answered and the place genuinely carries no usable location.
+      // Distinct from a refusal, and reported as such.
+      res.json({ details: null, reason: "no_geometry" });
+      return;
+    }
+
     res.json({
       details: {
-        lat,
-        lng,
-        formattedAddress: String(body.result.formatted_address ?? ""),
+        lat: loc.latitude,
+        lng: loc.longitude,
+        formattedAddress: String(body.formattedAddress ?? ""),
       },
     });
   } catch (err) {
-    logger.warn({ err, placeId }, "Google Place Details failed");
+    logger.warn({ err, placeId }, "Google Places (New) Place Details failed");
     res.json({ details: null, reason: "request_failed" });
   }
 });
@@ -510,6 +558,8 @@ router.get("/places/google-details", async (req, res) => {
 // Google Cloud API needs enabling without guessing.
 const GOOGLE_PHOTO_DISABLED_LOGGED = { at: 0 };
 const GOOGLE_AUTOCOMPLETE_KEY_LOGGED = { at: 0 };
+const GOOGLE_AUTOCOMPLETE_ERROR_LOGGED = { at: 0 };
+const GOOGLE_DETAILS_ERROR_LOGGED = { at: 0 };
 const GOOGLE_DETAILS_KEY_LOGGED = { at: 0 };
 const GOOGLE_KEY_STATE_LOGGED = { at: 0 };
 const FSQ_KEY_STATE_LOGGED = { at: 0 };
