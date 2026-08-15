@@ -21,7 +21,28 @@
 > described that way — including to the owner.** The observability fix exists so
 > that the answer is one call away instead of a guess.
 
-**Filed 2026-08-15. Open. Not Phase B's, and deliberately filed separately.**
+> # ✅ RESOLVED 2026-08-15 — autocomplete is LIVE AND WORKING
+>
+> The decision table's **first branch**: `places` populated, **no `reason`**,
+> `powered_by: "google"`, via `places.googleapis.com`.
+>
+> ```json
+> {"places":[{"id":"google-ChIJ5TCOcRaYpBIRCmZHTz37sEQ","type":"city",
+>   "name":"Barcelona","displayName":"Barcelona, Spain","source":"google",
+>   "formattedAddress":"Barcelona, Spain", ...}, ... six results ...],
+>  "powered_by":"google"}
+> ```
+>
+> **The migration WAS the remedy.** The fault was API-enablement-shaped after
+> all, not key- or referer-scoped — so the caveat carried to the owner ("this may
+> be necessary but not sufficient") resolved in the good direction. It was still
+> right to state it: nothing available before the deploy could distinguish them.
+>
+> **Follow-up now due**, per the decision table's own instruction: delete the
+> legacy reason helpers per the note in `googlePlacesReason.ts`. Not done here —
+> a separate change with its own review.
+
+**Filed 2026-08-15. RESOLVED for the original defect. Not Phase B's, and deliberately filed separately.**
 
 > ## STATUS — 2026-08-15, two changes landed, neither confirmed as the remedy
 >

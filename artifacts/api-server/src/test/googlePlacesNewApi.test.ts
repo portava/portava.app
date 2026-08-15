@@ -23,6 +23,8 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
+import { namespaceGooglePlaceId, denamespaceGooglePlaceId } from "../lib/googlePlaceId.js";
+
 process.env.GOOGLE_MAPS_API_KEY ??= "test-google-key";
 
 const realFetch = globalThis.fetch;
@@ -34,12 +36,15 @@ let calls: Array<{ url: string; init: any }> = [];
 function installFetchStub(): void {
   globalThis.fetch = (async (url: any, init?: any) => {
     calls.push({ url: String(url), init });
-    const next = queue.shift();
+    const next: any = queue.shift();
     if (!next) throw new Error(`unexpected fetch: ${String(url)}`);
+    // A queued entry may be a fixed response, or a function of the request URL
+    // so a stub can model an upstream that actually validates its input.
+    const resolved = typeof next.onRequest === "function" ? next.onRequest(String(url)) : next;
     return {
-      ok: next.ok,
-      status: next.status,
-      json: async () => next.body,
+      ok: resolved.ok,
+      status: resolved.status,
+      json: async () => resolved.body,
     } as any;
   }) as any;
 }
@@ -290,5 +295,131 @@ describe("google-details — Place Details by id, not a text search", () => {
     const b = await invoke("/places/google-details", { place_id: "y" });
     assert.equal(a.body.details, b.body.details, "both null");
     assert.notEqual(a.body.reason, b.body.reason, "for different reasons");
+  });
+});
+
+// ── THE ROUND TRIP ────────────────────────────────────────────────────────────
+//
+// This is the test whose absence let the two halves of one user flow disagree
+// about the id format for three weeks, through a migration that touched BOTH
+// routes in the same commit.
+//
+// autocomplete EMITTED `google-<id>`; details REQUIRED a bare `<id>`. Only a
+// `.replace(/^google-/, '')` on the client bridged them, and nothing on the
+// server knew that strip existed. Measured on production 2026-08-15:
+//
+//   place_id=google-ChIJ5TCOcRaYpBIRCmZHTz37sEQ
+//     -> {"details":null,"reason":"google_places_new_invalid_argument"}
+//   place_id=ChIJ5TCOcRaYpBIRCmZHTz37sEQ
+//     -> {"details":{"lat":41.3874…,"lng":2.1686…}}
+//
+// Testing the two routes SEPARATELY could never have caught it: each was
+// internally correct. Only feeding one's output into the other does.
+
+describe("googlePlaceIdRoundTrip — autocomplete's id must work in details, verbatim", () => {
+  it("id emitted by autocomplete, passed UNCHANGED to details, resolves", async () => {
+    queue.push({
+      ok: true,
+      status: 200,
+      body: {
+        suggestions: [
+          {
+            placePrediction: {
+              placeId: "ChIJ5TCOcRaYpBIRCmZHTz37sEQ",
+              text: { text: "Barcelona, Spain" },
+              types: ["locality"],
+            },
+          },
+        ],
+      },
+    });
+    const ac = await invoke("/places/google-autocomplete", { input: "Barcelona" });
+    const emittedId = ac.body.places[0].id;
+    assert.equal(emittedId, "google-ChIJ5TCOcRaYpBIRCmZHTz37sEQ");
+
+    // The stub answers the way PRODUCTION GOOGLE ACTUALLY DID when handed a
+    // namespaced id, measured 2026-08-15: INVALID_ARGUMENT. Without this the
+    // round-trip test passes even with the defect present, because a stub that
+    // returns success regardless of URL cannot detect a wrong URL — a test that
+    // cannot fail is the thing this whole workstream exists to prevent.
+    queue.push({
+      onRequest: (url: string) =>
+        url.includes("/places/google-")
+          ? { ok: false, status: 400, body: { error: { status: "INVALID_ARGUMENT" } } }
+          : {
+              ok: true,
+              status: 200,
+              body: {
+                location: { latitude: 41.3874374, longitude: 2.1686496 },
+                formattedAddress: "Barcelona, Spain",
+              },
+            },
+    } as any);
+    // NO transformation. That is the entire point.
+    const det = await invoke("/places/google-details", { place_id: emittedId });
+
+    assert.deepEqual(det.body.details, {
+      lat: 41.3874374,
+      lng: 2.1686496,
+      formattedAddress: "Barcelona, Spain",
+    });
+    assert.equal(det.body.reason, undefined);
+  });
+
+  it("the id reaching Google is the BARE one — the namespace never leaves us", async () => {
+    queue.push({ ok: true, status: 200, body: { location: { latitude: 1, longitude: 2 } } });
+    await invoke("/places/google-details", { place_id: "google-ChIJ_ABC" });
+    assert.match(calls[0].url, /\/v1\/places\/ChIJ_ABC$/);
+    assert.ok(!calls[0].url.includes("google-"), "the prefix is ours, not Google's");
+  });
+
+  it("the BARE form still works — the live client strips the prefix itself", async () => {
+    // Non-negotiable: production works today because the client strips. A fix
+    // that only accepted the namespaced form would break the working path.
+    queue.push({ ok: true, status: 200, body: { location: { latitude: 1, longitude: 2 } } });
+    const { body } = await invoke("/places/google-details", { place_id: "ChIJ_ABC" });
+    assert.deepEqual(body.details, { lat: 1, lng: 2, formattedAddress: "" });
+  });
+
+  it("only ONE prefix is stripped — an opaque id starting with the literal text survives", async () => {
+    queue.push({ ok: true, status: 200, body: { location: { latitude: 1, longitude: 2 } } });
+    await invoke("/places/google-details", { place_id: "google-google-weird" });
+    assert.match(calls[0].url, /\/v1\/places\/google-weird$/);
+  });
+
+  it("namespacing is idempotent — no google-google- can be produced", () => {
+    assert.equal(namespaceGooglePlaceId("ChIJ_ABC"), "google-ChIJ_ABC");
+    assert.equal(namespaceGooglePlaceId("google-ChIJ_ABC"), "google-ChIJ_ABC");
+    assert.equal(denamespaceGooglePlaceId(namespaceGooglePlaceId("ChIJ_ABC")), "ChIJ_ABC");
+  });
+
+  it("BOTH SIDES USE THE SHARED DEFINITION — neither re-hardcodes the prefix", async () => {
+    // The defect was two independent string literals. If someone reintroduces
+    // one, the constant can be changed here and this test will catch the half
+    // that did not follow.
+    const { readFileSync } = await import("node:fs");
+    const routes = readFileSync(
+      new URL("../routes/places.ts", import.meta.url).pathname,
+      "utf8",
+    );
+    // Comments are allowed to name the prefix — documenting the contract is the
+    // point. Only CODE re-hardcoding it is the defect, so strip comment lines
+    // before scanning rather than banning the string outright.
+    const codeLines = routes
+      .split("\n")
+      .filter((l) => {
+        const t = l.trim();
+        return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+      })
+      .join("\n");
+    const hardcoded = codeLines.match(/["'`]google-/g) ?? [];
+    assert.deepEqual(
+      hardcoded,
+      [],
+      `routes/places.ts re-hardcodes the namespace in CODE: ${hardcoded.join(", ")} — use lib/googlePlaceId.ts`,
+    );
+
+    // Vacuity guard: if the scan removed everything, it proves nothing.
+    assert.ok(codeLines.length > 5000, "comment-stripping removed too much — the scan is not examining the file");
   });
 });
