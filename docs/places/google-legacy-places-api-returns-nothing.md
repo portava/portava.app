@@ -138,6 +138,61 @@ Three reasons it cannot be the cause:
 The drift is a real problem for other reasons — it collapsed the photo
 fallback chain to FSQ → FSQ — but not for this one.
 
+### The git archaeology, checked — and a second wrong story corrected
+
+A follow-up account held that `cd1f4e1bb` migrated autocomplete to the New API
+and that `d713e58ee` (*"the places.ts repair"*, same day) restored the file to
+an earlier version and **silently undid that migration** — leaving today's
+legacy endpoint as the residue of an accidental revert.
+
+**That is not what happened, and the history says so plainly.**
+
+| Commit | Time (UTC) | legacy endpoint | New-API endpoint |
+|---|---|---|---|
+| `11fffd9f4` | **2026-07-27** 19:03 | **1** | 0 |
+| `9b9b120da` (#61) | 2026-08-15 09:39 | **1** | 0 |
+| `d713e58ee` (#62) | 2026-08-15 09:48 | **1** | 0 |
+| `cd1f4e1bb` (drift) | 2026-08-15 11:09 | 0 | **1** |
+| `87e245786` (revert) | 2026-08-15 11:23 | **1** | 0 |
+| `HEAD` | — | **1** | 0 |
+
+Three findings, each of which kills the account:
+
+1. **`d713e58ee` never touched these handlers.** Its diff against
+   `routes/places.ts` contains **zero** added or removed lines matching
+   `autocomplete` or `google-details`. It could not have undone a migration it
+   did not touch.
+2. **It predates the migration by 80 minutes.** `d713e58ee` is 09:48;
+   `cd1f4e1bb` is 11:09. There was nothing there yet to undo.
+3. **The New-API endpoint never existed before the drift.** Its count is 0 at
+   every commit on this branch until `cd1f4e1bb`, where it appears for the first
+   time. It survived roughly **14 minutes** before the deliberate revert.
+
+**The true story is duller and more useful: nothing broke autocomplete.** The
+legacy endpoint has been in place continuously **since 2026-07-27** and is still
+there. There is no regression to find and no commit to blame — **the code has
+always called the API that is now refusing it.** What changed is on Google's
+side, or was never true, and the app is pre-launch with no organic traffic, so
+nobody was in a position to notice either way.
+
+> **Recorded because being wrong here is expensive in a specific direction.**
+> Both incorrect accounts pointed at a commit, and a commit is a satisfying
+> thing to point at — it implies a revert will fix it. Neither would have. An
+> hour spent bisecting `places.ts` would have found nothing, because there is
+> nothing there.
+>
+> The general form, and it is the fourth face again: **a defect with no
+> regression is the one most likely to be mis-attributed**, because "what
+> changed?" is the first question anyone asks and here the answer is "nothing in
+> this repository."
+
+**What is still worth keeping from the discarded account:** a restore-from-
+corruption commit quietly reverting an unrelated intentional change *is* a real
+hazard and a real lesson — it just is not what happened here. Two commits on
+2026-08-15 do describe themselves as repairing corrupted or scrambled code in
+`places.ts` (`cf4d8a674`, `3fe369046`). Neither touched the autocomplete
+endpoint, but the pattern is worth watching for on its own terms.
+
 ---
 
 ## THE DESIGN DEFECT, which is the part worth fixing first
