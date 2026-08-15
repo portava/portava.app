@@ -30,7 +30,7 @@ of which is sufficient on its own.
 
 | # | Sub-question | Today | Why |
 |---|---|---|---|
-| 0 | *(precondition)* six months of history | **NO** | Retention window is **90 days**. Six months is outside it **by policy**, not by accident. |
+| 0 | *(precondition)* six months of history | **NO** | Retention window is **90 days**. Six months is outside it **by policy**, not by accident. **→ policy gap now closed: RULED 2026-08-15 (§7), decision evidence 12 months. The verdict stays NO because nothing implements it.** |
 | 1 | what the traveller saw | **NO** | Authenticated serves only, and the record is **destroyed on success** — see §1. |
 | 2 | what viable alternatives existed | **NO** | Nothing records a candidate that was **not** served. |
 | 3 | why each candidate was considered or removed | **NO** | **No exclusion is recorded anywhere**, by any component. |
@@ -170,7 +170,8 @@ One row per recommendation request, whether or not anything was ranked.
 | `engine_mode`, `mode_reason`, `cohort_reason` | provenance, as `discovery_shadow_serves` already does |
 | `ranker_version`, `weights_version` | **without this a six-month-old score cannot be interpreted**, only read |
 | `context` jsonb | destination, category, radius, page, page_size, sort_by, filters *as applied* |
-| `viewer_context` jsonb | **snapshot** of what the ranker actually saw: interest tags, follow-count, whether coords were present. Not a pointer to today's values — the traveller's interests six months ago are not their interests now. |
+| `viewer_context` jsonb | **snapshot** of what the ranker actually saw: interest tags, follow-count, whether coords were present. Not a pointer to today's values — the traveller's interests six months ago are not their interests now. **Split by sensitivity per §7**: precise coordinates are a **≤90-day** class and are redacted in place; the derived flags they produced are a **12-month** class and survive. |
+| `context_redacted_at`, `redaction_policy_version` | §7. So that *redacted*, *never captured* and *present* stay three distinguishable states. |
 | `timings` jsonb | |
 
 ### `discovery_candidate_evals` — the judgement, and the exclusions
@@ -243,7 +244,10 @@ in the schema, and answers no question the three tables above cannot.
   candidate, per run.
 - **What context existed** — `discovery_runs.context` + `viewer_context`
   **snapshotted at the time**, plus `ranker_version` / `weights_version` so a
-  historical score can be *interpreted* rather than merely read.
+  historical score can be *interpreted* rather than merely read. **After 90 days
+  this is the derived context, not the raw** (§7): the eligibility judgement
+  survives, the precise coordinates do not, and the difference is recorded rather
+  than silent.
 - **What the traveller did** — `discovery_interactions`, append-only, every
   stage preserved with its own timestamp.
 
@@ -252,9 +256,13 @@ hollow:**
 
 1. **Retention.** The window in force is **90 days**
    (`docs/ops/retention-policy.md`). A six-month counterfactual **fails on
-   policy before it fails on schema.** Event Truth needs its own retention
-   ruling, and that is an **owner decision**, not an engineering one. *Flagged,
-   not assumed.*
+   policy before it fails on schema.** → **RULED by the owner 2026-08-15; see
+   §7.** The ruling is *not* a longer global window: decision evidence gets
+   **12 months**, raw sensitive context gets **90 days or less**, and the durable
+   record keeps **the judgement rather than the sensitive input that produced
+   it**. It also **redefines what reproducibility means** once evidence expires.
+   Still listed here because **nothing implements it** — the policy gap is
+   closed, the schema gap is not.
 2. **The past is unrecoverable.** No schema reconstructs what was never written.
    Everything before Event Truth ships stays unreconstructable — which, with 0
    places and no organic traffic, costs almost nothing **today** and rises every
@@ -321,8 +329,16 @@ visit_observations   IMMUTABLE RAW FACTS — written once, never updated, never 
         │            · explicit_confirmation · checkin
         ▼
 visit_verifications  VERSIONED DERIVATIONS over those observations
-                     (standard_version, derived_at, confidence, evidence_refs[])
+                     (standard_version, derived_at, confidence, evidence_refs[],
+                      evidence_class_counts)
 ```
+
+**`evidence_class_counts` is required by the retention ruling (§7), not optional.**
+Raw observations expire on a **shorter** schedule than the verifications derived
+from them, so `evidence_refs[]` will dangle by design. The class counts are
+denormalised **at derivation time** so the conclusion stays readable — *which
+policy evaluated which evidence classes, and what it concluded* — after the
+evidence itself is gone.
 
 **When the verification standard changes, historical evidence is not rewritten.**
 A new standard writes **new verification rows**; the old rows stay, and every
@@ -362,9 +378,196 @@ joined to attributions. Same trip + same standard version = **same answer,
 forever** — because no input is mutable and no conclusion is recomputed in
 place. That is the property today's schema cannot offer at any level of care.
 
+**And it survives retention** (§7): the answer is **read from the recorded
+conclusion**, never recomputed from observations that may legitimately have
+expired. Determinism here does not depend on the evidence still existing — which
+is precisely why the conclusion had to be a versioned row rather than a mutable
+column in the first place.
+
 ---
 
-## §7 — Recommendation
+## §7 — Retention — **RULED by the owner, 2026-08-15**
+
+This packet escalated retention rather than resolving it (§5.1). **The ruling has
+been given, and it is folded in here.** It is **not a single TTL**, and reading it
+as one would produce exactly the schema it forbids.
+
+### The six-month acceptance test STAYS — and six months is not arbitrary
+
+> Travel feedback is **delayed and episodic**, and the strongest downstream
+> evidence often arrives **long after** the recommendation. A 90-day window would
+> make the system **deliberately forget evidence before it has enough
+> longitudinal behaviour to evaluate itself.**
+
+So the counterfactual in §0 is unchanged and stays the bar.
+
+**But this is NOT retain-everything-for-six-months.** The ruling splits the data
+by what is *actually required*, and the split is the substance of it:
+
+| Tier | Window |
+|---|---|
+| **DISCOVERY DECISION EVIDENCE** | **12 months** |
+| **RAW SENSITIVE CONTEXT** | **shortest practical lifetime — preferably 90 days or less** |
+| **DERIVED NON-SENSITIVE EVIDENCE** | **12 months, or longer where justified** |
+
+### The governing principle
+
+> ### PRESERVE THE DECISION EVIDENCE, NOT EVERY SENSITIVE INPUT THAT PRODUCED IT.
+
+The owner's worked example, because it settles the schema question exactly:
+
+> The durable record can say candidate X had `within_range = true`, `open = true`,
+> `weather_appropriate = true`, `previously_visited = false`, and **survived
+> eligibility under `candidate_policy_v3`**. It does **not** need the traveller's
+> exact latitude and longitude forever.
+
+The booleans **are** the decision evidence. The coordinates are a **sensitive
+input** that produced them, and they are discardable the moment the evaluation is
+recorded. `discovery_candidate_evals` (§3) already stores per-candidate judgement
+and exclusion reasons; this ruling says that table — not the raw context — is what
+survives.
+
+**Standing prohibition, stated because it is the failure mode this most likely
+degrades into:**
+
+> **Precise location is NEVER retained merely because ranking analytics would
+> benefit.** Analytic convenience is not a purpose. If a signal is wanted for
+> ranking, it is derived, stored derived, and the raw input still expires on the
+> raw-input schedule.
+
+### The per-class retention table
+
+**This is the required encoding — a per-class table, not one global TTL.** The
+final column is the one that carries the ruling: it names the records that
+legitimately **outlive their own inputs.**
+
+| Data class | Purpose | Sensitivity | Retention | At expiry | Downstream that survives it |
+|---|---|---|---|---|---|
+| `discovery_runs.viewer_context` — **precise coords** | eligibility + distance scoring at request time | **HIGH** — precise personal location | **≤ 90 days** | **redact in place**: coordinate fields nulled, `context_redacted_at` + `redaction_policy_version` stamped. Row survives. | `discovery_candidate_evals` (the booleans it produced), `discovery_exposures` |
+| `discovery_runs.viewer_context` — **derived flags** (interest tags present, follow-count bucket, coords_present) | interpret a historical score | LOW — derived, non-identifying | **12 months** | retained | — |
+| `discovery_runs` — ids, `serve_point`, `cache_level`, `engine_mode`, `ranker_version`, `weights_version`, `context` | reconstruct **the moment** | LOW | **12 months** | retained | — |
+| `discovery_runs.user_id` / `session_id` | enumerate a **historical trip** (§6 test) | MEDIUM — pseudonymous | **12 months** | retained; **not** extended past 12 without a fresh ruling | aggregate counts only |
+| `discovery_candidate_sets` | the world that was available | LOW — place ids, not personal | **12 months or longer** | retained | — |
+| `discovery_candidate_evals` — stage, `exclusion_reason`, `viable`, `score`, `rank_position`, policy version | **why a candidate was considered or removed** | LOW — **derived decision evidence** | **12 months** | retained | — |
+| `discovery_exposures` | what the traveller saw | LOW | **12 months** | retained | `visit_attributions` |
+| `discovery_interactions` | what the traveller did | MEDIUM | **12 months** | retained | `visit_attributions` |
+| `visit_observations` — **raw GPS ping / dwell sample** | evidence for a verification | **HIGH** — precise personal location + time | **≤ 90 days** | **hard delete of the row** | **`visit_verifications`** — see below |
+| `visit_observations` — `stamp_award`, `trip_membership`, `explicit_confirmation` | evidence for a verification | LOW–MEDIUM | **12 months** | retained | `visit_verifications` |
+| `visit_verifications` — conclusion, `standard_version`, `derived_at`, `confidence`, **minimum provenance** | the durable verified-visit record | LOW — derived | **12 months or longer** | retained | `visit_attributions` |
+| `visit_attributions` — `verification_id`, `exposure_id`, `basis`, `confidence`, `window` | Portava Discovery Contribution | LOW — derived | **12 months or longer** | retained | — |
+
+### `visit_observations` must NOT inherit the lifetime of `visit_verification`
+
+Stated explicitly because it is the exact inversion the naive design produces —
+an observation kept alive because something derived from it is still needed:
+
+> **A raw GPS observation must not inherit the lifetime of the resulting
+> `visit_verification`.** The observation **expires**; the **versioned
+> verification survives**, carrying the **minimum provenance** needed to establish
+> **which policy evaluated which evidence classes, and what it concluded.**
+
+**Minimum provenance** is therefore a defined set, and it is deliberately not
+"the evidence":
+
+| Kept | Not kept |
+|---|---|
+| `standard_version` — which policy evaluated it | the observation values |
+| `evidence_class_counts` — e.g. `{proximity_ping: 4, dwell_sample: 1}` | coordinates, timestamps of each ping |
+| `derived_at` — the date of evaluation | |
+| conclusion + `confidence` | |
+| `evidence_refs[]` — retained, and allowed to dangle **only** because the counts above are denormalised at derivation time | |
+
+**Consequence for the design in §6, and it is a change:** `evidence_refs[]` alone
+is **insufficient**. Once observations expire, refs point at nothing, and a
+verification whose provenance is only refs becomes unreadable exactly when it is
+most needed. **`evidence_class_counts` must be written at derivation time**, not
+joined at read time.
+
+### Expiry must be a RECORDED STATE, never an absence
+
+This is where the governing invariant lands on retention, and it is not
+decoration:
+
+> **ABSENCE OF EVIDENCE MUST NEVER SILENTLY BECOME EVIDENCE OF ABSENCE.**
+
+A coordinate field that expires to `NULL` is **indistinguishable from one that
+was never captured**. An `evidence_refs[]` that dangles is indistinguishable from
+a verification derived from nothing. Both are the same defect the invariant names:
+**success is indistinguishable from not having worked.**
+
+So, required:
+
+- **`context_redacted_at` + `redaction_policy_version`** on any row whose fields
+  are redacted in place. Redacted, never-captured and still-present are **three
+  distinguishable states**, and every reader must be able to tell them apart.
+- A dangling `evidence_ref` resolves to **`expired`**, never to `not_found`.
+- Any report or query over an expired window must **refuse a verdict** rather than
+  return a confident zero — the same rule already in force for empty windows.
+
+**And the interaction that must not be missed:** `visit_attributions.exposure_id`
+is `NULL`-load-bearing (§6). **Expiry must never manufacture that `NULL`.**
+Attribution rows are derived, non-sensitive, and retained for 12 months or
+longer precisely so that a `NULL` there keeps its single meaning. Two different
+`NULL`s in one column would destroy the rule below.
+
+### What reproducibility MEANS after source evidence expires
+
+**This changes the definition, and it is the subtlest requirement in the ruling:**
+
+> After source evidence legitimately expires, reproducibility means
+> **REPRODUCING THE HISTORICAL DECISION, not rerunning the original
+> computation.**
+
+| Portava MUST be able to say | Portava MUST NOT claim |
+|---|---|
+| *"Verification policy **v2** evaluated evidence classes **A and B** on **date X** and produced **verified = true** at confidence **Y**."* | that it can **independently recompute** that conclusion once the sensitive evidence is gone |
+
+The system must therefore be able to answer **"is this recomputable?"** — and
+answer **no** when it is not:
+
+- a derived `recomputable` property over `visit_verifications`, false once any
+  referenced evidence class is past its window;
+- **re-derivation refuses** on a verification whose inputs have expired. It does
+  **not** recompute from the surviving subset and present the result as the same
+  conclusion. Recomputing from partial evidence is the retention-shaped form of
+  *a failure that returns a verdict*, which the roadmap already ranks as worse
+  than one that refuses.
+
+§6's determinism claim is unchanged and is now **more precisely true**: the same
+trip at the same `standard_version` yields the same answer forever, because the
+answer is **read from the recorded conclusion**, not recomputed from inputs that
+may no longer exist.
+
+### The nullable attribution rule — **preserved exactly**
+
+Carried through this ruling **unchanged**, and reproduced here verbatim from §6
+because the owner called it an unusually important modelling decision:
+
+> **`NULL` and `basis = 'none'` are correct, expected answers.** A traveller who
+> found a bar by walking past it produced a real verified visit that Portava did
+> not source, and the system must be able to **say so** rather than reach for the
+> nearest exposure. **"Without inferring missing evidence" means an unattributable
+> visit stays unattributed** — Portava Discovery Contribution is a floor computed
+> from what is recorded, never an estimate topped up by proximity in time.
+
+**`NULL` does not mean *attribution unavailable, guess later*. It means NO
+PORTAVA ATTRIBUTION HAS BEEN ESTABLISHED.** Contribution stays **conservative by
+construction** — and retention does not weaken it, because attribution rows
+outlive the sensitive inputs that would otherwise be reached for.
+
+### What this ruling does NOT resolve
+
+- **`docs/ops/retention-policy.md` still says 90 days**, and it governs
+  `discovery_shadow_serves`. This ruling covers **Event Truth's classes**. The ops
+  document must be amended when Event Truth is implemented, not before — writing a
+  window for tables that do not exist is decoration.
+- **No deletion or redaction job exists.** Consistent with the existing policy,
+  expiry is a **scheduled decision taken by a person**, and there is deliberately
+  no code path here that makes it automatic.
+
+---
+
+## §8 — Recommendation
 
 **The counterfactual is answerable in principle and unanswerable today.** Build
 Event Truth, in the first-class-object shape above, with these conditions:
@@ -373,15 +576,20 @@ Event Truth, in the first-class-object shape above, with these conditions:
 |---|---|
 | **Append-only by construction** | Same three mechanisms as `discovery_shadow_serves` — grants, RLS, triggers — and the same `audit:shadow-append-only`-style **exact privilege assertion**, because `2092` proved a migration comment is not a constraint |
 | **`user_id` NULLABLE** | Anonymous traffic must be recordable. This is the single most important departure from `rank_events` |
-| **Retention ruling** | **Owner gate.** 90 days cannot answer a six-month question |
+| **Retention, per class** | **RULED — §7.** Not one TTL: decision evidence **12 months**, raw sensitive context **≤ 90 days**, derived non-sensitive **12 months+**. Sensitive inputs expire; the judgement they produced survives |
+| **Expiry is a recorded state** | §7. Redacted, never-captured and present are three distinguishable states. A field that expires to a bare `NULL` violates the governing invariant |
+| **Reproduce the DECISION, not the computation** | §7. Once inputs expire the system states what was concluded under which policy — and **refuses** to recompute rather than recomputing from a surviving subset |
 | **Behaviour-preserving at introduction** | Writes land inert behind a flag, as Stage 0 did |
 | **Observations immutable, verification versioned** | §6. A conclusion stored on the observation row cannot survive a change of standard |
 | **Attribution may be NULL** | An unattributable visit stays unattributed. Contribution is a floor, never an estimate |
 | **No production write by the agent** | Staged with before/after verification |
 
-**Retention is ESCALATED TO THE OWNER**, not resolved here. The six-month
-counterfactual fails on the **90-day policy**, and whether discovery evidence
-gets a longer window is an owner decision rather than a schema question.
+**Retention is RULED** — §7, folded in 2026-08-15. It was escalated by an earlier
+revision of this packet; it is no longer open. The ruling did **not** simply
+lengthen the window, and a reader who remembers only *"six months"* has the wrong
+half of it: the six-month counterfactual **stays**, and it is satisfied by
+retaining **decision evidence**, not by retaining every sensitive input for six
+months.
 
 **Still deferred:** what makes an event *strong* is a taste-model question that
 step 5 defines; specifying it now would be guessing at a contract that does not

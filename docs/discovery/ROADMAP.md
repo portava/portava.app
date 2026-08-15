@@ -70,7 +70,7 @@ Companion documents:
 | `discovery-engine-ruling-sheet.html` | the owner's decision sheet as presented |
 | `phase-minus-1-repository-proof.md` | repository proof of the carried-in claims at HEAD |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
-| `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves` |
+| `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves`. **Event Truth's classes are ruled separately** — packet §7 — and this document is amended when Event Truth is implemented, not before |
 
 ---
 
@@ -250,7 +250,7 @@ impression**.
 
 1. **Phase B evidence closure** ← *immediate gate*
 2. Remaining **A–D** exit criteria
-3. **Event Truth schema packet** *(written — must now also pass the `verified_visit` test)*
+3. **Event Truth schema packet** *(written — must now also pass the `verified_visit` test; retention **ruled** 2026-08-15 and folded in as packet §7)*
 4. **Event Truth implementation**
 5. **Place Intelligence**
 
@@ -271,6 +271,23 @@ So: **zero or suspiciously thin probe output is an INVESTIGATION RESULT, not a
 successful low-traffic result.** It does not close Phase B. It opens a
 question.
 
+#### When the probe finishes there are exactly TWO legitimate outcomes
+
+| | Outcome |
+|---|---|
+| **1** | **Evidence closure** — discovery rows at **multiple** serve points, the B3 criterion met on its own terms |
+| **2** | **A newly discovered reachability or observability defect** — named, with evidence |
+
+> **"Probably low traffic" is NOT a third state.** It is the shape a thin window
+> takes when nobody looks at it hard, and it is indistinguishable from a broken
+> surface by construction — which is the exact confusion the governing invariant
+> forbids. A probe that returns few rows has either found a defect or has not yet
+> been read; it has not produced a result.
+
+**Schema work is not a reason to relax this.** Event Truth being designed, ruled
+on, or ready does not advance Phase B by one row, and the gate is unchanged by
+anything in the packet.
+
 ### Step 2 is GATED
 
 **Before any migration**, Event Truth requires a **schema design packet**
@@ -285,6 +302,22 @@ answering one counterfactual explicitly:
 
 → **`event-truth-schema-packet.md`** — written, and its verdict on the *current*
 system is **NO, on five independent grounds**.
+
+**The retention question the packet escalated is RULED** (owner, 2026-08-15;
+packet §7). It is **not** a longer global window, and that is the half most
+likely to be misremembered:
+
+| | |
+|---|---|
+| **The six-month counterfactual STAYS** | Travel feedback is delayed and episodic; the strongest downstream evidence often arrives long after the recommendation. A 90-day window would make the system **forget evidence before it has enough longitudinal behaviour to evaluate itself** |
+| **Discovery decision evidence** | **12 months** |
+| **Raw sensitive context** | **shortest practical — ≤ 90 days preferred** |
+| **Derived non-sensitive evidence** | **12 months or longer where justified** |
+| **The principle** | **Preserve the decision evidence, not every sensitive input that produced it.** Precise location is never retained because ranking analytics would benefit |
+| **And it redefines reproducibility** | After evidence expires, reproducing the **historical decision** — *policy v2 evaluated classes A and B on date X and concluded verified=true at confidence Y* — never a claim that the computation can be rerun |
+
+**This closes a policy gap, not a schema gap.** Both acceptance tests still
+answer **NO** on the current system, and step 2 remains gated behind Phase B.
 
 ---
 
