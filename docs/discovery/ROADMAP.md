@@ -200,7 +200,7 @@ listed because each one caught something.
 | Phase | Name | Status |
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
-| **B** | Make discovery reachable | **IN PROGRESS** — see PR #54, which rules it **BLOCKED** on the authentication prerequisite. That ruling governs; this cell is whichever of the two lands last, and they must be reconciled rather than raced. Engineering blockers #55–#58 landed 2026-08-15. **The B3 probe has NOT been run against a build containing them.** |
+| **B** | Make discovery reachable | **BLOCKED — awaiting a deploy carrying #55/#56, then a probe.** Exit criterion (rows at multiple serve points) **unmet**; nothing has been measured in either direction. PR #54's ruling governs and stands. It is **NOT** blocked on Google SSO — see the correction below; that conflation was mine, not #54's. **The B3 probe has NOT been run against a build containing the fixes**, and the deployed build does not contain them. |
 | **C** | Complete shadow coverage | NOT STARTED |
 | **D** | D5=B engine split | NOT STARTED |
 | **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination |
@@ -221,14 +221,54 @@ Four PRs, in the order they had to land:
 | **#55** | #3658 — false "Couldn't verify your account" wall | Blocked reaching `/discovery` at all on an authenticated session. |
 | **#56** | #3657 guard rewritten | The 3642 guard was green and *could not* have caught 3657. |
 
-**These four are ENGINEERING blockers, and they do not unblock Phase B.**
-PR #54 records the owner's ruling that Phase B is **BLOCKED** on an
-authentication prerequisite — the Google provider is not enabled in Supabase.
-That is a different blocker from #3658. #3658 was a *false* auth wall shown to
-an already-authenticated session; fixing it does not enable Google sign-in, and
-per #54 §3 a successful login would remove the blocker rather than constitute
-Phase B evidence. **Do not read "the Discovery defects are fixed" as "Phase B
-may proceed."**
+> ### CORRECTION, 2026-08-15 — this paragraph was wrong when first written
+>
+> An earlier revision of this section (PR #59, mine) said Phase B was
+> *"**BLOCKED** on an authentication prerequisite — the Google provider is not
+> enabled in Supabase"*, and that the four PRs *"do not unblock Phase B"*.
+>
+> **That equated two things PR #54 explicitly separates, and #54 is right.**
+> #54's own words: *"It must NOT be repaired inside Phase B to get the probe
+> through. **Google auth is not part of Phase B's acceptance criteria**"*, and it
+> anticipates *"collecting Discovery evidence **by another route**"*. #54 never
+> named Google as Phase B's blocker. The blocker it recorded is narrower and
+> plainer: **no authenticated session had been obtained, so the probe never
+> ran.** The Google-provider conflation was introduced downstream of #54, in
+> this file, by me — not by the ruling.
+>
+> **Checked against the B3 spec rather than against the summary:** B3's exit
+> criterion is *"a repeat probe produces discovery rows at MULTIPLE serve
+> points"*, verified by `report:discovery-serve-points`. Phase B's entry is
+> *"Phase A merged."* **Neither names an authentication method.** What B3 needs
+> is an authenticated session; it is indifferent to how one was obtained.
+>
+> Two facts established since #54 was written:
+>
+> | | |
+> |---|---|
+> | The QA account authenticates by **email and password**, and a partial probe already ran that way | so a session is obtainable without Google |
+> | **#3681** — headless automation can never complete real Google OAuth; Google blocks it structurally | so Google Sign-In is **unverifiable by automated test regardless**, and waiting on it would be waiting on something that cannot arrive |
+>
+> **#55 is therefore not merely an engineering blocker.** #3658's false
+> *"Couldn't verify your account"* wall is what cut the password-authenticated
+> probe short. Fixing it removes the barrier that actually stopped the probe.
+>
+> **What follows, precisely — and it is narrower than "Phase B is unblocked":**
+> the exit criterion is **still unmet**, and blockage is still not closure. What
+> changed is *what it is waiting on*. It is waiting on **a deploy carrying #55
+> and #56, and then a probe** — not on a Supabase dashboard toggle. The
+> currently deployed build contains neither fix, so no probe run before that
+> deploy can close Phase B either.
+>
+> **Google SSO remains a real, separate, confirmed defect** (#54 §2, and
+> `docs/auth/google-sso-provider-not-enabled.md`). Nothing here repairs it or
+> reduces its priority. It is simply not what Phase B was ever gated on.
+
+**The four PRs are engineering fixes. #57 and #58 unblock CI and the
+instrument; #55 removes the wall that stopped the probe; #56 makes a guard able
+to fail.** None of them is Phase B *evidence* — per #54 §3, an agent that
+authenticates and navigates has reached the **starting line**. Phase B closes on
+discovery rows at multiple serve points and on nothing else.
 
 **Three things the next session must not misread:**
 
