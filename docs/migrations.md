@@ -126,7 +126,7 @@ P1 Stage 2, operator ruling **D7=A**. Creates the append-only table holding shad
 
 | | |
 |---|---|
-| status | **NOT APPLIED.** `audit:schema` exits 1 with **8 missing objects** across this one file |
+| status | **NOT APPLIED.** `audit:schema` exits 1 with **9 missing objects** across this one file — confirmed on CI run 31862331469 |
 | missing | table `discovery_shadow_serves`; function `discovery_shadow_serves_append_only`; indexes `_key_observed_at`, `_serve_point_observed_at`, `_user_id`; policies `service_role_insert_…`, `service_role_read_…`; triggers `discovery_shadow_serves_no_update`, `discovery_shadow_serves_no_update_stmt` |
 | effect of applying | **Behaviour-preserving.** It creates an empty table nothing currently reaches — `DISCOVERY_ENGINE_MODE` resolves to `legacy`, so no code path writes here |
 | enabling shadow | A **separate, later, deliberate** step. Applying this migration does not enable anything |
