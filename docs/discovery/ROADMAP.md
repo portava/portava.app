@@ -64,6 +64,57 @@
 > reads it. **A log with no reader is a to-do note written to a file nobody
 > opens.**
 >
+> #### FACE ONE, ONE LEVEL DEEPER — 2026-08-15. The instrument caught itself.
+>
+> > **PROVE THE TEST FAILS BEFORE YOU TRUST IT. A test you have only ever seen
+> > pass is not evidence — it is a test-shaped object.**
+>
+> The place-id round-trip test (#78) was written specifically to catch a defect
+> that two separately-correct routes had hidden between them. It was then
+> reverted-and-rerun to prove it would fail. **IT PASSED.**
+>
+> The reason is worth stating exactly, because it generalises: the test drove the
+> route through a **fetch stub that returned success regardless of the URL it was
+> handed.** A stub that cannot see a wrong request cannot detect one. The test
+> exercised the code, asserted on the response, and was **structurally incapable
+> of failing** for the defect it was written to catch.
+>
+> **That is face one — vacuity is failure — occurring inside a test written by
+> someone actively thinking about face one, on the same day, in the same
+> workstream.** #58 was the instrument being wrong about the world. This is the
+> instrument being wrong about itself.
+>
+> The fix was to make the stub answer the way **production Google actually did**:
+> `INVALID_ARGUMENT` for a namespaced id. Then: **3 failures with the fix
+> reverted, 22/22 with it.**
+>
+> ##### The dependency chain, which is the part that does not transfer for free
+>
+> That fix was only available because a **real production response existed to
+> model the stub on** — and it existed because the observability fix had shipped
+> hours earlier and put Google's actual status on the wire. **Three things earned
+> each other, in sequence:**
+>
+> | | | |
+> |---|---|---|
+> | **1** | the observability fix (#75) | made the real failure *speak* |
+> | **2** | a live probe against production | captured what it actually said |
+> | **3** | a stub modelled on that answer | made the test able to fail |
+>
+> **Remove any one and the round-trip test is still green and still worthless.**
+> A stub invented from imagination models the API you *expect*, which is the same
+> API your code already assumes — which is why invented stubs so often cannot
+> fail. **Model stubs on captured responses, not on expectations.**
+>
+> ##### What to do about it
+>
+> - **Every new test that guards a specific defect: break the fix, watch it go
+>   red, restore.** Not for the important ones. For every one. It costs a minute.
+> - **Distrust a stub that never rejects.** If no input makes it return an error,
+>   it is scenery.
+> - **`assert` on the request, not only the response**, whenever the defect could
+>   be "we called the wrong thing."
+
 > #### The guard for face one has already earned its keep — 2026-08-15
 >
 > `artifacts/api-server/scripts/check-test-registration.mjs` fails CI when a
@@ -166,7 +217,7 @@
 > | | | |
 > |---|---|---|
 > | **1** | **`google-autocomplete` is P1 PRODUCT FUNCTIONALITY** | Moves **ahead of any further ranker architecture**. *A user who cannot reliably select a destination never reaches the system we spent today measuring.* Filed: [`../places/google-legacy-places-api-returns-nothing.md`](../places/google-legacy-places-api-returns-nothing.md) |
-> | **2** | **Place Intelligence starts as a VISIBLE PRODUCT UNIT** | **Not invisible corpus-building.** OSM-only destinations must produce useful cards: reliable photos, experiential attributes, provenance and confidence, category and context, graceful fallbacks. Helps users **now** *and* becomes ranking input later. |
+> | **2** | **Place Intelligence starts as a VISIBLE PRODUCT UNIT** — enumeration done: [`place-intelligence-osm-card-enumeration.md`](place-intelligence-osm-card-enumeration.md) | **Not invisible corpus-building.** OSM-only destinations must produce useful cards: reliable photos, experiential attributes, provenance and confidence, category and context, graceful fallbacks. Helps users **now** *and* becomes ranking input later. |
 > | **3** | **Event Truth remains the next architectural foundation** | May run **in parallel** with card enrichment, provided neither mutates the other's contract casually. **Must not become another week of invisible infrastructure before visible Discovery improves.** |
 > | **4** | **RANKER WORK GOES ON EXPLICIT HOLD once Phase B resolves** | **No optimising ranking machinery over an empty corpus.** |
 >
@@ -203,6 +254,7 @@ Companion documents:
 | `discovery-engine-mode-packet.html` | the design, the eight D1–D8 rulings, and the operator-actions record |
 | `discovery-engine-ruling-sheet.html` | the owner's decision sheet as presented |
 | `phase-minus-1-repository-proof.md` | repository proof of the carried-in claims at HEAD |
+| `place-intelligence-osm-card-enumeration.md` | **item 2 of the live sequence** — what an OSM-only place card renders today vs what it could, enumerated from code, with each addition costed by what it would actually require. Enumeration only; nothing built |
 | `phase-b3-probe-runbook.md` | **the staged B3 probe** — exact commands, the sanctioned read-only front door for the production baseline, the production writes it incurs, and what to record. **STAGED, NOT RUN; the owner presses it** |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
 | `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves`. **Event Truth's classes are ruled separately** — packet §7 — and this document is amended when Event Truth is implemented, not before |
