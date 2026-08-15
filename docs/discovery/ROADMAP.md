@@ -217,13 +217,68 @@
 > | | | |
 > |---|---|---|
 > | **1** | **`google-autocomplete` is P1 PRODUCT FUNCTIONALITY** | Moves **ahead of any further ranker architecture**. *A user who cannot reliably select a destination never reaches the system we spent today measuring.* Filed: [`../places/google-legacy-places-api-returns-nothing.md`](../places/google-legacy-places-api-returns-nothing.md) |
-> | **2** | **Place Intelligence starts as a VISIBLE PRODUCT UNIT** — enumeration done: [`place-intelligence-osm-card-enumeration.md`](place-intelligence-osm-card-enumeration.md) | **Not invisible corpus-building.** OSM-only destinations must produce useful cards: reliable photos, experiential attributes, provenance and confidence, category and context, graceful fallbacks. Helps users **now** *and* becomes ranking input later. |
+> | **2** | **Place Intelligence starts as a VISIBLE PRODUCT UNIT** — enumeration done: [`place-intelligence-osm-card-enumeration.md`](place-intelligence-osm-card-enumeration.md); **both open questions now RULED: [`place-intelligence-owner-rulings.md`](place-intelligence-owner-rulings.md)** | **Not invisible corpus-building.** OSM-only destinations must produce useful cards: reliable photos, experiential attributes, provenance and confidence, category and context, graceful fallbacks. Helps users **now** *and* becomes ranking input later. |
 > | **3** | **Event Truth remains the next architectural foundation** | May run **in parallel** with card enrichment, provided neither mutates the other's contract casually. **Must not become another week of invisible infrastructure before visible Discovery improves.** |
 > | **4** | **RANKER WORK GOES ON EXPLICIT HOLD once Phase B resolves** | **No optimising ranking machinery over an empty corpus.** |
 >
 > **Item 4 supersedes the redirect's "Phases A–D land as planned" for the ranker
 > portions specifically.** Phase D (the D5=B engine split) is ranking machinery;
 > it is on hold once Phase B resolves, regardless of being "next".
+>
+> ### Item 2 — BOTH OPEN QUESTIONS RULED, 2026-08-15
+>
+> The enumeration raised two questions and refused to assume either answer. Both
+> are now ruled by the owner. **Full text and reasoning:
+> [`place-intelligence-owner-rulings.md`](place-intelligence-owner-rulings.md)** —
+> read it before starting item 2, not after.
+>
+> **RULING 1 — persisting the resolved photo is ENABLING INFRASTRUCTURE, not a
+> new product feature.** The product already resolves FSQ → Google → artwork, so
+> persisting the winner **adds no behaviour** — it removes repeated
+> external-provider work from behaviour already approved. Narrow: the canonical
+> resolved photo and its source metadata, reused on subsequent reads, with
+> **refresh and invalidation DEFINED EXPLICITLY**. Explicit non-goals, each
+> needing a **new** ruling first: crawling photos, bulk enrichment, multiple
+> candidates per place, quality scoring, cross-provider deduplication,
+> pre-populating cities. *Caching a resolved product fact is the objective;
+> corpus-building is not.*
+>
+> **RULING 2 — "useful" means TIER 1 INFORMATIVE for this phase.** The test:
+> **a place card becomes materially more useful EVEN WITH ZERO PORTAVA USERS
+> CONTRIBUTING ANYTHING.** Outdoor seating, wheelchair access, internet access,
+> neighborhood, wikidata and image provenance, accuracy/confidence/disclaimer
+> info are legitimate because they improve **the factual object itself**.
+>
+> **THE TIER BOUNDARY — verbatim, and governing:**
+>
+> > **TIER 1 is FACTUAL intelligence.**
+> > **TIER 2 is ENRICHED or DERIVED intelligence from external and accumulated
+> > place data.**
+> > **TIER 3 is EXPERIENTIAL or OPINIONATED intelligence derived from Portava
+> > behaviour — people-like-you, contextual recommendation, social proof, vibe,
+> > opinionated ranking.**
+>
+> Tier 3 requires behavioural data; **smuggling it into Tier 1 would manufacture
+> intelligence or create a premature scoring system.**
+> **DO NOT BUILD TIER 3 MERELY BECAUSE TIER 1 IS FINISHED** — the gate is users,
+> and it does not open by completing the tier below it.
+>
+> **IMPLEMENTATION ORDER, ruled:** (1) the nearly-free **OSM mapping win** — stop
+> discarding `outdoor_seating`, `wheelchair`, `internet_access`,
+> `addr:neighbourhood`, `wikidata`, `image` and populate the fields the card
+> already understands; (2) **persist the resolved photo metadata**; (3) **MEASURE
+> COVERAGE — part of the unit, not a follow-up**, and enumerated rather than
+> estimated.
+>
+> **REPUBLISH IS INDEPENDENT** and must not wait on Place Intelligence: **#66–#81
+> ship alone** and Tier 1 starts from that published baseline. The single
+> coupling condition — *does anything in #66–#81 alter the Overpass tag mapping
+> or the photo resolution chain?* — was **verified NEGATIVE** at `807846dd1`
+> against pre-#66 base `0e9a72aec`: `routes/discovery.ts` is not in the changed
+> set at all, the client photo chain is untouched, and the `/places/photo` +
+> `/places/fsq-photo` region of `routes/places.ts` is byte-identical but for four
+> log-throttle constants belonging to the autocomplete/details routes. Evidence
+> in the rulings document.
 >
 > ### What this means for the next session arriving cold
 >
@@ -255,6 +310,7 @@ Companion documents:
 | `discovery-engine-ruling-sheet.html` | the owner's decision sheet as presented |
 | `phase-minus-1-repository-proof.md` | repository proof of the carried-in claims at HEAD |
 | `place-intelligence-osm-card-enumeration.md` | **item 2 of the live sequence** — what an OSM-only place card renders today vs what it could, enumerated from code, with each addition costed by what it would actually require. Enumeration only; nothing built |
+| `place-intelligence-owner-rulings.md` | **GOVERNING for item 2** — the owner's answers to the two questions the enumeration raised: photo persistence is *enabling infrastructure*, "useful" means *Tier 1 informative*. Carries the **tier boundary verbatim**, the named non-goals, the ruled implementation order, and the verification that **republish (#66–#81) is independent** |
 | `phase-b3-probe-runbook.md` | **the staged B3 probe** — exact commands, the sanctioned read-only front door for the production baseline, the production writes it incurs, and what to record. **STAGED, NOT RUN; the owner presses it** |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
 | `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves`. **Event Truth's classes are ruled separately** — packet §7 — and this document is amended when Event Truth is implemented, not before |
