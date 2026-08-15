@@ -194,6 +194,11 @@ describe('classifyPhotoReason — outage and absence are never conflated', () =>
     expect(classifyPhotoReason('foursquare_http_429')).toBe('outage');
     expect(classifyPhotoReason('foursquare_auth_error')).toBe('outage');
     expect(classifyPhotoReason('no_google_maps_key')).toBe('outage');
+    // Present-but-empty is an outage too, and must never be 'unknown': an
+    // unrecognised reason warns on every card, which would turn the new signal
+    // into noise the first time a secret is blanked.
+    expect(classifyPhotoReason('google_key_present_but_empty')).toBe('outage');
+    expect(classifyPhotoReason('foursquare_key_present_but_empty')).toBe('outage');
     expect(classifyPhotoReason('request_failed')).toBe('outage');
   });
 

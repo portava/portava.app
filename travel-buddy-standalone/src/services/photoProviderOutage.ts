@@ -90,6 +90,12 @@ const ABSENT_REASONS: ReadonlySet<string> = new Set([
 const OUTAGE_REASONS: ReadonlySet<string> = new Set([
   'no_google_maps_key',
   'no_foursquare_key',
+  // Present-but-empty secrets. Distinct from the two above on purpose: those
+  // mean "nobody set it", these mean "somebody set it to nothing", and the
+  // second looks configured in any list that shows names rather than values.
+  // Both are outages — nothing was asked of the provider either way.
+  'google_key_present_but_empty',
+  'foursquare_key_present_but_empty',
   'foursquare_auth_error',
   'foursquare_quota_exhausted',
   'request_failed',
