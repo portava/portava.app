@@ -95,6 +95,20 @@
  *
  * Usage:
  *   pnpm run report:discovery-serve-points [-- --days 7]
+ *   pnpm run report:discovery-serve-points -- --since 2026-08-15T14:00:00Z \
+ *                                             --until 2026-08-15T14:30:00Z
+ *
+ * WHICH WINDOW TO USE
+ * ===================
+ * `--days N` is a ROLLING window (>= now - N days, open at the top). Use it for
+ * "what has the surface been doing lately".
+ *
+ * `--since/--until` is a FIXED window. Use it for the Phase B before/after pair,
+ * where the probe ran at a known time and the verification must address exactly
+ * the window the probe ran in. A rolling window cannot: between the "before" and
+ * "after" readings its lower bound moves, rows age off the tail, and the delta
+ * silently conflates "rows the probe wrote" with "rows that rolled out from
+ * under the baseline". See `docs/discovery/phase-b3-probe-runbook.md`.
  */
 
 // Read-only audit front door. Imported for its side effect and hoisted, so it
@@ -109,9 +123,11 @@ import {
   DISCOVERY_ENDPOINT_POINTS,
   RANKED_POINTS,
   SERVE_POINT_LABEL,
+  ReportWindowError,
   assertLabelsCoverEnum,
   countOn,
   observedPoints,
+  resolveReportWindow,
   tallyServePoints,
   unexercisedPoints,
   type ServeRow,
@@ -130,8 +146,16 @@ function pct(n: number, total: number): string {
 }
 
 async function main(): Promise<void> {
-  const daysArg = process.argv.indexOf("--days");
-  const days = daysArg >= 0 ? Math.max(1, parseInt(process.argv[daysArg + 1] ?? "7", 10)) : 7;
+  let window;
+  try {
+    window = resolveReportWindow(process.argv, Date.now());
+  } catch (err) {
+    if (err instanceof ReportWindowError) {
+      console.error(`Refusing to run: ${err.message}`);
+      process.exit(2);
+    }
+    throw err;
+  }
 
   const sc = getServiceClient();
   if (!sc) {
@@ -139,18 +163,23 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-
   console.log("Discovery serve-point distribution — READ-ONLY (SELECT only)");
-  console.log(`Window: last ${days} day(s), served_at >= ${cutoff}`);
+  console.log(`Window: ${window.description}`);
   console.log("");
 
-  const { data, error } = await sc
+  let query = sc
     .from("rank_events")
     .select("features, session_id, served_at")
     .eq("surface", "discovery")
     .eq("outcome", "impression")
-    .gte("served_at", cutoff);
+    .gte("served_at", window.since);
+
+  // Only bound the top when one was asked for. An unconditional `.lte(now)`
+  // would look harmless and would quietly exclude rows written between the
+  // query being built and the query being served.
+  if (window.until !== null) query = query.lte("served_at", window.until);
+
+  const { data, error } = await query;
 
   if (error) {
     console.error("Query failed:", error.message);
