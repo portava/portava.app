@@ -146,6 +146,7 @@ EXPO_PUBLIC_SUPABASE_URL = "https://ajrurzioarfkagpuxfnb.supabase.co"
 STAMP_IMAGE_MODEL = "gpt-image-1"
 TRANSLATION_PROVIDER = "openai"
 SUPABASE_URL = "https://ajrurzioarfkagpuxfnb.supabase.co"
+QA_ACCOUNT_EMAIL = "arxaitrading@gmail.com"
 
 [userenv.development]
 
