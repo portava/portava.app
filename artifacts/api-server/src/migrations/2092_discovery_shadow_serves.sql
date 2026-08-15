@@ -182,5 +182,23 @@ CREATE TRIGGER discovery_shadow_serves_no_update
   FOR EACH ROW
   EXECUTE FUNCTION discovery_shadow_serves_append_only();
 
+-- And again at statement level. Not redundant: a FOR EACH ROW trigger fires only
+-- for rows the statement actually matches, so `UPDATE ... WHERE false` would
+-- succeed silently against the row-level trigger alone.
+--
+-- That matters for a reason beyond tidiness. The append-only property is the
+-- entire ground of D7=A, and a property that can only be verified by writing a
+-- row into production is a property nobody will verify. With this trigger, the
+-- check is a single statement that touches nothing:
+--
+--   UPDATE discovery_shadow_serves SET category = 'x' WHERE false;
+--   -- expect: ERROR ... is append-only
+--
+DROP TRIGGER IF EXISTS discovery_shadow_serves_no_update_stmt ON discovery_shadow_serves;
+CREATE TRIGGER discovery_shadow_serves_no_update_stmt
+  BEFORE UPDATE ON discovery_shadow_serves
+  FOR EACH STATEMENT
+  EXECUTE FUNCTION discovery_shadow_serves_append_only();
+
 COMMENT ON TABLE discovery_shadow_serves IS
   'P1 Stage 2 shadow observations: what legacy served vs what PDE would have served, per request. Append-only (D7=A); UPDATE blocked by trigger; DELETE reachable only via the auth.users cascade. 90-day retention window, no automatic reaper.';

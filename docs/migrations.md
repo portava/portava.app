@@ -116,6 +116,55 @@ Verified 2026-08-09 against the aggregate command, not the script in isolation:
 | Third file added at documented prefix `2059` | **exit 1** — allowlist does not mask it; names all three files |
 | Fixtures removed | **exit 0** |
 
+## Staged, NOT applied
+
+Files present in the canonical tree whose objects do **not** exist in production. `audit:schema` reports each one as drift, and that report is **correct** — it is the intended state until an operator applies the file. These are not allowlisted: an allowlist entry asserts *"reviewed and deliberately not applied"*, and these are the opposite.
+
+### `2092_discovery_shadow_serves.sql` — staged 2026-08-15
+
+P1 Stage 2, operator ruling **D7=A**. Creates the append-only table holding shadow-mode comparisons: what legacy served vs what PDE would have served, per request.
+
+| | |
+|---|---|
+| status | **NOT APPLIED.** `audit:schema` exits 1 with **8 missing objects** across this one file |
+| missing | table `discovery_shadow_serves`; function `discovery_shadow_serves_append_only`; indexes `_key_observed_at`, `_serve_point_observed_at`, `_user_id`; policies `service_role_insert_…`, `service_role_read_…`; triggers `discovery_shadow_serves_no_update`, `discovery_shadow_serves_no_update_stmt` |
+| effect of applying | **Behaviour-preserving.** It creates an empty table nothing currently reaches — `DISCOVERY_ENGINE_MODE` resolves to `legacy`, so no code path writes here |
+| enabling shadow | A **separate, later, deliberate** step. Applying this migration does not enable anything |
+| retention | 90-day window, no reaper. See `docs/ops/retention-policy.md` |
+
+**Why it is staged rather than applied ahead of its writer.** The table lands in the same change as the only code that writes to it. Creating it earlier would buy nothing and would leave an empty table in production with no observable purpose; the earlier attempt was reverted for exactly this reason (`c7bd5528f`).
+
+**Verify after applying** — expect `t` on both, then eight rows, then exit 0:
+
+```sql
+SELECT to_regclass('public.discovery_shadow_serves') IS NOT NULL AS tbl,
+       (SELECT relrowsecurity FROM pg_class
+         WHERE oid = to_regclass('public.discovery_shadow_serves')) AS rls;
+-- expect: t, t
+
+SELECT 'index'   AS kind, indexname AS name FROM pg_indexes
+  WHERE schemaname='public' AND tablename='discovery_shadow_serves'
+UNION ALL
+SELECT 'policy',  policyname FROM pg_policies
+  WHERE schemaname='public' AND tablename='discovery_shadow_serves'
+UNION ALL
+SELECT 'trigger', tgname FROM pg_trigger
+  WHERE tgrelid = to_regclass('public.discovery_shadow_serves') AND NOT tgisinternal
+ORDER BY 1, 2;
+-- expect: 3 index + 2 policy + 2 trigger (the PK index also appears)
+```
+
+Then `pnpm run audit:schema` → **exit 0**, and append the applied row to this file.
+
+**Verify the append-only property directly**, since it is the entire ground of D7=A. The statement-level trigger exists so this check writes nothing — `WHERE false` matches no row, and a row-level trigger alone would let it succeed silently:
+
+```sql
+UPDATE discovery_shadow_serves SET category = 'x' WHERE false;
+-- expect: ERROR ... is append-only (operator ruling D7=A): UPDATE is not permitted
+```
+
+A property that can only be verified by writing a row into production is a property nobody verifies. This one costs a single statement and touches nothing.
+
 ## Automated audit
 
 The full audit is committed as `artifacts/api-server/src/scripts/auditMigrationsVsLive.ts`. Run it on demand from `artifacts/api-server`:
