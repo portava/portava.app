@@ -354,7 +354,8 @@
   <span><b>Flag</b> DISCOVERY_ENGINE_MODE</span>
   <span><b>Modes</b> legacy / shadow / pde</span>
   <span><b>Verified at</b> HEAD 93523f4fb</span>
-  <span><b>Status</b> design only — no implementation until ruled</span>
+  <span><b>Status</b> ruled D1–D8; Stages 0 and 1 live, mode <code>legacy</code></span>
+  <span><b>D5 clause</b> <a href="#d5-resolution">resolved structurally · measurement deferred, NOT satisfied</a></span>
 </div>
 
 <div class="col">
@@ -471,33 +472,61 @@
           <tr><td class="n">D2</td><td><strong>A</strong> — one row, <code>metadata.mode</code></td><td>Uses what exists and cannot express contradiction; the untyped-JSON cost is exactly what D3 exists to handle.</td></tr>
           <tr><td class="n">D3</td><td><strong>B</strong> — all failures → <code>legacy</code>, plus <code>disable_discovery_pde</code></td><td>A kill switch that survives an unhealthy database is the entire point of a kill switch; the inverted-polarity helper is the proven tool.</td></tr>
           <tr><td class="n">D4</td><td><strong>A</strong> for the flag, <strong>C</strong> for the baseline</td><td>The flag governs only what has a ranker to switch; the baseline covers everything users receive, and anything narrower reproduces the directive's named error.</td></tr>
-          <tr><td class="n">D5</td><td><strong>B</strong> — user-independent candidates, rank every request <em>(revisit clause below)</em></td><td>Separates what today's design conflates and fixes one-user-per-city-per-two-hours without touching external call volume.</td></tr>
+          <tr><td class="n">D5</td><td><strong>B</strong> — user-independent candidates, rank every request <em>(<a href="#d5-resolution">revisit clause — resolved structurally, measurement deferred</a>)</em></td><td>Separates what today's design conflates and fixes one-user-per-city-per-two-hours without touching external call volume.</td></tr>
           <tr><td class="n">D6</td><td><strong>A then B</strong> as staged escalation</td><td>Internal accounts prove the harness, then a fixed user-id-hashed percentage produces real divergence data. C only with the owner.</td></tr>
           <tr><td class="n">D7</td><td><strong>A</strong> — new <code>discovery_shadow_serves</code> table</td><td><code>rank_events</code> is mutable state with a client-input surface; one contaminated row corrupting the comparison funnel is disqualifying. Append-only-by-construction plus 90-day retention cover is the clean shape.</td></tr>
           <tr><td class="n">D8</td><td><strong>A</strong> — real impression rows at every serve point</td><td>The announced dated discontinuity in <code>adminRankingMetrics</code> beats permanent blindness on cache-served traffic, which is most traffic. Cutover date annotated in the metrics doc in the same PR.</td></tr>
         </tbody>
       </table>
     </div>
-    <p style="margin-bottom:0"><strong>D5 revisit clause, binding:</strong> if Stage 0's measured Cache&nbsp;A hit rate materially contradicts the TTL-implied rate, <strong>D5 implementation pauses</strong> and the numbers go to the owner before proceeding.</p>
+    <p><strong>D5 revisit clause, binding:</strong> if Stage 0's measured Cache&nbsp;A hit rate materially contradicts the TTL-implied rate, <strong>D5 implementation pauses</strong> and the numbers go to the owner before proceeding.</p>
+    <p style="margin-bottom:0"><strong>Clause status — <a href="#d5-resolution">RESOLVED 2026‑08‑15 on structural grounds</a>.</strong> The measurement it names <span class="no">was never taken</span> and cannot be taken pre-launch: the window is empty. The empirical check is <strong>deferred to post-launch and explicitly not satisfied</strong>. Read the resolution before quoting D5.</p>
   </div>
 
-  <div class="callout warn">
-    <h4>Where this stands — Stages 0 and 1 are LIVE, the sequence is parked at D5</h4>
-    <p><strong>Stage 0 (instrumentation) and Stage 1 (the dispatch) are merged and live in production.</strong> Nine PRs, #38 through #46, each merged on a full green verdict set; <code>bughunt-20260805</code> is green on the merge commit across CI, CI (live DB) and Unwired checks. No P1 PR is open.</p>
-    <p>Everything remaining on the sequence — Stage 2 shadow, Stage 3 sample scale, Stage 4 pde — requires the PDE engine, and the PDE engine <em>is</em> D5=B. <strong>D5 is gated on its own revisit clause, which is armed and unsatisfied.</strong> Building the engine now would mean building it on the assumption the clause exists to test.</p>
-    <h4 style="margin-top:22px">The documented next action</h4>
-    <p style="margin-bottom:10px">Run, no earlier than <strong>2026-08-15T23:05Z</strong> — a full day after the clock start, chosen because Cache A's TTL is 2 hours and a window shorter than several turnovers measures noise — or earlier only on the owner's explicit word:</p>
+  <div class="callout warn" id="d5-resolution">
+    <h4>D5 revisit clause — RESOLVED on structural grounds. The empirical check is DEFERRED, and explicitly NOT SATISFIED.</h4>
+
+    <p><strong>Read this before citing any number in this packet.</strong> The clause was discharged by a ruling about what the clause <em>can</em> establish, <span class="no">not by a measurement</span>. No Cache&nbsp;A hit rate has been measured. <code>report:discovery-serve-points</code> has not returned a verdict, and nothing below may be quoted as though it had.</p>
+
+    <h4 style="margin-top:22px">Operator ruling of record — 2026‑08‑15</h4>
+    <div style="background:var(--sunk); border-left:3px solid var(--decide); border-radius:0 6px 6px 0; padding:14px 16px; margin:0 0 16px;">
+      <p style="margin-top:0"><em>Recorded verbatim as ruled.</em></p>
+      <p>The clause said pause if the <strong>measured</strong> Cache&nbsp;A hit rate materially contradicts the TTL-implied rate. I checked production tonight: <code>rank_events</code> serves since the clock&nbsp;= <strong>0</strong>, distinct users&nbsp;= <strong>0</strong>. The app is pre-launch, 17 posts, 0 places. So the clause <strong>cannot be satisfied by waiting</strong> — waiting yields an empty window, and the report script correctly refuses to render a verdict on one.</p>
+      <p>I explicitly <strong>REJECTED</strong> resolving it with synthetic traffic:</p>
+      <ul>
+        <li>Cache&nbsp;A protects a <strong>rate-limited external dependency</strong> (Overpass), so volume sweeps risk rate-limiting production;</li>
+        <li>operator-designed traffic <strong>cannot answer a real-world hit-rate question without circularity</strong>;</li>
+        <li>it would <strong>pollute production <code>rank_events</code></strong> for the 90-day retention.</li>
+      </ul>
+      <p><strong>RESOLUTION:</strong> D5=B proceeds on <strong>STRUCTURAL</strong> grounds — Cache&nbsp;A conflates user-independent candidate retrieval with inherently per-user ranking, verified by code reading at HEAD, independent of traffic volume. The empirical check is recorded as <strong>DEFERRED TO POST-LAUNCH, explicitly NOT satisfied</strong>.</p>
+      <p style="margin-bottom:0">Behaviour-preserving at every step: mode stays <code>legacy</code>, nothing users receive changes. <strong>The pde-serving flip for real users remains the owner's alone.</strong></p>
+    </div>
+
+    <h4>What the structural ground is, and what it is not</h4>
+    <p>The structural claim is the one section&nbsp;01 makes from the code and section&nbsp;02 restates: Cache&nbsp;A's key is <strong>user-independent</strong> while what it stores is a <strong>ranked</strong> list, so a single user's ranking is replayed to every subsequent user of that key for the TTL. That defect is visible in the source at HEAD and is <strong>true at any traffic volume, including zero</strong>. It is what D5=B fixes, and it is why the ruling can stand on it.</p>
+    <p>What the measurement would have added is a <em>magnitude</em>: how much traffic is affected today, and therefore how much the fix is worth today. <strong>That magnitude is unknown and is now recorded as unknown.</strong> It is not zero-because-measured; it is unmeasured. The exit‑3 branch of the clause — ranked share above one third, meaning ranking is less starved than argued — has <strong>not been ruled out by evidence</strong>. It has been deferred, on the ground that the only window available to test it is empty.</p>
+
+    <h4 style="margin-top:22px">The deferred check, carried forward as a live obligation</h4>
+    <p style="margin-bottom:10px">This is not cancelled. It is owed, and it is owed <strong>before the pde-serving flip</strong>, which is the owner's decision and the first point at which the magnitude actually changes what users receive. Run once real traffic exists:</p>
     <div class="scroller" style="margin-bottom:14px">
       <table>
         <thead><tr><th>Command</th><th>Exit</th><th>Meaning</th><th>Next</th></tr></thead>
         <tbody>
-          <tr><td rowspan="3"><code>pnpm run report:discovery-serve-points -- --days N</code></td><td class="n"><strong>0</strong></td><td>Ranked share is consistent with the packet's argument — cache A absorbs the traffic and personalisation rarely runs</td><td><strong>Proceed:</strong> D5=B stands, build the engine, resume at Stage 2</td></tr>
-          <tr><td class="n"><strong>3</strong></td><td>Ranked share <strong>exceeds one third</strong> — ranking is not as starved as argued</td><td><strong>PAUSE D5.</strong> Numbers go to the operator and the owner before any engine work</td></tr>
-          <tr><td class="n">0, "NOT ESTABLISHED"</td><td>Zero marked rows — the window predates instrumentation</td><td>No D5 conclusion may be drawn. Let a real window pass and re-run</td></tr>
+          <tr><td rowspan="3"><code>pnpm run report:discovery-serve-points -- --days N</code></td><td class="n"><strong>0</strong></td><td>Ranked share is consistent with the packet's argument — cache A absorbs the traffic and personalisation rarely runs</td><td>The deferred check is discharged and D5=B is corroborated as well as ruled</td></tr>
+          <tr><td class="n"><strong>3</strong></td><td>Ranked share <strong>exceeds one third</strong> — ranking is not as starved as argued</td><td>Numbers go to the operator and the owner. The engine still exists and still serves nothing; what is re-opened is whether the flip is worth its ranking-CPU cost</td></tr>
+          <tr><td class="n">0, "NOT ESTABLISHED"</td><td>Zero marked rows — <strong>the state today</strong>. The window is empty, not the answer</td><td>No D5 conclusion may be drawn either way. Re-run after launch</td></tr>
         </tbody>
       </table>
     </div>
+    <p>Deferring it costs little precisely because of what the following stages are: Stage&nbsp;2 shadow <strong>never serves a user</strong>, and Stage&nbsp;4 pde is gated behind the owner. The engine can be built, tested and observed against real traffic while the magnitude question stays open, and the decision the magnitude bears on is not reached until the flip.</p>
     <p style="margin-bottom:0">The same run also verifies <strong>Stage 1's exit criterion</strong> — every serve should resolve to <code>legacy</code> — and separates "legacy by configuration" from "legacy by fallback" (<code>flag_unreadable</code>, <code>no_client</code>, <code>mode_invalid</code>, <code>kill_switch_engaged</code>). Those are behaviourally identical and diagnostically opposite, and a dispatch that had been silently falling back would otherwise look exactly like one resolving correctly.</p>
+  </div>
+
+  <div class="callout warn">
+    <h4>Outstanding: the zero is ambiguous, and a probe is in flight to disambiguate it</h4>
+    <p><strong>Zero rows is ambiguous between "instrumentation does not fire" and "nobody browsed."</strong> Both produce an empty <code>surface='discovery'</code> window, and the two are diagnostically opposite: the first is a Stage&nbsp;0 defect, the second is a pre-launch app behaving normally. That ambiguity must not sit underneath anything described as a measurement.</p>
+    <p>A small bounded probe against the live app is running to prove Stage&nbsp;0 instrumentation actually fires. <strong>Its result is not yet in, and this packet does not assume one.</strong></p>
+    <p style="margin-bottom:0">It does not gate the ruling above, and that is deliberate rather than convenient: the ruling rests on the structural argument, which is <strong>independent of traffic volume and therefore independent of whether the counter works</strong>. What the probe gates is the <em>deferred</em> check — an instrument that does not fire would make the post-launch window empty too, and would have to be fixed before that check could discharge anything. If the probe comes back negative, Stage&nbsp;0 is defective and is repaired before the deferred check is claimed as available.</p>
   </div>
 
   <div class="callout">
@@ -512,10 +541,14 @@
           <tr><td class="n"><strong>23:05:13Z</strong></td><td><strong>D5 measurement clock start</strong></td><td>Report runs after a representative window — not before 2026‑08‑15T23:05Z</td></tr>
           <tr><td class="n">2026‑08‑14</td><td><strong>Stages 0 and 1 landed live.</strong> PRs #38–#46, all merged green; no P1 PR open</td><td><code>bughunt-20260805</code> green on the merge commit across all three workflows</td></tr>
           <tr><td class="n">2026‑08‑14</td><td>Sequence <strong>parked at D5</strong> by the operator, stop ratified by the owner: the clause "exists to be tested by the measurement, not assumed past"</td><td>Owner is the only waiver; waiver declined</td></tr>
+          <tr><td class="n">2026‑08‑15</td><td>Production checked: <code>rank_events</code> serves since the clock start&nbsp;= <strong>0</strong>, distinct users&nbsp;= <strong>0</strong>. App is pre-launch — 17 posts, 0 places</td><td>Operator-run query. <strong>Empty window — no hit rate measured</strong></td></tr>
+          <tr><td class="n">2026‑08‑15</td><td>Resolving the clause with <strong>synthetic traffic REJECTED</strong> by the operator — Overpass rate-limit exposure, circularity, and 90-day <code>rank_events</code> pollution</td><td>No synthetic rows were written</td></tr>
+          <tr><td class="n">2026‑08‑15</td><td><strong>D5 revisit clause resolved on STRUCTURAL grounds</strong>; sequence unparked. Empirical check <strong>deferred to post-launch, explicitly not satisfied</strong></td><td><a href="#d5-resolution">Ruling of record</a>. <span class="no">Not a measurement</span></td></tr>
+          <tr><td class="n">2026‑08‑15</td><td>Bounded live probe of Stage 0 instrumentation — does the counter fire at all?</td><td class="dim">In flight; result not yet in. Does not gate the ruling; gates the deferred check</td></tr>
         </tbody>
       </table>
     </div>
-    <p style="margin-bottom:0"><strong>The D5 revisit clause is now armed, not satisfied.</strong> <code>report:discovery-serve-points</code> exits <strong>3</strong> — <em>PAUSE D5 AND REPORT</em> — if more than a third of serves already reach a ranker, and refuses to render any verdict on an empty window. Until it has run against a representative window, <strong>D5's engine work is not started</strong>: that is the clause operating as ruled, not a delay. Everything in the sequence that does not depend on D5's answer proceeds.</p>
+    <p style="margin-bottom:0"><strong>The D5 revisit clause is resolved, and the measurement it names remains owed.</strong> <code>report:discovery-serve-points</code> exits <strong>3</strong> — <em>PAUSE D5 AND REPORT</em> — if more than a third of serves reach a ranker, and refuses to render any verdict on an empty window; today's window is empty, which is why the clause was discharged by ruling rather than by result. Engine work proceeds on the structural argument. <strong>Nothing on the sequence serves a user until the owner flips <code>pde</code>, and the deferred check is owed before that flip.</strong></p>
   </div>
 
   <div class="callout warn">
@@ -732,7 +765,7 @@
 
   <h3>What would make this packet wrong</h3>
   <ul>
-    <li>If Cache&nbsp;A's hit rate in production is far lower than its 2-hour TTL implies — heavy invalidation, frequent restarts, or many empty-Overpass keys — then more traffic reaches a ranker than section 01 concludes, and D5 gets cheaper. <strong>Stage 0 measures this directly</strong>, which is why it comes before the flag rather than after it.</li>
+    <li>If Cache&nbsp;A's hit rate in production is far lower than its 2-hour TTL implies — heavy invalidation, frequent restarts, or many empty-Overpass keys — then more traffic reaches a ranker than section 01 concludes, and D5 gets cheaper. Stage 0 is built to measure this directly, which is why it came before the flag rather than after it. <strong>It has not measured it.</strong> The app is pre-launch and the window is empty, so this remains a <span class="no">live way for the packet to be wrong</span> — deferred, not eliminated (<a href="#d5-resolution">D5 resolution</a>).</li>
     <li>If the owner's intended comparison is narrower than "behaviour users receive" — a ranker-quality question rather than a delivered-experience question — then D4 and D8 are over-scoped and the packet should shrink accordingly.</li>
   </ul>
 </section>
