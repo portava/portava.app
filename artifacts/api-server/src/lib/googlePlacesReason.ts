@@ -46,7 +46,24 @@
  */
 export type GooglePlacesReason = string | null;
 
-/** Prefix marking the legacy `maps.googleapis.com` Places API surface. */
+/**
+ * Prefix marking the legacy `maps.googleapis.com` Places API surface.
+ *
+ * STATUS 2026-08-15: **no route calls the legacy surface any more.** Both
+ * `google-autocomplete` and `google-details` migrated to Places API (New).
+ *
+ * `legacyStatusReason` and `legacyHttpReason` are retained deliberately and on
+ * a condition, not indefinitely: the migration is NOT yet confirmed to be the
+ * remedy, because the legacy failure's exact cause is still unknown — the
+ * observability fix that would reveal it has not reached production. If the
+ * fault turns out to be key- or referer-scoped rather than API-enablement, it
+ * applies to the New surface too and the migration may have to be reverted.
+ * These keep that revert cheap.
+ *
+ * **DELETE THEM once a live `reason` from the New surface confirms the
+ * migration worked.** An unused export with no expiry condition is how dead
+ * code starts looking load-bearing.
+ */
 export const LEGACY_PREFIX = "google_places_legacy";
 
 /** Prefix marking the Places API (New) `places.googleapis.com` surface. */
