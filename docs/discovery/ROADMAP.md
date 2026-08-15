@@ -2,6 +2,51 @@
 
 **Status: living document. Update it in the same PR as the work it describes.**
 
+> ## ⚠️ ARCHITECTURAL REDIRECT — 2026-08-15, from the owner
+>
+> **The DESTINATION of the A–F sequence is SUPERSEDED. Its completed work is not.**
+>
+> **Discovery is no longer a ranking project. It is an EVIDENCE SYSTEM.**
+>
+> > Place Intelligence describes the world; Taste describes the traveller;
+> > Context describes the moment; Candidate generation describes the available
+> > choices; Ranking predicts the fit; Exploration determines what the system
+> > still needs to learn; Event Truth tells it what actually happened.
+> >
+> > **Once those contracts exist the ranker becomes replaceable without
+> > destroying the evidence beneath it.**
+>
+> ### The invariant — governing, alongside the statement above
+>
+> > **ABSENCE OF EVIDENCE MUST NEVER SILENTLY BECOME EVIDENCE OF ABSENCE.**
+>
+> **Phase B tests this in the current system. Event Truth must encode it
+> permanently.** And it is not a new rule — it is the general form of two rules
+> already in force here. **Three faces of one thing:**
+>
+> | Face | Where it shows up |
+> |---|---|
+> | **Vacuity is failure** | a check that examines nothing passes |
+> | **Swallowed failures are first-class defects** | a failure that is caught and discarded looks like success |
+> | **Absence of evidence ≠ evidence of absence** | a window with no rows reads as "it didn't happen" |
+>
+> In every one, **success is indistinguishable from not having worked.** Stated
+> as one rule because it is one rule, and because each face was discovered
+> separately at a cost that the general form would have avoided.
+>
+> Recorded verbatim as governing. What follows from it:
+>
+> | | |
+> |---|---|
+> | **Phase B** | **THE IMMEDIATE GATE.** *"Fix exists"* is not *"surface proven."* Exit criterion stays authoritative and **unmet**. |
+> | **Phases A–D** | **LAND AS PLANNED**, including Phase B's criterion. Verified infrastructure is not discarded because the destination moved. |
+> | **Phases E and F** | **FROZEN.** Do not continue them because they were next. |
+> | Anything assuming the six P1 components are **peer scoring systems** | **STALE** — must be re-scoped before implementation. |
+> | **Workstream S** | continues — it is orthogonal to the destination. |
+>
+> The new sequence is **[The superseding sequence](#the-superseding-sequence)**.
+> The A–F phases below are kept for the record and for the work still in flight.
+
 ## Why this file exists
 
 Sessions working on this die to container restarts without warning. A plan that
@@ -25,7 +70,7 @@ Companion documents:
 | `discovery-engine-ruling-sheet.html` | the owner's decision sheet as presented |
 | `phase-minus-1-repository-proof.md` | repository proof of the carried-in claims at HEAD |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
-| `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves` |
+| `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves`. **Event Truth's classes are ruled separately** — packet §7 — and this document is amended when Event Truth is implemented, not before |
 
 ---
 
@@ -158,8 +203,8 @@ listed because each one caught something.
 | **B** | Make discovery reachable | **IN PROGRESS** |
 | **C** | Complete shadow coverage | NOT STARTED |
 | **D** | D5=B engine split | NOT STARTED |
-| **E** | Measurement readiness | NOT STARTED |
-| **F** | Owner gates | **NOT AGENT WORK** — build nothing past these |
+| **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination |
+| **F** | Owner gates | ❄️ **FROZEN** + **NOT AGENT WORK**. The two gates still stand absolutely. |
 
 > **Maintain this table in the same PR as the work.** A status table that is
 > updated separately is a status table that is wrong. Use `DONE`, `IN PROGRESS`,
@@ -167,7 +212,116 @@ listed because each one caught something.
 
 ---
 
-## Phase A — Land Stage 2
+## The superseding sequence
+
+**Governing from 2026-08-15.** Steps 2–10 replace the destination that A–F was
+heading toward. Step 1 is the A–D work already in flight.
+
+### The design constraint that decides Event Truth's shape
+
+**Do NOT duplicate every viable candidate on every request — that becomes
+enormous.** Instead, make the recommendation request a **first-class object**:
+
+- a **`discovery_session` / `ranking_run`** capturing context and **candidate-set
+  identity**;
+- **candidate evaluations** recording eligibility, viability and scores *against
+  that run*;
+- **user events** referencing the **served recommendation**.
+
+That preserves the counterfactual **without a giant JSON snapshot per
+impression**.
+
+### The steps
+
+| # | Unit | Note |
+|---|---|---|
+| **1** | **Land the in-flight harness — A–D** | Including Phase B's unmet probe criterion |
+| **2** | **EVENT TRUTH** | Sessions/runs, candidate viability, exposures, interactions, strong outcomes, attribution, context snapshots, stable IDs, **append-only**, able to **reconstruct opportunity** |
+| **3** | **PLACE INTELLIGENCE v1 + VISIBLE CARDS** | Fixed experiential taxonomy, richer cards, *"Why this place"*. **Ships user-visible value — not merely ranker input** |
+| **4** | **TASTE BOOTSTRAP** | Visual onboarding using **contrasting sets**, not isolated binaries. **Stop early when uncertainty drops.** Archetype priors |
+| **5** | **PORTABLE TASTE** | Learned across destinations from **strong events**, with confidence **per taste dimension** |
+| **6** | **CANDIDATE GENERATION** | |
+| **7** | **CONTEXTUAL RANKING** | **Taste as the spine**; graph, behaviour, trails and **capped `local_momentum` as modifiers only** |
+| **8** | **GOVERNOR** | Exploration and diversity **allocator** — budget ~**15–25 %** with **reason codes**, *not fixed positions* |
+| **9** | **LEARNED RESIDUAL** | **Only after trustworthy outcomes exist.** It must **improve the explicit model**, and an **unexplainable high-confidence prediction must CONSTRAIN how aggressively it is exploited** |
+| **10** | **OPTIMISE AGAINST TRIP OUTCOMES** | |
+
+### The execution sequence — locked
+
+1. **Phase B evidence closure** ← *immediate gate*
+2. Remaining **A–D** exit criteria
+3. **Event Truth schema packet** *(written — must now also pass the `verified_visit` test; retention **ruled** 2026-08-15 and folded in as packet §7)*
+4. **Event Truth implementation**
+5. **Place Intelligence**
+
+**E and F stay frozen.**
+
+### Why Phase B gates the whole architecture, not just Phase C
+
+The next architecture **assumes instrumentation can distinguish absence of
+behaviour from absence of observation.** That assumption is load-bearing for
+every step after it.
+
+**If Phase B cannot demonstrate that distinction in the CURRENT system, Event
+Truth cannot be trusted to encode it into the new one.** A team that has never
+once separated "nobody did this" from "we did not see it" will build a schema
+that cannot separate them either.
+
+So: **zero or suspiciously thin probe output is an INVESTIGATION RESULT, not a
+successful low-traffic result.** It does not close Phase B. It opens a
+question.
+
+#### When the probe finishes there are exactly TWO legitimate outcomes
+
+| | Outcome |
+|---|---|
+| **1** | **Evidence closure** — discovery rows at **multiple** serve points, the B3 criterion met on its own terms |
+| **2** | **A newly discovered reachability or observability defect** — named, with evidence |
+
+> **"Probably low traffic" is NOT a third state.** It is the shape a thin window
+> takes when nobody looks at it hard, and it is indistinguishable from a broken
+> surface by construction — which is the exact confusion the governing invariant
+> forbids. A probe that returns few rows has either found a defect or has not yet
+> been read; it has not produced a result.
+
+**Schema work is not a reason to relax this.** Event Truth being designed, ruled
+on, or ready does not advance Phase B by one row, and the gate is unchanged by
+anything in the packet.
+
+### Step 2 is GATED
+
+**Before any migration**, Event Truth requires a **schema design packet**
+answering one counterfactual explicitly:
+
+> Given a recommendation made **six months ago**, can we reconstruct
+> **what the traveller saw**, **what viable alternatives existed**, **why each
+> candidate was considered or removed**, **what context existed**, and **what the
+> traveller eventually did**?
+
+**If it cannot, say so rather than building it.**
+
+→ **`event-truth-schema-packet.md`** — written, and its verdict on the *current*
+system is **NO, on five independent grounds**.
+
+**The retention question the packet escalated is RULED** (owner, 2026-08-15;
+packet §7). It is **not** a longer global window, and that is the half most
+likely to be misremembered:
+
+| | |
+|---|---|
+| **The six-month counterfactual STAYS** | Travel feedback is delayed and episodic; the strongest downstream evidence often arrives long after the recommendation. A 90-day window would make the system **forget evidence before it has enough longitudinal behaviour to evaluate itself** |
+| **Discovery decision evidence** | **12 months** |
+| **Raw sensitive context** | **shortest practical — ≤ 90 days preferred** |
+| **Derived non-sensitive evidence** | **12 months or longer where justified** |
+| **The principle** | **Preserve the decision evidence, not every sensitive input that produced it.** Precise location is never retained because ranking analytics would benefit |
+| **And it redefines reproducibility** | After evidence expires, reproducing the **historical decision** — *policy v2 evaluated classes A and B on date X and concluded verified=true at confidence Y* — never a claim that the computation can be rerun |
+
+**This closes a policy gap, not a schema gap.** Both acceptance tests still
+answer **NO** on the current system, and step 2 remains gated behind Phase B.
+
+---
+
+## Phase A — Land Stage 2  ·  *(A–F: destination superseded; A–D still land)*
 
 Shadow observation exists, is wired to the Cache A serve points, writes to an
 append-only table, and is gated by the D6 cohort.
@@ -444,7 +598,7 @@ produces a correctly filtered and paged result over cached candidates.
 
 ---
 
-## Phase E — Measurement readiness
+## Phase E — Measurement readiness  ·  ❄️ FROZEN
 
 **Everything needed so that the day traffic exists, the comparison runs and
 states its own verdict.** Nothing here is run to conclusion now; all of it is
@@ -480,7 +634,7 @@ unexplained reason is a failure of this phase**, not of the environment.
 
 ---
 
-## Phase F — Owner gates
+## Phase F — Owner gates  ·  ❄️ FROZEN (the gates themselves stand)
 
 **Build nothing past these. Both are behaviour changes and neither has been
 ruled on.**
