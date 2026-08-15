@@ -21,6 +21,7 @@ import {
 import { normalizeLocationName } from "../lib/canonicalLocations";
 import { logger as rootLogger } from "../lib/logger";
 import { classifyApiKey, apiKeyFailureReason, apiKeyFailureMessage } from "../lib/apiKeyState";
+import { legacyStatusReason, legacyHttpReason } from "../lib/googlePlacesReason";
 
 const router = Router();
 const logger = rootLogger.child({ route: "places" });
@@ -286,8 +287,21 @@ async function runUniversalSearch(
 // from /places/google-details on selection) plus `powered_by: "google"` for
 // attribution.
 //
-// Degrades gracefully: returns { places: [], powered_by: "google" } when the
-// key is unconfigured or Google returns a non-OK status.
+// Degrades gracefully AND AUDIBLY: returns { places: [], powered_by: "google" }
+// on every failure, plus a machine-readable `reason` saying which failure it
+// was. The reason field is additive — callers that only read `places` are
+// unaffected.
+//
+// It did not always. Until 2026-08-15 all four failure conditions — missing
+// key, non-OK HTTP, non-OK status body, and a genuine no-match — returned the
+// SAME bare empty list, so "there is no such city" and "the API is switched
+// off" were indistinguishable. Destination search returned empty for
+// Barcelona, Madrid and New York with a demonstrably working key and nothing
+// surfaced it. See docs/places/google-legacy-places-api-returns-nothing.md.
+//
+// `reason` is absent when `places` is non-empty, and absent on a genuine
+// ZERO_RESULTS: an empty answer that Google actually gave is not a fault, and
+// reporting it as one would be the same defect wearing the opposite sign.
 
 function inferGoogleType(types: string[]): string {
   if (types.includes("country")) return "country";
@@ -305,11 +319,26 @@ router.get("/places/google-autocomplete", async (req, res) => {
     return;
   }
 
-  const key = process.env.GOOGLE_MAPS_API_KEY;
-  if (!key) {
-    res.json({ places: [], powered_by: "google" });
+  // Same empty-vs-absent distinction as the photo route (#64): an
+  // empty-but-present secret is the case that looks configured and is not.
+  const rawKey = process.env.GOOGLE_MAPS_API_KEY;
+  const keyState = classifyApiKey(rawKey);
+  if (keyState !== "present") {
+    if (Date.now() - GOOGLE_AUTOCOMPLETE_KEY_LOGGED.at > 10 * 60 * 1000) {
+      GOOGLE_AUTOCOMPLETE_KEY_LOGGED.at = Date.now();
+      logger.warn(
+        { envVar: "GOOGLE_MAPS_API_KEY", keyState },
+        apiKeyFailureMessage(keyState, "GOOGLE_MAPS_API_KEY"),
+      );
+    }
+    res.json({
+      places: [],
+      powered_by: "google",
+      reason: apiKeyFailureReason(keyState, "google"),
+    });
     return;
   }
+  const key = rawKey as string;
 
   const type = typeof req.query.type === "string" ? req.query.type : "all";
   const countryCode = typeof req.query.countryCode === "string" ? req.query.countryCode : undefined;
@@ -323,12 +352,35 @@ router.get("/places/google-autocomplete", async (req, res) => {
       `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`,
       { signal: AbortSignal.timeout(4000) },
     );
-    if (!gRes.ok) throw new Error(`Google Places HTTP ${gRes.status}`);
+    if (!gRes.ok) {
+      // Previously `throw new Error(...)`, which landed in the catch below and
+      // was reported as an indistinguishable empty list. The HTTP code is the
+      // most useful thing we know at this point, so it reaches the caller.
+      logger.warn(
+        { httpStatus: gRes.status, input },
+        "Google Places Autocomplete HTTP error",
+      );
+      res.json({ places: [], powered_by: "google", reason: legacyHttpReason(gRes.status) });
+      return;
+    }
     const body = (await gRes.json()) as any;
 
     if (body.status !== "OK" && body.status !== "ZERO_RESULTS") {
-      logger.warn({ status: body.status as string, input }, "Google Places Autocomplete non-OK");
-      res.json({ places: [], powered_by: "google" });
+      // THE DEFECT THIS FIXES. This branch already logged Google's own status
+      // and then discarded it, returning a bare empty list. That log fired,
+      // unread, while destination search returned nothing for every input --
+      // see docs/places/google-legacy-places-api-returns-nothing.md.
+      const reason = legacyStatusReason(body.status as string | undefined);
+      logger.warn(
+        {
+          status: body.status as string,
+          // Google puts the actionable sentence here (e.g. which API to enable).
+          errorMessage: body.error_message as string | undefined,
+          input,
+        },
+        "Google Places Autocomplete non-OK",
+      );
+      res.json({ places: [], powered_by: "google", reason });
       return;
     }
 
@@ -357,7 +409,7 @@ router.get("/places/google-autocomplete", async (req, res) => {
     res.json({ places, powered_by: "google" });
   } catch (err) {
     logger.warn({ err, input }, "Google Places Autocomplete failed — returning empty");
-    res.json({ places: [], powered_by: "google" });
+    res.json({ places: [], powered_by: "google", reason: "request_failed" });
   }
 });
 
@@ -374,11 +426,20 @@ router.get("/places/google-details", async (req, res) => {
     return;
   }
 
-  const key = process.env.GOOGLE_MAPS_API_KEY;
-  if (!key) {
-    res.json({ details: null });
+  const rawKey = process.env.GOOGLE_MAPS_API_KEY;
+  const keyState = classifyApiKey(rawKey);
+  if (keyState !== "present") {
+    if (Date.now() - GOOGLE_DETAILS_KEY_LOGGED.at > 10 * 60 * 1000) {
+      GOOGLE_DETAILS_KEY_LOGGED.at = Date.now();
+      logger.warn(
+        { envVar: "GOOGLE_MAPS_API_KEY", keyState },
+        apiKeyFailureMessage(keyState, "GOOGLE_MAPS_API_KEY"),
+      );
+    }
+    res.json({ details: null, reason: apiKeyFailureReason(keyState, "google") });
     return;
   }
+  const key = rawKey as string;
 
   try {
     const params = new URLSearchParams({
@@ -391,11 +452,31 @@ router.get("/places/google-details", async (req, res) => {
       `https://maps.googleapis.com/maps/api/place/details/json?${params}`,
       { signal: AbortSignal.timeout(4000) },
     );
-    if (!gRes.ok) throw new Error(`Google Place Details HTTP ${gRes.status}`);
+    if (!gRes.ok) {
+      logger.warn({ httpStatus: gRes.status, placeId }, "Google Place Details HTTP error");
+      res.json({ details: null, reason: legacyHttpReason(gRes.status) });
+      return;
+    }
     const body = (await gRes.json()) as any;
 
     if (body.status !== "OK" || !body.result?.geometry) {
-      res.json({ details: null });
+      // Two DIFFERENT conditions were folded together here and both returned a
+      // bare null: the API declining to answer, and a place that genuinely
+      // carries no geometry. They need different fixes, so they get different
+      // reasons.
+      const statusReason = legacyStatusReason(body.status as string | undefined);
+      const reason = statusReason ?? "no_geometry";
+      if (statusReason) {
+        logger.warn(
+          {
+            status: body.status as string,
+            errorMessage: body.error_message as string | undefined,
+            placeId,
+          },
+          "Google Place Details non-OK",
+        );
+      }
+      res.json({ details: null, reason });
       return;
     }
 
@@ -409,7 +490,7 @@ router.get("/places/google-details", async (req, res) => {
     });
   } catch (err) {
     logger.warn({ err, placeId }, "Google Place Details failed");
-    res.json({ details: null });
+    res.json({ details: null, reason: "request_failed" });
   }
 });
 
@@ -428,6 +509,8 @@ router.get("/places/google-details", async (req, res) => {
 // (e.g. "google_places_api_new_disabled") so we can tell exactly which
 // Google Cloud API needs enabling without guessing.
 const GOOGLE_PHOTO_DISABLED_LOGGED = { at: 0 };
+const GOOGLE_AUTOCOMPLETE_KEY_LOGGED = { at: 0 };
+const GOOGLE_DETAILS_KEY_LOGGED = { at: 0 };
 const GOOGLE_KEY_STATE_LOGGED = { at: 0 };
 const FSQ_KEY_STATE_LOGGED = { at: 0 };
 router.get("/places/photo", async (req, res) => {
