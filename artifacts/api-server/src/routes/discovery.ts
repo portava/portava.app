@@ -1110,6 +1110,103 @@ router.get("/discovery", async (req, res) => {
     bounds: ageFilterBounds(),
   };
 
+  // ── Stage 2 shadow observation — ONE implementation, five serve points ─────
+  //
+  // Called from serve points 1-3 (Cache A) and 4-5 (Compass). It is a single
+  // function on purpose (mechanic M2): three copies of a comparison would drift,
+  // and a divergence table fed by drifting implementations measures the drift
+  // rather than the engines.
+  //
+  // Three properties, each load-bearing:
+  //   - callers invoke it AFTER res.json(), so it cannot affect what was served;
+  //   - `served: false` hands PDE a client that CANNOT WRITE, so nothing
+  //     downstream — DiscoveryRankingService included — can put a row in
+  //     rank_events for a page nobody saw;
+  //   - it is gated on mode === "shadow", so in legacy mode (today) not one line
+  //     of its body executes.
+  //
+  // WHAT THE COMPARISON MEANS DEPENDS ENTIRELY ON THE SERVE POINT
+  // =============================================================
+  // These are DIFFERENT QUESTIONS and their rows must never be pooled:
+  //
+  //   1-3  legacy ran NO RANKER AT ALL. The row asks: does ranking reach traffic
+  //        it currently cannot? This is what the whole packet is about.
+  //   4-5  legacy ran COMPASS — a genuinely different ranker, with its own
+  //        candidate cache and its own scoring pipeline. The row asks: do two
+  //        rankers disagree, and how?
+  //
+  // `serve_point` is on every row, which is what makes the separation queryable;
+  // the divergence report breaks down by it and REFUSES TO SUM 1-3 with 4-5.
+  //
+  // ON SERVE POINTS 4-5, `candidates` IS THE COMPASS-PASSED SET, NOT THE RAW POOL
+  // ============================================================================
+  // Compass is authoritative: it EXCLUDES blocked and rejected items, so the set
+  // it ranked is smaller than the merged pool. PDE is therefore handed the same
+  // set Compass ranked. Handing it the raw pool instead would let PDE surface
+  // items Compass had deliberately removed, and the resulting divergence would
+  // be Compass's EXCLUSION showing up as a ranking disagreement. The question at
+  // 4-5 is "given the same candidates, do these two rankers order them
+  // differently" — anything else is not a ranker comparison.
+  //
+  // Serve point 6 is deliberately absent. The cold path already IS PDE, so a row
+  // there would compare a result with itself and report a zero that reads as
+  // evidence. See lib/discoveryShadow.ts.
+  async function observeShadowServe(p: {
+    servePoint: number;
+    cacheLevel: string;
+    /** The pool PDE re-ranks — the SAME set the legacy side drew its page from. */
+    candidates: DiscoveryPlace[];
+    legacyIds: string[];
+    legacyTotal: number;
+    legacyMs: number;
+  }): Promise<void> {
+    if (!callerUserId) return;
+
+    // D6 cohort gate. `shadow` alone is not enough: the mode says WHAT, the
+    // cohort says WHO, and without the second the first means everybody.
+    // Operator ruling 2026-08-15 — shadow must not be enabled for any traffic
+    // until this gate exists. Fail-closed: an absent or unreadable cohort
+    // includes nobody, so a misconfiguration costs zero shadow runs rather
+    // than shadowing the entire surface.
+    const shadowCohort = engineMode.mode === "shadow"
+      ? isInDiscoveryCohort(engineMode.cohort, callerUserId)
+      : null;
+    if (!shadowCohort?.included) return;
+
+    try {
+      const shadowSc  = getServiceClient();
+      const shadowT0  = Date.now();
+      const pdeViewer = await loadPdeViewer(
+        shadowSc, callerUserId, destination!.split(",")[0]?.trim().toLowerCase() ?? null,
+      );
+      const outcome = await rankForViewer(p.candidates, pdeViewer, { sc: shadowSc, served: false });
+      // Same filters, same page window. Comparing a ranked full list
+      // against a filtered page would report divergence that filtering
+      // caused and ranking did not.
+      const pdeFiltered = applyFilters(outcome.ranked);
+      const pdeSlice    = pdeFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+      await logDiscoveryShadowServe(shadowSc, {
+        userId: callerUserId,
+        destination: destination!, category, radiusKm, page, pageSize: PAGE_SIZE, sortBy,
+        servePoint: p.servePoint, cacheLevel: p.cacheLevel,
+        legacyIds:   p.legacyIds,
+        legacyTotal: p.legacyTotal,
+        legacyMs:    p.legacyMs,
+        pdeIds:      pdeSlice.map((q) => q.id),
+        pdeTotal:    pdeFiltered.length,
+        pdeMs:       Date.now() - shadowT0,
+        pdeStages:   outcome.stages as unknown as Record<string, unknown>,
+        pdeSuppressedWrites: outcome.stages.suppressedWrites,
+        engineMode:  engineMode.mode,
+        modeReason:  engineMode.reason,
+        cohortReason: shadowCohort.reason,
+        cohortBucket: shadowCohort.bucket ?? null,
+      });
+    } catch (err) {
+      req.log.warn({ err }, "discovery: shadow observation failed — the response was unaffected");
+    }
+  }
+
   // ── Cache lookup helper ────────────────────────────────────────────────────
   // Shared by L1 (in-memory) and L2 (Postgres) hit paths.  OSM places are
   // served from cache; community DB places are always re-queried (they change
@@ -1174,45 +1271,13 @@ router.get("/discovery", async (req, res) => {
       // until this gate exists. Fail-closed: an absent or unreadable cohort
       // includes nobody, so a misconfiguration costs zero shadow runs rather
       // than shadowing the entire surface.
-      const shadowCohort = engineMode.mode === "shadow"
-        ? isInDiscoveryCohort(engineMode.cohort, callerUserId)
-        : null;
-      if (shadowCohort?.included) {
-        void (async () => {
-          try {
-            const shadowSc  = getServiceClient();
-            const shadowT0  = Date.now();
-            const pdeViewer = await loadPdeViewer(
-              shadowSc, callerUserId, destination!.split(",")[0]?.trim().toLowerCase() ?? null,
-            );
-            const outcome = await rankForViewer(merged, pdeViewer, { sc: shadowSc, served: false });
-            // Same filters, same page window. Comparing a ranked full list
-            // against a filtered page would report divergence that filtering
-            // caused and ranking did not.
-            const pdeFiltered = applyFilters(outcome.ranked);
-            const pdeSlice    = pdeFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-            await logDiscoveryShadowServe(shadowSc, {
-              userId: callerUserId,
-              destination: destination!, category, radiusKm, page, pageSize: PAGE_SIZE, sortBy,
-              servePoint, cacheLevel,
-              legacyIds:   slice.map((p) => p.id),
-              legacyTotal: filtered.length,
-              legacyMs:    totalMs,
-              pdeIds:      pdeSlice.map((p) => p.id),
-              pdeTotal:    pdeFiltered.length,
-              pdeMs:       Date.now() - shadowT0,
-              pdeStages:   outcome.stages as unknown as Record<string, unknown>,
-              pdeSuppressedWrites: outcome.stages.suppressedWrites,
-              engineMode:  engineMode.mode,
-              modeReason:  engineMode.reason,
-              cohortReason: shadowCohort.reason,
-              cohortBucket: shadowCohort.bucket ?? null,
-            });
-          } catch (err) {
-            req.log.warn({ err }, "discovery: shadow observation failed — the response was unaffected");
-          }
-        })();
-      }
+      void observeShadowServe({
+        servePoint, cacheLevel,
+        candidates:  merged,
+        legacyIds:   slice.map((p) => p.id),
+        legacyTotal: filtered.length,
+        legacyMs:    totalMs,
+      });
     }
   }
 
@@ -1343,6 +1408,18 @@ router.get("/discovery", async (req, res) => {
                   engineMode: engineMode.mode, modeReason: engineMode.reason,
                 },
               });
+              // ── Stage 2b shadow — serve point 4. RANKER vs RANKER ──────────
+              // Legacy here is a REPLAYED COMPASS ORDER, not an unranked list.
+              // `cCacheHit.places` is the set Compass already ranked and the
+              // set this page was drawn from, so PDE re-ranks exactly it.
+              void observeShadowServe({
+                servePoint: DiscoveryServePoint.CACHE_B_HIT,
+                cacheLevel: "compass_candidate_hit",
+                candidates:  cCacheHit.places,
+                legacyIds:   cSlice.map((q) => q.id),
+                legacyTotal: cFiltered.length,
+                legacyMs:    Date.now() - t0,
+              });
               return;
             }
 
@@ -1394,6 +1471,19 @@ router.get("/discovery", async (req, res) => {
                 destination, category, cacheLevel: "compass_fresh_rank",
                 engineMode: engineMode.mode, modeReason: engineMode.reason,
               },
+            });
+            // ── Stage 2b shadow — serve point 5. RANKER vs RANKER ────────────
+            // The Compass ranker DID run in this request. `merged` here is
+            // `compassRanked` — the Compass-passed set, blocked and rejected
+            // items already excluded — so PDE ranks what Compass ranked and the
+            // row measures ordering, not Compass's exclusions.
+            void observeShadowServe({
+              servePoint: DiscoveryServePoint.COMPASS_FRESH_RANK,
+              cacheLevel: "compass_fresh_rank",
+              candidates:  merged,
+              legacyIds:   cSlice.map((q) => q.id),
+              legacyTotal: cFiltered.length,
+              legacyMs:    Date.now() - t0,
             });
             return;
           }
