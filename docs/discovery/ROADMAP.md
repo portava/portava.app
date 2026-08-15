@@ -130,22 +130,38 @@
 >
 > ### Phase B disposition
 >
-> **The same-origin proxy was the LAST ALLOWED PREREQUISITE.** It worked, with
-> **no production config change**. **Phase B PROCEEDS** — run the verdict when
-> the observer sends the window.
+> **The same-origin proxy was the LAST ALLOWED PREREQUISITE.** The disposition
+> was: Phase B proceeds, and **if anything else blocks before the verdict, STOP
+> and formally PARK it** with its state recorded.
 >
-> **But the rule now binds.** If anything else blocks between here and the
-> verdict:
+> ### ⏸️ THIS FIRED THE SAME DAY. PHASE B IS PARKED.
 >
-> > **STOP. Formally PARK Phase B with its state recorded** — baseline captured,
-> > instrument fixed, methodology settled, blocked on X.
+> The proxy was built and verified, with **no production config change** — and
+> then failed on a **platform routing rule** that no proxy can address: Replit
+> intercepts `/api/*` on the workspace dev domain and serves it locally
+> regardless of what is bound underneath, and there is no deployed frontend.
+>
+> A different port, a different domain, or a different mechanism is **by
+> definition another chain of prerequisite work**, which is exactly what this
+> ruling ended. **No such attempt was made.**
+>
+> → **[Phase B — PARKED](#phase-b--parked-2026-08-15)** for the full state and
+> the verified evidence of the blocker.
 >
 > **PARKED-WITH-EVIDENCE IS A LEGITIMATE OUTCOME, NOT A FAILURE**, and is worth
 > more than another chain of prerequisites. Do not treat parking as losing. A
 > session that parks with its state legible has delivered; a session that
 > generates a fourth prerequisite has not.
 >
-> ### The sequence after Phase B resolves — resolves, not closes
+> **The rule worked.** It was written in the morning and it stopped a fourth
+> prerequisite the same evening — which is the strongest available evidence that
+> it was the right rule, and the reason it should not be softened later when
+> parking feels unsatisfying.
+>
+> ### The sequence — NOW LIVE, as of 2026-08-15
+>
+> Phase B has resolved by **parking**, so this is no longer "what comes after".
+> **It is the current work.**
 >
 > | | | |
 > |---|---|---|
@@ -319,7 +335,7 @@ listed because each one caught something.
 | Phase | Name | Status |
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
-| **B** | Make discovery reachable | **BLOCKED — awaiting the B3 probe ONLY.** The deploy precondition is **MET**: build `a384e29fa` (build-id `58536e52`) was verified clean and live 2026-08-15 12:13Z, carrying #55/#56 — verified in the *running* build, not merely published. Exit criterion (rows at multiple serve points) **still unmet**; nothing has been measured in either direction. PR #54's ruling governs and stands. It is **NOT** blocked on Google SSO — see the correction below; that conflation was mine, not #54's. **The B3 probe has NOT been run.** The same-origin proxy (#71) was the **LAST ALLOWED PREREQUISITE** — if anything else blocks before the verdict, **STOP and formally PARK Phase B with its state recorded**. Parked-with-evidence is a legitimate outcome, not a failure. When it is, **record the photo-provider state alongside the result** (FSQ 429 / Google live as of 12:13Z) — it does not affect serve-point logging, and the check establishing that is recorded below. |
+| **B** | Make discovery reachable | ⏸️ **PARKED — 2026-08-15. NOT closed, NOT abandoned, and the exit criterion remains UNMET.** Blocked on: **no route exists from a browser session to the production API in this workspace** — Replit's path-based routing intercepts `/api/*` on the dev domain to the local dev artifact, and there is no deployed frontend. See **[Phase B — PARKED](#phase-b--parked-2026-08-15)** for the full state: baseline captured, instrument fixed and red-proofed, methodology settled, auth resolved, deploy verified clean. **Parking is not closure.** |
 | **C** | Complete shadow coverage | NOT STARTED — and see the **owner ruling**: this is measurement infrastructure, downstream of the upstream bottleneck. |
 | **D** | D5=B engine split | **ON EXPLICIT HOLD once Phase B resolves** (owner ruling, 2026-08-15). This is ranking machinery, and there is no optimising a ranker over an empty corpus. |
 | **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination |
@@ -700,7 +716,100 @@ are different findings and must not be conflated.
 
 ---
 
-## Phase B — Make discovery reachable
+## Phase B — PARKED (2026-08-15)
+
+> # ⏸️ PARKED WITH EVIDENCE — NOT CLOSED, NOT ABANDONED
+>
+> **THE EXIT CRITERION REMAINS UNMET.** Discovery rows at multiple serve points
+> have **not** been produced. Nothing below claims otherwise, and **parking is
+> not closure** — the same distinction that has governed this phase since #54,
+> and it matters more here, not less. A parked phase with its state recorded is
+> a phase someone can resume. A phase quietly treated as done is a phase whose
+> criterion silently stopped applying.
+>
+> **This is the owner's ruling of 2026-08-15 firing exactly as written, not a
+> judgement call made in the moment.** The same-origin proxy was the LAST
+> PERMITTED PREREQUISITE. It failed on a platform routing rule. A different
+> port, a different domain, or a different mechanism is *by definition* another
+> chain of prerequisite work, and that no longer happens by default.
+>
+> **Do not attempt one.**
+
+### BLOCKED ON
+
+**No route exists from a browser session to the production API in this
+workspace.**
+
+1. **Replit's path-based routing intercepts `/api/*` on the workspace dev
+   domain** and serves it from the local dev artifact, **regardless of what is
+   bound underneath.** A same-origin proxy therefore cannot put a browser
+   session in front of production: the browser's `/api` calls never leave for
+   production, whatever the proxy is doing on its port.
+2. **There is no deployed frontend**, which is what made a local client
+   necessary in the first place.
+
+#### Verified, not merely reported
+
+| Probe | Result |
+|---|---|
+| `GET /api/healthz` on **production** | 200 + `server: Google Frontend`, `via: 1.1 google`, `x-cloud-trace-context` |
+| `GET /api/healthz` on the **dev domain** | 200 with **none of those headers** — not reaching production |
+| `GET /` on the **dev domain** | **502** |
+
+**The last two lines together are the proof.** The root is 502 — nothing is
+successfully serving the port — yet `/api/healthz` still returns 200. **`/api/*`
+is answered by something other than what is bound underneath**, which is exactly
+the interception claimed, demonstrated rather than asserted.
+
+### The state that is being preserved
+
+Parked-with-evidence means the next session resumes rather than rediscovers.
+
+| | |
+|---|---|
+| **Baseline** | **Captured** against production 2026-08-15T12:50:13Z: 13 rows / 24 h, **all on serve point 9**, 4 sessions, serve points **1–8 at a floor of zero**, **zero `GET /discovery` serves**. Recorded in `phase-b3-probe-runbook.md` → RECORDED READINGS. |
+| **Instrument** | **Fixed and red-proofed** (#58). Verified in use: it *declined* to render a verdict on sections 2b and 3 rather than returning a confident zero — *"That is not the criterion holding. It is the criterion untested."* |
+| **Window** | **Fixed `--since`/`--until`** (#67), so a before/after pair can address one window. Refuses `--days` mixed with them, and refuses an inverted or zero-width window. |
+| **Methodology** | **Settled.** Window-not-verdict; observer and verifier in different hands; the local-client substitution reasoned and documented rather than assumed. |
+| **Authentication** | **Resolved.** Email/password; never gated on Google SSO (#63 correction). |
+| **Deploy** | **Verified clean** — `a384e29fa` / build-id `58536e52`, confirmed in the *running* build, not merely published. |
+| **Contamination question** | **Asked and answered before the probe**: the Foursquare 429 cannot suppress serve points, server-side (50-module import closure, zero FSQ call sites) or client-side (`useFsqPhoto` never throws). |
+
+**None of that is invalidated by the park.** It is the reason the park is cheap
+to reverse.
+
+### What would unblock it later — RECORDED, NOT SCHEDULED
+
+Stated so a cold reader is not left guessing, and **deliberately not planned,
+resourced, or sequenced.** Neither of these is work anyone is doing:
+
+- **A deployed frontend artifact**, which removes the need for a local client
+  entirely; or
+- **A probe harness that is not browser-based**, which sidesteps the routing
+  rule rather than fighting it.
+
+**Neither is proposed here, and proposing one is what the ruling forbids.** If
+Phase B is resumed it will be because something else made one of them true
+anyway — most plausibly the new sequence, since a working destination picker and
+useful place cards both imply a frontend somebody can reach.
+
+### One caveat on the blocker's phrasing, recorded for accuracy
+
+The blocker is precisely *"no route from a **browser session** to the production
+**API**."* It is **not** the broader claim that nothing in this workspace can
+reach production data — the workspace's own `SUPABASE_URL` points at the
+production project, which is why the read-only audit guard had to be opened
+deliberately to take the baseline at all.
+
+**This is recorded for accuracy, not as a route to unpark Phase B, and no such
+route is proposed.** It is noted because a future reader comparing those two
+statements would otherwise find them contradictory, and because a dev artifact
+configured against the production database is worth someone's attention on its
+own terms, separately from Phase B.
+
+---
+
+## Phase B — the original plan, kept for the record
 
 **Ranked first among engineering work.** Every later measurement is worthless
 without it, and worse than worthless: it returns confident wrong answers rather
@@ -797,9 +906,16 @@ state** — it is what the 14-minute probe already produced. Success means sever
 distinct serve points appear, which demonstrates that the discovery surface is
 navigable rather than that one endpoint responds.
 
-> **Entry state as of 2026-08-15 12:13Z — this probe is now RUNNABLE.** The
-> deploy precondition is met: the live build was verified clean and carries
-> #55/#56. See *DEPLOY VERIFIED CLEAN* above. The probe has not been run.
+> ## ⏸️ THIS PROBE IS PARKED — 2026-08-15. It was never run.
+>
+> The deploy precondition was met and the probe was authorised, staged and
+> ready. It is blocked on **platform routing**, not on anything in this section:
+> `/api/*` on the workspace dev domain is intercepted and served locally, so no
+> browser session can reach the production API. See
+> **[Phase B — PARKED](#phase-b--parked-2026-08-15)**.
+>
+> **Everything below remains correct and is preserved for whoever resumes it.**
+> The exit criterion is unchanged and unmet.
 >
 > → **Staged runbook: `phase-b3-probe-runbook.md`.** Exact commands, the
 > sanctioned read-only front door for the production baseline, the production
