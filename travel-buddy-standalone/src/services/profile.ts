@@ -550,12 +550,54 @@ export interface AccountStatusResult {
   deletionScheduledAt: string | null;
 }
 
+/**
+ * errorKind returned when the CLIENT could not mint an access token for a
+ * request — `freshToken()` returned null.
+ *
+ * It is deliberately NOT 'unauthenticated', and the distinction is the whole of
+ * task 3658. 'unauthenticated' is the SERVER's verdict on a token it actually
+ * received: `requireUser` (api-server `lib/http.ts`) answers 401
+ * `{ error: 'unauthenticated' }` for a missing, malformed, invalid or expired
+ * bearer token. Both used to arrive here under the same name, so no caller
+ * could tell them apart.
+ *
+ * They are not the same fact and they do not license the same response:
+ *
+ *   - a 401 IS a statement about the caller's credentials;
+ *   - `freshToken()` returning null is a statement about ONE token mint, and
+ *     says nothing at all about whether the user is signed in. The session can
+ *     be entirely live while a single mint loses a refresh race, is handed
+ *     auth-js's cached refresh failure during its cooldown window, or has its
+ *     rotation dropped by auth-js's commit guard.
+ *
+ * Reporting the second as 'unauthenticated' states something that is not true,
+ * and `SessionContext.fetchAccountStatus` — which fails closed on anything it
+ * cannot read as a transient — then put a full-page "Couldn't verify your
+ * account" wall in front of a signed-in user whose other requests were
+ * succeeding at the same moment.
+ *
+ * NOTE the 13 other `freshToken()` call sites in this file still return
+ * 'unauthenticated' for the same non-fact. They are the same latent defect and
+ * are deliberately NOT changed here: each one's caller decides something
+ * different on it (`PulseCreate.machine.ts:224` force-signs-out, for instance),
+ * and re-deciding those without a reproduction for each is how a fix becomes a
+ * new bug. Named rather than silently half-fixed.
+ */
+export const TOKEN_UNAVAILABLE = 'token_unavailable';
+
 export async function getAccountStatus(): Promise<ProfileResult<AccountStatusResult>> {
   if (!isSupabaseConfigured || !apiBase()) {
     return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
   }
   const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', message: 'Please sign in' };
+  if (!token) {
+    return {
+      ok: false,
+      data: null,
+      errorKind: TOKEN_UNAVAILABLE,
+      message: 'Could not obtain a session token',
+    };
+  }
 
   try {
     const res = await fetch(`${apiBase()}/api/me/account-status`, {
