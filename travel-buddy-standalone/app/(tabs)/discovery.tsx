@@ -257,14 +257,18 @@ function DiscoveryHubScreen() {
     const w = window as any;
     w.history.pushState({ _layoverSheet: true }, '', w.location.href);
 
+    let dismissedByBack = false;
+
     const handlePop = () => {
+      dismissedByBack = true;
       setLayoverOpen(false);
     };
-    w.addEventListener('popstate', handlePop);
+    // Capture phase: fires before Expo Router's bubble-phase listener.
+    w.addEventListener('popstate', handlePop, true);
 
     return () => {
-      w.removeEventListener('popstate', handlePop);
-      if (w.history.state?._layoverSheet) {
+      w.removeEventListener('popstate', handlePop, true);
+      if (!dismissedByBack && w.history.state?._layoverSheet) {
         w.history.back();
       }
     };
@@ -279,14 +283,18 @@ function DiscoveryHubScreen() {
     const w = window as any;
     w.history.pushState({ _routeBuilderSheet: true }, '', w.location.href);
 
+    let dismissedByBack = false;
+
     const handlePop = () => {
+      dismissedByBack = true;
       setRouteBuilderOpen(false);
     };
-    w.addEventListener('popstate', handlePop);
+    // Capture phase: fires before Expo Router's bubble-phase listener.
+    w.addEventListener('popstate', handlePop, true);
 
     return () => {
-      w.removeEventListener('popstate', handlePop);
-      if (w.history.state?._routeBuilderSheet) {
+      w.removeEventListener('popstate', handlePop, true);
+      if (!dismissedByBack && w.history.state?._routeBuilderSheet) {
         w.history.back();
       }
     };
@@ -302,14 +310,18 @@ function DiscoveryHubScreen() {
     const w = window as any;
     w.history.pushState({ _submitPlaceSheet: true }, '', w.location.href);
 
+    let dismissedByBack = false;
+
     const handlePop = () => {
+      dismissedByBack = true;
       setSubmitPlaceOpen(false);
     };
-    w.addEventListener('popstate', handlePop);
+    // Capture phase: fires before Expo Router's bubble-phase listener.
+    w.addEventListener('popstate', handlePop, true);
 
     return () => {
-      w.removeEventListener('popstate', handlePop);
-      if (w.history.state?._submitPlaceSheet) {
+      w.removeEventListener('popstate', handlePop, true);
+      if (!dismissedByBack && w.history.state?._submitPlaceSheet) {
         w.history.back();
       }
     };
@@ -679,6 +691,7 @@ function DiscoveryHubScreen() {
         <DestinationBar destination={destination} onSelectPlace={handleSelectPlaceFromBar} />
         {isAuthed && (
           <Pressable
+            testID="submit-place-btn"
             style={styles.sharePlaceBtn}
             onPress={() => setSubmitPlaceOpen(true)}
             hitSlop={8}
