@@ -20,6 +20,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { getServiceClient } from "../lib/supabase";
+import { osmNeighborhood } from "../lib/osmPlaceShape";
 import { sendError, requireUser } from "../lib/http";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
@@ -458,30 +459,6 @@ function extractAttributeTags(tags: Record<string, string>): string[] {
   return out;
 }
 
-/**
- * Neighbourhood label, most specific key first.
- *
- * The fallback chain is not invented here. `scripts/seed-discovery-places.ts`
- * ALREADY resolves this field for seeded rows as
- * `neighbourhood ?? suburb ?? addr:suburb` — so the two paths would have
- * disagreed about what a neighbourhood is if this took only the key the ruling
- * names. This is the union of both, ordered specific → broad, so a seeded place
- * and a live OSM place in the same street produce the same label.
- *
- * `addr:neighbourhood` leads because it is the address component of THIS venue;
- * the bare `neighbourhood`/`suburb` keys describe an enclosing area.
- */
-function extractNeighborhood(tags: Record<string, string>): string | null {
-  const raw =
-    tags["addr:neighbourhood"] ??
-    tags["neighbourhood"] ??
-    tags["addr:suburb"] ??
-    tags["suburb"] ??
-    null;
-  const v = raw?.trim();
-  return v ? v : null;
-}
-
 /** Wikidata entity ids are `Q` followed by digits. Anything else is not one. */
 function extractWikidataId(tags: Record<string, string>): string | null {
   const raw = tags["wikidata"]?.trim();
@@ -620,7 +597,7 @@ export function mapOsmElementToPlace(
     lng:         elLng,
     tags:         [...new Set(chips)].slice(0, MAX_TOTAL_CHIPS),
     address:      buildAddress(tags),
-    neighborhood: extractNeighborhood(tags),
+    neighborhood: osmNeighborhood(tags),
     wikidataId:   extractWikidataId(tags),
     osmImageUrl:  extractOsmImageUrl(tags),
     website:      tags.website ?? tags.url ?? null,
