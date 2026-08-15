@@ -3,14 +3,25 @@
  *
  * WHY THIS EXISTS
  * ===============
- * `audit:schema` compares migrations against the live schema and reports
- * missing OBJECTS: tables, columns, functions, indexes, policies, triggers.
- * It does not compare PRIVILEGES, and privileges are where this table's whole
- * argument lives.
+ * `audit:schema` DOES model table grants — it parses the GRANT statements a
+ * migration writes and checks each against information_schema.role_table_grants.
+ * What it performs is a PRESENCE check, not an EQUALITY check, and the gap
+ * between those two is exactly where this table's argument lives:
+ *
+ *   - it asks "is each grant a migration CLAIMED actually present?";
+ *   - it cannot see EXCESS privilege beyond what was claimed;
+ *   - and it does not model REVOKE at all (the word appears in that script only
+ *     inside comments).
+ *
+ * So a migration that claims two privileges and leaves five more in place is
+ * indistinguishable, to that audit, from one that claims two and holds two.
+ * This script asserts the EXACT set instead, which is the only form of the
+ * question that can answer "can this table be mutated".
  *
  * That gap was not theoretical. Migration 2092 states, in its own header, that
- * `service_role` receives INSERT and SELECT "and nothing else". After the apply,
- * the live grants were:
+ * `service_role` receives INSERT and SELECT "and nothing else". It granted
+ * exactly those two, so its grant claims were satisfied and `audit:schema` was
+ * correct to report nothing. After the apply, the live grants were:
  *
  *     service_role: DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE
  *
@@ -18,7 +29,9 @@
  * service_role, and Supabase's default privileges on the public schema grant ALL
  * to service_role at CREATE TABLE time. So the explicit GRANT added nothing that
  * was not already there, the documented mechanism did not land, and every gate
- * in CI went green anyway because no gate looks at grants.
+ * in CI went green — not because no gate looks at grants, but because the five
+ * extra privileges and the revoke that was never written are both outside what
+ * a presence check can express.
  *
  * The append-only property may well have survived on the trigger alone. That is
  * exactly the problem: the belt was missing and only the braces were holding,

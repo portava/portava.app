@@ -22,10 +22,28 @@
 --
 -- WHY NOTHING CAUGHT IT
 -- =====================
--- `audit:schema` compares migrations against live for OBJECTS — tables,
--- columns, functions, indexes, policies, triggers. It does not compare
--- PRIVILEGES. So the documented mechanism silently did not land and every gate
--- went green.
+-- `audit:schema` DOES model table grants — it parses `GRANT <privs> ON <table>
+-- TO <role>` and checks each against information_schema.role_table_grants. The
+-- earlier claim in this repository that it "compares objects, not privileges"
+-- was WRONG, and is corrected here.
+--
+-- What it does is a PRESENCE check, not an EQUALITY check:
+--
+--   - it asks "is each grant a migration CLAIMS actually present?"
+--   - it cannot see EXCESS privileges beyond those claimed;
+--   - and it does not model REVOKE at all — the word appears in that script
+--     only inside comments.
+--
+-- 2092 claimed `service_role.insert` and `service_role.select`. Both WERE
+-- present. So the audit had nothing to report, and was right not to: the five
+-- extra privileges and the four revokes that never took effect are both
+-- outside anything its claim model can express.
+--
+-- That is the real gap, and it is narrower and more interesting than "it does
+-- not look at grants". An audit that can only confirm the presence of what you
+-- claimed cannot tell you that you also hold six things you did not.
+--
+-- So the documented mechanism silently did not land and every gate went green.
 --
 -- The append-only property itself survived, on the UPDATE triggers alone. That
 -- is precisely the problem worth naming rather than the reassurance it looks

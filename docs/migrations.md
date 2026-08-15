@@ -201,7 +201,7 @@ Adds `cohort_reason text` and `cohort_bucket smallint` (both nullable).
 pnpm run audit:shadow-append-only     # exit 0; grants, RLS and both UPDATE triggers
 ```
 
-That second command is new, and it exists because `audit:schema` compares **objects, not privileges** — which is why the 2092 grant discrepancy passed every gate.
+That second command is new. `audit:schema` **does** model table grants — it checks that each grant a migration *claims* is present. What it cannot do is check the privilege set is **exactly** what was claimed: it does not see excess privilege, and it does not model `REVOKE` at all. 2092 claimed `service_role.insert` and `service_role.select`, both were present, five more were too, and the audit was correct to report nothing. `audit:shadow-append-only` asserts the exact set instead.
 
 ## Automated audit
 

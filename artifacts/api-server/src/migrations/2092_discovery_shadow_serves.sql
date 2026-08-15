@@ -44,8 +44,14 @@
 --        - TRUNCATE was reachable, and TRUNCATE fires neither UPDATE trigger.
 --          2092 did not consider it at all. 2093 revokes it AND adds a
 --          BEFORE TRUNCATE trigger.
---        - `audit:schema` compares objects, not privileges, so every gate went
---          green. `pnpm run audit:shadow-append-only` now closes that.
+--        - Every gate went green, and NOT because audit:schema ignores grants
+--          -- it does model them. It parses the GRANT statements a migration
+--          writes and checks each is PRESENT. 2092 claimed service_role.insert
+--          and service_role.select, and both were present, so there was nothing
+--          to report. What no claim model here can express is EXCESS privilege,
+--          and REVOKE is not modelled at all. An audit that confirms what you
+--          claimed cannot tell you what else you hold.
+--          `pnpm run audit:shadow-append-only` asserts the EXACT set instead.
 --
 --      This text is a correction, not a rewrite: the DDL below is what was
 --      applied to production and must keep saying so. 2093 is the repair.
