@@ -41,6 +41,7 @@ import {
   DISCOVERY_ENGINE_MODE_FLAG,
   DISCOVERY_PDE_KILL_SWITCH,
 } from "../lib/discoveryEngineMode.js";
+import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
 
 /**
  * Stub answering the two feature_flags reads the resolver makes: getFlagRow for
@@ -78,19 +79,32 @@ function makeClient(opts: {
 
 const meta = (mode: unknown) => ({ enabled: true, metadata: { mode } });
 
+/**
+ * Compare only the mode and the reason.
+ *
+ * ResolvedMode also carries the D6 cohort (added with the cohort gate). These
+ * tests are about MODE resolution; asserting the whole object would make every
+ * one of them fail the next time a diagnostic field is added, which trains
+ * people to update assertions rather than read them. Cohort resolution has its
+ * own tests below and in discoveryCohort.test.ts.
+ */
+function modeOf(r: { mode: string; reason: string }) {
+  return { mode: r.mode, reason: r.reason };
+}
+
 describe("DISCOVERY_ENGINE_MODE — every failure state resolves to legacy", () => {
   beforeEach(() => invalidateDiscoveryEngineModeCache());
 
   it("A. a missing row resolves to legacy", async () => {
     const { client } = makeClient({ modeRow: null });
-    assert.deepEqual(await resolveDiscoveryEngineMode(client), {
+    assert.deepEqual(modeOf(await resolveDiscoveryEngineMode(client)), {
       mode: "legacy", reason: "flag_absent",
     });
   });
 
   it("B. enabled=false resolves to legacy even when metadata says pde", async () => {
     const { client } = makeClient({ modeRow: { enabled: false, metadata: { mode: "pde" } } });
-    assert.deepEqual(await resolveDiscoveryEngineMode(client), {
+    assert.deepEqual(modeOf(await resolveDiscoveryEngineMode(client)), {
       mode: "legacy", reason: "flag_disabled",
     });
   });
@@ -100,7 +114,7 @@ describe("DISCOVERY_ENGINE_MODE — every failure state resolves to legacy", () 
       invalidateDiscoveryEngineModeCache();
       const { client } = makeClient({ modeRow: { enabled: true, metadata } });
       const r = await resolveDiscoveryEngineMode(client);
-      assert.deepEqual(r, { mode: "legacy", reason: "mode_missing" });
+      assert.deepEqual(modeOf(r), { mode: "legacy", reason: "mode_missing" });
     }
   });
 
@@ -114,7 +128,7 @@ describe("DISCOVERY_ENGINE_MODE — every failure state resolves to legacy", () 
   });
 
   it("K. a null client resolves to legacy", async () => {
-    assert.deepEqual(await resolveDiscoveryEngineMode(null), {
+    assert.deepEqual(modeOf(await resolveDiscoveryEngineMode(null)), {
       mode: "legacy", reason: "no_client",
     });
   });
@@ -133,7 +147,7 @@ describe("DISCOVERY_ENGINE_MODE — configured modes", () => {
     for (const mode of ["legacy", "shadow"] as const) {
       invalidateDiscoveryEngineModeCache();
       const { client } = makeClient({ modeRow: meta(mode) });
-      assert.deepEqual(await resolveDiscoveryEngineMode(client), { mode, reason: "resolved" });
+      assert.deepEqual(modeOf(await resolveDiscoveryEngineMode(client)), { mode, reason: "resolved" });
     }
   });
 
@@ -141,7 +155,7 @@ describe("DISCOVERY_ENGINE_MODE — configured modes", () => {
     // A MISSING stop row means "no stop has been configured" and is NOT
     // engaged — isKillSwitchEngaged inverts the FAILURE, not the flag.
     const { client } = makeClient({ modeRow: meta("pde"), stopRow: null });
-    assert.deepEqual(await resolveDiscoveryEngineMode(client), {
+    assert.deepEqual(modeOf(await resolveDiscoveryEngineMode(client)), {
       mode: "pde", reason: "resolved",
     });
   });
@@ -152,7 +166,7 @@ describe("DISCOVERY_ENGINE_MODE — the PDE stop (D3=B)", () => {
 
   it("H. an engaged stop forces legacy", async () => {
     const { client } = makeClient({ modeRow: meta("pde"), stopRow: { enabled: true } });
-    assert.deepEqual(await resolveDiscoveryEngineMode(client), {
+    assert.deepEqual(modeOf(await resolveDiscoveryEngineMode(client)), {
       mode: "legacy", reason: "kill_switch_engaged",
     });
   });
@@ -162,7 +176,7 @@ describe("DISCOVERY_ENGINE_MODE — the PDE stop (D3=B)", () => {
     // disengage the stop exactly when the database is unhealthy, which is when
     // it is most likely to be needed.
     const { client } = makeClient({ modeRow: meta("pde"), stopError: { message: "db down" } });
-    assert.deepEqual(await resolveDiscoveryEngineMode(client), {
+    assert.deepEqual(modeOf(await resolveDiscoveryEngineMode(client)), {
       mode: "legacy", reason: "kill_switch_engaged",
     });
   });
@@ -174,7 +188,7 @@ describe("DISCOVERY_ENGINE_MODE — the PDE stop (D3=B)", () => {
         modeRow: meta(mode), stopError: { message: "db down" },
       });
       const r = await resolveDiscoveryEngineMode(client);
-      assert.deepEqual(r, { mode, reason: "resolved" },
+      assert.deepEqual(modeOf(r), { mode, reason: "resolved" },
         "a stop error must not drag a non-pde mode to legacy");
       assert.equal(stopReads(), 0, `${mode} must not read the stop at all`);
     }
@@ -211,5 +225,79 @@ describe("DISCOVERY_ENGINE_MODE — caching (mechanic M5)", () => {
     // D1=B: the name carries no COMPASS_ prefix, so it MUST NOT be read through
     // compass/flags.ts, whose loader filters .like("flag", "COMPASS_%").
     assert.ok(!DISCOVERY_ENGINE_MODE_FLAG.startsWith("COMPASS_"));
+  });
+
+  // ── D6 cohort resolution ────────────────────────────────────────────────────
+  //
+  // The resolver parses metadata.cohort alongside metadata.mode so it rides the
+  // same 30-second cache. What it must never do is let an unreadable cohort
+  // mean "everyone" — the mode fails closed toward legacy, and the cohort fails
+  // closed toward nobody, which are opposite directions for good reason.
+
+  it("N2. mode shadow, cohort absent -> shadow, but nobody is in it", async () => {
+    invalidateDiscoveryEngineModeCache();
+    const { client } = makeClient({ modeRow: { enabled: true, metadata: { mode: "shadow" } } });
+    const r = await resolveDiscoveryEngineMode(client);
+    assert.equal(r.mode, "shadow", "the mode itself still resolves");
+    assert.equal(r.cohort.kind, "none", "but it applies to nobody");
+    assert.equal(r.cohortReason, "absent");
+  });
+
+  it("N3. a malformed cohort is NOT narrowed to a guess", async () => {
+    invalidateDiscoveryEngineModeCache();
+    const { client } = makeClient({
+      modeRow: { enabled: true, metadata: { mode: "shadow", cohort: "all" } },
+    });
+    const r = await resolveDiscoveryEngineMode(client);
+    assert.equal(r.cohort.kind, "none");
+    assert.equal(r.cohortReason, "not_an_object");
+  });
+
+  it("N4. D6=A — an explicit user list survives the round trip", async () => {
+    invalidateDiscoveryEngineModeCache();
+    const { client } = makeClient({
+      modeRow: {
+        enabled: true,
+        metadata: { mode: "shadow", cohort: { kind: "users", userIds: ["u-1", "u-2"] } },
+      },
+    });
+    const r = await resolveDiscoveryEngineMode(client);
+    assert.equal(r.mode, "shadow");
+    assert.equal(r.cohort.kind, "users");
+    assert.equal(r.cohortReason, "parsed");
+    assert.equal(isInDiscoveryCohort(r.cohort, "u-1").included, true);
+    assert.equal(isInDiscoveryCohort(r.cohort, "u-3").included, false);
+  });
+
+  it("N5. legacy always carries a cohort of nobody", async () => {
+    invalidateDiscoveryEngineModeCache();
+    const { client } = makeClient({
+      modeRow: { enabled: true, metadata: { mode: "legacy", cohort: { kind: "all" } } },
+    });
+    const r = await resolveDiscoveryEngineMode(client);
+    assert.equal(r.mode, "legacy");
+    // Legacy is what everyone already receives, so there is no cohort question.
+    // Reading "all" here would invite the idea that legacy applies to some
+    // users and not others.
+    // Even with cohort:{kind:"all"} written in metadata. Legacy is what
+    // everyone already receives, so a populated cohort here could only be
+    // misread as "legacy applies to some users and not others".
+    assert.equal(r.cohort.kind, "none");
+    assert.equal(isInDiscoveryCohort(r.cohort, "u-1").included, false);
+  });
+
+  it("N6. every failure path yields a cohort of nobody", async () => {
+    const cases = [
+      makeClient({ modeRow: null }).client,
+      makeClient({ modeRow: { enabled: false, metadata: { mode: "shadow", cohort: { kind: "all" } } } }).client,
+      makeClient({ modeError: new Error("db down") }).client,
+      null,
+    ];
+    for (const c of cases) {
+      invalidateDiscoveryEngineModeCache();
+      const r = await resolveDiscoveryEngineMode(c);
+      assert.equal(r.mode, "legacy");
+      assert.equal(r.cohort.kind, "none", "a failed resolution must never carry a populated cohort");
+    }
   });
 });

@@ -55,6 +55,10 @@
  */
 import { getFlagRow, isKillSwitchEngaged } from "./featureFlags.js";
 import { logger } from "./logger.js";
+import {
+  parseDiscoveryCohort, COHORT_NONE,
+  type DiscoveryCohort, type CohortParseReason,
+} from "./discoveryCohort.js";
 
 export const DISCOVERY_ENGINE_MODE_FLAG = "DISCOVERY_ENGINE_MODE";
 export const DISCOVERY_PDE_KILL_SWITCH  = "disable_discovery_pde";
@@ -81,9 +85,27 @@ export type ModeReason =
 export interface ResolvedMode {
   mode:   DiscoveryEngineMode;
   reason: ModeReason;
+  /**
+   * WHO the mode applies to (ruling D6). Parsed here so it rides the same
+   * 30-second cache as the mode itself and costs no extra read per request.
+   *
+   * The per-user decision is NOT made here — this resolver is deliberately
+   * user-independent, since it sits above the cache fork and is shared across
+   * requests. Call `isInDiscoveryCohort(resolved.cohort, userId)` at the point
+   * of use.
+   *
+   * On `legacy` this is always `none`, and that is not a placeholder: legacy is
+   * what everyone already gets, so there is no cohort question to answer. A
+   * non-`none` cohort on legacy would invite the reading that legacy applies to
+   * some users and not others.
+   */
+  cohort:       DiscoveryCohort;
+  cohortReason: CohortParseReason;
 }
 
-const LEGACY = (reason: ModeReason): ResolvedMode => ({ mode: "legacy", reason });
+const LEGACY = (reason: ModeReason): ResolvedMode => ({
+  mode: "legacy", reason, cohort: COHORT_NONE, cohortReason: "absent",
+});
 
 // ── Cache (mechanic M5) ───────────────────────────────────────────────────────
 //
@@ -153,7 +175,28 @@ async function resolveUncached(sc: any): Promise<ResolvedMode> {
       return LEGACY("kill_switch_engaged");
     }
 
-    return { mode, reason: "resolved" };
+    // D6 — parse WHO this mode applies to. Fail-closed in the opposite
+    // direction from the mode itself: an unreadable cohort includes NOBODY,
+    // because "shadow, but I could not read who for" must never mean "shadow
+    // everyone". That failure would arrive as load, not as an error.
+    // Legacy carries no cohort, ever. Legacy is what everyone already receives,
+    // so there is no "who" to answer, and a populated cohort sitting on legacy
+    // would invite exactly one misreading: that legacy applies to some users
+    // and not others. Forced here rather than left to every call site to
+    // remember.
+    if (mode === "legacy") {
+      return { mode, reason: "resolved", cohort: COHORT_NONE, cohortReason: "absent" };
+    }
+
+    const parsed = parseDiscoveryCohort((row.metadata as Record<string, unknown> | null)?.cohort);
+    if (parsed.reason !== "parsed") {
+      logger.warn(
+        { mode, cohortReason: parsed.reason, flag: DISCOVERY_ENGINE_MODE_FLAG },
+        "discoveryEngineMode: mode is non-legacy but metadata.cohort is unusable — cohort is NOBODY, so no request will be affected",
+      );
+    }
+
+    return { mode, reason: "resolved", cohort: parsed.cohort, cohortReason: parsed.reason };
   } catch (err) {
     // isKillSwitchEngaged already fails closed internally; this catch covers
     // anything else and keeps the resolver total.

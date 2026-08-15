@@ -43,6 +43,7 @@ import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 // "one ranking pipeline in the tree" checkable rather than aspirational.
 import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
 import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
+import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
 import {
   readPlacesFromDb,
   writePlacesToDb,
@@ -1167,7 +1168,16 @@ router.get("/discovery", async (req, res) => {
       //     rank_events for a page nobody saw;
       //   - it is gated on mode === "shadow", so in legacy mode (today) not one
       //     line of it executes.
-      if (engineMode.mode === "shadow") {
+      // D6 cohort gate. `shadow` alone is not enough: the mode says WHAT, the
+      // cohort says WHO, and without the second the first means everybody.
+      // Operator ruling 2026-08-15 — shadow must not be enabled for any traffic
+      // until this gate exists. Fail-closed: an absent or unreadable cohort
+      // includes nobody, so a misconfiguration costs zero shadow runs rather
+      // than shadowing the entire surface.
+      const shadowCohort = engineMode.mode === "shadow"
+        ? isInDiscoveryCohort(engineMode.cohort, callerUserId)
+        : null;
+      if (shadowCohort?.included) {
         void (async () => {
           try {
             const shadowSc  = getServiceClient();
@@ -1195,6 +1205,8 @@ router.get("/discovery", async (req, res) => {
               pdeSuppressedWrites: outcome.stages.suppressedWrites,
               engineMode:  engineMode.mode,
               modeReason:  engineMode.reason,
+              cohortReason: shadowCohort.reason,
+              cohortBucket: shadowCohort.bucket ?? null,
             });
           } catch (err) {
             req.log.warn({ err }, "discovery: shadow observation failed — the response was unaffected");

@@ -41,22 +41,31 @@
  * were intercepted, so the guard's effectiveness is visible in the data rather
  * than assumed.
  *
- * WHAT IS STILL MISSING BEFORE SHADOW MAY BE TURNED ON — D6=A
- * ===========================================================
- * D6=A stages shadow to INTERNAL ACCOUNTS FIRST, and only then to a fixed
- * user-id-hashed percentage (D6=B). The dispatch this hangs off has no such
- * scoping: `DISCOVERY_ENGINE_MODE` is one global flag with one global value.
+ * WHO IT APPLIES TO — D6, and the gate is now in place
+ * =====================================================
+ * D6=A stages shadow to INTERNAL ACCOUNTS FIRST, then to a fixed
+ * user-id-hashed percentage (D6=B); everyone (C) is the owner's alone.
  *
- * So `shadow` as built today would shadow EVERY authenticated cache-A serve,
- * not a cohort. That is not what D6=A ruled, and the difference is not
- * cosmetic: each shadowed serve adds a follow-graph read, an interests read and
- * a DRS pass after the response — off the response path, but real database load
- * proportional to all traffic rather than to a chosen sample.
+ * `DISCOVERY_ENGINE_MODE` is one global flag with one global value, so the mode
+ * alone says WHAT and never WHO — and without a WHO, `shadow` means everybody.
+ * Operator ruling 2026-08-15: shadow must not be enabled for any traffic until
+ * that gate exists. It does now: `lib/discoveryCohort.ts`, read from
+ * `metadata.cohort` on the same flag row, and applied at the call site in
+ * routes/discovery.ts.
  *
- * The cohort gate is Stage 2b's first piece of work, and it is a PRECONDITION
- * of enabling this mode, not a refinement of it. Recorded here rather than only
- * in a ruling document because this file is what someone reads before flipping
- * the switch.
+ * It fails closed in the OPPOSITE direction from the mode resolver, which is
+ * the part worth remembering. The mode falls back to `legacy` because "keep
+ * doing what you were doing" is the safe answer for a mode. A cohort that
+ * cannot be read includes NOBODY, because "shadow, but I could not read who
+ * for" must never mean "shadow everyone" — that failure would arrive silently,
+ * as load, not as an error.
+ *
+ * Every row records which cohort admitted the user (`cohort_reason`, and
+ * `cohort_bucket` for D6=B). D6=A rows come from a handful of internal accounts
+ * and prove only that the harness runs; D6=B rows are the sample the divergence
+ * measurement is actually made from. Pooling them would be a category error,
+ * and a row that does not say where it came from will eventually be read as
+ * coming from wherever the reader assumes.
  *
  * READ THIS BEFORE INTERPRETING A ZERO-DIVERGENCE ROW
  * ===================================================
@@ -147,6 +156,18 @@ export interface ShadowServeParams {
 
   engineMode: string;
   modeReason: string;
+
+  /**
+   * Which D6 cohort admitted this user — 'user_listed' (A), 'percent_in' (B)
+   * or 'kind_all' (C) — and, for B, the 0-99 hash bucket.
+   *
+   * Required rather than optional. A shadow row whose population is unknown is
+   * a row that will eventually be pooled with a population it does not belong
+   * to, and internal-account rows pooled with real-user rows would corrupt the
+   * one measurement this table exists to produce.
+   */
+  cohortReason: string;
+  cohortBucket?: number | null;
 }
 
 /**
@@ -191,6 +212,8 @@ export async function logDiscoveryShadowServe(sc: any, p: ShadowServeParams): Pr
 
       engine_mode: p.engineMode,
       mode_reason: p.modeReason,
+      cohort_reason: p.cohortReason,
+      cohort_bucket: p.cohortBucket ?? null,
     });
 
     if (error) {
