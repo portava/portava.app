@@ -886,3 +886,104 @@ describe("GET /api/places/fsq-photo — dead CDN link: photoUrl null + result NO
     );
   });
 });
+
+// ── L. HEAD check timeout — atomic photoUrl+reason check + total retry count ───
+//
+// Scenario H proves the timeout path works, but its two `it` blocks test
+// photoUrl and the retry in separate, order-dependent assertions — the first
+// `it` never confirms `reason` is absent in the same response, and the
+// retry count is only meaningful because the second `it` happens to run after
+// the first.
+//
+// This scenario closes both gaps:
+//   1. A single `it` receives one response and atomically confirms that
+//      `photoUrl` is a non-empty string AND `reason` is absent — there is no
+//      way for these properties to come from different network round-trips.
+//   2. A final audit `it` (no extra request) checks that `fsqCallCount` equals
+//      exactly 2 after both earlier `it` blocks have run — asserting the total
+//      retry count independent of execution order.
+
+describe("GET /api/places/fsq-photo — HEAD timeout: atomic photoUrl+reason + total retry audit", () => {
+  let server: Server;
+  let url: string;
+  let fsqCallCount = 0;
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  before(() => {
+    process.env.FOURSQUARE_API_KEY = "test-fsq-key-head-timeout-atomic";
+    // Unique name+coords ensure no cache collision with any other describe block.
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        fsqCallCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              { photos: [{ prefix: "https://fastly.4sqi.net/img/general/", suffix: "/timeout.jpg" }] },
+            ],
+          }),
+        } as Response;
+      }
+      // HEAD liveness check throws — simulates a network timeout or connectivity blip.
+      if (reqUrl.includes("4sqi.net") && init?.method === "HEAD") {
+        throw new Error("AbortError: HEAD check timed out");
+      }
+      return originalFetch(input, init);
+    };
+  });
+
+  // Request 1 — atomic assertion on a single response object.
+  // Both properties are read from the same body, so there is no possibility of
+  // photoUrl coming from one request and reason from another.
+  it("first request: same response has a non-empty photoUrl string AND no reason field (atomic)", async () => {
+    const { body } = await getPhoto(url, { name: "Timeout Shack Atomic", lat: 66.0, lng: -5.0 });
+    assert.equal(
+      typeof body.photoUrl,
+      "string",
+      `expected photoUrl to be a string when HEAD times out, got ${JSON.stringify(body.photoUrl)}`,
+    );
+    assert.ok(
+      body.photoUrl.length > 0,
+      `expected a non-empty photoUrl, got an empty string`,
+    );
+    assert.equal(
+      body.reason,
+      undefined,
+      `expected reason to be absent (undefined) on the same response; got ${JSON.stringify(body.reason)}`,
+    );
+  });
+
+  // Request 2 — verify the unverified URL was not cached.
+  it("second request re-queries FSQ (fsqCallCount rises to 2 — unverified URL was not cached)", async () => {
+    await getPhoto(url, { name: "Timeout Shack Atomic", lat: 66.0, lng: -5.0 });
+    assert.equal(
+      fsqCallCount,
+      2,
+      `expected 2 FSQ calls after 2 requests when HEAD times out (no caching of unverified URLs), got ${fsqCallCount}`,
+    );
+  });
+
+  // Audit — no extra request; asserts the total count accumulated by both
+  // prior `it` blocks equals exactly 2 regardless of execution order.
+  it("total FSQ call count is exactly 2 — confirming neither timed-out result was written to cache", () => {
+    assert.equal(
+      fsqCallCount,
+      2,
+      `total FSQ call count should be 2 (one per request); got ${fsqCallCount}. ` +
+        `A count < 2 means a timed-out HEAD result was incorrectly served from cache.`,
+    );
+  });
+});
