@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import express from "express";
 import pino from "pino";
-import placesRouter, { _setGooglePhotoCacheMaxForTest } from "../routes/places.js";
+import placesRouter from "../routes/places.js";
 
 // ── fetch stub ────────────────────────────────────────────────────────────────
 
@@ -78,7 +78,6 @@ after(async () => {
 });
 
 beforeEach(() => {
-  _setGooglePhotoCacheMaxForTest(Infinity); // clear the server-side cache between tests
   process.env.GOOGLE_MAPS_API_KEY = "test-google-key";
   googleResponder = null;
 });

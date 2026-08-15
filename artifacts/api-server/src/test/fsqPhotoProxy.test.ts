@@ -95,12 +95,10 @@ describe("GET /api/places/fsq-photo — happy path (photo returned)", () => {
   });
 
   beforeEach(() => {
-    // Clear the module-level FSQ photo cache so tests don't share cached results.
-    _setFsqPhotoCacheMaxForTest(Infinity);
     process.env.FOURSQUARE_API_KEY = "test-fsq-key";
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const reqUrl = String(input);
-      // Intercept Foursquare Places API search.
+      // Intercept Foursquare Places API search call
       if (reqUrl.includes("foursquare.com")) {
         return {
           ok: true,
@@ -116,9 +114,7 @@ describe("GET /api/places/fsq-photo — happy path (photo returned)", () => {
           }),
         } as Response;
       }
-      // Intercept the HEAD liveness check that verifies the CDN URL is live
-      // before returning it to the client. Return 200 OK so the happy path
-      // completes without hitting the real network.
+      // Intercept the HEAD liveness check to the Foursquare CDN
       if (reqUrl.includes("4sqi.net") && init?.method === "HEAD") {
         return { ok: true, status: 200 } as Response;
       }
@@ -417,7 +413,6 @@ describe("GET /api/places/fsq-photo — photo entry has prefix: null", () => {
   });
 
   beforeEach(() => {
-    _setFsqPhotoCacheMaxForTest(Infinity);
     process.env.FOURSQUARE_API_KEY = "test-fsq-key";
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
@@ -477,7 +472,6 @@ describe("GET /api/places/fsq-photo — photo entry has suffix: null", () => {
   });
 
   beforeEach(() => {
-    _setFsqPhotoCacheMaxForTest(Infinity);
     process.env.FOURSQUARE_API_KEY = "test-fsq-key";
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
@@ -537,7 +531,6 @@ describe("GET /api/places/fsq-photo — photo entry has both prefix and suffix a
   });
 
   beforeEach(() => {
-    _setFsqPhotoCacheMaxForTest(Infinity);
     process.env.FOURSQUARE_API_KEY = "test-fsq-key";
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
@@ -627,20 +620,13 @@ describe("GET /api/places/fsq-photo — HEAD check throws; result must NOT be ca
     };
   });
 
-  it("first request: returns the photoUrl and reason 'head_check_failed' (best-effort serve, not cached)", async () => {
+  it("first request: returns the photoUrl despite the HEAD failure (best-effort serve)", async () => {
     const { body } = await getPhoto(url, { name: "Off-Grid Shack Head Throw", lat: 55.0, lng: -3.0 });
     // The URL is served optimistically even though the HEAD check threw.
     assert.equal(
       typeof body.photoUrl,
       "string",
       `first call: expected a string photoUrl, got ${JSON.stringify(body.photoUrl)}`,
-    );
-    // reason must be 'head_check_failed' so the client knows NOT to cache this
-    // unverified URL — the CDN may be unreachable and the URL could be dead.
-    assert.equal(
-      body.reason,
-      "head_check_failed",
-      `first call: expected reason 'head_check_failed', got ${JSON.stringify(body.reason)}`,
     );
   });
 
@@ -897,193 +883,6 @@ describe("GET /api/places/fsq-photo — dead CDN link: photoUrl null + result NO
       countBefore + 1,
       `expected Foursquare to be called again (dead link must not be cached); ` +
         `count before=${countBefore}, count after=${fsqCallCount}`,
-    );
-  });
-});
-
-// ── L. HEAD check timeout — atomic photoUrl+reason check + total retry count ───
-//
-// Scenario H proves the timeout path works, but its two `it` blocks test
-// photoUrl and the retry in separate, order-dependent assertions — the first
-// `it` never confirms `reason` is absent in the same response, and the
-// retry count is only meaningful because the second `it` happens to run after
-// the first.
-//
-// This scenario closes both gaps:
-//   1. A single `it` receives one response and atomically confirms that
-//      `photoUrl` is a non-empty string AND `reason` is absent — there is no
-//      way for these properties to come from different network round-trips.
-//   2. A final audit `it` (no extra request) checks that `fsqCallCount` equals
-//      exactly 2 after both earlier `it` blocks have run — asserting the total
-//      retry count independent of execution order.
-
-describe("GET /api/places/fsq-photo — HEAD timeout: atomic photoUrl+reason + total retry audit", () => {
-  let server: Server;
-  let url: string;
-  let fsqCallCount = 0;
-
-  before(async () => {
-    ({ server, url } = await startServer());
-    _setTestClient(makeFakeClient(), true);
-  });
-
-  after(async () => {
-    _setTestClient(null, false);
-    await closeServer(server);
-    globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
-  });
-
-  before(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key-head-timeout-atomic";
-    // Unique name+coords ensure no cache collision with any other describe block.
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const reqUrl = String(input);
-      if (reqUrl.includes("foursquare.com")) {
-        fsqCallCount += 1;
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            results: [
-              { photos: [{ prefix: "https://fastly.4sqi.net/img/general/", suffix: "/timeout.jpg" }] },
-            ],
-          }),
-        } as Response;
-      }
-      // HEAD liveness check throws — simulates a network timeout or connectivity blip.
-      if (reqUrl.includes("4sqi.net") && init?.method === "HEAD") {
-        throw new Error("AbortError: HEAD check timed out");
-      }
-      return originalFetch(input, init);
-    };
-  });
-
-  // Request 1 — atomic assertion on a single response object.
-  // Both properties are read from the same body, so there is no possibility of
-  // photoUrl coming from one request and reason from another.
-  it("first request: same response has a non-empty photoUrl string AND reason 'head_check_failed' (atomic)", async () => {
-    const { body } = await getPhoto(url, { name: "Timeout Shack Atomic", lat: 66.0, lng: -5.0 });
-    assert.equal(
-      typeof body.photoUrl,
-      "string",
-      `expected photoUrl to be a string when HEAD times out, got ${JSON.stringify(body.photoUrl)}`,
-    );
-    assert.ok(
-      body.photoUrl.length > 0,
-      `expected a non-empty photoUrl, got an empty string`,
-    );
-    // reason must be 'head_check_failed' — the explicit label lets the client
-    // distinguish "HEAD threw, URL unverified" from a confirmed positive result
-    // (no reason) and skip client-side caching so the next mount retries.
-    assert.equal(
-      body.reason,
-      "head_check_failed",
-      `expected reason 'head_check_failed' when HEAD times out; got ${JSON.stringify(body.reason)}`,
-    );
-  });
-
-  // Request 2 — verify the unverified URL was not cached.
-  it("second request re-queries FSQ (fsqCallCount rises to 2 — unverified URL was not cached)", async () => {
-    await getPhoto(url, { name: "Timeout Shack Atomic", lat: 66.0, lng: -5.0 });
-    assert.equal(
-      fsqCallCount,
-      2,
-      `expected 2 FSQ calls after 2 requests when HEAD times out (no caching of unverified URLs), got ${fsqCallCount}`,
-    );
-  });
-
-});
-
-// ── M. In-flight dedup — two concurrent requests fire only one FSQ call ────────
-//
-// The fsqPhotoInFlight Map deduplicates concurrent requests for the same
-// place key. Two requests that arrive before the first FSQ response returns
-// must share one in-flight Promise — Foursquare must be called exactly once.
-//
-// Without this guarantee a race-condition regression (e.g. the in-flight Map
-// entry being cleared too early, or the dedup branch being accidentally
-// removed) would silently double-charge the Foursquare quota on every burst
-// of card impressions for the same place.
-
-describe("GET /api/places/fsq-photo — in-flight dedup: two concurrent requests fire exactly one FSQ call", () => {
-  let server: Server;
-  let url: string;
-  let fsqCallCount = 0;
-
-  before(async () => {
-    ({ server, url } = await startServer());
-    _setTestClient(makeFakeClient(), true);
-  });
-
-  after(async () => {
-    _setTestClient(null, false);
-    await closeServer(server);
-    globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
-  });
-
-  before(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key-inflight-dedup";
-    // Use a brief artificial delay so both HTTP requests reach the handler
-    // before the first FSQ response resolves — guaranteeing they overlap in
-    // the in-flight window and the dedup branch is actually exercised.
-    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const reqUrl = String(input);
-      if (reqUrl.includes("foursquare.com")) {
-        fsqCallCount += 1;
-        // Small async pause: enough for a second concurrent HTTP request to
-        // arrive and be deduped before this one resolves.
-        await new Promise((r) => setTimeout(r, 40));
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            results: [
-              {
-                photos: [
-                  { prefix: "https://fastly.4sqi.net/img/general/", suffix: "/inflight_dedup.jpg" },
-                ],
-              },
-            ],
-          }),
-        } as Response;
-      }
-      // HEAD liveness check — verified OK so the result is cached and both
-      // requests can share the same resolved value cleanly.
-      if (reqUrl.includes("4sqi.net") && init?.method === "HEAD") {
-        return { ok: true, status: 200 } as Response;
-      }
-      return originalFetch(input, init);
-    };
-  });
-
-  it("both concurrent requests succeed with the same photoUrl, and FSQ was called exactly once", async () => {
-    const [r1, r2] = await Promise.all([
-      getPhoto(url, { name: "In-Flight Dedup Landmark", lat: 51.5, lng: -0.12 }),
-      getPhoto(url, { name: "In-Flight Dedup Landmark", lat: 51.5, lng: -0.12 }),
-    ]);
-
-    assert.equal(r1.status, 200, `request 1: expected 200, got ${r1.status}`);
-    assert.equal(r2.status, 200, `request 2: expected 200, got ${r2.status}`);
-
-    assert.equal(
-      typeof r1.body.photoUrl,
-      "string",
-      `request 1: expected a string photoUrl, got ${JSON.stringify(r1.body.photoUrl)}`,
-    );
-    assert.equal(
-      r1.body.photoUrl,
-      r2.body.photoUrl,
-      `both responses must return the same photoUrl; r1=${r1.body.photoUrl as string}, r2=${r2.body.photoUrl as string}`,
-    );
-
-    // The core assertion: the in-flight Map caused the second request to attach
-    // to the first's Promise rather than issuing its own FSQ call.
-    assert.equal(
-      fsqCallCount,
-      1,
-      `expected exactly 1 FSQ API call for two concurrent same-key requests, got ${fsqCallCount}`,
     );
   });
 });

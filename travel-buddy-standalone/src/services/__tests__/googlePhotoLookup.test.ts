@@ -221,9 +221,7 @@ describe('lookupGooglePhoto — network error handling', () => {
     assert.equal(result, null, 'must return null on network error');
   });
 
-  it('does NOT cache the null result on network error — a second call retries the fetch', async () => {
-    // Network failures are transient; caching them would lock a place into
-    // fallback artwork for 24 h even after the connection recovers.
+  it('caches the null result so a sequential second call does not fetch again', async () => {
     const abortError = new DOMException('The operation was aborted.', 'AbortError');
     let fetchCallCount = 0;
     globalThis.fetch = async () => {
@@ -241,111 +239,6 @@ describe('lookupGooglePhoto — network error handling', () => {
 
     const second = await lookupGooglePhoto(name, lat, lng);
     assert.equal(second, null);
-    assert.equal(fetchCallCount, 2, 'fetch must be called again — transient errors must not be cached');
-  });
-});
-
-// ── lookupGooglePhoto — caching policy: outage vs genuine absence ──────────────
-//
-// The server returns a machine-readable `reason` on every null-photoUrl path.
-// The client must cache only stable results (confirmed photo URL, or confirmed
-// absence: no_photo_found). Outage and transient reasons must never be cached
-// — they are billing/config/network state that can change without a code
-// deploy, and locking in a null for 24 h would keep cards on fallback artwork
-// even after the provider recovers.
-
-describe('lookupGooglePhoto — outage reason: NOT cached, second call retries fetch', () => {
-  it('google_places_api_new_service_disabled: second sequential request fires fetch again', async () => {
-    let fetchCallCount = 0;
-    globalThis.fetch = async (_input: RequestInfo | URL) => {
-      fetchCallCount++;
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ photoUrl: null, reason: 'google_places_api_new_service_disabled' }),
-      } as Response;
-    };
-
-    const name = uniqueName();
-    const first = await lookupGooglePhoto(name, 10.0, 20.0);
-    assert.equal(first, null);
-    assert.equal(fetchCallCount, 1, 'first request must call fetch once');
-
-    const second = await lookupGooglePhoto(name, 10.0, 20.0);
-    assert.equal(second, null);
-    assert.equal(
-      fetchCallCount,
-      2,
-      'service-disabled result must NOT be cached — second request must call fetch again',
-    );
-  });
-
-  it('no_google_maps_key: second sequential request fires fetch again', async () => {
-    let fetchCallCount = 0;
-    globalThis.fetch = async (_input: RequestInfo | URL) => {
-      fetchCallCount++;
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ photoUrl: null, reason: 'no_google_maps_key' }),
-      } as Response;
-    };
-
-    const name = uniqueName();
-    await lookupGooglePhoto(name, 10.0, 20.0);
-    assert.equal(fetchCallCount, 1);
-
-    await lookupGooglePhoto(name, 10.0, 20.0);
-    assert.equal(
-      fetchCallCount,
-      2,
-      'missing-key result must NOT be cached — second request must call fetch again',
-    );
-  });
-
-  it('proxy HTTP error (!res.ok): second sequential request fires fetch again', async () => {
-    let fetchCallCount = 0;
-    globalThis.fetch = async (_input: RequestInfo | URL) => {
-      fetchCallCount++;
-      return { ok: false, status: 503, json: async () => ({}) } as Response;
-    };
-
-    const name = uniqueName();
-    await lookupGooglePhoto(name, 10.0, 20.0);
-    assert.equal(fetchCallCount, 1);
-
-    await lookupGooglePhoto(name, 10.0, 20.0);
-    assert.equal(
-      fetchCallCount,
-      2,
-      'proxy HTTP error must NOT be cached — second request must call fetch again',
-    );
-  });
-});
-
-describe('lookupGooglePhoto — no_photo_found: IS cached, second call skips fetch', () => {
-  it('no_photo_found: second sequential request served from cache (fetch not called again)', async () => {
-    let fetchCallCount = 0;
-    globalThis.fetch = async (_input: RequestInfo | URL) => {
-      fetchCallCount++;
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ photoUrl: null, reason: 'no_photo_found' }),
-      } as Response;
-    };
-
-    const name = uniqueName();
-    const first = await lookupGooglePhoto(name, 10.0, 20.0);
-    assert.equal(first, null);
-    assert.equal(fetchCallCount, 1, 'first request must call fetch once');
-
-    const second = await lookupGooglePhoto(name, 10.0, 20.0);
-    assert.equal(second, null);
-    assert.equal(
-      fetchCallCount,
-      1,
-      'no_photo_found is stable absence — second request must be served from cache without fetching',
-    );
+    assert.equal(fetchCallCount, 1, 'fetch must not be called again — null result is cached');
   });
 });

@@ -204,34 +204,21 @@ export function DisplayMediaImage({
   const resolved = resolveDisplayMedia([uri]);
   const [phase, setPhase] = useState<Phase>(resolved ? 'loading' : 'error');
 
-  // Initialized with the plain URI so ExpoImage mounts immediately (correct for
-  // flag-OFF, the common case, and required for component tests). useHydratedMedia
-  // updates to the signed URL once the async call resolves.
-  //
-  // Declared BEFORE the prevUri guard so that both setPhase and setResolvedSource
-  // are in scope when the guard calls them during a URI prop change.
-  const [resolvedSource, setResolvedSource] = useState<{ uri: string } | null>(
-    resolved ? { uri: resolved } : null,
-  );
-
-  // Re-evaluate when the URI prop changes (e.g. list recycling or a deferred
-  // FSQ photo URL arriving after the initial fallback render).
-  //
-  // Both phase AND resolvedSource must be reset together.  If only phase is
-  // reset, ExpoImage keeps the *old* resolved source (e.g. the generic-place
-  // fallback WebP that 404d in the Expo web dev server) and fires onError
-  // immediately — locking the card in error phase even though a real photo URL
-  // has now arrived.  Resetting resolvedSource to the new URI here ensures
-  // ExpoImage tries the correct URL on the very next render; useHydratedMedia
-  // will overwrite it with a signed URL later when needed (private-bucket case).
+  // Re-evaluate when the URI prop changes (e.g. list recycling).
   const prevUri = useRef(uri);
   const reHydrated = useRef(false);
   if (prevUri.current !== uri) {
     prevUri.current = uri;
     setPhase(resolved ? 'loading' : 'error');
-    setResolvedSource(resolved ? { uri: resolved } : null);
     reHydrated.current = false;
   }
+
+  // Initialized with the plain URI so ExpoImage mounts immediately (correct for
+  // flag-OFF, the common case, and required for component tests). useHydratedMedia
+  // updates to the signed URL once the async call resolves.
+  const [resolvedSource, setResolvedSource] = useState<{ uri: string } | null>(
+    resolved ? { uri: resolved } : null,
+  );
 
   // Hydrate via signed-URL layer — replaces the old mediaSource() useEffect.
   const { resolved: hydratedMap } = useHydratedMedia(resolved ? [resolved] : []);
