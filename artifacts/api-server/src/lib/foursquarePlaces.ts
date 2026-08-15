@@ -133,7 +133,22 @@ export async function searchFoursquare(q: string, opts: FoursquareOptions = {}):
 /** Result of a photo lookup. `reason` is populated only when photoUrl is null. */
 export interface FoursquarePhotoResult {
   photoUrl: string | null;
-  reason?: "no_foursquare_key" | "no_match" | "no_photo" | "auth_failed" | "request_failed";
+  /**
+   * Why there is no photo. Populated only when photoUrl is null.
+   *
+   * `foursquare_http_<status>` is deliberately per-status rather than a single
+   * bucket. A 429 is rate limiting — the thing Cache A exists to protect us
+   * from — and it must not read the same as a 404. Collapsing them would hide
+   * the one failure mode whose remedy is "back off" behind the one whose remedy
+   * is "nothing".
+   */
+  reason?:
+    | "no_foursquare_key"
+    | "no_match"
+    | "no_photo"
+    | "auth_failed"
+    | "request_failed"
+    | `foursquare_http_${number}`;
 }
 
 /**
@@ -190,7 +205,14 @@ export async function lookupFoursquarePhoto(
       }
       return { photoUrl: null, reason: "auth_failed" };
     }
-    if (!res.ok) throw new Error(`Foursquare ${res.status}`);
+    if (!res.ok) {
+      // Per-status, not a single bucket. 429 in particular is rate limiting and
+      // is the one status whose remedy differs from all the others.
+      if (res.status === 429) {
+        logger.warn({ status: res.status, q }, "Foursquare RATE LIMITED on photo lookup");
+      }
+      return { photoUrl: null, reason: `foursquare_http_${res.status}` as const };
+    }
 
     const body: any = await res.json();
     const first = Array.isArray(body?.results) ? body.results[0] : null;

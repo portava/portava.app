@@ -179,13 +179,19 @@ describe("lookupFoursquarePhoto — every failure is a null with a REASON", () =
     }
   });
 
-  it("L. a 500 is request_failed, and does not throw", async () => {
-    const { fn } = makeFetch(500, { message: "boom" });
-    globalThis.fetch = fn;
-    assert.deepEqual(
-      await lookupFoursquarePhoto("V", null, null),
-      { photoUrl: null, reason: "request_failed" },
-    );
+  it("L. a non-auth HTTP error reports its STATUS, not a single bucket", async () => {
+    // 429 is rate limiting -- the failure whose remedy is "back off" -- and it
+    // must not read the same as a 404, whose remedy is nothing. Adopted from the
+    // parallel implementation; it was the one thing that version did better.
+    for (const status of [404, 429, 500, 503]) {
+      const { fn } = makeFetch(status, { message: "boom" });
+      globalThis.fetch = fn;
+      assert.deepEqual(
+        await lookupFoursquarePhoto("V", null, null),
+        { photoUrl: null, reason: `foursquare_http_${status}` },
+        `status ${status} must be distinguishable`,
+      );
+    }
   });
 
   it("M. a rejecting fetch is request_failed, and does not throw", async () => {

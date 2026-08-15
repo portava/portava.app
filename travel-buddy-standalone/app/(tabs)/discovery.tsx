@@ -193,10 +193,90 @@ function DiscoveryHubScreen() {
     setDetailVisible(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.placeId]);
+
+  // Web back-nav guard for the place detail sheet.
+  //
+  // Without this, the sheet opens with no browser history entry, so pressing
+  // Back navigates the whole tab away (to /passport or wherever the user came
+  // from) instead of just closing the sheet.
+  //
+  // When the sheet becomes visible on web we push a synthetic history entry at
+  // the same URL.  A Back press fires `popstate`, which we intercept to close
+  // the sheet and absorb the navigation.  When the sheet is dismissed via the
+  // close button instead, the cleanup callback pops the synthetic entry so the
+  // history stack stays clean for future back presses.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!detailVisible) return;
+
+    // Push a history entry with the same URL so the address bar doesn't change.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    w.history.pushState({ _discoverySheet: true }, '', w.location.href);
+
+    const handlePop = () => {
+      setDetailVisible(false);
+    };
+    w.addEventListener('popstate', handlePop);
+
+    return () => {
+      w.removeEventListener('popstate', handlePop);
+      // If the sheet was closed through the UI (not Back), we still have the
+      // synthetic entry on the stack.  Pop it silently so subsequent Back
+      // presses go to the correct previous screen.
+      if (w.history.state?._discoverySheet) {
+        w.history.back();
+      }
+    };
+  }, [detailVisible]);
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [layoverOpen, setLayoverOpen] = useState(false);
   const [routeBuilderDraft, setRouteBuilderDraft] = useState<RouteStopDraft | null>(null);
   const [routeBuilderOpen, setRouteBuilderOpen] = useState(false);
+
+  // Web back-nav guard for LayoverModeSheet — mirrors the detailVisible guard above.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!layoverOpen) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    w.history.pushState({ _layoverSheet: true }, '', w.location.href);
+
+    const handlePop = () => {
+      setLayoverOpen(false);
+    };
+    w.addEventListener('popstate', handlePop);
+
+    return () => {
+      w.removeEventListener('popstate', handlePop);
+      if (w.history.state?._layoverSheet) {
+        w.history.back();
+      }
+    };
+  }, [layoverOpen]);
+
+  // Web back-nav guard for RouteBuilderSheet — mirrors the detailVisible guard above.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    if (!routeBuilderOpen) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    w.history.pushState({ _routeBuilderSheet: true }, '', w.location.href);
+
+    const handlePop = () => {
+      setRouteBuilderOpen(false);
+    };
+    w.addEventListener('popstate', handlePop);
+
+    return () => {
+      w.removeEventListener('popstate', handlePop);
+      if (w.history.state?._routeBuilderSheet) {
+        w.history.back();
+      }
+    };
+  }, [routeBuilderOpen]);
   const [submitPlaceOpen, setSubmitPlaceOpen] = useState(false);
   const [communityRefreshKey, setCommunityRefreshKey] = useState(0);
   const [categoryCounts, setCategoryCounts] = useState<Partial<Record<DiscoveryCategory, number>>>({});
