@@ -144,6 +144,85 @@ step 3 needs.
 
 ---
 
+## METHODOLOGY DEVIATION — ruled 2026-08-15, and it belongs in the verdict
+
+**There is no deployed frontend to browse.** The runbook's browser-hits-production
+step could not be satisfied literally. The agent flagged the deviation and
+offered options rather than substituting quietly, which was correct.
+
+**RULED: option 1 — point a LOCAL dev frontend's `EXPO_PUBLIC_API_BASE_URL` at
+the PRODUCTION backend and run the probe from there.**
+
+**The reasoning, which is the part that must survive.** Phase B measures
+**server-side** behaviour: whether discovery serve points log rows when
+exercised. Those serve points are api-server routes. **Which frontend served the
+JavaScript does not change which route fires or whether it writes.** What matters
+is that requests reach the production API and the production database, and
+option 1 does exactly that.
+
+**Option 2 — registering and deploying `travel-buddy-standalone` as a real
+artifact — was explicitly REFUSED.** That is a new production surface and a
+publish, which is the owner's trigger.
+
+### The three conditions imposed with the ruling
+
+| | Condition |
+|---|---|
+| **1** | The agent must **first confirm the local frontend is equivalent to the deployed build for serve-path purposes, and STOP if it is not.** Measuring a different client would make the result unreadable. |
+| **2** | It must **document the exact env value used**, that **backend and database were production**, and that the **frontend was local**. |
+| **3** | Everything else per this runbook **unchanged** — window not verdict, authenticated throughout, browse paths prioritised. |
+
+### State the substitution PLAINLY in the verdict, not in a footnote
+
+A reader six months from now needs to know **the client was local and the backend
+was production**. That is exactly the kind of detail that turns a clean result
+into a disputed one when it surfaces later instead of upfront.
+
+---
+
+## ⚠ PRE-FLIGHT — CORS will silently decide whether this probe is readable at all
+
+**Established by measurement against production, 2026-08-15. Do this before
+navigating anything.** It is a direct consequence of the deviation above: a local
+frontend sends a **different `Origin` header**, and production does not accept
+all of them.
+
+| Origin the frontend runs on | Production response | Probe viable? |
+|---|---|---|
+| `https://<id>.kirk.replit.dev` (and **any** subdomain of it, incl. `*.expo.kirk.replit.dev`) | **200**, `ACAO` echoed | ✅ **yes** |
+| `http://localhost:3000` / `http://localhost:8081` | **HTTP 500**, no `ACAO` | ❌ **NO — every request fails** |
+| No `Origin` header (native app, curl, server-to-server) | **200** | ✅ yes |
+
+> **THIS IS THE TRAP THIS WHOLE PHASE EXISTS TO AVOID.** Run the probe from
+> `localhost` and **every request 500s, zero rows are written, and the report
+> shows an unexercised surface** — which is indistinguishable from the surface
+> being unreachable. It would look exactly like a Phase B failure and would be an
+> artefact of the probe's own origin.
+>
+> Worse, the rejection surfaces as a **500, not as a clean CORS error**, so it
+> reads as a server fault rather than a configuration mismatch.
+
+**Therefore: run the frontend on the Replit dev domain, NOT on `localhost`.**
+
+**Verify before navigating** — substitute the actual origin the frontend runs on:
+
+```bash
+curl -s -o /dev/null -D - \
+  -H "Origin: https://<the-origin-the-frontend-runs-on>" \
+  'https://portava.replit.app/api/places/search?q=Barcelona' \
+  | grep -i 'access-control-allow-origin\|^HTTP'
+```
+
+**Expect `HTTP/2 200` and an `access-control-allow-origin` echoing your origin.**
+If you get a 500 with no `access-control-allow-origin`, **STOP** — that is
+condition 1 failing, and any rows you collect afterwards are unreadable.
+
+**Record the frontend's actual origin in the probe report** alongside the env
+value. It is part of condition 2, and without it the CORS question cannot be
+re-checked later.
+
+---
+
 ## Step 2 — The probe (run by the OBSERVER)
 
 **Record and report these three things. They are the observer's entire output:**
@@ -154,6 +233,12 @@ step 3 needs.
 3. **What was navigated**, in enough detail to say which serve points were
    *attempted* — so that a serve point which produced no row can be told apart
    from one that was never exercised.
+4. **The exact `EXPO_PUBLIC_API_BASE_URL` value used**, the **origin the
+   frontend actually ran on**, and an explicit statement that **backend and
+   database were production while the frontend was local** (condition 2 of the
+   methodology ruling above).
+5. **The pre-flight CORS check result** — the `HTTP` status and
+   `access-control-allow-origin` header observed for that origin.
 
 > **Report the window; do not report the verdict.** Whether the probe "worked" is
 > the verifier's call, made against the table. An observer's impression that
