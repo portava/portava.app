@@ -41,6 +41,23 @@
  * were intercepted, so the guard's effectiveness is visible in the data rather
  * than assumed.
  *
+ * WHAT IS STILL MISSING BEFORE SHADOW MAY BE TURNED ON — D6=A
+ * ===========================================================
+ * D6=A stages shadow to INTERNAL ACCOUNTS FIRST, and only then to a fixed
+ * user-id-hashed percentage (D6=B). The dispatch this hangs off has no such
+ * scoping: `DISCOVERY_ENGINE_MODE` is one global flag with one global value.
+ *
+ * So `shadow` as built today would shadow EVERY authenticated cache-A serve,
+ * not a cohort. That is not what D6=A ruled, and the difference is not
+ * cosmetic: each shadowed serve adds a follow-graph read, an interests read and
+ * a DRS pass after the response — off the response path, but real database load
+ * proportional to all traffic rather than to a chosen sample.
+ *
+ * The cohort gate is Stage 2b's first piece of work, and it is a PRECONDITION
+ * of enabling this mode, not a refinement of it. Recorded here rather than only
+ * in a ruling document because this file is what someone reads before flipping
+ * the switch.
+ *
  * READ THIS BEFORE INTERPRETING A ZERO-DIVERGENCE ROW
  * ===================================================
  * `applyFilters` does not only filter. When `sortBy` is `rating`, `popular` or
