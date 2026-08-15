@@ -263,6 +263,78 @@ describe("GET /api/places/fsq-photo — Foursquare 401 auth error", () => {
   });
 });
 
+// ── C2. Foursquare responds 429 — OUT OF CREDITS, not "busy" ─────────────────
+//
+// This is the state the live account was actually in on 2026-08-15, confirmed
+// by direct call: HTTP 429 with body
+// {"message":"Your account has no API credits remaining..."}.
+//
+// It matters that this does NOT collapse into the generic `foursquare_http_429`
+// bucket. Ordinary 429 means "slow down, retry shortly"; this one means the
+// account is out of credits and NO place will return a photo until someone
+// tops it up. Reporting a persistent billing state as a transient rate limit
+// invites a retry that can never succeed, and hides an outage behind a word
+// that sounds temporary.
+describe("GET /api/places/fsq-photo — Foursquare 429 out of credits", () => {
+  let server: Server;
+  let url: string;
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+  });
+
+  beforeEach(() => {
+    process.env.FOURSQUARE_API_KEY = "valid-but-broke";
+    globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        return {
+          ok: false,
+          status: 429,
+          json: async () => ({
+            message:
+              "Your account has no API credits remaining. Please visit your organization’s billing page",
+          }),
+        } as Response;
+      }
+      return originalFetch(input, _init);
+    };
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  it("still degrades gracefully with HTTP 200 and a null photoUrl", async () => {
+    const { status, body } = await getPhoto(url, { name: "Big Ben" });
+    assert.equal(status, 200, `expected 200 (graceful degradation), got ${status}`);
+    assert.equal(body.photoUrl, null, `expected null photoUrl on 429, got ${JSON.stringify(body.photoUrl)}`);
+  });
+
+  it("names the cause 'foursquare_quota_exhausted', NOT 'no_photo_found'", async () => {
+    const { body } = await getPhoto(url, { name: "Big Ben" });
+    assert.equal(
+      body.reason,
+      "foursquare_quota_exhausted",
+      `expected 'foursquare_quota_exhausted', got '${body.reason as string}'`,
+    );
+    // The conflation this whole change exists to prevent: a dead provider must
+    // never be reported as a fact about the place.
+    assert.notEqual(
+      body.reason,
+      "no_photo_found",
+      "an exhausted account is NOT evidence that this place has no photo",
+    );
+  });
+});
+
 // ── D. Foursquare responds 403 ────────────────────────────────────────────────
 
 describe("GET /api/places/fsq-photo — Foursquare 403 auth error", () => {

@@ -16,6 +16,8 @@
  * Foursquare" (FSQ API license requirement).
  */
 
+import { reportPhotoLookupResult } from './photoProviderOutage.ts';
+
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -84,15 +86,23 @@ export async function lookupFsqPhoto(
       clearTimeout(timer);
 
       if (!res.ok) {
+        // The proxy itself is unreachable or erroring. That is an outage, not
+        // evidence this place has no photo.
+        reportPhotoLookupResult('foursquare', 'proxy_http_error');
         photoCache.set(cKey, { url: null, ts: Date.now() });
         return null;
       }
 
-      const body = (await res.json()) as { photoUrl?: string | null };
+      const body = (await res.json()) as { photoUrl?: string | null; reason?: string | null };
       const photoUrl = typeof body.photoUrl === 'string' ? body.photoUrl : null;
+      // The server computes `reason` on every failure path precisely so this
+      // distinction survives. Reading only `photoUrl` is what made a dead
+      // provider indistinguishable from a photoless place.
+      if (!photoUrl) reportPhotoLookupResult('foursquare', body.reason);
       photoCache.set(cKey, { url: photoUrl, ts: Date.now() });
       return photoUrl;
     } catch {
+      reportPhotoLookupResult('foursquare', 'proxy_unreachable');
       photoCache.set(cKey, { url: null, ts: Date.now() });
       return null;
     } finally {

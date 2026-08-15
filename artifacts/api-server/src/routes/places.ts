@@ -511,6 +511,7 @@ router.get("/places/photo", async (req, res) => {
 const FSQ_PHOTO_SEARCH = "https://places-api.foursquare.com/places/search";
 const FSQ_PHOTO_API_VERSION = "2025-06-17";
 let fsqPhotoAuthLogged = false;
+let fsqPhotoQuotaLogged = false;
 
 router.get("/places/fsq-photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
@@ -556,6 +557,23 @@ router.get("/places/fsq-photo", async (req, res) => {
         );
       }
       res.json({ photoUrl: null, reason: "foursquare_auth_error" });
+      return;
+    }
+
+    // 429 here is NOT ordinary rate limiting that will pass on retry: Foursquare
+    // returns it for "your account has no API credits remaining", which is a
+    // billing state that persists until someone tops the account up. Confirmed
+    // by direct call on 2026-08-15 — every place, not merely OSM-only ones.
+    // Naming it explicitly keeps a dead account from reading as a busy minute.
+    if (fsqRes.status === 429) {
+      if (!fsqPhotoQuotaLogged) {
+        fsqPhotoQuotaLogged = true;
+        logger.warn(
+          { status: 429 },
+          "Foursquare photo proxy: account has no API credits remaining — NO place will return a photo from Foursquare until credits are restored. Cards fall back to category artwork, which is indistinguishable from a place that has no photo.",
+        );
+      }
+      res.json({ photoUrl: null, reason: "foursquare_quota_exhausted" });
       return;
     }
 
