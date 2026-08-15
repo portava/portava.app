@@ -24,6 +24,7 @@ Companion documents:
 | `discovery-engine-mode-packet.html` | the design, the eight D1–D8 rulings, and the operator-actions record |
 | `discovery-engine-ruling-sheet.html` | the owner's decision sheet as presented |
 | `phase-minus-1-repository-proof.md` | repository proof of the carried-in claims at HEAD |
+| `ranker-signal-audit.md` | **what the ranker actually ranks on** — phase C0, and it sizes phase D |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
 | `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves` |
 
@@ -155,8 +156,8 @@ listed because each one caught something.
 | Phase | Name | Status |
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
-| **B** | Make discovery reachable | **IN PROGRESS** |
-| **C** | Complete shadow coverage | NOT STARTED |
+| **B** | Make discovery reachable | **IN PROGRESS** — B1 (Foursquare proxy) done, B2/B3 open |
+| **C** | Complete shadow coverage | **C0 DONE** (ranker signal audit); C1–C3 not started |
 | **D** | D5=B engine split | NOT STARTED |
 | **E** | Measurement readiness | NOT STARTED |
 | **F** | Owner gates | **NOT AGENT WORK** — build nothing past these |
@@ -313,6 +314,50 @@ Phase C. Do not fabricate a fix for a bug that cannot be shown to exist.
 ## Phase C — Complete shadow coverage
 
 **Entry:** Phase B exit met, or explicitly declared blocked.
+
+### C0 — Establish what the ranker actually ranks on  ·  **DONE**
+
+**A code read, not a build. It sizes the rest of the roadmap, so it comes first
+within this phase and its conclusion feeds Phase D's framing.**
+
+The packet argues about **reach** — how many requests reach a ranker — and never
+about **signal** — what the ranker does once reached. Both matter and they fail
+differently: a ranker with **no user-specific term produces the same order for
+every viewer**, and running it on every request instead of one in a thousand
+would then change nothing except CPU cost.
+
+**Full evidence table with file:line per signal: `ranker-signal-audit.md`.**
+Result, in short:
+
+- **Exactly ONE user-specific signal can change the discovery order:
+  interest-tag overlap.** Everything else user-specific is hardcoded off, never
+  populated, or constant across all candidates.
+- **The follow graph is dead in both rankers.** `loadPdeViewer` reads
+  `user_follows` on every ranked request (`lib/discoveryPde.ts:250-257`); no
+  candidate carries an `authorId` or `creatorId`, so `f.followedAuthor`
+  (`portavaRank.ts:267`) and `calcRelationshipRelevance`
+  (`DiscoveryRankingService.ts:477`) are both structurally zero.
+- **≈80 % of declared scoring weight is inert on this surface.** `recency`
+  (1.00) and `actionability` (0.90) — the two largest weights — receive nothing,
+  because OSM venues have neither a creation date nor a start time.
+- Effective live ordering signal today: **distance, interest-tag match,
+  verified, kind**. One of four is user-specific.
+
+**What this changes about Phase D.** D5=B mostly buys **consistency**, not
+personalisation: for a user with no recorded interests, PDE and legacy differ
+only by item-intrinsic terms, which is the same order for every such user. The
+defect is real and the fix is right — but it must not be sold as a
+personalisation win, because for most users today **the code cannot produce
+one**. The dormant capability is real and sits behind *plumbing*, not behind
+missing algorithms: ~3.2 of declared weight is implemented, tested, and unfed.
+
+**Exit:** the table exists with file:line evidence per signal, and the
+user-specific vs item-intrinsic split is stated. **Met.**
+
+**Explicitly NOT done here:** no scoring was changed. The three cheap findings
+the read produced — the dead `user_follows` query, the fabricated
+`impressionCount` denominator, and the constant `cityMatch` — are recorded in
+the audit and left for a change that can be reviewed on its own merits.
 
 ### C1 — Serve points 4–5 (Compass)
 
