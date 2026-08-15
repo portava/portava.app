@@ -160,6 +160,40 @@ object listing.
   this tooling. Deletion at window end is a decision taken by a person against the
   agenda below, and making it executable was deliberately left undone.
 
+## Tables created under this window
+
+### `discovery_shadow_serves` — P1 Stage 2, operator ruling D7=A
+
+Created by migration `2092_discovery_shadow_serves.sql`. Holds one row per
+shadow-mode discovery serve: what legacy served, what PDE would have served, the
+serve point, and both timings. It exists so the two engines can be compared on
+the traffic users actually receive.
+
+It is named here because the ruling that created it — D7=A — was made **on the
+strength of this window**: the argument for a separate table rather than
+`rank_events` was append-only-by-construction *plus 90-day retention cover*. A
+retention rule that is assumed rather than written down is not cover.
+
+| | |
+|---|---|
+| retention | **90 days**, the window in force from 2026-08-14 |
+| reaper | **none.** No cron, no TTL, no `DELETE` in any code path |
+| mutability | `UPDATE` blocked by trigger. `DELETE` reachable **only** via the `auth.users` cascade |
+| client surface | none. No route reads or writes it; `anon` and `authenticated` hold no privilege on it |
+| population today | **0 rows.** `DISCOVERY_ENGINE_MODE` resolves to `legacy`, so nothing writes here yet |
+
+The same rule as everything else on this page applies to it: at window end,
+deletion is a scheduled decision taken by a person against the evidence the
+window produced, and there is deliberately no code path in this repository that
+would make it automatic.
+
+**Why `DELETE` is not blocked when `UPDATE` is.** The trigger would otherwise
+make account deletion fail — the `ON DELETE CASCADE` from `auth.users` would hit
+this table and abort the transaction. An observability table must not be able to
+hold a user's deletion request hostage. What D7=A was protecting against is a row
+that says something different later than it said when written, and that is fully
+blocked.
+
 ## At window end — 2026-11-12
 
 This is a **decision**, taken by a person, on this agenda:
