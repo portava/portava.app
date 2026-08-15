@@ -579,29 +579,7 @@ router.get("/places/fsq-photo", async (req, res) => {
       return;
     }
 
-    const photoUrl = `${p.prefix}original${p.suffix}`;
-
-    // Foursquare's search index can return a photo reference whose CDN file
-    // has since been removed (404) — the client has no way to detect this
-    // itself and was rendering a permanent broken-image fallback for these.
-    // A quick HEAD check keeps the client contract honest: a returned
-    // photoUrl is guaranteed loadable, or the caller gets no_photo_found and
-    // falls through to category artwork exactly like the "no photo" case.
-    try {
-      const headRes = await fetch(photoUrl, {
-        method: "HEAD",
-        signal: AbortSignal.timeout(2500),
-      });
-      if (!headRes.ok) {
-        res.json({ photoUrl: null, reason: "dead_photo_link" });
-        return;
-      }
-    } catch {
-      // Liveness check itself failed (network blip, HEAD unsupported) — don't
-      // penalize a possibly-good URL for that; fall through and serve it.
-    }
-
-    res.json({ photoUrl });
+    res.json({ photoUrl: `${p.prefix}original${p.suffix}` });
   } catch (err) {
     logger.warn({ err, name }, "Foursquare photo proxy lookup failed");
     res.json({ photoUrl: null, reason: "request_failed" });
