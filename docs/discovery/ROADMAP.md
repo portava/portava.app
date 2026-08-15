@@ -270,6 +270,21 @@
 > COVERAGE — part of the unit, not a follow-up**, and enumerated rather than
 > estimated.
 >
+> #### Tier 1 progress
+>
+> | Step | State |
+> |---|---|
+> | **1 — OSM tag mapping** | **LANDED.** `mapOsmElementToPlace` in `routes/discovery.ts` now keeps the six ruled tags. `neighborhood` reaches the field the card already renders; `outdoor_seating` / `wheelchair` / `internet_access` reach the chip row; `wikidata` and `image` are **carried, not consumed** — they are the Tier 2 join key and photo candidate, and were previously discarded. Extracted to an exported pure function so the mapping is unit-testable at all: it was reachable only through a live Overpass call before. 15 tests, red-proved at **12 fail / 3 pass** with the behaviour reverted through the same seam. |
+> | **2 — persist the resolved photo** | next |
+> | **3 — measure coverage** | **part of the unit, not a follow-up** |
+>
+> **Tier 1 deliberately does NOT set `headerImageUrl` from the OSM `image` tag.**
+> The client's `useFsqPhoto` returns early when a header image is present, so
+> promoting it here would silently replace the working FSQ → Google → artwork
+> chain with an unvalidated third-party URL — and a dead URL renders as "no
+> photo", which is indistinguishable from never having resolved one. Precedence
+> is settled in step 2, where invalidation is defined.
+>
 > **REPUBLISH IS INDEPENDENT** and must not wait on Place Intelligence: **#66–#81
 > ship alone** and Tier 1 starts from that published baseline. The single
 > coupling condition — *does anything in #66–#81 alter the Overpass tag mapping
