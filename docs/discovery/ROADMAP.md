@@ -223,7 +223,7 @@ listed because each one caught something.
 | Phase | Name | Status |
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
-| **B** | Make discovery reachable | **BLOCKED — awaiting a deploy carrying #55/#56, then a probe.** Exit criterion (rows at multiple serve points) **unmet**; nothing has been measured in either direction. PR #54's ruling governs and stands. It is **NOT** blocked on Google SSO — see the correction below; that conflation was mine, not #54's. **The B3 probe has NOT been run against a build containing the fixes**, and the deployed build does not contain them. |
+| **B** | Make discovery reachable | **BLOCKED — awaiting the B3 probe ONLY.** The deploy precondition is **MET**: build `a384e29fa` (build-id `58536e52`) was verified clean and live 2026-08-15 12:13Z, carrying #55/#56 — verified in the *running* build, not merely published. Exit criterion (rows at multiple serve points) **still unmet**; nothing has been measured in either direction. PR #54's ruling governs and stands. It is **NOT** blocked on Google SSO — see the correction below; that conflation was mine, not #54's. **The B3 probe has NOT been run.** When it is, **record the photo-provider state alongside the result** (FSQ 429 / Google live as of 12:13Z) — it does not affect serve-point logging, and the check establishing that is recorded below. |
 | **C** | Complete shadow coverage | NOT STARTED |
 | **D** | D5=B engine split | NOT STARTED |
 | **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination |
@@ -292,6 +292,140 @@ instrument; #55 removes the wall that stopped the probe; #56 makes a guard able
 to fail.** None of them is Phase B *evidence* — per #54 §3, an agent that
 authenticates and navigates has reached the **starting line**. Phase B closes on
 discovery rows at multiple serve points and on nothing else.
+
+### DEPLOY VERIFIED CLEAN, 2026-08-15 12:13Z — the precondition above is now MET
+
+The paragraph above ends: *"It is waiting on a deploy carrying #55 and #56, and
+then a probe... The currently deployed build contains neither fix."* **That is
+no longer true.** The deploy half is satisfied. The probe half is not, and
+nothing here closes Phase B.
+
+#### What happened, in order
+
+| Time (UTC) | Event |
+|---|---|
+| 11:23:13 | **Publish `d43b2fb3a`** — tree `bf16e88d`, **byte-identical to `cd1f4e1bb`**. This shipped the unreviewed drift. |
+| 11:23:47 | **Revert `87e245786`** — 34 seconds later. Five local commits reverted with history intact; all five preserved on `wip/discovery-photo-cache-lru`. |
+| 11:30–11:39 | #63, #64 merge; branch reconciled. |
+| 11:55:17 | **Publish `a384e29fa`** — build-id `58536e52-de91-4ce1-b1d9-1a91fc2e7813`, tree `2014ada7`, **byte-identical to `origin/bughunt-20260805`**. |
+
+**The drift was live for roughly 32 minutes.** It is worth stating what that
+means rather than only that it happened — see the fallback-chain finding below.
+
+#### How "clean" was established — and why git alone was not enough
+
+Git proves which commit was *published*. It cannot prove which build the
+autoscale instances are *running*. Both were checked, and they agree.
+
+| Method | Evidence |
+|---|---|
+| **Git** | `tree(a384e29fa) == tree(origin/bughunt-20260805) == tree(HEAD)` = `2014ada7`. #55, #56, #57, #58, #61, #62, #63, #64 all in history. |
+| **Live, decisive** | `GET /api/places/photo` on production returns a **`places.googleapis.com/v1/places/{id}/photos/{ref}/media`** URL. That construction exists **only** in the clean tree (`places.ts:510`). The drift's `/places/photo` calls `places-api.foursquare.com` and **cannot emit that shape** under any input. |
+| **Live, corroborating** | `/api/places/fsq-photo` returns the wire string `foursquare_quota_exhausted`, introduced by **#61** (`9b9b120da`). So the running build is at or past #61 — and #55, #56, #57, #58 are all ancestors of #61. |
+
+**Method note for whoever verifies a deploy next.** The useful discriminator was
+not a version endpoint — `/api/healthz` returns `{"status":"ok"}` and nothing
+else. It was **a wire string that only one of the two candidate trees can
+produce.** Pick a response value the other tree is structurally incapable of
+emitting, not one that merely differs in likelihood.
+
+#### Google is no longer SERVICE_DISABLED
+
+Places API (New) enablement was blocked on billing activation. **That cleared.**
+
+- `/api/places/photo` returned real photo URLs for **5 of 5** distinct places
+  (Eiffel Tower, Sagrada Família, Park Güell, Colosseum, Tokyo Tower), each a
+  different Google place ID.
+- One media URL was followed end-to-end: **HTTP 200, `image/jpeg`, 135,854 bytes.**
+
+The route reads **`GOOGLE_MAPS_API_KEY`**, which is the only name the repository
+uses. **`GOOGLE_PLACES_API_KEY` is referenced nowhere as a `process.env` read** —
+only in a comment at `places.ts:444` and a test docstring. A secret provisioned
+under that name is **inert by design, not broken**, and #64 exists so that this
+class of thing reports itself honestly.
+
+#### Foursquare is quota-exhausted — and this is why the revert was load-bearing
+
+`/api/places/fsq-photo` returns `foursquare_quota_exhausted` (**HTTP 429**)
+uniformly, on every place tried. FSQ is the **primary** photo provider; Google is
+the **fallback**. Right now every Discovery place card is carried entirely by the
+Google fallback.
+
+> **The drift replaced the Google fallback with a second Foursquare call —
+> collapsing the chain to FSQ → FSQ.** Had it stayed live into the 429, both
+> links of a two-provider chain would have been the same exhausted provider, and
+> Discovery would have had **no working photo provider at all**. The two faults
+> are independent and neither is visible from the other; they compose into an
+> outage. The revert was not hygiene.
+>
+> This is the fallback-chain form of the governing invariant. A fallback that
+> calls the same provider as the primary is **absence of redundancy presenting as
+> redundancy** — it looks like a chain and is a single point of failure.
+
+#### The provider state does NOT contaminate Phase B — established, not assumed
+
+It is tempting to read "unusual provider state" as a reason to withhold Phase B
+closure. **It is not**, and the distinction matters in both directions.
+
+**Phase B's exit criterion is discovery rows at MULTIPLE serve points. That is
+about instrumentation reachability, not photo provenance.** Whether a card's
+image came from Foursquare or Google does not change whether the serve point
+logged.
+
+The one case where it *would* genuinely matter is if the 429 made a discovery
+path fail outright and suppress serve points that would otherwise log. **That was
+checked before the probe rather than after, and it does not happen:**
+
+| Check | Result |
+|---|---|
+| Transitive import closure of `routes/discovery.ts` — **50 modules** | **Zero** reference `places-api.foursquare.com` or `FOURSQUARE_API_KEY`. |
+| Only FSQ mention in `discovery.ts` | `row.source.startsWith("fsq")` at `:652` — attribution on rows already in the DB. **No network call.** |
+| Where photo lookup actually happens | A separate client-initiated call per card, against `/api/places/fsq-photo`, **after** the discovery response is sent and `logDiscoveryServe` has run. |
+
+**The discovery serve path makes no Foursquare call. The 429 cannot suppress a
+serve point.**
+
+**So: record the provider state alongside the probe result, do not treat it as a
+blocker.** The reason to record it is that a probe run today is a measurement
+taken while FSQ was at 429 and Google was carrying every card, and a later reader
+with no note will not know that. **Recorded so that nobody later reads a valid
+Phase B closure as contaminated, or an invalid one as clean.**
+
+#### Separate live defect found while verifying — Google autocomplete returns nothing
+
+`GET /api/places/google-autocomplete?input=Barcelona&type=city` returns
+`{"places":[],"powered_by":"google"}`. The key is present and demonstrably
+working (the photo route proves it), so this is the **legacy**
+`maps.googleapis.com` Places Autocomplete endpoint returning non-OK or a non-`OK`
+status body. **Places API (New) is enabled; the legacy Places API apparently is
+not.**
+
+This is a **user-facing defect in destination search**, and it is **not** caused
+by the drift — the clean tree is correctly on the legacy endpoint, and the drift
+is the tree that moved *off* it. `places.ts:289` documents the route as
+degrading to an empty list on non-OK, which is honest but silent: the caller
+cannot distinguish "no such city" from "the API is off". **Not yet filed. It is
+its own defect and does not belong to Phase B.**
+
+#### Phase B status after all of the above
+
+| | |
+|---|---|
+| Deploy carrying #55 and #56 | **MET** — verified in the running build, not merely published |
+| Probe producing discovery rows at multiple serve points | **UNMET** |
+| Phase B | **still OPEN.** Blockage was never closure, and neither is a satisfied precondition. |
+
+#### Open PRs as of 2026-08-15 12:15Z
+
+Recorded because a red PR with no note reads, to the next session, as work that
+was abandoned rather than work whose redness *is* the result.
+
+| PR | Checks | Reading |
+|---|---|---|
+| **#65** — REVIEW ONLY, cd1f4e1bb replaces the Google fallback with a second FSQ call | 31 pass / **11 fail** | **Leave open. Do not merge.** It targets `review/photo-cache-base`, not trunk. **The red is the finding**: the drift does not pass CI, which corroborates reverting it rather than reviewing it in place. Merging it would re-introduce the FSQ → FSQ collapse described above. |
+| **#60** — FSQ photo liveness + URI-change reload | 26 pass / **6 fail**, CONFLICTING | **Close as superseded.** Self-titled *"RED, do not merge as-is"*. Its intent shipped via **#61** (audible provider failure) and **#62** (liveness check + caching). |
+| **#54** — Phase B is BLOCKED (authentication prerequisite) | **32/32 green**, CONFLICTING | **Owner's.** ⚠️ **Partly stale after #63.** #54's core separation was *correct* and #63 affirms it — but #54 is still open against a tree whose Phase B section now records the opposite status. Its blocked-on-authentication framing has been overtaken: the wall is fixed (#55), the deploy is verified, and only the probe remains. |
+| **#52** — Phase B1 + C0, server-side FSQ proxy | **26/26 green**, CONFLICTING, +1857/−148 | **Owner's.** Overlaps substantially with what landed via #61/#62; the server-side FSQ proxy exists in trunk now. Needs a scope re-read against current trunk before it can be merged or closed. |
 
 **Three things the next session must not misread:**
 
@@ -554,6 +688,25 @@ Read against the serve-point table. **One row at serve point 9 is the FAILING
 state** — it is what the 14-minute probe already produced. Success means several
 distinct serve points appear, which demonstrates that the discovery surface is
 navigable rather than that one endpoint responds.
+
+> **Entry state as of 2026-08-15 12:13Z — this probe is now RUNNABLE.** The
+> deploy precondition is met: the live build was verified clean and carries
+> #55/#56. See *DEPLOY VERIFIED CLEAN* above. The probe has not been run.
+>
+> **Run `--days 1` BEFORE the probe as well as after.** The before-run is the
+> baseline; without it a post-probe reading cannot distinguish rows the probe
+> produced from rows that were already there. A before/after pair is the
+> measurement — a single after-reading is an anecdote.
+>
+> **Record the photo-provider state with the result.** At the time of writing,
+> Foursquare is returning **HTTP 429** on every photo lookup and Google is
+> carrying every card. This does **not** affect serve-point logging — the
+> transitive import closure of `routes/discovery.ts` (50 modules) contains no
+> Foursquare call site, and photo lookup happens client-side per card after the
+> discovery response is already sent. **The state is recorded so the measurement
+> stays interpretable later, not because it qualifies the verdict.** A future
+> reader who finds a Phase B closure dated during an FSQ outage must be able to
+> see that the question was asked and answered rather than overlooked.
 
 > **The instrument that renders this verdict was itself broken until
 > 2026-08-15 (PR #58).** It bounded `servePoint` to 1..6 while the writer had
