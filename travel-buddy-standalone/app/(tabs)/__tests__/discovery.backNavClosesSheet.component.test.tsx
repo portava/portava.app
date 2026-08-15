@@ -1,5 +1,5 @@
 /**
- * DiscoveryHub — Back-nav closes the place detail sheet (regression for task 3642)
+ * DiscoveryHub — Back-nav closes the place detail sheet
  *
  * Task 3642 fixed a bug where pressing browser/hardware Back from the
  * Discovery place detail sheet sent users to /passport instead of staying on
@@ -7,18 +7,32 @@
  * absorbs the resulting `popstate` event to close the sheet instead of letting
  * it propagate as a tab navigation.
  *
+ * Task 3657 fixed a related regression: the sheet stayed open after pressing
+ * Back even though the URL remained correct.  Root cause: Expo Router registers
+ * its own bubble-phase `popstate` listener at app-init time (before any
+ * component effects run) and may absorb or stop the event before our handler
+ * fires.  Fix: register our listener in CAPTURE phase (`true` as the third
+ * argument) so it fires before any bubble-phase listener.  A `dismissedByBack`
+ * flag in the closure prevents the cleanup from calling `history.back()` a
+ * second time when the sheet was already closed by the Back button.
+ *
  * This test covers the web back-nav guard path.  Because jest-expo's native
  * runner does not expose real DOM event APIs, the test:
  *   • forces Platform.OS to 'web' via the react-native Proxy mock so the guard
  *     activates inside the component
  *   • installs a minimal window event-emitter in beforeEach so the guard's
  *     addEventListener / removeEventListener / dispatchEvent calls work
+ *   • the event-emitter stub ignores the capture/bubble argument (third arg)
+ *     since there is no second listener competing in tests — this is fine
+ *     because the stub fires all listeners for a type unconditionally
  *
  * Confirmed behaviours:
  *   1. The sheet becomes visible after a place is selected.
  *   2. Firing a `popstate` event closes the sheet.
  *   3. The Discovery screen is still rendered (router.push was not called).
  *   4. The active category state is preserved (Layover FAB reappears).
+ *   5. After a popstate close, history.back is NOT called a second time.
+ *   6. A subsequent popstate (after the sheet is already closed) has no effect.
  *
  * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
@@ -396,6 +410,13 @@ describe('DiscoveryHub — back-nav closes place detail sheet (web guard)', () =
     // router.push must NOT have been called — no tab navigation occurred.
     const { router } = require('expo-router') as { router: { push: jest.Mock } };
     expect(router.push).not.toHaveBeenCalled();
+
+    // history.back must NOT have been called by the cleanup.  The dismissedByBack
+    // flag in the effect closure prevents a redundant back() when the sheet was
+    // already closed by the browser's own Back button — calling it twice would
+    // navigate past the synthetic entry and send the user away from Discovery.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((window as any).history.back).not.toHaveBeenCalled();
 
     // ── Category state preserved ────────────────────────────────────────────
     // The Layover FAB reappears — detailVisible is false and the screen is

@@ -205,6 +205,12 @@ function DiscoveryHubScreen() {
   // the sheet and absorb the navigation.  When the sheet is dismissed via the
   // close button instead, the cleanup callback pops the synthetic entry so the
   // history stack stays clean for future back presses.
+  //
+  // The listener is registered in CAPTURE phase (third arg = true) so it fires
+  // before Expo Router's bubble-phase popstate listener.  Without capture, Expo
+  // Router (whose listener was registered first at app init) fires first and
+  // may stop propagation or navigate before our handler has a chance to close
+  // the sheet — leaving it open on screen even though the URL stayed correct.
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     if (!detailVisible) return;
@@ -214,17 +220,25 @@ function DiscoveryHubScreen() {
     const w = window as any;
     w.history.pushState({ _discoverySheet: true }, '', w.location.href);
 
+    // Track whether the sheet was already dismissed by the Back button so the
+    // cleanup doesn't call history.back() a second time (which would navigate
+    // past the absorbed synthetic entry and send the user away from Discovery).
+    let dismissedByBack = false;
+
     const handlePop = () => {
+      dismissedByBack = true;
       setDetailVisible(false);
     };
-    w.addEventListener('popstate', handlePop);
+    // Capture phase: our handler fires before any bubble-phase listener
+    // (including Expo Router's), so the sheet closes reliably on Back.
+    w.addEventListener('popstate', handlePop, true);
 
     return () => {
-      w.removeEventListener('popstate', handlePop);
+      w.removeEventListener('popstate', handlePop, true);
       // If the sheet was closed through the UI (not Back), we still have the
       // synthetic entry on the stack.  Pop it silently so subsequent Back
       // presses go to the correct previous screen.
-      if (w.history.state?._discoverySheet) {
+      if (!dismissedByBack && w.history.state?._discoverySheet) {
         w.history.back();
       }
     };
