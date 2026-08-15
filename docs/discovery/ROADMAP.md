@@ -270,6 +270,41 @@
 > COVERAGE — part of the unit, not a follow-up**, and enumerated rather than
 > estimated.
 >
+> #### ⚖️ MEASUREMENT-SYSTEM RULINGS — 2026-08-15, GOVERNING
+>
+> **Full text: [`place-intelligence-measurement-system-rulings.md`](place-intelligence-measurement-system-rulings.md).**
+> Read it before starting anything below it.
+>
+> > **The key outcome is NOT 33%. It is that you have now built a MEASUREMENT
+> > SYSTEM capable of telling you where the information deficit actually is.
+> > Exploit that before building the next supply layer.**
+>
+> This reframes what Tier 1 was for. The obvious response to "33% carry outdoor
+> seating" is to find a source for the other 67% — **that is the next supply
+> layer, and it is exactly what this defers.** The instrument is the asset.
+>
+> | | Ruled | State |
+> |---|---|---|
+> | **1** | **Republish #66–#85** — authorised, owner presses. Verification re-run **IMMEDIATELY BEFORE**, not earlier the same day. The old supply-path condition is **MOOT and retired**: #83–#85 *are* the supply path, and coverage was measured against real Overpass data rather than the deployed build | verified at `9a59b321f` |
+> | **2** | **Apply migration `2095`** right after republish verifies. Full discipline despite the tiny data risk: snapshot + before-state → sanctioned path → after-state + schema verification → **ONE REAL end-to-end photo-resolution and persistence proof**. Staged by agent, executed by owner | staged |
+> | **3** | **COMPLETE coverage matrix, 7 destinations × 4 categories** — **outranks starting any new feature**. **PRESERVE PER-CITY AND PER-CATEGORY NUMBERS ALONGSIDE THE AGGREGATE; the result must NOT be reduced to one percentage.** If the default endpoint stays unreachable, **use the mirror and pace it** — same OSM database, and a complete matrix from it beats a partial one from the canonical host. **Record which endpoint produced the numbers** | |
+> | **4** | **Fix the seed/live neighbourhood mismatch — AHEAD of Tier 2.** `seed-discovery-places.ts` and the live route must represent the same place shape, or QA produces **both false regressions and false confidence** | |
+> | **5** | **Change the default test city away from Cebu — but KEEP Cebu as an explicit low-coverage fixture. Do not solve Cebu by hiding it.** Two standing tests: does enrichment work when the source has data, and does the product degrade gracefully when it does not | |
+> | **6** | **Paris is SEPARATE.** 0.0% from arrondissement tagging semantics is a **NORMALISATION problem** — not evidence Tier 1 failed, not evidence for Tier 2. File as a **narrow geography adapter** so it does not contaminate the enrichment decision | |
+>
+> **TIER 2 IS NOT AUTHORISED AS A PROVIDER INTEGRATION.** What is authorised,
+> *after* the above, is a **TIER 2 LEVERAGE STUDY**: which missing card fields
+> actually matter, which sources could supply them, **matchability WITHOUT
+> Wikidata ids**, expected incremental coverage, latency and cost, and whether
+> results can be persisted into the corpus. **The 3.2% wikidata figure is why —
+> if only 3% of the corpus exposes the join key, perfect enrichment downstream
+> of it still has a hard ceiling.** *Choose the source from evidence, not
+> architecture aesthetics.*
+>
+> **STILL PARKED, unchanged:** Phase B, ranker work, Tier 3, the photo
+> non-goals. **The corpus remains the constraint — ranking two-thirds of
+> structurally thin places more intelligently does not create information.**
+>
 > #### Tier 1 progress
 >
 > | Step | State |
@@ -339,6 +374,7 @@ Companion documents:
 | `place-intelligence-owner-rulings.md` | **GOVERNING for item 2** — the owner's answers to the two questions the enumeration raised: photo persistence is *enabling infrastructure*, "useful" means *Tier 1 informative*. Carries the **tier boundary verbatim**, the named non-goals, the ruled implementation order, and the verification that **republish (#66–#81) is independent** |
 | `place-photo-persistence-migration-staging.md` | **STAGED, NOT APPLIED** — `2095_discovery_place_photos.sql`, with before/after verification and the trap that a zero-row table is indistinguishable from a table nothing writes to. **The operator presses this** |
 | `osm-tier1-coverage-findings.md` | **Tier 1 step 3** — measured coverage of the six ruled tags over 857 real places. Uneven by region in a way averaging hides, and it constrains Tier 2 |
+| `place-intelligence-measurement-system-rulings.md` | **GOVERNING** — the measurement system is the outcome, not the 33%. Six ruled steps, the Tier 2 **leverage study** (not an integration), and what stays parked |
 | `phase-b3-probe-runbook.md` | **the staged B3 probe** — exact commands, the sanctioned read-only front door for the production baseline, the production writes it incurs, and what to record. **STAGED, NOT RUN; the owner presses it** |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
 | `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves`. **Event Truth's classes are ruled separately** — packet §7 — and this document is amended when Event Truth is implemented, not before |
