@@ -81,6 +81,28 @@ export interface DiscoveryPlace {
   lng: number | null;
   tags: string[];
   address: string | null;
+  /** Neighbourhood label. From OSM `addr:neighbourhood` / `addr:suburb` for OSM
+   *  places; the client renders it ahead of `address` on the card. */
+  neighborhood?: string | null;
+  /**
+   * Wikidata entity id (`Q…`) when OSM carries one. Tier 1 CARRIES this; it does
+   * not consume it. It is the join key a later Tier 2 step would use to reach
+   * free licensed structured data, and it is worthless if discarded here.
+   */
+  wikidataId?: string | null;
+  /**
+   * Raw OSM `image` tag, validated as an absolute http(s) URL and nothing more.
+   *
+   * DELIBERATELY NOT PROMOTED to `headerImageUrl` in Tier 1 step 1. The client's
+   * `useFsqPhoto` returns early when a header image is already present, so
+   * promoting this value here would silently REPLACE the working FSQ → Google →
+   * artwork chain with an unvalidated third-party URL — and a dead URL renders
+   * as "this place has no photo", which is indistinguishable from never having
+   * resolved one. Precedence and invalidation are ruled to be settled together
+   * in the photo-persistence step; this field is what lets that step consider
+   * OSM at all.
+   */
+  osmImageUrl?: string | null;
   website: string | null;
   phone: string | null;
   openingHours: string | null;
@@ -381,6 +403,101 @@ function extractTags(tags: Record<string, string>): string[] {
   return [...new Set(out)].filter(Boolean).slice(0, 3);
 }
 
+// ── Tier 1 OSM attribute mapping ──────────────────────────────────────────────
+//
+// Overpass returns the FULL tag set and this route historically kept seven tags
+// and dropped the rest on the floor. These helpers stop discarding the six the
+// owner's Tier 1 ruling names: outdoor_seating, wheelchair, internet_access,
+// addr:neighbourhood, wikidata and image.
+//
+// ONE INVARIANT GOVERNS ALL OF THEM, and it is the workstream's own:
+// ABSENCE OF EVIDENCE MUST NOT BECOME EVIDENCE OF ABSENCE. An untagged place is
+// not a place without wifi — OSM tagging is sparse and voluntary. So every
+// helper below renders something only for an AFFIRMATIVE tag value, and emits
+// nothing at all when the tag is missing, empty, or negative. No card ever says
+// "no outdoor seating" on the strength of a tag nobody wrote.
+
+/** OSM boolean-ish values that affirm a feature. `no`/`none` never affirm. */
+function osmAffirms(raw: string | undefined): boolean {
+  if (!raw) return false;
+  const v = raw.trim().toLowerCase();
+  return v === "yes" || v === "designated" || v === "only";
+}
+
+/**
+ * Human-readable attribute chips for the card's existing tag row.
+ *
+ * Deliberately limited to the SIX TAGS THE RULING NAMES. Overpass carries far
+ * more that the enumeration costed as Tier 1 (takeaway, delivery, payment:*,
+ * kids_area…), and they remain free to add — but widening the set is a decision
+ * the ruling did not make, so this does not make it either.
+ */
+function extractAttributeTags(tags: Record<string, string>): string[] {
+  const out: string[] = [];
+
+  if (osmAffirms(tags["outdoor_seating"])) out.push("outdoor seating");
+
+  // `wheelchair` is three-valued and the middle value is real information:
+  // `limited` means *partially* accessible, and flattening it to "accessible"
+  // would overstate it to exactly the users who cannot afford the overstatement.
+  const wheelchair = tags["wheelchair"]?.trim().toLowerCase();
+  if (wheelchair === "yes" || wheelchair === "designated") out.push("wheelchair accessible");
+  else if (wheelchair === "limited") out.push("partial wheelchair access");
+
+  // `internet_access` names the TECHNOLOGY, not a yes/no: wlan/wifi mean wifi,
+  // `terminal` means a machine on site, and `no` means no.
+  const net = tags["internet_access"]?.trim().toLowerCase();
+  if (net === "wlan" || net === "wifi" || net === "yes") out.push("wifi");
+  else if (net === "terminal") out.push("internet terminal");
+
+  return out;
+}
+
+/**
+ * Neighbourhood label, most specific key first.
+ *
+ * The fallback chain is not invented here. `scripts/seed-discovery-places.ts`
+ * ALREADY resolves this field for seeded rows as
+ * `neighbourhood ?? suburb ?? addr:suburb` — so the two paths would have
+ * disagreed about what a neighbourhood is if this took only the key the ruling
+ * names. This is the union of both, ordered specific → broad, so a seeded place
+ * and a live OSM place in the same street produce the same label.
+ *
+ * `addr:neighbourhood` leads because it is the address component of THIS venue;
+ * the bare `neighbourhood`/`suburb` keys describe an enclosing area.
+ */
+function extractNeighborhood(tags: Record<string, string>): string | null {
+  const raw =
+    tags["addr:neighbourhood"] ??
+    tags["neighbourhood"] ??
+    tags["addr:suburb"] ??
+    tags["suburb"] ??
+    null;
+  const v = raw?.trim();
+  return v ? v : null;
+}
+
+/** Wikidata entity ids are `Q` followed by digits. Anything else is not one. */
+function extractWikidataId(tags: Record<string, string>): string | null {
+  const raw = tags["wikidata"]?.trim();
+  return raw && /^Q[1-9]\d*$/.test(raw) ? raw : null;
+}
+
+/**
+ * The OSM `image` tag, kept only when it is an absolute http(s) URL.
+ *
+ * This tag is NOT reliably a photo. A large share of real values are Wikimedia
+ * Commons *page* URLs (`.../wiki/File:X.jpg`) which render as a broken image,
+ * and others are `File:X.jpg` bare filenames with no host at all. Resolving
+ * those is a Wikimedia call, which is Tier 2. Tier 1 carries the raw value and
+ * makes no claim that it is displayable.
+ */
+function extractOsmImageUrl(tags: Record<string, string>): string | null {
+  const raw = tags["image"]?.trim();
+  if (!raw) return null;
+  return /^https?:\/\/\S+$/i.test(raw) ? raw : null;
+}
+
 function parseRating(tags: Record<string, string>): number | null {
   const raw = tags["stars"] ?? tags["rating"] ?? null;
   if (!raw) return null;
@@ -451,32 +568,62 @@ async function queryOverpass(
 
   return data.elements
     .filter((el) => el.tags?.name && el.tags.name.trim())
-    .map((el): DiscoveryPlace => {
-      const elLat = el.lat ?? el.center?.lat ?? null;
-      const elLng = el.lon ?? el.center?.lon ?? null;
-      const tags  = el.tags ?? {};
-      return {
-        id:          `${el.type}/${el.id}`,
-        name:        tags.name!,
-        category,
-        type:        friendlyType(tags),
-        description: tags.description ?? tags["note"] ?? null,
-        distanceKm:  elLat != null && elLng != null
-          ? Math.round(haversineKm(lat, lng, elLat, elLng) * 10) / 10
-          : null,
-        lat:         elLat,
-        lng:         elLng,
-        tags:         extractTags(tags),
-        address:      buildAddress(tags),
-        website:      tags.website ?? tags.url ?? null,
-        phone:        tags.phone ?? tags["contact:phone"] ?? null,
-        openingHours: tags.opening_hours ?? null,
-        rating:       parseRating(tags),
-        isOpenNow:    determineOpenNow(tags.opening_hours ?? null),
-      };
-    })
+    .map((el) => mapOsmElementToPlace(el, category, lat, lng))
     .sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999))
     .slice(0, MAX_FETCH);
+}
+
+/** Category chips first, then attribute chips, capped so the card's tag row
+ *  cannot be flooded. Category identity is what the chip row was for, so it
+ *  keeps its places; attributes fill what is left. */
+const MAX_CATEGORY_CHIPS  = 3;
+const MAX_TOTAL_CHIPS     = 6;
+
+/**
+ * OSM element → `DiscoveryPlace`.
+ *
+ * Exported for test on purpose. This is the ONLY OSM→place mapping in the
+ * route, it is the function Tier 1 modifies, and until now it was reachable
+ * only through a live Overpass HTTP call — which means it had no unit coverage
+ * at all and every claim about "what an OSM place carries" was read by eye.
+ */
+export function mapOsmElementToPlace(
+  el: OsmElement,
+  category: string,
+  originLat: number,
+  originLng: number,
+): DiscoveryPlace {
+  const elLat = el.lat ?? el.center?.lat ?? null;
+  const elLng = el.lon ?? el.center?.lon ?? null;
+  const tags  = el.tags ?? {};
+
+  const chips = [
+    ...extractTags(tags).slice(0, MAX_CATEGORY_CHIPS),
+    ...extractAttributeTags(tags),
+  ];
+
+  return {
+    id:          `${el.type}/${el.id}`,
+    name:        tags.name!,
+    category,
+    type:        friendlyType(tags),
+    description: tags.description ?? tags["note"] ?? null,
+    distanceKm:  elLat != null && elLng != null
+      ? Math.round(haversineKm(originLat, originLng, elLat, elLng) * 10) / 10
+      : null,
+    lat:         elLat,
+    lng:         elLng,
+    tags:         [...new Set(chips)].slice(0, MAX_TOTAL_CHIPS),
+    address:      buildAddress(tags),
+    neighborhood: extractNeighborhood(tags),
+    wikidataId:   extractWikidataId(tags),
+    osmImageUrl:  extractOsmImageUrl(tags),
+    website:      tags.website ?? tags.url ?? null,
+    phone:        tags.phone ?? tags["contact:phone"] ?? null,
+    openingHours: tags.opening_hours ?? null,
+    rating:       parseRating(tags),
+    isOpenNow:    determineOpenNow(tags.opening_hours ?? null),
+  };
 }
 
 // ── Category mapper (DB → Discovery tab) ──────────────────────────────────────
