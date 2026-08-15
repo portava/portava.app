@@ -719,3 +719,98 @@ describe("GET /api/places/fsq-photo — capacity cap: oldest entry evicted at ma
     );
   });
 });
+
+// ── K. Dead CDN link — result NOT cached; next request retries Foursquare ──────
+//
+// Foursquare can return a photo entry whose CDN file has since been removed
+// (the HEAD check returns 404). The proxy must:
+//   1. Return { photoUrl: null, reason: "dead_photo_link" } for the current request.
+//   2. NOT cache the result — so the next request re-queries Foursquare rather
+//      than being permanently locked into a null result for 24 h.
+//
+// This is the key difference from the "no_photo_found" negative cache path:
+// dead links are transient CDN issues that may recover, so they must not be
+// persisted in the cache.
+
+describe("GET /api/places/fsq-photo — dead CDN link: photoUrl null + result NOT cached", () => {
+  let server: Server;
+  let url: string;
+  let fsqCallCount = 0;
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  before(() => {
+    process.env.FOURSQUARE_API_KEY = "test-fsq-key-dead-link";
+    // Unique name + coords to avoid collisions with other describe blocks' cache entries.
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        fsqCallCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              {
+                photos: [
+                  { prefix: "https://fastly.4sqi.net/img/general/", suffix: "/dead404.jpg" },
+                ],
+              },
+            ],
+          }),
+        } as Response;
+      }
+      // CDN HEAD check returns 404 — link is dead
+      if (reqUrl.includes("4sqi.net") && init?.method === "HEAD") {
+        return { ok: false, status: 404 } as Response;
+      }
+      return originalFetch(input, init);
+    };
+  });
+
+  it("returns HTTP 200", async () => {
+    const { status } = await getPhoto(url, { name: "Dead Link Landmark", lat: 77.0, lng: 33.0 });
+    assert.equal(status, 200, `expected 200, got ${status}`);
+  });
+
+  it("returns photoUrl: null when the CDN HEAD check returns 404", async () => {
+    const { body } = await getPhoto(url, { name: "Dead Link Landmark", lat: 77.0, lng: 33.0 });
+    assert.equal(
+      body.photoUrl,
+      null,
+      `expected null photoUrl for dead CDN link, got ${JSON.stringify(body.photoUrl)}`,
+    );
+  });
+
+  it("returns reason: 'dead_photo_link' when the CDN HEAD check returns 404", async () => {
+    const { body } = await getPhoto(url, { name: "Dead Link Landmark", lat: 77.0, lng: 33.0 });
+    assert.equal(
+      body.reason,
+      "dead_photo_link",
+      `expected reason 'dead_photo_link', got '${body.reason as string}'`,
+    );
+  });
+
+  it("second request for same place re-calls Foursquare (dead link result was NOT cached)", async () => {
+    // All prior `it` blocks in this describe have each made one request.
+    // Record the count before making one final additional request.
+    const countBefore = fsqCallCount;
+    await getPhoto(url, { name: "Dead Link Landmark", lat: 77.0, lng: 33.0 });
+    assert.equal(
+      fsqCallCount,
+      countBefore + 1,
+      `expected Foursquare to be called again (dead link must not be cached); ` +
+        `count before=${countBefore}, count after=${fsqCallCount}`,
+    );
+  });
+});
