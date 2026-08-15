@@ -1,6 +1,18 @@
 # Phase B3 probe — staged runbook
 
-**Status: STAGED and AUTHORISED. Not yet run.**
+**Status: ⏸️ PARKED — 2026-08-15. Staged, authorised, and NEVER RUN.**
+
+> Blocked on platform routing: Replit intercepts `/api/*` on the workspace dev
+> domain and serves it from the local dev artifact regardless of what is bound
+> underneath, so no same-origin proxy can put a browser session in front of
+> production — and there is no deployed frontend. See `ROADMAP.md` →
+> **Phase B — PARKED**.
+>
+> **The exit criterion remains unmet. Parking is not closure.** This document is
+> kept intact — baseline, methodology, division of labour, conditions — because
+> it is what makes the park cheap to reverse. **Do not build a new mechanism to
+> get around the routing rule**; that is precisely the prerequisite chain the
+> owner's ruling of 2026-08-15 ended.
 
 Prepared 2026-08-15 by the agent session that verified the deploy. Every
 precondition below was checked, not assumed.
