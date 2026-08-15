@@ -132,6 +132,21 @@ for all day, at the level of a user-visible field.
 
 **Two things worth deciding before anything is built:**
 
+> ### ⚖️ BOTH RULED, 2026-08-15 — [`place-intelligence-owner-rulings.md`](place-intelligence-owner-rulings.md)
+>
+> The two questions below are **answered and closed**. They are left in place
+> because the reasoning that produced them is the reasoning the rulings respond
+> to — but **do not re-raise either one.**
+>
+> 1. **Persisting the resolved photo is ENABLING INFRASTRUCTURE**, not a new
+>    product feature: the chain is already approved, so storing its winner adds
+>    no behaviour. Narrow, with refresh and invalidation defined explicitly, and
+>    with six named non-goals that each need a new ruling.
+> 2. **"Useful" means TIER 1 INFORMATIVE for this phase** — the test is that a
+>    card gets materially more useful *with zero Portava users contributing
+>    anything*. Tier 3 is gated on behavioural data, and **finishing Tier 1 does
+>    not open that gate.**
+
 1. **Does persisting the resolved photo count as corpus-building or as product?**
    It is invisible on the day it ships and it is what stops every viewer
    re-paying two external providers. Reading the ruling strictly it is
