@@ -71,6 +71,7 @@ Companion documents:
 | `phase-minus-1-repository-proof.md` | repository proof of the carried-in claims at HEAD |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
 | `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves`. **Event Truth's classes are ruled separately** — packet §7 — and this document is amended when Event Truth is implemented, not before |
+| `../auth/google-sso-provider-not-enabled.md` | the **confirmed Google SSO defect** that blocked the Phase B probe. **Tracked separately and explicitly not Phase B work** |
 
 ---
 
@@ -200,7 +201,7 @@ listed because each one caught something.
 | Phase | Name | Status |
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
-| **B** | Make discovery reachable | **IN PROGRESS** |
+| **B** | Make discovery reachable | 🚧 **BLOCKED — authentication prerequisite failed; no probe evidence exists, exit criterion unmet.** B1 (Foursquare proxy) landed; B2/B3 unmet |
 | **C** | Complete shadow coverage | NOT STARTED |
 | **D** | D5=B engine split | NOT STARTED |
 | **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination |
@@ -248,7 +249,7 @@ impression**.
 
 ### The execution sequence — locked
 
-1. **Phase B evidence closure** ← *immediate gate*
+1. **Phase B evidence closure** ← *immediate gate* — 🚧 **BLOCKED 2026-08-15**, authentication prerequisite failed. **No evidence exists, so the gate is NOT passed.** Blocked ≠ closed
 2. Remaining **A–D** exit criteria
 3. **Event Truth schema packet** *(written — must now also pass the `verified_visit` test; retention **ruled** 2026-08-15 and folded in as packet §7)*
 4. **Event Truth implementation**
@@ -362,7 +363,51 @@ are different findings and must not be conflated.
 
 ---
 
-## Phase B — Make discovery reachable
+## Phase B — Make discovery reachable  ·  🚧 **BLOCKED**
+
+> ### BLOCKED — authentication prerequisite failed (owner ruling, 2026-08-15)
+>
+> **No Discovery probe evidence exists. The exit criterion is UNMET.**
+>
+> The probe could not be run: the browser agent could not authenticate into the
+> application. **Phase B is therefore blocked, not failed and not in progress** —
+> nothing about discovery reachability has been measured, in either direction.
+>
+> **TWO INDEPENDENT STATES. Do not conflate them:**
+>
+> | | State | |
+> |---|---|---|
+> | **Phase B** | **BLOCKED** | authentication prerequisite failed, **no probe evidence exists**, exit criterion unmet |
+> | **Google SSO** | **CONFIRMED DEFECT** | the Google provider is **not enabled** in Supabase — tracked on its own in [`../auth/google-sso-provider-not-enabled.md`](../auth/google-sso-provider-not-enabled.md) |
+>
+> **Google SSO must NOT be repaired inside Phase B merely to get the probe
+> through.** Google auth is **not part of Phase B's acceptance criteria**, and
+> folding an authentication repair into a discovery-reachability phase would
+> entangle Phase B's evidence with a change that has nothing to do with what
+> Phase B measures.
+>
+> Neither state resolves the other. Enabling the provider produces **zero** rows
+> of Discovery evidence; collecting Discovery evidence by some other route does
+> **not** fix Google sign-in.
+>
+> ### SUCCESSFUL LOGIN IS NOT PHASE B EVIDENCE
+>
+> **It merely removes the blocker that prevented evidence collection.** Phase B
+> is closed by discovery rows at **multiple serve points** (B3), and by nothing
+> else. An agent that authenticates successfully has reached the **starting
+> line**, and reporting that as progress against the exit criterion would be the
+> precise error this roadmap keeps warning about — *a result that looks like
+> success while nothing was measured.*
+>
+> And when the probe does run, **the two legitimate outcomes are unchanged**:
+> [evidence closure, or a newly discovered reachability or observability
+> defect](#when-the-probe-finishes-there-are-exactly-two-legitimate-outcomes).
+> **Missing or suspiciously thin evidence is never interpreted as low traffic.**
+>
+> **Lane note:** the authentication prerequisite — credential handling and the
+> probe run itself — belongs to the **browser agent**, which drives the browser.
+> It is recorded here as a *state of Phase B*, not restated as policy in this
+> file.
 
 **Ranked first among engineering work.** Every later measurement is worthless
 without it, and worse than worthless: it returns confident wrong answers rather
@@ -461,6 +506,27 @@ navigable rather than that one endpoint responds.
 
 **If B2 cannot be reproduced:** say so, record what was tried, and proceed to
 Phase C. Do not fabricate a fix for a bug that cannot be shown to exist.
+
+**Current state: NOT RUN.** The probe is blocked on the authentication
+prerequisite above, so **no row of this report has been produced** and the
+criterion stands unmet. **A successful login does not advance this criterion by
+one row** — it only makes the probe possible.
+
+### What Phase B's blockage does and does NOT unlock
+
+Recorded because the two rules point in different directions and a reader could
+reasonably take the wrong one:
+
+| | |
+|---|---|
+| **Phase C** | **may proceed.** Its entry is *"Phase B exit met, **or explicitly declared blocked**"* — and Phase B is now explicitly declared blocked, which is exactly the case that clause was written for |
+| **Step 2, Event Truth** | **stays gated. Blockage is NOT closure.** The superseding sequence gates it on *"Phase B **evidence closure**"*, and no evidence exists |
+
+**A phase declared blocked has been honestly reported, not satisfied.** The A–F
+sequence permits routing around it; the architecture gate does not, because its
+whole reason for existing is that instrumentation must be shown to distinguish
+absence of behaviour from absence of observation — and a blocked probe has
+demonstrated nothing either way.
 
 ---
 
