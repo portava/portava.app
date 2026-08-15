@@ -2,6 +2,19 @@
 
 **Filed 2026-08-15. Open. Severity: LOW-TO-MODERATE and LATENT.**
 
+> # 🔒 FUTURE-AUTHENTICATION TRIGGER — BLOCKING
+>
+> ## THIS MUST BE RESOLVED **BEFORE** COOKIE OR SESSION AUTHENTICATION IS INTRODUCED.
+>
+> Not "considered alongside". **Before.** This finding's low severity is held
+> down entirely by the fact that authentication is Bearer-token only. Introducing
+> cookie or session auth removes that, and does so **without touching this file,
+> `app.ts`, or anything that would prompt a reader to re-check the CORS policy.**
+>
+> **If you are here because you are adding cookie or session auth: stop and fix
+> items 1–3 below first.** The change that makes this serious is the change least
+> likely to notice it.
+
 Found while establishing whether the Phase B3 probe could run from a local
 frontend. Not a Phase B issue and filed separately.
 
@@ -118,10 +131,28 @@ change. In priority order:
    misleading, it costs nothing, and it is what the next reader will trust.
 2. **Set `ALLOWED_ORIGINS` explicitly in the production deployment.** The code
    already prefers it over the fallback (`app.ts:35`), and setting it makes the
-   production allowlist an enumerated list. Note the fallback path *already logs a
-   warning* that it is in use — worth checking whether that warning is firing in
-   production and being ignored, which would make this a **third** instance of a
-   signal that existed and was not read.
+   production allowlist an enumerated list.
+
+   > ### CHECK THIS FIRST, AND IT IS THE SHARPEST THING IN THIS DOCUMENT
+   >
+   > **The fallback path at `app.ts:38` already logs a warning when it is in
+   > use** — *"ALLOWED_ORIGINS env var is not set — CORS allowlist is using
+   > hardcoded fallback domains."*
+   >
+   > If that warning has been firing in production and going unread, then **the
+   > condition described in this document has been announcing itself all along.**
+   >
+   > **It is the THIRD such instance found on 2026-08-15**, alongside
+   > `places.ts:330` (Google autocomplete non-OK, carrying Google's own status)
+   > and `places.ts:490` (Places API New disabled, carrying the activation URL).
+   > All three defects were found by **probing production from outside**, not by
+   > reading logs the code already writes.
+   >
+   > **Three is a pattern, not three coincidences.** It is recorded as a fourth
+   > face of the governing invariant in
+   > [`../discovery/ROADMAP.md`](../discovery/ROADMAP.md): **a signal nobody reads
+   > is not a signal.** Whatever is decided about the allowlist, the more valuable
+   > question is why three separate warnings fired into a void.
 3. **Gate the dev-domain branch on more than the presence of `REPLIT_DEV_DOMAIN`.**
    The variable is evidently not the production/dev discriminator the code
    assumes. An explicit `NODE_ENV !== 'production'` check, or an opt-in flag,
