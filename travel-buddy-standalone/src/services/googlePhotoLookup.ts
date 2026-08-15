@@ -9,6 +9,8 @@
  *
  * Failures are silent — callers fall back to category artwork. Never throws.
  */
+import { reportPhotoLookupResult } from './photoProviderOutage.ts';
+
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -69,15 +71,23 @@ export async function lookupGooglePhoto(
       clearTimeout(timer);
 
       if (!res.ok) {
+        // The proxy itself is unreachable or erroring. That is an outage, not
+        // evidence this place has no photo.
+        reportPhotoLookupResult('google', 'proxy_http_error');
         photoCache.set(cKey, { url: null, ts: Date.now() });
         return null;
       }
 
-      const body = (await res.json()) as { photoUrl?: string | null };
+      const body = (await res.json()) as { photoUrl?: string | null; reason?: string | null };
       const photoUrl = typeof body.photoUrl === 'string' ? body.photoUrl : null;
+      // SERVICE_DISABLED arrives here as `google_places_api_new_service_disabled`.
+      // Discarding it is what let a project-wide disabled API look like a run
+      // of places that happen to have no pictures.
+      if (!photoUrl) reportPhotoLookupResult('google', body.reason);
       photoCache.set(cKey, { url: photoUrl, ts: Date.now() });
       return photoUrl;
     } catch {
+      reportPhotoLookupResult('google', 'proxy_unreachable');
       photoCache.set(cKey, { url: null, ts: Date.now() });
       return null;
     } finally {
