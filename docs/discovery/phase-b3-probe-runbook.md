@@ -301,3 +301,67 @@ completion, update:
 - **B3**, with the before/after figures and the provider state
 - if outcome 2: file the defect and name it in the roadmap rather than leaving
   the probe looking inconclusive
+
+---
+
+## RECORDED READINGS
+
+Committed rather than left in `/tmp`, which does not survive a container
+restart — the same reason this file exists at all.
+
+### Step 1 baseline — taken 2026-08-15T12:50:13Z, window `--days 1`
+
+Read READ-ONLY against production `ajrurzioarfkagpuxfnb` through
+`ciProdReadOnlyAuditGuard`. **The probe had NOT yet run at this point.**
+
+| | |
+|---|---|
+| Marked rows in window | **13** |
+| Distinct sessions | **4** |
+| Serve points with rows | **1 of 9 — point 9 (Suggest) only** |
+| Unexercised | **1, 2, 3, 4, 5, 6, 7, 8** |
+| `GET /discovery` serves (points 1–6) | **0** |
+
+```
+  9  Suggest (GET /discovery/suggest)   13  100.0%   4 sessions
+  ⚠ ONE serve point only (9). Phase B's exit criterion is rows at
+    MULTIPLE serve points; one does not meet it, however many rows it has.
+```
+
+**This is the FAILING state, and that is what makes it a good baseline.** Phase
+B's criterion is unmet at T-0 on the same instrument that will read the result,
+so any serve-point diversity appearing in the probe window is attributable to the
+probe rather than to background traffic.
+
+**Zero `GET /discovery` serves in the preceding 24 hours** — so serve points 1–6
+are all at a floor of zero going in. The 13 rows are entirely on `/suggest`,
+which contains no ranker call.
+
+**What this baseline does NOT say.** It does not say the surface is unreachable.
+The instrument says so itself, and the distinction is the workstream's governing
+invariant:
+
+> *Unexercised is NOT the same as unreachable: nothing here can tell a surface
+> nobody visited from one nobody could reach. Say which, or say neither.*
+
+**Answering that is what the probe is for.** Sections 2b and 3 correctly declined
+to render a verdict — *"That is not the criterion holding. It is the criterion
+untested."* An instrument that had returned a confident zero here would have been
+the failure mode this whole phase is built around.
+
+### Environment at baseline
+
+| | |
+|---|---|
+| Live build | `a384e29fa` / build-id `58536e52` — verified clean |
+| Foursquare photo lookups | **HTTP 429, quota exhausted** |
+| Google photo fallback | **live, carrying every card** |
+| `/api/places/google-autocomplete` | **returning empty with a working key** (separate defect, unfiled) |
+
+### Step 2 — observer's window
+
+*Not yet run. Record `PROBE_START`, `PROBE_END`, and what was navigated here.*
+
+### Step 3 — verifier's readings and verdict
+
+*Not yet run.*
