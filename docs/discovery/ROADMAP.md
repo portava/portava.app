@@ -154,12 +154,12 @@ listed because each one caught something.
 
 | Phase | Name | Status |
 |---|---|---|
-| **A** | Land Stage 2 | see status table maintenance note below |
-| **B** | Make discovery reachable | |
-| **C** | Complete shadow coverage | |
-| **D** | D5=B engine split | |
-| **E** | Measurement readiness | |
-| **F** | Owner gates | **NOT AGENT WORK** |
+| **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
+| **B** | Make discovery reachable | **IN PROGRESS** |
+| **C** | Complete shadow coverage | NOT STARTED |
+| **D** | D5=B engine split | NOT STARTED |
+| **E** | Measurement readiness | NOT STARTED |
+| **F** | Owner gates | **NOT AGENT WORK** — build nothing past these |
 
 > **Maintain this table in the same PR as the work.** A status table that is
 > updated separately is a status table that is wrong. Use `DONE`, `IN PROGRESS`,
@@ -193,7 +193,7 @@ fork) live; the PDE engine merged.
 - [x] `audit:schema` exit 0 on both.
 - [x] `audit:shadow-append-only` exit 0 on both — `service_role` exactly
       `INSERT, SELECT`; `anon`/`authenticated` nothing; RLS on; 3/3 triggers.
-- [ ] PR #50 green and merged.
+- [x] PR #50 green (26/26) and merged 2026-08-15.
 
 **Verification**
 
