@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import { AppState } from 'react-native';
 import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile } from '../services/auth.ts';
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
-import { getAccountStatus } from '../services/profile.ts';
+import { getAccountStatus, TOKEN_UNAVAILABLE } from '../services/profile.ts';
 import type { AccountStatus } from '../services/profile.ts';
 import { pauseOnSessionEnd } from '../services/circle.ts';
 import { clearForUser as clearSavedForUser, primeSaved } from '../services/savedPostsCache.ts';
@@ -141,9 +141,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const fetchAccountStatus = useCallback(async (uid: string | null, opts?: { background?: boolean }) => {
     clearStatusRetry();
     if (!uid) {
+      // NOT LOADED — "we have not asked", not "we asked and failed".
+      //
+      // These two states are both (accountStatus === null) and the gate tells
+      // them apart ONLY by accountStatusLoaded. Setting it true here latched the
+      // context into the exact shape AccountStatusGate renders as the full-page
+      // "Couldn't verify your account" wall, and left it latched. While signed
+      // out that is invisible — the gate returns children before it reads this
+      // flag — but the moment userId became non-null again the gate rendered
+      // with the stale latched pair before this effect could clear it.
+      //
+      // That is the second half of task 3658, and it is why the wall appeared
+      // mid-session with the session still live: any auth event delivering a
+      // null session (a discarded token rotation, a refresh that momentarily
+      // reports no session) flips userId null → non-null through
+      // onAuthStateChange, and the round trip alone was enough to raise the
+      // wall. Nothing about the account was ever in question.
       setAccountStatus(null);
       setDeletionScheduledAt(null);
-      setAccountStatusLoaded(true);
+      setAccountStatusLoaded(false);
       return;
     }
     // Background retries keep the already-rendered app visible — flipping
@@ -158,21 +174,28 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (result.ok && result.data) {
       setAccountStatus(result.data.accountStatus);
       setDeletionScheduledAt(result.data.deletionScheduledAt);
-    } else if (result.errorKind === 'network_unreachable' || result.errorKind === 'unauthenticated') {
-      // Fail-OPEN: the request never reached the API (offline cold start,
-      // airplane mode, DNS failure) so there is no server verdict to enforce,
-      // OR we could not obtain a valid token right now. The 'unauthenticated'
-      // kind is returned exclusively by freshToken() returning null — this
-      // happens when the Supabase SDK's own auto-refresh and freshToken()'s
-      // explicit refreshSession() call race to rotate the same refresh token;
-      // the losing call gets a null session even though the user is still
-      // fully signed in. This is a transient race, not a server verdict about
-      // account status, so it must not block the app. In both cases the user
-      // IS authenticated at the session level (userId is non-null at the call
-      // site) so treating the account as active is safe. Keep retrying in the
-      // background until a confirmed server response lands. Real API responses
-      // (suspended / banned / deactivated / server errors) still fail closed
-      // below.
+    } else if (result.errorKind === 'network_unreachable' || result.errorKind === TOKEN_UNAVAILABLE) {
+      // Fail-OPEN, and ONLY for the two kinds that mean NO SERVER VERDICT
+      // EXISTS:
+      //
+      //   network_unreachable — the request never reached the API (offline cold
+      //                         start, airplane mode, DNS failure);
+      //   TOKEN_UNAVAILABLE   — freshToken() returned null, so nothing was ever
+      //                         sent. See its definition in services/profile.ts:
+      //                         one failed token mint is not a claim that the
+      //                         user is signed out, and userId is non-null at
+      //                         this call site, so the session is live.
+      //
+      // In neither case has anything examined the account, so blocking the app
+      // behind "Couldn't verify your account" asserts a check that never ran.
+      // Assume active and keep retrying in the background until a real answer
+      // lands.
+      //
+      // 'unauthenticated' is deliberately NOT here. That is the server's 401 on
+      // a token it received, and failing open on it would render the app for a
+      // genuinely invalid, expired or revoked token. Real API responses
+      // (unauthenticated / forbidden / deactivated / server errors) all still
+      // fail closed below.
       setAccountStatus('active');
       setDeletionScheduledAt(null);
       statusRetryTimerRef.current = setTimeout(() => {

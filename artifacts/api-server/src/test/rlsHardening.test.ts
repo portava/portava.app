@@ -81,6 +81,157 @@ function anonClient(): SupabaseClient {
 
 const RLS_TEST_PREFIX = "rls_hardening_test_";
 
+/**
+ * THE FIXTURES THIS SUITE OWNS, NAMED IN ONE PLACE.
+ *
+ * WHY THIS BLOCK EXISTS — the failure it is written against
+ * ========================================================
+ * On 2026-08-15 this suite reported `tests=15 pass=0 fail=0 skipped=0 exit=1`
+ * on every live-DB run in the repository, across unrelated branches, with:
+ *
+ *     Error: Setup: create userA: A user with this email address has already
+ *            been registered
+ *
+ * Two `CI (live DB)` runs fired on the SAME commit 28 seconds apart (push, then
+ * pull_request) and interleaved against the shared CI project. Each created one
+ * of the two fixture users and then collided on the other. Both threw — and
+ * both threw BEFORE `testProfileIdPrivate` / `testProfileIdPublic` were
+ * assigned, because the assignment sat below both throw sites. So `after()` had
+ * no id to delete, and each run left one orphaned auth user behind.
+ *
+ * The emails are deterministic, so those orphans made the collision PERMANENT:
+ * every subsequent run, on every branch, failed identically. Recovery required
+ * a human deleting rows out of the CI project by hand.
+ *
+ * That is a self-inflicted instance of the rule this repository already runs on:
+ * a failure that destroys the information needed to recover from it. The suite
+ * could not clean up after itself precisely BECAUSE it had failed, so the first
+ * failure was the last one that meant anything — every run after it reported the
+ * same red regardless of the code under test.
+ *
+ * Two changes, and they are separate:
+ *
+ *   1. `purgeFixtures()` runs FIRST in `before()`, not only in `after()`. Setup
+ *      no longer assumes it is starting from a clean project. A poisoned project
+ *      heals on the next run instead of staying poisoned until someone notices.
+ *
+ *   2. Every created user id is recorded the instant it exists — `createdUserIds`
+ *      below — so a throw between two creates still leaves teardown a handle.
+ *      Recording after the last throw site is what turned a transient collision
+ *      into a permanent one.
+ *
+ * WHAT THIS DOES NOT FIX, STATED RATHER THAN IMPLIED
+ * =================================================
+ * It does not make the suite concurrency-safe. Two runs overlapping will still
+ * interfere: the second one's purge deletes the first one's live fixtures. What
+ * changes is that the damage is no longer PERMANENT — the next run sweeps and
+ * proceeds, instead of every future run failing on a leftover row. The real
+ * remedy is one live-DB run at a time; that is a workflow-trigger question
+ * (`live-db.yml` fires on both `push` and `pull_request`), and it is deliberately
+ * not decided here. Note that a naive `concurrency:` group is NOT a safe fix on
+ * its own: `live DB · verdict` fails on a cancelled run by design, so cancelling
+ * a superseded run would trade this failure for a different red.
+ */
+const FIXTURE_EMAILS = [
+  `${RLS_TEST_PREFIX}private@example.com`,
+  `${RLS_TEST_PREFIX}public@example.com`,
+] as const;
+
+const FIXTURE_HANDLES = [`${RLS_TEST_PREFIX}private`, `${RLS_TEST_PREFIX}public`] as const;
+const FIXTURE_EVENT_TITLE = `${RLS_TEST_PREFIX}private_event`;
+const FIXTURE_TRIP_TITLE = `${RLS_TEST_PREFIX}private_trip`;
+
+/**
+ * Every auth user THIS process created, appended the instant the id exists.
+ * Teardown deletes these in addition to whatever the email sweep finds, so a
+ * user created moments before an unrelated failure is still cleaned up.
+ */
+const createdUserIds: string[] = [];
+
+/**
+ * Bound on the `listUsers` sweep. Exceeding it THROWS rather than returning a
+ * partial answer: a sweep that quietly stopped early would report "no orphans"
+ * having looked at a fraction of the project, which is the same shape of lie
+ * this whole block exists to remove.
+ */
+const MAX_USER_PAGES = 20;
+const USERS_PER_PAGE = 1000;
+
+/** Ids of any auth user currently holding one of this suite's fixture emails. */
+async function findFixtureUserIds(admin: SupabaseClient): Promise<string[]> {
+  const wanted = new Set<string>(FIXTURE_EMAILS.map((e) => e.toLowerCase()));
+  const found: string[] = [];
+
+  for (let page = 1; page <= MAX_USER_PAGES; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({
+      page,
+      perPage: USERS_PER_PAGE,
+    });
+    if (error) throw new Error(`purgeFixtures: listUsers page ${page}: ${error.message}`);
+
+    const users = data?.users ?? [];
+    for (const u of users) {
+      const email = (u as { email?: string | null }).email;
+      if (email && wanted.has(email.toLowerCase())) found.push(u.id);
+    }
+    // A short page is the last page.
+    if (users.length < USERS_PER_PAGE) return found;
+  }
+
+  throw new Error(
+    `purgeFixtures: listUsers exceeded ${MAX_USER_PAGES} pages of ${USERS_PER_PAGE}. ` +
+      `Refusing to report a partial sweep as a clean one.`,
+  );
+}
+
+/**
+ * Remove every row this suite owns, whether this process created it or a
+ * previous crashed run left it. Safe to call on a clean project.
+ *
+ * Deletion order follows the FK chain: trips and events reference profiles,
+ * profiles hang off auth users. Matched by EXACT value, never by a LIKE
+ * pattern — `_` is a single-character wildcard in SQL LIKE, so
+ * `rls_hardening_test_%` matches far more than it appears to.
+ */
+async function purgeFixtures(admin: SupabaseClient): Promise<void> {
+  const { error: tErr } = await admin.from("trips").delete().eq("title", FIXTURE_TRIP_TITLE);
+  if (tErr) throw new Error(`purgeFixtures: delete trips: ${tErr.message}`);
+
+  const { error: eErr } = await admin.from("events").delete().eq("title", FIXTURE_EVENT_TITLE);
+  if (eErr) throw new Error(`purgeFixtures: delete events: ${eErr.message}`);
+
+  // Deleting the auth user cascades to its profile, but a profile whose user is
+  // already gone would keep the unique handle and break the upsert below.
+  const { error: pErr } = await admin
+    .from("profiles")
+    .delete()
+    .in("handle", [...FIXTURE_HANDLES]);
+  if (pErr) throw new Error(`purgeFixtures: delete profiles: ${pErr.message}`);
+
+  const ids = new Set<string>([...(await findFixtureUserIds(admin)), ...createdUserIds]);
+  for (const id of ids) {
+    const { error } = await admin.auth.admin.deleteUser(id);
+    // Already gone is the desired end state, not a failure.
+    if (error && !/not.?found/i.test(error.message)) {
+      throw new Error(`purgeFixtures: deleteUser ${id}: ${error.message}`);
+    }
+  }
+  createdUserIds.length = 0;
+}
+
+/** Create one fixture user, recording its id BEFORE anything else can throw. */
+async function createFixtureUser(admin: SupabaseClient, email: string): Promise<string> {
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password: "test-password-123",
+    email_confirm: true,
+  });
+  if (error) throw new Error(`Setup: create ${email}: ${error.message}`);
+  const id = data.user.id;
+  createdUserIds.push(id);
+  return id;
+}
+
 /** IDs that we'll insert and then clean up */
 let testProfileIdPrivate: string;
 let testProfileIdPublic: string;
@@ -94,37 +245,25 @@ before(async () => {
 
   const admin = adminClient();
 
+  // Start from a known-empty state rather than assuming one. This is the line
+  // that heals a project poisoned by an earlier crashed run.
+  await purgeFixtures(admin);
+
   // ── Create two auth users for test profiles ──────────────────────────────
-  const { data: userA, error: userAErr } =
-    await admin.auth.admin.createUser({
-      email: `${RLS_TEST_PREFIX}private@example.com`,
-      password: "test-password-123",
-      email_confirm: true,
-    });
-  if (userAErr) throw new Error(`Setup: create userA: ${userAErr.message}`);
-
-  const { data: userB, error: userBErr } =
-    await admin.auth.admin.createUser({
-      email: `${RLS_TEST_PREFIX}public@example.com`,
-      password: "test-password-123",
-      email_confirm: true,
-    });
-  if (userBErr) throw new Error(`Setup: create userB: ${userBErr.message}`);
-
-  testProfileIdPrivate = userA.user.id;
-  testProfileIdPublic = userB.user.id;
+  testProfileIdPrivate = await createFixtureUser(admin, FIXTURE_EMAILS[0]);
+  testProfileIdPublic = await createFixtureUser(admin, FIXTURE_EMAILS[1]);
 
   // ── Upsert profile rows (auto-created by trigger, but set is_private) ────
   const { error: pErr } = await admin.from("profiles").upsert([
     {
       id: testProfileIdPrivate,
-      handle: `${RLS_TEST_PREFIX}private`,
+      handle: FIXTURE_HANDLES[0],
       name: "RLS Test Private",
       is_private: true,
     },
     {
       id: testProfileIdPublic,
-      handle: `${RLS_TEST_PREFIX}public`,
+      handle: FIXTURE_HANDLES[1],
       name: "RLS Test Public",
       is_private: false,
     },
@@ -136,7 +275,7 @@ before(async () => {
     .from("events")
     .insert({
       host_id: testProfileIdPrivate,
-      title: `${RLS_TEST_PREFIX}private_event`,
+      title: FIXTURE_EVENT_TITLE,
       visibility: "invite_only",
       state: "open",
     })
@@ -150,7 +289,7 @@ before(async () => {
     .from("trips")
     .insert({
       owner_id: testProfileIdPrivate,
-      title: `${RLS_TEST_PREFIX}private_trip`,
+      title: FIXTURE_TRIP_TITLE,
       destination_city: "Testville",
       visibility: "private",
       status: "planning",
@@ -166,19 +305,28 @@ after(async () => {
 
   const admin = adminClient();
 
-  // Delete trips first (FK dependency)
+  // Delete by id where we have one — the narrowest possible match, and the only
+  // way to remove rows whose title a concurrent run may since have reused.
   if (testTripIdPrivate) {
     await admin.from("trips").delete().eq("id", testTripIdPrivate);
   }
   if (testEventIdPrivate) {
     await admin.from("events").delete().eq("id", testEventIdPrivate);
   }
-  // Delete auth users (cascades to profiles)
-  if (testProfileIdPrivate) {
-    await admin.auth.admin.deleteUser(testProfileIdPrivate);
-  }
-  if (testProfileIdPublic) {
-    await admin.auth.admin.deleteUser(testProfileIdPublic);
+
+  // Then the identity sweep, which is what runs when setup threw and there are
+  // no ids to delete by. `node:test` runs `after` even when `before` throws,
+  // which is the whole reason this is reachable on the failure path.
+  //
+  // It must not throw: a teardown that fails masks the real failure with its
+  // own, and the next run's `before()` purge is the backstop. Report and move on.
+  try {
+    await purgeFixtures(admin);
+  } catch (err) {
+    console.error(
+      `rlsHardening teardown: purgeFixtures failed — the next run's setup purge ` +
+        `is expected to clear this: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 });
 
