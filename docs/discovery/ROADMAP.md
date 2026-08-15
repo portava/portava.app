@@ -168,6 +168,72 @@ listed because each one caught something.
 
 ---
 
+## Workstream S — Strengthening (standing, runs ALONGSIDE the phases)
+
+**Authority granted by the owner, delegated 2026-08-15.** Changes that
+strengthen the system may be made on judgement, not only when a phase names
+them. This runs *beside* A–F continuously, not after them.
+
+### The four conditions. A change must meet all of them.
+
+1. **Behaviour-preserving for users, OR it fixes a genuine defect.**
+2. **Red-proof with a positive control.** A guard asserting "nothing was wrong"
+   passes trivially against a check that has stopped working. The control is
+   what distinguishes *found nothing* from *cannot find anything*.
+3. **Normal PR flow**, three green verdicts.
+4. **Recorded with its reasoning**, in the commit and in the file.
+
+### The doctrine: SWALLOWED FAILURES ARE FIRST-CLASS DEFECTS
+
+The exemplar is `fsqPhotoLookup`. It failed CORS on **every place card** — one
+request per visible card — and the failure was **caught and discarded**. The card
+showed a blank placeholder. No error surfaced anywhere.
+
+**That is worse than a crash.** A crash gets fixed in a day. A silent blank
+teaches everyone the system is fine, and it had been teaching that for as long
+as the web build has existed.
+
+Treat this as the same family as *vacuity is failure*: both are states where
+**success is indistinguishable from not having worked**.
+
+### What counts as strengthening
+
+- making a check enforce the claim it already states
+- giving a guard a floor so it cannot pass vacuously
+- making a silent failure loud
+- deleting or correcting a comment or doc that asserts a constraint the code
+  does not have
+- removing dead code that misleads a reader
+- adding a test that pins behaviour someone could otherwise break unknowingly
+
+### The gates that make the rest safe — STOP and escalate
+
+| | |
+|---|---|
+| ranking or scoring behaviour | **no change** |
+| production writes | **staged for the operator**, with before/after verification |
+| what a user receives | **no change** |
+| enabling `shadow` for any cohort | **owner gate, absolute** |
+| the `pde`-serving flip | **owner gate, absolute** |
+
+If a strengthening change would touch any of those, **stop and bring it up
+instead of proceeding.**
+
+### Register
+
+| Item | State |
+|---|---|
+| **dead-routes guard has no floor for a MISSING root** — the conditional `if (existsSync)` floors an empty root and passes an absent one, which is the case that actually happened (`artifacts/travel-buddy`, archived). Sibling `fixture-import-guard.test.ts:118` asserts unconditionally; that contrast is the argument | **DONE** |
+| **route table can hold a shadowed duplicate silently** — two implementations of `/places/fsq-photo` existed at once; Express runs the first and the second is dead with no warning | **DONE** — asserted to be exactly one |
+| `scoreWithContext` else-branch is unreachable (`routes/discovery.ts`) — `discoveryCtx` is only assigned where `callerUserId` is (`:925`, `:942`), so the `else` can never see a non-null ctx | OPEN |
+| `getFlagRow` — the only selector of the `feature_flags.metadata` column — had **zero callers** before this week | OPEN |
+| the dead `user_follows` read per ranked request (`discoveryPde.ts:250-257`) feeding terms that are structurally zero — see `ranker-signal-audit.md` | OPEN |
+| `impressionCount: Math.max(1, savedCount)` — an engagement *rate* whose denominator derives from its numerator (`discoveryPde.ts:357`) | OPEN |
+| `cityMatch` fires for every candidate, a constant in a scoring function | OPEN — **touches scoring, escalate rather than fix** |
+| any other check whose success is indistinguishable from having checked nothing | STANDING |
+
+---
+
 ## Phase A — Land Stage 2
 
 Shadow observation exists, is wired to the Cache A serve points, writes to an
