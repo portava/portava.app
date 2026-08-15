@@ -239,6 +239,8 @@ export function DisplayMediaImage({
     // undefined = still loading; keep the initialised plain-URI source.
   }, [resolved, hydratedMap]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const retriedPublic = useRef(false);
+
   // One-time re-hydration on 403 / onError.  The cache entry is evicted first
   // so the next batchSignUrls call fetches a fresh signed URL from the server.
   // Re-hydration is only attempted for private-bucket URLs (post-media /
@@ -265,6 +267,16 @@ export function DisplayMediaImage({
           setResolvedSource({ uri: newUrl });
         }
       });
+    } else if (!retriedPublic.current) {
+      // Public CDN URLs (e.g. Foursquare place photos) occasionally fail on
+      // the first attempt from transient network hiccups rather than a truly
+      // dead link — a dead link is already filtered server-side before this
+      // component ever sees it. Retry once, after a short delay, before
+      // committing to the fallback artwork.
+      retriedPublic.current = true;
+      setTimeout(() => {
+        setResolvedSource({ uri: resolved });
+      }, 400);
     } else {
       setPhase('error');
       onError?.();
