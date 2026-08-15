@@ -72,23 +72,31 @@ export async function lookupGooglePhoto(
 
       if (!res.ok) {
         // The proxy itself is unreachable or erroring. That is an outage, not
-        // evidence this place has no photo.
+        // evidence this place has no photo. Do NOT cache — the condition may
+        // clear (server restarts, network recovers) and we must retry.
         reportPhotoLookupResult('google', 'proxy_http_error');
-        photoCache.set(cKey, { url: null, ts: Date.now() });
         return null;
       }
 
       const body = (await res.json()) as { photoUrl?: string | null; reason?: string | null };
       const photoUrl = typeof body.photoUrl === 'string' ? body.photoUrl : null;
+      const reason = body.reason ?? null;
       // SERVICE_DISABLED arrives here as `google_places_api_new_service_disabled`.
       // Discarding it is what let a project-wide disabled API look like a run
       // of places that happen to have no pictures.
-      if (!photoUrl) reportPhotoLookupResult('google', body.reason);
-      photoCache.set(cKey, { url: photoUrl, ts: Date.now() });
+      if (!photoUrl) reportPhotoLookupResult('google', reason);
+      // Cache only stable results: a confirmed photo URL, or a confirmed
+      // absence (no_photo_found = Google has no record for this place).
+      // Outage reasons (service_disabled, auth errors, proxy errors, etc.) must
+      // not be cached — they are billing/config state that can be resolved
+      // without a code change, and locking in a null for 24 h would leave
+      // every previously viewed card on fallback artwork even after recovery.
+      const shouldCache = photoUrl !== null || reason === 'no_photo_found';
+      if (shouldCache) photoCache.set(cKey, { url: photoUrl, ts: Date.now() });
       return photoUrl;
     } catch {
+      // Network / timeout error — transient, do NOT cache.
       reportPhotoLookupResult('google', 'proxy_unreachable');
-      photoCache.set(cKey, { url: null, ts: Date.now() });
       return null;
     } finally {
       inFlightPhotos.delete(cKey);

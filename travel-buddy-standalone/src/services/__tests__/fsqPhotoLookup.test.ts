@@ -206,7 +206,9 @@ describe('lookupFsqPhoto — network error handling', () => {
     assert.equal(result, null, 'must return null on network error');
   });
 
-  it('caches the null result so a sequential second call does not fetch again', async () => {
+  it('does NOT cache the null result on network error — a second call retries the fetch', async () => {
+    // Network failures are transient; caching them would lock a place into
+    // fallback artwork for 24 h even after the connection recovers.
     const abortError = new DOMException('The operation was aborted.', 'AbortError');
     let fetchCallCount = 0;
     globalThis.fetch = async () => {
@@ -224,6 +226,149 @@ describe('lookupFsqPhoto — network error handling', () => {
 
     const second = await lookupFsqPhoto(name, lat, lng);
     assert.equal(second, null);
-    assert.equal(fetchCallCount, 1, 'fetch must not be called again — null result is cached');
+    assert.equal(fetchCallCount, 2, 'fetch must be called again — transient errors must not be cached');
+  });
+});
+
+// ── lookupFsqPhoto — caching policy: outage vs genuine absence ────────────────
+//
+// The server returns a machine-readable `reason` on every null-photoUrl path.
+// The client must cache only stable results (confirmed photo URL, or confirmed
+// absence: no_photo_found). Outage and transient reasons must never be cached
+// — they are billing/config/network state that can change without a code
+// deploy, and locking in a null for 24 h would keep cards on fallback artwork
+// even after the provider recovers.
+
+describe('lookupFsqPhoto — unverified_url: NOT cached, second call retries fetch', () => {
+  it('proxy returns a photoUrl with reason unverified_url: second call fires fetch again', async () => {
+    // The server emits reason: "unverified_url" when its CDN HEAD check timed
+    // out and the URL has not been verified as loadable. Caching it would pin
+    // the client to a potentially dead image for 24 h; the client must skip
+    // the cache and let the next request retry via the proxy.
+    let fetchCallCount = 0;
+    globalThis.fetch = async (_input: RequestInfo | URL) => {
+      fetchCallCount++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          photoUrl: 'https://fastly.4sqi.net/img/general/original/unverified.jpg',
+          reason: 'unverified_url',
+        }),
+      } as Response;
+    };
+
+    const name = uniqueName();
+    const first = await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(
+      typeof first,
+      'string',
+      `first call: expected a string photoUrl (served optimistically), got ${JSON.stringify(first)}`,
+    );
+    assert.equal(fetchCallCount, 1, 'first request must call fetch once');
+
+    const second = await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(typeof second, 'string', 'second call: still returns the URL');
+    assert.equal(
+      fetchCallCount,
+      2,
+      'unverified_url must NOT be cached — second request must call fetch again so the proxy can re-verify the CDN link',
+    );
+  });
+});
+
+describe('lookupFsqPhoto — outage reason: NOT cached, second call retries fetch', () => {
+  it('foursquare_quota_exhausted: second sequential request fires fetch again', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = async (_input: RequestInfo | URL) => {
+      fetchCallCount++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ photoUrl: null, reason: 'foursquare_quota_exhausted' }),
+      } as Response;
+    };
+
+    const name = uniqueName();
+    const first = await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(first, null);
+    assert.equal(fetchCallCount, 1, 'first request must call fetch once');
+
+    const second = await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(second, null);
+    assert.equal(
+      fetchCallCount,
+      2,
+      'quota-exhausted result must NOT be cached — second request must call fetch again',
+    );
+  });
+
+  it('foursquare_auth_error: second sequential request fires fetch again', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = async (_input: RequestInfo | URL) => {
+      fetchCallCount++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ photoUrl: null, reason: 'foursquare_auth_error' }),
+      } as Response;
+    };
+
+    const name = uniqueName();
+    await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(fetchCallCount, 1);
+
+    await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(
+      fetchCallCount,
+      2,
+      'auth-error result must NOT be cached — second request must call fetch again',
+    );
+  });
+
+  it('proxy HTTP error (!res.ok): second sequential request fires fetch again', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = async (_input: RequestInfo | URL) => {
+      fetchCallCount++;
+      return { ok: false, status: 502, json: async () => ({}) } as Response;
+    };
+
+    const name = uniqueName();
+    await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(fetchCallCount, 1);
+
+    await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(
+      fetchCallCount,
+      2,
+      'proxy HTTP error must NOT be cached — second request must call fetch again',
+    );
+  });
+});
+
+describe('lookupFsqPhoto — no_photo_found: IS cached, second call skips fetch', () => {
+  it('no_photo_found: second sequential request served from cache (fetch not called again)', async () => {
+    let fetchCallCount = 0;
+    globalThis.fetch = async (_input: RequestInfo | URL) => {
+      fetchCallCount++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ photoUrl: null, reason: 'no_photo_found' }),
+      } as Response;
+    };
+
+    const name = uniqueName();
+    const first = await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(first, null);
+    assert.equal(fetchCallCount, 1, 'first request must call fetch once');
+
+    const second = await lookupFsqPhoto(name, 10.0, 20.0);
+    assert.equal(second, null);
+    assert.equal(
+      fetchCallCount,
+      1,
+      'no_photo_found is stable absence — second request must be served from cache without fetching',
+    );
   });
 });

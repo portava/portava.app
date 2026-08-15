@@ -620,13 +620,21 @@ describe("GET /api/places/fsq-photo — HEAD check throws; result must NOT be ca
     };
   });
 
-  it("first request: returns the photoUrl despite the HEAD failure (best-effort serve)", async () => {
+  it("first request: returns photoUrl string AND reason 'unverified_url' (best-effort serve, client must not cache)", async () => {
     const { body } = await getPhoto(url, { name: "Off-Grid Shack Head Throw", lat: 55.0, lng: -3.0 });
     // The URL is served optimistically even though the HEAD check threw.
     assert.equal(
       typeof body.photoUrl,
       "string",
       `first call: expected a string photoUrl, got ${JSON.stringify(body.photoUrl)}`,
+    );
+    // The reason signal tells the client NOT to cache this result. Without it
+    // the client cannot distinguish a verified URL from an unverified one and
+    // would pin the user to a potentially dead image for 24 h.
+    assert.equal(
+      body.reason,
+      "unverified_url",
+      `HEAD-timeout response must carry reason 'unverified_url'; got '${body.reason as string}'`,
     );
   });
 
@@ -948,7 +956,7 @@ describe("GET /api/places/fsq-photo — HEAD timeout: atomic photoUrl+reason + t
   // Request 1 — atomic assertion on a single response object.
   // Both properties are read from the same body, so there is no possibility of
   // photoUrl coming from one request and reason from another.
-  it("first request: same response has a non-empty photoUrl string AND no reason field (atomic)", async () => {
+  it("first request: same response has a non-empty photoUrl AND reason: 'unverified_url' (atomic)", async () => {
     const { body } = await getPhoto(url, { name: "Timeout Shack Atomic", lat: 66.0, lng: -5.0 });
     assert.equal(
       typeof body.photoUrl,
@@ -959,10 +967,13 @@ describe("GET /api/places/fsq-photo — HEAD timeout: atomic photoUrl+reason + t
       body.photoUrl.length > 0,
       `expected a non-empty photoUrl, got an empty string`,
     );
+    // The "unverified_url" reason tells the client NOT to cache this result.
+    // Without it the client cannot distinguish a verified URL from an
+    // unverified one and would cache it for 24 h.
     assert.equal(
       body.reason,
-      undefined,
-      `expected reason to be absent (undefined) on the same response; got ${JSON.stringify(body.reason)}`,
+      "unverified_url",
+      `expected reason 'unverified_url' on HEAD-timeout response; got ${JSON.stringify(body.reason)}`,
     );
   });
 
@@ -976,14 +987,97 @@ describe("GET /api/places/fsq-photo — HEAD timeout: atomic photoUrl+reason + t
     );
   });
 
-  // Audit — no extra request; asserts the total count accumulated by both
-  // prior `it` blocks equals exactly 2 regardless of execution order.
-  it("total FSQ call count is exactly 2 — confirming neither timed-out result was written to cache", () => {
+});
+
+// ── M. In-flight dedup — two concurrent requests fire only one FSQ call ────────
+//
+// The fsqPhotoInFlight Map deduplicates concurrent requests for the same
+// place key. Two requests that arrive before the first FSQ response returns
+// must share one in-flight Promise — Foursquare must be called exactly once.
+//
+// Without this guarantee a race-condition regression (e.g. the in-flight Map
+// entry being cleared too early, or the dedup branch being accidentally
+// removed) would silently double-charge the Foursquare quota on every burst
+// of card impressions for the same place.
+
+describe("GET /api/places/fsq-photo — in-flight dedup: two concurrent requests fire exactly one FSQ call", () => {
+  let server: Server;
+  let url: string;
+  let fsqCallCount = 0;
+
+  before(async () => {
+    ({ server, url } = await startServer());
+    _setTestClient(makeFakeClient(), true);
+  });
+
+  after(async () => {
+    _setTestClient(null, false);
+    await closeServer(server);
+    globalThis.fetch = originalFetch;
+    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  });
+
+  before(() => {
+    process.env.FOURSQUARE_API_KEY = "test-fsq-key-inflight-dedup";
+    // Use a brief artificial delay so both HTTP requests reach the handler
+    // before the first FSQ response resolves — guaranteeing they overlap in
+    // the in-flight window and the dedup branch is actually exercised.
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const reqUrl = String(input);
+      if (reqUrl.includes("foursquare.com")) {
+        fsqCallCount += 1;
+        // Small async pause: enough for a second concurrent HTTP request to
+        // arrive and be deduped before this one resolves.
+        await new Promise((r) => setTimeout(r, 40));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: [
+              {
+                photos: [
+                  { prefix: "https://fastly.4sqi.net/img/general/", suffix: "/inflight_dedup.jpg" },
+                ],
+              },
+            ],
+          }),
+        } as Response;
+      }
+      // HEAD liveness check — verified OK so the result is cached and both
+      // requests can share the same resolved value cleanly.
+      if (reqUrl.includes("4sqi.net") && init?.method === "HEAD") {
+        return { ok: true, status: 200 } as Response;
+      }
+      return originalFetch(input, init);
+    };
+  });
+
+  it("both concurrent requests succeed with the same photoUrl, and FSQ was called exactly once", async () => {
+    const [r1, r2] = await Promise.all([
+      getPhoto(url, { name: "In-Flight Dedup Landmark", lat: 51.5, lng: -0.12 }),
+      getPhoto(url, { name: "In-Flight Dedup Landmark", lat: 51.5, lng: -0.12 }),
+    ]);
+
+    assert.equal(r1.status, 200, `request 1: expected 200, got ${r1.status}`);
+    assert.equal(r2.status, 200, `request 2: expected 200, got ${r2.status}`);
+
+    assert.equal(
+      typeof r1.body.photoUrl,
+      "string",
+      `request 1: expected a string photoUrl, got ${JSON.stringify(r1.body.photoUrl)}`,
+    );
+    assert.equal(
+      r1.body.photoUrl,
+      r2.body.photoUrl,
+      `both responses must return the same photoUrl; r1=${r1.body.photoUrl as string}, r2=${r2.body.photoUrl as string}`,
+    );
+
+    // The core assertion: the in-flight Map caused the second request to attach
+    // to the first's Promise rather than issuing its own FSQ call.
     assert.equal(
       fsqCallCount,
-      2,
-      `total FSQ call count should be 2 (one per request); got ${fsqCallCount}. ` +
-        `A count < 2 means a timed-out HEAD result was incorrectly served from cache.`,
+      1,
+      `expected exactly 1 FSQ API call for two concurrent same-key requests, got ${fsqCallCount}`,
     );
   });
 });

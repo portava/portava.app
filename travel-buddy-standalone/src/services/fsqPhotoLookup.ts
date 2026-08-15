@@ -87,23 +87,37 @@ export async function lookupFsqPhoto(
 
       if (!res.ok) {
         // The proxy itself is unreachable or erroring. That is an outage, not
-        // evidence this place has no photo.
+        // evidence this place has no photo. Do NOT cache — the condition may
+        // clear (server restarts, network recovers) and we must retry.
         reportPhotoLookupResult('foursquare', 'proxy_http_error');
-        photoCache.set(cKey, { url: null, ts: Date.now() });
         return null;
       }
 
       const body = (await res.json()) as { photoUrl?: string | null; reason?: string | null };
       const photoUrl = typeof body.photoUrl === 'string' ? body.photoUrl : null;
+      const reason = body.reason ?? null;
       // The server computes `reason` on every failure path precisely so this
       // distinction survives. Reading only `photoUrl` is what made a dead
       // provider indistinguishable from a photoless place.
-      if (!photoUrl) reportPhotoLookupResult('foursquare', body.reason);
-      photoCache.set(cKey, { url: photoUrl, ts: Date.now() });
+      if (!photoUrl) reportPhotoLookupResult('foursquare', reason);
+      // Cache only stable results:
+      //   • A confirmed photo URL (reason absent or any non-outage value).
+      //   • Confirmed absence (no_photo_found = FSQ has no record for this place).
+      // Do NOT cache:
+      //   • Outage reasons (quota_exhausted, auth_error, proxy errors) — billing/
+      //     config state that can clear without a code deploy.
+      //   • "unverified_url" — the server's CDN HEAD check timed out, so the URL
+      //     is served optimistically but may be dead. Caching it would pin this
+      //     client to a broken image for 24 h; skipping the cache lets the next
+      //     request retry via the proxy (which will run a fresh HEAD check).
+      const shouldCache = photoUrl !== null
+        ? reason !== 'unverified_url'      // verified URL → cache; unverified → don't
+        : reason === 'no_photo_found';     // null → cache only on genuine absence
+      if (shouldCache) photoCache.set(cKey, { url: photoUrl, ts: Date.now() });
       return photoUrl;
     } catch {
+      // Network / timeout error — transient, do NOT cache.
       reportPhotoLookupResult('foursquare', 'proxy_unreachable');
-      photoCache.set(cKey, { url: null, ts: Date.now() });
       return null;
     } finally {
       inFlightPhotos.delete(cKey);
