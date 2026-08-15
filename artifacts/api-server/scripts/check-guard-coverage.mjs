@@ -192,6 +192,18 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'prints a verdict for a human to act on; the D5 revisit clause is the action it feeds.',
   },
   {
+    file: 'src/scripts/auditShadowAppendOnly.ts',
+    reason:
+      'Three SELECTs through the Management API — pg_class for relrowsecurity, ' +
+      'information_schema.role_table_grants for the privilege set, and pg_trigger for the append-only ' +
+      'triggers — on the single table discovery_shadow_serves. It writes nothing and mutates nothing; it ' +
+      'deliberately does NOT attempt an UPDATE or a TRUNCATE to prove the property, because an audit may not ' +
+      'mutate production to test it. It exists because audit:schema compares OBJECTS and not PRIVILEGES: ' +
+      'migration 2092 claimed service_role held INSERT and SELECT "and nothing else" and it in fact held all ' +
+      'seven privileges, and every gate went green. That is a question about production specifically, since ' +
+      'the append-only guarantee D7=A rests on is a property of the live catalog and of nothing else.',
+  },
+  {
     file: 'src/scripts/checkMissingLiveColumns.ts',
     reason:
       'Two SELECTs — information_schema.columns and pg_class — diffed against columns parsed out of migration ' +

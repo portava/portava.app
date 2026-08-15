@@ -26,6 +26,30 @@
 --      actually binds the application: service_role has BYPASSRLS in Supabase,
 --      so RLS policies alone would constrain nothing that writes here.
 --
+--      ⚠ CORRECTION, 2026-08-15 — THIS FILE DID NOT ACHIEVE (1). Read 2093.
+--
+--      Applied to production, this file left service_role holding DELETE,
+--      INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE and UPDATE — verified
+--      against the live catalog, not inferred. The revokes below name PUBLIC,
+--      anon and authenticated, and those DID land (anon and authenticated hold
+--      nothing). What is missing is a revoke from service_role: Supabase's
+--      default privileges on the public schema grant ALL to service_role at
+--      CREATE TABLE time, so the GRANT below added nothing already held and
+--      established no limit.
+--
+--      Consequences worth stating plainly rather than filing away:
+--        - Mechanism (1) was absent from the moment this was applied. The
+--          append-only property held on mechanism (3), the UPDATE triggers,
+--          alone — belt missing, braces holding, nothing able to say so.
+--        - TRUNCATE was reachable, and TRUNCATE fires neither UPDATE trigger.
+--          2092 did not consider it at all. 2093 revokes it AND adds a
+--          BEFORE TRUNCATE trigger.
+--        - `audit:schema` compares objects, not privileges, so every gate went
+--          green. `pnpm run audit:shadow-append-only` now closes that.
+--
+--      This text is a correction, not a rewrite: the DDL below is what was
+--      applied to production and must keep saying so. 2093 is the repair.
+--
 --   2. RLS, still enabled and still deny-by-default for anon/authenticated.
 --      Belt to the grants' braces, and it is what makes a future route that
 --      reaches this table with a user JWT fail loudly rather than quietly read

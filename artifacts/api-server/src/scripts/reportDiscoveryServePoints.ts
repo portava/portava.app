@@ -29,6 +29,26 @@
  *    reports zeroes that mean "not instrumented", NOT "did not happen". The
  *    script refuses to render a verdict on an empty window for this reason.
  *
+ * 1b. A THIN WINDOW MAY BE A BROKEN SURFACE, NOT LOW TRAFFIC — AND THIS SCRIPT
+ *    CANNOT TELL THE DIFFERENCE. Established 2026-08-15: instrumentation was
+ *    proven live by a bounded probe, and the same probe showed that exactly ONE
+ *    of the 464 rank rows written that hour carried surface='discovery' (the
+ *    rest: 270 pulse, 189 compass, 4 live_pulse), alongside CORS-blocked
+ *    places-api.foursquare.com calls and a navigation bug.
+ *
+ *    So discovery is barely reachable in the current build. That matters more
+ *    than the empty-window case it resembles, and in the opposite direction:
+ *    an empty window makes this script REFUSE a verdict, but a thin non-empty
+ *    window makes it RETURN one. A handful of serves that all happened to be
+ *    cache hits would exit 0 and read as "cache A absorbs the traffic and
+ *    personalisation rarely runs" — the packet's central claim, apparently
+ *    corroborated, when what was actually measured is that almost nobody could
+ *    reach discovery at all.
+ *
+ *    BEFORE QUOTING ANY WINDOW FROM THIS SCRIPT, establish separately that the
+ *    discovery surface is reachable. The distinct-session count printed below
+ *    is the closest signal available here, and it is not sufficient on its own.
+ *
  * 2. AUTHENTICATED TRAFFIC ONLY. `rank_events.user_id` is NOT NULL
  *    (0153_add_rank_events.sql), so anonymous serves cannot be recorded at all.
  *    Every percentage below is a share of AUTHENTICATED serves. Anonymous

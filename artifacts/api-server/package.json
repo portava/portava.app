@@ -8,6 +8,7 @@
     "build": "node --import tsx/esm src/scripts/checkSentryOtelDeps.ts && node ./build.mjs",
     "start": "node --import ./dist/sentry-preload.mjs --env-file-if-exists=.env --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -b ../../lib/api-zod ../../lib/db && tsc -p tsconfig.json --noEmit",
+    "audit:shadow-append-only": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditShadowAppendOnly.ts",
     "audit:schema": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditMigrationsVsLive.ts",
     "check:frozen-dir": "node --import tsx/esm src/scripts/checkFrozenDir.ts",
     "check:async-handlers": "node --import tsx/esm src/scripts/checkAsyncHandlers.ts",
