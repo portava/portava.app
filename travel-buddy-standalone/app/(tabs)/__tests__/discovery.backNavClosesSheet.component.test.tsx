@@ -1,40 +1,73 @@
 /**
- * DiscoveryHub — Back-nav closes the place detail sheet
+ * DiscoveryHub — Back-nav closes the place detail sheet (web guard)
  *
- * Task 3642 fixed a bug where pressing browser/hardware Back from the
- * Discovery place detail sheet sent users to /passport instead of staying on
- * Discovery.  The fix pushes a synthetic history entry when the sheet opens and
- * absorbs the resulting `popstate` event to close the sheet instead of letting
- * it propagate as a tab navigation.
+ * Task 3642: pressing Back from the place detail sheet sent users to /passport
+ * instead of staying on Discovery. Fix: push a synthetic history entry when the
+ * sheet opens and absorb the resulting `popstate` to close the sheet.
  *
- * Task 3657 fixed a related regression: the sheet stayed open after pressing
- * Back even though the URL remained correct.  Root cause: Expo Router registers
- * its own bubble-phase `popstate` listener at app-init time (before any
- * component effects run) and may absorb or stop the event before our handler
- * fires.  Fix: register our listener in CAPTURE phase (`true` as the third
- * argument) so it fires before any bubble-phase listener.  A `dismissedByBack`
- * flag in the closure prevents the cleanup from calling `history.back()` a
- * second time when the sheet was already closed by the Back button.
+ * Task 3657: the sheet then STAYED OPEN on /discovery instead of dismissing —
+ * reproduced twice in the field, Tops Lookout and House of Lechon. Fix
+ * (`96f503f04`): register the popstate listener in CAPTURE phase so it runs
+ * before any bubble-phase listener, plus a `dismissedByBack` flag so the cleanup
+ * does not call `history.back()` a second time.
  *
- * This test covers the web back-nav guard path.  Because jest-expo's native
- * runner does not expose real DOM event APIs, the test:
- *   • forces Platform.OS to 'web' via the react-native Proxy mock so the guard
- *     activates inside the component
- *   • installs a minimal window event-emitter in beforeEach so the guard's
- *     addEventListener / removeEventListener / dispatchEvent calls work
- *   • the event-emitter stub ignores the capture/bubble argument (third arg)
- *     since there is no second listener competing in tests — this is fine
- *     because the stub fires all listeners for a type unconditionally
+ * WHY THIS FILE WAS REWRITTEN
+ * ===========================
+ * The 3642 guard was in place, green, and did not catch 3657. It could not have:
+ * its window stub said so in its own header — *"the event-emitter stub ignores
+ * the capture/bubble argument (third arg) since there is no second listener
+ * competing in tests"* — and its `history` stub never mutated `state`, leaving
+ * the cleanup branch `if (w.history.state?._discoverySheet)` permanently falsy.
  *
- * Confirmed behaviours:
- *   1. The sheet becomes visible after a place is selected.
- *   2. Firing a `popstate` event closes the sheet.
- *   3. The Discovery screen is still rendered (router.push was not called).
- *   4. The active category state is preserved (Layover FAB reappears).
- *   5. After a popstate close, history.back is NOT called a second time.
- *   6. A subsequent popstate (after the sheet is already closed) has no effect.
+ * So BOTH mechanisms of the 3657 fix were invisible to it, and both of its
+ * headline assertions were vacuous: the sheet closed because the stub fired
+ * every listener regardless of phase, and `history.back` was "not called
+ * a second time" because it could never have been called once. Reverting the
+ * fix left the file green.
  *
- * Run with: pnpm --dir travel-buddy-standalone test -- --watchAll=false
+ * It is replaced with `webHistoryHarness.ts`, which orders capture before
+ * bubble, honours `stopPropagation` / `stopImmediatePropagation`, and keeps a
+ * real entry stack so `history.state` and history depth mean something. Each
+ * test below is annotated with what removing it would break.
+ *
+ * WHAT IS AND IS NOT ESTABLISHED
+ * ==============================
+ * Confirmed by reading `@react-navigation/native`: `createMemoryHistory`
+ * (`:206`, `:228`) does register a bubble-phase popstate listener at app-init
+ * time, before any component effect. NOT confirmed: that it stops propagation —
+ * it calls neither `stopPropagation` nor `stopImmediatePropagation`. The
+ * competitor in `capture phase wins the race` is therefore the HAZARD THE
+ * CAPTURE FLAG EXISTS TO DEFEAT, modelled deliberately — not a replay of the
+ * field failure, which was not reproduced here (no browser in this harness).
+ * Do not read a green run as proof the field symptom is gone.
+ *
+ * RED-PROOF, AND ONE FINDING FROM IT
+ * ==================================
+ * Each mechanism was removed in turn and the suite re-run:
+ *
+ *   capture flag dropped        → RED (2 tests)
+ *   cleanup's history.back()    → RED (1 test)
+ *   `dismissedByBack` removed   → GREEN. Nothing here catches it.
+ *
+ * That last line is a finding about the fix, not a gap in the tests, and it is
+ * recorded rather than papered over. `dismissedByBack` guards the cleanup
+ * against calling `history.back()` after the Back button already dismissed the
+ * sheet — but by then the browser has popped the synthetic entry, so
+ * `history.state` is the baseline entry's and `state?._discoverySheet` is
+ * already falsy. The branch it protects is unreachable in every sequence that
+ * could be modelled. It is harmless and defensible as belt-and-braces; it is
+ * not load-bearing, and no test in this file should be contorted to pretend
+ * otherwise. Manufacturing a scenario purely to turn it red would be inventing
+ * evidence.
+ *
+ * Test harness notes:
+ *   - Platform.OS is forced to 'web' via the react-native Proxy mock so the
+ *     guard's `if (Platform.OS !== 'web') return;` does not short-circuit.
+ *   - No `fireEvent.press`: captured prop callbacks are invoked directly inside
+ *     act(), the same functions a real press would invoke, to stay inside the
+ *     React 19 + RNTL v14 press budget.
+ *
+ * Run with: pnpm --dir travel-buddy-standalone test:component
  */
 
 import React from 'react';
@@ -236,6 +269,7 @@ jest.mock('../../../src/components/discovery/DiscoveryCategoryTab', () => ({
 // Capture visible from PlaceDetailSheet so the test can assert it changes.
 // Renders a sentinel testID when visible so the test can confirm the sheet opened.
 let capturedSheetVisible: boolean | undefined = undefined;
+let capturedSheetOnClose: (() => void) | null = null;
 
 jest.mock('../../../src/components/discovery/PlaceDetailSheet', () => {
   const R = require('react');
@@ -243,6 +277,7 @@ jest.mock('../../../src/components/discovery/PlaceDetailSheet', () => {
   return {
     PlaceDetailSheet: (props: { visible?: boolean; onClose?: () => void }) => {
       capturedSheetVisible = props.visible;
+      capturedSheetOnClose = props.onClose ?? null;
       return props.visible
         ? R.createElement(actual.View, { testID: 'place-detail-sheet' })
         : null;
@@ -277,53 +312,27 @@ jest.mock('../../../src/components/discovery/SectionErrorBoundary', () => ({
   SectionErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-// ── Window event emitter ──────────────────────────────────────────────────────
+// ── Window + history harness ────────────────────────────────────
 // jest-expo's native environment has a `window` global but no DOM event APIs.
-// The back-nav guard in discovery.tsx calls window.addEventListener /
-// removeEventListener / dispatchEvent and window.history.pushState — none of
-// which exist in the native runner.  Install a minimal emitter before each
-// test so the guard can attach and receive its popstate listener.
-//
-// Platform.OS is forced to 'web' by the react-native Proxy mock above, so the
-// guard's first-line `if (Platform.OS !== 'web') return;` does not short-circuit.
+// See webHistoryHarness.ts for what it models and, more importantly, what it
+// does not.
 
-type SimpleListener = () => void;
-const windowListeners = new Map<string, Set<SimpleListener>>();
+import { installWebHistoryHarness, type WebHistoryHarness } from './webHistoryHarness.ts';
+
+let dom: WebHistoryHarness;
 
 beforeEach(() => {
   jest.clearAllMocks();
   capturedOnSelectPlace = null;
   capturedSheetVisible  = undefined;
-  windowListeners.clear();
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const w = window as any;
-
-  w.addEventListener = (type: string, cb: SimpleListener) => {
-    if (!windowListeners.has(type)) windowListeners.set(type, new Set());
-    windowListeners.get(type)!.add(cb);
-  };
-  w.removeEventListener = (type: string, cb: SimpleListener) => {
-    windowListeners.get(type)?.delete(cb);
-  };
-  w.dispatchEvent = (event: { type: string }) => {
-    windowListeners.get(event.type)?.forEach((cb) => cb());
-    return true;
-  };
-  // Minimal history stub — pushState and back are recorded but do not mutate
-  // history.state (so the cleanup branch `if (w.history.state?._discoverySheet)`
-  // stays falsy and history.back is not called during popstate close).
-  w.history = {
-    pushState: jest.fn(),
-    back:      jest.fn(),
-    state:     null,
-  };
-  w.location = { href: 'http://localhost/' };
+  capturedSheetOnClose  = null;
+  dom = installWebHistoryHarness();
 });
 
 afterEach(async () => {
   // Drain any concurrent work scheduled outside act() before RNTL cleanup.
   await act(async () => {});
+  dom.restore();
 });
 
 // ── Fake place ────────────────────────────────────────────────────────────────
@@ -348,88 +357,120 @@ const FAKE_PLACE: DiscoveryPlace = {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('DiscoveryHub — back-nav closes place detail sheet (web guard)', () => {
-  // React 19 + RNTL v14 note: this test avoids fireEvent.press entirely.
-  // Instead it calls the captured prop callbacks directly inside act() — the
-  // same functions a real press would invoke — so the detailVisible state
-  // transitions are honest and not mocked.
-  it('popstate closes the sheet and keeps the Discovery screen visible — not navigating away', async () => {
+  /** Render the hub and open the detail sheet, as tapping a place card does. */
+  async function openSheet() {
     const view = await render(<DiscoveryHub />);
     await act(async () => {});
-
-    // ── Precondition: screen is rendered, prop-capture hooks fired ──────────
     expect(view.getByText('Discover')).toBeTruthy();
     expect(typeof capturedOnSelectPlace).toBe('function');
-
-    // Layover FAB is visible — sheet is not open yet.
+    // Layover FAB visible ⇒ sheet not open yet.
     expect(view.queryByText('Layover Mode')).not.toBeNull();
 
-    // ── Open the place detail sheet ─────────────────────────────────────────
-    // Calling the captured prop is equivalent to the user tapping a place card.
-    await act(async () => {
-      capturedOnSelectPlace!(FAKE_PLACE);
-    });
+    await act(async () => { capturedOnSelectPlace!(FAKE_PLACE); });
 
-    // Sheet sentinel is present: PlaceDetailSheet received visible=true.
     expect(view.queryByTestId('place-detail-sheet')).not.toBeNull();
     expect(capturedSheetVisible).toBe(true);
-
-    // Layover FAB is hidden while the sheet is open ({!detailVisible && ...}).
+    // Hidden while the sheet is open ({!detailVisible && ...}).
     expect(view.queryByText('Layover Mode')).toBeNull();
+    return view;
+  }
 
-    // The guard must have pushed a synthetic history entry when the sheet opened.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((window as any).history.pushState).toHaveBeenCalledWith(
-      { _discoverySheet: true },
-      '',
-      'http://localhost/',
-    );
+  it('Back closes the sheet and returns to the results, still on Discovery', async () => {
+    const view = await openSheet();
 
-    // A popstate listener must be attached (our emitter holds it).
-    expect(windowListeners.get('popstate')?.size).toBeGreaterThan(0);
+    // The guard pushed a synthetic entry at the same URL.
+    expect(dom.depth()).toBe(2);
+    expect((window as any).history.state).toEqual({ _discoverySheet: true });
 
-    // ── Fire a browser Back (popstate) event ────────────────────────────────
-    // The useEffect in discovery.tsx attached a popstate listener when
-    // detailVisible became true.  Dispatching via our minimal window emitter
-    // exercises the exact same handler the browser's Back button would invoke.
-    // The handler (`const handlePop = () => setDetailVisible(false)`) does not
-    // read the event object, so any truthy event dispatch suffices.
-    await act(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).dispatchEvent({ type: 'popstate' });
-    });
+    await act(async () => { dom.pressBack(); });
 
-    // ── Assert: sheet closed, Discovery still shown ─────────────────────────
-    // Sheet sentinel must be gone — PlaceDetailSheet received visible=false.
+    // Sheet dismissed.
     expect(view.queryByTestId('place-detail-sheet')).toBeNull();
     expect(capturedSheetVisible).toBe(false);
-
-    // The Discovery screen header must still be rendered — the user was NOT
-    // navigated away from Discovery.
+    // Back on the results, not navigated away.
     expect(view.getByText('Discover')).toBeTruthy();
-
-    // router.push must NOT have been called — no tab navigation occurred.
+    expect(view.queryByText('Layover Mode')).not.toBeNull();
     const { router } = require('expo-router') as { router: { push: jest.Mock } };
     expect(router.push).not.toHaveBeenCalled();
 
-    // history.back must NOT have been called by the cleanup.  The dismissedByBack
-    // flag in the effect closure prevents a redundant back() when the sheet was
-    // already closed by the browser's own Back button — calling it twice would
-    // navigate past the synthetic entry and send the user away from Discovery.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect((window as any).history.back).not.toHaveBeenCalled();
+    // And the guard did not then walk the user further back. Under the old stub
+    // this could not fail: `history.state` never changed, so the cleanup branch
+    // was unreachable and `back()` could never have been called even once.
+    expect(dom.backCalls()).toBe(0);
+    expect(dom.index()).toBe(0);
 
-    // ── Category state preserved ────────────────────────────────────────────
-    // The Layover FAB reappears — detailVisible is false and the screen is
-    // intact, confirming the category/destination state was not reset.
-    expect(view.queryByText('Layover Mode')).not.toBeNull();
+    // Listener released — a later Back is the app's to handle, not ours.
+    expect(dom.listeners.get('popstate')?.length ?? 0).toBe(0);
+  });
 
-    // The popstate listener is cleaned up after the sheet closes — firing
-    // another popstate event must have no effect (no second state change).
-    await act(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).dispatchEvent({ type: 'popstate' });
+  it('registers the popstate listener in CAPTURE phase', async () => {
+    // The mechanism assertion, stated directly rather than inferred from an
+    // outcome. RED if the third argument to addEventListener is dropped.
+    //
+    // It matters beyond ordering: removeEventListener matches on
+    // (type, callback, capture), so a listener added with capture and removed
+    // without it is never removed at all. Pinning the flag here pins both ends.
+    await openSheet();
+
+    const attached = dom.listeners.get('popstate') ?? [];
+    expect(attached).toHaveLength(1);
+    expect(attached[0]!.capture).toBe(true);
+  });
+
+  it('capture phase wins the race against a bubble-phase listener that stops propagation', async () => {
+    // THE HAZARD, MODELLED — not a replay of the field failure. See the file
+    // header: @react-navigation/native does register its popstate listener in
+    // bubble phase at app-init time, before any component effect, but it does
+    // NOT stop propagation. This competitor does, which is what makes listener
+    // ORDER decide the outcome and therefore what makes this test able to fail.
+    //
+    // RED without capture: registered second and in bubble phase, the guard's
+    // handler would never run, the sheet would stay open, and the URL would
+    // still be correct — exactly the shape reported in 3657.
+    const competitor = jest.fn((ev: { stopImmediatePropagation(): void }) => {
+      ev.stopImmediatePropagation();
     });
-    // Still on Discovery, sheet still closed.
+    // Registered BEFORE the component mounts, as an app-init subscriber is.
+    dom.addCompetitor('popstate', competitor as never, false);
+
+    const view = await openSheet();
+    await act(async () => { dom.pressBack(); });
+
+    expect(view.queryByTestId('place-detail-sheet')).toBeNull();
+    expect(capturedSheetVisible).toBe(false);
+    // Our handler ran FIRST, in capture, before the bubble pass reached the
+    // competitor. The competitor still runs — nothing here stops it, and
+    // nothing should: the point is only that it can no longer pre-empt us.
+    expect(dom.fireOrder).toEqual(['capture', 'bubble']);
+    expect(competitor).toHaveBeenCalledTimes(1);
+  });
+
+  it('closing through the UI pops the synthetic entry instead of leaving it stranded', async () => {
+    // The other half of "returns to results": if the sheet is dismissed by the
+    // close button, the synthetic entry is still on the stack and the NEXT Back
+    // press would be swallowed doing nothing. RED if the cleanup's history.back()
+    // is removed.
+    const view = await openSheet();
+    expect(dom.depth()).toBe(2);
+    expect(dom.index()).toBe(1);
+
+    // Dismiss the way the close button does.
+    await act(async () => { capturedSheetOnClose!(); });
+
+    expect(view.queryByTestId('place-detail-sheet')).toBeNull();
+    expect(dom.backCalls()).toBe(1);
+    expect(dom.index()).toBe(0); // synthetic entry popped, back at the baseline
+  });
+
+  it('a second Back after the sheet has closed is not ours to absorb', async () => {
+    const view = await openSheet();
+    await act(async () => { dom.pressBack(); });
+    expect(view.queryByTestId('place-detail-sheet')).toBeNull();
+
+    // Nothing of ours is left listening, so this is a no-op here — the app's
+    // router owns it.
+    await act(async () => { (window as any).dispatchEvent({ type: 'popstate' }); });
+
     expect(view.getByText('Discover')).toBeTruthy();
     expect(view.queryByTestId('place-detail-sheet')).toBeNull();
   });
