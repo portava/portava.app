@@ -506,12 +506,96 @@ router.get("/places/photo", async (req, res) => {
 // Honest degradation: every failure path returns { photoUrl: null, reason }
 // and NEVER throws — the caller falls through to category-appropriate artwork.
 //
+// Server-side cache: positive (24 h) and negative (24 h) results are cached
+// per place to prevent repeated Foursquare API calls for the same place cards.
+// Dead CDN links (HEAD 404) are NOT cached — they may recover, and the next
+// request must retry rather than being locked into a permanent null for 24 h.
+//
 // ATTRIBUTION: callers that render the returned photoUrl must display
 // "Powered by Foursquare" (FSQ API license requirement).
 const FSQ_PHOTO_SEARCH = "https://places-api.foursquare.com/places/search";
 const FSQ_PHOTO_API_VERSION = "2025-06-17";
 let fsqPhotoAuthLogged = false;
 let fsqPhotoQuotaLogged = false;
+
+const FSQ_PHOTO_CACHE_TTL_MS = 24 * 60 * 60 * 1_000; // 24 h
+
+let FSQ_PHOTO_CACHE_MAX = 5_000;
+
+interface FsqPhotoCacheEntry {
+  photoUrl: string | null;
+  reason?: string;
+  ts: number;
+}
+
+interface FsqPhotoLookupResult {
+  photoUrl: string | null;
+  reason?: string;
+  /** When true the result should be stored in the server-side cache. */
+  cacheable: boolean;
+}
+
+const fsqPhotoCache = new Map<string, FsqPhotoCacheEntry>();
+const fsqPhotoInFlight = new Map<string, Promise<FsqPhotoLookupResult>>();
+
+/** Normalise a place name + coords into a stable cache key. */
+function fsqPhotoCacheKey(
+  name: string,
+  lat: number | null,
+  lng: number | null,
+): string {
+  const n = name.toLowerCase().trim().replace(/\s+/g, " ");
+  return `${n}|${lat != null && Number.isFinite(lat) ? lat.toFixed(3) : "_"}|${lng != null && Number.isFinite(lng) ? lng.toFixed(3) : "_"}`;
+}
+
+function getFsqPhotoCached(key: string): FsqPhotoCacheEntry | undefined {
+  const entry = fsqPhotoCache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() - entry.ts > FSQ_PHOTO_CACHE_TTL_MS) {
+    fsqPhotoCache.delete(key);
+    return undefined;
+  }
+  return entry;
+}
+
+/**
+ * Write an entry to the FSQ photo cache with active eviction:
+ *   1. Sweep all expired entries on every write (prevent silent TTL pile-up).
+ *   2. If capacity is still at or above the limit after the sweep, evict the
+ *      oldest entries (Map insertion order) until there is room for the new one.
+ *
+ * Deleting the existing entry for `key` before re-inserting refreshes its
+ * position in insertion order so it won't be evicted by subsequent writers.
+ */
+function writeFsqPhotoCached(key: string, entry: FsqPhotoCacheEntry): void {
+  // Remove any existing entry for this key so the re-insert lands at the end.
+  fsqPhotoCache.delete(key);
+
+  // Sweep expired entries.
+  const now = Date.now();
+  for (const [k, v] of fsqPhotoCache) {
+    if (now - v.ts > FSQ_PHOTO_CACHE_TTL_MS) fsqPhotoCache.delete(k);
+  }
+
+  // Evict oldest entries until there is room for the new one.
+  while (fsqPhotoCache.size >= FSQ_PHOTO_CACHE_MAX) {
+    const oldest = fsqPhotoCache.keys().next().value;
+    if (oldest !== undefined) fsqPhotoCache.delete(oldest);
+    else break;
+  }
+
+  fsqPhotoCache.set(key, entry);
+}
+
+/**
+ * Override the FSQ photo cache capacity for tests.
+ * Clears the cache so tests start from a clean state.
+ * Must be restored after the test (pass Infinity to reset to default).
+ */
+export function _setFsqPhotoCacheMaxForTest(n: number): void {
+  FSQ_PHOTO_CACHE_MAX = n === Infinity ? 5_000 : n;
+  fsqPhotoCache.clear();
+}
 
 router.get("/places/fsq-photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
@@ -529,79 +613,140 @@ router.get("/places/fsq-photo", async (req, res) => {
     return;
   }
 
-  try {
-    const params = new URLSearchParams({
-      query:  name,
-      limit:  "1",
-      fields: "photos",
-    });
-    if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
-      params.set("ll", `${lat},${lng}`);
-    }
+  const cKey = fsqPhotoCacheKey(name, lat, lng);
 
-    const fsqRes = await fetch(`${FSQ_PHOTO_SEARCH}?${params}`, {
-      headers: {
-        Authorization: `Bearer ${key}`,
-        Accept: "application/json",
-        "X-Places-Api-Version": FSQ_PHOTO_API_VERSION,
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (fsqRes.status === 401 || fsqRes.status === 403) {
-      if (!fsqPhotoAuthLogged) {
-        fsqPhotoAuthLogged = true;
-        logger.warn(
-          { status: fsqRes.status },
-          "Foursquare photo proxy auth failure — check FOURSQUARE_API_KEY",
-        );
-      }
-      res.json({ photoUrl: null, reason: "foursquare_auth_error" });
-      return;
-    }
-
-    // 429 here is NOT ordinary rate limiting that will pass on retry: Foursquare
-    // returns it for "your account has no API credits remaining", which is a
-    // billing state that persists until someone tops the account up. Confirmed
-    // by direct call on 2026-08-15 — every place, not merely OSM-only ones.
-    // Naming it explicitly keeps a dead account from reading as a busy minute.
-    if (fsqRes.status === 429) {
-      if (!fsqPhotoQuotaLogged) {
-        fsqPhotoQuotaLogged = true;
-        logger.warn(
-          { status: 429 },
-          "Foursquare photo proxy: account has no API credits remaining — NO place will return a photo from Foursquare until credits are restored. Cards fall back to category artwork, which is indistinguishable from a place that has no photo.",
-        );
-      }
-      res.json({ photoUrl: null, reason: "foursquare_quota_exhausted" });
-      return;
-    }
-
-    if (!fsqRes.ok) {
-      res.json({ photoUrl: null, reason: `foursquare_http_${fsqRes.status}` });
-      return;
-    }
-
-    const body = (await fsqRes.json()) as {
-      results?: Array<{ photos?: Array<{ prefix?: string; suffix?: string }> }>;
-    };
-    const photos = body?.results?.[0]?.photos ?? [];
-    if (!photos.length) {
-      res.json({ photoUrl: null, reason: "no_photo_found" });
-      return;
-    }
-
-    const p = photos[0];
-    if (typeof p?.prefix !== "string" || typeof p?.suffix !== "string") {
-      res.json({ photoUrl: null, reason: "no_photo_found" });
-      return;
-    }
-
-    res.json({ photoUrl: `${p.prefix}original${p.suffix}` });
-  } catch (err) {
-    logger.warn({ err, name }, "Foursquare photo proxy lookup failed");
-    res.json({ photoUrl: null, reason: "request_failed" });
+  // Serve from cache when available.
+  const cachedEntry = getFsqPhotoCached(cKey);
+  if (cachedEntry) {
+    const { ts: _ts, ...body } = cachedEntry;
+    res.json(body);
+    return;
   }
+
+  // Deduplicate concurrent requests for the same place.
+  const existingFlight = fsqPhotoInFlight.get(cKey);
+  if (existingFlight) {
+    const result = await existingFlight;
+    const { cacheable: _c, ...body } = result;
+    res.json(body);
+    return;
+  }
+
+  const lookup = (async (): Promise<FsqPhotoLookupResult> => {
+    try {
+      const params = new URLSearchParams({
+        query:  name,
+        limit:  "1",
+        fields: "photos",
+      });
+      if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
+        params.set("ll", `${lat},${lng}`);
+      }
+
+      const fsqRes = await fetch(`${FSQ_PHOTO_SEARCH}?${params}`, {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          Accept: "application/json",
+          "X-Places-Api-Version": FSQ_PHOTO_API_VERSION,
+        },
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (fsqRes.status === 401 || fsqRes.status === 403) {
+        if (!fsqPhotoAuthLogged) {
+          fsqPhotoAuthLogged = true;
+          logger.warn(
+            { status: fsqRes.status },
+            "Foursquare photo proxy auth failure — check FOURSQUARE_API_KEY",
+          );
+        }
+        return { photoUrl: null, reason: "foursquare_auth_error", cacheable: false };
+      }
+
+      // 429 here is NOT ordinary rate limiting that will pass on retry: Foursquare
+      // returns it for "your account has no API credits remaining", which is a
+      // billing state that persists until someone tops the account up. Confirmed
+      // by direct call on 2026-08-15 — every place, not merely OSM-only ones.
+      // Naming it explicitly keeps a dead account from reading as a busy minute.
+      //
+      // NOT cacheable: caching it would pin "no photo" for 24 h per place and
+      // then keep serving that answer after the credits are restored.
+      if (fsqRes.status === 429) {
+        if (!fsqPhotoQuotaLogged) {
+          fsqPhotoQuotaLogged = true;
+          logger.warn(
+            { status: 429 },
+            "Foursquare photo proxy: account has no API credits remaining — NO place will return a photo from Foursquare until credits are restored. Cards fall back to category artwork, which is indistinguishable from a place that has no photo.",
+          );
+        }
+        return { photoUrl: null, reason: "foursquare_quota_exhausted", cacheable: false };
+      }
+
+      if (!fsqRes.ok) {
+        return { photoUrl: null, reason: `foursquare_http_${fsqRes.status}`, cacheable: false };
+      }
+
+      const body = (await fsqRes.json()) as {
+        results?: Array<{ photos?: Array<{ prefix?: string; suffix?: string }> }>;
+      };
+      const photos = body?.results?.[0]?.photos ?? [];
+      if (!photos.length) {
+        // FSQ has no photo record for this place — cache (24 h) so subsequent
+        // requests for the same OSM place are served without hitting FSQ.
+        return { photoUrl: null, reason: "no_photo_found", cacheable: true };
+      }
+
+      const p = photos[0];
+      if (typeof p?.prefix !== "string" || typeof p?.suffix !== "string") {
+        // Malformed photo entry — treat same as "no photo" and cache.
+        return { photoUrl: null, reason: "no_photo_found", cacheable: true };
+      }
+
+      const photoUrl = `${p.prefix}original${p.suffix}`;
+
+      // Foursquare's search index can return a photo reference whose CDN file
+      // has since been removed (404) — the client has no way to detect this
+      // itself and was rendering a permanent broken-image fallback for these.
+      // A quick HEAD check keeps the client contract honest: a returned
+      // photoUrl is guaranteed loadable, or the caller gets no_photo_found and
+      // falls through to category artwork exactly like the "no photo" case.
+      // Dead CDN links are NOT cached (transient CDN issue — might recover).
+      try {
+        const headRes = await fetch(photoUrl, {
+          method: "HEAD",
+          signal: AbortSignal.timeout(2500),
+        });
+        if (!headRes.ok) {
+          return { photoUrl: null, reason: "dead_photo_link", cacheable: false };
+        }
+      } catch {
+        // Liveness check itself failed (network blip, HEAD unsupported) — serve
+        // the URL so the client can attempt to load it, but do NOT cache: the
+        // URL is unverified and may be dead, so the next request must retry
+        // rather than being stranded on a broken URL for 24 h.
+        return { photoUrl, reason: undefined, cacheable: false };
+      }
+
+      // Positive result — verified loadable photo URL, cache for 24 h.
+      return { photoUrl, cacheable: true };
+    } catch (err) {
+      logger.warn({ err, name }, "Foursquare photo proxy lookup failed");
+      return { photoUrl: null, reason: "request_failed", cacheable: false };
+    } finally {
+      fsqPhotoInFlight.delete(cKey);
+    }
+  })();
+
+  fsqPhotoInFlight.set(cKey, lookup);
+
+  const result = await lookup;
+
+  if (result.cacheable) {
+    writeFsqPhotoCached(cKey, { photoUrl: result.photoUrl, reason: result.reason, ts: Date.now() });
+  }
+
+  const { cacheable: _c, ...responseBody } = result;
+  res.json(responseBody);
 });
 
 // ── GET /api/places/live-status ───────────────────────────────────────────────

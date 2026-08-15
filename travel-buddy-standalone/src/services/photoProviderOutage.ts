@@ -72,7 +72,14 @@ export type PhotoReasonKind = 'outage' | 'absent' | 'unknown';
  * The only reason meaning "we looked and there is genuinely no photo".
  * Everything else that is recognised is an outage.
  */
-const ABSENT_REASONS: ReadonlySet<string> = new Set(['no_photo_found']);
+const ABSENT_REASONS: ReadonlySet<string> = new Set([
+  'no_photo_found',
+  // The proxy found a photo reference whose CDN file is gone (HEAD != ok).
+  // That is a fact about THIS place's photo, not about the provider being
+  // reachable — the lookup itself succeeded. It belongs with absence, not
+  // with outage, and it must not raise a false provider alarm.
+  'dead_photo_link',
+]);
 
 /**
  * Reasons that mean the lookup never happened. Kept as exact strings the
