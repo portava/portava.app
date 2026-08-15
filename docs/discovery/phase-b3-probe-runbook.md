@@ -1,13 +1,36 @@
 # Phase B3 probe — staged runbook
 
-**Status: STAGED, NOT RUN. The owner presses this.**
+**Status: STAGED and AUTHORISED. Not yet run.**
 
 Prepared 2026-08-15 by the agent session that verified the deploy. Every
-precondition below was checked, not assumed. The probe itself is a **production
-write** and is therefore not an agent action.
+precondition below was checked, not assumed.
 
 Companion: `ROADMAP.md` → *Phase B — B3 — The repeat probe*, and
 *DEPLOY VERIFIED CLEAN, 2026-08-15 12:13Z*.
+
+---
+
+## Division of labour — this is the point, not an implementation detail
+
+| Role | Who | Does |
+|---|---|---|
+| **Observation** | the browser agent | Runs the probe. Reports **timestamps** (UTC start and end) and what it navigated. |
+| **Verification** | a separate agent session | Queries production **independently** against the reported window and renders the verdict. |
+
+**These stay in different hands.** An observer who also renders the verdict on
+their own run is reporting, not verifying, and the Phase B result is worth
+exactly as much as that separation.
+
+> **This is why `--since`/`--until` exists.** The verifier must be able to
+> address *the same window* the observer reported. The report previously offered
+> only a rolling `--days N` with no upper bound, under which a before/after pair
+> addresses two different windows and the delta silently conflates *rows the
+> probe wrote* with *rows that rolled out from under the baseline*. A verifier
+> who cannot address the observer's window is not independently checking the
+> claim — they are producing a second, differently shaped claim and calling the
+> pair agreement.
+
+**The observer reports the window. The observer does not report the verdict.**
 
 ---
 
@@ -28,10 +51,42 @@ measured in either direction.
 
 ---
 
+## The contamination question — ASKED AND ANSWERED before the probe, not after
+
+**Condition on the authorisation, discharged 2026-08-15.** The probe runs while
+Foursquare is returning HTTP 429 and Google is carrying every card. The question
+that had to be settled first: *does the 429 make any discovery path fail outright
+and suppress serve points that would otherwise log?* If it did, the measurement
+would be genuinely contaminated rather than merely unusual, and this would hold.
+
+**It does not. Both halves were checked.**
+
+| Half | Check | Result |
+|---|---|---|
+| **Server** | Transitive import closure of `routes/discovery.ts` — **50 modules** | **Zero** reference `places-api.foursquare.com` or `FOURSQUARE_API_KEY`. The only FSQ mention in `discovery.ts` is `row.source.startsWith("fsq")` at `:652` — attribution on stored rows, no network call. **The 429 cannot suppress a serve-point write.** |
+| **Client** | `useFsqPhoto` / `fsqPhotoLookup` / `photoProviderOutage` | `lookupFsqPhoto` **never throws** — returns null on any failure, so a 429 falls through to `lookupGooglePhoto`, which currently works. The chain is deferred 500 ms, non-blocking on list render, with a terminal `.catch(() => {})`. `foursquare_quota_exhausted` is classified as an **outage** reason and reported, not raised. |
+
+**The client half matters specifically for a browser-driven probe**, and is the
+half that is easy to miss: a card render that crashed on a failed photo lookup
+would stop the agent navigating onward to further serve points, reducing
+serve-point diversity *with no server-side failure at all*. That would look
+exactly like an unreachable surface. It does not happen — but "the server never
+calls Foursquare" would not have established that on its own.
+
+**Proceed. Record the provider state (below); do not treat it as a qualifier.**
+
+---
+
 ## What this writes to production
 
-**State this plainly before pressing anything.** The probe is an authenticated
-navigation session against production Discovery. Its serves write:
+The probe writes `rank_events` rows, and those rows are the app logging its own
+normal browsing — **indistinguishable from a real user opening Discovery**. It is
+not a schema change, a deletion, or an irreversible policy edit. It is stated
+here so the cost is a decision rather than a surprise, not because it needs a
+gate.
+
+The probe is an authenticated navigation session against production Discovery.
+Its serves write:
 
 - `rank_events` rows — `DiscoveryRankingService.rankItems` writes an eligible and
   a scored row **per candidate** whenever it is handed a client
@@ -48,7 +103,7 @@ measurement — it is named here so it is a decision rather than a surprise.
 
 ---
 
-## Step 1 — BEFORE baseline (read-only)
+## Step 1 — BEFORE baseline (read-only, run by the VERIFIER)
 
 **Do not skip this.** Without a baseline, a post-probe reading cannot distinguish
 rows the probe produced from rows that were already there. **A before/after pair
@@ -61,11 +116,16 @@ door** for exactly this case, which must be opened deliberately:
 ```bash
 cd artifacts/api-server
 
+# Note the UTC instant you run this. It is the lower bound of the probe window.
 PORTAVA_PROD_READ_ONLY_AUDIT='read-only-audit-against-production' \
 KNOWN_PROD_PROJECT_REF='ajrurzioarfkagpuxfnb' \
 pnpm run report:discovery-serve-points -- --days 1 \
   | tee /tmp/b3-before-$(date -u +%Y%m%dT%H%M%SZ).txt
 ```
+
+`--days 1` is the right flag **here**: the baseline question is "what was already
+in the table", which is a rolling-window question. The **fixed** window is what
+step 3 needs.
 
 **Preconditions, all verified present in the deploy shell on 2026-08-15:**
 
@@ -84,7 +144,25 @@ pnpm run report:discovery-serve-points -- --days 1 \
 
 ---
 
-## Step 2 — The probe
+## Step 2 — The probe (run by the OBSERVER)
+
+**Record and report these three things. They are the observer's entire output:**
+
+1. **`PROBE_START`** — UTC instant immediately before the first navigation,
+   ISO-8601, e.g. `2026-08-15T14:02:00Z`.
+2. **`PROBE_END`** — UTC instant immediately after the last navigation.
+3. **What was navigated**, in enough detail to say which serve points were
+   *attempted* — so that a serve point which produced no row can be told apart
+   from one that was never exercised.
+
+> **Report the window; do not report the verdict.** Whether the probe "worked" is
+> the verifier's call, made against the table. An observer's impression that
+> "Discovery loaded fine" is not evidence about serve points, and reporting it as
+> though it were is exactly the coupling this split exists to prevent.
+>
+> **Widen `PROBE_START`/`PROBE_END` by a minute at each end** when reporting.
+> `served_at` is written server-side and a boundary row lost to clock skew is a
+> row the verifier will never see.
 
 Authenticate as the QA account **by email and password**. Not Google: per #3681,
 headless automation can never complete real Google OAuth, and Phase B was never
@@ -110,17 +188,57 @@ neither blocks the probe:
 
 ---
 
-## Step 3 — AFTER reading, and what to record
+## Step 3 — AFTER reading and verdict (run by the VERIFIER)
 
-Same command as step 1, `-after-` in the filename. Then record **all** of the
-following in the same place as the verdict:
+**Two readings, and they answer different questions. Run both.**
+
+**3a — the probe window itself.** This is the reading the verdict is rendered
+from. Substitute the observer's reported instants:
+
+```bash
+cd artifacts/api-server
+
+PORTAVA_PROD_READ_ONLY_AUDIT='read-only-audit-against-production' \
+KNOWN_PROD_PROJECT_REF='ajrurzioarfkagpuxfnb' \
+pnpm run report:discovery-serve-points -- \
+  --since "$PROBE_START" --until "$PROBE_END" \
+  | tee /tmp/b3-window.txt
+```
+
+**3b — the rolling day**, directly comparable to the step 1 baseline:
+
+```bash
+PORTAVA_PROD_READ_ONLY_AUDIT='read-only-audit-against-production' \
+KNOWN_PROD_PROJECT_REF='ajrurzioarfkagpuxfnb' \
+pnpm run report:discovery-serve-points -- --days 1 \
+  | tee /tmp/b3-after.txt
+```
+
+> **Read 3a for the verdict, not 3b.** 3b's window has moved since the baseline —
+> its lower bound rolled forward while the probe ran. The before/after pair is a
+> **sanity check** that the two agree in direction; it is not the measurement.
+> If 3a and 3b disagree in direction, **stop and say so** rather than picking the
+> friendlier one.
+>
+> `--days` cannot be combined with `--since`/`--until`; the report refuses,
+> deliberately. Two different windows asked for at once has no sensible
+> precedence.
+
+Then record **all** of the following alongside the verdict:
 
 | Record | Value at staging time |
 |---|---|
 | Build the probe ran against | `a384e29fa` / build-id `58536e52` |
-| Before/after row counts, per serve point | — |
+| `PROBE_START` / `PROBE_END` as reported by the observer | — |
+| Per-serve-point counts **in the fixed window** (3a) | — |
 | Distinct sessions | — |
+| Rolling-day before/after (step 1 vs 3b), as a direction check | — |
 | **Photo-provider state** | **Foursquare HTTP 429 (quota exhausted); Google live and carrying every card** |
+| Serve points **attempted but not observed** | — (from the observer's navigation report) |
+
+That last row is the one most easily lost, and it is the difference between *"the
+surface is unreachable"* and *"nobody went there"*. **A serve point with no rows
+means nothing until you know whether anyone tried it.**
 
 ### Why the provider state is recorded and what it does NOT mean
 
