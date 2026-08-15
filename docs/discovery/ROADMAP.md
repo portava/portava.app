@@ -34,6 +34,36 @@
 > as one rule because it is one rule, and because each face was discovered
 > separately at a cost that the general form would have avoided.
 >
+> #### A FOURTH FACE, added 2026-08-15 — and this one is a pattern, not a coincidence
+>
+> > **A SIGNAL NOBODY READS IS NOT A SIGNAL.**
+>
+> Three defects found on 2026-08-15 were each **already being logged** by code
+> written specifically to report them. In every case the warning existed, fired,
+> and was never looked at:
+>
+> | | The signal that existed | What it would have said |
+> |---|---|---|
+> | 1 | `app.ts:38` — fires whenever `ALLOWED_ORIGINS` is unset and the hardcoded fallback is in use | that production's CORS allowlist is not the one anyone configured |
+> | 2 | `places.ts:330` — `"Google Places Autocomplete non-OK"`, carrying Google's own `status` | that destination search has been returning empty with a working key |
+> | 3 | `places.ts:490` — `"Places API (New) is disabled on this Google Cloud project"`, with the activation URL | exactly which API needed enabling, and when |
+>
+> **All three were found by probing production from outside, not by reading the
+> logs the code already writes.** That is the finding.
+>
+> This workstream has been *adding* observability and it has been right to —
+> #61, #62 and #64 are why the Foursquare 429 and the Google key state were
+> detectable at all. But **instrumentation with no reader is instrumentation that
+> does not work**, and it fails in the invariant's own shape: the signal is
+> present, the failure is unobserved, and the outcome is indistinguishable from
+> having no instrumentation at all.
+>
+> **Consequence, and it is a real one:** *"we log that"* is not an answer to
+> *"how would we know?"* — not until someone or something reads it. Before adding
+> another `logger.warn` to close an observability gap, establish who or what
+> reads it. **A log with no reader is a to-do note written to a file nobody
+> opens.**
+>
 > #### The guard for face one has already earned its keep — 2026-08-15
 >
 > `artifacts/api-server/scripts/check-test-registration.mjs` fails CI when a
@@ -69,6 +99,71 @@
 >
 > The new sequence is **[The superseding sequence](#the-superseding-sequence)**.
 > The A–F phases below are kept for the record and for the work still in flight.
+
+---
+
+> ## ⚠⚠ OWNER RULING — 2026-08-15, GOVERNING. THE BOTTLENECK HAS MOVED UPSTREAM.
+>
+> **This binds everything below it, including the redirect above.** Where they
+> differ, this wins.
+>
+> ### The statement, verbatim
+>
+> > **Discovery measurement work may close its existing proof obligation, but it
+> > NO LONGER GETS TO GENERATE NEW PREREQUISITE WORK BY DEFAULT. Any new blocker
+> > must be weighed against fixing the place corpus and destination discovery
+> > first. Ranking is downstream until the app has something worth ranking.**
+>
+> ### The reasoning — recorded because it reframes everything, not as commentary
+>
+> **The harness has already paid for itself.** It exposed auth blockage,
+> observability gaps, CORS risk, the autocomplete failure, and several
+> methodology weaknesses. That was its job and it did it.
+>
+> **The bottleneck is no longer measurement. It is upstream of it:**
+>
+> > empty/thin **place corpus** → broken **destination discovery** and
+> > **autocomplete** → weak **user-visible place cards** → **THEN** ranking.
+>
+> Measuring a ranker sitting behind three broken upstream stages produces
+> confident answers about the wrong stage.
+>
+> ### Phase B disposition
+>
+> **The same-origin proxy was the LAST ALLOWED PREREQUISITE.** It worked, with
+> **no production config change**. **Phase B PROCEEDS** — run the verdict when
+> the observer sends the window.
+>
+> **But the rule now binds.** If anything else blocks between here and the
+> verdict:
+>
+> > **STOP. Formally PARK Phase B with its state recorded** — baseline captured,
+> > instrument fixed, methodology settled, blocked on X.
+>
+> **PARKED-WITH-EVIDENCE IS A LEGITIMATE OUTCOME, NOT A FAILURE**, and is worth
+> more than another chain of prerequisites. Do not treat parking as losing. A
+> session that parks with its state legible has delivered; a session that
+> generates a fourth prerequisite has not.
+>
+> ### The sequence after Phase B resolves — resolves, not closes
+>
+> | | | |
+> |---|---|---|
+> | **1** | **`google-autocomplete` is P1 PRODUCT FUNCTIONALITY** | Moves **ahead of any further ranker architecture**. *A user who cannot reliably select a destination never reaches the system we spent today measuring.* Filed: [`../places/google-legacy-places-api-returns-nothing.md`](../places/google-legacy-places-api-returns-nothing.md) |
+> | **2** | **Place Intelligence starts as a VISIBLE PRODUCT UNIT** | **Not invisible corpus-building.** OSM-only destinations must produce useful cards: reliable photos, experiential attributes, provenance and confidence, category and context, graceful fallbacks. Helps users **now** *and* becomes ranking input later. |
+> | **3** | **Event Truth remains the next architectural foundation** | May run **in parallel** with card enrichment, provided neither mutates the other's contract casually. **Must not become another week of invisible infrastructure before visible Discovery improves.** |
+> | **4** | **RANKER WORK GOES ON EXPLICIT HOLD once Phase B resolves** | **No optimising ranking machinery over an empty corpus.** |
+>
+> **Item 4 supersedes the redirect's "Phases A–D land as planned" for the ranker
+> portions specifically.** Phase D (the D5=B engine split) is ranking machinery;
+> it is on hold once Phase B resolves, regardless of being "next".
+>
+> ### What this means for the next session arriving cold
+>
+> Before proposing any new prerequisite, ask the question this ruling exists to
+> force: **does this help a user select a destination or see a useful place card
+> today?** If not, it is downstream work, and downstream work does not get to
+> block by default any more.
 
 ## Why this file exists
 
@@ -224,9 +319,9 @@ listed because each one caught something.
 | Phase | Name | Status |
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
-| **B** | Make discovery reachable | **BLOCKED — awaiting the B3 probe ONLY.** The deploy precondition is **MET**: build `a384e29fa` (build-id `58536e52`) was verified clean and live 2026-08-15 12:13Z, carrying #55/#56 — verified in the *running* build, not merely published. Exit criterion (rows at multiple serve points) **still unmet**; nothing has been measured in either direction. PR #54's ruling governs and stands. It is **NOT** blocked on Google SSO — see the correction below; that conflation was mine, not #54's. **The B3 probe has NOT been run.** When it is, **record the photo-provider state alongside the result** (FSQ 429 / Google live as of 12:13Z) — it does not affect serve-point logging, and the check establishing that is recorded below. |
-| **C** | Complete shadow coverage | NOT STARTED |
-| **D** | D5=B engine split | NOT STARTED |
+| **B** | Make discovery reachable | **BLOCKED — awaiting the B3 probe ONLY.** The deploy precondition is **MET**: build `a384e29fa` (build-id `58536e52`) was verified clean and live 2026-08-15 12:13Z, carrying #55/#56 — verified in the *running* build, not merely published. Exit criterion (rows at multiple serve points) **still unmet**; nothing has been measured in either direction. PR #54's ruling governs and stands. It is **NOT** blocked on Google SSO — see the correction below; that conflation was mine, not #54's. **The B3 probe has NOT been run.** The same-origin proxy (#71) was the **LAST ALLOWED PREREQUISITE** — if anything else blocks before the verdict, **STOP and formally PARK Phase B with its state recorded**. Parked-with-evidence is a legitimate outcome, not a failure. When it is, **record the photo-provider state alongside the result** (FSQ 429 / Google live as of 12:13Z) — it does not affect serve-point logging, and the check establishing that is recorded below. |
+| **C** | Complete shadow coverage | NOT STARTED — and see the **owner ruling**: this is measurement infrastructure, downstream of the upstream bottleneck. |
+| **D** | D5=B engine split | **ON EXPLICIT HOLD once Phase B resolves** (owner ruling, 2026-08-15). This is ranking machinery, and there is no optimising a ranker over an empty corpus. |
 | **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination |
 | **F** | Owner gates | ❄️ **FROZEN** + **NOT AGENT WORK**. The two gates still stand absolutely. |
 
