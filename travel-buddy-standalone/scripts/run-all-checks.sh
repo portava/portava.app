@@ -32,6 +32,7 @@ run_check "typecheck" pnpm run typecheck
 run_check "lint:bare-image" pnpm run lint:bare-image
 run_check "lint:avatar-icon-sizing" pnpm run lint:avatar-icon-sizing
 run_check "test:avatar-icon-sizing-guard" pnpm run test:avatar-icon-sizing-guard
+run_check "lint:dev-proxy-not-shipped" pnpm run lint:dev-proxy-not-shipped
 
 echo ""
 echo "──────────────────────────────────────────────────────────"

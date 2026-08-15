@@ -150,19 +150,33 @@ step 3 needs.
 step could not be satisfied literally. The agent flagged the deviation and
 offered options rather than substituting quietly, which was correct.
 
-**RULED: option 1 — point a LOCAL dev frontend's `EXPO_PUBLIC_API_BASE_URL` at
-the PRODUCTION backend and run the probe from there.**
+**RULED: run the frontend locally behind a LOCAL SAME-ORIGIN PROXY that forwards
+`/api/*` to production server-to-server.** The browser talks to the local dev
+server and nothing else.
+
+> **This supersedes an earlier ruling in this document's history.** The first
+> ruling was to point the local frontend straight at production and widen
+> `ALLOWED_ORIGINS` to permit the dev origin. **That was reversed, and the reason
+> is the finding it collided with:** production *already* auto-allows any
+> subdomain of the multi-tenant parent `kirk.replit.dev` with
+> `credentials: true` — see
+> `../security/cors-dev-domain-allowlist-in-production.md`. Adding another
+> permitted origin, in production, to make a test convenient, is **the wrong
+> direction on a policy that needs tightening rather than loosening.**
+>
+> **No live production config change for a measurement.** The proxy achieves the
+> same measurement with zero production change.
 
 **The reasoning, which is the part that must survive.** Phase B measures
 **server-side** behaviour: whether discovery serve points log rows when
 exercised. Those serve points are api-server routes. **Which frontend served the
 JavaScript does not change which route fires or whether it writes.** What matters
-is that requests reach the production API and the production database, and
-option 1 does exactly that.
+is that requests reach the production API and the production database, and the
+proxy does exactly that — it changes the transport, not the routes.
 
-**Option 2 — registering and deploying `travel-buddy-standalone` as a real
-artifact — was explicitly REFUSED.** That is a new production surface and a
-publish, which is the owner's trigger.
+**Registering and deploying `travel-buddy-standalone` as a real artifact was
+explicitly REFUSED.** That is a new production surface and a publish, which is
+the owner's trigger.
 
 ### The three conditions imposed with the ruling
 
@@ -180,52 +194,82 @@ into a disputed one when it surfaces later instead of upfront.
 
 ---
 
-## ⚠ PRE-FLIGHT — CORS will silently decide whether this probe is readable at all
+## HOW TO RUN IT — the local same-origin proxy
 
-**Established by measurement against production, 2026-08-15. Do this before
-navigating anything.** It is a direct consequence of the deviation above: a local
-frontend sends a **different `Origin` header**, and production does not accept
-all of them.
+**Why a proxy at all, in one measurement.** A local frontend talking straight to
+production is cross-origin, and production does not accept every origin:
 
-| Origin the frontend runs on | Production response | Probe viable? |
-|---|---|---|
-| `https://<id>.kirk.replit.dev` (and **any** subdomain of it, incl. `*.expo.kirk.replit.dev`) | **200**, `ACAO` echoed | ✅ **yes** |
-| `http://localhost:3000` / `http://localhost:8081` | **HTTP 500**, no `ACAO` | ❌ **NO — every request fails** |
-| No `Origin` header (native app, curl, server-to-server) | **200** | ✅ yes |
+| Origin | Direct to production |
+|---|---|
+| `https://<id>.kirk.replit.dev` (**any** subdomain) | **200**, `ACAO` echoed |
+| `http://localhost:3000` / `:8081` | **HTTP 500**, no `ACAO` |
+| No `Origin` (server-to-server) | **200** |
 
-> **THIS IS THE TRAP THIS WHOLE PHASE EXISTS TO AVOID.** Run the probe from
-> `localhost` and **every request 500s, zero rows are written, and the report
-> shows an unexercised surface** — which is indistinguishable from the surface
-> being unreachable. It would look exactly like a Phase B failure and would be an
-> artefact of the probe's own origin.
->
-> Worse, the rejection surfaces as a **500, not as a clean CORS error**, so it
-> reads as a server fault rather than a configuration mismatch.
+> **This is the trap the phase exists to avoid, and the measurement would have
+> introduced it.** Run the probe from `localhost` straight at production and
+> every request 500s, zero rows are written, and the report shows an unexercised
+> surface — **indistinguishable from the surface being unreachable.** It would
+> read as a clean Phase B failure while being an artefact of the probe's own
+> origin. Worse, it surfaces as a **500, not a CORS error**, so it looks like a
+> server fault.
 
-**Therefore: run the frontend on the Replit dev domain, NOT on `localhost`.**
+**The proxy removes the question rather than answering it.** The browser makes
+only same-origin requests to the local dev server; the forward to production is
+server-to-server and therefore carries **no `Origin` header at all** — the case
+production already permits, with **no production change**.
 
-**Verify before navigating** — substitute the actual origin the frontend runs on:
-
-```bash
-curl -s -o /dev/null -D - \
-  -H "Origin: https://<the-origin-the-frontend-runs-on>" \
-  'https://portava.replit.app/api/places/search?q=Barcelona' \
-  | grep -i 'access-control-allow-origin\|^HTTP'
+```
+browser ──same-origin──> proxy ──server-to-server──> production API
+                           │
+                           └────────────────────────> Metro dev server
 ```
 
-**Expect `HTTP/2 200` and an `access-control-allow-origin` echoing your origin.**
-If you get a 500 with no `access-control-allow-origin`, **STOP** — that is
-condition 1 failing, and any rows you collect afterwards are unreadable.
+### Verified, not assumed
 
-**Record the frontend's actual origin in the probe report** alongside the env
-value. It is part of condition 2, and without it the CORS question cannot be
-re-checked later.
+Same `Origin: http://localhost:8097` header, two paths, measured 2026-08-15:
+
+| Path | Result |
+|---|---|
+| Direct to production | **HTTP 500** |
+| Through the proxy | **HTTP 200**, real Nominatim body |
+
+### Run it
+
+```bash
+# terminal 1 — Metro. EXPO_PUBLIC_API_BASE_URL must be EMPTY: every call site
+# reads `?? ''`, so empty makes the app issue same-origin RELATIVE /api requests.
+cd travel-buddy-standalone
+EXPO_PUBLIC_API_BASE_URL= pnpm exec expo start --web --port 8081
+
+# terminal 2 — the proxy
+node scripts/dev-same-origin-proxy.mjs \
+  --api https://portava.replit.app --metro http://127.0.0.1:8081 --port 8090
+```
+
+**Open the app at `http://localhost:8090`** — the proxy — **not at Metro's port.**
+Opening Metro directly means `/api` 404s and no rows are written.
+
+The proxy logs every forwarded call as `[api] GET /api/... -> 200 (123ms)`.
+**Keep that log: it is a client-side audit trail to set beside the server-side
+row counts**, and it is how a serve point that was *attempted* can be told from
+one that was never tried. It never logs header values, so an `Authorization`
+bearer token cannot reach a terminal scrollback.
+
+### Sanity check before navigating
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' 'http://localhost:8090/api/places/search?q=Barcelona'
+```
+
+**Expect `200`.** A `502` means the proxy cannot reach production; a `404` means
+you are pointed at Metro rather than the proxy. Either way **STOP** — that is
+condition 1 failing, and rows collected afterwards are unreadable.
 
 ---
 
 ## Step 2 — The probe (run by the OBSERVER)
 
-**Record and report these three things. They are the observer's entire output:**
+**Record and report these FIVE things. They are the observer's entire output:**
 
 1. **`PROBE_START`** — UTC instant immediately before the first navigation,
    ISO-8601, e.g. `2026-08-15T14:02:00Z`.
@@ -237,8 +281,10 @@ re-checked later.
    frontend actually ran on**, and an explicit statement that **backend and
    database were production while the frontend was local** (condition 2 of the
    methodology ruling above).
-5. **The pre-flight CORS check result** — the `HTTP` status and
-   `access-control-allow-origin` header observed for that origin.
+5. **The proxy's `[api]` log** for the probe window — the client-side record of
+   which routes were actually called and what they returned. This is what
+   distinguishes a serve point that was *attempted and produced no row* from one
+   that was *never exercised*, and the verifier cannot reconstruct it.
 
 > **Report the window; do not report the verdict.** Whether the probe "worked" is
 > the verifier's call, made against the table. An observer's impression that
