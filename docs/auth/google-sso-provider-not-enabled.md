@@ -77,6 +77,21 @@ silently become evidence of absence.** Nothing in CI, and nothing in the repo,
 distinguishes *"the Google provider is enabled"* from *"nobody has ever checked."*
 The configuration lives in a dashboard this repository cannot see.
 
+### THE CLASS — recorded because this instance is not the interesting part
+
+> **DECLARED-COMPLETE-BUT-EXTERNALLY-INERT: a defect family this architecture
+> currently CANNOT SEE.** Every guard here — CI, `audit:schema`,
+> `audit:shadow-append-only`, the RLS and privilege assertions — watches **repo
+> state or database state**. **External provider configuration is invisible to
+> all of them.** So any feature whose last mile is a setting in someone else's
+> dashboard can be fully merged, fully green, and completely inert, and **no
+> existing check can tell that apart from working.**
+
+Google SSO is one instance. The family includes every OAuth provider, and any
+other feature completed in code but finished in a console. **The gap is not that
+this toggle was missed — it is that nothing in the system was ever capable of
+noticing.**
+
 ---
 
 ## The fix
