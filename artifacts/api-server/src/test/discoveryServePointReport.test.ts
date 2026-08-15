@@ -53,9 +53,11 @@ import {
   DISCOVERY_ENDPOINT_POINTS,
   RANKED_POINTS,
   SERVE_POINT_LABEL,
+  ReportWindowError,
   assertLabelsCoverEnum,
   countOn,
   observedPoints,
+  resolveReportWindow,
   tallyServePoints,
   unexercisedPoints,
   type ServeRow,
@@ -236,5 +238,116 @@ describe("discoveryServePointReport — an empty window says nothing rather than
     // Everything unexercised — which is a statement about this window, not
     // about the surface.
     assert.deepEqual(unexercisedPoints(t), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+});
+
+// ── resolveReportWindow ───────────────────────────────────────────────────────
+//
+// These exist because the Phase B verification is a before/after pair read by a
+// DIFFERENT party than the one who ran the probe. The verifier must be able to
+// address exactly the window the observer reported. A rolling window cannot do
+// that, and the failure is silent — which is the whole reason this instrument
+// is under test at all.
+
+const NOW = Date.parse("2026-08-15T12:00:00.000Z");
+
+describe("resolveReportWindow — the --days default is unchanged", () => {
+  it("no flags is 7 rolling days, open at the top", () => {
+    const w = resolveReportWindow(["node", "script"], NOW);
+    assert.equal(w.since, "2026-08-08T12:00:00.000Z");
+    assert.equal(w.until, null);
+    assert.match(w.description, /last 7 day\(s\)/);
+  });
+
+  it("--days 1 is one rolling day, open at the top", () => {
+    const w = resolveReportWindow(["node", "script", "--days", "1"], NOW);
+    assert.equal(w.since, "2026-08-14T12:00:00.000Z");
+    assert.equal(w.until, null);
+  });
+
+  it("--days floors at 1, as before — 0 and negatives do not widen to everything", () => {
+    for (const n of ["0", "-5"]) {
+      const w = resolveReportWindow(["node", "script", "--days", n], NOW);
+      assert.equal(w.since, "2026-08-14T12:00:00.000Z");
+    }
+  });
+});
+
+describe("resolveReportWindow — a fixed window can be addressed exactly", () => {
+  it("--since/--until bounds both ends", () => {
+    const w = resolveReportWindow(
+      ["node", "script", "--since", "2026-08-15T14:00:00Z", "--until", "2026-08-15T14:30:00Z"],
+      NOW,
+    );
+    assert.equal(w.since, "2026-08-15T14:00:00.000Z");
+    assert.equal(w.until, "2026-08-15T14:30:00.000Z");
+    assert.match(w.description, /fixed window/);
+  });
+
+  it("--since alone is a fixed lower bound, open at the top", () => {
+    const w = resolveReportWindow(["node", "script", "--since", "2026-08-15T14:00:00Z"], NOW);
+    assert.equal(w.since, "2026-08-15T14:00:00.000Z");
+    assert.equal(w.until, null);
+  });
+
+  it("the window is independent of the clock — the same flags resolve the same at any 'now'", () => {
+    const flags = ["node", "script", "--since", "2026-08-15T14:00:00Z", "--until", "2026-08-15T14:30:00Z"];
+    const a = resolveReportWindow(flags, NOW);
+    const b = resolveReportWindow(flags, NOW + 9 * 60 * 60 * 1000);
+    assert.deepEqual(a, b);
+  });
+
+  it("A ROLLING WINDOW IS NOT: the same --days flags resolve differently as 'now' moves", () => {
+    // This is the defect the fixed window exists to avoid, pinned as a fact
+    // rather than left as an argument in a comment. A before/after pair taken
+    // with --days addresses two different windows.
+    const flags = ["node", "script", "--days", "1"];
+    const before = resolveReportWindow(flags, NOW);
+    const after = resolveReportWindow(flags, NOW + 30 * 60 * 1000);
+    assert.notEqual(before.since, after.since);
+  });
+});
+
+describe("resolveReportWindow — refuses rather than guessing", () => {
+  it("--days with --since is refused: two different windows asked for at once", () => {
+    assert.throws(
+      () => resolveReportWindow(["node", "s", "--days", "1", "--since", "2026-08-15T14:00:00Z"], NOW),
+      ReportWindowError,
+    );
+  });
+
+  it("--until without --since is refused", () => {
+    assert.throws(
+      () => resolveReportWindow(["node", "s", "--until", "2026-08-15T14:30:00Z"], NOW),
+      ReportWindowError,
+    );
+  });
+
+  it("an unparseable timestamp is refused, NOT silently defaulted", () => {
+    assert.throws(
+      () => resolveReportWindow(["node", "s", "--since", "last tuesday"], NOW),
+      ReportWindowError,
+    );
+  });
+
+  it("a flag with no value is refused rather than swallowing the next flag", () => {
+    assert.throws(
+      () => resolveReportWindow(["node", "s", "--since", "--until"], NOW),
+      ReportWindowError,
+    );
+  });
+
+  it("VACUITY IS FAILURE: an inverted or zero-width window is refused", () => {
+    // Such a window returns zero rows and reads exactly like a surface nobody
+    // reached. It must not be renderable as a result.
+    for (const [since, until] of [
+      ["2026-08-15T14:30:00Z", "2026-08-15T14:00:00Z"], // inverted
+      ["2026-08-15T14:00:00Z", "2026-08-15T14:00:00Z"], // zero width
+    ]) {
+      assert.throws(
+        () => resolveReportWindow(["node", "s", "--since", since, "--until", until], NOW),
+        ReportWindowError,
+      );
+    }
   });
 });

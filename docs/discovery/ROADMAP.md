@@ -34,6 +34,36 @@
 > as one rule because it is one rule, and because each face was discovered
 > separately at a cost that the general form would have avoided.
 >
+> #### A FOURTH FACE, added 2026-08-15 — and this one is a pattern, not a coincidence
+>
+> > **A SIGNAL NOBODY READS IS NOT A SIGNAL.**
+>
+> Three defects found on 2026-08-15 were each **already being logged** by code
+> written specifically to report them. In every case the warning existed, fired,
+> and was never looked at:
+>
+> | | The signal that existed | What it would have said |
+> |---|---|---|
+> | 1 | `app.ts:38` — fires whenever `ALLOWED_ORIGINS` is unset and the hardcoded fallback is in use | that production's CORS allowlist is not the one anyone configured |
+> | 2 | `places.ts:330` — `"Google Places Autocomplete non-OK"`, carrying Google's own `status` | that destination search has been returning empty with a working key |
+> | 3 | `places.ts:490` — `"Places API (New) is disabled on this Google Cloud project"`, with the activation URL | exactly which API needed enabling, and when |
+>
+> **All three were found by probing production from outside, not by reading the
+> logs the code already writes.** That is the finding.
+>
+> This workstream has been *adding* observability and it has been right to —
+> #61, #62 and #64 are why the Foursquare 429 and the Google key state were
+> detectable at all. But **instrumentation with no reader is instrumentation that
+> does not work**, and it fails in the invariant's own shape: the signal is
+> present, the failure is unobserved, and the outcome is indistinguishable from
+> having no instrumentation at all.
+>
+> **Consequence, and it is a real one:** *"we log that"* is not an answer to
+> *"how would we know?"* — not until someone or something reads it. Before adding
+> another `logger.warn` to close an observability gap, establish who or what
+> reads it. **A log with no reader is a to-do note written to a file nobody
+> opens.**
+>
 > #### The guard for face one has already earned its keep — 2026-08-15
 >
 > `artifacts/api-server/scripts/check-test-registration.mjs` fails CI when a
@@ -70,6 +100,87 @@
 > The new sequence is **[The superseding sequence](#the-superseding-sequence)**.
 > The A–F phases below are kept for the record and for the work still in flight.
 
+---
+
+> ## ⚠⚠ OWNER RULING — 2026-08-15, GOVERNING. THE BOTTLENECK HAS MOVED UPSTREAM.
+>
+> **This binds everything below it, including the redirect above.** Where they
+> differ, this wins.
+>
+> ### The statement, verbatim
+>
+> > **Discovery measurement work may close its existing proof obligation, but it
+> > NO LONGER GETS TO GENERATE NEW PREREQUISITE WORK BY DEFAULT. Any new blocker
+> > must be weighed against fixing the place corpus and destination discovery
+> > first. Ranking is downstream until the app has something worth ranking.**
+>
+> ### The reasoning — recorded because it reframes everything, not as commentary
+>
+> **The harness has already paid for itself.** It exposed auth blockage,
+> observability gaps, CORS risk, the autocomplete failure, and several
+> methodology weaknesses. That was its job and it did it.
+>
+> **The bottleneck is no longer measurement. It is upstream of it:**
+>
+> > empty/thin **place corpus** → broken **destination discovery** and
+> > **autocomplete** → weak **user-visible place cards** → **THEN** ranking.
+>
+> Measuring a ranker sitting behind three broken upstream stages produces
+> confident answers about the wrong stage.
+>
+> ### Phase B disposition
+>
+> **The same-origin proxy was the LAST ALLOWED PREREQUISITE.** The disposition
+> was: Phase B proceeds, and **if anything else blocks before the verdict, STOP
+> and formally PARK it** with its state recorded.
+>
+> ### ⏸️ THIS FIRED THE SAME DAY. PHASE B IS PARKED.
+>
+> The proxy was built and verified, with **no production config change** — and
+> then failed on a **platform routing rule** that no proxy can address: Replit
+> intercepts `/api/*` on the workspace dev domain and serves it locally
+> regardless of what is bound underneath, and there is no deployed frontend.
+>
+> A different port, a different domain, or a different mechanism is **by
+> definition another chain of prerequisite work**, which is exactly what this
+> ruling ended. **No such attempt was made.**
+>
+> → **[Phase B — PARKED](#phase-b--parked-2026-08-15)** for the full state and
+> the verified evidence of the blocker.
+>
+> **PARKED-WITH-EVIDENCE IS A LEGITIMATE OUTCOME, NOT A FAILURE**, and is worth
+> more than another chain of prerequisites. Do not treat parking as losing. A
+> session that parks with its state legible has delivered; a session that
+> generates a fourth prerequisite has not.
+>
+> **The rule worked.** It was written in the morning and it stopped a fourth
+> prerequisite the same evening — which is the strongest available evidence that
+> it was the right rule, and the reason it should not be softened later when
+> parking feels unsatisfying.
+>
+> ### The sequence — NOW LIVE, as of 2026-08-15
+>
+> Phase B has resolved by **parking**, so this is no longer "what comes after".
+> **It is the current work.**
+>
+> | | | |
+> |---|---|---|
+> | **1** | **`google-autocomplete` is P1 PRODUCT FUNCTIONALITY** | Moves **ahead of any further ranker architecture**. *A user who cannot reliably select a destination never reaches the system we spent today measuring.* Filed: [`../places/google-legacy-places-api-returns-nothing.md`](../places/google-legacy-places-api-returns-nothing.md) |
+> | **2** | **Place Intelligence starts as a VISIBLE PRODUCT UNIT** | **Not invisible corpus-building.** OSM-only destinations must produce useful cards: reliable photos, experiential attributes, provenance and confidence, category and context, graceful fallbacks. Helps users **now** *and* becomes ranking input later. |
+> | **3** | **Event Truth remains the next architectural foundation** | May run **in parallel** with card enrichment, provided neither mutates the other's contract casually. **Must not become another week of invisible infrastructure before visible Discovery improves.** |
+> | **4** | **RANKER WORK GOES ON EXPLICIT HOLD once Phase B resolves** | **No optimising ranking machinery over an empty corpus.** |
+>
+> **Item 4 supersedes the redirect's "Phases A–D land as planned" for the ranker
+> portions specifically.** Phase D (the D5=B engine split) is ranking machinery;
+> it is on hold once Phase B resolves, regardless of being "next".
+>
+> ### What this means for the next session arriving cold
+>
+> Before proposing any new prerequisite, ask the question this ruling exists to
+> force: **does this help a user select a destination or see a useful place card
+> today?** If not, it is downstream work, and downstream work does not get to
+> block by default any more.
+
 ## Why this file exists
 
 Sessions working on this die to container restarts without warning. A plan that
@@ -92,6 +203,7 @@ Companion documents:
 | `discovery-engine-mode-packet.html` | the design, the eight D1–D8 rulings, and the operator-actions record |
 | `discovery-engine-ruling-sheet.html` | the owner's decision sheet as presented |
 | `phase-minus-1-repository-proof.md` | repository proof of the carried-in claims at HEAD |
+| `phase-b3-probe-runbook.md` | **the staged B3 probe** — exact commands, the sanctioned read-only front door for the production baseline, the production writes it incurs, and what to record. **STAGED, NOT RUN; the owner presses it** |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
 | `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves`. **Event Truth's classes are ruled separately** — packet §7 — and this document is amended when Event Truth is implemented, not before |
 
@@ -223,9 +335,9 @@ listed because each one caught something.
 | Phase | Name | Status |
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
-| **B** | Make discovery reachable | **BLOCKED — awaiting a deploy carrying #55/#56, then a probe.** Exit criterion (rows at multiple serve points) **unmet**; nothing has been measured in either direction. PR #54's ruling governs and stands. It is **NOT** blocked on Google SSO — see the correction below; that conflation was mine, not #54's. **The B3 probe has NOT been run against a build containing the fixes**, and the deployed build does not contain them. |
-| **C** | Complete shadow coverage | NOT STARTED |
-| **D** | D5=B engine split | NOT STARTED |
+| **B** | Make discovery reachable | ⏸️ **PARKED — 2026-08-15. NOT closed, NOT abandoned, and the exit criterion remains UNMET.** Blocked on: **no route exists from a browser session to the production API in this workspace** — Replit's path-based routing intercepts `/api/*` on the dev domain to the local dev artifact, and there is no deployed frontend. See **[Phase B — PARKED](#phase-b--parked-2026-08-15)** for the full state: baseline captured, instrument fixed and red-proofed, methodology settled, auth resolved, deploy verified clean. **Parking is not closure.** |
+| **C** | Complete shadow coverage | NOT STARTED — and see the **owner ruling**: this is measurement infrastructure, downstream of the upstream bottleneck. |
+| **D** | D5=B engine split | **ON EXPLICIT HOLD once Phase B resolves** (owner ruling, 2026-08-15). This is ranking machinery, and there is no optimising a ranker over an empty corpus. |
 | **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination |
 | **F** | Owner gates | ❄️ **FROZEN** + **NOT AGENT WORK**. The two gates still stand absolutely. |
 
@@ -292,6 +404,152 @@ instrument; #55 removes the wall that stopped the probe; #56 makes a guard able
 to fail.** None of them is Phase B *evidence* — per #54 §3, an agent that
 authenticates and navigates has reached the **starting line**. Phase B closes on
 discovery rows at multiple serve points and on nothing else.
+
+### DEPLOY VERIFIED CLEAN, 2026-08-15 12:13Z — the precondition above is now MET
+
+The paragraph above ends: *"It is waiting on a deploy carrying #55 and #56, and
+then a probe... The currently deployed build contains neither fix."* **That is
+no longer true.** The deploy half is satisfied. The probe half is not, and
+nothing here closes Phase B.
+
+#### What happened, in order
+
+| Time (UTC) | Event |
+|---|---|
+| 11:23:13 | **Publish `d43b2fb3a`** — tree `bf16e88d`, **byte-identical to `cd1f4e1bb`**. This shipped the unreviewed drift. |
+| 11:23:47 | **Revert `87e245786`** — 34 seconds later. Five local commits reverted with history intact; all five preserved on `wip/discovery-photo-cache-lru`. |
+| 11:30–11:39 | #63, #64 merge; branch reconciled. |
+| 11:55:17 | **Publish `a384e29fa`** — build-id `58536e52-de91-4ce1-b1d9-1a91fc2e7813`, tree `2014ada7`, **byte-identical to `origin/bughunt-20260805`**. |
+
+**The drift was live for roughly 32 minutes.** It is worth stating what that
+means rather than only that it happened — see the fallback-chain finding below.
+
+#### How "clean" was established — and why git alone was not enough
+
+Git proves which commit was *published*. It cannot prove which build the
+autoscale instances are *running*. Both were checked, and they agree.
+
+| Method | Evidence |
+|---|---|
+| **Git** | `tree(a384e29fa) == tree(origin/bughunt-20260805) == tree(HEAD)` = `2014ada7`. #55, #56, #57, #58, #61, #62, #63, #64 all in history. |
+| **Live, decisive** | `GET /api/places/photo` on production returns a **`places.googleapis.com/v1/places/{id}/photos/{ref}/media`** URL. That construction exists **only** in the clean tree (`places.ts:510`). The drift's `/places/photo` calls `places-api.foursquare.com` and **cannot emit that shape** under any input. |
+| **Live, corroborating** | `/api/places/fsq-photo` returns the wire string `foursquare_quota_exhausted`, introduced by **#61** (`9b9b120da`). So the running build is at or past #61 — and #55, #56, #57, #58 are all ancestors of #61. |
+
+**Method note for whoever verifies a deploy next.** The useful discriminator was
+not a version endpoint — `/api/healthz` returns `{"status":"ok"}` and nothing
+else. It was **a wire string that only one of the two candidate trees can
+produce.** Pick a response value the other tree is structurally incapable of
+emitting, not one that merely differs in likelihood.
+
+#### Google is no longer SERVICE_DISABLED
+
+Places API (New) enablement was blocked on billing activation. **That cleared.**
+
+- `/api/places/photo` returned real photo URLs for **5 of 5** distinct places
+  (Eiffel Tower, Sagrada Família, Park Güell, Colosseum, Tokyo Tower), each a
+  different Google place ID.
+- One media URL was followed end-to-end: **HTTP 200, `image/jpeg`, 135,854 bytes.**
+
+The route reads **`GOOGLE_MAPS_API_KEY`**, which is the only name the repository
+uses. **`GOOGLE_PLACES_API_KEY` is referenced nowhere as a `process.env` read** —
+only in a comment at `places.ts:444` and a test docstring. A secret provisioned
+under that name is **inert by design, not broken**, and #64 exists so that this
+class of thing reports itself honestly.
+
+#### Foursquare is quota-exhausted — and this is why the revert was load-bearing
+
+`/api/places/fsq-photo` returns `foursquare_quota_exhausted` (**HTTP 429**)
+uniformly, on every place tried. FSQ is the **primary** photo provider; Google is
+the **fallback**. Right now every Discovery place card is carried entirely by the
+Google fallback.
+
+> **The drift replaced the Google fallback with a second Foursquare call —
+> collapsing the chain to FSQ → FSQ.** Had it stayed live into the 429, both
+> links of a two-provider chain would have been the same exhausted provider, and
+> Discovery would have had **no working photo provider at all**. The two faults
+> are independent and neither is visible from the other; they compose into an
+> outage. The revert was not hygiene.
+>
+> This is the fallback-chain form of the governing invariant. A fallback that
+> calls the same provider as the primary is **absence of redundancy presenting as
+> redundancy** — it looks like a chain and is a single point of failure.
+
+#### The provider state does NOT contaminate Phase B — established, not assumed
+
+It is tempting to read "unusual provider state" as a reason to withhold Phase B
+closure. **It is not**, and the distinction matters in both directions.
+
+**Phase B's exit criterion is discovery rows at MULTIPLE serve points. That is
+about instrumentation reachability, not photo provenance.** Whether a card's
+image came from Foursquare or Google does not change whether the serve point
+logged.
+
+The one case where it *would* genuinely matter is if the 429 made a discovery
+path fail outright and suppress serve points that would otherwise log. **That was
+checked before the probe rather than after, and it does not happen:**
+
+| Check | Result |
+|---|---|
+| Transitive import closure of `routes/discovery.ts` — **50 modules** | **Zero** reference `places-api.foursquare.com` or `FOURSQUARE_API_KEY`. |
+| Only FSQ mention in `discovery.ts` | `row.source.startsWith("fsq")` at `:652` — attribution on rows already in the DB. **No network call.** |
+| Where photo lookup actually happens | A separate client-initiated call per card, against `/api/places/fsq-photo`, **after** the discovery response is sent and `logDiscoveryServe` has run. |
+
+**The discovery serve path makes no Foursquare call. The 429 cannot suppress a
+serve point.**
+
+**So: record the provider state alongside the probe result, do not treat it as a
+blocker.** The reason to record it is that a probe run today is a measurement
+taken while FSQ was at 429 and Google was carrying every card, and a later reader
+with no note will not know that. **Recorded so that nobody later reads a valid
+Phase B closure as contaminated, or an invalid one as clean.**
+
+#### Separate live defect found while verifying — Google autocomplete returns nothing
+
+`GET /api/places/google-autocomplete?input=Barcelona&type=city` returns
+`{"places":[],"powered_by":"google"}`. The key is present and demonstrably
+working (the photo route proves it), so this is the **legacy**
+`maps.googleapis.com` Places Autocomplete endpoint returning non-OK or a non-`OK`
+status body. **Places API (New) is enabled; the legacy Places API apparently is
+not.**
+
+It is **not** caused by the drift — the clean tree is correctly on the legacy
+endpoint, and the drift is the tree that moved *off* it. `places.ts:289`
+documents the route as degrading to an empty list on non-OK, which is honest but
+silent: the caller cannot distinguish "no such city" from "the API is off".
+
+→ **FILED: `../places/google-legacy-places-api-returns-nothing.md`.** It is its
+own defect and **does not belong to Phase B** — folding it in would both delay
+Phase B and bury the defect.
+
+**Two corrections that investigation produced, recorded here because the
+short version above was wrong in both directions:**
+
+1. **`/places/google-details` fails too**, on the same legacy host, for a valid
+   real `place_id`. It is the legacy Places **API family**, not one endpoint.
+2. **It is degradation, not an outage.** `GlobalPlacePicker` composes several
+   sources and `/api/places/search` (Nominatim) works, so the picker still
+   returns results. What is lost is the whole Google-sourced contribution,
+   silently. *"Destination search is broken"* would have been wrong.
+
+#### Phase B status after all of the above
+
+| | |
+|---|---|
+| Deploy carrying #55 and #56 | **MET** — verified in the running build, not merely published |
+| Probe producing discovery rows at multiple serve points | **UNMET** |
+| Phase B | **still OPEN.** Blockage was never closure, and neither is a satisfied precondition. |
+
+#### Open PRs as of 2026-08-15 12:15Z
+
+Recorded because a red PR with no note reads, to the next session, as work that
+was abandoned rather than work whose redness *is* the result.
+
+| PR | Checks | Reading |
+|---|---|---|
+| **#65** — REVIEW ONLY, cd1f4e1bb replaces the Google fallback with a second FSQ call | 31 pass / **11 fail** | **Leave open. Do not merge.** It targets `review/photo-cache-base`, not trunk. **The red is the finding**: the drift does not pass CI, which corroborates reverting it rather than reviewing it in place. Merging it would re-introduce the FSQ → FSQ collapse described above. |
+| **#60** — FSQ photo liveness + URI-change reload | 26 pass / **6 fail**, CONFLICTING | **Close as superseded.** Self-titled *"RED, do not merge as-is"*. Its intent shipped via **#61** (audible provider failure) and **#62** (liveness check + caching). |
+| **#54** — Phase B is BLOCKED (authentication prerequisite) | **32/32 green**, CONFLICTING | **Owner's.** ⚠️ **Partly stale after #63.** #54's core separation was *correct* and #63 affirms it — but #54 is still open against a tree whose Phase B section now records the opposite status. Its blocked-on-authentication framing has been overtaken: the wall is fixed (#55), the deploy is verified, and only the probe remains. |
+| **#52** — Phase B1 + C0, server-side FSQ proxy | **26/26 green**, CONFLICTING, +1857/−148 | **Owner's.** Overlaps substantially with what landed via #61/#62; the server-side FSQ proxy exists in trunk now. Needs a scope re-read against current trunk before it can be merged or closed. |
 
 **Three things the next session must not misread:**
 
@@ -458,7 +716,100 @@ are different findings and must not be conflated.
 
 ---
 
-## Phase B — Make discovery reachable
+## Phase B — PARKED (2026-08-15)
+
+> # ⏸️ PARKED WITH EVIDENCE — NOT CLOSED, NOT ABANDONED
+>
+> **THE EXIT CRITERION REMAINS UNMET.** Discovery rows at multiple serve points
+> have **not** been produced. Nothing below claims otherwise, and **parking is
+> not closure** — the same distinction that has governed this phase since #54,
+> and it matters more here, not less. A parked phase with its state recorded is
+> a phase someone can resume. A phase quietly treated as done is a phase whose
+> criterion silently stopped applying.
+>
+> **This is the owner's ruling of 2026-08-15 firing exactly as written, not a
+> judgement call made in the moment.** The same-origin proxy was the LAST
+> PERMITTED PREREQUISITE. It failed on a platform routing rule. A different
+> port, a different domain, or a different mechanism is *by definition* another
+> chain of prerequisite work, and that no longer happens by default.
+>
+> **Do not attempt one.**
+
+### BLOCKED ON
+
+**No route exists from a browser session to the production API in this
+workspace.**
+
+1. **Replit's path-based routing intercepts `/api/*` on the workspace dev
+   domain** and serves it from the local dev artifact, **regardless of what is
+   bound underneath.** A same-origin proxy therefore cannot put a browser
+   session in front of production: the browser's `/api` calls never leave for
+   production, whatever the proxy is doing on its port.
+2. **There is no deployed frontend**, which is what made a local client
+   necessary in the first place.
+
+#### Verified, not merely reported
+
+| Probe | Result |
+|---|---|
+| `GET /api/healthz` on **production** | 200 + `server: Google Frontend`, `via: 1.1 google`, `x-cloud-trace-context` |
+| `GET /api/healthz` on the **dev domain** | 200 with **none of those headers** — not reaching production |
+| `GET /` on the **dev domain** | **502** |
+
+**The last two lines together are the proof.** The root is 502 — nothing is
+successfully serving the port — yet `/api/healthz` still returns 200. **`/api/*`
+is answered by something other than what is bound underneath**, which is exactly
+the interception claimed, demonstrated rather than asserted.
+
+### The state that is being preserved
+
+Parked-with-evidence means the next session resumes rather than rediscovers.
+
+| | |
+|---|---|
+| **Baseline** | **Captured** against production 2026-08-15T12:50:13Z: 13 rows / 24 h, **all on serve point 9**, 4 sessions, serve points **1–8 at a floor of zero**, **zero `GET /discovery` serves**. Recorded in `phase-b3-probe-runbook.md` → RECORDED READINGS. |
+| **Instrument** | **Fixed and red-proofed** (#58). Verified in use: it *declined* to render a verdict on sections 2b and 3 rather than returning a confident zero — *"That is not the criterion holding. It is the criterion untested."* |
+| **Window** | **Fixed `--since`/`--until`** (#67), so a before/after pair can address one window. Refuses `--days` mixed with them, and refuses an inverted or zero-width window. |
+| **Methodology** | **Settled.** Window-not-verdict; observer and verifier in different hands; the local-client substitution reasoned and documented rather than assumed. |
+| **Authentication** | **Resolved.** Email/password; never gated on Google SSO (#63 correction). |
+| **Deploy** | **Verified clean** — `a384e29fa` / build-id `58536e52`, confirmed in the *running* build, not merely published. |
+| **Contamination question** | **Asked and answered before the probe**: the Foursquare 429 cannot suppress serve points, server-side (50-module import closure, zero FSQ call sites) or client-side (`useFsqPhoto` never throws). |
+
+**None of that is invalidated by the park.** It is the reason the park is cheap
+to reverse.
+
+### What would unblock it later — RECORDED, NOT SCHEDULED
+
+Stated so a cold reader is not left guessing, and **deliberately not planned,
+resourced, or sequenced.** Neither of these is work anyone is doing:
+
+- **A deployed frontend artifact**, which removes the need for a local client
+  entirely; or
+- **A probe harness that is not browser-based**, which sidesteps the routing
+  rule rather than fighting it.
+
+**Neither is proposed here, and proposing one is what the ruling forbids.** If
+Phase B is resumed it will be because something else made one of them true
+anyway — most plausibly the new sequence, since a working destination picker and
+useful place cards both imply a frontend somebody can reach.
+
+### One caveat on the blocker's phrasing, recorded for accuracy
+
+The blocker is precisely *"no route from a **browser session** to the production
+**API**."* It is **not** the broader claim that nothing in this workspace can
+reach production data — the workspace's own `SUPABASE_URL` points at the
+production project, which is why the read-only audit guard had to be opened
+deliberately to take the baseline at all.
+
+**This is recorded for accuracy, not as a route to unpark Phase B, and no such
+route is proposed.** It is noted because a future reader comparing those two
+statements would otherwise find them contradictory, and because a dev artifact
+configured against the production database is worth someone's attention on its
+own terms, separately from Phase B.
+
+---
+
+## Phase B — the original plan, kept for the record
 
 **Ranked first among engineering work.** Every later measurement is worthless
 without it, and worse than worthless: it returns confident wrong answers rather
@@ -554,6 +905,36 @@ Read against the serve-point table. **One row at serve point 9 is the FAILING
 state** — it is what the 14-minute probe already produced. Success means several
 distinct serve points appear, which demonstrates that the discovery surface is
 navigable rather than that one endpoint responds.
+
+> ## ⏸️ THIS PROBE IS PARKED — 2026-08-15. It was never run.
+>
+> The deploy precondition was met and the probe was authorised, staged and
+> ready. It is blocked on **platform routing**, not on anything in this section:
+> `/api/*` on the workspace dev domain is intercepted and served locally, so no
+> browser session can reach the production API. See
+> **[Phase B — PARKED](#phase-b--parked-2026-08-15)**.
+>
+> **Everything below remains correct and is preserved for whoever resumes it.**
+> The exit criterion is unchanged and unmet.
+>
+> → **Staged runbook: `phase-b3-probe-runbook.md`.** Exact commands, the
+> sanctioned read-only front door for the production baseline, the production
+> writes the probe incurs, and what to record. **The owner presses it.**
+>
+> **Run `--days 1` BEFORE the probe as well as after.** The before-run is the
+> baseline; without it a post-probe reading cannot distinguish rows the probe
+> produced from rows that were already there. A before/after pair is the
+> measurement — a single after-reading is an anecdote.
+>
+> **Record the photo-provider state with the result.** At the time of writing,
+> Foursquare is returning **HTTP 429** on every photo lookup and Google is
+> carrying every card. This does **not** affect serve-point logging — the
+> transitive import closure of `routes/discovery.ts` (50 modules) contains no
+> Foursquare call site, and photo lookup happens client-side per card after the
+> discovery response is already sent. **The state is recorded so the measurement
+> stays interpretable later, not because it qualifies the verdict.** A future
+> reader who finds a Phase B closure dated during an FSQ outage must be able to
+> see that the question was asked and answered rather than overlooked.
 
 > **The instrument that renders this verdict was itself broken until
 > 2026-08-15 (PR #58).** It bounded `servePoint` to 1..6 while the writer had

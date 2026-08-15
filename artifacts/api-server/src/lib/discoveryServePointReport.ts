@@ -227,3 +227,133 @@ export function unexercisedPoints(tally: ServePointTally): number[] {
   const seen = new Set(observedPoints(tally));
   return ALL_SERVE_POINTS.filter((sp) => !seen.has(sp));
 }
+
+// ── The reporting window ──────────────────────────────────────────────────────
+//
+// WHY AN EXPLICIT WINDOW EXISTS AT ALL.
+//
+// The report accepted only `--days N`, floored at 1, applied as a single
+// `served_at >= now - N days` with NO upper bound. That is a ROLLING window, and
+// it is adequate for "what has the surface been doing lately" and inadequate for
+// the one question Phase B actually asks.
+//
+// Phase B's evidence is produced by a bounded probe run at a known time. The
+// verification is a before/after pair. With a rolling lower bound and no upper
+// bound, the "after" reading covers a window that has MOVED since the "before"
+// reading: rows aged off the tail during the probe, and the delta cannot
+// separate "rows the probe wrote" from "rows that rolled out from under the
+// baseline". The difference understates the probe, and it does so silently.
+//
+// It matters more here than the arithmetic suggests, because of who reads it.
+// The probe is run by one agent and verified by another against the reported
+// window — observation and verification deliberately in different hands. A
+// verifier who cannot address the same window as the observer is not
+// independently checking the claim; they are producing a second, differently
+// shaped claim and calling the pair agreement.
+//
+// So: `--since` / `--until` bound the window explicitly. `--days` is unchanged
+// when the new flags are absent, down to the printed line.
+
+/** A resolved reporting window. `until` of `null` means "open at the top". */
+export interface ReportWindow {
+  /** ISO-8601, inclusive lower bound. */
+  since: string;
+  /** ISO-8601, inclusive upper bound, or null for an open window. */
+  until: string | null;
+  /** The line the report prints, so the window is never inferred from flags. */
+  description: string;
+}
+
+/** Thrown for a window that cannot be honoured. Never silently coerced. */
+export class ReportWindowError extends Error {}
+
+function readFlag(argv: readonly string[], flag: string): string | undefined {
+  const i = argv.indexOf(flag);
+  if (i < 0) return undefined;
+  return argv[i + 1];
+}
+
+function parseInstant(raw: string | undefined, flag: string): string {
+  if (raw === undefined || raw.startsWith("--")) {
+    throw new ReportWindowError(
+      `${flag} requires an ISO-8601 timestamp, e.g. ${flag} 2026-08-15T14:00:00Z. ` +
+        `A window flag with no value is a window nobody chose.`,
+    );
+  }
+  const ms = Date.parse(raw);
+  if (Number.isNaN(ms)) {
+    throw new ReportWindowError(
+      `${flag} value ${JSON.stringify(raw)} is not a parseable ISO-8601 timestamp. ` +
+        `Refusing rather than falling back to a default window: a report that ` +
+        `silently measures a different window than the one you asked for is the ` +
+        `failure this instrument already had once.`,
+    );
+  }
+  return new Date(ms).toISOString();
+}
+
+/**
+ * Resolve the reporting window from argv.
+ *
+ * `nowMs` is injected rather than read from the clock so this is testable and
+ * so two callers in the same run cannot disagree about "now".
+ *
+ * Refuses, rather than guessing, on:
+ *   - `--days` combined with `--since`/`--until` (two different windows asked
+ *     for at once; picking either would be a coin toss the caller cannot see);
+ *   - an unparseable or absent timestamp;
+ *   - `until` at or before `since` — an empty window returns zero rows and reads
+ *     exactly like a surface nobody reached. Vacuity is failure: a check that
+ *     examines nothing must not pass.
+ */
+export function resolveReportWindow(argv: readonly string[], nowMs: number): ReportWindow {
+  const hasDays = argv.includes("--days");
+  const hasSince = argv.includes("--since");
+  const hasUntil = argv.includes("--until");
+
+  if (hasDays && (hasSince || hasUntil)) {
+    throw new ReportWindowError(
+      "--days cannot be combined with --since/--until. They describe different " +
+        "windows and there is no sensible precedence: one is a rolling window " +
+        "ending now, the other is a fixed window. Pass one or the other.",
+    );
+  }
+
+  if (hasUntil && !hasSince) {
+    throw new ReportWindowError(
+      "--until requires --since. An upper bound with a default lower bound is a " +
+        "window whose size depends on a flag you did not pass.",
+    );
+  }
+
+  if (hasSince) {
+    const since = parseInstant(readFlag(argv, "--since"), "--since");
+    const until = hasUntil ? parseInstant(readFlag(argv, "--until"), "--until") : null;
+
+    if (until !== null && Date.parse(until) <= Date.parse(since)) {
+      throw new ReportWindowError(
+        `Empty window: --until (${until}) is at or before --since (${since}). ` +
+          `Such a window can only return zero rows, which is indistinguishable ` +
+          `from a surface nobody reached. Refusing to render that as a result.`,
+      );
+    }
+
+    return {
+      since,
+      until,
+      description:
+        until === null
+          ? `fixed window, served_at >= ${since} (open at the top)`
+          : `fixed window, ${since} <= served_at <= ${until}`,
+    };
+  }
+
+  const raw = readFlag(argv, "--days");
+  const days = hasDays ? Math.max(1, parseInt(raw ?? "7", 10)) : 7;
+  const since = new Date(nowMs - days * 24 * 60 * 60 * 1000).toISOString();
+  return {
+    since,
+    until: null,
+    description: `last ${days} day(s), served_at >= ${since}`,
+  };
+}
