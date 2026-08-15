@@ -200,7 +200,7 @@ listed because each one caught something.
 | Phase | Name | Status |
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
-| **B** | Make discovery reachable | **IN PROGRESS** |
+| **B** | Make discovery reachable | **IN PROGRESS** — see PR #54, which rules it **BLOCKED** on the authentication prerequisite. That ruling governs; this cell is whichever of the two lands last, and they must be reconciled rather than raced. Engineering blockers #55–#58 landed 2026-08-15. **The B3 probe has NOT been run against a build containing them.** |
 | **C** | Complete shadow coverage | NOT STARTED |
 | **D** | D5=B engine split | NOT STARTED |
 | **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination |
@@ -209,6 +209,39 @@ listed because each one caught something.
 > **Maintain this table in the same PR as the work.** A status table that is
 > updated separately is a status table that is wrong. Use `DONE`, `IN PROGRESS`,
 > `BLOCKED — <reason>`, or `NOT STARTED`.
+
+### Landed 2026-08-15 — the Phase B unblock
+
+Four PRs, in the order they had to land:
+
+| PR | What | Why it was on the critical path |
+|---|---|---|
+| **#57** | RLS fixture made idempotent | **The unblock.** Every live-DB run in the repo was red, on every branch, including PRs touching no server code. |
+| **#58** | Serve-point report fixed | **The instrument.** It rendered the Phase B verdict and was misreporting live instrumentation as absent. See the B3 warning. |
+| **#55** | #3658 — false "Couldn't verify your account" wall | Blocked reaching `/discovery` at all on an authenticated session. |
+| **#56** | #3657 guard rewritten | The 3642 guard was green and *could not* have caught 3657. |
+
+**These four are ENGINEERING blockers, and they do not unblock Phase B.**
+PR #54 records the owner's ruling that Phase B is **BLOCKED** on an
+authentication prerequisite — the Google provider is not enabled in Supabase.
+That is a different blocker from #3658. #3658 was a *false* auth wall shown to
+an already-authenticated session; fixing it does not enable Google sign-in, and
+per #54 §3 a successful login would remove the blocker rather than constitute
+Phase B evidence. **Do not read "the Discovery defects are fixed" as "Phase B
+may proceed."**
+
+**Three things the next session must not misread:**
+
+1. **CI going green is not proof #57 worked.** The fixture collision was a race
+   between two `live-db.yml` runs on the same commit (`push` + `pull_request`);
+   it clears on its own and recurs. #57 stops a crashed run *poisoning* the
+   project permanently — it does **not** make the suite concurrency-safe, and
+   #57 says so in place rather than implying otherwise.
+2. **`dismissedByBack` in `discovery.tsx` is not covered by any test.** Removing
+   it leaves all five back-nav tests green. That is recorded in the test file's
+   header as a finding about the fix, not a gap to be papered over: the branch it
+   guards is unreachable in every sequence that can be modelled. Independently
+   re-verified 2026-08-15. **Do not manufacture a scenario to turn it red.**
 
 ---
 
@@ -458,6 +491,20 @@ Read against the serve-point table. **One row at serve point 9 is the FAILING
 state** — it is what the 14-minute probe already produced. Success means several
 distinct serve points appear, which demonstrates that the discovery surface is
 navigable rather than that one endpoint responds.
+
+> **The instrument that renders this verdict was itself broken until
+> 2026-08-15 (PR #58).** It bounded `servePoint` to 1..6 while the writer had
+> grown to 9, so it reported the five real, marked, post-Stage-0b production
+> rows as *"rows that predate Stage 0"* and printed **"the instrumentation was
+> not enabled during this window"** when it demonstrably was. A Phase B verdict
+> read before that fix would have been a false negative indistinguishable from
+> absence of observation — the governing invariant violated inside the ruler
+> rather than the thing measured.
+>
+> **Do not read a Phase B verdict from a build predating `a015c3a76`.** The
+> fixed reader is red-proofed against those exact production rows
+> (`discoveryServePointReport.test.ts`); reintroducing the 1..6 bound turns 9 of
+> its 13 tests red.
 
 **If B2 cannot be reproduced:** say so, record what was tried, and proceed to
 Phase C. Do not fabricate a fix for a bug that cannot be shown to exist.
