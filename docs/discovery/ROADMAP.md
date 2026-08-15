@@ -92,6 +92,7 @@ Companion documents:
 | `discovery-engine-mode-packet.html` | the design, the eight D1–D8 rulings, and the operator-actions record |
 | `discovery-engine-ruling-sheet.html` | the owner's decision sheet as presented |
 | `phase-minus-1-repository-proof.md` | repository proof of the carried-in claims at HEAD |
+| `phase-b3-probe-runbook.md` | **the staged B3 probe** — exact commands, the sanctioned read-only front door for the production baseline, the production writes it incurs, and what to record. **STAGED, NOT RUN; the owner presses it** |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
 | `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves`. **Event Truth's classes are ruled separately** — packet §7 — and this document is amended when Event Truth is implemented, not before |
 
@@ -692,6 +693,10 @@ navigable rather than that one endpoint responds.
 > **Entry state as of 2026-08-15 12:13Z — this probe is now RUNNABLE.** The
 > deploy precondition is met: the live build was verified clean and carries
 > #55/#56. See *DEPLOY VERIFIED CLEAN* above. The probe has not been run.
+>
+> → **Staged runbook: `phase-b3-probe-runbook.md`.** Exact commands, the
+> sanctioned read-only front door for the production baseline, the production
+> writes the probe incurs, and what to record. **The owner presses it.**
 >
 > **Run `--days 1` BEFORE the probe as well as after.** The before-run is the
 > baseline; without it a post-probe reading cannot distinguish rows the probe
