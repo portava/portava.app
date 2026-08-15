@@ -33,15 +33,15 @@ import { buildCompassContext, defaultSignals } from "../compass/CompassContextEn
 import { rankItemsForDiscovery } from "../compass/CompassFeedBuilder";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
 import { isEnabled } from "../compass/flags";
-import { rankCandidates } from "../lib/portavaRank";
-import type { RankCandidate, ViewerContext, ScoredCandidate } from "../lib/portavaRank";
+import type { RankCandidate, ScoredCandidate } from "../lib/portavaRank";
 import { logImpression } from "../lib/rankLog";
 import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
 import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
-import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
-import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
-import { emitCreatorCapAnalytics } from "../services/ranking/CreatorCapEnforcer.js";
-import { emitFeedSlotAnalytics } from "../services/ranking/FeedSlotAllocator.js";
+// The PDE ranking pipeline (D5=B, ranking half). portavaRank, the
+// DiscoveryRankingService re-rank and the assembly analytics all moved behind
+// this module; the route no longer imports them directly, which is what keeps
+// "one ranking pipeline in the tree" checkable rather than aspirational.
+import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
 import {
   readPlacesFromDb,
   writePlacesToDb,
@@ -1336,149 +1336,31 @@ router.get("/discovery", async (req, res) => {
       }
     }
 
-    // ── Authenticated path: route through portavaRank (spec §42) ─────────────
-    // When a userId is present, map candidates to RankCandidate and call
-    // rankCandidates() so Discovery gets the same trust firewall, diversity/
-    // exploration slots, and feature-weight surface as Pulse.  Missing fields
-    // (no authorId, no distanceKm) contribute 0 to rank — never a crash.
-    // Unauthenticated requests keep the existing distance/saved-count sort.
-    type PlaceCandidate = RankCandidate & { __place: DiscoveryPlace };
+    // ── Authenticated path: PDE ranking (ruling D5=B, ranking half) ──────────
+    // The portavaRank + DiscoveryRankingService pipeline that used to live
+    // inline here now lives in lib/discoveryPde.ts and is called from here. It
+    // was MOVED, not copied (mechanic M2): there must be exactly one ranking
+    // pipeline in the tree, or the shadow comparison this engine exists to feed
+    // would be measuring drift between two implementations rather than the
+    // reach of one.
+    //
+    // Nothing about this request changes. Same ranker, same inputs, same order,
+    // same rank_events writes — served is true because this IS the serve path
+    // and its result is what the user receives.
+    //
+    // What D5=B adds is not visible from this call site: the same function can
+    // now be called over candidates that came from Cache A, on requests that
+    // today end inside serveCachedPlaces having never reached a ranker at all.
     // Hoisted so it is accessible after the if/else block for per-page impression logging.
     let scoredByPlaceId = new Map<string, ScoredCandidate<RankCandidate>>();
     let ranked: DiscoveryPlace[];
     if (callerUserId) {
-      const rankSc = getServiceClient();
-
-      // Load followed user IDs — social-proximity boost
-      let followedIds = new Set<string>();
-      if (rankSc) {
-        try {
-          const { data: followRows } = await rankSc
-            .from("user_follows")
-            .select("following_id")
-            .eq("follower_id", callerUserId);
-          for (const row of (followRows as any[]) ?? []) followedIds.add(row.following_id as string);
-        } catch { /* non-fatal */ }
-      }
-
-      // Load interest hashtags from compass preferences — tag-affinity boost
-      let interestTags = new Set<string>();
-      if (rankSc) {
-        try {
-          const { data: prefRow } = await rankSc
-            .from("compass_user_preferences")
-            .select("interests")
-            .eq("user_id", callerUserId)
-            .maybeSingle();
-          const interests: string[] = (prefRow as any)?.interests ?? [];
-          interestTags = new Set(interests.map((t: string) => t.toLowerCase()));
-        } catch { /* non-fatal */ }
-      }
-
-      const viewerContext: ViewerContext = {
-        userId: callerUserId,
-        city: destination.split(",")[0]?.trim().toLowerCase() ?? undefined,
-        followedIds,
-        interestTags,
-      };
-
-      // Map DiscoveryPlace → RankCandidate.
-      // DB-backed places (id prefix "db/") are treated as gems (curated by hosts);
-      // OSM places are kind "place". Both carry savedCount as the likeCount proxy.
-      const candidates: PlaceCandidate[] = places.map((p) => ({
-        id: p.id,
-        kind: p.id.startsWith("db/") ? "gem" as const : "place" as const,
-        city: destination.split(",")[0]?.trim().toLowerCase() ?? null,
-        category: p.category ?? null,
-        distanceKm: p.distanceKm ?? null,
-        verified: p.id.startsWith("db/") ? true : null,
-        likeCount: p.savedCount ?? null,
-        tags: (p.tags ?? []).map((t) => t.toLowerCase()),
-        __place: p,
-      }));
-
-      const scored = rankCandidates(candidates, viewerContext);
-      // Map place id → ScoredCandidate for per-page impression logging below.
-      scoredByPlaceId = new Map(scored.map((s) => [(s.candidate as PlaceCandidate).__place.id, s]));
-      ranked = scored.map((s) => (s.candidate as PlaceCandidate).__place);
-
-      // ── DiscoveryRankingService re-ranking pass ──────────────────────────
-      // Applies activity boost, underexposure boost, and fatigue penalties on
-      // top of the existing portavaRank score.  Non-fatal; shadow mode preserves
-      // the portavaRank order automatically (DRS returns items in input order).
-      try {
-        const drsRankSc = rankSc;
-        const drsInputs: RankingInput[] = ranked.map((p) => ({
-          itemId:             p.id,
-          itemType:           p.id.startsWith("db/") ? "place" : "place",
-          creatorId:          null,
-          createdAt:          null,
-          city:               p.id.startsWith("db/") ? destination.split(",")[0]?.trim().toLowerCase() ?? null : null,
-          country:            null,
-          tags:               (p.tags ?? []).map((t) => t.toLowerCase()),
-          category:           p.category ?? null,
-          languageCode:       null,
-          hasMedia:           !!(p.headerImageUrl),
-          completeness:       p.headerImageUrl && p.description ? 0.9 : 0.5,
-          positiveReviewRate: p.rating != null ? Math.min(1, (p.rating - 1) / 4) : null,
-          flagCount:          0,
-          saveCount:          p.savedCount ?? 0,
-          shareCount:         0,
-          commentCount:       0,
-          impressionCount:    Math.max(1, p.savedCount ?? 1),
-          uniqueViewerCount:  p.savedCount ?? 0,
-          lat:                p.lat, lng: p.lng,
-          distanceKm:         p.distanceKm ?? null,
-          isFollowedByViewer: false,
-          isDeleted: false, isExpired: false, isSuspended: false,
-          isModerated: false, isPrivate: false,
-          isAgeRestricted: false, minAgeRequired: null,
-          isGeoRestricted: false, geoRestrictionCountries: null,
-          authorIsBlockedByViewer: false, authorBlocksViewer: false,
-          authorIsMutedByViewer: false,
-          viewerHasReportedItem: false, viewerHasHiddenItem: false,
-          viewerHasHiddenCreator: false,
-          repeatCount: null, expiresAt: null, accountAgeDays: null,
-          isUnfamiliarCategory: false, isFirstImpression: false,
-        }));
-        const drsViewer: RankingViewerContext = {
-          viewerId:           callerUserId,
-          travelStyles:       [...interestTags],
-          preferredLanguages: [],
-          preferredCities:    [destination.split(",")[0]?.trim().toLowerCase() ?? ""],
-          currentCity:        destination.split(",")[0]?.trim().toLowerCase() ?? null,
-          currentCountry:     null,
-          lat: null, lng: null, viewerAge: null,
-          followedCreatorIds: followedIds,
-          mutedCreatorIds:    new Set(),
-          blockedCreatorIds:  new Set(),
-          seenItemIds:        new Set(),
-          sessionId:          null,
-          lastActiveAt:       null,
-        };
-        const drsResults = await drsRankItems(drsInputs, "discovery", drsViewer, drsRankSc);
-        if (drsResults.length > 0) {
-          const drsOrder = new Map(drsResults.map((r, idx) => [r.itemId, idx]));
-          ranked.sort((a, b) => {
-            const aIdx = drsOrder.get(a.id) ?? ranked.length;
-            const bIdx = drsOrder.get(b.id) ?? ranked.length;
-            return aIdx - bIdx;
-          });
-        }
-
-        // Assembly-phase analytics: creator-cap diversity pass + slot allocation.
-        // Both calls are fire-and-forget side effects that emit rank_events rows;
-        // they never affect feed order, response shape, or latency on error.
-        try {
-          const eligibleDrs  = drsResults.filter((r) => r.eligibilityPassed);
-          const itemTypeMap  = new Map(drsInputs.map((i) => [i.itemId, i.itemType]));
-          const creatorIdMap = new Map(drsInputs.map((i) => [i.itemId, i.creatorId]));
-          const capEnforced  = emitCreatorCapAnalytics(
-            eligibleDrs, itemTypeMap, creatorIdMap, "discovery", callerUserId, null, drsRankSc,
-          );
-          emitFeedSlotAnalytics(capEnforced, drsInputs, "discovery", callerUserId, null, drsRankSc);
-        } catch { /* non-fatal — assembly analytics must never affect the feed response */ }
-      } catch { /* non-fatal — portavaRank order preserved on DRS error */ }
+      const rankSc   = getServiceClient();
+      const rankCity = destination.split(",")[0]?.trim().toLowerCase() ?? null;
+      const pdeViewer = await loadPdeViewer(rankSc, callerUserId, rankCity);
+      const outcome   = await rankForViewer(places, pdeViewer, { sc: rankSc, served: true });
+      ranked          = outcome.ranked;
+      scoredByPlaceId = outcome.scoredById;
     } else {
       // Unauthenticated: keep existing distance/saved-count ordering
       ranked = discoveryCtx ? scoreWithContext(places, discoveryCtx) : places;
