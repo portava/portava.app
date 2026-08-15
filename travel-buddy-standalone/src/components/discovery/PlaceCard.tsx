@@ -56,7 +56,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   // For all other sources the existing URL is already the best photo available.
   const isAiHeader = place.headerImageSource === 'ai_generated';
   const fsqPassthrough = isAiHeader ? undefined : (place.headerImageUrl ?? undefined);
-  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, fsqPassthrough);
+  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, fsqPassthrough, place.id);
 
   // Build candidates with correct source metadata so the resolver can set
   // isRepresentation correctly for the AI disclosure label.

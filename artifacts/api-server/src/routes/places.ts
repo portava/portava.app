@@ -22,6 +22,12 @@ import { normalizeLocationName } from "../lib/canonicalLocations";
 import { logger as rootLogger } from "../lib/logger";
 import { classifyApiKey, apiKeyFailureReason, apiKeyFailureMessage } from "../lib/apiKeyState";
 import { newApiErrorReason } from "../lib/googlePlacesReason";
+import {
+  normalisePlaceKey,
+  readStoredPlacePhoto,
+  writeStoredPlacePhoto,
+  mintPhotoUrl,
+} from "../lib/discoveryPlacePhotoStore.js";
 import { namespaceGooglePlaceId, denamespaceGooglePlaceId } from "../lib/googlePlaceId";
 
 const router = Router();
@@ -578,10 +584,26 @@ router.get("/places/photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
   const lat = req.query.lat != null ? Number(req.query.lat) : null;
   const lng = req.query.lng != null ? Number(req.query.lng) : null;
+  const placeKey = normalisePlaceKey(req.query.placeKey as string | undefined);
 
   if (!name || name.length > 200) {
     res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
     return;
+  }
+
+  // STORED PHOTO FIRST — deliberately ahead of the key check.
+  //
+  // A photo we already resolved is a fact about the place, not a fact about our
+  // current credentials. Serving it before the key check means a rotated or
+  // missing Google key stops NEW resolutions without blanking every card that
+  // was already resolved.
+  const stored = placeKey ? await readStoredPlacePhoto(placeKey) : null;
+  if (stored) {
+    const mintedUrl = mintPhotoUrl(stored);
+    if (mintedUrl) {
+      res.json({ photoUrl: mintedUrl, source: stored.source, cached: true });
+      return;
+    }
   }
 
   // NOTE ON WHICH VARIABLE THIS IS. This route reads GOOGLE_MAPS_API_KEY, and
@@ -652,7 +674,18 @@ router.get("/places/photo", async (req, res) => {
     // Photo media endpoint requires its own key param — resolve it here
     // server-side so the client never needs the key.
     const photoUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${key}`;
-    res.json({ photoUrl });
+
+    // Persist the REFERENCE, never this URL: it carries the API key, and a
+    // stored key-bearing URL becomes a dead link the day the key rotates.
+    if (placeKey) {
+      void writeStoredPlacePhoto(placeKey, {
+        source: "google",
+        photoUrl: null,
+        photoRef: photoName,
+      });
+    }
+
+    res.json({ photoUrl, source: "google" });
   } catch (err) {
     logger.warn({ err, name }, "Google Places (New) photo lookup failed");
     res.json({ photoUrl: null, reason: "request_failed" });
@@ -767,10 +800,29 @@ router.get("/places/fsq-photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
   const lat = req.query.lat != null ? Number(req.query.lat) : null;
   const lng = req.query.lng != null ? Number(req.query.lng) : null;
+  const placeKey = normalisePlaceKey(req.query.placeKey as string | undefined);
 
   if (!name || name.length > 200) {
     res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
     return;
+  }
+
+  // STORED PHOTO FIRST, and ahead of the key check for the same reason as the
+  // Google route: an already-resolved photo does not depend on our credentials.
+  //
+  // This is where the repeated external-provider work actually disappears. This
+  // route is the FIRST link in the chain, so a hit here means neither Foursquare
+  // nor Google is called for this card at all — and it can legitimately return
+  // a photo Google resolved earlier, because what is stored is the CANONICAL
+  // resolved photo for the place rather than this provider's answer. `source`
+  // travels with it so attribution stays truthful about which provider it was.
+  const stored = placeKey ? await readStoredPlacePhoto(placeKey) : null;
+  if (stored) {
+    const mintedUrl = mintPhotoUrl(stored);
+    if (mintedUrl) {
+      res.json({ photoUrl: mintedUrl, source: stored.source, cached: true });
+      return;
+    }
   }
 
   // Same distinction as the Google route above, and the same reason for it: an
@@ -922,8 +974,22 @@ router.get("/places/fsq-photo", async (req, res) => {
     writeFsqPhotoCached(cKey, { photoUrl: result.photoUrl, reason: result.reason, ts: Date.now() });
   }
 
+  // PERSIST ONLY A VERIFIED PHOTO. `cacheable` is already this route's own
+  // signal for "we HEAD-checked this URL and it loaded" — an unverified URL is
+  // served to the client but deliberately not cached, because it may be a dead
+  // CDN link. Persisting one for 30 days would strand exactly the broken image
+  // the existing liveness check was added to prevent, so the same gate governs
+  // both, and the durable store never gets a weaker guarantee than the L1 one.
+  if (placeKey && result.cacheable && result.photoUrl) {
+    void writeStoredPlacePhoto(placeKey, {
+      source: "foursquare",
+      photoUrl: result.photoUrl,
+      photoRef: null,
+    });
+  }
+
   const { cacheable: _c, ...responseBody } = result;
-  res.json(responseBody);
+  res.json(result.photoUrl ? { ...responseBody, source: "foursquare" } : responseBody);
 });
 
 // ── GET /api/places/live-status ───────────────────────────────────────────────

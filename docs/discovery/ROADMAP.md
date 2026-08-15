@@ -275,8 +275,19 @@
 > | Step | State |
 > |---|---|
 > | **1 — OSM tag mapping** | **LANDED.** `mapOsmElementToPlace` in `routes/discovery.ts` now keeps the six ruled tags. `neighborhood` reaches the field the card already renders; `outdoor_seating` / `wheelchair` / `internet_access` reach the chip row; `wikidata` and `image` are **carried, not consumed** — they are the Tier 2 join key and photo candidate, and were previously discarded. Extracted to an exported pure function so the mapping is unit-testable at all: it was reachable only through a live Overpass call before. 15 tests, red-proved at **12 fail / 3 pass** with the behaviour reverted through the same seam. |
-> | **2 — persist the resolved photo** | next |
+> | **2 — persist the resolved photo** | **CODE LANDED, INERT.** `discoveryPlacePhotoStore.ts` plus a read-through in both photo routes: a stored photo is served on the FIRST link of the chain, so neither provider is called. Google stores the photo **reference**, never the key-bearing media URL. Only a HEAD-verified Foursquare URL is persisted. Its table is created by **`2095_discovery_place_photos.sql`, STAGED for the operator** — [`place-photo-persistence-migration-staging.md`](place-photo-persistence-migration-staging.md). Until that is applied every store call degrades to "no stored photo", which is exactly today's behaviour. |
 > | **3 — measure coverage** | **part of the unit, not a follow-up** |
+>
+> **REFRESH AND INVALIDATION, defined as the ruling requires:** age (30-day
+> horizon, enforced **on read** so an unswept store still cannot serve a stale
+> photo); key rotation (cannot strand a row — the URL is minted per read); an
+> unusable row (stamped `invalid_at`, read as absent, kept observable rather
+> than silently deleted); explicit eviction (wired into the admin place-image
+> paths, so an operator is never overruled by a photo we resolved earlier); and
+> whole-store reset (truncate at any time; the cost is one re-resolve).
+> **Named as NOT a trigger:** a client-side broken image — the card cannot
+> report a 404 today, and the 30-day horizon is the backstop. Recorded so the
+> gap is known rather than discovered.
 >
 > **Tier 1 deliberately does NOT set `headerImageUrl` from the OSM `image` tag.**
 > The client's `useFsqPhoto` returns early when a header image is present, so
