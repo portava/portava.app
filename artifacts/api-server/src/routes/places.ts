@@ -22,6 +22,7 @@ import { normalizeLocationName } from "../lib/canonicalLocations";
 import { logger as rootLogger } from "../lib/logger";
 import { classifyApiKey, apiKeyFailureReason, apiKeyFailureMessage } from "../lib/apiKeyState";
 import { newApiErrorReason } from "../lib/googlePlacesReason";
+import { namespaceGooglePlaceId, denamespaceGooglePlaceId } from "../lib/googlePlaceId";
 
 const router = Router();
 const logger = rootLogger.child({ route: "places" });
@@ -305,6 +306,11 @@ async function runUniversalSearch(
 // from /places/google-details on selection) plus `powered_by: "google"` for
 // attribution.
 //
+// ID CONTRACT: this route OWNS the `google-` namespacing of `Place.id`, via
+// lib/googlePlaceId.ts. /places/google-details accepts exactly what this emits.
+// The round trip is pinned by test — see googlePlaceIdRoundTrip in
+// src/test/googlePlacesNewApi.test.ts.
+//
 // Degrades gracefully AND AUDIBLY: returns { places: [], powered_by: "google" }
 // on every failure, plus a machine-readable `reason` saying which failure it
 // was. The reason field is additive — callers that only read `places` are
@@ -420,7 +426,7 @@ router.get("/places/google-autocomplete", async (req, res) => {
         const mainText: string = pred.structuredFormat?.mainText?.text ?? description;
         const types: string[] = pred.types ?? [];
         return {
-          id: `google-${pred.placeId as string}`,
+          id: namespaceGooglePlaceId(pred.placeId as string),
           type: inferGoogleType(types),
           name: mainText,
           displayName: String(description || mainText),
@@ -462,7 +468,12 @@ router.get("/places/google-autocomplete", async (req, res) => {
 // starts from a name.
 
 router.get("/places/google-details", async (req, res) => {
-  const placeId = String(req.query.place_id ?? "").trim();
+  // Accept the id in the form /places/google-autocomplete EMITS
+  // (`google-<id>`) as well as the bare form the current client sends after
+  // stripping the prefix itself. One definition, in lib/googlePlaceId.ts —
+  // never a second hardcoded "google-" at a call site, which is precisely how
+  // the two halves of this flow drifted apart for three weeks.
+  const placeId = denamespaceGooglePlaceId(String(req.query.place_id ?? "").trim());
   if (!placeId || placeId.length > 500) {
     res.status(400).json({ error: "invalid_payload", message: "place_id is required (max 500 chars)" });
     return;
