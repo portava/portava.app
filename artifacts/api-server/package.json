@@ -122,7 +122,8 @@
     "test:media-file-quality-transform": "node --import tsx/esm --test src/test/mediaFileQualityTransform.test.ts",
     "test:media-sign-batch-transform": "node --import tsx/esm --test src/test/mediaSignBatchTransform.test.ts",
     "test:fsq-photo-proxy": "node --import tsx/esm --test src/test/fsqPhotoProxy.test.ts",
-    "test:google-photo-proxy": "node --import tsx/esm --test src/test/googlePhotoProxy.test.ts"
+    "test:google-photo-proxy": "node --import tsx/esm --test src/test/googlePhotoProxy.test.ts",
+    "test:places-cache-eviction": "node --import tsx/esm --test src/test/placesCacheEviction.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
