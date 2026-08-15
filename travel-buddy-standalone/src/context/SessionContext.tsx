@@ -158,11 +158,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     if (result.ok && result.data) {
       setAccountStatus(result.data.accountStatus);
       setDeletionScheduledAt(result.data.deletionScheduledAt);
-    } else if (result.errorKind === 'network_unreachable') {
+    } else if (result.errorKind === 'network_unreachable' || result.errorKind === 'unauthenticated') {
       // Fail-OPEN: the request never reached the API (offline cold start,
-      // airplane mode, DNS failure) so there is no server verdict to enforce.
-      // Treat the account as active so the app boots, and keep retrying in
-      // the background until a real response lands. Real API responses
+      // airplane mode, DNS failure) so there is no server verdict to enforce,
+      // OR we could not obtain a valid token right now. The 'unauthenticated'
+      // kind is returned exclusively by freshToken() returning null — this
+      // happens when the Supabase SDK's own auto-refresh and freshToken()'s
+      // explicit refreshSession() call race to rotate the same refresh token;
+      // the losing call gets a null session even though the user is still
+      // fully signed in. This is a transient race, not a server verdict about
+      // account status, so it must not block the app. In both cases the user
+      // IS authenticated at the session level (userId is non-null at the call
+      // site) so treating the account as active is safe. Keep retrying in the
+      // background until a confirmed server response lands. Real API responses
       // (suspended / banned / deactivated / server errors) still fail closed
       // below.
       setAccountStatus('active');
@@ -175,10 +183,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         }
       }, OFFLINE_STATUS_RETRY_MS);
     } else {
-      // Fail-closed: a real API/server response we cannot interpret as active
-      // (or an auth failure). Keep accountStatus = null (unknown) so
-      // AccountStatusGate blocks the app and shows a retry screen until the
-      // status is confirmed.
+      // Fail-closed: a real API/server response we cannot interpret as active.
+      // Keep accountStatus = null (unknown) so AccountStatusGate blocks the
+      // app and shows a retry screen until the status is confirmed.
       setAccountStatus(null);
       setDeletionScheduledAt(null);
     }
