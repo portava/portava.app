@@ -1,5 +1,26 @@
 # DEFECT — the legacy Google Places API returns nothing, with a working key
 
+> # ⇒ AFTER THE NEXT REPUBLISH, RUN THIS FIRST
+>
+> ```bash
+> curl -s 'https://portava.replit.app/api/places/google-autocomplete?input=Barcelona&type=city'
+> ```
+>
+> **One call. Four outcomes. Four distinct readings. No ambiguity — which is
+> precisely what did not exist before 2026-08-15, when every one of these
+> returned the same empty list.**
+>
+> | Response | Reading | Next action |
+> |---|---|---|
+> | `places` populated, **no `reason`** | **The migration was the remedy.** | Close this filing. Delete the legacy helpers per the note in `googlePlacesReason.ts`. |
+> | `reason: "google_places_new_service_disabled"` | **An enablement fault — now NAMED rather than silent.** | Owner enables Places API (New). The error carries an `activationUrl` in the logs. |
+> | `reason: "google_places_new_*"` (anything else — key, referer, quota shaped) | **Migration was NECESSARY BUT NOT SUFFICIENT.** The fault follows the key, not the API. | This filing stays open; the real cause is here. |
+> | still `{"places":[]}`, **no `reason` at all** | **The deploy did not carry these changes.** | Verify the build before concluding anything about Google. |
+>
+> **Until that value is read, this defect's cause is UNKNOWN and must be
+> described that way — including to the owner.** The observability fix exists so
+> that the answer is one call away instead of a guess.
+
 **Filed 2026-08-15. Open. Not Phase B's, and deliberately filed separately.**
 
 > ## STATUS — 2026-08-15, two changes landed, neither confirmed as the remedy
@@ -26,25 +47,7 @@
 > surface. That is not a remote possibility — it is one of the two live
 > hypotheses, and nothing available before a deploy can distinguish them.
 >
-> ### ⇒ AFTER THE NEXT REPUBLISH, READ THIS FIRST
->
-> ```bash
-> curl -s 'https://portava.replit.app/api/places/google-autocomplete?input=Barcelona&type=city'
-> ```
->
-> **That single `reason` value decides which story is true:**
->
-> | Response | Meaning |
-> |---|---|
-> | `places` populated, **no `reason`** | **Migration was the remedy.** Close this; delete the legacy helpers per the note in `googlePlacesReason.ts`. |
-> | `reason: "google_places_new_service_disabled"` | Enablement fault, now **named**. Owner action: enable the API. |
-> | `reason: "google_places_new_..."` (key/referer/quota shaped) | **Migration was necessary but not sufficient** — the fault follows the key, not the API. This filing stays open and the real cause is here. |
-> | still `{"places":[]}` with **no `reason`** at all | The deploy did not carry these changes. Verify the build before concluding anything. |
->
-> **Until that value is read, this defect's cause is UNKNOWN and should be
-> described that way** — including to the owner. The observability fix exists
-> precisely so the answer is one call away instead of a guess.
-
+> ### ⇒ The one call that decides which story is true is at the top of this file.
 Found while verifying the deploy for Phase B. It is **not** a Phase B blocker and
 must not be folded into it: doing so would both delay Phase B and bury this.
 
@@ -229,12 +232,36 @@ nobody was in a position to notice either way.
 > changed?" is the first question anyone asks and here the answer is "nothing in
 > this repository."
 
-**What is still worth keeping from the discarded account:** a restore-from-
-corruption commit quietly reverting an unrelated intentional change *is* a real
-hazard and a real lesson — it just is not what happened here. Two commits on
-2026-08-15 do describe themselves as repairing corrupted or scrambled code in
-`places.ts` (`cf4d8a674`, `3fe369046`). Neither touched the autocomplete
-endpoint, but the pattern is worth watching for on its own terms.
+### What DID remove the migration, and why the framing matters
+
+**`87e245786` — a deliberate revert of five unreviewed local commits, with a
+written rationale.** Not silent, not accidental, not collateral.
+
+`cd1f4e1bb` had bundled a real API migration together with changes that **had
+not passed CI**, including the one that collapsed the photo fallback chain from
+Google→Foursquare to **Foursquare→Foursquare**. Reverting the bundle was the
+correct call, and the reasons in that commit message still hold.
+
+> **The silent-accident framing is backwards in the way that matters most.** It
+> recasts an intentional decision as damage, and damage invites undoing. The
+> commit a reader would "restore" is the one whose FSQ→FSQ collapse would take
+> Discovery's photos out entirely the next time Foursquare returns 429 — **which
+> it did, the same day.**
+>
+> **The correct response to a deliberately reverted commit is never to restore
+> it blindly. It is to redo the good part cleanly** — on its own branch, through
+> CI, with the failure made observable first. That is what #75 and #76 did, and
+> it is the case study worth keeping.
+
+**Also worth keeping from the discarded account:** a restore-from-corruption
+commit quietly reverting an unrelated intentional change *is* a real hazard — it
+just is not what happened here. Two commits on 2026-08-15 do describe themselves
+as repairing corrupted or scrambled code in `places.ts` (`cf4d8a674`,
+`3fe369046`). Neither touched the autocomplete endpoint.
+
+Recorded as a memory note at
+`.agents/memory/restore-from-corruption-reverts-unrelated-work.md`, which
+previously carried the wrong version of this story.
 
 ---
 
