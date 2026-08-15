@@ -42,6 +42,7 @@ import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 // this module; the route no longer imports them directly, which is what keeps
 // "one ranking pipeline in the tree" checkable rather than aspirational.
 import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
+import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
 import {
   readPlacesFromDb,
   writePlacesToDb,
@@ -1148,6 +1149,58 @@ router.get("/discovery", async (req, res) => {
           engineMode: engineMode.mode, modeReason: engineMode.reason,
         },
       });
+
+      // ── Stage 2 shadow — observe only, after the response has left ─────────
+      //
+      // THIS IS THE POINT THE WHOLE PACKET IS ABOUT. The user has already been
+      // served, from cache, WITHOUT ANY RANKER HAVING RUN. PDE now ranks the
+      // same candidates for this same viewer, and both pages are recorded.
+      //
+      // A divergence row from here says something no other measurement in this
+      // system can say: not "two rankers disagree" but "one user's cold fetch
+      // is still deciding what a different user sees, two hours later".
+      //
+      // Three properties, each load-bearing:
+      //   - it runs after res.json(), so it cannot affect what was served;
+      //   - `served: false` hands PDE a client that cannot write, so nothing
+      //     downstream — DiscoveryRankingService included — can put a row in
+      //     rank_events for a page nobody saw;
+      //   - it is gated on mode === "shadow", so in legacy mode (today) not one
+      //     line of it executes.
+      if (engineMode.mode === "shadow") {
+        void (async () => {
+          try {
+            const shadowSc  = getServiceClient();
+            const shadowT0  = Date.now();
+            const pdeViewer = await loadPdeViewer(
+              shadowSc, callerUserId, destination!.split(",")[0]?.trim().toLowerCase() ?? null,
+            );
+            const outcome = await rankForViewer(merged, pdeViewer, { sc: shadowSc, served: false });
+            // Same filters, same page window. Comparing a ranked full list
+            // against a filtered page would report divergence that filtering
+            // caused and ranking did not.
+            const pdeFiltered = applyFilters(outcome.ranked);
+            const pdeSlice    = pdeFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+            await logDiscoveryShadowServe(shadowSc, {
+              userId: callerUserId,
+              destination: destination!, category, radiusKm, page, pageSize: PAGE_SIZE, sortBy,
+              servePoint, cacheLevel,
+              legacyIds:   slice.map((p) => p.id),
+              legacyTotal: filtered.length,
+              legacyMs:    totalMs,
+              pdeIds:      pdeSlice.map((p) => p.id),
+              pdeTotal:    pdeFiltered.length,
+              pdeMs:       Date.now() - shadowT0,
+              pdeStages:   outcome.stages as unknown as Record<string, unknown>,
+              pdeSuppressedWrites: outcome.stages.suppressedWrites,
+              engineMode:  engineMode.mode,
+              modeReason:  engineMode.reason,
+            });
+          } catch (err) {
+            req.log.warn({ err }, "discovery: shadow observation failed — the response was unaffected");
+          }
+        })();
+      }
     }
   }
 
