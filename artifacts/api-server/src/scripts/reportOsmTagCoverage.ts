@@ -41,13 +41,20 @@
  * `OVERPASS_URL` exists because some environments cannot reach the default
  * endpoint. Whichever is used is printed with the results.
  */
+import { pathToFileURL } from "node:url";
 import { overpassFilter, mapOsmElementToPlace, type OsmElement } from "../routes/discovery.js";
 
 const DEFAULT_OVERPASS = "https://overpass-api.de/api/interpreter";
 const OVERPASS = process.env.OVERPASS_URL || DEFAULT_OVERPASS;
 
 /** Politeness gap between Overpass calls — this is a free shared service. */
-const THROTTLE_MS = 2_000;
+const THROTTLE_MS = Number(process.env.COVERAGE_THROTTLE_MS ?? 5_000);
+
+/** Attempts per cell before it is recorded as unmeasured. */
+const MAX_ATTEMPTS = Number(process.env.COVERAGE_ATTEMPTS ?? 4);
+
+/** Linear backoff step between attempts. */
+const BACKOFF_BASE_MS = Number(process.env.COVERAGE_BACKOFF_MS ?? 20_000);
 
 const RADIUS_M = Number(process.env.COVERAGE_RADIUS_M ?? 1500);
 const MAX_ELEMENTS = Number(process.env.COVERAGE_MAX ?? 200);
@@ -55,18 +62,44 @@ const MAX_ELEMENTS = Number(process.env.COVERAGE_MAX ?? 200);
 /**
  * Destinations chosen to be UNLIKE each other, because a coverage number
  * averaged over five European capitals would describe Europe and be quietly
- * presented as describing the product.
+ * presented as describing the product. The complete matrix justified that
+ * choice: attribute coverage ranges from 47% (Berlin) to 1.8% (Cebu).
  *
  * Cebu and Bangkok are deliberately included even though they are seeded
  * cities: seeding affects the DB path, not the OSM tag density, and leaving out
  * the regions the app is actually aimed at would bias the result toward the
  * best-mapped places on earth.
+ *
+ * The first two carry a standing QA role. They are listed first because the
+ * pair is the point, not their alphabetical position.
  */
-const DESTINATIONS: Array<{ name: string; lat: number; lng: number }> = [
+export interface CoverageDestination {
+  name: string;
+  lat: number;
+  lng: number;
+  /**
+   * Standing QA role, where one exists. Measured 2026-08-15 over 2121 places.
+   * These two are a PAIR and answer different questions — see
+   * `docs/discovery/test-destination-fixtures.md`.
+   */
+  fixture?: "high-coverage" | "low-coverage";
+}
+
+export const DESTINATIONS: CoverageDestination[] = [
+  // The ENRICHMENT-POSITIVE fixture. The only measured city where all six
+  // Tier 1 fields are non-zero, so it is the one that can answer "does
+  // enrichment work when the source has data".
+  { name: "Berlin",    lat: 52.5200, lng: 13.4050, fixture: "high-coverage" },
+
+  // The DEGRADATION fixture, KEPT DELIBERATELY. Flattest destination measured:
+  // 0.9% neighbourhood, 1.8% on both attributes, 0.0% wikidata, 0.0% image.
+  // Removing it would discard the only case that can answer "does the product
+  // degrade gracefully when the source has nothing". Do not solve Cebu by
+  // hiding it.
+  { name: "Cebu",      lat: 10.3157, lng: 123.8854, fixture: "low-coverage" },
+
   { name: "Paris",     lat: 48.8566, lng: 2.3522 },
-  { name: "Berlin",    lat: 52.5200, lng: 13.4050 },
   { name: "New York",  lat: 40.7580, lng: -73.9855 },
-  { name: "Cebu",      lat: 10.3157, lng: 123.8854 },
   { name: "Bangkok",   lat: 13.7563, lng: 100.5018 },
   { name: "Nairobi",   lat: -1.2864, lng: 36.8172 },
   { name: "Lima",      lat: -12.0464, lng: -77.0428 },
@@ -102,21 +135,75 @@ function emptyCounts(): Counts {
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
-async function queryOverpass(
+/** Overpass statuses that mean "busy, try again", not "this query is wrong". */
+const RETRYABLE = new Set([429, 502, 503, 504]);
+
+/**
+ * One Overpass attempt.
+ *
+ * Failures are distinguished on purpose. A 504 is the public endpoint telling
+ * us it is loaded; a 400 means the query itself is malformed. Retrying the
+ * first is patience, retrying the second is a loop — and reporting either as
+ * "no tags here" would turn a server condition into a false coverage finding.
+ */
+async function attemptOverpass(
   lat: number, lng: number, category: string,
-): Promise<OsmElement[]> {
+): Promise<{ ok: true; elements: OsmElement[] } | { ok: false; status: number; retryable: boolean }> {
   const filter = overpassFilter(category, RADIUS_M, lat, lng);
-  const query = `[out:json][timeout:60];\n${filter}\nout body center qt ${MAX_ELEMENTS};`;
+  const query = `[out:json][timeout:90];\n${filter}\nout body center qt ${MAX_ELEMENTS};`;
   const url = `${OVERPASS}?data=${encodeURIComponent(query)}`;
 
-  const res = await fetch(url, {
-    headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
-    signal: AbortSignal.timeout(90_000),
-  });
-  if (!res.ok) throw new Error(`Overpass HTTP ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
+      signal: AbortSignal.timeout(180_000),
+    });
+  } catch {
+    // Timeout or transport failure — indistinguishable from an overloaded
+    // endpoint from here, so treated as retryable.
+    return { ok: false, status: 0, retryable: true };
+  }
+
+  if (!res.ok) return { ok: false, status: res.status, retryable: RETRYABLE.has(res.status) };
 
   const data = (await res.json()) as { elements?: OsmElement[] };
-  return data.elements ?? [];
+  return { ok: true, elements: data.elements ?? [] };
+}
+
+/**
+ * Query with patience.
+ *
+ * PACING IS THE POINT, not a workaround. The heavier category filters
+ * (`places`, `activities` — several regexes over both nodes and ways) reliably
+ * 504 on a loaded public endpoint at the first attempt and succeed on a later
+ * one. Giving up after one try produced a matrix with holes in it, and holes in
+ * a coverage matrix are worse than a slow run: an unmeasured cell and a
+ * genuinely empty one look identical in the output.
+ */
+async function queryOverpass(
+  lat: number, lng: number, category: string,
+  onRetry?: (attempt: number, status: number, waitMs: number) => void,
+): Promise<OsmElement[]> {
+  let lastStatus = 0;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const result = await attemptOverpass(lat, lng, category);
+    if (result.ok) return result.elements;
+
+    lastStatus = result.status;
+    if (!result.retryable) throw new Error(`Overpass HTTP ${result.status} (not retryable)`);
+    if (attempt === MAX_ATTEMPTS) break;
+
+    // Linear backoff, not exponential: this is a free shared service being
+    // asked to do real work, and the goal is to stop crowding it rather than to
+    // recover from a blip as fast as possible.
+    const waitMs = BACKOFF_BASE_MS * attempt;
+    onRetry?.(attempt, result.status, waitMs);
+    await sleep(waitMs);
+  }
+
+  throw new Error(`Overpass HTTP ${lastStatus} after ${MAX_ATTEMPTS} attempts`);
 }
 
 /** Which Tier 1 chip, if any, an element produced. Read off the MAPPED place. */
@@ -178,6 +265,7 @@ async function tallyFromDir(dir: string) {
 
   const overall = emptyCounts();
   const perDestination = new Map<string, Counts>();
+  const perCell = new Map<string, Counts>();
   const files = (await readdir(dir)).filter((f) => f.endsWith(".json")).sort();
   const measured: string[] = [];
 
@@ -193,13 +281,16 @@ async function tallyFromDir(dir: string) {
 
     const counts = perDestination.get(dest) ?? emptyCounts();
     const origin = DESTINATIONS.find((d) => d.name.toLowerCase().replace(/\s+/g, "") === dest.toLowerCase());
+    const cell = emptyCounts();
+    tally(cell, elements, category, origin?.lat ?? 0, origin?.lng ?? 0);
+    perCell.set(`${dest}|${category}`, cell);
     tally(counts, elements, category, origin?.lat ?? 0, origin?.lng ?? 0);
     tally(overall, elements, category, origin?.lat ?? 0, origin?.lng ?? 0);
     perDestination.set(dest, counts);
     measured.push(`${dest}/${category}: ${elements.length}`);
   }
 
-  report(overall, perDestination, [], `${dir} (pre-captured)`, measured);
+  report(overall, perDestination, perCell, [], `${dir} (pre-captured)`, measured);
 }
 
 async function main() {
@@ -212,6 +303,11 @@ async function main() {
   const wantJson = process.argv.includes("--json");
   const overall = emptyCounts();
   const perDestination = new Map<string, Counts>();
+  // Per CELL — destination x category. The ruling is explicit that the result
+  // must NOT be reduced to one percentage, and the partial matrix already
+  // showed why: an aggregate of 15.2% neighbourhood coverage sat over a Berlin
+  // at 50.0% and a Paris at 0.0%. Both true, and the aggregate useless.
+  const perCell = new Map<string, Counts>();
   const failures: string[] = [];
 
   // Progress goes to stderr, so `--json` piped to a file stays clean while a
@@ -228,10 +324,15 @@ async function main() {
     const counts = emptyCounts();
     for (const category of CATEGORIES) {
       try {
-        const elements = await queryOverpass(dest.lat, dest.lng, category);
+        const elements = await queryOverpass(dest.lat, dest.lng, category, (attempt, status, waitMs) =>
+          step(`${dest.name}/${category}: HTTP ${status} on attempt ${attempt} — waiting ${Math.round(waitMs / 1000)}s`),
+        );
+        const cell = emptyCounts();
+        tally(cell, elements, category, dest.lat, dest.lng);
+        perCell.set(`${dest.name}|${category}`, cell);
         tally(counts, elements, category, dest.lat, dest.lng);
         tally(overall, elements, category, dest.lat, dest.lng);
-        step(`${dest.name}/${category}: ${elements.length} elements`);
+        step(`${dest.name}/${category}: ${elements.length} elements, ${cell.total} named`);
       } catch (err) {
         step(`${dest.name}/${category}: FAILED — ${(err as Error).message}`);
         // A failed query is NOT zero coverage. Recording it separately keeps a
@@ -252,11 +353,12 @@ async function main() {
       failures,
       overall,
       perDestination: Object.fromEntries(perDestination),
+      perCell: Object.fromEntries(perCell),
     }, null, 2));
     return;
   }
 
-  report(overall, perDestination, failures, OVERPASS, null);
+  report(overall, perDestination, perCell, failures, OVERPASS, null);
 }
 
 /**
@@ -268,6 +370,7 @@ async function main() {
 function report(
   overall: Counts,
   perDestination: Map<string, Counts>,
+  perCell: Map<string, Counts>,
   failures: string[],
   endpoint: string,
   measured: string[] | null,
@@ -318,6 +421,21 @@ function report(
     );
   }
 
+  console.log("");
+  console.log("PER DESTINATION x CATEGORY — the full matrix, NOT reduced to one number");
+  console.log("-".repeat(88));
+  console.log(
+    `${"destination".padEnd(12)}${"category".padEnd(12)}${"n".padStart(6)}  ` +
+    t1.map((f) => f.key.slice(0, 8).padStart(9)).join(""),
+  );
+  for (const [key, c] of [...perCell.entries()].sort()) {
+    const [dest, category] = key.split("|");
+    console.log(
+      `${(dest ?? "").padEnd(12)}${(category ?? "").padEnd(12)}${String(c.total).padStart(6)}  ` +
+      t1.map((f) => pct(c.present[f.key], c.total).padStart(9)).join(""),
+    );
+  }
+
   if (failures.length) {
     console.log("");
     console.log("QUERIES THAT FAILED — these are NOT zero coverage, they are unmeasured:");
@@ -326,7 +444,21 @@ function report(
   console.log("");
 }
 
-main().catch((err) => {
-  console.error("coverage report failed:", err);
-  process.exit(1);
-});
+/**
+ * Run ONLY when invoked directly.
+ *
+ * Without this guard, importing anything from this module — the DESTINATIONS
+ * fixture list, for instance — starts a live Overpass sweep as a side effect of
+ * the import. A test that merely reads the fixture list would hang for an hour
+ * hammering a free public endpoint, which is how this guard came to be written.
+ */
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error("coverage report failed:", err);
+    process.exit(1);
+  });
+}

@@ -22,6 +22,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { mapOsmElementToPlace, overpassFilter, type OsmElement } from "../routes/discovery.js";
+import { DESTINATIONS } from "../scripts/reportOsmTagCoverage.js";
 
 const ORIGIN = { lat: 48.8566, lng: 2.3522 };
 
@@ -108,5 +109,42 @@ describe("The report queries what production queries", () => {
     );
 
     assert.equal(new Set(filters).size, filters.length);
+  });
+});
+
+describe("The two standing test fixtures cannot be quietly dropped", () => {
+  it("keeps a high-coverage fixture — the positive control", () => {
+    // A field that renders nothing here is broken, because "the data isn't
+    // there" is not an available explanation.
+    const high = DESTINATIONS.filter((d) => d.fixture === "high-coverage");
+    assert.equal(high.length, 1, "exactly one high-coverage fixture");
+    assert.equal(high[0]!.name, "Berlin", "Berlin is the only measured city with all six fields non-zero");
+  });
+
+  it("KEEPS CEBU as the low-coverage fixture", () => {
+    // Cebu measured 0.9% neighbourhood, 1.8% on both attributes, 0.0% wikidata
+    // and 0.0% image. That flatness is the point: it is the only case that can
+    // answer "does the product degrade gracefully when the source has nothing",
+    // and most of the world looks like Cebu rather than like Berlin.
+    //
+    // This test exists because the tempting fix is to drop the destination that
+    // makes a report look bad. Do not solve Cebu by hiding it.
+    const low = DESTINATIONS.filter((d) => d.fixture === "low-coverage");
+    assert.equal(low.length, 1, "exactly one low-coverage fixture");
+    assert.equal(low[0]!.name, "Cebu", "Cebu must remain the low-coverage fixture");
+  });
+
+  it("keeps the destination set geographically spread", () => {
+    // A coverage number averaged over European capitals would describe Europe
+    // and be quietly presented as describing the product.
+    assert.ok(DESTINATIONS.length >= 7, "at least seven destinations");
+    assert.ok(
+      DESTINATIONS.some((d) => d.lat < 0),
+      "at least one southern-hemisphere destination",
+    );
+    assert.ok(
+      DESTINATIONS.some((d) => d.lng < -60) && DESTINATIONS.some((d) => d.lng > 90),
+      "destinations must span the Americas and Asia, not one region",
+    );
   });
 });
