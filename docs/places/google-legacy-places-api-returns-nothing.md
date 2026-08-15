@@ -38,9 +38,12 @@
 > be necessary but not sufficient") resolved in the good direction. It was still
 > right to state it: nothing available before the deploy could distinguish them.
 >
-> **Follow-up now due**, per the decision table's own instruction: delete the
-> legacy reason helpers per the note in `googlePlacesReason.ts`. Not done here —
-> a separate change with its own review.
+> **Follow-up DONE.** The legacy reason helpers were deleted once this confirmed
+> the migration worked — which is exactly what their retention note said should
+> happen, and when. **The condition was written down before the answer was
+> known, and then honoured.** That is the whole value of putting an expiry on
+> retained code: it is the difference between keeping something for a reason and
+> keeping it because deleting it felt risky.
 
 **Filed 2026-08-15. RESOLVED for the original defect. Not Phase B's, and deliberately filed separately.**
 

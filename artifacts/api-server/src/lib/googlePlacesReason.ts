@@ -24,9 +24,11 @@
  *
  *   ABSENCE OF EVIDENCE MUST NEVER SILENTLY BECOME EVIDENCE OF ABSENCE.
  *
- * And it is why the fix is *this* rather than a change of endpoint: the endpoint
+ * And it is why the fix was *this* rather than a change of endpoint: the endpoint
  * question is answerable, but only by a system that reports what the endpoint
- * said. The sibling routes already prove the pattern — `/places/photo` and
+ * said. (It was answered — the migration to Places API (New) landed in #76 and
+ * autocomplete works. The legacy reason helpers that carried this file through
+ * that transition were deleted in the change that confirmed it.) The sibling routes already prove the pattern — `/places/photo` and
  * `/places/fsq-photo` return a `reason` on every failure path (#61, #62, #64),
  * which is exactly why the Foursquare 429 and the Google key state were
  * detectable at all.
@@ -46,51 +48,11 @@
  */
 export type GooglePlacesReason = string | null;
 
-/**
- * Prefix marking the legacy `maps.googleapis.com` Places API surface.
- *
- * STATUS 2026-08-15: **no route calls the legacy surface any more.** Both
- * `google-autocomplete` and `google-details` migrated to Places API (New).
- *
- * `legacyStatusReason` and `legacyHttpReason` are retained deliberately and on
- * a condition, not indefinitely: the migration is NOT yet confirmed to be the
- * remedy, because the legacy failure's exact cause is still unknown — the
- * observability fix that would reveal it has not reached production. If the
- * fault turns out to be key- or referer-scoped rather than API-enablement, it
- * applies to the New surface too and the migration may have to be reverted.
- * These keep that revert cheap.
- *
- * **DELETE THEM once a live `reason` from the New surface confirms the
- * migration worked.** An unused export with no expiry condition is how dead
- * code starts looking load-bearing.
- */
-export const LEGACY_PREFIX = "google_places_legacy";
-
 /** Prefix marking the Places API (New) `places.googleapis.com` surface. */
 export const NEW_PREFIX = "google_places_new";
 
 function normalise(status: string): string {
   return status.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-}
-
-/**
- * Map a legacy Places API `status` field to a reason.
- *
- * Returns `null` for `OK` and for `ZERO_RESULTS` — a real, successful empty
- * answer is not a fault and must not be reported as one. Reporting it as a
- * fault would be the mirror image of the defect this module fixes: evidence of
- * absence becoming absence of evidence.
- */
-export function legacyStatusReason(status: string | null | undefined): GooglePlacesReason {
-  if (!status) return `${LEGACY_PREFIX}_no_status`;
-  const s = status.trim().toUpperCase();
-  if (s === "OK" || s === "ZERO_RESULTS") return null;
-  return `${LEGACY_PREFIX}_${normalise(s)}`;
-}
-
-/** Reason for a non-2xx HTTP response from the legacy surface. */
-export function legacyHttpReason(httpStatus: number): string {
-  return `${LEGACY_PREFIX}_http_${httpStatus}`;
 }
 
 /**
@@ -127,5 +89,5 @@ export function newApiErrorReason(body: unknown, httpStatus: number): string {
  */
 export function isProviderRefusal(reason: GooglePlacesReason): boolean {
   if (!reason) return false;
-  return reason.startsWith(LEGACY_PREFIX) || reason.startsWith(NEW_PREFIX);
+  return reason.startsWith(NEW_PREFIX);
 }

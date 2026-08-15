@@ -27,83 +27,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  LEGACY_PREFIX,
   NEW_PREFIX,
   isProviderRefusal,
-  legacyHttpReason,
-  legacyStatusReason,
   newApiErrorReason,
 } from "../lib/googlePlacesReason.js";
-
-describe("legacyStatusReason — a real empty answer is not a fault", () => {
-  it("OK yields no reason", () => {
-    assert.equal(legacyStatusReason("OK"), null);
-  });
-
-  it("ZERO_RESULTS yields NO reason — Google looked and found nothing", () => {
-    assert.equal(legacyStatusReason("ZERO_RESULTS"), null);
-  });
-
-  it("is case- and whitespace-insensitive about that, because upstreams drift", () => {
-    assert.equal(legacyStatusReason(" zero_results "), null);
-    assert.equal(legacyStatusReason("ok"), null);
-  });
-});
-
-describe("legacyStatusReason — a refusal is reported, and says which", () => {
-  it("REQUEST_DENIED — the status the live defect is believed to be returning", () => {
-    assert.equal(legacyStatusReason("REQUEST_DENIED"), `${LEGACY_PREFIX}_request_denied`);
-  });
-
-  it("OVER_QUERY_LIMIT is distinct from REQUEST_DENIED", () => {
-    const quota = legacyStatusReason("OVER_QUERY_LIMIT");
-    const denied = legacyStatusReason("REQUEST_DENIED");
-    assert.equal(quota, `${LEGACY_PREFIX}_over_query_limit`);
-    assert.notEqual(quota, denied);
-  });
-
-  it("an UNKNOWN status is carried through rather than flattened", () => {
-    // A status this build has never seen must not become a generic "error".
-    // The whole point is that the operator learns what Google actually said.
-    assert.equal(
-      legacyStatusReason("SOME_FUTURE_STATUS"),
-      `${LEGACY_PREFIX}_some_future_status`,
-    );
-  });
-
-  it("a MISSING status is itself reportable — a failure to observe is not a pass", () => {
-    for (const v of [undefined, null, ""]) {
-      assert.equal(legacyStatusReason(v as string | null | undefined), `${LEGACY_PREFIX}_no_status`);
-    }
-  });
-});
-
-describe("THE DEFECT ITSELF: the four conditions must not collapse", () => {
-  it("no-match, refusal, quota and unparseable are four DISTINCT values", () => {
-    const noMatch = legacyStatusReason("ZERO_RESULTS");
-    const refusal = legacyStatusReason("REQUEST_DENIED");
-    const quota = legacyStatusReason("OVER_QUERY_LIMIT");
-    const unparseable = legacyStatusReason(undefined);
-    const http = legacyHttpReason(503);
-
-    const all = [noMatch, refusal, quota, unparseable, http];
-    assert.equal(new Set(all).size, all.length, "two conditions share a reason — that is the bug");
-  });
-
-  it("and only ONE of them means 'nothing is wrong'", () => {
-    assert.equal(isProviderRefusal(legacyStatusReason("ZERO_RESULTS")), false);
-    assert.equal(isProviderRefusal(legacyStatusReason("REQUEST_DENIED")), true);
-    assert.equal(isProviderRefusal(legacyStatusReason(undefined)), true);
-    assert.equal(isProviderRefusal(legacyHttpReason(503)), true);
-  });
-});
-
-describe("legacyHttpReason", () => {
-  it("carries the HTTP code, which used to be thrown away by a generic throw", () => {
-    assert.equal(legacyHttpReason(403), `${LEGACY_PREFIX}_http_403`);
-    assert.equal(legacyHttpReason(500), `${LEGACY_PREFIX}_http_500`);
-  });
-});
 
 describe("newApiErrorReason — the surface the routes are migrating to", () => {
   it("prefers the detail reason, which is the actionable one", () => {
@@ -154,8 +81,7 @@ describe("isProviderRefusal — the predicate a health check should use", () => 
     assert.equal(isProviderRefusal("request_failed"), false);
   });
 
-  it("both provider surfaces are recognised", () => {
-    assert.equal(isProviderRefusal(legacyStatusReason("REQUEST_DENIED")), true);
+  it("a provider refusal is recognised", () => {
     assert.equal(isProviderRefusal(newApiErrorReason({ error: { status: "PERMISSION_DENIED" } }, 403)), true);
   });
 });
