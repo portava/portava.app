@@ -200,7 +200,7 @@ listed because each one caught something.
 | Phase | Name | Status |
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
-| **B** | Make discovery reachable | **IN PROGRESS** — B1 blockers landed 2026-08-15 (#55, #56, #57, #58). **B3 probe NOT yet run against a build containing them.** |
+| **B** | Make discovery reachable | **IN PROGRESS** — see PR #54, which rules it **BLOCKED** on the authentication prerequisite. That ruling governs; this cell is whichever of the two lands last, and they must be reconciled rather than raced. Engineering blockers #55–#58 landed 2026-08-15. **The B3 probe has NOT been run against a build containing them.** |
 | **C** | Complete shadow coverage | NOT STARTED |
 | **D** | D5=B engine split | NOT STARTED |
 | **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination |
@@ -221,7 +221,16 @@ Four PRs, in the order they had to land:
 | **#55** | #3658 — false "Couldn't verify your account" wall | Blocked reaching `/discovery` at all on an authenticated session. |
 | **#56** | #3657 guard rewritten | The 3642 guard was green and *could not* have caught 3657. |
 
-**Two things the next session must not misread:**
+**These four are ENGINEERING blockers, and they do not unblock Phase B.**
+PR #54 records the owner's ruling that Phase B is **BLOCKED** on an
+authentication prerequisite — the Google provider is not enabled in Supabase.
+That is a different blocker from #3658. #3658 was a *false* auth wall shown to
+an already-authenticated session; fixing it does not enable Google sign-in, and
+per #54 §3 a successful login would remove the blocker rather than constitute
+Phase B evidence. **Do not read "the Discovery defects are fixed" as "Phase B
+may proceed."**
+
+**Three things the next session must not misread:**
 
 1. **CI going green is not proof #57 worked.** The fixture collision was a race
    between two `live-db.yml` runs on the same commit (`push` + `pull_request`);
