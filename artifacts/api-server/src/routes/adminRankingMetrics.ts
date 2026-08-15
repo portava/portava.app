@@ -11,10 +11,18 @@
  * position distributions and per-user counts are NOT comparable across that
  * boundary, and no back-fill is possible.
  *
- * Rows written from Stage 0 onward carry features.servePoint (1-6) and
+ * Rows written from Stage 0 onward carry features.servePoint and
  * features.rankedInRequest (bool); filter on rankedInRequest when a metric is
  * meant to describe ranker behaviour rather than delivered behaviour. Rows with
  * neither key predate the cutover.
+ *
+ * servePoint runs 1-9, NOT 1-6: Stage 0b (ruling D4=C) added FEED=7, SEARCH=8
+ * and SUGGEST=9 for the rest of the discovery surface. This comment said 1-6
+ * until 2026-08-15. Nothing in this file range-checks the value, so the stale
+ * range misinformed readers rather than the code — but the identical staleness
+ * in reportDiscoveryServePoints.ts WAS in the code, and made that script report
+ * live instrumentation as absent. The enum in lib/discoveryServeLog.ts is the
+ * only authority; do not restate its range anywhere it can drift again.
  *
  * Full reasoning and the verified blast radius:
  * docs/algorithm/discovery-impression-gap.md § "Resolution — 2026-08-14".
