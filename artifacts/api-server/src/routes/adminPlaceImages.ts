@@ -19,6 +19,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { sendError } from "../lib/http.js";
 import { invalidateDiscoveryCacheForEntity } from "../lib/discoveryPersistentCache.js";
 import { evictCacheEntriesForEntity } from "./discovery.js";
+import { evictStoredPlacePhoto } from "../lib/discoveryPlacePhotoStore.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
@@ -300,6 +301,7 @@ router.post("/admin/place-images/:visualId/approve", asyncHandler(async (req, re
     const placeId = (visual as any).canonical_place_id ?? (visual as any).entity_id;
     if (placeId && isUuid(placeId)) {
       evictCacheEntriesForEntity(placeId);
+      void evictStoredPlacePhoto(`db/${placeId}`);
       void invalidateDiscoveryCacheForEntity(placeId);
     }
   }
@@ -369,6 +371,7 @@ router.post("/admin/place-images/:visualId/reject", asyncHandler(async (req, res
 
       // Evict L1 + L2 cache so resolveHeaderImage re-evaluates on the next request
       evictCacheEntriesForEntity(placeId);
+      void evictStoredPlacePhoto(`db/${placeId}`);
       void invalidateDiscoveryCacheForEntity(placeId);
     }
   }
@@ -423,6 +426,7 @@ router.post("/admin/place-images/:visualId/downgrade", asyncHandler(async (req, 
     const placeId = (visual as any).canonical_place_id ?? (visual as any).entity_id;
     if (placeId && isUuid(placeId)) {
       evictCacheEntriesForEntity(placeId);
+      void evictStoredPlacePhoto(`db/${placeId}`);
       void invalidateDiscoveryCacheForEntity(placeId);
     }
   }
@@ -522,6 +526,7 @@ router.post("/admin/place-images/:visualId/replace", asyncHandler(async (req, re
       }
       // Evict L1 + L2 cache so the next discovery request re-hydrates this place's image
       evictCacheEntriesForEntity(placeId);
+      void evictStoredPlacePhoto(`db/${placeId}`);
       void invalidateDiscoveryCacheForEntity(placeId);
     }
   }
@@ -643,6 +648,7 @@ router.post("/admin/place-images/reports/:reportId/resolve", asyncHandler(async 
     // Evict L1 + L2 cache so resolveHeaderImage picks up the rejection on the next request
     if (reportPlaceId && isUuid(reportPlaceId)) {
       evictCacheEntriesForEntity(reportPlaceId);
+      void evictStoredPlacePhoto(`db/${reportPlaceId}`);
       void invalidateDiscoveryCacheForEntity(reportPlaceId);
     }
   }

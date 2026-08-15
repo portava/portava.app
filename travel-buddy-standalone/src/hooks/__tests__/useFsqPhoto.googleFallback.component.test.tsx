@@ -76,8 +76,31 @@ describe('useFsqPhoto — Google Places fallback chain', () => {
       { timeout: 1500 },
     );
 
-    expect(mockLookupFsqPhoto).toHaveBeenCalledWith('Cebu Zoo', 10.311, 123.891);
-    expect(mockLookupGooglePhoto).toHaveBeenCalledWith('Cebu Zoo', 10.311, 123.891);
+    // The fourth argument is `placeKey`, undefined here because this caller
+    // supplies none — which is the case that must keep behaving exactly as it
+    // did before the photo store existed.
+    expect(mockLookupFsqPhoto).toHaveBeenCalledWith('Cebu Zoo', 10.311, 123.891, undefined);
+    expect(mockLookupGooglePhoto).toHaveBeenCalledWith('Cebu Zoo', 10.311, 123.891, undefined);
+  });
+
+  it('forwards placeKey to BOTH links so either can serve and store the photo', async () => {
+    // Without this the persisted-photo path is unreachable from the client: the
+    // routes treat placeKey as optional and silently store nothing without it,
+    // so a hook that quietly dropped it would look completely healthy.
+    mockLookupFsqPhoto.mockResolvedValue(null);
+    mockLookupGooglePhoto.mockResolvedValue('https://example.org/g.jpg');
+
+    const { result } = await renderHook(() =>
+      useFsqPhoto('Cebu Zoo', 10.311, 123.891, undefined, 'node/123'),
+    );
+
+    await waitFor(
+      () => expect(result.current).toBe('https://example.org/g.jpg'),
+      { timeout: 1500 },
+    );
+
+    expect(mockLookupFsqPhoto).toHaveBeenCalledWith('Cebu Zoo', 10.311, 123.891, 'node/123');
+    expect(mockLookupGooglePhoto).toHaveBeenCalledWith('Cebu Zoo', 10.311, 123.891, 'node/123');
   });
 
   it('short-circuits at FSQ and never calls lookupGooglePhoto when FSQ returns a URL', async () => {

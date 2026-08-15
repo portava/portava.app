@@ -234,6 +234,21 @@ Adds `cohort_reason text` and `cohort_bucket smallint` (both nullable).
 | why now | The table holds 0 rows. Adding it later would create a NULL population that can never be attributed — the exact gap the column closes, introduced by closing it late |
 | why nullable | NULL has one meaning: written by a code path predating this column. Zero such rows exist, so NULL should never appear; a `NOT NULL` default would hide it behind a plausible value |
 
+### `2095_discovery_place_photos.sql` — **STAGED, NOT APPLIED**
+
+Creates `discovery_place_photos`: the persisted canonical resolved photo for a
+place (`place_key` PK, `source`, `photo_url`, `photo_ref`, `resolved_at`,
+`expires_at`, `invalid_at`), one index on `expires_at`, RLS on, no client grants.
+
+| | |
+|---|---|
+| status | **NOT APPLIED. Staged for the operator**, with before/after verification: [`discovery/place-photo-persistence-migration-staging.md`](discovery/place-photo-persistence-migration-staging.md). **Do not mark this row applied until it has been verified against the live database** — this file's own warning is that "applied" claims here are not authoritative |
+| why | Discovery re-resolves the FSQ → Google → artwork chain **per card, per viewer**. Nothing is stored, so the same external work is paid again for every reader of the same place. Ruled **enabling infrastructure, not a new product feature**: the chain is already approved behaviour, so storing its winner adds none |
+| why a new table | `discovery_places` holds place RECORDS, and the overwhelming majority of OSM places served have no row there. Writing place rows to hang a photo off them would build a place corpus as a side effect — the explicitly forbidden outcome. This table holds a photo and nothing else. `discovery_cache` was also rejected: it is a 2-hour cache keyed by search query, and a photo is neither query-scoped nor 2-hour-lived |
+| why `photo_ref` exists | Google's media URL embeds the API key. Persisting the rendered URL would store a credential and produce a dead link on the next rotation — and a dead image renders as "no photo", indistinguishable from never having resolved one. Google rows store the photo resource name; the URL is minted per read |
+| effect while unapplied | **None, by design.** Every store call fails and degrades to "no stored photo", which is exactly today's behaviour. The code is merged and inert; applying this is what turns it on |
+| undo | `DROP TABLE IF EXISTS public.discovery_place_photos;` — nothing depends on it, and the cost is one re-resolve per place |
+
 **Verify all three at once** — after applying, `pnpm run audit:schema` exits 0 and:
 
 ```

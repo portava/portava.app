@@ -60,7 +60,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   const effectiveHeaderSource = localAiHeaderUrl ? 'ai_generated' : (place?.headerImageSource ?? null);
   const isAiHeader = effectiveHeaderSource === 'ai_generated';
   const fsqPassthrough = isAiHeader ? undefined : (effectiveHeaderUrl ?? undefined);
-  const photoUrl = useFsqPhoto(place?.name ?? '', place?.lat, place?.lng, fsqPassthrough);
+  const photoUrl = useFsqPhoto(place?.name ?? '', place?.lat, place?.lng, fsqPassthrough, place?.id);
 
   // Reset local override when a different place is shown.
   useEffect(() => {

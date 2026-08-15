@@ -20,6 +20,13 @@ export function useFsqPhoto(
   lat: number | null | undefined,
   lng: number | null | undefined,
   existingUrl?: string | null,
+  /**
+   * Place identity (e.g. an OSM `node/123`). When supplied, the server serves
+   * and stores the canonical resolved photo for this place, so the chain below
+   * is paid once for the place rather than once per viewer. Optional: omitting
+   * it reproduces the previous behaviour exactly.
+   */
+  placeKey?: string | null,
 ): string | null {
   const [photoUrl, setPhotoUrl] = useState<string | null>(existingUrl ?? null);
 
@@ -32,12 +39,12 @@ export function useFsqPhoto(
 
     let cancelled = false;
     const timer = setTimeout(() => {
-      lookupFsqPhoto(name, lat, lng)
+      lookupFsqPhoto(name, lat, lng, placeKey)
         .then((url) => {
           if (cancelled) return null;
           if (url) { setPhotoUrl(url); return null; }
           // FSQ came up empty — try the Google fallback before giving up.
-          return lookupGooglePhoto(name, lat, lng);
+          return lookupGooglePhoto(name, lat, lng, placeKey);
         })
         .then((googleUrl) => {
           if (!cancelled && googleUrl) setPhotoUrl(googleUrl);
@@ -49,7 +56,7 @@ export function useFsqPhoto(
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [name, lat, lng, existingUrl]);
+  }, [name, lat, lng, existingUrl, placeKey]);
 
   return photoUrl;
 }

@@ -42,6 +42,7 @@ export async function lookupGooglePhoto(
   name: string,
   lat: number | null | undefined,
   lng: number | null | undefined,
+  placeKey?: string | null,
 ): Promise<string | null> {
   if (!name.trim()) return null;
 
@@ -64,6 +65,11 @@ export async function lookupGooglePhoto(
         params.set('lat', String(resolvedLat));
         params.set('lng', String(resolvedLng));
       }
+      // Identifies the place so the server can store the resolved photo. What
+      // gets stored for Google is the photo REFERENCE, never the media URL —
+      // that URL carries the API key. Optional: without it, nothing persists
+      // and the route behaves exactly as before.
+      if (placeKey) params.set('placeKey', placeKey);
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);

@@ -318,7 +318,7 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
   const _previewFsqPassthrough = _previewHeaderSource === 'ai_generated'
     ? undefined
     : ((place as any).headerImageUrl as string | undefined ?? undefined);
-  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, _previewFsqPassthrough);
+  const photoUrl = useFsqPhoto(place.name, place.lat, place.lng, _previewFsqPassthrough, place.id);
 
   // Build candidates with real source metadata so isRepresentation is correct.
   const _previewCandidates: HeaderCandidate[] = [];

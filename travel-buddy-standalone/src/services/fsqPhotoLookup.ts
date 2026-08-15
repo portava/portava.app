@@ -57,6 +57,7 @@ export async function lookupFsqPhoto(
   name: string,
   lat: number | null | undefined,
   lng: number | null | undefined,
+  placeKey?: string | null,
 ): Promise<string | null> {
   if (!name.trim()) return null;
 
@@ -79,6 +80,10 @@ export async function lookupFsqPhoto(
         params.set('lat', String(resolvedLat));
         params.set('lng', String(resolvedLng));
       }
+      // Identifies the place so the server can serve, and store, the canonical
+      // resolved photo instead of every viewer re-paying the provider chain.
+      // Optional on purpose: without it the route behaves exactly as before.
+      if (placeKey) params.set('placeKey', placeKey);
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);
