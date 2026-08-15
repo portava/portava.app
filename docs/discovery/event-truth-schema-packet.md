@@ -1,7 +1,16 @@
 # Event Truth — schema design packet
 
 **Gate for step 2 of the superseding sequence. No migration may be written until
-this packet answers its counterfactual explicitly.**
+this packet answers BOTH acceptance tests explicitly.**
+
+| | Test | Verdict on today's system |
+|---|---|---|
+| **1** | reconstruct a **six-month-old recommendation** (§0–§5) | **NO** — five independent grounds |
+| **2** | enumerate and attribute **verified visits** on a historical trip (§6) | **NO** — four independent grounds. **Portava Discovery Contribution is not computable.** |
+
+**Neither is close.** The design that would make both YES is below; the system
+does not pass either today, and this packet exists to say that rather than to
+build past it.
 
 Evidence standard: file:line, as in `phase-minus-1-repository-proof.md`.
 
@@ -257,7 +266,105 @@ hollow:**
 
 ---
 
-## §6 — Recommendation
+## §6 — `verified_visit` — required for v1; the packet does not pass without it
+
+### The second hard acceptance test
+
+> Given a **historical trip**, can the system **deterministically** enumerate
+> verified visits, identify which were **Portava-sourced**, and reconstruct the
+> **recommendation opportunity** responsible for each attributed visit —
+> **without inferring missing evidence**?
+
+### The answer, on today's system: **NO.** Portava Discovery Contribution is **not computable.**
+
+Four independent failures. As with the first test, stating this is the point.
+
+| Requirement | Today | Evidence |
+|---|---|---|
+| enumerate verified visits **for a place** | **NO** | No place-level visit record exists. `hidden_gem_visits` covers **hidden gems only** (`0043_hidden_gems.sql:155-165`) — not OSM places, not `db/` places, which is what Discovery serves. |
+| **deterministically** | **NO** | The closest thing, `trust_level`, is a **mutable column on the observation row** (`:160`, default `'manual'`). Re-deriving under a new standard **overwrites history**, so the same trip yields different answers at different times. |
+| identify **Portava-sourced** | **NO** | **Nothing links any visit, stamp or check-in to a recommendation.** Not a column, not a table, anywhere. |
+| reconstruct the **opportunity** | **NO** | Requires runs and candidate evaluations — §1–§5 of this packet, none of which exist yet. |
+
+### The four things that must not be collapsed, against what exists
+
+| # | Concept | Today | Note |
+|---|---|---|---|
+| 1 | **CLAIMED visit** | `hidden_gem_visits` with `trust_level = 'manual'` — the schema default | exists, **gems only** |
+| 2 | **EVIDENCE-SUPPORTED PRESENCE** | `distance_m`, `latitude`, `longitude`, `visited_at` on the *same row* | exists, **gems only**, and **not separable from the conclusion** |
+| 3 | **STAMP** | `passport_stamps_gps`, unique on `(user_id, stamp_type, country, city)` (`0025_location_system.sql:22-32`) | exists — and is **city/country granularity**, so **a stamp is not a place visit and cannot be made into one** |
+| 4 | **VERIFIED VISIT** | — | **does not exist** |
+
+`HiddenGemVerificationService.ts:83` is the nearest approach:
+`const trustLevel = isSuspicious ? "pending_review" : "gps_verified"` — proximity
+in, conclusion out. It is real evidence-based verification, and it is **(a)**
+gems-only, **(b)** written into a mutable column, **(c)** unversioned.
+
+**Collapsing these four destroys the metric.** A claimed visit counted as
+verified inflates contribution; a stamp counted as a place visit attributes
+city-level presence to whichever place happened to be recommended; and a
+verified visit with no attribution basis is contribution invented from
+proximity.
+
+### DESIGN PROTECTION — `verified_visit` is NOT another UI action
+
+**It is a CONCLUSION SUPPORTED BY EVIDENCE.** The evidence may be proximity,
+dwell duration, stamp behaviour, trip membership, explicit confirmation, or
+combinations of them. A button that sets `verified = true` is a **claim**, and
+belongs in layer 1.
+
+The structural consequence, and it is the subtlest requirement in this packet:
+
+```
+visit_observations   IMMUTABLE RAW FACTS — written once, never updated, never re-derived
+        │            proximity_ping · dwell_sample · stamp_award · trip_membership
+        │            · explicit_confirmation · checkin
+        ▼
+visit_verifications  VERSIONED DERIVATIONS over those observations
+                     (standard_version, derived_at, confidence, evidence_refs[])
+```
+
+**When the verification standard changes, historical evidence is not rewritten.**
+A new standard writes **new verification rows**; the old rows stay, and every
+old conclusion remains reproducible **under the standard that produced it**.
+That is the difference between *"this visit is verified"* — which silently means
+*"under whatever rule we use today"* — and *"this visit was verified under
+standard v3, from these five observations."*
+
+Today's `trust_level` column is the first form. It cannot answer "was this
+verified under the standard in force at the time", because the standard is not
+recorded and the conclusion overwrites its predecessor.
+
+### Attribution: `visit_attributions`
+
+Links a **verification** to a `discovery_exposures.id`, and through it to the
+run, the candidate set, and the candidate's evaluation — the full backward
+trace: **recommendation → serve → ranking run → candidate opportunity.**
+
+| column | note |
+|---|---|
+| `verification_id` | which conclusion is being attributed |
+| `exposure_id` **NULLABLE** | → the served recommendation. **Nullable is load-bearing** |
+| `basis` | `direct_tap` · `same_session_exposure` · `prior_exposure_window` · `none` |
+| `confidence`, `window` | how far the link reaches, stated rather than assumed |
+
+**`NULL` and `basis = 'none'` are correct, expected answers.** A traveller who
+found a bar by walking past it produced a real verified visit that Portava did
+not source, and the system must be able to **say so** rather than reach for the
+nearest exposure. **"Without inferring missing evidence" means an unattributable
+visit stays unattributed** — Portava Discovery Contribution is a floor computed
+from what is recorded, never an estimate topped up by proximity in time.
+
+### What makes it deterministic
+
+Enumeration runs over `visit_verifications` **at a named `standard_version`**,
+joined to attributions. Same trip + same standard version = **same answer,
+forever** — because no input is mutable and no conclusion is recomputed in
+place. That is the property today's schema cannot offer at any level of care.
+
+---
+
+## §7 — Recommendation
 
 **The counterfactual is answerable in principle and unanswerable today.** Build
 Event Truth, in the first-class-object shape above, with these conditions:
@@ -268,11 +375,21 @@ Event Truth, in the first-class-object shape above, with these conditions:
 | **`user_id` NULLABLE** | Anonymous traffic must be recordable. This is the single most important departure from `rank_events` |
 | **Retention ruling** | **Owner gate.** 90 days cannot answer a six-month question |
 | **Behaviour-preserving at introduction** | Writes land inert behind a flag, as Stage 0 did |
+| **Observations immutable, verification versioned** | §6. A conclusion stored on the observation row cannot survive a change of standard |
+| **Attribution may be NULL** | An unattributable visit stays unattributed. Contribution is a floor, never an estimate |
 | **No production write by the agent** | Staged with before/after verification |
 
-**Not yet designed, and deliberately deferred to the packet's next revision:**
-the `strong outcomes` and `attribution` semantics — what makes an event *strong*
-is a taste-model question (step 5), and designing it before the taste
-dimensions exist would be guessing at a contract that step 5 defines.
+**Retention is ESCALATED TO THE OWNER**, not resolved here. The six-month
+counterfactual fails on the **90-day policy**, and whether discovery evidence
+gets a longer window is an owner decision rather than a schema question.
+
+**Still deferred:** what makes an event *strong* is a taste-model question that
+step 5 defines; specifying it now would be guessing at a contract that does not
+exist. `verified_visit` is **no longer** in this category — it is required for
+v1, and §6 is its design.
+
+**Both acceptance tests currently answer NO.** The packet passes as a *design*;
+the *system* does not pass either test, and neither should be reported as
+close.
 
 **Nothing in this packet has been implemented. No migration has been written.**

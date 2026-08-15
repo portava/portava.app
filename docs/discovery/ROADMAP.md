@@ -16,11 +16,30 @@
 > > **Once those contracts exist the ranker becomes replaceable without
 > > destroying the evidence beneath it.**
 >
+> ### The invariant — governing, alongside the statement above
+>
+> > **ABSENCE OF EVIDENCE MUST NEVER SILENTLY BECOME EVIDENCE OF ABSENCE.**
+>
+> **Phase B tests this in the current system. Event Truth must encode it
+> permanently.** And it is not a new rule — it is the general form of two rules
+> already in force here. **Three faces of one thing:**
+>
+> | Face | Where it shows up |
+> |---|---|
+> | **Vacuity is failure** | a check that examines nothing passes |
+> | **Swallowed failures are first-class defects** | a failure that is caught and discarded looks like success |
+> | **Absence of evidence ≠ evidence of absence** | a window with no rows reads as "it didn't happen" |
+>
+> In every one, **success is indistinguishable from not having worked.** Stated
+> as one rule because it is one rule, and because each face was discovered
+> separately at a cost that the general form would have avoided.
+>
 > Recorded verbatim as governing. What follows from it:
 >
 > | | |
 > |---|---|
-> | **Phases A–D** | **LAND AS PLANNED**, including Phase B's unmet probe criterion. Verified infrastructure is not discarded because the destination moved. |
+> | **Phase B** | **THE IMMEDIATE GATE.** *"Fix exists"* is not *"surface proven."* Exit criterion stays authoritative and **unmet**. |
+> | **Phases A–D** | **LAND AS PLANNED**, including Phase B's criterion. Verified infrastructure is not discarded because the destination moved. |
 > | **Phases E and F** | **FROZEN.** Do not continue them because they were next. |
 > | Anything assuming the six P1 components are **peer scoring systems** | **STALE** — must be re-scoped before implementation. |
 > | **Workstream S** | continues — it is orthogonal to the destination. |
@@ -226,6 +245,31 @@ impression**.
 | **8** | **GOVERNOR** | Exploration and diversity **allocator** — budget ~**15–25 %** with **reason codes**, *not fixed positions* |
 | **9** | **LEARNED RESIDUAL** | **Only after trustworthy outcomes exist.** It must **improve the explicit model**, and an **unexplainable high-confidence prediction must CONSTRAIN how aggressively it is exploited** |
 | **10** | **OPTIMISE AGAINST TRIP OUTCOMES** | |
+
+### The execution sequence — locked
+
+1. **Phase B evidence closure** ← *immediate gate*
+2. Remaining **A–D** exit criteria
+3. **Event Truth schema packet** *(written — must now also pass the `verified_visit` test)*
+4. **Event Truth implementation**
+5. **Place Intelligence**
+
+**E and F stay frozen.**
+
+### Why Phase B gates the whole architecture, not just Phase C
+
+The next architecture **assumes instrumentation can distinguish absence of
+behaviour from absence of observation.** That assumption is load-bearing for
+every step after it.
+
+**If Phase B cannot demonstrate that distinction in the CURRENT system, Event
+Truth cannot be trusted to encode it into the new one.** A team that has never
+once separated "nobody did this" from "we did not see it" will build a schema
+that cannot separate them either.
+
+So: **zero or suspiciously thin probe output is an INVESTIGATION RESULT, not a
+successful low-traffic result.** It does not close Phase B. It opens a
+question.
 
 ### Step 2 is GATED
 
