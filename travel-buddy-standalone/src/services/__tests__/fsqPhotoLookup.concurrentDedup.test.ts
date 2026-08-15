@@ -2,9 +2,13 @@
  * fsqPhotoLookup.concurrentDedup.test.ts
  *
  * Confirms that two concurrent lookupFsqPhoto() calls for the same
- * name/lat/lng only dispatch one fetch to Foursquare — not two.
+ * name/lat/lng only dispatch one request to the api-server proxy — not two.
  * Without the in-flight dedup Map both calls race past the empty cache and
- * each fires its own Foursquare request, double-billing API quota.
+ * each fires its own proxy request, double-billing the Foursquare API quota
+ * that the server holds.
+ *
+ * The client now calls GET /api/places/fsq-photo (the api-server proxy) instead
+ * of hitting Foursquare directly, which fixes the CORS failure on the web build.
  *
  * Run:
  *   node --import tsx/esm --test \
@@ -46,25 +50,23 @@ function uniqueName(): string {
 // ── setup ─────────────────────────────────────────────────────────────────────
 
 const originalFetch = globalThis.fetch;
-const originalEnv = process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY;
+const originalApiBase = process.env.EXPO_PUBLIC_API_BASE_URL;
 
 beforeEach(() => {
-  process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY = 'test-fsq-key';
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'http://api.test';
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  process.env.EXPO_PUBLIC_FOURSQUARE_API_KEY = originalEnv;
+  process.env.EXPO_PUBLIC_API_BASE_URL = originalApiBase;
 });
 
 // ── concurrent dedup ──────────────────────────────────────────────────────────
 
 describe('lookupFsqPhoto — concurrent dedup', () => {
-  it('fires only one fetch when two calls for the same venue are made concurrently', async () => {
-    const body = {
-      results: [{ photos: [{ prefix: 'https://fastly.4sqi.net/img/general/', suffix: '/venue.jpg' }] }],
-    };
-    const { fetch: mockFetch, captured } = makeFetch(200, body);
+  it('fires only one proxy request when two calls for the same venue are made concurrently', async () => {
+    const photoUrl = 'https://fastly.4sqi.net/img/general/original/venue.jpg';
+    const { fetch: mockFetch, captured } = makeFetch(200, { photoUrl });
     globalThis.fetch = mockFetch;
 
     const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
@@ -78,17 +80,21 @@ describe('lookupFsqPhoto — concurrent dedup', () => {
     assert.equal(
       captured.length,
       1,
-      `Expected exactly 1 fetch but got ${captured.length} — in-flight dedup is not working`,
+      `Expected exactly 1 proxy request but got ${captured.length} — in-flight dedup is not working`,
     );
-    assert.equal(url1, 'https://fastly.4sqi.net/img/general/original/venue.jpg');
-    assert.equal(url2, 'https://fastly.4sqi.net/img/general/original/venue.jpg');
+    // Confirm the request went to the proxy, not directly to Foursquare.
+    assert.match(
+      captured[0].url,
+      /\/api\/places\/fsq-photo/,
+      'proxy URL must contain /api/places/fsq-photo',
+    );
+    assert.equal(url1, photoUrl);
+    assert.equal(url2, photoUrl);
   });
 
   it('both concurrent callers receive the same resolved photo URL', async () => {
-    const body = {
-      results: [{ photos: [{ prefix: 'https://fastly.4sqi.net/img/general/', suffix: '/eiffel.jpg' }] }],
-    };
-    const { fetch: mockFetch } = makeFetch(200, body);
+    const photoUrl = 'https://fastly.4sqi.net/img/general/original/eiffel.jpg';
+    const { fetch: mockFetch } = makeFetch(200, { photoUrl });
     globalThis.fetch = mockFetch;
 
     const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
@@ -99,13 +105,12 @@ describe('lookupFsqPhoto — concurrent dedup', () => {
       lookupFsqPhoto(name, 48.858, 2.294),
     ]);
 
-    const expected = 'https://fastly.4sqi.net/img/general/original/eiffel.jpg';
     for (const result of results) {
-      assert.equal(result, expected, 'each caller must receive the resolved URL');
+      assert.equal(result, photoUrl, 'each caller must receive the resolved URL');
     }
   });
 
-  it('both concurrent callers receive null on a non-ok response — only one fetch', async () => {
+  it('both concurrent callers receive null on a non-ok response — only one proxy request', async () => {
     const { fetch: mockFetch, captured } = makeFetch(500, {});
     globalThis.fetch = mockFetch;
 
@@ -120,17 +125,15 @@ describe('lookupFsqPhoto — concurrent dedup', () => {
     assert.equal(
       captured.length,
       1,
-      `Expected exactly 1 fetch on error path but got ${captured.length}`,
+      `Expected exactly 1 proxy request on error path but got ${captured.length}`,
     );
     assert.equal(r1, null);
     assert.equal(r2, null);
   });
 
-  it('two calls for DIFFERENT venues still each fire their own fetch', async () => {
-    const body = {
-      results: [{ photos: [{ prefix: 'https://fastly.4sqi.net/img/general/', suffix: '/x.jpg' }] }],
-    };
-    const { fetch: mockFetch, captured } = makeFetch(200, body);
+  it('two calls for DIFFERENT venues still each fire their own proxy request', async () => {
+    const photoUrl = 'https://fastly.4sqi.net/img/general/original/x.jpg';
+    const { fetch: mockFetch, captured } = makeFetch(200, { photoUrl });
     globalThis.fetch = mockFetch;
 
     const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
@@ -143,7 +146,7 @@ describe('lookupFsqPhoto — concurrent dedup', () => {
     assert.equal(
       captured.length,
       2,
-      'different venues must each dispatch their own fetch',
+      'different venues must each dispatch their own proxy request',
     );
   });
 });
@@ -151,11 +154,9 @@ describe('lookupFsqPhoto — concurrent dedup', () => {
 // ── cache hit after first call ────────────────────────────────────────────────
 
 describe('lookupFsqPhoto — cache hit after resolution', () => {
-  it('a sequential second call for the same venue hits the cache — no second fetch', async () => {
-    const body = {
-      results: [{ photos: [{ prefix: 'https://fastly.4sqi.net/img/general/', suffix: '/cached.jpg' }] }],
-    };
-    const { fetch: mockFetch, captured } = makeFetch(200, body);
+  it('a sequential second call for the same venue hits the cache — no second proxy request', async () => {
+    const photoUrl = 'https://fastly.4sqi.net/img/general/original/cached.jpg';
+    const { fetch: mockFetch, captured } = makeFetch(200, { photoUrl });
     globalThis.fetch = mockFetch;
 
     const { lookupFsqPhoto } = await import('../fsqPhotoLookup.ts');
@@ -165,7 +166,7 @@ describe('lookupFsqPhoto — cache hit after resolution', () => {
     const second = await lookupFsqPhoto(name, 1.0, 1.0);
 
     assert.equal(captured.length, 1, 'cache must absorb the sequential second call');
-    assert.equal(first, 'https://fastly.4sqi.net/img/general/original/cached.jpg');
-    assert.equal(second, 'https://fastly.4sqi.net/img/general/original/cached.jpg');
+    assert.equal(first, photoUrl);
+    assert.equal(second, photoUrl);
   });
 });

@@ -31,9 +31,9 @@ import { lookupFsqPhoto } from '../../services/fsqPhotoLookup.ts';
 import { lookupGooglePhoto } from '../../services/googlePhotoLookup.ts';
 import { useFsqPhoto } from '../useFsqPhoto.ts';
 
-// NOTE: intentionally exhaustive — fsqPhotoLookup makes real fetch calls to
-// the Foursquare API using EXPO_PUBLIC_FOURSQUARE_API_KEY; only the stub
-// return value matters here so no network activity occurs during tests.
+// NOTE: intentionally exhaustive — fsqPhotoLookup calls the api-server proxy
+// (GET /api/places/fsq-photo) to avoid CORS failures on the web build; only
+// the stub return value matters here so no network activity occurs during tests.
 jest.mock('../../services/fsqPhotoLookup.ts', () => ({
   lookupFsqPhoto: jest.fn(),
 }));

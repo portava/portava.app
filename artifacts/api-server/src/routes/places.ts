@@ -493,6 +493,99 @@ router.get("/places/photo", async (req, res) => {
   }
 });
 
+// ── GET /api/places/fsq-photo ─────────────────────────────────────────────────
+//
+// Server-side proxy for Foursquare place-photo lookup on Discovery place cards.
+// Calling Foursquare directly from the browser fails with a CORS error because
+// Foursquare's API doesn't emit Access-Control-Allow-Origin headers. Routing
+// the call through the api-server avoids that — server-to-server fetches are
+// not subject to CORS.
+//
+// Uses FOURSQUARE_API_KEY (server-side env var; never sent to the client).
+//
+// Honest degradation: every failure path returns { photoUrl: null, reason }
+// and NEVER throws — the caller falls through to category-appropriate artwork.
+//
+// ATTRIBUTION: callers that render the returned photoUrl must display
+// "Powered by Foursquare" (FSQ API license requirement).
+const FSQ_PHOTO_SEARCH = "https://places-api.foursquare.com/places/search";
+const FSQ_PHOTO_API_VERSION = "2025-06-17";
+let fsqPhotoAuthLogged = false;
+
+router.get("/places/fsq-photo", async (req, res) => {
+  const name = String(req.query.name ?? "").trim();
+  const lat = req.query.lat != null ? Number(req.query.lat) : null;
+  const lng = req.query.lng != null ? Number(req.query.lng) : null;
+
+  if (!name || name.length > 200) {
+    res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
+    return;
+  }
+
+  const key = process.env.FOURSQUARE_API_KEY;
+  if (!key) {
+    res.json({ photoUrl: null, reason: "no_foursquare_key" });
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      query:  name,
+      limit:  "1",
+      fields: "photos",
+    });
+    if (lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)) {
+      params.set("ll", `${lat},${lng}`);
+    }
+
+    const fsqRes = await fetch(`${FSQ_PHOTO_SEARCH}?${params}`, {
+      headers: {
+        Authorization: `Bearer ${key}`,
+        Accept: "application/json",
+        "X-Places-Api-Version": FSQ_PHOTO_API_VERSION,
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (fsqRes.status === 401 || fsqRes.status === 403) {
+      if (!fsqPhotoAuthLogged) {
+        fsqPhotoAuthLogged = true;
+        logger.warn(
+          { status: fsqRes.status },
+          "Foursquare photo proxy auth failure — check FOURSQUARE_API_KEY",
+        );
+      }
+      res.json({ photoUrl: null, reason: "foursquare_auth_error" });
+      return;
+    }
+
+    if (!fsqRes.ok) {
+      res.json({ photoUrl: null, reason: `foursquare_http_${fsqRes.status}` });
+      return;
+    }
+
+    const body = (await fsqRes.json()) as {
+      results?: Array<{ photos?: Array<{ prefix?: string; suffix?: string }> }>;
+    };
+    const photos = body?.results?.[0]?.photos ?? [];
+    if (!photos.length) {
+      res.json({ photoUrl: null, reason: "no_photo_found" });
+      return;
+    }
+
+    const p = photos[0];
+    if (typeof p?.prefix !== "string" || typeof p?.suffix !== "string") {
+      res.json({ photoUrl: null, reason: "no_photo_found" });
+      return;
+    }
+
+    res.json({ photoUrl: `${p.prefix}original${p.suffix}` });
+  } catch (err) {
+    logger.warn({ err, name }, "Foursquare photo proxy lookup failed");
+    res.json({ photoUrl: null, reason: "request_failed" });
+  }
+});
+
 // ── GET /api/places/live-status ───────────────────────────────────────────────
 //
 // Live open-now lookup for Explore / place detail surfaces. Reuses the same
