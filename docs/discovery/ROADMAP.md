@@ -166,7 +166,7 @@
 > | | | |
 > |---|---|---|
 > | **1** | **`google-autocomplete` is P1 PRODUCT FUNCTIONALITY** | Moves **ahead of any further ranker architecture**. *A user who cannot reliably select a destination never reaches the system we spent today measuring.* Filed: [`../places/google-legacy-places-api-returns-nothing.md`](../places/google-legacy-places-api-returns-nothing.md) |
-> | **2** | **Place Intelligence starts as a VISIBLE PRODUCT UNIT** | **Not invisible corpus-building.** OSM-only destinations must produce useful cards: reliable photos, experiential attributes, provenance and confidence, category and context, graceful fallbacks. Helps users **now** *and* becomes ranking input later. |
+> | **2** | **Place Intelligence starts as a VISIBLE PRODUCT UNIT** — enumeration done: [`place-intelligence-osm-card-enumeration.md`](place-intelligence-osm-card-enumeration.md) | **Not invisible corpus-building.** OSM-only destinations must produce useful cards: reliable photos, experiential attributes, provenance and confidence, category and context, graceful fallbacks. Helps users **now** *and* becomes ranking input later. |
 > | **3** | **Event Truth remains the next architectural foundation** | May run **in parallel** with card enrichment, provided neither mutates the other's contract casually. **Must not become another week of invisible infrastructure before visible Discovery improves.** |
 > | **4** | **RANKER WORK GOES ON EXPLICIT HOLD once Phase B resolves** | **No optimising ranking machinery over an empty corpus.** |
 >
@@ -203,6 +203,7 @@ Companion documents:
 | `discovery-engine-mode-packet.html` | the design, the eight D1–D8 rulings, and the operator-actions record |
 | `discovery-engine-ruling-sheet.html` | the owner's decision sheet as presented |
 | `phase-minus-1-repository-proof.md` | repository proof of the carried-in claims at HEAD |
+| `place-intelligence-osm-card-enumeration.md` | **item 2 of the live sequence** — what an OSM-only place card renders today vs what it could, enumerated from code, with each addition costed by what it would actually require. Enumeration only; nothing built |
 | `phase-b3-probe-runbook.md` | **the staged B3 probe** — exact commands, the sanctioned read-only front door for the production baseline, the production writes it incurs, and what to record. **STAGED, NOT RUN; the owner presses it** |
 | `../migrations.md` | applied/staged migration state, and what `audit:schema` can and cannot establish |
 | `../ops/retention-policy.md` | the 90-day window covering `discovery_shadow_serves`. **Event Truth's classes are ruled separately** — packet §7 — and this document is amended when Event Truth is implemented, not before |
