@@ -150,6 +150,7 @@ STAMP_IMAGE_MODEL = "gpt-image-1"
 TRANSLATION_PROVIDER = "openai"
 SUPABASE_URL = "https://ajrurzioarfkagpuxfnb.supabase.co"
 QA_ACCOUNT_EMAIL = "arxaitrading@gmail.com"
+FSQ_API_KEY_DEV = "I1YRAIPY30PQIV1L5FPIQDS0TN1SNIGSHD0SRR2BSC0SEZMF"
 
 [userenv.development]
 
