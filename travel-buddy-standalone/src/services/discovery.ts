@@ -817,6 +817,33 @@ export async function saveSearchHistory(query: string, searchType = 'all'): Prom
   }
 }
 
+// ── Wikidata enrichment ───────────────────────────────────────────────────────
+
+export interface WikidataEnrichment {
+  /** English short description from Wikidata. */
+  description: string | null;
+  /** English Wikipedia article URL, when available. */
+  wikipediaUrl: string | null;
+  /** Wikimedia Commons image URL (via Special:FilePath), when available. */
+  commonsImageUrl: string | null;
+}
+
+/**
+ * Fetch structured enrichment for a Wikidata entity (Qnnn).
+ * No auth required. Returns null on any network/parse failure.
+ */
+export async function getWikidataEnrichment(wikidataId: string): Promise<WikidataEnrichment | null> {
+  const base = apiBase();
+  if (!base) return null;
+  try {
+    const res = await fetch(`${base}/api/discovery/wikidata/${encodeURIComponent(wikidataId)}`);
+    if (!res.ok) return null;
+    return (await res.json()) as WikidataEnrichment;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Clear the current user's search history.
  * Pass `id` (UUID) to remove a single entry by its row id; omit to clear all.

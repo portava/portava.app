@@ -2474,4 +2474,128 @@ router.post("/discovery/community/:placeId/report", async (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Wikidata enrichment ───────────────────────────────────────────────────────
+//
+// Proxies a single Wikidata entity fetch and caches the result so repeated
+// opens of the same place sheet don't hammer the public API.
+//
+// TTL: 24 h (Wikidata structured data changes infrequently).
+
+const WIKIDATA_CACHE_TTL_MS = 24 * 60 * 60 * 1_000;
+
+interface WikidataCacheEntry {
+  data: WikidataEnrichment;
+  cachedAt: number;
+}
+
+const _wikidataCache = new Map<string, WikidataCacheEntry>();
+
+export interface WikidataEnrichment {
+  /** English short description from Wikidata (e.g. "palace in Versailles, France"). */
+  description: string | null;
+  /** Full URL of the English Wikipedia article, when the entity has an enwiki sitelink. */
+  wikipediaUrl: string | null;
+  /** Wikimedia Commons image URL via Special:FilePath, when the entity has a P18 claim. */
+  commonsImageUrl: string | null;
+}
+
+/**
+ * GET /api/discovery/wikidata/:wikidataId
+ *
+ * Returns structured enrichment for a single Wikidata entity (Qnnn).
+ * No auth required — all data is public.
+ *
+ * Response: WikidataEnrichment
+ */
+router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
+  const { wikidataId } = req.params;
+
+  // Validate: must be Q followed by one or more digits.
+  if (!/^Q[1-9]\d*$/.test(wikidataId)) {
+    sendError(res, "invalid_payload", "wikidataId must be a valid Wikidata entity id (Q…)");
+    return;
+  }
+
+  // L1: in-process memory cache.
+  const cached = _wikidataCache.get(wikidataId);
+  if (cached && Date.now() - cached.cachedAt < WIKIDATA_CACHE_TTL_MS) {
+    res.json(cached.data);
+    return;
+  }
+
+  // Fetch from Wikidata API.
+  // props=descriptions|sitelinks/urls|claims gives us exactly what we need.
+  const url = new URL("https://www.wikidata.org/w/api.php");
+  url.searchParams.set("action", "wbgetentities");
+  url.searchParams.set("ids", wikidataId);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("languages", "en");
+  url.searchParams.set("props", "descriptions|sitelinks/urls|claims");
+
+  let raw: Response;
+  try {
+    raw = await fetchWithTimeout(url.toString(), {
+      headers: { "User-Agent": "TravelBuddy/1.0 (travel-buddy-app; discovery)" },
+    });
+  } catch {
+    sendError(res, "upstream_error", "Wikidata fetch failed");
+    return;
+  }
+
+  if (!raw.ok) {
+    sendError(res, "upstream_error", `Wikidata returned ${raw.status}`);
+    return;
+  }
+
+  let body: unknown;
+  try {
+    body = await raw.json();
+  } catch {
+    sendError(res, "upstream_error", "Wikidata response was not valid JSON");
+    return;
+  }
+
+  const entities = (body as Record<string, unknown>)?.entities as Record<string, unknown> | undefined;
+  const item = entities?.[wikidataId] as Record<string, unknown> | undefined;
+
+  if (!item || (item as { missing?: string }).missing !== undefined) {
+    // Entity doesn't exist on Wikidata — return empty enrichment and cache it.
+    const empty: WikidataEnrichment = { description: null, wikipediaUrl: null, commonsImageUrl: null };
+    _wikidataCache.set(wikidataId, { data: empty, cachedAt: Date.now() });
+    res.json(empty);
+    return;
+  }
+
+  // Extract English description.
+  const descriptions = item.descriptions as Record<string, { value: string }> | undefined;
+  const description: string | null = descriptions?.en?.value ?? null;
+
+  // Extract English Wikipedia URL from sitelinks.
+  const sitelinks = item.sitelinks as Record<string, { url?: string; title?: string }> | undefined;
+  const enwiki = sitelinks?.enwiki;
+  let wikipediaUrl: string | null = null;
+  if (enwiki?.url) {
+    wikipediaUrl = enwiki.url;
+  } else if (enwiki?.title) {
+    wikipediaUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(enwiki.title)}`;
+  }
+
+  // Extract Commons image from P18 claim (image property).
+  let commonsImageUrl: string | null = null;
+  const claims = item.claims as Record<string, unknown[]> | undefined;
+  const p18 = claims?.P18;
+  if (Array.isArray(p18) && p18.length > 0) {
+    const snak = (p18[0] as Record<string, unknown>)?.mainsnak as Record<string, unknown> | undefined;
+    const dv = snak?.datavalue as Record<string, unknown> | undefined;
+    const filename = dv?.value as string | undefined;
+    if (filename && typeof filename === "string" && filename.trim()) {
+      commonsImageUrl = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(filename.trim())}`;
+    }
+  }
+
+  const enrichment: WikidataEnrichment = { description, wikipediaUrl, commonsImageUrl };
+  _wikidataCache.set(wikidataId, { data: enrichment, cachedAt: Date.now() });
+  res.json(enrichment);
+});
+
 export default router;

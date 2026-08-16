@@ -14,8 +14,8 @@ import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, 
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useSession } from '../../context/SessionContext.tsx';
 import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
-import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
-import { getPlaceLiveStatus } from '../../services/discovery.ts';
+import type { DiscoveryPlace, PlaceLiveStatus, WikidataEnrichment } from '../../services/discovery.ts';
+import { getPlaceLiveStatus, getWikidataEnrichment } from '../../services/discovery.ts';
 import { checkSaved, toggleSave } from '../../services/collections.ts';
 import { color, space, radius, type as t, shadow, avatar, dot } from '../../theme/tokens.ts';
 import { categoryColor } from './PlaceCard.tsx';
@@ -48,6 +48,9 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   // Local override applied when an AI header is accepted — so the image updates
   // immediately without needing to refetch the parent data.
   const [localAiHeaderUrl, setLocalAiHeaderUrl] = useState<string | null>(null);
+  // Wikidata enrichment — description, Wikipedia link, Commons image.
+  // Fetched lazily when the sheet opens for a place that has a wikidataId.
+  const [wikidataEnrichment, setWikidataEnrichment] = useState<WikidataEnrichment | null>(null);
 
   // Feature flag + role guard for the "Generate header image" admin action.
   const { isEnabled } = useFeatureFlags();
@@ -62,10 +65,23 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   const fsqPassthrough = isAiHeader ? undefined : (effectiveHeaderUrl ?? undefined);
   const photoUrl = useFsqPhoto(place?.name ?? '', place?.lat, place?.lng, fsqPassthrough, place?.id);
 
-  // Reset local override when a different place is shown.
+  // Reset local override and enrichment when a different place is shown.
   useEffect(() => {
     setLocalAiHeaderUrl(null);
+    setWikidataEnrichment(null);
   }, [place?.id]);
+
+  // Fetch Wikidata enrichment lazily when the sheet opens for a place that
+  // has a wikidataId. Any failure is silently ignored — the sheet still works
+  // without enrichment.
+  useEffect(() => {
+    if (!place?.wikidataId || !visible) return;
+    let cancelled = false;
+    getWikidataEnrichment(place.wikidataId)
+      .then((data) => { if (!cancelled) setWikidataEnrichment(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [place?.id, place?.wikidataId, visible]);
 
   // Build candidates with real source metadata so the resolver can set
   // isRepresentation correctly for the AI disclosure label.
@@ -79,10 +95,21 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   if (photoUrl && photoUrl !== effectiveHeaderUrl) {
     _sheetCandidates.push({ url: photoUrl, source: 'provider' });
   }
-  // osmImageUrl is the lowest-priority candidate — only used when no
+  // osmImageUrl is the second-lowest-priority candidate — only used when no
   // headerImageUrl or FSQ photo is available.
   if (place?.osmImageUrl && place.osmImageUrl !== effectiveHeaderUrl && place.osmImageUrl !== photoUrl) {
     _sheetCandidates.push({ url: place.osmImageUrl, source: 'provider' });
+  }
+  // Wikidata Commons image (P18) is the absolute lowest-priority candidate —
+  // only used when no headerImageUrl, FSQ photo, or OSM image is available.
+  // Special:FilePath redirects to the actual file, so it renders as a normal
+  // image URL. Wikimedia content is freely licensed (CC-BY-SA / public domain).
+  if (wikidataEnrichment?.commonsImageUrl) {
+    const commonsUrl = wikidataEnrichment.commonsImageUrl;
+    const alreadyPresent = _sheetCandidates.some((c) => c.url === commonsUrl);
+    if (!alreadyPresent) {
+      _sheetCandidates.push({ url: commonsUrl, source: 'provider' });
+    }
   }
   const resolvedSheet = place ? resolveHeaderImage(_sheetCandidates, {
     entityType: 'place',
@@ -351,11 +378,12 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             </Pressable>
           )}
 
-          {/* Description */}
-          {place.description && (
+          {/* Description — prefer the place's own description; fall back to
+              the Wikidata English description when available and no local one. */}
+          {(place.description || wikidataEnrichment?.description) && (
             <View style={styles.section}>
               <Text style={styles.sectionLabel}>About</Text>
-              <Text style={styles.desc}>{place.description}</Text>
+              <Text style={styles.desc}>{place.description ?? wikidataEnrichment?.description}</Text>
             </View>
           )}
 
@@ -398,6 +426,16 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
                   <Text style={styles.linkText} numberOfLines={1}>Website</Text>
                 </Pressable>
               )}
+              {wikidataEnrichment?.wikipediaUrl && (
+                <Pressable
+                  style={styles.linkBtn}
+                  onPress={() => Linking.openURL(wikidataEnrichment.wikipediaUrl!).catch(() => {})}
+                  testID="place-sheet-wikipedia"
+                >
+                  <Info size={15} color={color.deep} />
+                  <Text style={styles.linkText} numberOfLines={1}>Wikipedia</Text>
+                </Pressable>
+              )}
               {place.wikidataId && (
                 <Pressable
                   style={styles.linkBtn}
@@ -405,7 +443,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
                   testID="place-sheet-wikidata"
                 >
                   <Info size={15} color={color.deep} />
-                  <Text style={styles.linkText} numberOfLines={1}>More info (Wikidata)</Text>
+                  <Text style={styles.linkText} numberOfLines={1}>Wikidata</Text>
                 </Pressable>
               )}
             </View>

@@ -43,6 +43,7 @@ import type { DiscoveryPlace } from '../../../services/discovery.ts';
 // controlled entirely by this stub.
 jest.mock('../../../services/discovery', () => ({
   getPlaceLiveStatus: jest.fn().mockResolvedValue(null),
+  getWikidataEnrichment: jest.fn().mockResolvedValue(null),
 }));
 
 // NOTE: intentionally exhaustive — collections imports Supabase native modules

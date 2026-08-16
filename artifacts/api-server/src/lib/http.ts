@@ -71,7 +71,8 @@ export type ApiErrorCode =
   | "conflict"
   | "gone"
   | "e2ee_thread"
-  | "no_key_package";
+  | "no_key_package"
+  | "upstream_error";
 
 const STATUS: Record<ApiErrorCode, number> = {
   server_not_configured: 503,
@@ -98,6 +99,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   gone: 410,
   e2ee_thread: 422,
   no_key_package: 404,
+  upstream_error: 502,
 };
 
 /**
