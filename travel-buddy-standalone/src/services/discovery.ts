@@ -77,6 +77,18 @@ export interface DiscoveryPlace {
   /** Disclaimer copy to show when disclaimerRequired is true. */
   disclaimerText?: string | null;
   /**
+   * Wikidata entity id (`Q…`) when OSM carries one. Used to surface a
+   * structured-data "More info" link in the detail sheet.
+   */
+  wikidataId?: string | null;
+  /**
+   * Raw OSM `image` tag value, kept only when it is an absolute http(s) URL.
+   * Used as the lowest-priority header image candidate — only shown when no
+   * headerImageUrl or FSQ photo is available. May be a Wikimedia page URL
+   * rather than a direct image, so it is placed after all other candidates.
+   */
+  osmImageUrl?: string | null;
+  /**
    * True when this card represents a hosted Compass event (an activity/idea
    * with a real start time and RSVP flow), not a resolved venue. Detail UI
    * must never show venue-only affordances (Directions/phone/hours/website)

@@ -10,7 +10,7 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
 import { Platform } from 'react-native';
-import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles } from 'lucide-react-native';
+import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles, Info } from 'lucide-react-native';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useSession } from '../../context/SessionContext.tsx';
 import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
@@ -78,6 +78,11 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   }
   if (photoUrl && photoUrl !== effectiveHeaderUrl) {
     _sheetCandidates.push({ url: photoUrl, source: 'provider' });
+  }
+  // osmImageUrl is the lowest-priority candidate — only used when no
+  // headerImageUrl or FSQ photo is available.
+  if (place?.osmImageUrl && place.osmImageUrl !== effectiveHeaderUrl && place.osmImageUrl !== photoUrl) {
+    _sheetCandidates.push({ url: place.osmImageUrl, source: 'provider' });
   }
   const resolvedSheet = place ? resolveHeaderImage(_sheetCandidates, {
     entityType: 'place',
@@ -391,6 +396,16 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
                 <Pressable style={styles.linkBtn} onPress={openWeb}>
                   <Globe size={15} color={color.deep} />
                   <Text style={styles.linkText} numberOfLines={1}>Website</Text>
+                </Pressable>
+              )}
+              {place.wikidataId && (
+                <Pressable
+                  style={styles.linkBtn}
+                  onPress={() => Linking.openURL(`https://www.wikidata.org/wiki/${place.wikidataId}`).catch(() => {})}
+                  testID="place-sheet-wikidata"
+                >
+                  <Info size={15} color={color.deep} />
+                  <Text style={styles.linkText} numberOfLines={1}>More info (Wikidata)</Text>
                 </Pressable>
               )}
             </View>

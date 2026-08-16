@@ -72,6 +72,12 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   if (photoUrl && photoUrl !== place.headerImageUrl) {
     _resolverCandidates.push({ url: photoUrl, source: 'provider' });
   }
+  // osmImageUrl is the lowest-priority candidate — only used when no
+  // headerImageUrl or FSQ photo is available. The OSM image tag can be a
+  // Wikimedia Commons page URL (not a direct image), so it is tried last.
+  if (place.osmImageUrl && place.osmImageUrl !== place.headerImageUrl && place.osmImageUrl !== photoUrl) {
+    _resolverCandidates.push({ url: place.osmImageUrl, source: 'provider' });
+  }
   const resolved = resolveHeaderImage(_resolverCandidates, {
     entityType: 'place',
     category: place.category,
