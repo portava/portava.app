@@ -13,6 +13,7 @@ import { getServiceClient } from "../lib/supabase";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 import { reverseGeocode } from "../services/geocodingService";
 import { searchFoursquare } from "../lib/foursquarePlaces";
+import { getFoursquareApiKey } from "../lib/foursquareApiKey";
 import {
   getLiveVenueStatus,
   makeConfidence,
@@ -827,7 +828,7 @@ router.get("/places/fsq-photo", async (req, res) => {
 
   // Same distinction as the Google route above, and the same reason for it: an
   // empty-but-present secret is the case that looks configured and is not.
-  const rawKey = process.env.FOURSQUARE_API_KEY;
+  const rawKey = getFoursquareApiKey();
   const keyState = classifyApiKey(rawKey);
   if (keyState !== "present") {
     if (Date.now() - FSQ_KEY_STATE_LOGGED.at > 10 * 60 * 1000) {
@@ -1052,6 +1053,7 @@ router.get("/places/live-status", async (req, res) => {
 
 const NEARBY_VENUE_CACHE_TTL_MS = 30 * 60 * 1_000;
 const nearbyVenueCache = new Map<string, { venue: NearbyVenueInfo | null; cachedAt: number }>();
+let nearbyVenueQuotaLogged = false;
 
 interface NearbyVenueInfo {
   name: string;
@@ -1109,7 +1111,7 @@ router.get("/places/nearby-venue", async (req, res) => {
     return;
   }
 
-  const apiKey = process.env.FOURSQUARE_API_KEY;
+  const apiKey = getFoursquareApiKey();
   if (!apiKey) {
     res.json({ venue: null });
     return;
@@ -1127,6 +1129,22 @@ router.get("/places/nearby-venue", async (req, res) => {
       headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "X-Places-Api-Version": "2025-06-17" },
       signal: AbortSignal.timeout(3_000),
     });
+
+    // Same distinction as fsq-photo: 429 here means the account has no API
+    // credits remaining, not ordinary rate limiting — name it explicitly
+    // (once per process) instead of letting it blend into "lookup failed".
+    if (fsqRes.status === 429) {
+      if (!nearbyVenueQuotaLogged) {
+        nearbyVenueQuotaLogged = true;
+        logger.warn(
+          { status: 429 },
+          "nearby-venue FSQ lookup: account has no API credits remaining — venue enrichment disabled until credits are restored",
+        );
+      }
+      nearbyVenueCache.set(cacheKey, { venue: null, cachedAt: nowMs });
+      res.json({ venue: null });
+      return;
+    }
 
     if (!fsqRes.ok) {
       logger.warn({ status: fsqRes.status, lat, lng }, "nearby-venue FSQ lookup failed");

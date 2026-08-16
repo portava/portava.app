@@ -8,6 +8,7 @@
  */
 import { logger as rootLogger } from "./logger";
 import { Sentry } from "./sentry.js";
+import { getFoursquareApiKey } from "./foursquareApiKey";
 
 const logger = rootLogger.child({ lib: "foursquarePlaces" });
 
@@ -16,6 +17,7 @@ const FSQ_API_VERSION = "2025-06-17";
 const TIMEOUT_MS = 1500;
 let keyMissingLogged = false;
 let authFailedLogged = false;
+let quotaExhaustedLogged = false;
 
 function inferType(categories: Array<{ name?: string }> | undefined): string {
   const names = (categories ?? []).map((c) => c.name ?? "").join(" ").toLowerCase();
@@ -32,7 +34,7 @@ export interface FoursquareOptions {
 
 /** Search Foursquare Places; returns [] on any failure. Result shape = Place. */
 export async function searchFoursquare(q: string, opts: FoursquareOptions = {}): Promise<any[]> {
-  const key = process.env.FOURSQUARE_API_KEY;
+  const key = getFoursquareApiKey();
   if (!key) {
     if (!keyMissingLogged) {
       keyMissingLogged = true;
@@ -61,6 +63,25 @@ export async function searchFoursquare(q: string, opts: FoursquareOptions = {}):
         Sentry.captureMessage("Foursquare auth failure — venue search disabled", {
           level: "error",
           extra: { status: res.status, hint: "Check FOURSQUARE_API_KEY is set and valid" },
+        });
+      }
+      return [];
+    }
+    // See places.ts fsq-photo route for the full rationale: a 429 here means
+    // the account has no API credits remaining, not ordinary rate limiting.
+    // Named explicitly (once per process) so a dead account reads as a dead
+    // account instead of a transient blip that looks identical to "no venues
+    // matched" in the UI.
+    if (res.status === 429) {
+      if (!quotaExhaustedLogged) {
+        quotaExhaustedLogged = true;
+        logger.warn(
+          { status: 429 },
+          "Foursquare venue search: account has no API credits remaining — venue search disabled until credits are restored",
+        );
+        Sentry.captureMessage("Foursquare quota exhausted — venue search disabled", {
+          level: "warning",
+          extra: { status: 429 },
         });
       }
       return [];

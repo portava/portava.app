@@ -21,8 +21,10 @@
  * makes every live venue lookup behave exactly like a source outage.
  */
 import { logger as rootLogger } from "./logger";
+import { getFoursquareApiKey } from "./foursquareApiKey";
 
 const logger = rootLogger.child({ lib: "liveIntelligence" });
+let liveQuotaExhaustedLogged = false;
 
 // ── Confidence system ─────────────────────────────────────────────────────────
 
@@ -128,7 +130,7 @@ export async function getLiveVenueStatus(
   const cached = liveCache.get(key);
   if (cached && nowMs - cached.cachedAt < LIVE_CACHE_TTL_MS) return cached.status;
 
-  const apiKey = process.env.FOURSQUARE_API_KEY;
+  const apiKey = getFoursquareApiKey();
   if (!apiKey) return null;
 
   try {
@@ -143,6 +145,18 @@ export async function getLiveVenueStatus(
       headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "X-Places-Api-Version": FSQ_API_VERSION },
       signal: AbortSignal.timeout(LIVE_TIMEOUT_MS),
     });
+    // Same distinction as the discovery photo routes: 429 here means the
+    // account has no API credits remaining, not ordinary rate limiting.
+    if (res.status === 429) {
+      if (!liveQuotaExhaustedLogged) {
+        liveQuotaExhaustedLogged = true;
+        logger.warn(
+          { status: 429 },
+          "live venue lookup: account has no API credits remaining — live open-now checks disabled until credits are restored",
+        );
+      }
+      return null;
+    }
     if (!res.ok) {
       logger.warn({ status: res.status, name }, "live venue lookup failed — degrading honestly");
       return null;
