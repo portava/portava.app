@@ -3,7 +3,9 @@ import cors from "cors";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
+import { createRequire } from "module";
 import * as Sentry from "@sentry/node";
 import router from "./routes";
 import { logger } from "./lib/logger";
@@ -129,7 +131,9 @@ app.post("/api/verification/webhook", verificationWebhookRawParser, verification
 app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
-app.get("/", (_req, res) => { res.sendStatus(200); });
+// NOTE: bare GET "/" removed — the frontend catch-all (registered after /api
+// routes) now serves the landing page.  Health-check callers should use
+// GET /api/healthz which goes through the API router.
 
 // ── Deep-link association files + share landing pages ─────────────────────────
 // Public, unauthenticated, cookie-free surface served from the app ROOT
@@ -166,6 +170,39 @@ app.use("/api/static", express.static(path.join(__dirname, "../static"), {
 }));
 
 app.use("/api", router);
+
+// ── Frontend catch-all ────────────────────────────────────────────────────────
+// In production the travel-buddy-standalone web server (serve.js) is imported
+// directly and used as a catch-all middleware so a single process handles both
+// the API and the frontend.  The guard on static-build/ keeps this a no-op in
+// development (where the standalone dev server on port 3000 handles these paths).
+//
+// Path resolution: __dirname in the compiled dist/ is artifacts/api-server/dist/.
+// The workspace root is three levels up: dist/ → api-server/ → artifacts/ → root.
+// Using __dirname avoids process.cwd() whose value depends on which directory
+// pnpm uses as the package root when running `pnpm --filter ... run start`.
+const _require = createRequire(import.meta.url);
+const _workspaceRoot = path.resolve(__dirname, "../../..");
+const _frontendStaticBuildDir = path.join(_workspaceRoot, "travel-buddy-standalone", "static-build");
+if (fs.existsSync(_frontendStaticBuildDir)) {
+  try {
+    const { createRequestHandler } = _require(
+      path.join(_workspaceRoot, "travel-buddy-standalone", "server", "serve.js"),
+    ) as { createRequestHandler: (template: string, appName: string) => (req: Request, res: Response) => void };
+    const _templatePath = path.join(
+      _workspaceRoot, "travel-buddy-standalone", "server", "templates", "landing-page.html",
+    );
+    const _landingPageTemplate = fs.readFileSync(_templatePath, "utf-8");
+    const _frontendHandler = createRequestHandler(_landingPageTemplate, "Portava");
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    app.use((req: Request, res: Response, _next: NextFunction): void => {
+      _frontendHandler(req, res);
+    });
+    logger.info("Frontend catch-all registered (travel-buddy-standalone/static-build exists)");
+  } catch (err) {
+    logger.warn({ err }, "Frontend catch-all setup failed — non-API paths will 404");
+  }
+}
 
 // ── Sentry error handler ──────────────────────────────────────────────────────
 // Must be registered AFTER all routes but BEFORE the custom global error handler

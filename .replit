@@ -3,13 +3,15 @@ modules = ["nodejs-24", "python-base-3.13", "postgresql-16"]
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
-# Build/run for the API server (artifacts/api-server) — added by audit Wave 2.
-# Mirrors that package's scripts: "build" runs the Sentry/OTel dep check then
-# esbuild (build.mjs → dist/), "start" boots dist/index.mjs with the Sentry
-# preload. Best-effort: deployment settings configured in the Replit UI
-# override this file, so CONFIRM these commands in the Replit Deployments UI
-# before relying on them.
-build = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
+# Build step: compiles the API server AND builds the travel-buddy-standalone
+# frontend (Metro OTA bundles + landing-page assets → static-build/).
+# The api-server Express process serves both: /api/* via the API router and
+# everything else via the travel-buddy-standalone serve.js catch-all.
+# See scripts/build-production.sh for the two-step sequence.
+# Best-effort: deployment settings configured in the Replit UI override this
+# file, so CONFIRM these commands in the Replit Deployments UI before relying
+# on them.
+build = ["bash", "scripts/build-production.sh"]
 run = ["pnpm", "--filter", "@workspace/api-server", "run", "start"]
 
 [deployment.postBuild]

@@ -7,7 +7,9 @@ id = "3B4_FFSkEVBkAeYMFRJ2e"
 [[services]]
 localPort = 8080
 name = "API Server"
-paths = ["/api"]
+# Handles ALL paths: /api/* goes to the Express API router; everything else
+# falls through to the travel-buddy-standalone frontend catch-all middleware.
+paths = ["/"]
 
 [services.development]
 run = "pnpm --filter @workspace/api-server run dev"
@@ -15,7 +17,9 @@ run = "pnpm --filter @workspace/api-server run dev"
 [services.production]
 
 [services.production.build]
-args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
+# Builds both the API server (esbuild) and the frontend (Metro OTA bundles).
+# scripts/build-production.sh runs both steps sequentially with set -e.
+args = ["bash", "scripts/build-production.sh"]
 
 [services.production.build.env]
 NODE_ENV = "production"
