@@ -19,6 +19,21 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchPostMediaMap, mergePostMedia } from "./postMediaResolve.js";
 
+// ── Demo-event guard ───────────────────────────────────────────────────────────
+
+/**
+ * Returns true when an event's tags mark it as a seeded demo or QA fixture.
+ *
+ * seed-demo-profile.ts tags events with `["demo", ...]`.
+ * seed-demo-city-events.ts tags events with `["demo", "demo_seed", ...]`.
+ *
+ * Exported so tests can assert against this rule without going through the full
+ * HTTP pipeline.
+ */
+export function isDemoEvent(tags: string[]): boolean {
+  return tags.some((t) => t === "demo" || t === "demo_seed");
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface DiscoveryEventPost {
@@ -256,7 +271,8 @@ async function fetchPathA(
           location_lng,
           starts_at,
           ends_at,
-          location_name
+          location_name,
+          tags
         )
       `)
       .limit(200);
@@ -274,6 +290,12 @@ async function fetchPathA(
       const post = row.posts;
       const event = row.events;
       if (!post || !event) continue;
+
+      // Skip posts linked to seeded demo/QA events — they were created by
+      // seed-demo-profile.ts / seed-demo-city-events.ts and tagged 'demo' or
+      // 'demo_seed' precisely so they can be identified and excluded here.
+      const eventTags: string[] = Array.isArray(event.tags) ? (event.tags as string[]) : [];
+      if (isDemoEvent(eventTags)) continue;
 
       if (!postPassesStaticFilters(post)) continue;
 

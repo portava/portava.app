@@ -15,7 +15,8 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
 import pino from "pino";
-import discoveryRouter, { _setTestDbPlacesOverride } from "../routes/discovery.js";
+import discoveryRouter, { _setTestDbPlacesOverride, DEMO_DISCOVERY_SOURCES } from "../routes/discovery.js";
+import { isDemoEvent } from "../lib/eventPostsDiscovery.js";
 
 // ── Block external network calls ───────────────────────────────────────────────
 // queryOverpass and geocode use fetchWithTimeout which catches all errors and
@@ -210,5 +211,116 @@ describe("GET /discovery/feed", () => {
     const r = await get(server, "/discovery/feed?lat=25.77&lng=-80.19&city=Miami&categories=food,places");
     assert.equal(r.status, 200);
     assert.ok(r.body.places.length >= 2, "multi-category fan-out should produce more places");
+  });
+});
+
+// ── DEMO_DISCOVERY_SOURCES — source-filter regression ─────────────────────────
+//
+// These tests verify the canonical exclusion set used by queryDbPlaces and the
+// in-memory safety filter.  Changing this set is a breaking change: add a test
+// for every value you add or remove.
+
+describe("DEMO_DISCOVERY_SOURCES filter set", () => {
+  // ── Sources that MUST be excluded ──────────────────────────────────────────
+
+  it("excludes seed_script (seed-demo-profile.ts and seed-demo-social.ts)", () => {
+    assert.ok(DEMO_DISCOVERY_SOURCES.has("seed_script"),
+      "seed_script must be in the exclusion set");
+  });
+
+  it("excludes demo (generic demo pipeline marker)", () => {
+    assert.ok(DEMO_DISCOVERY_SOURCES.has("demo"),
+      "demo must be in the exclusion set");
+  });
+
+  it("excludes qa_fixture (QA test data marker)", () => {
+    assert.ok(DEMO_DISCOVERY_SOURCES.has("qa_fixture"),
+      "qa_fixture must be in the exclusion set");
+  });
+
+  // ── Sources that MUST remain visible ──────────────────────────────────────
+
+  it("includes null source (legacy community submissions pre-date the column)", () => {
+    // Set.has(null) is false; this asserts the null case is NOT accidentally blocked.
+    assert.ok(!DEMO_DISCOVERY_SOURCES.has(null as any),
+      "null source must not be excluded — legacy rows have no source value");
+  });
+
+  it("includes undefined source (same as null — absent field)", () => {
+    assert.ok(!DEMO_DISCOVERY_SOURCES.has(undefined as any),
+      "undefined source must not be excluded");
+  });
+
+  it("includes curated (migration 0075 seeded landmark places)", () => {
+    assert.ok(!DEMO_DISCOVERY_SOURCES.has("curated"),
+      "curated rows must remain visible");
+  });
+
+  it("includes traveler (user-submitted hidden gems and traveler picks)", () => {
+    assert.ok(!DEMO_DISCOVERY_SOURCES.has("traveler"),
+      "traveler rows must remain visible");
+  });
+
+  it("includes osm (Overpass-saved places written by the wishlist handler)", () => {
+    assert.ok(!DEMO_DISCOVERY_SOURCES.has("osm"),
+      "osm rows must remain visible");
+  });
+
+  it("includes fsq (Foursquare-sourced places)", () => {
+    assert.ok(!DEMO_DISCOVERY_SOURCES.has("fsq"),
+      "fsq rows must remain visible");
+  });
+
+  it("includes fsq_venues and other fsq-prefixed variants", () => {
+    assert.ok(!DEMO_DISCOVERY_SOURCES.has("fsq_venues"),
+      "fsq-prefixed variant rows must remain visible");
+  });
+});
+
+// ── isDemoEvent — event tag-filter regression ──────────────────────────────────
+//
+// These tests verify the helper used in fetchPathA (eventPostsDiscovery.ts) to
+// skip posts linked to seeded demo events.  The seed scripts tag events with
+// 'demo' (seed-demo-profile.ts) and 'demo_seed' (seed-demo-city-events.ts).
+
+describe("isDemoEvent tag filter", () => {
+  // ── Tags that MUST be excluded ─────────────────────────────────────────────
+
+  it("identifies events tagged demo (seed-demo-profile.ts pattern)", () => {
+    assert.ok(isDemoEvent(["island hopping", "demo", "cebu"]),
+      "event tagged 'demo' must be identified as a demo event");
+  });
+
+  it("identifies events tagged demo_seed (seed-demo-city-events.ts pattern)", () => {
+    assert.ok(isDemoEvent(["demo", "demo_seed", "nightlife"]),
+      "event tagged 'demo_seed' must be identified as a demo event");
+  });
+
+  it("identifies events where demo is the only tag", () => {
+    assert.ok(isDemoEvent(["demo"]),
+      "single 'demo' tag must be identified as a demo event");
+  });
+
+  it("identifies events where demo_seed is the only tag", () => {
+    assert.ok(isDemoEvent(["demo_seed"]),
+      "single 'demo_seed' tag must be identified as a demo event");
+  });
+
+  // ── Tags that MUST NOT be excluded ─────────────────────────────────────────
+
+  it("passes through events with real category tags only", () => {
+    assert.ok(!isDemoEvent(["nightlife", "cebu", "rooftop"]),
+      "real event tags must not trigger the demo filter");
+  });
+
+  it("passes through events with an empty tag array", () => {
+    assert.ok(!isDemoEvent([]),
+      "empty tag array must not trigger the demo filter");
+  });
+
+  it("passes through events where 'demo' appears only as a substring", () => {
+    // 'demonstration' is not 'demo'; the filter must be exact-match.
+    assert.ok(!isDemoEvent(["demonstration", "demo-night"]),
+      "tags that merely contain the word 'demo' must not trigger the filter");
   });
 });

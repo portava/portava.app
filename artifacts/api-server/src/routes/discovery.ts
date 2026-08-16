@@ -646,6 +646,18 @@ function mapDbCategory(rawCategory: string, rawPlaceType?: string): string {
 // with OSM results and deduplicated by normalised place name so that traveler-
 // submitted places surface even when Overpass returns nothing for a destination.
 
+/**
+ * Source values that identify seeded demo/QA fixture rows in `discovery_places`.
+ * Exported so tests can assert against the canonical set without duplicating it.
+ *
+ * NULL source is intentionally absent — it indicates a legacy community submission
+ * that pre-dates the source column and must remain visible in Discovery.
+ *
+ * Good sources (pass through): 'curated', 'traveler', 'osm', 'fsq*', null/undefined.
+ * Excluded sources: anything in this set.
+ */
+export const DEMO_DISCOVERY_SOURCES = new Set(["seed_script", "demo", "qa_fixture"]);
+
 /** Test-only: override the DB query so tests can inject seeded rows without a live DB. */
 let _testDbOverride: ((dest: string, cat: string, lat: number | null, lng: number | null) => Promise<DiscoveryPlace[]>) | null = null;
 export function _setTestDbPlacesOverride(fn: typeof _testDbOverride): void {
@@ -725,6 +737,17 @@ async function queryDbPlaces(
       .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, rating, saved_count, lat, lng, tag, verified, created_at, source")
       .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
       .eq("status", "active")
+      // Exclude seeded demo/QA fixtures — they never carry real OSM enrichment
+      // (outdoor_seating, wheelchair, wikidata, image tags etc.) and would mislead
+      // any reviewer checking whether Tier 1 Place Intelligence is working.
+      // Known demo-source values: 'seed_script' (seed-demo-profile.ts, seed-demo-social.ts)
+      // and 'demo' (any future demo-data pipeline).  Curated ('curated'), OSM-saved
+      // ('osm'), FSQ ('fsq*'), and traveler-submitted ('traveler') rows are unaffected.
+      //
+      // NULL-safe: use OR so rows with no source value are included (legacy community
+      // submissions pre-date the source column and must not be accidentally excluded).
+      // SQL NOT IN silently drops NULLs, so we must name the NULL case explicitly.
+      .or("source.is.null,source.not.in.(seed_script,demo,qa_fixture)")
       .order("saved_count", { ascending: false })
       .limit(60);
 
@@ -732,6 +755,11 @@ async function queryDbPlaces(
 
     const dbPlaces = (data as any[])
       .filter((row: any) => {
+        // In-memory safety net alongside the DB predicate: exclude demo/QA fixture
+        // rows even if the DB filter was not applied (e.g. a test override, a schema
+        // change, or a future query refactor).  null source passes — it is a legitimate
+        // legacy row, not a demo row.
+        if (DEMO_DISCOVERY_SOURCES.has(row.source as string)) return false;
         if (category === "for_you") return true;
         // Prefer primary_category (post-migration 0083); fall back to the
         // canonical mapper so pre-migration rows still filter correctly.
