@@ -25,6 +25,7 @@ import {
   applyRestriction,
   liftRestriction,
   getRestrictionState,
+  trustRestrictionLogger,
 } from "../services/trust/TrustRestrictionService.js";
 import {
   confirmEvent,
@@ -840,6 +841,177 @@ describe("Integration: fake GPS confirmed caps location confidence", () => {
     assert.ok(
       result.categories.location_honesty < 50,
       `location_honesty should be < 50 after confirmed severe event; got ${result.categories.location_honesty}`,
+    );
+  });
+});
+
+// ── getRestrictionState: authoritative vs degraded reads ─────────────────────
+//
+// postgrest-js RESOLVES an { data, error } tuple on failure — it does not
+// reject unless .throwOnError() was called. So the error cases below are
+// delivered as resolved tuples on purpose: a test that only threw would have
+// passed against a `const { data } = await db...` implementation and proved
+// nothing. Exactly one case (the last) exercises a genuine throw.
+
+type QueryOutcome =
+  | { kind: "tuple"; data: any[] | null; error: any }
+  | { kind: "throw"; err: Error };
+
+/** Minimal client whose trust_restrictions read resolves/rejects on demand. */
+function makeRestrictionQueryClient(outcome: QueryOutcome): any {
+  const builder: any = {
+    select: () => builder,
+    eq:     () => builder,
+    is:     () => builder,
+    or:     () => builder,
+    then(onF: any, onR: any) {
+      const p =
+        outcome.kind === "throw"
+          ? Promise.reject(outcome.err)
+          : Promise.resolve({ data: outcome.data, error: outcome.error });
+      return p.then(onF, onR);
+    },
+  };
+  return { from: () => builder };
+}
+
+/** Runs fn with the service logger intercepted, so channels can be asserted. */
+async function captureTrustLogs<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; warns: any[]; errors: any[] }> {
+  const warns: any[] = [];
+  const errors: any[] = [];
+  const originalWarn  = trustRestrictionLogger.warn.bind(trustRestrictionLogger);
+  const originalError = trustRestrictionLogger.error.bind(trustRestrictionLogger);
+  (trustRestrictionLogger as any).warn  = (obj: any, msg?: string) => { warns.push({ obj, msg }); };
+  (trustRestrictionLogger as any).error = (obj: any, msg?: string) => { errors.push({ obj, msg }); };
+  try {
+    return { result: await fn(), warns, errors };
+  } finally {
+    (trustRestrictionLogger as any).warn  = originalWarn;
+    (trustRestrictionLogger as any).error = originalError;
+  }
+}
+
+describe("getRestrictionState degraded-read semantics", () => {
+  it("successful unrestricted read is authoritative — open and NOT degraded", async () => {
+    const db = makeRestrictionQueryClient({ kind: "tuple", data: [], error: null });
+    const { result: state, warns, errors } = await captureTrustLogs(() =>
+      getRestrictionState(db, USER_A),
+    );
+
+    assert.equal(state.canHost, true);
+    assert.equal(state.canMessage, true);
+    assert.equal(state.canJoinPrivatePlans, true);
+    assert.equal(state.canJoinLocationPlans, true);
+    assert.deepEqual(state.activeRestrictions, []);
+    assert.ok(!state.degraded, "a clean read must not be flagged degraded");
+    assert.equal(warns.length, 0, "no warn on a successful read");
+    assert.equal(errors.length, 0, "no error on a successful read");
+  });
+
+  it("a real active restriction is enforced and NOT degraded", async () => {
+    const db = makeRestrictionQueryClient({
+      kind: "tuple",
+      data: [{ restriction_type: "messaging" }],
+      error: null,
+    });
+    const { result: state, warns, errors } = await captureTrustLogs(() =>
+      getRestrictionState(db, USER_A),
+    );
+
+    assert.equal(state.canMessage, false, "an active messaging restriction must bite");
+    assert.equal(state.canHost, true, "unrelated capabilities stay open");
+    assert.deepEqual(state.activeRestrictions, ["messaging"]);
+    assert.ok(
+      !state.degraded,
+      "a real restriction is an authoritative answer — it must be distinguishable " +
+        "from a fail-closed guess, which is the whole point of the flag",
+    );
+    assert.equal(warns.length, 0);
+    assert.equal(errors.length, 0);
+  });
+
+  it("missing-table TUPLE fails OPEN, flags degraded, and reports on warn only", async () => {
+    // All three shapes the shared classifier recognises for this same table.
+    const missingTableErrors = [
+      { code: "42P01", message: 'relation "trust_restrictions" does not exist' },
+      { code: "PGRST204", message: "schema cache miss" },
+      { code: "PGRST500", message: "Table trust_restrictions DOES NOT EXIST in schema" },
+    ];
+
+    for (const error of missingTableErrors) {
+      const db = makeRestrictionQueryClient({ kind: "tuple", data: null, error });
+      const { result: state, warns, errors } = await captureTrustLogs(() =>
+        getRestrictionState(db, USER_A),
+      );
+
+      assert.equal(state.canHost, true, `${error.code}: never-migrated is not a restriction`);
+      assert.equal(state.canMessage, true, `${error.code}: never-migrated is not a restriction`);
+      assert.equal(state.canJoinPrivatePlans, true, `${error.code}`);
+      assert.equal(state.canJoinLocationPlans, true, `${error.code}`);
+      assert.deepEqual(state.activeRestrictions, [], `${error.code}`);
+      assert.equal(
+        state.degraded,
+        true,
+        `${error.code}: a fail-OPEN guess must carry the flag too, or callers can ` +
+          "spot the fail-closed guess but not this one",
+      );
+      assert.equal(warns.length, 1, `${error.code}: exactly one warn`);
+      assert.equal(errors.length, 0, `${error.code}: a missing table is not an ERROR`);
+      assert.equal((warns[0].obj as any).userId, USER_A, `${error.code}: warn identifies the user`);
+    }
+  });
+
+  it("transient-failure TUPLE fails CLOSED on hosting/messaging, flags degraded, reports on error only", async () => {
+    const error = { code: "57014", message: "canceling statement due to statement timeout" };
+    const db = makeRestrictionQueryClient({ kind: "tuple", data: null, error });
+    const { result: state, warns, errors } = await captureTrustLogs(() =>
+      getRestrictionState(db, USER_A),
+    );
+
+    assert.equal(state.canHost, false, "high-risk action fails closed on a DB error");
+    assert.equal(state.canMessage, false, "high-risk action fails closed on a DB error");
+    assert.equal(state.canJoinPrivatePlans, true, "low-risk actions stay open");
+    assert.equal(state.canJoinLocationPlans, true, "low-risk actions stay open");
+    assert.deepEqual(state.activeRestrictions, []);
+    assert.equal(state.degraded, true);
+
+    // The otherwise-impossible combination the flag exists to explain.
+    assert.ok(
+      state.activeRestrictions.length === 0 && state.canMessage === false && state.degraded === true,
+      "no active restrictions yet canMessage false must be marked degraded",
+    );
+
+    assert.equal(errors.length, 1, "exactly one ERROR — losing messaging must leave evidence");
+    assert.equal(warns.length, 0, "a transient failure is not a warn-level event");
+    assert.equal((errors[0].obj as any).userId, USER_A, "error identifies the affected user");
+    assert.match(
+      String((errors[0].obj as any).err?.message ?? ""),
+      /statement timeout/,
+      "the error log must carry the underlying cause, not just a generic message",
+    );
+  });
+
+  it("a THROWN failure also fails closed, flags degraded, and reports on error", async () => {
+    const db = makeRestrictionQueryClient({
+      kind: "throw",
+      err: new Error("connection terminated unexpectedly"),
+    });
+    const { result: state, warns, errors } = await captureTrustLogs(() =>
+      getRestrictionState(db, USER_A),
+    );
+
+    assert.equal(state.canHost, false);
+    assert.equal(state.canMessage, false);
+    assert.equal(state.canJoinPrivatePlans, true);
+    assert.equal(state.canJoinLocationPlans, true);
+    assert.equal(state.degraded, true);
+    assert.equal(errors.length, 1);
+    assert.equal(warns.length, 0);
+    assert.match(
+      String((errors[0].obj as any).err?.message ?? ""),
+      /connection terminated/,
     );
   });
 });
