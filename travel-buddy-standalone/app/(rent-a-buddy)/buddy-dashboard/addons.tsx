@@ -14,6 +14,7 @@ import { KeyboardSafeView } from '../../../src/components/ui/KeyboardSafeView';
 import { color, space, radius, type as t, avatar } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyAddon } from '../../../src/services/rentABuddy';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 const PRESET_ADDONS: Array<{ title: string; description: string; defaultPrice: number }> = [
   { title: 'Extra Hour', description: 'Extend the booking by one additional hour', defaultPrice: 25 },
@@ -200,11 +201,11 @@ export default function BuddyAddons() {
     const payload = { title: form.title, description: form.description || null, priceUsd: form.priceUsd, isActive: form.isActive };
     if (editing.addon) {
       const res = await rentABuddy.updateAddon(editing.addon.id, payload);
-      if (!res.ok) { Alert.alert('Error', res.error); return; }
+      if (!res.ok) { Alert.alert('Error', bookingErrorCopy(res.error)); return; }
       setAddons((prev) => prev.map((a) => a.id === editing.addon!.id ? { ...a, ...payload } : a));
     } else {
       const res = await rentABuddy.createAddon({ title: form.title, description: form.description || null, priceUsd: form.priceUsd });
-      if (!res.ok) { Alert.alert('Error', res.error); return; }
+      if (!res.ok) { Alert.alert('Error', bookingErrorCopy(res.error)); return; }
       if (!res.data.addon) { Alert.alert('Error', 'Could not create add-on'); return; }
       setAddons((prev) => [...prev, res.data.addon!]);
     }
@@ -219,7 +220,7 @@ export default function BuddyAddons() {
         onPress: async () => {
           const res = await rentABuddy.deleteAddon(id);
           if (res.ok) setAddons((prev) => prev.filter((a) => a.id !== id));
-          else Alert.alert('Error', res.error);
+          else Alert.alert('Error', bookingErrorCopy(res.error));
         },
       },
     ]);

@@ -11,7 +11,7 @@ import {
   getAvailabilitySettings, updateAvailabilitySettings,
   setAvailableNow, clearAvailableNow,
   getMyBuddyProfile,
-  type FullAvailabilitySettings,
+  type FullAvailabilitySettings, bookingErrorCopy
 } from '../../../src/services/rentABuddy';
 
 const DURATION_OPTIONS = [30, 60, 120, 180];
@@ -60,7 +60,7 @@ export default function AvailabilityCalendar() {
     setSaving(true);
     const res = await updateAvailabilitySettings(settings);
     setSaving(false);
-    if (!res.ok) { Alert.alert('Error', res.error); return; }
+    if (!res.ok) { Alert.alert('Error', bookingErrorCopy(res.error)); return; }
     Alert.alert('Saved', 'Availability settings updated.');
   }, [settings]);
 
@@ -69,11 +69,11 @@ export default function AvailabilityCalendar() {
     if (isAvailableNow) {
       const res = await clearAvailableNow();
       if (res.ok) setIsAvailableNow(false);
-      else Alert.alert('Error', res.error);
+      else Alert.alert('Error', bookingErrorCopy(res.error));
     } else {
       const res = await setAvailableNow(availableNowDuration);
       if (res.ok) setIsAvailableNow(true);
-      else Alert.alert('Error', res.error);
+      else Alert.alert('Error', bookingErrorCopy(res.error));
     }
     setTogglingNow(false);
   }, [isAvailableNow, availableNowDuration]);

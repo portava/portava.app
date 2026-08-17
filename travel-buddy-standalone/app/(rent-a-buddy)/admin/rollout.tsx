@@ -123,7 +123,7 @@ function CityBoard() {
           },
         ]);
       } else {
-        Alert.alert('Error', r.error);
+        Alert.alert('Error', bookingErrorCopy(r.error));
       }
     } else {
       load();
@@ -715,6 +715,7 @@ const TABS: { key: Tab; label: string; icon: any }[] = [
 ];
 
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 export default function AdminRolloutDashboard() {
   useRequireAdmin();

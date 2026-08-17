@@ -9,7 +9,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout, avatar } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
-import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, endBookingEarly, type BuddyBooking } from '../../src/services/rentABuddy';
+import { getBooking, addExtraTime, reportBooking, safetyCheckin, feelUnsafe, endBookingEarly, type BuddyBooking, bookingErrorCopy } from '../../src/services/rentABuddy';
 import {
   getActiveSession,
   startLiveShare,
@@ -233,7 +233,7 @@ export default function RentABuddyActive() {
         setShareRecipientName(null);
         setShareExpiresAt(null);
       } else {
-        Alert.alert('Error', res.error ?? 'Could not stop live share. Please try again.');
+        Alert.alert('Error', bookingErrorCopy(res.error, 'Could not stop live share. Please try again.'));
         // Revert: keep toggle ON since the share is still active.
       }
     }
@@ -505,7 +505,7 @@ export default function RentABuddyActive() {
       <AddTimeModal visible={addTimeVisible} onClose={() => setAddTimeVisible(false)} onAdd={async h => {
         const res = await addExtraTime(bookingId, h);
         if (res.ok) setAddedH(a => a + h);
-        else Alert.alert('Error', res.error ?? 'Could not add time');
+        else Alert.alert('Error', bookingErrorCopy(res.error, 'Could not add time'));
       }} />
       <EndModal visible={endVisible} onClose={() => setEndVisible(false)} onEnd={handleEnd} />
       <ContactPickerModal

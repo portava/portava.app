@@ -125,6 +125,7 @@ function PackageItem({ pkg, onApprove, onDisable, actioning }: {
 }
 
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 export default function PackageQueue() {
   useRequireAdmin();
@@ -157,7 +158,7 @@ export default function PackageQueue() {
       await adminFetch(`/api/rent-a-buddy/admin/packages/${pkg.id}/approve`, { method: 'POST' });
       setPackages((prev) => prev.filter((p) => p.id !== pkg.id));
     } catch (err: any) {
-      Alert.alert('Error', err?.message);
+      Alert.alert('Error', bookingErrorCopy(err?.message));
     } finally {
       setActioningId(null);
     }
@@ -174,7 +175,7 @@ export default function PackageQueue() {
             await adminFetch(`/api/rent-a-buddy/admin/packages/${pkg.id}/disable`, { method: 'POST' });
             setPackages((prev) => prev.filter((p) => p.id !== pkg.id));
           } catch (err: any) {
-            Alert.alert('Error', err?.message);
+            Alert.alert('Error', bookingErrorCopy(err?.message));
           } finally {
             setActioningId(null);
           }

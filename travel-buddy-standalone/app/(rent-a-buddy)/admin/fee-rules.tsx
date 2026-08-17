@@ -100,6 +100,7 @@ function RuleEditor({ rule, onChange }: { rule: FeeRule; onChange: (r: FeeRule) 
 }
 
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 export default function FeeRulesEditor() {
   useRequireAdmin();
@@ -126,7 +127,7 @@ export default function FeeRulesEditor() {
       await saveFeeRules(rules);
       Alert.alert('Saved', 'Fee rules updated successfully.');
     } catch (err: any) {
-      Alert.alert('Error', err?.message);
+      Alert.alert('Error', bookingErrorCopy(err?.message));
     } finally {
       setSaving(false);
     }

@@ -16,6 +16,7 @@ import { color, space, radius, type as t, icon, aspect, avatar } from '../../../
 import { useMediaComposer } from '../../../src/hooks/useMediaComposer';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyCategory, TrainingItem, ChecklistItem, ProfileSubmitResult } from '../../../src/services/rentABuddy';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 const TOTAL_STEPS = 7;
 
@@ -400,7 +401,7 @@ export default function ApplyToBeBuddy() {
         const labels = missing.map((k) => fieldNames[k] ?? k).join('\n• ');
         Alert.alert('Profile Incomplete', `Please complete the following before submitting:\n\n• ${labels}`);
       } else {
-        Alert.alert('Could not submit', result.error ?? 'Please try again.');
+        Alert.alert('Could not submit', bookingErrorCopy(result.error, 'Please try again.'));
       }
     } finally {
       submitLockRef.current = false;

@@ -12,7 +12,7 @@ import { TravelButton, TravelCard } from '../../../src/components/primitives';
 import { color, space, radius, type as t, icon, avatar, dot} from '../../../src/theme/tokens';
 import {
   getMyRequests, reportBooking, endBookingEarly, feelUnsafe, confirmCashBalance,
-  type BuddyBooking,
+  type BuddyBooking, bookingErrorCopy
 } from '../../../src/services/rentABuddy';
 
 const REPORT_REASONS = [
@@ -172,7 +172,7 @@ export default function BuddySafetyTools() {
     if (res.ok) {
       Alert.alert('Report submitted', 'Thank you for reporting. Our safety team will review this within 24 hours.');
     } else {
-      Alert.alert('Could not submit report', res.error ?? 'Please try again.');
+      Alert.alert('Could not submit report', bookingErrorCopy(res.error, 'Please try again.'));
     }
   }
 
@@ -188,7 +188,7 @@ export default function BuddySafetyTools() {
         [{ text: 'OK', onPress: () => router.back() }],
       );
     } else {
-      Alert.alert('Could not end booking', res.error ?? 'Please try again.');
+      Alert.alert('Could not end booking', bookingErrorCopy(res.error, 'Please try again.'));
     }
   }
 
@@ -208,7 +208,7 @@ export default function BuddySafetyTools() {
             if (res.ok) {
               Alert.alert('Flagged', 'The unpaid balance is now marked as disputed. Our team will follow up.');
             } else {
-              Alert.alert('Could not flag', res.error ?? 'Please try again.');
+              Alert.alert('Could not flag', bookingErrorCopy(res.error, 'Please try again.'));
             }
           },
         },
@@ -231,7 +231,7 @@ export default function BuddySafetyTools() {
             if (res.ok) {
               Alert.alert('Flagged', 'The unapproved guest has been reported on this booking.');
             } else {
-              Alert.alert('Could not flag', res.error ?? 'Please try again.');
+              Alert.alert('Could not flag', bookingErrorCopy(res.error, 'Please try again.'));
             }
           },
         },
@@ -264,7 +264,7 @@ export default function BuddySafetyTools() {
             if (res.ok) {
               Alert.alert('Safety team notified', 'Our safety team has been alerted about this booking. Stay safe.');
             } else {
-              Alert.alert('Could not notify', res.error ?? 'Please call local emergency services if you are in danger.');
+              Alert.alert('Could not notify', bookingErrorCopy(res.error, 'Please call local emergency services if you are in danger.'));
             }
           },
         },

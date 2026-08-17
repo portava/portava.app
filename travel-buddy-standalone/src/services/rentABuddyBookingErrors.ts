@@ -49,20 +49,31 @@ const GENERIC_BOOKING_ERROR =
   "Something went wrong on our side and we couldn't complete that. Please try again.";
 
 /**
- * Human copy for any booking refusal.
+ * Human copy for any Rent-a-Buddy refusal.
  *
  * Unknown codes fall back to generic copy rather than being echoed: apiFetch
  * yields either a server error code (`snake_case`, no spaces), an `HTTP <status>`
  * placeholder, or a caught network-error message. Only the last is human text,
  * so anything without a space is treated as a code and never shown raw.
+ *
+ * `fallback` is the caller's own sentence for "no usable copy from the server".
+ * Many call sites already had one — `'Could not accept booking.'`, and in the
+ * safety flow `'Please call local emergency services if you are in danger.'` —
+ * and those are better than anything generic this module could invent, so they
+ * are preserved rather than replaced. The rule this function enforces is only
+ * that a raw code is never what a user reads.
  */
-export function bookingErrorCopy(code: string | null | undefined): string {
-  if (!code) return GENERIC_BOOKING_ERROR;
+export function bookingErrorCopy(
+  code: string | null | undefined,
+  fallback?: string,
+): string {
+  const generic = fallback ?? GENERIC_BOOKING_ERROR;
+  if (!code) return generic;
   const known = BOOKING_UNAVAILABLE_COPY[code];
   if (known) return known;
   const trimmed = code.trim();
   if (!trimmed || !/\s/.test(trimmed) || /^HTTP \d+$/.test(trimmed)) {
-    return GENERIC_BOOKING_ERROR;
+    return generic;
   }
   return trimmed;
 }

@@ -19,7 +19,7 @@ import { MapLocationPicker } from '../../../src/components/location/MapLocationP
 import type { Place } from '../../../src/lib/location/placeTypes';
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import {
-  getMyBuddyProfile, updateMyBuddyProfile,
+  getMyBuddyProfile, updateMyBuddyProfile, bookingErrorCopy
 } from '../../../src/services/rentABuddy';
 import { roundMeetupPin, buildMeetupPinPatch } from '../../../src/lib/meetupPin.ts';
 
@@ -82,7 +82,7 @@ export default function BuddyMeetupPin() {
     const res = await updateMyBuddyProfile(buildMeetupPinPatch(draftLat, draftLng));
     setSaving(false);
     if (!res.ok) {
-      Alert.alert('Could not save', res.error ?? 'Please try again.');
+      Alert.alert('Could not save', bookingErrorCopy(res.error, 'Please try again.'));
       return;
     }
     setSavedLat(draftLat);

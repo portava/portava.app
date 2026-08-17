@@ -86,6 +86,31 @@ describe('bookingErrorCopy', () => {
     assert.equal(bookingErrorCopy(msg), msg);
   });
 
+  it('prefers the caller\'s fallback over the generic sentence', () => {
+    const tailored = 'Please call local emergency services if you are in danger.';
+    // Unknown code, empty, null — all resolve to the caller's own sentence.
+    assert.equal(bookingErrorCopy('db_error', tailored), tailored);
+    assert.equal(bookingErrorCopy('HTTP 500', tailored), tailored);
+    assert.equal(bookingErrorCopy(null, tailored), tailored);
+    assert.equal(bookingErrorCopy(undefined, tailored), tailored);
+    assert.equal(bookingErrorCopy('', tailored), tailored);
+  });
+
+  it('a fallback never overrides real feature-closed copy', () => {
+    // The site's generic sentence must not mask the specific, honest reason.
+    const copy = bookingErrorCopy('verification_unavailable', 'Please try again.');
+    assert.match(copy, /identity verification/i);
+    assert.notEqual(copy, 'Please try again.');
+  });
+
+  it('a fallback never causes a raw code to be shown', () => {
+    for (const code of ['db_error', 'forbidden', 'some_new_code']) {
+      const copy = bookingErrorCopy(code, 'Could not accept booking.');
+      assert.notEqual(copy, code);
+      assert.ok(!copy.includes(code));
+    }
+  });
+
   it('returns generic copy for null/undefined/empty', () => {
     const generic = bookingErrorCopy(null);
     assert.ok(/\s/.test(generic));

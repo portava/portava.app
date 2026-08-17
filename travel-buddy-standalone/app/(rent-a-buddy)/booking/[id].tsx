@@ -437,7 +437,7 @@ export default function BookingDetail() {
       setBooking(prev => prev ? { ...prev, status: 'cancelled' } : prev);
       Alert.alert('Booking cancelled', 'Your booking has been cancelled.');
     } else {
-      Alert.alert('Error', res.error);
+      Alert.alert('Error', bookingErrorCopy(res.error));
     }
   };
 
@@ -732,7 +732,7 @@ export default function BookingDetail() {
             setBooking(prev => prev ? { ...prev, durationH: res.data?.newDurationH ?? prev.durationH + h } : prev);
             Alert.alert('Time added', `${h} hour${h !== 1 ? 's' : ''} added to your session.`);
           } else {
-            Alert.alert('Error', res.error ?? 'Could not add time');
+            Alert.alert('Error', bookingErrorCopy(res.error, 'Could not add time'));
           }
         }}
       />

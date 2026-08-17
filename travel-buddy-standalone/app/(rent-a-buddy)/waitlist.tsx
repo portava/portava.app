@@ -11,7 +11,7 @@ import { GlobalTimePicker } from '../../src/components/selectors/GlobalTimePicke
 import { formatDisplayDate, fromISODate, fromHHmm, formatDisplayTime } from '../../src/lib/dateTime/formatters';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { Stamp } from '../../src/components/ui';
-import { joinWaitlist, type BuddyCategory } from '../../src/services/rentABuddy';
+import { joinWaitlist, type BuddyCategory, bookingErrorCopy } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const CATEGORIES: { key: BuddyCategory; label: string }[] = [
@@ -58,7 +58,7 @@ export default function RentABuddyWaitlist() {
     });
     setSubmitting(false);
     if (!res.ok) {
-      Alert.alert('Error', res.error);
+      Alert.alert('Error', bookingErrorCopy(res.error));
       return;
     }
     // The API doesn't return a queue position — never invent one. The

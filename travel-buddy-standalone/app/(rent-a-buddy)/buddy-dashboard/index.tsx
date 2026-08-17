@@ -16,6 +16,7 @@ import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t, shadow, avatar } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyDashboardSummary, BuddyBooking, ChecklistItem } from '../../../src/services/rentABuddy';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 function StatusBanner({ status }: { status: string }) {
   if (status === 'active') return null;
@@ -246,7 +247,7 @@ export default function BuddyDashboard() {
               const res = await rentABuddy.setAvailabilitySettings({ availableNow: v });
               if (!res.ok) {
                 setAvailableNow(!v);
-                Alert.alert('Could not update', res.error ?? 'Please try again.');
+                Alert.alert('Could not update', bookingErrorCopy(res.error, 'Please try again.'));
               }
             }}
             trackColor={{ false: color.haze, true: color.success }}

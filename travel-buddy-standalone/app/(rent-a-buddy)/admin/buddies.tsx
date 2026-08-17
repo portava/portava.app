@@ -105,6 +105,7 @@ function FeatureDisabled() {
 }
 
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 export default function AdminBuddiesScreen() {
   useRequireAdmin();
@@ -158,7 +159,7 @@ export default function AdminBuddiesScreen() {
     const res = await buddyAction(selected.id, action);
     setActing(false);
     if (!res.ok) {
-      Alert.alert('Error', res.error ?? 'Failed');
+      Alert.alert('Error', bookingErrorCopy(res.error, 'Failed'));
       return;
     }
     setSelected(null);

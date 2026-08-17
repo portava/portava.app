@@ -10,7 +10,7 @@ import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import { TravelChip, TravelLoadingState } from '../../../src/components/primitives';
 import {
   submitOffer, getRequest, getPricingSuggestion,
-  getMyBuddyProfile, type BuddyRequest, type PricingSuggestion,
+  getMyBuddyProfile, type BuddyRequest, type PricingSuggestion, bookingErrorCopy
 } from '../../../src/services/rentABuddy';
 
 const EXPIRY_OPTIONS = [
@@ -87,7 +87,7 @@ export default function OfferCreate() {
         paymentMode,
         expiresInHours,
       });
-      if (!result.ok) { Alert.alert('Error', result.error); return; }
+      if (!result.ok) { Alert.alert('Error', bookingErrorCopy(result.error)); return; }
       Alert.alert('Offer Sent!', 'The traveler will be notified of your offer.', [
         { text: 'Back to Inbox', onPress: () => router.back() },
       ]);

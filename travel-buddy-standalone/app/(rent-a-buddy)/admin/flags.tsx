@@ -89,6 +89,7 @@ function FlagRow({
 }
 
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 export default function AdminFlagsScreen() {
   useRequireAdmin();
@@ -143,7 +144,7 @@ export default function AdminFlagsScreen() {
         : await dismissFlag(actionTarget.id, notes || undefined);
     setSaving(false);
     if (!res.ok) {
-      Alert.alert('Error', res.error ?? 'Failed');
+      Alert.alert('Error', bookingErrorCopy(res.error, 'Failed'));
       return;
     }
     setActionTarget(null);

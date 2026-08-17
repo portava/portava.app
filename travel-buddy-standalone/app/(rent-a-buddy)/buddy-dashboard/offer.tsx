@@ -12,6 +12,7 @@ import { DatePickerField as TimePickerField } from '../../../src/components/Date
 import { color, space, radius, type as t } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyCategory } from '../../../src/services/rentABuddy';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 const CATEGORIES: { value: BuddyCategory; label: string }[] = [
   { value: 'arrival', label: 'Arrival Support' },
@@ -106,7 +107,7 @@ export default function BuddyOffer() {
       if (res.ok) {
         setSent(true);
       } else {
-        Alert.alert('Could not send offer', res.error ?? 'Please try again.');
+        Alert.alert('Could not send offer', bookingErrorCopy(res.error, 'Please try again.'));
       }
     } finally {
       sendLockRef.current = false;

@@ -15,6 +15,7 @@ import { KeyboardSafeView } from '../../../src/components/ui/KeyboardSafeView';
 import { color, space, radius, type as t, avatar } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyPackage, BuddyCategory } from '../../../src/services/rentABuddy';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 const CATEGORIES: { value: string; label: string }[] = [
   { value: 'arrival', label: 'Arrival Support' },
@@ -272,11 +273,11 @@ export default function BuddyPackages() {
     try {
       if (editing.pkg) {
         const res = await rentABuddy.updatePackage(editing.pkg.id, payload);
-        if (!res.ok) { Alert.alert('Error', res.error); return; }
+        if (!res.ok) { Alert.alert('Error', bookingErrorCopy(res.error)); return; }
         setPackages((prev) => prev.map((p) => p.id === editing.pkg!.id ? { ...p, ...payload } : p));
       } else {
         const res = await rentABuddy.createPackage(payload as any);
-        if (!res.ok) { Alert.alert('Error', res.error); return; }
+        if (!res.ok) { Alert.alert('Error', bookingErrorCopy(res.error)); return; }
         if (!res.data.pkg) { Alert.alert('Error', 'Could not create package'); return; }
         setPackages((prev) => [...prev, res.data.pkg!]);
       }
@@ -294,7 +295,7 @@ export default function BuddyPackages() {
         onPress: async () => {
           const res = await rentABuddy.deletePackage(id);
           if (res.ok) setPackages((prev) => prev.filter((p) => p.id !== id));
-          else Alert.alert('Error', res.error);
+          else Alert.alert('Error', bookingErrorCopy(res.error));
         },
       },
     ]);

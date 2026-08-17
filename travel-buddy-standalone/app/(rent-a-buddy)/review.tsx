@@ -6,7 +6,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeft, Star, Lock } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout } from '../../src/theme/tokens';
 import { Stamp } from '../../src/components/ui';
-import { submitReview } from '../../src/services/rentABuddy';
+import { submitReview, bookingErrorCopy } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 
@@ -76,7 +76,7 @@ export default function RentABuddyReview() {
         punctualityScore: categoryRatings.onTime || undefined,
       });
       if (!res.ok) {
-        Alert.alert('Error', res.error);
+        Alert.alert('Error', bookingErrorCopy(res.error));
         return;
       }
       setSubmitted(true);

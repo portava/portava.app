@@ -20,7 +20,7 @@ import type { Place } from '../../src/lib/location/placeTypes';
 import { ArrowLeft, Send } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TravelChip } from '../../src/components/primitives';
-import { createRequest } from '../../src/services/rentABuddy';
+import { createRequest, bookingErrorCopy } from '../../src/services/rentABuddy';
 
 // ── Open-request form (Mode B) ─────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ function OpenRequestForm() {
       notes: notes.trim() || undefined,
     });
     setLoading(false);
-    if (!result.ok) { Alert.alert('Error', result.error); return; }
+    if (!result.ok) { Alert.alert('Error', bookingErrorCopy(result.error)); return; }
     Alert.alert(
       'Request Posted!',
       'Eligible Buddies in your city will see your request and can send you offers.',

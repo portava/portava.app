@@ -6,7 +6,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, ArrowRight, CheckCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
-import { saveMatchPreferences } from '../../src/services/rentABuddy';
+import { saveMatchPreferences, bookingErrorCopy } from '../../src/services/rentABuddy';
 
 interface QuizStep {
   id: string;
@@ -163,7 +163,7 @@ export default function MatchQuiz() {
         await saveMatchPreferences(prefs);
         router.replace({ pathname: '/(rent-a-buddy)/marketplace', params: { fromQuiz: '1' } } as any);
       } catch (err: any) {
-        Alert.alert('Error', err?.message ?? 'Something went wrong');
+        Alert.alert('Error', bookingErrorCopy(err?.message, 'Something went wrong'));
       } finally {
         setLoading(false);
       }

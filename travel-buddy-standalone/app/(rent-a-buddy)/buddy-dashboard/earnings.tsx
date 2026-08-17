@@ -13,6 +13,7 @@ import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyEarnings, BuddyBooking } from '../../../src/services/rentABuddy';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 function EarningBanner() {
   return (
@@ -258,7 +259,7 @@ export default function BuddyEarnings() {
                         onPress: async () => {
                           const res = await rentABuddy.reportBooking(b.id, { reason: 'Earnings dispute', details: 'Flagged from the earnings screen.' });
                           if (res.ok) Alert.alert('Sent for review', 'Our team will look at this booking and follow up.');
-                          else Alert.alert('Could not send', res.error ?? 'Please try again.');
+                          else Alert.alert('Could not send', bookingErrorCopy(res.error, 'Please try again.'));
                         },
                       },
                     ]);

@@ -19,6 +19,7 @@ import { toISODate, fromISODate } from '../../../src/lib/dateTime/formatters';
 import { color, space, radius, type as t, icon, avatar, dot } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
 import type { BuddyBooking } from '../../../src/services/rentABuddy';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 const DECLINE_REASONS = [
   'Unavailable on this date',
@@ -398,7 +399,7 @@ export default function BuddyRequests() {
     try {
       const res = await rentABuddy.acceptBooking(id);
       if (!res.ok) {
-        Alert.alert('Error', res.error ?? 'Could not accept booking.');
+        Alert.alert('Error', bookingErrorCopy(res.error, 'Could not accept booking.'));
         return;
       }
       setRequests((prev) => prev.filter((r) => r.id !== id));
@@ -419,7 +420,7 @@ export default function BuddyRequests() {
     try {
       const res = await rentABuddy.declineBooking(id, reason || undefined);
       if (!res.ok) {
-        Alert.alert('Error', res.error ?? 'Could not decline booking.');
+        Alert.alert('Error', bookingErrorCopy(res.error, 'Could not decline booking.'));
         return;
       }
       setRequests((prev) => prev.filter((r) => r.id !== id));
@@ -445,7 +446,7 @@ export default function BuddyRequests() {
     try {
       const res = await rentABuddy.suggestChanges(id, payload);
       if (!res.ok) {
-        Alert.alert('Error', res.error ?? 'Could not send suggestion.');
+        Alert.alert('Error', bookingErrorCopy(res.error, 'Could not send suggestion.'));
         return;
       }
       setRequests((prev) => prev.filter((r) => r.id !== id));

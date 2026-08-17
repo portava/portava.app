@@ -100,6 +100,7 @@ function ApplicationRow({
 }
 
 import { useRequireAdmin } from '../../../src/hooks/useRequireAdmin';
+import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
 export default function AdminApplicationsScreen() {
   useRequireAdmin();
@@ -167,7 +168,7 @@ export default function AdminApplicationsScreen() {
     const res = await reviewApplication(actionTarget.id, actionTarget.action, notes || undefined, cats);
     setSaving(false);
     if (!res.ok) {
-      Alert.alert('Error', res.error ?? 'Failed to update');
+      Alert.alert('Error', bookingErrorCopy(res.error, 'Failed to update'));
       return;
     }
     setActionTarget(null);
