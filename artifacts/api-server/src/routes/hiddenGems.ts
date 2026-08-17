@@ -31,7 +31,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   submitGem,
@@ -1085,9 +1085,36 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
   const tripId = req.body?.tripId;
   if (!tripId) { sendError(res, "invalid_payload", "tripId is required"); return; }
 
+  // tripId is caller-supplied and was previously written straight through with
+  // no membership or plan-edit check at all, so any authenticated user could
+  // add an item to any trip id they could guess. Same shape as
+  // routes/compassAutopilot.ts: null means the trip does not exist, false means
+  // it does but this user may not edit its plan.
+  const permitted = await canEditPlan(sc, tripId, user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; }
+
   try {
     const gem = await getGem(sc, req.params.id);
     if (!gem) { sendError(res, "not_found", "Gem not found"); return; }
+
+    // Duplicate guard, mirroring routes/plan.ts. trip_plan_items_source_uniq
+    // (trip_id, source_type, source_id) means a second tap raises 23505, which
+    // becomes a db_error and is then SANITIZED to "A database error occurred" —
+    // so the client cannot tell a duplicate from a real failure. Return the
+    // established 409 shape instead.
+    const { data: existing } = await client
+      .from("trip_plan_items")
+      .select("id")
+      .eq("trip_id", tripId)
+      .eq("source_type", "hidden_gem")
+      .eq("source_id", (gem as any).id)
+      .is("removed_at", null)
+      .maybeSingle();
+    if (existing) {
+      res.status(409).json({ error: "duplicate", message: "This gem is already in your trip plan" });
+      return;
+    }
 
     // Location reveal follows sensitivity rules
     const coords = await (async () => {
@@ -1097,6 +1124,13 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
 
     const planItem = {
       trip_id: tripId,
+      // creator_id is NOT NULL and required by the generated Insert type
+      // (database.types.ts: `creator_id: string`), while added_by is optional
+      // (`added_by?: string | null`). This insert set only added_by, so every
+      // call violated NOT NULL and this endpoint has never once added a gem to
+      // a plan — which is also why the missing authorization check above was
+      // latent rather than exploited. routes/plan.ts sets creator_id likewise.
+      creator_id: user.id,
       added_by: user.id,
       source_type: "hidden_gem",
       source_id: (gem as any).id,

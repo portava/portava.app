@@ -85,6 +85,8 @@ interface FakeState {
   passportVizPrefs?: Record<string, any>[];
   /** Canonical places — used by the dedicated Add a Gem flow validation. */
   places?:          Record<string, any>[];
+  /** Existing plan rows — used by the POST /:id/plan duplicate guard. */
+  tripPlanItems?:   Record<string, any>[];
 }
 
 function makeFakeClient(state: FakeState, userId: string) {
@@ -192,6 +194,7 @@ function makeFakeClient(state: FakeState, userId: string) {
         location_trust_events:   state.locationTrust ?? [],
         passport_visibility_preferences: state.passportVizPrefs ?? [],
         places:                  state.places ?? [],
+        trip_plan_items:         state.tripPlanItems ?? [],
       };
       return (tableData[table] ?? []).filter((r) => filters.every((f) => f(r)));
     }
@@ -1187,11 +1190,16 @@ describe("Hidden Gems — plan-from-gem reveal logic", () => {
   });
 
   it("POST /plan inserts a trip_plan_items row", async () => {
+    // owner_id added to the fixture: this endpoint now runs canEditPlan, and the
+    // trip was previously seeded with no owner and no members, so the caller was
+    // neither. It asserted 201 for a write it was never entitled to make — which
+    // was defect (a), not a property worth preserving. The assertions below are
+    // unchanged; only the caller's right to make the write is now established.
     const client = makeFakeClient(
       {
         featureFlags: { hidden_gems_enabled: true },
         gems: [makeActiveGem()],
-        trips: [{ id: TRIP_ID, destination: "Tokyo" }],
+        trips: [{ id: TRIP_ID, destination: "Tokyo", owner_id: USER_ID }],
         tripMembers: [],
         gemSaves: [],
       },
@@ -1206,6 +1214,110 @@ describe("Hidden Gems — plan-from-gem reveal logic", () => {
 
     const tables = client._inserted.map((i: any) => i.table);
     assert.ok(tables.includes("trip_plan_items"), "should insert into trip_plan_items");
+  });
+
+  it("POST /plan sets creator_id on the inserted row (NOT NULL, required by the Insert type)", async () => {
+    // trip_plan_items.creator_id is `creator_id: string` in the generated Insert
+    // type — required — while added_by is `added_by?: string | null`. This
+    // handler set only added_by, so every insert violated NOT NULL and the
+    // endpoint had never once added a gem to a plan. The fake client does not
+    // enforce constraints, which is why the test above reported success for a
+    // write that always failed live; this one checks the column directly.
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [makeActiveGem()],
+        trips: [{ id: TRIP_ID, destination: "Tokyo", owner_id: USER_ID }],
+        tripMembers: [],
+        gemSaves: [],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/plan`, { tripId: TRIP_ID });
+    assert.equal(r.status, 201);
+
+    const planInsert = client._inserted.find((i: any) => i.table === "trip_plan_items");
+    assert.ok(planInsert, "expected a trip_plan_items insert");
+    assert.equal(planInsert.row.creator_id, USER_ID,
+      `creator_id is NOT NULL and must be set, got: ${JSON.stringify(planInsert.row.creator_id)}`);
+  });
+
+  it("POST /plan returns 403 when the caller is not a member of the trip", async () => {
+    // tripId comes straight from the request body and was written with no
+    // membership or plan-edit check at all, so any authenticated user could add
+    // an item to any trip id they could guess.
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [makeActiveGem()],
+        trips: [{ id: TRIP_ID, destination: "Tokyo", owner_id: OTHER_ID }],
+        tripMembers: [],
+        gemSaves: [],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/plan`, { tripId: TRIP_ID });
+    assert.equal(r.status, 403, `a non-member must not write to someone else's trip plan, got ${r.status}`);
+    assert.equal(r.body.error, "forbidden");
+
+    const tables = client._inserted.map((i: any) => i.table);
+    assert.ok(!tables.includes("trip_plan_items"), "no plan row may be written for a non-member");
+  });
+
+  it("POST /plan returns 404 when the trip does not exist", async () => {
+    // canEditPlan distinguishes null (no such trip) from false (exists, not
+    // permitted), matching routes/compassAutopilot.ts.
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [makeActiveGem()],
+        trips: [],
+        tripMembers: [],
+        gemSaves: [],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/plan`, { tripId: TRIP_ID });
+    assert.equal(r.status, 404, `unknown trip must be 404, got ${r.status}`);
+    assert.equal(r.body.error, "not_found");
+  });
+
+  it("POST /plan returns 409 duplicate on a second tap instead of a sanitized db_error", async () => {
+    // trip_plan_items_source_uniq (trip_id, source_type, source_id) makes the
+    // second tap raise 23505, which became a db_error and was then SANITIZED to
+    // "A database error occurred" — leaving the client unable to tell a
+    // duplicate from a real failure.
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [makeActiveGem()],
+        trips: [{ id: TRIP_ID, destination: "Tokyo", owner_id: USER_ID }],
+        tripMembers: [],
+        gemSaves: [],
+        tripPlanItems: [
+          { id: "existing-plan-item-1", trip_id: TRIP_ID, source_type: "hidden_gem", source_id: GEM_ID, removed_at: null },
+        ],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/plan`, { tripId: TRIP_ID });
+    assert.equal(r.status, 409, `second tap must be 409, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "duplicate");
+
+    const tables = client._inserted.map((i: any) => i.table);
+    assert.ok(!tables.includes("trip_plan_items"), "duplicate must not insert a second row");
   });
 
   it("plan from reveal_after_acceptance gem hides exact coords until trip member", async () => {
