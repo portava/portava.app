@@ -114,6 +114,13 @@ export function CachedImage({
   const { resolved: hydrated } = useHydratedMedia(uri ? [uri] : []);
   const [failed, setFailed] = useState(false);
 
+  // Latest onError, held in a ref so the hydration effect below can call it
+  // without listing it as a dependency. Parents pass inline arrows, so adding
+  // it to the dep array would re-run the effect on every render, and omitting
+  // it while calling it directly would invoke a stale closure.
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+
   // Initialised with the plain URI so the common case paints without waiting
   // on the async resolve; useHydratedMedia swaps in the signed URL.
   const [resolvedSource, setResolvedSource] = useState<{ uri: string } | null>(
@@ -147,7 +154,13 @@ export function CachedImage({
       // to resolvedSource is silently discarded and the tile stays blank.
       setResolvedSource({ uri: next });
       setFailed(false);
-    } else if (next === null) { setResolvedSource(null); setFailed(true); }
+    } else if (next === null) {
+      // Server explicitly rejected the URL — this IS final, so the parent is
+      // told here rather than from the transient onError path above.
+      setResolvedSource(null);
+      setFailed(true);
+      onErrorRef.current?.();
+    }
     // undefined = still resolving; keep the plain URI.
   }, [uri, hydrated]);
 
@@ -167,7 +180,28 @@ export function CachedImage({
       cachePolicy="disk"
       transition={200}
       onLoad={onLoad ? () => onLoad() : undefined}
-      onError={() => { setFailed(true); onError?.(); }}
+      onError={() => {
+        setFailed(true);
+        // Only notify the PARENT once recovery is impossible.
+        //
+        // The first paint is deliberately on the bare, unsigned path so the
+        // common case renders without waiting on the async sign call — and for
+        // a private bucket that paint ALWAYS fails with HTTP 400. This
+        // component recovers from that itself (the hydration effect above
+        // clears `failed` when the signed URL lands), but it used to forward
+        // the transient failure upward first, and ~17 parents latch on it:
+        // MediaCard, PostcardTile, PostCard, TripCard, EventCard, PlaceCard,
+        // BuddyCard, DiscoveryWall, PulseFeedCard and more each keep their own
+        // never-reset `imgFailed` and then UNMOUNT this component, so the
+        // recovery it was about to perform never ran. One transient error
+        // permanently blanked the tile on every one of those surfaces.
+        //
+        // `hydrated[uri] === undefined` means "still resolving" — a signed URL
+        // may yet arrive, so this failure is not final and the parent is not
+        // told. Once hydration has settled (a string that also failed, or the
+        // null branch below), the parent is notified exactly as before.
+        if (!uri || hydrated[uri] !== undefined) onError?.();
+      }}
       testID={testID}
       placeholder={placeholder ? { blurhash: placeholder } : undefined}
       accessible={!!accessibilityLabel}

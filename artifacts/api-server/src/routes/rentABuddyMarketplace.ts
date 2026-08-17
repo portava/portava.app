@@ -79,7 +79,10 @@ import { logger } from "../lib/logger.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { invalidateSuggestedCityCache } from "./rentABuddyRollout.js";
+import { invalidateSuggestedCityCache, checkRentBuddyAccess } from "./rentABuddyRollout.js";
+import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
+import { isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { getUserLimits } from "./rentABuddy.js";
 import {
   calculateCompatibilityScore,
   rankBuddies,
@@ -1024,6 +1027,19 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
   const { user } = auth;
   const svc = sc() ?? auth.client;
 
+  // Booking-creation gate stack. Accepting an offer INSERTs a
+  // rent_buddy_bookings row, so this is a creation path and takes the same
+  // gates as POST /rent-a-buddy/bookings — it previously had none of them, not
+  // even the admin user-limits check its package-book sibling performs.
+  // Wiring action "offer-accept" also revives the rollout branch at
+  // rentABuddyRollout.ts:270-280, which was dead because no caller passed it,
+  // so RENT_BUDDY_OFFERS_ENABLED gated nothing.
+  if (!await requireBookingKyc(svc, res)) return;
+  if (await isKillSwitchEngaged(svc, 'disable_rent_buddy_booking')
+      || await isKillSwitchEngaged(svc, 'disable_rab_bookings')) {
+    return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+  }
+
   const { offerId } = req.params;
   const { data: offer, error: offerErr } = await svc
     .from("rent_buddy_offers")
@@ -1035,6 +1051,26 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
   const o = offer as any;
   if (o.status !== "pending") return sendError(res, 'invalid_payload', `Offer is already ${o.status}.`);
   if (o.request.traveler_id !== user.id) return sendError(res, 'forbidden', "Only the traveler can accept offers.");
+
+  // City/category rollout + admin user limits. Deferred to here rather than the
+  // top of the handler because both values live on the offer's parent request,
+  // so they are not knowable until the offer has been loaded.
+  const offerAccess = await checkRentBuddyAccess({
+    sc: svc, userId: user.id,
+    city: o.request.city, category: o.request.category,
+    action: "offer-accept",
+  });
+  if (!offerAccess.allowed) {
+    return res.status(offerAccess.httpStatus).json({ error: offerAccess.code, message: offerAccess.message });
+  }
+
+  const offerLimits = await getUserLimits(svc, user.id);
+  if (offerLimits?.rent_buddy_disabled || offerLimits?.traveler_booking_disabled) {
+    return res.status(403).json({
+      error: "access_limited",
+      message: "Rent a Buddy access is limited while your account is under review.",
+    });
+  }
 
   const now = new Date().toISOString();
   if (o.expires_at && new Date(o.expires_at) < new Date()) {
@@ -1259,6 +1295,17 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
   const { user } = auth;
   const svc = sc() ?? auth.client;
 
+  // Booking-creation gate stack — see the offer-accept handler above. This path
+  // checked rent_buddy_user_limits but nothing else: no KYC, no kill switches,
+  // no rollout. Wiring action "package-book" also revives the dead branch at
+  // rentABuddyRollout.ts:257-267, so RENT_BUDDY_PACKAGES_ENABLED (seeded false
+  // in migrations/0090) finally gates something.
+  if (!await requireBookingKyc(svc, res)) return;
+  if (await isKillSwitchEngaged(svc, 'disable_rent_buddy_booking')
+      || await isKillSwitchEngaged(svc, 'disable_rab_bookings')) {
+    return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+  }
+
   const { data: pkg } = await svc
     .from("rent_buddy_packages")
     .select("*, buddy:rent_buddy_profiles(*)")
@@ -1278,6 +1325,20 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
   const buddy = p.buddy;
   if (!buddy || buddy.status !== "active") return sendError(res, 'invalid_payload', "Buddy is not available.");
   if (groupSize > 1 && !buddy.group_approved) return sendError(res, 'invalid_payload', "This Buddy is not approved for group bookings.");
+
+  // City/category rollout. Placed here because both values come off the loaded
+  // package and its buddy, so they are not knowable at the top of the handler.
+  // The existing user-limits check below is left as-is: it already performs the
+  // same restriction lookup inline, and duplicating it via getUserLimits would
+  // add a query without changing behaviour.
+  const pkgAccess = await checkRentBuddyAccess({
+    sc: svc, userId: user.id,
+    city: buddy.city, category: p.category,
+    action: "package-book", groupSize,
+  });
+  if (!pkgAccess.allowed) {
+    return res.status(pkgAccess.httpStatus).json({ error: pkgAccess.code, message: pkgAccess.message });
+  }
 
   // User limits
   const { data: limits } = await svc.from("rent_buddy_user_limits").select("*").eq("user_id", user.id).maybeSingle();

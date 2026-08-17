@@ -42,6 +42,18 @@ export function sniffMedia(buf: Buffer): SniffResult | null {
   if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") {
     return { kind: "image", mime: "image/webp", ext: "webp" };
   }
+  // WebM / Matroska: EBML header 1A 45 DF A3.
+  //
+  // Added because `video/webm` is in the postcard upload allowlist while this
+  // sniffer did not recognise it — so once the postcard /complete path started
+  // verifying real bytes for video (fail-closed, matching images), every
+  // legitimate WebM upload would have been rejected as "not a video". Both
+  // WebM and Matroska share this magic and telling them apart needs the DocType
+  // element; the distinction is irrelevant here, where the only question is
+  // whether the bytes are a video at all.
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) {
+    return { kind: "video", mime: "video/webm", ext: "webm" };
+  }
   // MP4 / MOV / HEIC family: size box then "ftyp" at offset 4
   if (buf.toString("ascii", 4, 8) === "ftyp") {
     const brand = buf.toString("ascii", 8, 12).toLowerCase();

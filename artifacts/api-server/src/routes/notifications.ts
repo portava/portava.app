@@ -29,7 +29,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, safeSecretEquals } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationPreferenceService, isValidTimezone } from "../services/notifications/NotificationPreferenceService.js";
@@ -66,7 +66,11 @@ function requireInternalSecret(req: any, res: any): boolean {
     return false;
   }
   const provided = req.headers['x-internal-secret'];
-  if (provided !== secret) {
+  // Constant-time compare — a plain !== leaks how many leading characters
+  // matched through response timing, which is enough to recover
+  // INTERNAL_API_SECRET byte by byte, and that secret gates endpoints which
+  // bypass user auth entirely. See safeSecretEquals in lib/http.ts.
+  if (!safeSecretEquals(provided, secret)) {
     res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid internal secret' });
     return false;
   }

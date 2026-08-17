@@ -16,7 +16,7 @@
  */
 
 import { Router } from "express";
-import { requireUser, sendError, safeSecretEquals } from "../lib/http.js";
+import { requireUser, optionalUser, sendError, safeSecretEquals } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
@@ -144,7 +144,11 @@ function sc(fallback?: any) {
 
 // ── User limits helper ─────────────────────────────────────────────────────────
 
-async function getUserLimits(client: any, userId: string): Promise<any | null> {
+// Exported so every booking-CREATION path applies the same account-level
+// restrictions. There are five such paths and only this file's two were gated;
+// rentABuddySpec and rentABuddyMarketplace now import this rather than
+// re-querying rent_buddy_user_limits ad hoc (or, as before, not at all).
+export async function getUserLimits(client: any, userId: string): Promise<any | null> {
   const { data } = await client
     .from("rent_buddy_user_limits")
     .select("*")
@@ -797,7 +801,13 @@ router.get("/rent-a-buddy/buddies/:buddyId", async (req, res) => {
   if (!serviceClient) return res.json({ buddy: null, packages: [], addons: [], reviews: [], availability: [], savedByMe: false });
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const auth = await requireUser(req, res);
+  // optionalUser, not requireUser. This route treats auth as OPTIONAL — it
+  // immediately does `auth?.user.id ?? null` and serves anonymous callers a
+  // public buddy profile. But requireUser SENDS a 401 before returning null, so
+  // for every signed-out visitor the handler wrote a 401 and then kept running
+  // to write a second, 200 response on the same request. optionalUser exists in
+  // lib/http.ts for exactly this shape: it returns null without touching `res`.
+  const auth = await optionalUser(req);
   const userId = auth?.user.id ?? null;
   const { buddyId } = req.params;
 

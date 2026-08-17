@@ -641,11 +641,11 @@ describe("Per-item authz — blocked users excluded from city_pulse_preview", ()
 
     const fakePost_fromBlocked = {
       id: "post-blocked", content: "blocked post", created_at: new Date().toISOString(),
-      author_id: BLOCKED_USER, post_status: null, status: "active", location_city: "Bangkok",
+      author_id: BLOCKED_USER, post_status: null, status: "active", visibility: "public", location_city: "Bangkok",
     };
     const fakePost_fromSafe = {
       id: "post-safe", content: "safe post", created_at: new Date().toISOString(),
-      author_id: SAFE_USER, post_status: null, status: "active", location_city: "Bangkok",
+      author_id: SAFE_USER, post_status: null, status: "active", visibility: "public", location_city: "Bangkok",
     };
 
     const { db } = makeFakeDb({
@@ -671,15 +671,49 @@ describe("Per-item authz — blocked users excluded from city_pulse_preview", ()
     assert.ok(safePost, "posts from non-blocked users must be included");
   });
 
+  it("private and trip_only posts never appear in city_pulse_preview", async () => {
+    // Regression lock for the city-pulse visibility leak. The query had no
+    // visibility predicate and the caller passes the SERVICE-ROLE client, which
+    // bypasses RLS, so every private and trip_only caption in the viewer's city
+    // was returned to any signed-in user in that city.
+    //
+    // This test can only observe the IN-MEMORY gate: makeFakeDb ignores .eq()
+    // on its array path and hands back every row for the table, so the SQL
+    // predicate is invisible here. That is exactly why the fix keeps both — a
+    // SQL-only fix would have shipped with no test able to fail.
+    clearL1Cache();
+    const mk = (id: string, visibility: string) => ({
+      id, content: `${visibility} post`, created_at: new Date().toISOString(),
+      author_id: USER_B, post_status: null, status: "active",
+      visibility, location_city: "Lisbon",
+    });
+
+    const { db } = makeFakeDb({
+      posts: [mk("post-private", "private"), mk("post-trip", "trip_only"), mk("post-public", "public")],
+    });
+
+    const payload = await buildFrontLoadPayload(
+      db, USER_A, baseProfile({ currentCity: "Lisbon" }), { networkHint: "wifi" },
+    );
+
+    const pulseItem = [...payload.tier1].find((i) => i.type === "city_pulse_preview");
+    assert.ok(pulseItem, "city_pulse_preview must be present in tier1");
+    const ids = (pulseItem!.data as Array<{ id: string }>).map((p) => p.id);
+
+    assert.ok(!ids.includes("post-private"), "private posts must never reach city_pulse_preview");
+    assert.ok(!ids.includes("post-trip"), "trip_only posts must never reach city_pulse_preview");
+    assert.ok(ids.includes("post-public"), "public posts must still be included");
+  });
+
   it("delayed/unpublished posts never appear in city_pulse_preview", async () => {
     clearL1Cache();   // isolate from previous test's L1 back-fill (same user, same cache key)
     const fakeDelayedPost = {
       id: "post-delayed", content: "not yet!", created_at: new Date().toISOString(),
-      author_id: USER_B, post_status: "pending_delay", status: "active", location_city: "Bangkok",
+      author_id: USER_B, post_status: "pending_delay", status: "active", visibility: "public", location_city: "Bangkok",
     };
     const fakePublishedPost = {
       id: "post-published", content: "live", created_at: new Date().toISOString(),
-      author_id: USER_B, post_status: null, status: "active", location_city: "Tokyo",
+      author_id: USER_B, post_status: null, status: "active", visibility: "public", location_city: "Tokyo",
     };
 
     const { db } = makeFakeDb({
@@ -712,11 +746,11 @@ describe("Cellular mode — no video previews in city_pulse_preview", () => {
     const VIDEO_USER = "00000000-0000-0000-7777-000000000077";
     const fakeVideoPost = {
       id: "post-video", content: "watch this!", created_at: new Date().toISOString(),
-      author_id: VIDEO_USER, post_status: null, status: "active", has_video: true, location_city: "Barcelona",
+      author_id: VIDEO_USER, post_status: null, status: "active", visibility: "public", has_video: true, location_city: "Barcelona",
     };
     const fakeTextPost = {
       id: "post-text", content: "hello world", created_at: new Date().toISOString(),
-      author_id: VIDEO_USER, post_status: null, status: "active", has_video: false, location_city: "Barcelona",
+      author_id: VIDEO_USER, post_status: null, status: "active", visibility: "public", has_video: false, location_city: "Barcelona",
     };
 
     const { db } = makeFakeDb({ posts: [fakeVideoPost, fakeTextPost] });
@@ -742,7 +776,7 @@ describe("Cellular mode — no video previews in city_pulse_preview", () => {
     const VIDEO_USER = "00000000-0000-0000-7777-000000000077";
     const fakeVideoPost = {
       id: "post-video-wifi", content: "watch this!", created_at: new Date().toISOString(),
-      author_id: VIDEO_USER, post_status: null, status: "active", has_video: true, location_city: "Barcelona",
+      author_id: VIDEO_USER, post_status: null, status: "active", visibility: "public", has_video: true, location_city: "Barcelona",
     };
 
     const { db } = makeFakeDb({ posts: [fakeVideoPost] });

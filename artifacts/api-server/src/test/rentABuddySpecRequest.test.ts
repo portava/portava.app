@@ -63,9 +63,28 @@ interface SpecState {
   buddyProfiles: any[];
   availabilityExceptions: any[];
   insertedBookings: any[];
+  /** feature_flags rows read by checkRentBuddyAccess / the kill switches. */
+  featureFlags: Record<string, boolean>;
+  /** rent_buddy_city_rollouts rows, matched by the .ilike("city", …) probe. */
+  cityRollouts: any[];
+  /** rent_buddy_user_limits rows, keyed by user_id. */
+  userLimits: any[];
 }
 
-let state: SpecState = { buddyProfiles: [], availabilityExceptions: [], insertedBookings: [] };
+const OPEN_FLAGS = (): Record<string, boolean> => ({
+  // Everything the booking gate stack reads, in its permissive state, so the
+  // pre-existing cases keep asserting what they were written to assert. The
+  // gate-specific cases override these individually.
+  rent_buddy_enabled: true,
+  disable_rent_buddy_booking: false,
+  disable_rab_bookings: false,
+  rent_buddy_allow_bookings_without_kyc: true,
+});
+
+let state: SpecState = {
+  buddyProfiles: [], availabilityExceptions: [], insertedBookings: [],
+  featureFlags: OPEN_FLAGS(), cityRollouts: [], userLimits: [],
+};
 
 function makeClient() {
   function fakeTable(table: string) {
@@ -80,6 +99,12 @@ function makeClient() {
       eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       lte(col: string, val: any) { this._filters.push(["lte", col, val]); return this; },
       gte(col: string, val: any) { this._filters.push(["gte", col, val]); return this; },
+      // checkRentBuddyAccess probes the city rollout with .ilike("city", city)
+      // (rentABuddyRollout.ts). Without this method the booking gate throws
+      // "this.ilike is not a function" and asyncHandler turns it into a 500 on
+      // every case in this file. Treated as eq — these fixtures use exact city
+      // names, so case-insensitivity is not what is under test here.
+      ilike(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       or() { return this; },
       order() { return this; },
       maybeSingle() { this._maybeSingle = true; return this; },
@@ -102,6 +127,34 @@ function makeClient() {
 
         if (t === "rent_buddy_profiles") {
           let rows = [...state.buddyProfiles];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, count: rows.length, error: null };
+        }
+
+        // Tables the booking gate stack reads. Before the gates were added to
+        // this route none of them were touched, so the fake fell through to the
+        // empty default — which now reads as "feature off" and 403s everything.
+        if (t === "feature_flags") {
+          const flag = this._filters.find(([op, col]) => op === "eq" && col === "flag")?.[2];
+          const enabled = state.featureFlags[flag as string];
+          if (enabled === undefined) return { data: null, error: null };
+          return { data: { flag, enabled }, error: null };
+        }
+
+        if (t === "rent_buddy_city_rollouts") {
+          let rows = [...state.cityRollouts];
+          for (const [op, col, val] of this._filters) {
+            if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+          }
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, count: rows.length, error: null };
+        }
+
+        if (t === "rent_buddy_user_limits") {
+          let rows = [...state.userLimits];
           for (const [op, col, val] of this._filters) {
             if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
           }
@@ -171,6 +224,11 @@ beforeEach(() => {
     ],
     availabilityExceptions: [],
     insertedBookings: [],
+    // Gate stack open by default so the availability cases below keep testing
+    // availability rather than the gates. Each gate case closes exactly one.
+    featureFlags: OPEN_FLAGS(),
+    cityRollouts: [{ city: "Seoul", status: "live", is_active: true }],
+    userLimits: [],
   };
   const client = makeClient();
   _setTestClient(client as any, true);

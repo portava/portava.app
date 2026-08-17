@@ -16,29 +16,27 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
-import { requireUser, sendError } from '../lib/http.js';
+import { requireUser, sendError, safeSecretEquals, tripExists, isAcceptedTripMember } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
-import { sniffMedia, processImage, computePHash, makeFeedVariant } from '../lib/mediaProcessing.js';
+import { processImage, computePHash, makeFeedVariant } from '../lib/mediaProcessing.js';
+import {
+  guardUploadRequest,
+  validateDeclaredUpload,
+  verifyUploadedBytes,
+  MEDIA_SIZE_LIMITS,
+} from '../lib/mediaPipeline.js';
 
 const router = Router();
 
 const STORAGE_BUCKET = 'post-media';
 const MAX_MEDIA_PER_POSTCARD = 10;
-const MAX_VIDEO_BYTES = 100 * 1024 * 1024;  // 100 MB
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024;   // 20 MB
+// Size ceilings and the MIME allowlist now live in lib/mediaPipeline.ts, shared
+// with POST /api/media/upload. They diverged while they were local: this path
+// allowed 20 MB images against the other path's 15 MB, for the same photo from
+// the same picker.
 
-const ALLOWED_MIME: Record<string, { mediaType: 'image' | 'video'; ext: string }> = {
-  'image/jpeg':      { mediaType: 'image', ext: 'jpg' },
-  'image/jpg':       { mediaType: 'image', ext: 'jpg' },
-  'image/png':       { mediaType: 'image', ext: 'png' },
-  'image/webp':      { mediaType: 'image', ext: 'webp' },
-  'image/heic':      { mediaType: 'image', ext: 'heic' },
-  'video/mp4':       { mediaType: 'video', ext: 'mp4' },
-  'video/quicktime': { mediaType: 'video', ext: 'mov' },
-  'video/webm':      { mediaType: 'video', ext: 'webm' },
-};
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isValidUuid(v: unknown): v is string {
@@ -254,12 +252,39 @@ router.post('/postcards', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // Emergency posting stop. POST /posts has always honoured this; the postcard
+  // shell is a post row by another name and did not, so engaging the switch
+  // stopped one composer and left the other writing posts. Fail-CLOSED via
+  // isKillSwitchEngaged: an unreadable stop engages.
+  if (await isKillSwitchEngaged(sc, 'disable_posting')) {
+    sendError(res, 'feature_disabled', 'Posting is temporarily disabled');
+    return;
+  }
+
   const parsed = createPostcardSchema.safeParse(req.body);
   if (!parsed.success) {
     sendError(res, 'invalid_payload', parsed.error.issues[0]?.message ?? 'Invalid payload');
     return;
   }
   const p = parsed.data;
+
+  // Trip-attached: verify existence + accepted membership BEFORE writing.
+  // Identical gate to POST /api/posts — the postcard shell is a posts row by
+  // another name, and posts.trip_id is what every trip-scoped reader trusts
+  // (GET /trips/:tripId/posts, the trip_only visibility checks in mediaFeed and
+  // checkEngagePermission, contentStamps). The posts_trip_id_fkey constraint
+  // only rejects a nonexistent trip; it knows nothing about membership, so
+  // without this a client could attach a postcard to any trip id it can guess.
+  if (p.tripId) {
+    if (!(await tripExists(sc, p.tripId))) {
+      sendError(res, 'not_found', 'Trip not found');
+      return;
+    }
+    if (!(await isAcceptedTripMember(sc, p.tripId, user.id))) {
+      sendError(res, 'not_member', 'You must be an accepted member of this trip to post to it');
+      return;
+    }
+  }
 
   // Column mapping: provider place refs go to location_place_id (same column
   // the /api/posts flow writes — a bare `place_id` column does not exist).
@@ -377,10 +402,17 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  // Emergency media kill switch (audit: this path previously ignored it).
-  // Fail-CLOSED: an unreadable stop engages.
-  if (await isKillSwitchEngaged(sc, 'disable_media_uploads')) {
-    sendError(res, 'feature_disabled', 'Media uploads are temporarily disabled');
+  // Emergency media kill switch AND the per-user upload rate limit, both from
+  // lib/mediaPipeline so this transport draws on the same budget as
+  // POST /api/media/upload. Rate limiting was previously absent here entirely:
+  // minting signed upload URLs was unbounded, so a client could push 100 MB
+  // objects at the storage bill without ever touching a limiter.
+  const guard = await guardUploadRequest(sc, user.id);
+  if (!guard.ok) {
+    if (guard.failure.code === 'rate_limited') {
+      res.setHeader('Retry-After', Math.ceil(guard.failure.retryAfterMs / 1000).toString());
+    }
+    sendError(res, guard.failure.code, guard.failure.message);
     return;
   }
 
@@ -391,20 +423,16 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
   }
   const { mimeType, fileSizeBytes } = parsed.data;
 
-  // MIME validation
-  const mimeInfo = ALLOWED_MIME[mimeType];
-  if (!mimeInfo) {
-    sendError(res, 'invalid_payload', `Unsupported MIME type: ${mimeType}. Supported: ${Object.keys(ALLOWED_MIME).join(', ')}`);
+  // Declared MIME + size, from the shared policy table. This path used to allow
+  // 20 MB images while /api/media/upload allowed 15 MB, for the same photo from
+  // the same picker; the shared limit is 15 MB, which is the number that had
+  // documented reasoning behind it.
+  const declared = validateDeclaredUpload({ mimeType, fileSizeBytes });
+  if (!declared.ok) {
+    sendError(res, declared.failure.code, declared.failure.message);
     return;
   }
-
-  // Size validation
-  const sizeLimit = mimeInfo.mediaType === 'video' ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
-  if (fileSizeBytes > sizeLimit) {
-    const limitMB = Math.round(sizeLimit / 1024 / 1024);
-    sendError(res, 'invalid_payload', `File too large. Maximum ${limitMB} MB for ${mimeInfo.mediaType}.`);
-    return;
-  }
+  const mimeInfo = declared.value;
 
   // Verify post ownership
   const { data: postRow, error: postErr } = await sc
@@ -578,8 +606,9 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
       const dl = await sc.storage.from(STORAGE_BUCKET).download(storagePath);
       if ((dl as any).error || !(dl as any).data) throw new Error((dl as any).error?.message ?? 'download failed');
       const rawBuf = Buffer.from(await (dl as any).data.arrayBuffer());
-      const sniffed = sniffMedia(rawBuf);
-      if (!sniffed || sniffed.kind !== 'image') throw new Error('uploaded bytes are not an image');
+      const verified = verifyUploadedBytes(rawBuf, 'image');
+      if (!verified.ok) throw new Error(verified.failure.message);
+      const sniffed = verified.value;
       const img = await processImage(rawBuf, sniffed);
       const { error: reErr } = await sc.storage
         .from(STORAGE_BUCKET)
@@ -620,6 +649,57 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     } catch (err) {
       req.log.error({ err, mediaId }, 'postcards: image processing failed — completion rejected (retryable)');
       sendError(res, 'invalid_payload', 'Image could not be processed. Please re-upload.');
+      return;
+    }
+  } else {
+    // VIDEO — verify the stored bytes are really a video, and really within the
+    // ceiling.
+    //
+    // Until now video got NO byte-level check on this transport: the whole
+    // processing block above is gated on media_type === 'image', so the only
+    // thing ever validated for a video was the size the CLIENT declared before
+    // uploading. On a signed-URL transport the client has already written the
+    // object by then, so a declaration is not validation — a client could
+    // declare 1 MB of video/mp4 and store 500 MB of anything.
+    //
+    // Verified with a 64-byte RANGE read rather than a full download: magic
+    // bytes live in the first few, and pulling 100 MB through an autoscale
+    // process to read 12 of them is what made "just check it" look expensive
+    // enough to skip. Content-Range carries the true stored length, so the real
+    // size ceiling is enforced from the same request.
+    //
+    // Fail-CLOSED, matching images: completion is refused and is retryable,
+    // rather than marking ready a row whose bytes nothing has ever inspected.
+    try {
+      const signed = await sc.storage.from(STORAGE_BUCKET).createSignedUrl(storagePath, 60);
+      const signedUrl = (signed as any)?.data?.signedUrl;
+      if (!signedUrl) {
+        throw new Error((signed as any)?.error?.message ?? 'could not sign stored object for verification');
+      }
+
+      const probe = await fetch(signedUrl, { headers: { Range: 'bytes=0-63' } });
+      if (!probe.ok && probe.status !== 206) {
+        throw new Error(`verification read failed (HTTP ${probe.status})`);
+      }
+      const headBuf = Buffer.from(await probe.arrayBuffer());
+
+      const verified = verifyUploadedBytes(headBuf, 'video');
+      if (!verified.ok) throw new Error(verified.failure.message);
+
+      // "bytes 0-63/12345678" — the trailing total is the stored object size.
+      // Absent (or a 200 without Content-Range) means the store did not honour
+      // the range; skip the size assertion rather than guess from 64 bytes.
+      const contentRange = probe.headers.get('content-range');
+      const totalBytes = contentRange ? Number(contentRange.split('/')[1]) : NaN;
+      if (Number.isFinite(totalBytes) && totalBytes > MEDIA_SIZE_LIMITS.video) {
+        throw new Error(
+          `stored video is ${Math.round(totalBytes / 1024 / 1024)}MB; ` +
+          `max ${Math.round(MEDIA_SIZE_LIMITS.video / 1024 / 1024)}MB`,
+        );
+      }
+    } catch (err) {
+      req.log.error({ err, mediaId }, 'postcards: video verification failed — completion rejected (retryable)');
+      sendError(res, 'invalid_payload', 'Video could not be verified. Please re-upload.');
       return;
     }
   }
@@ -1132,7 +1212,11 @@ function requireInternalSecret(req: any, res: any): boolean {
     return false;
   }
   const provided = req.headers['x-internal-secret'];
-  if (provided !== secret) {
+  // Constant-time compare — a plain !== leaks how many leading characters
+  // matched through response timing, which is enough to recover
+  // INTERNAL_API_SECRET byte by byte, and that secret gates endpoints which
+  // bypass user auth entirely. See safeSecretEquals in lib/http.ts.
+  if (!safeSecretEquals(provided, secret)) {
     res.status(401).json({ error: 'unauthorized', message: 'Missing or invalid internal secret' });
     return false;
   }

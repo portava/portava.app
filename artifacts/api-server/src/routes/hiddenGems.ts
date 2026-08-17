@@ -1001,6 +1001,24 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
   const threadId = req.body?.threadId;
   if (!threadId) { sendError(res, "invalid_payload", "threadId is required"); return; }
 
+  // Thread access is gated ONLY by message_thread_members — the same check the
+  // canonical send path makes before its insert (routes/messaging.ts, and
+  // verifyThreadMember in routes/telegraphChat.ts). Without it, threadId came
+  // straight from the body and any authenticated user could post a message into
+  // ANY thread id they could guess. The insert below runs on the service-role
+  // client, so RLS is not a backstop, and messages_thread_id_fkey only proves
+  // the thread exists — not that the sender belongs to it.
+  const { data: threadMember } = await sc
+    .from("message_thread_members")
+    .select("user_id, left_at")
+    .eq("thread_id", threadId)
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!threadMember || (threadMember as any).left_at !== null) {
+    sendError(res, "forbidden", "Not a member of this thread");
+    return;
+  }
+
   try {
     const gem = await getGem(sc, req.params.id);
     if (!gem) { sendError(res, "not_found", "Gem not found"); return; }

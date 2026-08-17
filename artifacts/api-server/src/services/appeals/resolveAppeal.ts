@@ -34,7 +34,13 @@ export async function resolveAppeal(
         .from("posts")
         .update({ deleted_at: null, updated_at: new Date().toISOString() })
         .eq("id", target_id)
-        .eq("user_id", appellant_id);
+        // author_id, not user_id: `posts` has no user_id column (see the
+        // canonical POST_COLUMNS list in routes/posts.ts). The old filter made
+        // every post-appeal restore fail with an undefined-column error, which
+        // this function then reported as a silent "noop" — the appeal resolved
+        // while the post stayed deleted. The sibling memory case already uses
+        // that table's own owner_id, so the per-table naming was known.
+        .eq("author_id", appellant_id);
       if (error) return { ok: false, action: "noop", reason: `post restore failed: ${error.message}` };
       return { ok: true, action: "post_restored" };
     }

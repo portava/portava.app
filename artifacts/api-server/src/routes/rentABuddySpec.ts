@@ -2,8 +2,11 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { findBlockingAvailabilityException, sendBuddyUnavailable } from "./rentABuddy.js";
+import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
+import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
+import { isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 
 const router = Router();
 
@@ -406,9 +409,47 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  const { user } = auth;
+
+  // ── Booking-creation gate stack ────────────────────────────────────────────
+  // This route INSERTs a rent_buddy_bookings row, which makes it a booking
+  // CREATION path, and it carried none of the gates the canonical
+  // POST /rent-a-buddy/bookings applies. It is reachable from mobile as
+  // /api/buddies/:buddyId/request via lib/specAliasRewrite.ts, so it was a full
+  // bypass of KYC, both kill switches, the city rollout and admin user limits.
+  //
+  // rentBuddyKycGate.ts claims the KYC gate "is applied to BOTH insert paths".
+  // There are five creation paths; before this change two were gated. That
+  // sentence is what kept anyone from looking.
+  //
+  // Order mirrors rentABuddy.ts:1002-1050 deliberately: gate failures preempt
+  // payload validation and the buddy lookup, so a caller cannot use error
+  // shapes to probe which buddies exist while the feature is closed.
+  if (!await requireBookingKyc(serviceClient, res)) return;
+
+  if (await isKillSwitchEngaged(serviceClient, 'disable_rent_buddy_booking')
+      || await isKillSwitchEngaged(serviceClient, 'disable_rab_bookings')) {
+    return res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+  }
 
   const { buddyId } = req.params;
   const { bookingDate, durationH, city, category, notes, groupSize } = req.body ?? {};
+
+  const rolloutAccess = await checkRentBuddyAccess({
+    sc: serviceClient, userId: user.id,
+    city, category, action: "book", groupSize,
+  });
+  if (!rolloutAccess.allowed) {
+    return res.status(rolloutAccess.httpStatus).json({ error: rolloutAccess.code, message: rolloutAccess.message });
+  }
+
+  const limits = await getUserLimits(serviceClient, user.id);
+  if (limits?.rent_buddy_disabled || limits?.traveler_booking_disabled) {
+    return res.status(403).json({
+      error: "access_limited",
+      message: "Rent a Buddy access is limited while your account is under review.",
+    });
+  }
 
   // Required field validation
   if (!bookingDate || !durationH || !city || !category) {

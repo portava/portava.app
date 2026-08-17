@@ -28,6 +28,7 @@ import {
   readStoredPlacePhoto,
   writeStoredPlacePhoto,
   mintPhotoUrl,
+  photoProxyUrl,
 } from "../lib/discoveryPlacePhotoStore.js";
 import { namespaceGooglePlaceId, denamespaceGooglePlaceId } from "../lib/googlePlaceId";
 
@@ -581,6 +582,56 @@ const GOOGLE_DETAILS_ERROR_LOGGED = { at: 0 };
 const GOOGLE_DETAILS_KEY_LOGGED = { at: 0 };
 const GOOGLE_KEY_STATE_LOGGED = { at: 0 };
 const FSQ_KEY_STATE_LOGGED = { at: 0 };
+
+// ── GET /api/places/photo/media ───────────────────────────────────────────────
+//
+// Byte proxy for Google Places photos. Google's media endpoint takes the API
+// key as a query parameter, and /places/photo previously returned that
+// key-bearing URL to the caller — on a route with NO auth guard, so anyone
+// could read GOOGLE_MAPS_API_KEY straight out of the JSON and spend against
+// this project's Google billing. The key now never leaves the server: clients
+// get a URL pointing here, and this route fetches the bytes.
+//
+// `ref` is a Google photo resource name ("places/<id>/photos/<id>"). It is
+// pattern-validated and then re-embedded into a URL THIS code constructs, so a
+// caller cannot steer the upstream fetch anywhere but googleapis.com — the ref
+// is a path segment of a fixed host, never a full URL.
+const PHOTO_REF_RE = /^places\/[A-Za-z0-9_-]{1,256}\/photos\/[A-Za-z0-9_-]{1,512}$/;
+
+router.get("/places/photo/media", async (req, res) => {
+  const ref = String(req.query.ref ?? "").trim();
+  const width = Math.min(Math.max(Number(req.query.w) || 800, 64), 1600);
+
+  if (!PHOTO_REF_RE.test(ref)) {
+    res.status(400).json({ error: "invalid_payload", message: "invalid photo reference" });
+    return;
+  }
+
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) {
+    res.status(503).json({ error: "server_not_configured" });
+    return;
+  }
+
+  try {
+    const upstream = await fetch(
+      `https://places.googleapis.com/v1/${ref}/media?maxWidthPx=${width}&key=${key}`,
+    );
+    if (!upstream.ok) {
+      res.status(502).json({ error: "upstream_error" });
+      return;
+    }
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "image/jpeg");
+    // Immutable: a Google photo reference addresses fixed bytes.
+    res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+    res.send(buf);
+  } catch (err) {
+    logger.warn({ err, ref }, "Google photo media proxy failed");
+    res.status(502).json({ error: "upstream_error" });
+  }
+});
+
 router.get("/places/photo", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
   const lat = req.query.lat != null ? Number(req.query.lat) : null;
@@ -672,9 +723,12 @@ router.get("/places/photo", async (req, res) => {
       return;
     }
 
-    // Photo media endpoint requires its own key param — resolve it here
-    // server-side so the client never needs the key.
-    const photoUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=800&key=${key}`;
+    // Photo media endpoint requires its own key param — so we hand the client a
+    // URL pointing at our OWN byte proxy rather than Google's key-bearing URL.
+    // Returning the latter published GOOGLE_MAPS_API_KEY to every caller of this
+    // unauthenticated route; the comment below about not STORING it was right
+    // about the hazard and only half the exposure.
+    const photoUrl = photoProxyUrl(photoName);
 
     // Persist the REFERENCE, never this URL: it carries the API key, and a
     // stored key-bearing URL becomes a dead link the day the key rotates.

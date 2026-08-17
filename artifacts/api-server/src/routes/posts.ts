@@ -41,7 +41,12 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
-import { sniffMedia, processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
+import { processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
+import {
+  guardUploadRequest,
+  verifyUploadedBytes,
+  ALLOWED_MEDIA_MIME,
+} from "../lib/mediaPipeline.js";
 import { recordMediaAsset } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
@@ -51,32 +56,11 @@ import { detectAndStoreLanguage, invalidateContentTranslations } from "../servic
 const router = Router();
 
 const STORAGE_BUCKET = "post-media";
-/** Pre-processing size caps for /media/upload (this path had NONE — audit). */
-// Cap on the INBOUND upload, which is a different thing from MAX_IMAGE_DIM
-// (mediaProcessing.ts) — that one caps what the server keeps after re-encoding.
-// Raising MAX_IMAGE_DIM 2048 → 4096 does NOT move this number: the client has
-// always uploaded the full-resolution source, and the old 2048 cap only decided
-// how much of it survived. Inbound bytes are unchanged.
-//
-// Still adequate at 4096. The dominant source is a 12MP phone photo, and the
-// pickers re-encode at CAPTURE_QUALITY = 0.92, which lands at roughly 4–8 MB.
-// The case that would not fit is a 48MP source (8064 × 6048) at that quality,
-// around 15–18 MB — reachable only with HEIF-Max / ProRAW deliberately enabled,
-// and it was equally unable to fit before this change. If that becomes common
-// the number to move to is 25 MB, chosen to clear 48MP-at-q92 with headroom;
-// not raised here, because nothing observed needs it and a larger cap is a
-// larger memory footprint per concurrent upload.
-const MAX_UPLOAD_IMAGE_BYTES = 15 * 1024 * 1024;   // 15 MB
-const MAX_UPLOAD_VIDEO_BYTES = 100 * 1024 * 1024;  // 100 MB
-const ALLOWED_MIME: Record<string, string> = {
-  "image/jpeg": "jpg",
-  "image/jpg": "jpg",
-  "image/png": "png",
-  "image/webp": "webp",
-  "image/heic": "heic",
-  "video/mp4": "mp4",
-  "video/quicktime": "mov",
-};
+// Inbound size caps and the MIME allowlist moved to lib/mediaPipeline.ts
+// (MEDIA_SIZE_LIMITS, ALLOWED_MEDIA_MIME), shared with the postcard signed-URL
+// transport. They are a different thing from MAX_IMAGE_DIM in
+// mediaProcessing.ts, which caps what the server KEEPS after re-encoding rather
+// than what it accepts; the reasoning for the 15 MB figure moved with it.
 
 /* ===========================================================================
  * POST /media/upload  — authenticated media upload proxied through API server
@@ -102,44 +86,38 @@ router.post(
     const sc = getServiceClient();
     if (!sc) { sendError(res, "server_not_configured", "Storage not configured"); return; }
 
-    // Emergency kill switch — this endpoint previously ignored it (audit).
-    // Fail-CLOSED: an unreadable stop engages.
-    if (await isKillSwitchEngaged(sc, "disable_media_uploads")) {
-      sendError(res, "feature_disabled", "Media uploads are temporarily disabled");
-      return;
-    }
-
-    // Upload-flood guard (audit: no rate limit + no size cap on this path).
-    const rl = checkRateLimit("media_upload", user.id, 30, 5 * 60_000);
-    if (!rl.allowed) {
-      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
-      sendError(res, "rate_limited", "Too many uploads. Please wait a moment.");
+    // Kill switch + per-user upload budget, from lib/mediaPipeline so this
+    // transport and the postcard signed-URL transport share one policy and one
+    // rate-limit bucket — switching endpoint does not buy a fresh allowance.
+    const guard = await guardUploadRequest(sc, user.id);
+    if (!guard.ok) {
+      if (guard.failure.code === "rate_limited") {
+        res.setHeader("Retry-After", Math.ceil(guard.failure.retryAfterMs / 1000).toString());
+      }
+      sendError(res, guard.failure.code, guard.failure.message);
       return;
     }
 
     const declaredMime = (req.headers["content-type"] ?? "").split(";")[0].trim();
-    if (!ALLOWED_MIME[declaredMime]) {
+    const declaredInfo = ALLOWED_MEDIA_MIME[declaredMime];
+    if (!declaredInfo) {
       sendError(res, "invalid_payload", `Unsupported media type: ${declaredMime}`);
       return;
     }
-    const rawBody: Buffer = (req as any).rawBody;
-    if (!rawBody || rawBody.length === 0) {
-      sendError(res, "invalid_payload", "Empty file body");
-      return;
-    }
 
-    // Content sniffing: the bytes decide the real type — the header is untrusted.
-    const sniffed = sniffMedia(rawBody);
-    if (!sniffed) {
-      sendError(res, "invalid_payload", "Unrecognized or corrupt media file");
+    // The bytes decide the real type — the header is untrusted. verifyUploadedBytes
+    // folds together the three checks this path used to run inline (non-empty,
+    // recognisable, within the ceiling for its REAL kind) and adds one it did
+    // not: rejecting a declared/actual KIND mismatch, so a request announcing
+    // image/jpeg cannot store a video that every downstream consumer will then
+    // treat as a photo.
+    const rawBody: Buffer = (req as any).rawBody;
+    const verified = verifyUploadedBytes(rawBody, declaredInfo.mediaType);
+    if (!verified.ok) {
+      sendError(res, verified.failure.code, verified.failure.message);
       return;
     }
-    const sizeCap = sniffed.kind === "video" ? MAX_UPLOAD_VIDEO_BYTES : MAX_UPLOAD_IMAGE_BYTES;
-    if (rawBody.length > sizeCap) {
-      sendError(res, "invalid_payload",
-        `File too large (${Math.round(rawBody.length / 1024 / 1024)}MB; max ${Math.round(sizeCap / 1024 / 1024)}MB)`);
-      return;
-    }
+    const sniffed = verified.value;
 
     let uploadBuf = rawBody;
     let uploadMime = sniffed.mime;

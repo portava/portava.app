@@ -192,10 +192,18 @@ export class NotificationRouter {
         .eq('id', userId)
         .maybeSingle();
 
+      // Deduped: the legacy profiles.expo_push_token was populated from the same
+      // Expo token that later landed in devices.push_token, so for most users
+      // the two sources return the SAME string and every routed push was
+      // delivered twice.
       const tokens = [
-        ...((devices ?? []) as any[]).map((d: any) => d.push_token as string),
-        (profile as any)?.expo_push_token ?? null,
-      ].filter(Boolean);
+        ...new Set(
+          [
+            ...((devices ?? []) as any[]).map((d: any) => d.push_token as string),
+            (profile as any)?.expo_push_token ?? null,
+          ].filter(Boolean),
+        ),
+      ];
 
       if (tokens.length === 0) {
         await this.logAttempt(notification.id, userId, 'push', 'suppressed', 'no push tokens');

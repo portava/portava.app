@@ -71,16 +71,29 @@ router.post("/auth/lookup-username", lookupUsernameLimiter, async (req, res) => 
   try {
     // Query auth.users via the admin API. The auth schema is not exposed through
     // PostgREST, so the service-role client cannot use client.schema("auth").
-    const { data: usersPage, error: authError } = await (client as any).auth.admin.listUsers({
-      page: 1,
-      perPage: 1000,
-    });
+    // Paginate. A single page:1 lookup silently misses every account past the
+    // first 1000 and answers "no account found" — a false negative on account
+    // RECOVERY that only appears once the user base crosses 1000 and then
+    // worsens. Same loop shape as the email lookup in routes/admin.ts.
+    const needle = email.toLowerCase();
+    let user: { id: string } | null = null;
+    let lookupError: unknown = null;
+    for (let page = 1; ; page++) {
+      const { data: usersPage, error: pageError } = await (client as any).auth.admin.listUsers({
+        page,
+        perPage: 1000,
+      });
+      if (pageError) { lookupError = pageError; break; }
+      const users = (usersPage?.users ?? []) as any[];
+      if (users.length === 0) break;
+      const match = users.find(
+        (u: any) => typeof u.email === "string" && u.email.toLowerCase() === needle,
+      );
+      if (match) { user = match; break; }
+      if (users.length < 1000) break; // last page — not found
+    }
 
-    const user = usersPage?.users?.find(
-      (u: any) => typeof u.email === "string" && u.email.toLowerCase() === email.toLowerCase(),
-    );
-
-    if (authError || !user?.id) {
+    if (lookupError || !user?.id) {
       res.status(404).json({ error: "No account found with that email address." });
       return;
     }

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
-import { stampOverlayCol } from "../lib/postMediaOverlay";
+import { stampOverlayCol, feedVariantCol } from "../lib/postMediaOverlay";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { resolveProfileVisibility, extractBearerToken } from "../lib/profileVisibility";
 import { nameVisibleFor } from "../lib/publicIdentity";
@@ -65,6 +65,16 @@ function buildMediaArray(items: any[]): Array<Record<string, unknown>> {
       id:                m.id,
       media_type:        m.media_type,
       url:               m.public_url,
+      // feed_url was missing from this projection entirely while the sibling
+      // in routes/posts.ts (filterPostMedia) emitted it. The Postcard Wall is
+      // the surface migration 0208 was built for, and PostcardsTab already
+      // READS `feed_url` — it just always got undefined here, so every postcard
+      // silently served the full-size original instead of the ~1500px variant.
+      // `?? null` is load-bearing: feedVariantCol() omits the column entirely
+      // on a pre-0208 database, and test/feedVariantContract.test.ts requires
+      // the key to survive as an explicit null rather than be dropped as
+      // undefined.
+      feed_url:          m.feed_url ?? null,
       thumbnail_url:     m.thumbnail_url ?? null,
       duration_seconds:  m.duration_seconds ?? null,
       width:             m.width ?? null,
@@ -508,7 +518,7 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
     try {
         const { data: mediaRows } = await sc
           .from("post_media")
-          .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
+          .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)) + (await feedVariantCol(sc)))
           .in("post_id", postIds)
           .eq("processing_status", "ready");
       for (const m of (mediaRows ?? []) as any[]) {
@@ -576,7 +586,7 @@ router.get("/me/passport/postcards", async (req, res) => {
       try {
         const { data: mediaRows } = await sc
           .from("post_media")
-          .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)))
+          .select("post_id, id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)) + (await feedVariantCol(sc)))
           .in("post_id", ownerPostIds)
           .eq("processing_status", "ready");
         for (const m of (mediaRows ?? []) as any[]) {

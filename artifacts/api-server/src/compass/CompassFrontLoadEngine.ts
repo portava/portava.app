@@ -355,9 +355,18 @@ async function loadTier1(
       const blockedSet = new Set(profile.blockedUserIds ?? []);
       const { data: raw } = await db
         .from("posts")
-        .select("id, content, created_at, author_id, post_status, status, has_video")
+        .select("id, content, created_at, author_id, post_status, status, visibility, has_video")
         .eq("location_city", profile.currentCity)
         .eq("status", "active")
+        // City pulse is a SHARED surface. This query had no visibility
+        // predicate at all, and the caller hands it the service-role client
+        // (routes/compass.ts), which bypasses RLS — so every private and
+        // trip_only post caption in the viewer's city was being returned to any
+        // signed-in user who happened to be in that city. The post-filter below
+        // checked blocks, delayed-publish and video, but never visibility, and
+        // isPermitted() cannot help because for city_pulse_preview `data` is an
+        // array, so its per-item checks read undefined and pass unconditionally.
+        .eq("visibility", "public")
         .order("created_at", { ascending: false })
         .limit(20);
       pulsePreview = ((raw as any[]) ?? [])
@@ -366,11 +375,17 @@ async function loadTier1(
           !blockedSet.has(p.author_id as string) &&
           // Privacy: exclude posts pending delayed-publish
           (!p.post_status || p.post_status === "published") &&
+          // Privacy: second gate on visibility, deliberately redundant with the
+          // SQL predicate above. Defence in depth against a dropped predicate —
+          // and the only half of this fix the test harness can actually observe,
+          // because the fake DB in test/compass-cache.test.ts ignores .eq() on
+          // its array path and returns every row for the table.
+          p.visibility === "public" &&
           // Cellular: no video previews (bandwidth-sensitive)
           !(isCellular && p.has_video === true),
         )
         .slice(0, 5)
-        .map(({ post_status: _ps, status: _s, has_video: _hv, ...rest }: any) => rest);
+        .map(({ post_status: _ps, status: _s, visibility: _v, has_video: _hv, ...rest }: any) => rest);
     } catch { /* non-fatal */ }
   }
   items.push({ type: 'city_pulse_preview', tier: 1, cachedAt: now, data: pulsePreview });

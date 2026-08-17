@@ -198,15 +198,32 @@ function PostcardTile({
   const firstReady = allMedia.find((m) => m.processing_status === 'ready');
   const firstAny = allMedia[0];
   const displayItem = firstReady ?? firstAny;
-  // Preference order per item: thumbnail (400px, smallest that still reads at
-  // this size) → 0208 feed variant (~1500px) → original. feed_url is NULL for
-  // pre-0208 uploads, videos and failed derives, so it is skipped rather than
-  // requested-and-404'd; the chain below already degrades to the original.
-  const displayUri =
-    firstReady?.thumbnail_url ?? firstReady?.feed_url ?? firstReady?.url ??
-    firstAny?.thumbnail_url ?? firstAny?.feed_url ?? firstAny?.url ??
-    card.mediaUrl;
-  const isVideo = (firstReady ?? firstAny)?.media_type === 'video' || card.hasVideo;
+  const sourceIsVideo = displayItem?.media_type === 'video';
+
+  // IMAGE preference order: thumbnail (400px, smallest that still reads at this
+  // size) → 0208 feed variant (~1500px) → original. feed_url is NULL for
+  // pre-0208 uploads and failed derives, so it is skipped rather than
+  // requested-and-404'd; the chain degrades to the original.
+  //
+  // VIDEO is deliberately NOT part of that chain. A video row's `url` and
+  // `feed_url` address the video file itself, not a poster frame, so letting
+  // them reach an <Image> source is the blank-tile bug: the old chain fell
+  // straight past thumbnail_url to url for EVERY video postcard, because no
+  // video postcard has a thumbnail_url. The only postcard upload path
+  // (PostcardComposer → completeUpload) never sends `thumbnailPath`, and
+  // routes/postcards.ts only derives a feed variant when media_type ===
+  // 'image'. So an .mp4 was reliably bound into an image and rendered nothing.
+  //
+  // For video we therefore offer ONLY a real poster, and null when there isn't
+  // one — MediaCard renders its play-circle placeholder for a null
+  // thumbnailUrl, which is both the correct affordance and immediate, rather
+  // than waiting on a decode error that does not fire on every platform.
+  const displayUri = sourceIsVideo
+    ? (displayItem?.thumbnail_url ?? null)
+    : (firstReady?.thumbnail_url ?? firstReady?.feed_url ?? firstReady?.url ??
+       firstAny?.thumbnail_url ?? firstAny?.feed_url ?? firstAny?.url ??
+       card.mediaUrl);
+  const isVideo = sourceIsVideo || card.hasVideo;
   const hasPending = allMedia.length > 0 && !firstReady && allMedia.some((m) => m.processing_status === 'pending');
   const hasFailed = allMedia.length > 0 && !firstReady && allMedia.every((m) => m.processing_status === 'failed');
   const isCarousel = allMedia.length > 1;

@@ -112,10 +112,35 @@ export function mintPhotoUrl(stored: StoredPlacePhoto): string | null {
   if (stored.photoUrl) return stored.photoUrl;
   if (!stored.photoRef) return null;
 
+  // The key check is kept even though the URL below no longer embeds the key:
+  // it preserves the "degrade honestly" contract — with no key the proxy could
+  // only 503, so callers are better served falling through to category artwork.
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!key) return null;
 
-  return `https://places.googleapis.com/v1/${stored.photoRef}/media?maxWidthPx=800&key=${key}`;
+  return photoProxyUrl(stored.photoRef);
+}
+
+/**
+ * The URL a CLIENT should fetch for a Google photo reference.
+ *
+ * Deliberately NOT Google's own media URL. That one carries
+ * GOOGLE_MAPS_API_KEY as a query parameter, so returning it to a client
+ * publishes the key — and GET /api/places/photo, which returned it, has no auth
+ * guard, meaning anyone on the internet could read the key out of the response
+ * and spend against the project's Google billing. This points at the
+ * api-server byte proxy (GET /api/places/photo/media), which resolves the key
+ * server-side and streams the image back.
+ *
+ * Absolute where possible: the mobile client renders this straight into an
+ * image source and cannot resolve a relative path. Falls back to a relative
+ * path when API_BASE_URL is unset, which still works for same-origin web
+ * callers — the same `process.env.API_BASE_URL ?? ""` convention routes/
+ * mediaFeed.ts already uses.
+ */
+export function photoProxyUrl(photoRef: string, width = 800): string {
+  const base = (process.env.API_BASE_URL ?? "").replace(/\/+$/, "");
+  return `${base}/api/places/photo/media?ref=${encodeURIComponent(photoRef)}&w=${width}`;
 }
 
 /**

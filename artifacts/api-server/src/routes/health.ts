@@ -6,6 +6,7 @@ import { queryPublisherHealth } from "../lib/delayedPostPublisher.js";
 import { callPurgeOldWeatherCache } from "../lib/weatherCacheCleanup.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { safeSecretEquals } from "../lib/http.js";
 
 const router: IRouter = Router();
 
@@ -79,7 +80,9 @@ router.post("/admin/cleanup/weather-cache", asyncHandler(async (req, res) => {
     return;
   }
   const provided = req.headers["x-cleanup-secret"];
-  if (provided !== secret) {
+  // Constant-time compare — a plain !== leaks how many leading characters
+  // matched through response timing. See safeSecretEquals in lib/http.ts.
+  if (!safeSecretEquals(provided, secret)) {
     res.status(401).json({ error: "unauthorized" });
     return;
   }

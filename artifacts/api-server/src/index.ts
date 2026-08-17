@@ -1,6 +1,6 @@
 // Sentry must be the very first import so it can instrument the process before
 // any other module loads.  The module is a no-op when SENTRY_DSN is not set.
-import "./lib/sentry.js";
+import { Sentry } from "./lib/sentry.js";
 
 import app from "./app";
 import { logger } from "./lib/logger";
@@ -41,6 +41,31 @@ import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
+
+// ── Crash backstop for fire-and-forget side effects ──────────────────────────
+// ~190 call sites launch best-effort work as `void fn(...)`, and not all of
+// those callees swallow their own errors: recordTrustEvent (19 unguarded call
+// sites) ends with `if (error) throw new Error(...)` on any trust_events write
+// failure. Node's default for an unhandled rejection is to TERMINATE the
+// process, so one transient Postgres error on a side effect nobody awaited
+// would take down the whole API and every in-flight request with it.
+//
+// Sentry's OnUnhandledRejection integration registers a listener that masks
+// this — but lib/sentry.ts is a no-op unless SENTRY_DSN is set, so the
+// protection silently vanishes in exactly the environments least likely to
+// have a DSN. This backstop must not depend on the error reporter being
+// configured.
+//
+// These promises are best-effort by contract, so the right response is to log
+// loudly and keep serving rather than to die. captureException is safe to call
+// unconditionally: without a DSN the SDK is inert.
+process.on("unhandledRejection", (reason) => {
+  logger.error(
+    { err: reason },
+    "unhandled promise rejection from fire-and-forget work — request unaffected, side effect lost",
+  );
+  Sentry.captureException(reason);
+});
 
 const rawPort = process.env["PORT"];
 

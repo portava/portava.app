@@ -6,6 +6,7 @@ import { normalizedFriendshipPair } from "../lib/friendDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { getSeenIds, markAsSeen, clearSeen, dailySeed, seededShuffle } from "../lib/suggestionSeenCache";
 import { isKillSwitchEngaged } from "../lib/featureFlags";
+import { safeOrIlikeValue } from "../lib/postgrestFilter";
 
 const router = Router();
 
@@ -525,7 +526,13 @@ router.get("/users/search", async (req, res) => {
   if (!q) { res.status(200).json({ users: [] }); return; }
 
   const limit = Math.min(Math.max(parseInt((req.query.limit as string) ?? "20", 10) || 20, 1), 50);
-  const pattern = `%${q.replace(/[%_]/g, "\\$&")}%`;
+  // safeOrIlikeValue, not a bare wildcard escape: `pattern` is spliced into an
+  // .or() FILTER EXPRESSION below, where `,` ends a predicate and starts the
+  // next one. Escaping only %/_ leaves that structure hazard open — a query of
+  // `zzz,name.ilike.` injected a bare `name.ilike.%` and returned arbitrary
+  // profiles instead of search matches. See lib/postgrestFilter.ts: the two
+  // hazards need two different functions and are not interchangeable.
+  const pattern = `%${safeOrIlikeValue(q)}%`;
 
   const { getServiceClient } = await import("../lib/supabase");
   const sc = getServiceClient();

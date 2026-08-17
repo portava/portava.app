@@ -6,6 +6,7 @@
  * table is empty or unavailable.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { safeOrIlikeValue } from "../../lib/postgrestFilter.js";
 import {
   searchStaticAirports,
   resolveStaticByIata,
@@ -178,11 +179,18 @@ export async function searchAirports(
 ): Promise<AirportProfile[]> {
   const q = query.trim();
   if (!q) return [];
+  // The .or() argument is a filter EXPRESSION: an unescaped `,` in `q` ends the
+  // current predicate and starts a caller-chosen one, and a bare `%` turns the
+  // prefix search into a full scan. `q` arrives from a z.string().max(100) with
+  // no character constraint, so it must be sanitised here rather than trusted.
+  // The static fallback below keeps using the raw `q` — it is an in-memory
+  // string match with no filter grammar to break out of.
+  const qSafe = safeOrIlikeValue(q);
   try {
     const { data } = await db
       .from("airport_profiles")
       .select("*")
-      .or(`iata_code.ilike.${q}%,city.ilike.%${q}%,name.ilike.%${q}%`)
+      .or(`iata_code.ilike.${qSafe}%,city.ilike.%${qSafe}%,name.ilike.%${qSafe}%`)
       .order("verified", { ascending: false })
       .limit(10);
     // If DB has results, use them

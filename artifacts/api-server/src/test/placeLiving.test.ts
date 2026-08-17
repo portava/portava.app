@@ -275,6 +275,7 @@ describe("GET /places/:id/living", () => {
       id:                  `post-${i}`,
       canonical_place_id:  PLACE_ID,
       status:              "active",
+      visibility:          "public",
       content:             `Caption ${i}`,
       media_urls:          [`https://cdn.example.com/img${i}.jpg`],
       media_type:          "photo",
@@ -320,6 +321,7 @@ describe("GET /places/:id/living", () => {
       id:                  `drone-post-${i}`,
       canonical_place_id:  PLACE_ID,
       status:              "active",
+      visibility:          "public",
       content:             `Drone shot ${i}`,
       media_urls:          [`https://cdn.example.com/drone${i}.jpg`],
       media_type:          "photo",
@@ -383,13 +385,13 @@ describe("GET /places/:id/living", () => {
   it("sparseMode is true when < 5 total posts", async () => {
     const posts = [
       {
-        id: "p1", canonical_place_id: PLACE_ID, status: "active",
+        id: "p1", canonical_place_id: PLACE_ID, status: "active", visibility: "public",
         content: "a", media_urls: [], media_type: "photo",
         media_thumbnail_url: null, author_id: USER_ID,
         created_at: hoursAgo(1), like_count: 0, save_count: 0, share_count: 0, view_count: 0, post_buckets: [],
       },
       {
-        id: "p2", canonical_place_id: PLACE_ID, status: "active",
+        id: "p2", canonical_place_id: PLACE_ID, status: "active", visibility: "public",
         content: "b", media_urls: [], media_type: "photo",
         media_thumbnail_url: null, author_id: USER_ID,
         created_at: hoursAgo(2), like_count: 0, save_count: 0, share_count: 0, view_count: 0, post_buckets: [],
@@ -422,7 +424,7 @@ describe("GET /places/:id/living", () => {
 
     const posts = [
       {
-        id: "p1", canonical_place_id: PLACE_ID, status: "active",
+        id: "p1", canonical_place_id: PLACE_ID, status: "active", visibility: "public",
         content: "hi", media_urls: [], media_type: "photo",
         media_thumbnail_url: null, author_id: USER_ID,
         created_at: hoursAgo(1), like_count: 0, save_count: 0, share_count: 0, view_count: 0, post_buckets: [],
@@ -496,13 +498,13 @@ describe("GET /places/:id/living/timeline", () => {
   it("returns posts within last 24 h for slice=today", async () => {
     const posts = [
       {
-        id: "recent", canonical_place_id: PLACE_ID, status: "active",
+        id: "recent", canonical_place_id: PLACE_ID, status: "active", visibility: "public",
         content: "recent", media_urls: ["https://cdn.example.com/a.jpg"],
         media_type: "photo", media_thumbnail_url: null, author_id: USER_ID,
         created_at: hoursAgo(1), like_count: 5, post_buckets: [],
       },
       {
-        id: "old", canonical_place_id: PLACE_ID, status: "active",
+        id: "old", canonical_place_id: PLACE_ID, status: "active", visibility: "public",
         content: "old post", media_urls: [],
         media_type: "photo", media_thumbnail_url: null, author_id: USER_ID,
         created_at: hoursAgo(48), like_count: 0, post_buckets: [],
@@ -524,16 +526,59 @@ describe("GET /places/:id/living/timeline", () => {
     server.close();
   });
 
+  it("timeline never returns private, trip_only or unpublished posts to an anonymous caller", async () => {
+    // Regression lock. The living page is an ANONYMOUS surface (optionalUser,
+    // mounted bare) served through the SERVICE-ROLE client, so RLS is bypassed.
+    // All three of its post queries filtered only on canonical_place_id +
+    // status, with no visibility predicate, so private and trip_only captions
+    // and not-yet-published delayed posts were returned to any caller at all.
+    //
+    // Unlike compass-cache.test.ts — whose fake DB ignores .eq() on the array
+    // path, leaving only the in-memory gate observable — the fake client here
+    // implements .eq() as a real r[col] === val filter. So this exercises BOTH
+    // halves: the SQL predicate AND the isEligiblePlaceDayPost gate that covers
+    // post_status / publish_at.
+    const base = {
+      canonical_place_id: PLACE_ID, content: "x", media_urls: [],
+      media_type: "photo", media_thumbnail_url: null, author_id: USER_ID,
+      created_at: hoursAgo(1), like_count: 0, post_buckets: [],
+    };
+    const posts = [
+      { ...base, id: "ok-public",   status: "active", visibility: "public" },
+      { ...base, id: "no-private",  status: "active", visibility: "private" },
+      { ...base, id: "no-triponly", status: "active", visibility: "trip_only" },
+      // Public, but its delayed-publish geofence has not cleared yet — only the
+      // isEligiblePlaceDayPost gate catches this one.
+      { ...base, id: "no-pending",  status: "active", visibility: "public", post_status: "pending_location_exit" },
+    ];
+
+    const sc  = makeFakeSc({ posts });
+    const app = makeApp(sc);
+    server = http.createServer(app);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+
+    const res = await request(server, "GET", `/places/${PLACE_ID}/living/timeline?slice=today`);
+    assert.equal(res.status, 200);
+    const ids = (res.body.posts ?? []).map((p: any) => p.id);
+
+    assert.ok(ids.includes("ok-public"), "public published posts must still be returned");
+    assert.ok(!ids.includes("no-private"),  "private posts must never reach the living page");
+    assert.ok(!ids.includes("no-triponly"), "trip_only posts must never reach the living page");
+    assert.ok(!ids.includes("no-pending"),  "delayed posts must not surface before they publish");
+
+    server.close();
+  });
+
   it("week slice: posts include like_count so client engagement sort works", async () => {
     const posts = [
       {
-        id: "high-likes", canonical_place_id: PLACE_ID, status: "active",
+        id: "high-likes", canonical_place_id: PLACE_ID, status: "active", visibility: "public",
         content: "popular", media_urls: ["https://cdn.example.com/a.jpg"],
         media_type: "photo", media_thumbnail_url: null, author_id: USER_ID,
         created_at: hoursAgo(120), like_count: 42, post_buckets: [],
       },
       {
-        id: "low-likes", canonical_place_id: PLACE_ID, status: "active",
+        id: "low-likes", canonical_place_id: PLACE_ID, status: "active", visibility: "public",
         content: "recent but unpopular", media_urls: ["https://cdn.example.com/b.jpg"],
         media_type: "photo", media_thumbnail_url: null, author_id: USER_ID,
         created_at: hoursAgo(1), like_count: 1, post_buckets: [],
@@ -607,7 +652,7 @@ describe("GET /places/:id/living/timeline", () => {
     // Posts are stored against the survivor
     const posts = [
       {
-        id: "survivor-post-1", canonical_place_id: SURVIVOR_ID, status: "active",
+        id: "survivor-post-1", canonical_place_id: SURVIVOR_ID, status: "active", visibility: "public",
         content: "great view", media_urls: ["https://cdn.example.com/p1.jpg"],
         media_type: "photo", media_thumbnail_url: null, author_id: USER_ID,
         created_at: hoursAgo(1), like_count: 3, post_buckets: [],

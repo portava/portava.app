@@ -2,7 +2,7 @@
  * MediaCard — shared card for media grid/list surfaces.
  * Thumbnail, duration/type badge, creator info.
  */
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { PlayCircle, Image as ImageIcon } from 'lucide-react-native';
 import { CachedImage } from '../CachedImage.tsx';
@@ -32,6 +32,30 @@ export function MediaCard({
   thumbnailUrl, mediaType, durationSeconds, creatorName, creatorHandle, title, onPress, onLongPress, hideBadge,
 }: MediaCardProps) {
   const [imgFailed, setImgFailed] = useState(false);
+
+  // Clear the failure latch whenever `thumbnailUrl` changes.
+  //
+  // THIS IS THE BLANK-TILE BUG. post-media is a private bucket, so callers hand
+  // us a bare `post-media/<uid>/<file>` path on the first render and swap in the
+  // signed URL a network round-trip later. That first source ALWAYS fails —
+  // an unsigned private-bucket path returns HTTP 400 — CachedImage forwards
+  // onError, we latch imgFailed, and line ~48 then unmounts CachedImage
+  // entirely. When the signed URL finally arrives there is no CachedImage left
+  // to receive it and no reset here, so the tile stays blank forever even
+  // though hydration succeeded.
+  //
+  // CachedImage already carries exactly this fix (see its prevUri resync and
+  // the guard test in __tests__/CachedImage.uriResync.component.test.tsx). It
+  // was applied to that layer only — MediaCard latches independently, one level
+  // up, and kept the defect. Same pattern, deliberately: resync in render so
+  // the reset lands in the SAME commit as the new URL rather than one render
+  // later, which would re-latch off the stale URI.
+  const prevThumbnailUrl = useRef(thumbnailUrl);
+  if (prevThumbnailUrl.current !== thumbnailUrl) {
+    prevThumbnailUrl.current = thumbnailUrl;
+    setImgFailed(false);
+  }
+
   const isVideo = mediaType === 'video';
   const creator = creatorHandle ? `@${creatorHandle}` : creatorName ?? null;
 

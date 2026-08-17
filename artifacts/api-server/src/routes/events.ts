@@ -203,6 +203,18 @@ import {
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
+
+/**
+ * The event states a BROWSE surface may return.
+ *
+ * Deliberately excludes draft, cancelled and archived: those are host-private
+ * and canViewEvent refuses them on the detail endpoint, so any list that
+ * returned them would disagree with the detail view about who may see what.
+ * Declared once here because GET /api/events derives its caller-supplied
+ * `state` filter from it — an unvalidated value used to reach the query
+ * directly.
+ */
+const BROWSE_STATES = ["open", "full", "waitlist", "started", "completed"];
 function isUuid(s: string) { return UUID_RE.test(s); }
 
 // ── Permission helpers ────────────────────────────────────────────────────────
@@ -653,7 +665,15 @@ router.get("/events", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
 
-  const state    = (req.query.state as string) ?? "open";
+  // Browse states only. `state` is caller-supplied and is spliced straight into
+  // the PostgREST .in() filter below, so without an allowlist `?state=draft`
+  // (or cancelled, or archived) turned this feed into a reader for other hosts'
+  // unpublished events — precisely the states every sibling browse route
+  // hard-excludes, and which canViewEvent refuses on the detail endpoint.
+  // An unrecognised value falls back to the default rather than 400ing, so no
+  // existing client breaks on a typo.
+  const stateParam = (req.query.state as string) ?? "open";
+  const state    = (stateParam === "all" || BROWSE_STATES.includes(stateParam)) ? stateParam : "open";
   const city     = (req.query.city as string | undefined) ?? null;
   const category = (req.query.category as string) ?? null;
 
@@ -677,7 +697,7 @@ router.get("/events", async (req, res) => {
       "waitlist_count, category, city, country, show_exact_location, rsvp_closed, " +
       "tags, created_at, updated_at",
     )
-    .in("state", state === "all" ? ["open","full","waitlist","started","completed"] : [state])
+    .in("state", state === "all" ? BROWSE_STATES : [state])
     .in("visibility", ["public", "friends_only"])
     .order("starts_at", { ascending: true, nullsFirst: false })
     .limit(RANK_POOL_SIZE);
@@ -1910,6 +1930,13 @@ router.get("/events/near-trip/:tripId", async (req, res) => {
         .maybeSingle();
       if (!friendship) continue;
     }
+    // Same eligibility gate the sibling browse routes apply (ban / trust /
+    // age / verified-only). GET /api/events/:id enforces it, so without this a
+    // banned or gate-failing trip member sees a card here that 404s the moment
+    // they tap it — the list and the detail view disagreed about who may see
+    // the event.
+    const elig = await checkEventEligibility(sc, ev as any, user.id);
+    if (!elig.ok) continue;
     filtered.push(ev);
   }
 

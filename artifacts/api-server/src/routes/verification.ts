@@ -60,18 +60,16 @@ async function applyVerifiedProfile(
     })
     .eq("id", userId);
 
-  // Trust Score hook — emit IDENTITY_VERIFIED when available.
-  // TODO (V-4): Add IDENTITY_VERIFIED to TRUST_EVENT_TYPES in TrustEventService
-  //   and replace this check once the event type ships.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const identityVerifiedEvent = (TRUST_EVENT_TYPES as any).IDENTITY_VERIFIED;
-  if (identityVerifiedEvent) {
-    await recordTrustEvent(client, {
-      userId,
-      eventType: "identity_verified",
-      ...identityVerifiedEvent,
-    }).catch(() => {/* fire-and-forget — never block the webhook response */});
-  }
+  // Trust Score hook. V-4 has shipped — IDENTITY_VERIFIED is a declared member
+  // of TRUST_EVENT_TYPES (TrustEventService.ts), so the dynamic `as any` lookup
+  // and its presence guard that used to sit here are gone: the property is
+  // statically typed and always defined, and the old guard silently skipped the
+  // trust award for as long as it was left in place after the event shipped.
+  await recordTrustEvent(client, {
+    userId,
+    eventType: "identity_verified",
+    ...TRUST_EVENT_TYPES.IDENTITY_VERIFIED,
+  }).catch(() => {/* fire-and-forget — never block the webhook response */});
 }
 
 /** Upsert the identity_verifications row from a VerificationResult. */

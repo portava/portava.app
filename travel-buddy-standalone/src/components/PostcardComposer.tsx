@@ -18,6 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { X, Camera, ImageIcon, PlayCircle, ChevronDown, MapPin, Minus, Plus, Stamp as StampIcon } from 'lucide-react-native';
 import {
   createPostcard,
+  discardPostcardShell,
   getUploadUrl,
   uploadToSignedUrl,
   completeUpload,
@@ -264,6 +265,11 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     });
 
     if (!postRes.ok || abortedRef.current) {
+      // The shell is a real, publicly-visible posts row created before any bytes
+      // exist. Whenever we bail after it was created, discard it — otherwise the
+      // attempt leaves an empty active post on the author's profile that nothing
+      // reaps (sweep-orphans collects post_media rows only, never the posts row).
+      if (postRes.ok) void discardPostcardShell(postRes.data.id);
       if (!abortedRef.current) {
         setError(postRes.ok ? 'Upload cancelled' : postRes.message);
         setPhase('pick');
@@ -279,6 +285,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     });
 
     if (!urlRes.ok || abortedRef.current) {
+      void discardPostcardShell(postId);
       if (!abortedRef.current) {
         setError(urlRes.ok ? 'Upload cancelled' : urlRes.message);
         setPhase('pick');
@@ -297,6 +304,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     );
 
     if (!uploadRes.ok || abortedRef.current) {
+      void discardPostcardShell(postId);
       if (!abortedRef.current) {
         setError(uploadRes.message ?? 'Upload failed');
         setPhase('pick');
@@ -315,6 +323,10 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     });
 
     if (!completeRes.ok) {
+      // Completion is rejected as retryable (e.g. the server's fail-closed byte
+      // verification), and the composer resets to 'pick' — so a retry creates a
+      // fresh shell. Discard this one rather than stranding it.
+      void discardPostcardShell(postId);
       setError(completeRes.message);
       setPhase('pick');
       return;

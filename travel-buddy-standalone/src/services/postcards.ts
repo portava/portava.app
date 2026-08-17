@@ -202,6 +202,24 @@ async function apiDelete(path: string): Promise<ApiResult<unknown>> {
   }
 }
 
+/**
+ * Discard an abandoned postcard shell.
+ *
+ * Step 1 creates a REAL posts row — `status: 'active'` with the author's chosen
+ * visibility — before a single byte has been uploaded. Every step after it can
+ * fail or be cancelled, and nothing reaped the shell when they did: the server's
+ * sweep-orphans job collects orphaned `post_media` rows only and never touches
+ * the posts row. The result was an empty, publicly-visible post on the author's
+ * profile for every failed or cancelled attempt.
+ *
+ * Best-effort by design: this runs on a path that is ALREADY failing, so it must
+ * never surface a second error or block the composer from resetting. A shell
+ * that survives a failed discard is the old behaviour, not a new problem.
+ */
+export async function discardPostcardShell(postId: string): Promise<void> {
+  await apiDelete(`/api/posts/${encodeURIComponent(postId)}`).catch(() => undefined);
+}
+
 /** Step 1 — create the post shell. Returns the postId for subsequent steps. */
 export async function createPostcard(
   params: CreatePostcardParams,

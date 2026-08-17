@@ -17,7 +17,7 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
+import { requireUser, sendError, safeSecretEquals, type ApiErrorCode } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
@@ -2003,7 +2003,10 @@ router.post("/admin/circle/kill-switch", async (req, res) => {
 router.post("/circle/internal/cleanup-presence", async (req, res) => {
   const secret = process.env.INTERNAL_API_SECRET;
   const provided = req.headers["x-internal-secret"];
-  if (!secret || provided !== secret) {
+  // Constant-time compare — a plain !== leaks how many leading characters
+  // matched through response timing, which is enough to recover
+  // INTERNAL_API_SECRET byte by byte. See safeSecretEquals in lib/http.ts.
+  if (!secret || !safeSecretEquals(provided, secret)) {
     res.status(401).json({ error: "unauthorized" });
     return;
   }

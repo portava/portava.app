@@ -37,7 +37,15 @@ import { resolveFilterStyle, type FilterStyle } from '../../lib/media/filters.ts
 
 // Only these two buckets can benefit from re-hydration; all other URLs get an
 // immediate error fallback rather than a no-op re-sign attempt.
-const PRIVATE_BUCKET_ERROR_RE = /\/storage\/v1\/object\/public\/(post-media|profile-media)\//;
+// Matches BOTH shapes a private-bucket reference arrives in:
+//   - the legacy full public URL, /storage/v1/object/public/post-media/...
+//   - the bare storage key the upload endpoints return today, post-media/<uid>/...
+//
+// It previously matched only the first. Every current upload persists the bare
+// form, so `isPrivateBucket` was false for all of them and the one-shot
+// re-hydration escape hatch below never fired for the exact case it exists to
+// rescue — it only ever helped legacy rows.
+const PRIVATE_BUCKET_ERROR_RE = /(?:\/storage\/v1\/object\/public\/|^)(post-media|profile-media)\//;
 
 // ── Skeleton pulse ──────────────────────────────────────────────────────────
 
@@ -231,6 +239,19 @@ export function DisplayMediaImage({
     const hydratedUrl = hydratedMap[resolved];
     if (typeof hydratedUrl === 'string') {
       setResolvedSource({ uri: hydratedUrl });
+      // Lift a prior error latch. The prevUri resync above only fires when the
+      // `uri` PROP changes — but in the private-bucket flow the prop never
+      // changes: what changes is this hydration resolving the same bare
+      // `post-media/...` reference into a signed URL. The component mounts
+      // ExpoImage on the bare path first (line ~219), that path is unsigned and
+      // returns HTTP 400, handleError drives phase → 'error', and the render at
+      // line ~312 then unmounts the image on `phase !== 'error'`. Without this
+      // reset the signed URL lands in resolvedSource with nothing left to
+      // render it, and the postcard stays blank permanently.
+      //
+      // Only 'error' is lifted — flipping a 'loaded' image back to 'loading'
+      // would flash a skeleton over an image that is already on screen.
+      setPhase((p) => (p === 'error' ? 'loading' : p));
     } else if (hydratedUrl === null) {
       // Server explicitly rejected the URL — show the designed fallback.
       setResolvedSource(null);
@@ -411,6 +432,16 @@ export function AvatarImage({ uri, user, size, style, bg, testID }: AvatarImageP
     const hydratedUrl = hydratedMap[resolvedUri];
     if (typeof hydratedUrl === 'string') {
       setResolvedSource({ uri: hydratedUrl });
+      // Fourth instance of the same latch (CachedImage had the fix; MediaCard,
+      // DisplayMediaImage and this did not). The prevUri resync above only fires
+      // when the avatar URL PROP changes — but in the private-bucket flow it
+      // never does: what changes is hydration turning the same bare
+      // `profile-media/...` reference into a signed URL. The first paint is on
+      // the unsigned path, that returns HTTP 400, imgError latches true, and
+      // `showImage = !!resolvedUri && !imgError` then pins the avatar to its
+      // initials chip permanently even though the signed URL arrived moments
+      // later. Clearing it here is what lets the real photo render.
+      setImgError(false);
     } else if (hydratedUrl === null) {
       // Server explicitly rejected — fall back to initials.
       setResolvedSource(null);

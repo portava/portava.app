@@ -7,7 +7,10 @@
  *
  * HARD RULES:
  *   - Cannot message self → denied.
- *   - Blocked (TODO: plug in block table) → denied.
+ *   - Blocked in EITHER direction → denied. (Enforced below against the `blocks`
+ *     table via the service-role client; the stale "TODO: plug in block table"
+ *     that used to sit on this line was wrong — the check has been live since
+ *     the mutual-block query was added.)
  *   - recipient.message_privacy = 'no_one' → denied.
  *   - 'friends' → allowed only if mutual friendship exists.
  *   - 'followers' → allowed only if the recipient follows the sender.

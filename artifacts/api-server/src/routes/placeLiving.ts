@@ -28,6 +28,7 @@ import { getWeatherContext } from "../lib/weatherCache.js";
 import { getBestOf, enqueueLivingCacheInvalidation } from "../lib/places/placeCollections.js";
 import { generateAiSummary } from "../lib/places/placeAiSummary.js";
 import { isLivePlacesCapabilityEnabled } from "../lib/featureFlags.js";
+import { isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -180,13 +181,25 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
     safe(async () => {
       const { data, error } = await sc
         .from("posts")
-        .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, save_count, share_count, post_buckets")
+        // `status` is projected even though it is also an .eq() predicate:
+        // isEligiblePlaceDayPost reads post.status, and PostgREST returns ONLY
+        // the projected columns, so omitting it here would leave p.status
+        // undefined and the filter below would reject every post — emptying the
+        // living page rather than securing it.
+        .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, save_count, share_count, post_buckets, visibility, status, post_status, publish_at")
         .eq("canonical_place_id", survivorId)
         .eq("status", "active")
+        // The living page is an ANONYMOUS surface (optionalUser, mounted bare)
+        // served through the service-role client, which bypasses RLS. Without a
+        // visibility predicate it returned private and trip_only captions, and
+        // not-yet-published delayed posts, to any caller at all.
+        .eq("visibility", "public")
         .order("created_at", { ascending: false })
         .limit(50);
       if (error) return null;
-      return (data as any[]) ?? [];
+      // Second gate, same predicate the Place Day feed uses — covers
+      // post_status and publish_at, which no SQL predicate above enforces.
+      return ((data as any[]) ?? []).filter((p: any) => isEligiblePlaceDayPost(p));
     }),
 
     // WorthIt rating: aggregate from post engagement signals (best-effort)
@@ -195,7 +208,10 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
         .from("posts")
         .select("like_count")
         .eq("canonical_place_id", survivorId)
-        .eq("status", "active");
+        .eq("status", "active")
+        // Aggregate only over posts this anonymous surface may actually count.
+        // Private and trip_only engagement must not move a public rating.
+        .eq("visibility", "public");
       if (error) return null;
       return (data as any[]) ?? [];
     }),
@@ -337,12 +353,22 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
   let topContributor: any = null;
   if (topContributorRows) {
     // Fetch display info for the top contributor
-    const { data: profile } = await sc
-      .from("profiles")
-      .select("id, display_name, avatar_url, username")
-      .eq("id", (topContributorRows as any).user_id)
-      .maybeSingle()
-      .catch(() => ({ data: null }));
+    // safe(), not `.catch()` on the builder. A PostgREST query builder is a
+    // thenable — it implements `then` to satisfy PromiseLike — and does not
+    // necessarily expose `.catch`. Because `sc` is typed `any` here, TypeScript
+    // never checked that call, so a missing `.catch` surfaces only at runtime,
+    // as a TypeError thrown on the one path that reaches it: a living-page
+    // cache miss for a place that HAS a top contributor. Every one of the seven
+    // sibling sub-calls in this file already uses safe() (lines 132-200); this
+    // was the only one that hand-rolled its own error handling.
+    const profile = await safe(async () => {
+      const { data } = await sc
+        .from("profiles")
+        .select("id, display_name, avatar_url, username")
+        .eq("id", (topContributorRows as any).user_id)
+        .maybeSingle();
+      return data;
+    });
     topContributor = {
       userId:            (topContributorRows as any).user_id,
       displayName:       (profile as any)?.display_name ?? (profile as any)?.username ?? null,
@@ -491,9 +517,14 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
   const now = new Date();
   let query = sc
     .from("posts")
-    .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, post_buckets")
+    // `status` projected deliberately — isEligiblePlaceDayPost reads it, and
+    // PostgREST returns only projected columns, so omitting it would make the
+    // filter below reject every row and empty the timeline.
+    .select("id, content, media_urls, media_type, media_thumbnail_url, author_id, created_at, like_count, post_buckets, visibility, status, post_status, publish_at")
     .eq("canonical_place_id", survivorId)
     .eq("status", "active")
+    // Anonymous surface: public content only. See the assembler query above.
+    .eq("visibility", "public")
     .order("created_at", { ascending: false });
 
   if (slice === "today") {
@@ -519,7 +550,10 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
   const { data, error } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  let posts: any[] = (data as any[]) ?? [];
+  // Second gate, deliberately redundant with the SQL predicates above: it also
+  // covers post_status and publish_at, so a delayed post whose geofence has not
+  // cleared cannot surface on an anonymous page just because it is public.
+  let posts: any[] = ((data as any[]) ?? []).filter((p: any) => isEligiblePlaceDayPost(p));
 
   // Season filtering (in-memory)
   if (slice === "dry_season" || slice === "rainy_season") {

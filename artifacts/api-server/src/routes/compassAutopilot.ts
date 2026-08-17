@@ -20,7 +20,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
+import { requireUser, sendError, isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isCompassEnabled } from "../compass/flags.js";
 import {
@@ -212,6 +212,17 @@ router.post("/autopilot/proposals/:id/confirm", asyncHandler(async (req, res) =>
 
   const proposal = await loadOwnPendingProposal(sc, res, req.params.id, auth.user.id);
   if (!proposal) return;
+
+  // Re-authorize at execution time. Confirm is the only autopilot route that
+  // WRITES trip_plan_items, so it must honour trips.plan_edit_permission like
+  // every other plan write. Membership alone is not enough on an owner_only or
+  // specific_members trip, and the per-user autopilot settings applyProposal
+  // re-checks are self-service, so they authorize nothing. Deliberately NOT put
+  // in loadOwnPendingProposal: /decline shares that helper and writes no plan
+  // rows, so gating there would reject a decline the user is entitled to make.
+  const permitted = await canEditPlan(sc, (proposal as any).trip_id, auth.user.id);
+  if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; }
 
   const { applied, blocked } = await applyProposal(sc, proposal);
   await sc
