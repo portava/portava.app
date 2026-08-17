@@ -8,6 +8,7 @@
  * POST /api/me/recent-places          (auth required)
  */
 import { Router } from "express";
+import { checkRateLimit } from "../lib/rateLimit.js";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
@@ -84,6 +85,66 @@ function getSearchCached(key: string): any[] | null {
 function setSearchCached(key: string, places: any[]): void {
   searchCache.set(key, { places, ts: Date.now() });
 }
+
+/**
+ * Test-only: clear the shared place-search cache and both in-flight maps.
+ *
+ * The cache is module-level and keyed by query, which is exactly what makes it
+ * useful in production and hostile in a test file: two cases that use the same
+ * input are no longer independent, and the second silently asserts against the
+ * first's answer. Mirrors _resetRateLimit in lib/rateLimit.ts.
+ */
+export function _resetPlaceSearchCache(): void {
+  searchCache.clear();
+  inFlightSearches.clear();
+  inFlightGoogleAutocomplete.clear();
+}
+
+// ── Google autocomplete: cache key, in-flight dedup, rate limit ──────────────
+//
+// The Google proxy had NONE of the protections /places/search already had —
+// no cache, no in-flight dedup, no rate limit — so every debounced keystroke
+// that missed nothing was a billable call. That is fine while Google is a
+// secondary source and becomes a defect the moment it is the primary one.
+//
+// The CACHE is the one above, not a second one: same Map, same TTL, same
+// get/set helpers, with a namespaced key so the two sources cannot collide.
+//
+// FAILURES ARE NEVER CACHED. The route answers `{ places: [], reason }` for a
+// missing key, an HTTP error and a request failure, and caching that would
+// freeze a five-minute outage in place and hide its recovery. Only an answer
+// Google actually gave is stored — including a genuine empty result, which is
+// a real answer ("nothing matches") rather than a fault.
+function makeGoogleAutocompleteCacheKey(
+  input: string,
+  type: string,
+  countryCode: string | undefined,
+): string {
+  return `google:${input.toLowerCase()}:${type}:${countryCode?.toLowerCase() ?? ""}`;
+}
+
+/**
+ * In-flight dedup for the Google proxy. Separate map from inFlightSearches
+ * because the value type differs — this one carries the `reason` alongside the
+ * places so a concurrent waiter learns it was a failure and does not cache it.
+ */
+const inFlightGoogleAutocomplete = new Map<
+  string,
+  Promise<{ places: any[]; reason?: string }>
+>();
+
+/**
+ * Per-IP ceiling. The client debounces at 300 ms with a two-character floor
+ * (useGooglePlacesAutocomplete), so a human typing a city name costs a handful
+ * of calls; 60/minute leaves that untouched while capping a runaway retry loop
+ * or a script. Unauthenticated route, so the bucket is keyed by IP rather than
+ * user id.
+ */
+const GOOGLE_AUTOCOMPLETE_LIMIT = parseInt(
+  process.env.GOOGLE_AUTOCOMPLETE_RATE_LIMIT_PER_MIN ?? "60",
+  10,
+);
+const GOOGLE_AUTOCOMPLETE_WINDOW_MS = 60 * 1_000;
 
 // ── Nominatim helpers ─────────────────────────────────────────────────────────
 
@@ -375,7 +436,54 @@ router.get("/places/google-autocomplete", async (req, res) => {
   const type = typeof req.query.type === "string" ? req.query.type : "all";
   const countryCode = typeof req.query.countryCode === "string" ? req.query.countryCode : undefined;
 
-  try {
+  const cacheKey = makeGoogleAutocompleteCacheKey(input, type, countryCode);
+
+  // 1. Cache — a hit costs nothing and is never billed.
+  const cachedPlaces = getSearchCached(cacheKey);
+  if (cachedPlaces) {
+    res.json({ places: cachedPlaces, powered_by: "google", cached: true });
+    return;
+  }
+
+  // 2. In-flight dedup — identical concurrent queries share one upstream call.
+  //    Checked BEFORE the rate limit deliberately: a waiter joining a call that
+  //    is already paid for costs nothing, so charging it against the limit
+  //    would punish the cheapest possible request.
+  const inFlight = inFlightGoogleAutocomplete.get(cacheKey);
+  if (inFlight) {
+    const shared = await inFlight;
+    res.json({
+      places: shared.places,
+      powered_by: "google",
+      ...(shared.reason ? { reason: shared.reason } : {}),
+      coalesced: true,
+    });
+    return;
+  }
+
+  // 3. Rate limit — only a request that will actually reach Google is counted.
+  const rateKey = req.ip ?? "unknown";
+  const rate = checkRateLimit(
+    "google_autocomplete",
+    rateKey,
+    GOOGLE_AUTOCOMPLETE_LIMIT,
+    GOOGLE_AUTOCOMPLETE_WINDOW_MS,
+  );
+  if (!rate.allowed) {
+    logger.warn(
+      { rateKey, retryAfterMs: rate.retryAfterMs, limit: GOOGLE_AUTOCOMPLETE_LIMIT },
+      "google autocomplete rate limit hit",
+    );
+    // Same shape as every other failure on this route: 200 with a machine
+    // readable reason, so a client reading only `places` is unaffected.
+    res.json({ places: [], powered_by: "google", reason: "rate_limited" });
+    return;
+  }
+
+  // The upstream call is registered in the dedup map BEFORE it is awaited, so a
+  // concurrent identical query joins this one instead of starting a second.
+  const work = (async (): Promise<{ places: any[]; reason?: string }> => {
+    try {
     // Places API (New). The key travels in the X-Goog-Api-Key HEADER, not the
     // query string — the same shape already proven authorized for this key by
     // /places/photo, and it keeps the secret out of any URL that might be
@@ -415,8 +523,7 @@ router.get("/places/google-autocomplete", async (req, res) => {
           "Google Places (New) Autocomplete failed",
         );
       }
-      res.json({ places: [], powered_by: "google", reason });
-      return;
+      return { places: [] as any[], reason };
     }
 
     const gBody = (await gRes.json()) as any;
@@ -451,11 +558,26 @@ router.get("/places/google-autocomplete", async (req, res) => {
         };
       });
 
-    res.json({ places, powered_by: "google" });
-  } catch (err) {
-    logger.warn({ err, input }, "Google Places (New) Autocomplete failed — returning empty");
-    res.json({ places: [], powered_by: "google", reason: "request_failed" });
-  }
+    return { places };
+    } catch (err) {
+      logger.warn({ err, input }, "Google Places (New) Autocomplete failed — returning empty");
+      return { places: [], reason: "request_failed" };
+    }
+  })().finally(() => inFlightGoogleAutocomplete.delete(cacheKey));
+
+  inFlightGoogleAutocomplete.set(cacheKey, work);
+  const result = await work;
+
+  // Cache only what Google actually answered. A `reason` means the answer did
+  // not come from Google (no key, HTTP error, request failure), and caching it
+  // would hold a transient outage open for the whole TTL.
+  if (!result.reason) setSearchCached(cacheKey, result.places);
+
+  res.json({
+    places: result.places,
+    powered_by: "google",
+    ...(result.reason ? { reason: result.reason } : {}),
+  });
 });
 
 // ── GET /api/places/google-details ────────────────────────────────────────────

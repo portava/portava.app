@@ -22,8 +22,14 @@
 
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { _resetPlaceSearchCache } from "../routes/places.js";
 
 import { namespaceGooglePlaceId, denamespaceGooglePlaceId } from "../lib/googlePlaceId.js";
+
+// The place-search cache is module-level and keyed by query. Several cases in
+// this file reuse the same `input`, so without this reset the second case
+// asserts against the first case's cached answer instead of its own stub.
+beforeEach(() => { _resetPlaceSearchCache(); });
 
 process.env.GOOGLE_MAPS_API_KEY ??= "test-google-key";
 
