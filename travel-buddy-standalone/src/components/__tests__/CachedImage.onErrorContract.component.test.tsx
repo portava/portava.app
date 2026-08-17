@@ -52,6 +52,10 @@ let mockHydrated: Record<string, string | null> = {};
 const mockListeners = new Set<() => void>();
 
 jest.mock('../../services/mediaUrl.ts', () => ({
+  // Spread the real module so PRIVATE_BUCKETS and hydrateMediaUrls stay real:
+  // only useHydratedMedia is replaced, and a future export cannot silently
+  // become undefined here.
+  ...jest.requireActual('../../services/mediaUrl.ts'),
   useHydratedMedia: () => {
     const { useState, useEffect } = require('react');
     const [, force] = useState(0);
