@@ -7,6 +7,7 @@ import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 const postsLogger = rootLogger.child({ route: "posts" });
 import { nameVisibilitySet, sanitizeIdentity, presentedName } from "../lib/publicIdentity";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import { decidePostReadable, needsTripMembershipCheck } from "../lib/postVisibility.js";
 import {
   requireUser,
   sendError,
@@ -1618,7 +1619,7 @@ router.get("/posts/saved-by-me", async (req, res) => {
 router.get("/posts/:postId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { user } = auth;
+  const { user, client } = auth;
   const { postId } = req.params;
   if (!isValidUuid(postId)) { sendError(res, "invalid_payload", "Invalid post id"); return; }
 
@@ -1640,6 +1641,34 @@ router.get("/posts/:postId", async (req, res) => {
   const isPublished = !post.post_status || post.post_status === "published";
 
   if (!isPublished && !isAuthor) {
+    sendError(res, "not_found", "Post not found");
+    return;
+  }
+
+  // VISIBILITY. The read above uses the SERVICE client, so RLS is bypassed and
+  // this is the only thing standing between a post id and its contents.
+  // POST_COLUMNS has always selected `visibility` and `trip_id`; nothing read
+  // them, so any authenticated user holding an id received private and
+  // trip_only posts in full.
+  //
+  // The membership query runs ONLY for a trip_only post viewed by a non-author
+  // (see needsTripMembershipCheck) — author and public reads cost no extra
+  // round trip. It uses the USER client, matching checkEngagePermission, so
+  // membership is evaluated under the viewer's own RLS rather than bypassed.
+  //
+  // A refusal answers not_found rather than forbidden: forbidden would confirm
+  // that a private post with this id exists, which is itself a disclosure to
+  // someone who may only be guessing ids.
+  const viewerIsTripMember = needsTripMembershipCheck(post, user.id)
+    ? await isAcceptedTripMember(client, post.trip_id, user.id)
+    : false;
+
+  const decision = decidePostReadable(post, user.id, viewerIsTripMember);
+  if (!decision.readable) {
+    req.log.info(
+      { postId, viewerId: user.id, reason: decision.reason },
+      "post read refused by visibility gate",
+    );
     sendError(res, "not_found", "Post not found");
     return;
   }
