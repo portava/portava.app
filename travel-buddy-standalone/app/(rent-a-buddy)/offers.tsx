@@ -10,6 +10,7 @@ import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelEmptyState } from '../../src/components/primitives';
 import {
   getRequestOffers, acceptOffer, declineOffer,
+  isBookingUnavailable, bookingErrorCopy,
   type BuddyOffer, getRequest, type BuddyRequest,
 } from '../../src/services/rentABuddy';
 
@@ -146,7 +147,18 @@ export default function Offers() {
             setAcceptingId(offer.id);
             const res = await acceptOffer(offer.id);
             setAcceptingId(null);
-            if (!res.ok) { Alert.alert('Error', res.error); return; }
+            if (!res.ok) {
+              // Accepting an offer creates a booking, so it passes the same
+              // server-side KYC gate as checkout and can answer 503
+              // verification_unavailable. An Alert is fine here — unlike
+              // checkout there is no long form behind it — but the copy must
+              // never be the raw code.
+              Alert.alert(
+                isBookingUnavailable(res.error) ? 'Not available yet' : 'Error',
+                bookingErrorCopy(res.error),
+              );
+              return;
+            }
             Alert.alert('Booking Created!', 'Your booking is confirmed.', [
               { text: 'OK', onPress: () => router.back() },
             ]);
@@ -158,7 +170,9 @@ export default function Offers() {
 
   const handleDecline = useCallback(async (offer: BuddyOffer) => {
     const res = await declineOffer(offer.id);
-    if (!res.ok) { Alert.alert('Error', res.error); return; }
+    // Declining is not KYC-gated, but a raw code must not reach a user here
+    // either.
+    if (!res.ok) { Alert.alert('Error', bookingErrorCopy(res.error)); return; }
     load(true);
   }, [load]);
 

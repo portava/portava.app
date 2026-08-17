@@ -13,7 +13,7 @@ import { KeyboardSafeScrollView } from '../../../src/components/ui/KeyboardSafeV
 import { color, space, radius, type as t, shadow, layout, avatar, dot, icon } from '../../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState, TravelCard } from '../../../src/components/primitives';
 import { Stamp } from '../../../src/components/ui';
-import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, getBuddyBlockedDates, openDispute, type BuddyBooking, type BuddyBlockedRange, type DisputeReason } from '../../../src/services/rentABuddy';
+import { getBooking, cancelBooking, getOrCreateBookingThread, addExtraTime, optInStayConnected, reportBooking, rebookBooking, getBuddyBlockedDates, openDispute, isBookingUnavailable, bookingErrorCopy, type BuddyBooking, type BuddyBlockedRange, type DisputeReason } from '../../../src/services/rentABuddy';
 import { disputeErrorMessage } from '../../../src/lib/disputeErrorMessage';
 import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../../src/components/selectors/GlobalTimePicker';
@@ -757,7 +757,15 @@ export default function BookingDetail() {
         onRebook={async (date, time) => {
           const res = await rebookBooking(id as string, { bookingDate: date, startTime: time });
           if (!res.ok) {
-            Alert.alert('Could not rebook', res.error ?? 'Please try again.');
+            // /api/buddy-bookings/:id/rebook is rewritten to the KYC-gated
+            // /rent-a-buddy/bookings/:id/rebook, so this path can answer 503
+            // verification_unavailable while Rent a Buddy is closed. An Alert
+            // is fine here — there is no long form behind it — but the copy
+            // must never be the raw code.
+            Alert.alert(
+              isBookingUnavailable(res.error) ? 'Not available yet' : 'Could not rebook',
+              bookingErrorCopy(res.error),
+            );
           } else if (res.data?.bookingId) {
             const newId = res.data.bookingId;
             Alert.alert('Booking requested!', 'Your new booking has been sent to the Buddy for confirmation.', [

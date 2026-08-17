@@ -13,6 +13,7 @@ import { TravelLoadingState, TravelErrorState } from '../../src/components/primi
 import { Stamp } from '../../src/components/ui';
 import {
   getBuddyProfile, createBooking, getBuddyBlockedDates,
+  isBookingUnavailable, bookingErrorCopy,
   type BuddyProfile, type BuddyPackage, type BuddyCategory, type BuddyBlockedRange,
 } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -170,6 +171,11 @@ export default function RentABuddyCheckout() {
   });
   const [tutorialVisible, setTutorialVisible] = useState(false);
   const [pendingBook, setPendingBook] = useState(false);
+  // Set when the server refuses because the feature is not open (Rent a Buddy is
+  // deliberately closed for launch). Held as state, not shown as an Alert: an
+  // alert is dismissed and leaves the user staring at a Book button that cannot
+  // work. This is a state of the feature, so it stays on screen.
+  const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
 
   const location = zoneIndex != null ? PUBLIC_ZONES[zoneIndex] : customZone;
 
@@ -237,7 +243,16 @@ export default function RentABuddyCheckout() {
     });
     setSubmitting(false);
 
-    if (!res.ok) { Alert.alert('Booking failed', res.error); return; }
+    if (!res.ok) {
+      if (isBookingUnavailable(res.error)) {
+        setUnavailableReason(bookingErrorCopy(res.error));
+        return;
+      }
+      // Genuine failure — still routed through bookingErrorCopy so no raw
+      // error code can reach the user.
+      Alert.alert('Booking failed', bookingErrorCopy(res.error));
+      return;
+    }
     const bookingId = res.data.booking?.id;
     if (bookingId) {
       router.replace({ pathname: '/(rent-a-buddy)/booking/[id]' as any, params: { id: bookingId, fromCheckout: '1' } });
@@ -245,7 +260,7 @@ export default function RentABuddyCheckout() {
   };
 
   const handleBook = async () => {
-    if (!buddy || !policyAccepted) return;
+    if (!buddy || !policyAccepted || unavailableReason) return;
     if (!date.trim()) { Alert.alert('Missing date', 'Please select a booking date.'); return; }
     if (blockedDates.includes(date)) {
       Alert.alert('Date unavailable', 'This Buddy is not available on that date. Please pick another date.');
@@ -278,6 +293,17 @@ export default function RentABuddyCheckout() {
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: barInset }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        {/* Feature-closed banner — persistent, above the form. */}
+        {unavailableReason && (
+          <View style={styles.unavailableBanner} accessibilityRole="alert" testID="booking-unavailable-banner">
+            <Info size={15} color={color.deep} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.unavailableTitle}>Not available yet</Text>
+              <Text style={styles.unavailableBody}>{unavailableReason}</Text>
+            </View>
+          </View>
+        )}
+
         {/* Buddy summary */}
         <View style={styles.buddyRow}>
           <View style={styles.buddyAvatar}>
@@ -510,15 +536,18 @@ export default function RentABuddyCheckout() {
         <Pressable
           style={({ pressed }) => [
             styles.confirmBtn,
-            (!policyAccepted || submitting) && styles.confirmBtnDisabled,
+            (!policyAccepted || submitting || !!unavailableReason) && styles.confirmBtnDisabled,
             pressed && { opacity: layout.pressedOpacity },
           ]}
           onPress={handleBook}
-          disabled={!policyAccepted || submitting}
+          disabled={!policyAccepted || submitting || !!unavailableReason}
+          testID="checkout-confirm-btn"
         >
           <CalendarCheck size={16} color={color.onInk} />
           <Text style={styles.confirmBtnText}>
-            {submitting ? 'Sending request…' : 'Request Booking'}
+            {unavailableReason
+              ? 'Not available yet'
+              : submitting ? 'Sending request…' : 'Request Booking'}
           </Text>
         </Pressable>
       </View>
@@ -569,6 +598,14 @@ const styles = StyleSheet.create({
   },
   backBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { ...t.heading, color: color.ink },
+  unavailableBanner: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: space.sm,
+    marginHorizontal: space.lg, marginTop: space.md,
+    backgroundColor: '#EBF0FF', borderRadius: radius.md,
+    padding: space.md, borderWidth: 1, borderColor: color.deep,
+  },
+  unavailableTitle: { ...t.bodyStrong, color: color.deep, marginBottom: 2 },
+  unavailableBody: { ...t.small, color: color.deep, lineHeight: 18 },
   buddyRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
     padding: space.lg, backgroundColor: color.paperRaised,

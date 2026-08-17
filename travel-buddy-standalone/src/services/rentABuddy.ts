@@ -8,6 +8,15 @@
 import { freshToken } from './adminApi.ts';
 import { cityCoordSpread } from '../lib/cityCoords.ts';
 
+// Booking-refusal classification + copy. Defined in their own import-free module
+// so they are unit-testable without pulling in react-native, and re-exported
+// here because rentABuddy.ts is where every caller imports from.
+export {
+  BOOKING_UNAVAILABLE_CODES,
+  isBookingUnavailable,
+  bookingErrorCopy,
+} from './rentABuddyBookingErrors.ts';
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type BuddyStatus = 'pending' | 'active' | 'paused' | 'rejected' | 'suspended';
