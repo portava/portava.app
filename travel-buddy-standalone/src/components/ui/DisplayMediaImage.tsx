@@ -210,6 +210,16 @@ export function DisplayMediaImage({
   testID,
 }: DisplayMediaImageProps) {
   const resolved = resolveDisplayMedia([uri]);
+  // A null/absent `uri` starts in the 'error' phase so the fallback renders,
+  // but it deliberately does NOT notify the consumer's onError: nothing
+  // failed here, the caller simply had no image to show. onError is reserved
+  // for a real load failure reported by ExpoImage.
+  //
+  // CachedImage draws the same distinction and lands on the opposite answer
+  // for its own null case, which is a different event: a null RESOLVE there
+  // means the sign endpoint rejected a URL the caller believed in, so it is a
+  // genuine, final failure and the parent IS told. Absent uri → nobody is
+  // told; rejected URL → the parent is told. Both components follow that rule.
   const [phase, setPhase] = useState<Phase>(resolved ? 'loading' : 'error');
 
   // Re-evaluate when the URI prop changes (e.g. list recycling).

@@ -306,6 +306,14 @@ describe('DisplayMediaImage — consumer onLoad / onError props', () => {
     // null URI → phase='error' is set synchronously in useState initialiser,
     // not via the ExpoImage onError callback. Consumer onError is only called
     // when ExpoImage's onError fires (broken URL), not for null URIs.
+    //
+    // This is the deliberate half of a policy shared with CachedImage: an
+    // ABSENT uri is not a failure and notifies nobody, whereas a URL the sign
+    // endpoint explicitly REJECTS is final and does notify the parent (see
+    // CachedImage's null-resolve branch and
+    // `__tests__/CachedImage.onErrorContract.component.test.tsx`). The two
+    // components look like they disagree and do not — they are handling
+    // different events.
     const onErrorSpy = jest.fn();
     await render(
       <DisplayMediaImage

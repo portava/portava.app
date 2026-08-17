@@ -143,6 +143,24 @@ export function CachedImage({
     setResolvedSource(uri ? { uri } : null);
   }
 
+  // ## Null policy (deliberate, and deliberately different from DisplayMediaImage)
+  //
+  // A null RESOLVE and an absent `uri` are different events and are treated
+  // differently on purpose:
+  //
+  //   • null resolve — the sign endpoint was asked about a real URL and
+  //     rejected it. Something the caller believed existed does not. That is
+  //     final and unrecoverable, so the parent IS notified (below).
+  //   • absent uri — the caller simply has no image to show. Nothing failed,
+  //     so nobody is notified; the fallback renders and that is the whole
+  //     story.
+  //
+  // DisplayMediaImage's null-uri case is the SECOND kind, which is why it
+  // deliberately does not call its consumer's onError — see its `phase`
+  // initialiser and the test
+  // `__tests__/DisplayMediaImage.errorfallback.component.test.tsx`
+  // ("does NOT call onError when uri is null"). The two components agree on
+  // the rule; they differ because they are handling different events.
   useEffect(() => {
     if (!uri) { setResolvedSource(null); return; }
     const next = hydrated[uri];
