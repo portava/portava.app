@@ -31,6 +31,31 @@ function __testJpeg(): Promise<Buffer> {
   return __jpegPromise;
 }
 
+/**
+ * 64-byte MP4 head: 4-byte size box then "ftypisom", zero-padded.
+ *
+ * /complete now VERIFIES video bytes instead of trusting the client-declared
+ * fileSizeBytes, because on this signed-URL transport the client writes
+ * straight to Storage and the declared size is an assertion about a file the
+ * server never saw. It reads the first 64 bytes over a Range request rather
+ * than downloading the whole object, so this is all the fixture must serve.
+ */
+function __testMp4Head(): Buffer {
+  const buf = Buffer.alloc(64);
+  buf.writeUInt32BE(32, 0);
+  buf.write('ftypisom', 4, 'ascii');
+  return buf;
+}
+
+/** Total size the stubbed Range response reports, in bytes. */
+let __videoTotalBytes = 500_000;
+/** Bytes the stubbed Range response serves (override to test rejection paths). */
+let __videoHeadBytes: Buffer = __testMp4Head();
+/** When true the stub omits Content-Range, as a server ignoring Range would. */
+let __omitContentRange = false;
+
+const __realFetch = globalThis.fetch;
+
 // ── Stable fake IDs ───────────────────────────────────────────────────────────
 
 const OWNER_ID = '00000000-0000-0000-0000-000000000c01';
@@ -267,6 +292,11 @@ function buildFakeClient(tokenToId: Record<string, string>) {
             data: { publicUrl: `https://cdn.test/post-media/${path}` },
           }),
           remove: async (_paths: string[]) => ({ data: null, error: null }),
+          // /complete signs a short-lived read URL to range-read video bytes.
+          createSignedUrl: async (path: string, _expiresIn: number) => ({
+            data: { signedUrl: `https://storage.test/signed/${path}` },
+            error: null,
+          }),
           // /complete now downloads image bytes server-side to strip EXIF and
           // measure real dimensions — serve a valid jpeg for image paths.
           download: async (_path: string) => ({
@@ -321,15 +351,32 @@ before(async () => {
   server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   port = (server.address() as any).port;
+
+  // Serve the Range read that /complete performs against the signed video URL.
+  // Only storage.test is intercepted; everything else falls through to the real
+  // fetch so an unrelated request cannot be silently swallowed by this stub.
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const url = typeof input === 'string' ? input : input?.url ?? '';
+    if (!url.startsWith('https://storage.test/')) return __realFetch(input, init);
+    const headers: Record<string, string> = {};
+    if (!__omitContentRange) {
+      headers['content-range'] = `bytes 0-${__videoHeadBytes.length - 1}/${__videoTotalBytes}`;
+    }
+    return new Response(new Uint8Array(__videoHeadBytes), { status: 206, headers });
+  }) as typeof globalThis.fetch;
 });
 
 after(async () => {
+  globalThis.fetch = __realFetch;
   _setTestClient(null as any, true);
   await new Promise<void>((r) => server.close(() => r()));
 });
 
 beforeEach(() => {
   resetDb();
+  __videoTotalBytes = 500_000;
+  __videoHeadBytes = __testMp4Head();
+  __omitContentRange = false;
   _setTestClient(buildFakeClient({ [TOKEN_OWNER]: OWNER_ID, [TOKEN_OTHER]: OTHER_ID }), true);
 });
 

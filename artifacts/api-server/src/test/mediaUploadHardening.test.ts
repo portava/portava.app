@@ -117,8 +117,30 @@ function makeClient(state: FakeState = {}) {
 
 function setClients(c: any) { _setTestClient(c, true); _setTestServiceClient(c); }
 
+/** 64-byte MP4 head — 4-byte size box then "ftypisom", zero-padded. */
+function mp4Head(): Buffer {
+  const buf = Buffer.alloc(64);
+  buf.writeUInt32BE(32, 0);
+  buf.write("ftypisom", 4, "ascii");
+  return buf;
+}
+
+const realFetch = globalThis.fetch;
+
 before(() => {
   process.env.SUPABASE_URL = SB;
+  // Serve the Range read that postcards /complete performs against the signed
+  // video URL. Scoped to storage.test so unrelated requests still hit the real
+  // fetch rather than being silently swallowed.
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const url = typeof input === "string" ? input : input?.url ?? "";
+    if (!url.startsWith("https://storage.test/")) return realFetch(input, init);
+    const head = mp4Head();
+    return new Response(new Uint8Array(head), {
+      status: 206,
+      headers: { "content-range": `bytes 0-${head.length - 1}/1024` },
+    });
+  }) as typeof globalThis.fetch;
   const app = express();
   app.use(express.json());
   app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
@@ -132,6 +154,7 @@ before(() => {
 
 after(() => {
   process.env.SUPABASE_URL = OLD_SUPABASE_URL;
+  globalThis.fetch = realFetch;
   return new Promise<void>((r) => server.close(() => r()));
 });
 
@@ -380,6 +403,14 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
             async upload() { return { data: null, error: null }; },
             getPublicUrl() { return { data: { publicUrl: "" } }; },
             async download() { return { data: null, error: { message: "not implemented" } }; },
+            // /complete range-reads the uploaded video's first 64 bytes to
+            // verify them, since the client wrote straight to Storage and the
+            // declared fileSizeBytes proves nothing. The video here is VALID —
+            // this test is about the missing dimensions that follow, so
+            // verification must succeed and hand off to the dim guard.
+            async createSignedUrl(path: string) {
+              return { data: { signedUrl: `https://storage.test/signed/${path}` }, error: null };
+            },
           };
         },
       },
