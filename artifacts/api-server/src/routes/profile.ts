@@ -5,6 +5,7 @@ import { getServiceClient } from "../lib/supabase";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { retranslateForUser } from "../services/messageTranslation";
+import { shouldRetranslateOnLanguageChange } from "../lib/retranslateGate";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags";
 import { invalidateCompassHomeCache } from "./compassHome";
@@ -899,7 +900,23 @@ router.patch("/me/profile", async (req, res) => {
   if (p.preferredLanguage !== undefined && p.preferredLanguage !== null) {
     const sc = getServiceClient();
     if (sc) {
-      retranslateForUser(sc, user.id, p.preferredLanguage, req.log).catch(() => {});
+      // Gated on auto_translate_messages, matching messaging.ts. Ungated, this
+      // sent a 200-message provider sweep for users who never enabled message
+      // translation. NOTE: unlike messaging.ts this branch has no change
+      // detection -- any present value re-fires it, even an unchanged one --
+      // because the update has already run here and the prior language is not
+      // in scope. Recorded rather than restructured.
+      const { data: prefRow } = await sc
+        .from('profiles')
+        .select('auto_translate_messages')
+        .eq('id', user.id)
+        .single();
+      if (shouldRetranslateOnLanguageChange({
+        newLanguage: p.preferredLanguage,
+        autoTranslateMessages: (prefRow as any)?.auto_translate_messages,
+      })) {
+        retranslateForUser(sc, user.id, p.preferredLanguage, req.log).catch(() => {});
+      }
     }
   }
 

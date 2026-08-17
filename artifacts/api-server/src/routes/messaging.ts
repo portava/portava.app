@@ -39,6 +39,7 @@ import {
   retranslateForUser,
   type TranslationStatusValue,
 } from '../services/messageTranslation';
+import { shouldRetranslateOnLanguageChange } from '../lib/retranslateGate';
 import {
   syncTripChatMembers,
   syncCircleChatMembers,
@@ -222,7 +223,14 @@ router.patch('/me/language-settings', async (req, res) => {
   // Fire-and-forget re-translation sweep when the translation target changes.
   const newLang = (data as any).preferred_language as string | null;
   const oldLang = (before as any)?.preferred_language as string | null;
-  if (newLang && newLang !== oldLang) {
+  // Gated on auto_translate_messages. Ungated, changing the display language
+  // fired a sweep of up to 200 messages at the translation provider for users
+  // who had never asked for message translation at all.
+  if (newLang && shouldRetranslateOnLanguageChange({
+    newLanguage: newLang,
+    oldLanguage: oldLang,
+    autoTranslateMessages: (data as any).auto_translate_messages,
+  })) {
     const sc = getServiceClient();
     if (sc) {
       retranslateForUser(sc, user.id, newLang, req.log).catch(() => {});
