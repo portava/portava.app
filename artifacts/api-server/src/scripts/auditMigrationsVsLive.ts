@@ -68,6 +68,13 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FROZEN_LEGACY_FILES } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
+import {
+  scanMigrations,
+  findUndeclaredRlsTables,
+  findStaleAllowlistEntries,
+  findUnreasonedAllowlistEntries,
+  RLS_DECLARATION_ALLOWLIST,
+} from "./rlsDeclarationAudit.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -792,8 +799,16 @@ try {
 
 let totalClaims = 0;
 let filesWithGaps = 0;
+/** Raw SQL of every audited file, for the RLS-declaration pass below. */
+const scannedFiles: Array<{ file: string; sql: string }> = [];
 let missingCount = 0;
 let filesAudited = 0;
+
+console.log(
+  "\n══ SECTION 1 — MIGRATION DRIFT ══════════════════════════════════════════\n" +
+    "   Objects a migration claims to create that are ABSENT from the live schema.\n" +
+    "   A finding here means a migration has not been applied.",
+);
 
 for (const dir of MIGRATION_DIRS) {
   let files: string[];
@@ -809,7 +824,9 @@ for (const dir of MIGRATION_DIRS) {
       continue;
     }
     filesAudited++;
-    const claims = parseMigration(readFileSync(join(dir, file), "utf8"));
+    const rawSql = readFileSync(join(dir, file), "utf8");
+    scannedFiles.push({ file, sql: rawSql });
+    const claims = parseMigration(rawSql);
     totalClaims += claims.length;
     const missing = claims.filter(
       (c) => !ALLOWLIST.has(c.key) && isMissing(c, live),
@@ -826,12 +843,101 @@ for (const dir of MIGRATION_DIRS) {
 console.log(
   `\nAudited ${filesAudited} migration files, ${totalClaims} claimed objects.`,
 );
-if (missingCount > 0) {
+
+// ── RLS declaration pass (STATIC — see rlsDeclarationAudit.ts) ───────────────
+//
+// The claim check above can only verify what a migration SAYS. A table that
+// never declares RLS produces no claim, so its absence reads as a pass. This
+// pass asks the opposite question: does every table the tree CREATES declare
+// RLS at all? Live state is annotated where known, but the assertion is static.
+console.log(
+  "\n══ SECTION 2 — RLS DECLARATION ══════════════════════════════════════════\n" +
+    "   Tables the canonical tree CREATES without ever declaring row level\n" +
+    "   security. Independent of Section 1: a finding here is a table with no\n" +
+    "   RLS declaration, NOT an unapplied migration. This is a STATIC check of\n" +
+    "   the SQL; live state is shown per table as an annotation only.",
+);
+
+const rlsScan = scanMigrations(scannedFiles);
+const undeclared = findUndeclaredRlsTables(rlsScan, RLS_DECLARATION_ALLOWLIST);
+const staleAllow = findStaleAllowlistEntries(rlsScan, RLS_DECLARATION_ALLOWLIST);
+const unreasoned = findUnreasonedAllowlistEntries(RLS_DECLARATION_ALLOWLIST);
+
+let rlsProblems = 0;
+
+if (unreasoned.length > 0) {
+  rlsProblems += unreasoned.length;
   console.error(
-    `✖ ${missingCount} missing object(s) across ${filesWithGaps} file(s). ` +
-      "Apply the migrations via the Supabase Management API and update docs/migrations.md.",
+    `\n✖ ${unreasoned.length} RLS allowlist entr(ies) without a written reason: ` +
+      `${unreasoned.join(", ")}. An entry must say WHY the table needs no RLS.`,
   );
+}
+
+if (staleAllow.length > 0) {
+  rlsProblems += staleAllow.length;
+  console.error(
+    `\n✖ ${staleAllow.length} stale RLS allowlist entr(ies): ` +
+      `${staleAllow.join(", ")} now declare(s) RLS. Remove the entr(ies).`,
+  );
+}
+
+if (undeclared.length > 0) {
+  rlsProblems += undeclared.length;
+  console.error(
+    `\n✖ ${undeclared.length} public table(s) created with NO 'enable row level security' ` +
+      `declaration anywhere in the canonical tree:`,
+  );
+  for (const t of undeclared) {
+    const liveNote =
+      live.rlsEnabled.has(t.table)
+        ? " [live: RLS ON — declaration missing from the tree]"
+        : live.relations.has(t.table)
+          ? " [live: RLS OFF]"
+          : " [not present live]";
+    console.error(`\n      ${t.table}  (created by ${t.file})${liveNote}`);
+    console.error(`        fix: ALTER TABLE public.${t.table} ENABLE ROW LEVEL SECURITY;`);
+    console.error(
+      `        then add at least one policy — a table with RLS on and no policy ` +
+        `denies everything.`,
+    );
+  }
+  console.error(
+    "\n  Each line above is copy-paste ready. Put it in the migration that creates " +
+      "the table (or a new one), together with the policies that table needs.\n" +
+      "  If a table legitimately needs no RLS — pure reference data, or service-role " +
+      "only with no PostgREST exposure — add it to RLS_DECLARATION_ALLOWLIST in\n" +
+      "  src/scripts/rlsDeclarationAudit.ts WITH A WRITTEN REASON. A bare name is " +
+      "rejected.",
+  );
+}
+
+console.log(
+  `RLS declaration pass: ${rlsScan.created.size} table(s) created, ` +
+    `${rlsScan.rlsDeclared.size} with an RLS declaration, ` +
+    `${Object.keys(RLS_DECLARATION_ALLOWLIST).length} allowlisted.`,
+);
+
+if (missingCount > 0 || rlsProblems > 0) {
+  console.error("\n══ SUMMARY ══════════════════════════════════════════════════════════════");
+  console.error(
+    `   Section 1 — migration drift : ${missingCount} missing object(s) across ` +
+      `${filesWithGaps} file(s)`,
+  );
+  console.error(`   Section 2 — RLS declaration : ${rlsProblems} finding(s)`);
+  console.error(
+    "   These are INDEPENDENT failures. Neither count includes the other, and " +
+      "fixing\n   one does not clear the other.",
+  );
+  if (missingCount > 0) {
+    console.error(
+      `\n   Section 1 remedy: apply the migrations via the Supabase Management API ` +
+        "and update docs/migrations.md.",
+    );
+  }
   process.exit(1);
 }
-console.log("✔ Live schema contains every object claimed by the migrations.");
+console.log(
+  "\n✔ Section 1: live schema contains every object claimed by the migrations.\n" +
+    "✔ Section 2: every table created by the tree declares row level security.",
+);
 process.exit(0);

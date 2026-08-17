@@ -25,7 +25,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const SCREEN_ROOT = 'app/(rent-a-buddy)';
 
@@ -102,7 +102,7 @@ describe('Rent-a-Buddy screens never show a raw error code', () => {
   it('no screen passes a raw error string into an Alert body', () => {
     const violations: string[] = [];
     for (const file of walk(SCREEN_ROOT)) {
-      const lines = readFileSync(file, 'utf8').split('\n');
+      const lines = readFileSync(resolve(file), 'utf8').split('\n');
       lines.forEach((line, i) => {
         if (RAW_IN_ALERT.test(line)) violations.push(`${file}:${i + 1}: ${line.trim()}`);
       });
@@ -132,7 +132,7 @@ describe('Rent-a-Buddy screens never show a raw error code', () => {
   it('no screen outside Rent-a-Buddy passes a raw service error into an Alert', () => {
     const violations: string[] = [];
     for (const file of OTHER_ROOTS) {
-      const lines = readFileSync(file, 'utf8').split('\n');
+      const lines = readFileSync(resolve(file), 'utf8').split('\n');
       lines.forEach((line, i) => {
         if (OTHER_RAW_IN_ALERT.test(line)) violations.push(`${file}:${i + 1}: ${line.trim()}`);
       });
