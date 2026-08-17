@@ -25,6 +25,7 @@ import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
+import { errorCopy } from '../lib/errorCopy.ts';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -616,7 +617,7 @@ function RequestCard({
       setReportNote('');
       Alert.alert('Report submitted', 'Thank you — our team will review this request.');
     } else {
-      Alert.alert('Error', res.error ?? 'Could not submit report');
+      Alert.alert('Error', errorCopy(res.error, 'Could not submit report'));
     }
   }
 

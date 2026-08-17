@@ -13,6 +13,7 @@ import {
   resetReportSheet,
   REPORT_POST_REASONS,
 } from './ReportPostSheet.state';
+import { errorCopy } from '../lib/errorCopy.ts';
 
 export { REPORT_POST_REASONS };
 
@@ -60,7 +61,7 @@ export function ReportPostSheet({
       onReported?.();
       setTimeout(() => handleClose(), 2500);
     } else {
-      Alert.alert('Error', res.error ?? 'Could not submit report');
+      Alert.alert('Error', errorCopy(res.error, 'Could not submit report'));
     }
   }
 

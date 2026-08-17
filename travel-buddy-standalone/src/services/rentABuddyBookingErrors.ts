@@ -17,6 +17,7 @@
  * under node:test; re-exported from rentABuddy.ts, which is where callers
  * import it from.
  */
+import { errorCopy } from '../lib/errorCopy.ts';
 
 /** Refusal codes meaning "this feature is not open", not "your request was wrong". */
 export const BOOKING_UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
@@ -67,13 +68,13 @@ export function bookingErrorCopy(
   code: string | null | undefined,
   fallback?: string,
 ): string {
-  const generic = fallback ?? GENERIC_BOOKING_ERROR;
-  if (!code) return generic;
-  const known = BOOKING_UNAVAILABLE_COPY[code];
-  if (known) return known;
-  const trimmed = code.trim();
-  if (!trimmed || !/\s/.test(trimmed) || /^HTTP \d+$/.test(trimmed)) {
-    return generic;
+  // The Rent-a-Buddy map first — a feature-closed code has specific, honest
+  // copy that must beat any caller fallback. Everything else is the general
+  // "don't show a machine string" rule, which lives in lib/errorCopy so other
+  // features can use it WITHOUT inheriting Rent-a-Buddy's wording.
+  if (code) {
+    const known = BOOKING_UNAVAILABLE_COPY[code];
+    if (known) return known;
   }
-  return trimmed;
+  return errorCopy(code, fallback ?? GENERIC_BOOKING_ERROR);
 }

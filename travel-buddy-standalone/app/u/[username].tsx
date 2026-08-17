@@ -47,6 +47,7 @@ import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
 import { useMilestoneCelebration } from '../../src/hooks/useMilestoneCelebration';
 import { TenKStampsBadge } from '../../src/components/TenKStampsBadge';
+import { errorCopy } from '../../src/lib/errorCopy';
 
 type Tab = 'postcards' | 'stamps' | 'map' | 'about';
 const TABS: { key: Tab; label: string; Icon: LucideIcon }[] = [
@@ -320,7 +321,7 @@ function KebabMenu({
             if (res.ok) {
               onBlocked();
             } else {
-              Alert.alert('Error', res.error ?? 'Could not block user');
+              Alert.alert('Error', errorCopy(res.error, 'Could not block user'));
             }
           },
         },
@@ -337,7 +338,7 @@ function KebabMenu({
     setBusy(null);
     if (!res.ok) {
       setIsMuted(wasMuted);
-      Alert.alert('Error', res.error ?? `Could not ${wasMuted ? 'unmute' : 'mute'} user`);
+      Alert.alert('Error', errorCopy(res.error, `Could not ${wasMuted ? 'unmute' : 'mute'} user`));
     }
   }
 
@@ -350,7 +351,7 @@ function KebabMenu({
     setBusy(null);
     if (!res.ok) {
       setIsSaved(wasSaved);
-      Alert.alert('Error', res.error ?? `Could not ${wasSaved ? 'unsave' : 'save'} profile`);
+      Alert.alert('Error', errorCopy(res.error, `Could not ${wasSaved ? 'unsave' : 'save'} profile`));
     }
   }
 
@@ -859,7 +860,7 @@ function PublicPassportScreenNative() {
             if (res.ok) {
               setIsMutedByMe(false);
             } else {
-              Alert.alert('Error', res.error ?? 'Could not unmute user');
+              Alert.alert('Error', errorCopy(res.error, 'Could not unmute user'));
             }
           },
         },

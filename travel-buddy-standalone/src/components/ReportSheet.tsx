@@ -28,6 +28,7 @@ import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 import { useMediaComposer } from '../hooks/useMediaComposer.ts';
 import { MediaPickerButton } from './ui/MediaPickerButton.tsx';
 import { MediaAttachmentTray } from './ui/MediaAttachmentTray.tsx';
+import { errorCopy } from '../lib/errorCopy.ts';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -130,7 +131,7 @@ export function ReportSheet({
       setStep(3);
       onReported?.();
     } else {
-      Alert.alert('Error', res.error ?? 'Could not submit report');
+      Alert.alert('Error', errorCopy(res.error, 'Could not submit report'));
     }
   }
 
@@ -143,7 +144,7 @@ export function ReportSheet({
       if (res.ok) {
         removeBlock(subjectUserId);
       } else {
-        Alert.alert('Error', res.error ?? 'Could not unblock user');
+        Alert.alert('Error', errorCopy(res.error, 'Could not unblock user'));
       }
     } else {
       const res = await blockUser(subjectUserId);
@@ -151,7 +152,7 @@ export function ReportSheet({
       if (res.ok) {
         addBlock(subjectUserId);
       } else {
-        Alert.alert('Error', res.error ?? 'Could not block user');
+        Alert.alert('Error', errorCopy(res.error, 'Could not block user'));
       }
     }
   }

@@ -25,6 +25,7 @@ import {
   type HashtagMeta, type UserPreview,
 } from '../services/hashtag.ts';
 import type { RichTextEntityType } from './RichText.tsx';
+import { errorCopy } from '../lib/errorCopy.ts';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ function HashtagCard({
     if (res.ok) {
       Alert.alert('Report submitted', 'Thanks for helping keep Portava safe.');
     } else {
-      Alert.alert('Could not submit report', res.error ?? 'Please try again.');
+      Alert.alert('Could not submit report', errorCopy(res.error, 'Please try again.'));
     }
   }
 

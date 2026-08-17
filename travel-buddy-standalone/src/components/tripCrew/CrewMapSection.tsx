@@ -24,6 +24,7 @@ import { ArrivalBoard } from './ArrivalBoard.tsx';
 import { useTripCrewMap } from '../../hooks/useTripCrewMap.ts';
 import { enableGhostMode, disableGhostMode, updateCrewPreferences } from '../../services/tripCrewLocation.ts';
 import type { CrewMemberCard as CrewMemberCardType } from '../../services/tripCrewLocation.ts';
+import { errorCopy } from '../../lib/errorCopy.ts';
 
 interface Props {
   tripId: string;
@@ -168,7 +169,7 @@ export function CrewMapSection({ tripId, refreshKey = 0 }: Props) {
       : await disableGhostMode(tripId);
     setGhostLoading(false);
     if (!result.ok) {
-      Alert.alert('Error', result.error ?? 'Could not update ghost mode');
+      Alert.alert('Error', errorCopy(result.error, 'Could not update ghost mode'));
       return;
     }
     setGhostMode(value);
@@ -180,7 +181,7 @@ export function CrewMapSection({ tripId, refreshKey = 0 }: Props) {
     const result = await updateCrewPreferences(tripId, { defaultVisibility: v });
     setVisibilitySaving(false);
     if (!result.ok) {
-      Alert.alert('Error', result.error ?? 'Could not update visibility');
+      Alert.alert('Error', errorCopy(result.error, 'Could not update visibility'));
     }
   }
 

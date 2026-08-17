@@ -44,6 +44,7 @@ import {
   type RichTextHashtag,
   type Segment,
 } from './richTextSegments.ts';
+import { errorCopy } from '../lib/errorCopy.ts';
 
 // Re-export public types so consumers can import from 'RichText' as before.
 export type { RichTextEntityType, RichTextTag, RichTextHashtag };
@@ -181,7 +182,7 @@ export function RichText({
                     if (res.ok) {
                       setRemovedTagRowIds((prev) => new Set(prev).add(tagRowId));
                     } else {
-                      Alert.alert('Could not remove tag', res.error ?? 'Please try again.');
+                      Alert.alert('Could not remove tag', errorCopy(res.error, 'Please try again.'));
                     }
                   },
                 },

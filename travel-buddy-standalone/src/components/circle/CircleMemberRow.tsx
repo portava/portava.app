@@ -9,6 +9,7 @@ import { blockUser } from '../../services/blocks.ts';
 import { reportContent } from '../../services/reports.ts';
 import { openDirectThread } from '../../services/messaging.ts';
 import { color, radius, type as t, dot } from '../../theme/tokens.ts';
+import { errorCopy } from '../../lib/errorCopy.ts';
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; textColor: string }> = {
   active:     { label: 'Available',   bg: '#E8F5E9', textColor: '#2E7D32' },
@@ -103,7 +104,7 @@ export function CircleMemberRow({ member, isViewerRow = false }: Props) {
     if (res.ok) {
       Alert.alert('Report sent', 'Thanks — our safety team will review it.');
     } else {
-      Alert.alert('Could not send report', res.error ?? 'Please try again.');
+      Alert.alert('Could not send report', errorCopy(res.error, 'Please try again.'));
     }
   }
 
