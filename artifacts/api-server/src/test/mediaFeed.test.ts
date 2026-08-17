@@ -27,6 +27,7 @@ import {
 } from "../lib/mediaCursor.js";
 import {
   filterEligibleMediaCandidates,
+  loadViewerTripIds,
   type MediaCandidate,
 } from "../lib/mediaEligibility.js";
 import { hydrateMediaFeedItem, hydrateMediaGridItem } from "../lib/mediaFeedItem.js";
@@ -383,7 +384,12 @@ describe("filterEligibleMediaCandidates", () => {
     assert.equal(eligible.length, 0, "private posts must be excluded from for_you feed");
   });
 
-  it("includes private posts from followed creators in following feed", async () => {
+  it("excludes private posts from followed creators in following feed", async () => {
+    // Inverted deliberately. This previously asserted eligible.length === 1 and
+    // encoded the bug: the following branch checked only the follow edge and
+    // never read `visibility`, so one follow admitted the author's private
+    // posts into Watch and the grid. Following someone is not consent to their
+    // private posts.
     const post = makePost({ author_id: CREATOR_A, visibility: "private" });
     const client = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
     const { eligible } = await filterEligibleMediaCandidates(
@@ -396,7 +402,73 @@ describe("filterEligibleMediaCandidates", () => {
       client,
       new Set(),
     );
-    assert.equal(eligible.length, 1, "private posts from followed creators must be included");
+    assert.equal(eligible.length, 0, "a follow must NOT admit the author's private posts");
+  });
+
+  // ── Visibility gate on the following feed ──────────────────────────────────
+  //
+  // The following branch used to test only the follow edge, computing
+  // `visibility` and never reading it. These six pin what each visibility value
+  // means once a follow edge exists: a follow is not trip membership and not
+  // consent to private posts, but it is still a follow for ordinary content,
+  // and the viewer always sees their own.
+
+  const TRIP_ID = "dddddddd-0000-4000-a000-000000000009";
+
+  async function runFollowingGate(post: MediaCandidate, viewerTripIds?: Set<string>) {
+    const client = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
+    const { eligible } = await filterEligibleMediaCandidates(
+      [post],
+      {
+        viewerUserId: VIEWER_ID,
+        feedType: "following",
+        followedCreatorIds: new Set([CREATOR_A]),
+        ...(viewerTripIds ? { viewerTripIds } : {}),
+      },
+      client,
+      new Set(),
+    );
+    return eligible;
+  }
+
+  it("visibility gate: admits an ordinary public post from a followed creator", async () => {
+    const eligible = await runFollowingGate(makePost({ author_id: CREATOR_A, visibility: "public" }));
+    assert.equal(eligible.length, 1, "public posts from followed creators must still be admitted");
+  });
+
+  it("visibility gate: admits a private post authored by the VIEWER themselves", async () => {
+    // The self-exemption: you always see what you posted, whatever its
+    // visibility. Only OTHER authors' private posts are refused.
+    const eligible = await runFollowingGate(makePost({ author_id: VIEWER_ID, visibility: "private" }));
+    assert.equal(eligible.length, 1, "the viewer's own private post must remain visible to them");
+  });
+
+  it("visibility gate: refuses a trip_only post when the viewer is not in that trip", async () => {
+    const post = makePost({ author_id: CREATOR_A, visibility: "trip_only", trip_id: TRIP_ID });
+    const eligible = await runFollowingGate(post, new Set(["some-other-trip"]));
+    assert.equal(eligible.length, 0, "following an author is not membership of their trip");
+  });
+
+  it("visibility gate: admits a trip_only post when the viewer IS in that trip", async () => {
+    const post = makePost({ author_id: CREATOR_A, visibility: "trip_only", trip_id: TRIP_ID });
+    const eligible = await runFollowingGate(post, new Set([TRIP_ID]));
+    assert.equal(eligible.length, 1, "a genuine trip member must still receive trip_only content");
+  });
+
+  it("visibility gate: fails closed on a trip_only post with a null trip_id", async () => {
+    // Nothing to check membership against — admitting it would mean trusting
+    // the visibility label alone.
+    const post = makePost({ author_id: CREATOR_A, visibility: "trip_only", trip_id: null });
+    const eligible = await runFollowingGate(post, new Set([TRIP_ID]));
+    assert.equal(eligible.length, 0, "trip_only with no trip_id must be excluded, not admitted");
+  });
+
+  it("visibility gate: fails closed on trip_only when viewerTripIds was never loaded", async () => {
+    // The caller-forgot-to-load case, which is also what a double read failure
+    // in loadViewerTripIds produces.
+    const post = makePost({ author_id: CREATOR_A, visibility: "trip_only", trip_id: TRIP_ID });
+    const eligible = await runFollowingGate(post, undefined);
+    assert.equal(eligible.length, 0, "absent viewerTripIds must exclude trip_only, not admit it");
   });
 
   it("excludes pending_delay posts", async () => {
@@ -459,6 +531,130 @@ describe("filterEligibleMediaCandidates", () => {
     );
     assert.equal(blockFetchFailed, true, "must report blockFetchFailed on DB error");
     assert.equal(eligible.length, 0, "must return empty on blockFetchFailed");
+  });
+});
+
+// ── loadViewerTripIds — read isolation ────────────────────────────────────────
+//
+// Membership and ownership are two INDEPENDENT grants: either alone is
+// sufficient. The tests below exist because `Promise.all` inside one try/catch
+// would couple them — it rejects on the first rejection, so a failure of the
+// rarer ownership read would discard an already-successful membership result
+// and drop every trip_only post for every genuine accepted member.
+//
+// Each read can fail in two distinct shapes and both must be covered:
+//   • the promise REJECTS      — network / client throw
+//   • it resolves with an ERROR TUPLE — { data: null, error } , which is what
+//     postgrest actually produces for a query error; it does not reject.
+
+describe("loadViewerTripIds — membership and ownership read isolation", () => {
+  const VIEWER = "aaaaaaaa-0000-4000-a000-000000000001";
+  const TRIP_MEMBER = "trip-member-1";
+  const TRIP_OWNED  = "trip-owned-1";
+
+  type Outcome =
+    | { kind: "ok"; rows: any[] }
+    | { kind: "errorTuple"; message: string }
+    | { kind: "reject"; message: string };
+
+  /**
+   * Minimal client exposing exactly what loadViewerTripIds calls, so each read
+   * can be failed independently and in either failure shape.
+   */
+  function makeTripClient(members: Outcome, owned: Outcome): any {
+    const settle = (outcome: Outcome) => {
+      if (outcome.kind === "reject") return Promise.reject(new Error(outcome.message));
+      if (outcome.kind === "errorTuple") {
+        return Promise.resolve({ data: null, error: { message: outcome.message } });
+      }
+      return Promise.resolve({ data: outcome.rows, error: null });
+    };
+    return {
+      from(table: string) {
+        const outcome = table === "trip_members" ? members : owned;
+        const chain: any = {
+          select: () => chain,
+          eq: () => chain,
+          in: () => chain,
+          then: (resolve: any, reject: any) => settle(outcome).then(resolve, reject),
+        };
+        return chain;
+      },
+    };
+  }
+
+  it("unions both reads when both succeed", async () => {
+    const client = makeTripClient(
+      { kind: "ok", rows: [{ trip_id: TRIP_MEMBER }] },
+      { kind: "ok", rows: [{ id: TRIP_OWNED }] },
+    );
+    const ids = await loadViewerTripIds(client, VIEWER);
+    assert.deepEqual([...ids].sort(), [TRIP_MEMBER, TRIP_OWNED].sort(),
+      "membership and ownership must be unioned");
+  });
+
+  it("membership survives an ownership REJECTION", async () => {
+    const client = makeTripClient(
+      { kind: "ok", rows: [{ trip_id: TRIP_MEMBER }] },
+      { kind: "reject", message: "ownership read exploded" },
+    );
+    const ids = await loadViewerTripIds(client, VIEWER);
+    assert.ok(ids.has(TRIP_MEMBER),
+      "a rejected ownership read must not discard a successful membership read");
+    assert.equal(ids.size, 1);
+  });
+
+  it("membership survives an ownership ERROR TUPLE", async () => {
+    // postgrest resolves with { data, error } rather than rejecting, so a
+    // rejection-only check would let this shape through silently.
+    const client = makeTripClient(
+      { kind: "ok", rows: [{ trip_id: TRIP_MEMBER }] },
+      { kind: "errorTuple", message: "permission denied for relation trips" },
+    );
+    const ids = await loadViewerTripIds(client, VIEWER);
+    assert.ok(ids.has(TRIP_MEMBER),
+      "an ownership error tuple must not discard a successful membership read");
+    assert.equal(ids.size, 1);
+  });
+
+  it("ownership survives a membership REJECTION", async () => {
+    const client = makeTripClient(
+      { kind: "reject", message: "membership read exploded" },
+      { kind: "ok", rows: [{ id: TRIP_OWNED }] },
+    );
+    const ids = await loadViewerTripIds(client, VIEWER);
+    assert.ok(ids.has(TRIP_OWNED),
+      "a rejected membership read must not discard a successful ownership read");
+    assert.equal(ids.size, 1);
+  });
+
+  it("fails closed when NEITHER read proves anything — a trip_only post is dropped", async () => {
+    // Asserted as a CONSEQUENCE, not merely as an empty set: the point is that
+    // a double failure withholds content rather than leaking it.
+    const client = makeTripClient(
+      { kind: "reject", message: "membership read exploded" },
+      { kind: "errorTuple", message: "ownership read failed" },
+    );
+    const ids = await loadViewerTripIds(client, VIEWER);
+    assert.equal(ids.size, 0, "a double failure must yield an empty set");
+
+    const tripOnlyPost = makePost({
+      author_id: CREATOR_A, visibility: "trip_only", trip_id: "dddddddd-0000-4000-a000-000000000009",
+    });
+    const filterClient = makeClient({ blocks: [], mutes: [], profiles: [makeProfile()] });
+    const { eligible } = await filterEligibleMediaCandidates(
+      [tripOnlyPost],
+      {
+        viewerUserId: VIEWER_ID,
+        feedType: "following",
+        followedCreatorIds: new Set([CREATOR_A]),
+        viewerTripIds: ids,
+      },
+      filterClient,
+      new Set(),
+    );
+    assert.equal(eligible.length, 0,
+      "with nothing proven, the trip_only post must be withheld — fail closed, not open");
   });
 });
 

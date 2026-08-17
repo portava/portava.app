@@ -40,6 +40,13 @@ export interface ViewerCtx {
    * for safety.
    */
   viewerAge?: number | null;
+  /**
+   * Trips the viewer belongs to (as member or owner) — required to admit
+   * trip_only items on the following feed. Load with loadViewerTripIds.
+   * Omit or leave empty and every trip_only item is excluded, which is the
+   * safe direction: following someone is not membership of their trip.
+   */
+  viewerTripIds?: Set<string>;
 }
 
 export interface EligibilityResult {
@@ -78,6 +85,11 @@ export interface MediaCandidate {
   age_restriction_enabled?: boolean | null;
   age_min?: number | null;
   age_max?: number | null;
+  /**
+   * Owning trip for trip_only items. Absent/null on a trip_only item means
+   * there is no trip to check membership against, so the item is excluded.
+   */
+  trip_id?: string | null;
   [key: string]: unknown;
 }
 
@@ -184,6 +196,22 @@ export async function filterEligibleMediaCandidates(
       if (authorId !== viewerCtx.viewerUserId && !viewerCtx.followedCreatorIds.has(authorId)) {
         return false;
       }
+      // A follow is NOT consent to private posts and is NOT membership of the
+      // author's trip. This branch used to stop at the follow check and never
+      // read `visibility` at all, so a single follow admitted both trip_only
+      // and private items into the Watch and grid feeds. The viewer's own
+      // items are exempt — they are always allowed to see what they posted.
+      if (authorId !== viewerCtx.viewerUserId) {
+        if (visibility === "private") return false;
+        if (visibility === "trip_only") {
+          // Fail closed on either missing piece: an item with no trip_id has
+          // nothing to check membership against, and an absent viewerTripIds
+          // means the caller never loaded it (or both reads failed).
+          const tripId = c.trip_id;
+          if (!tripId) return false;
+          if (!viewerCtx.viewerTripIds?.has(tripId)) return false;
+        }
+      }
     } else {
       // For-you feed: only public items
       if (visibility !== "public") return false;
@@ -241,4 +269,71 @@ export async function filterEligibleMediaCandidates(
   });
 
   return { eligible, blockFetchFailed: false };
+}
+
+/** Trip roles that count as genuine membership. Mirrors circleAccessGuard. */
+const ACCEPTED_TRIP_ROLES = ["owner", "co_host", "member", "viewer"];
+
+/**
+ * Load the set of trip ids the viewer may see trip_only content for — trips
+ * they are an accepted member of, unioned with trips they own.
+ *
+ * ## Why allSettled, and why each result is admitted independently
+ *
+ * These are two separate grants: membership OR ownership is sufficient on its
+ * own. `Promise.all` inside one try/catch would couple them — it rejects on the
+ * first rejection, so a failure of the rarer ownership read would discard an
+ * already-successful membership result and drop every trip_only post for every
+ * genuine accepted member. That turns a partial outage of one query into a
+ * silent content blackout for the majority case.
+ *
+ * So each read is admitted on its own merits, and a read counts as failed in
+ * BOTH of the ways it can actually fail: the promise rejecting (network/client
+ * throw) and the resolved `{ data, error }` tuple carrying an error, which is
+ * what postgrest actually produces for a query error — it resolves, it does not
+ * reject. Checking only one of those would let the other pass silently.
+ *
+ * Only a DOUBLE failure yields an empty set, which fails closed: callers treat
+ * an empty set as "no trip_only content admitted".
+ */
+export async function loadViewerTripIds(
+  sc: SupabaseClient,
+  viewerUserId: string,
+): Promise<Set<string>> {
+  const tripIds = new Set<string>();
+
+  const [memberOutcome, ownerOutcome] = await Promise.allSettled([
+    sc.from("trip_members").select("trip_id").eq("user_id", viewerUserId).in("role", ACCEPTED_TRIP_ROLES),
+    sc.from("trips").select("id").eq("owner_id", viewerUserId),
+  ]);
+
+  if (memberOutcome.status === "fulfilled") {
+    const { data, error } = (memberOutcome.value ?? {}) as { data?: any[] | null; error?: unknown };
+    if (error) {
+      console.warn("loadViewerTripIds: trip_members read failed (non-fatal):", error);
+    } else {
+      for (const row of data ?? []) {
+        const id = (row as any)?.trip_id;
+        if (id) tripIds.add(String(id));
+      }
+    }
+  } else {
+    console.warn("loadViewerTripIds: trip_members read rejected (non-fatal):", memberOutcome.reason);
+  }
+
+  if (ownerOutcome.status === "fulfilled") {
+    const { data, error } = (ownerOutcome.value ?? {}) as { data?: any[] | null; error?: unknown };
+    if (error) {
+      console.warn("loadViewerTripIds: trips ownership read failed (non-fatal):", error);
+    } else {
+      for (const row of data ?? []) {
+        const id = (row as any)?.id;
+        if (id) tripIds.add(String(id));
+      }
+    }
+  } else {
+    console.warn("loadViewerTripIds: trips ownership read rejected (non-fatal):", ownerOutcome.reason);
+  }
+
+  return tripIds;
 }

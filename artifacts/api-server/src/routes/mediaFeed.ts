@@ -23,6 +23,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   filterEligibleMediaCandidates,
+  loadViewerTripIds,
   type MediaCandidate,
 } from "../lib/mediaEligibility.js";
 import { calculateUserAge } from "../lib/ageEligibility.js";
@@ -108,7 +109,7 @@ function pruneViewDedup(): void {
  * they are never forwarded to the client (hydrateMediaGridItem omits them).
  */
 const GRID_POST_COLUMNS =
-  "id, author_id, " +
+  "id, author_id, trip_id, " +
   "location_name, location_city, location_country, location_verified, " +
   "location_lat, location_lng, " +
   "created_at, category, " +
@@ -611,12 +612,20 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
   }
 
   // ── Eligibility filter ──────────────────────────────────────────────────────
+  // Trip membership is needed only to admit trip_only items, which only the
+  // following feed can reach — for_you admits public content exclusively, so
+  // the query is skipped there entirely. Loaded ONCE per request, never per row.
+  const gridViewerTripIds = filter === "following"
+    ? await loadViewerTripIds(sc, user.id)
+    : undefined;
+
   const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
     candidates,
     {
       viewerUserId: user.id,
       feedType: filter === "following" ? "following" : "for_you",
       followedCreatorIds,
+      viewerTripIds: gridViewerTripIds,
     },
     sc,
   );
@@ -1122,9 +1131,15 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   const candidates = (rawCandidates as MediaCandidate[]) ?? [];
 
   // ── Eligibility filter ─────────────────────────────────────────────────────
+  // See the grid path above: trip membership gates trip_only items, which only
+  // the following feed can reach, so for_you skips the query. Once per request.
+  const watchViewerTripIds = feedType === "following"
+    ? await loadViewerTripIds(sc, user.id)
+    : undefined;
+
   const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
     candidates,
-    { viewerUserId: user.id, feedType, followedCreatorIds, viewerCountry, viewerAge },
+    { viewerUserId: user.id, feedType, followedCreatorIds, viewerCountry, viewerAge, viewerTripIds: watchViewerTripIds },
     sc,
   );
 
@@ -1589,9 +1604,21 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
   // "following" eligibility (not "for_you" which requires public visibility).
   const candidate = row as MediaCandidate;
   const singleItemFeedType = viewerFollowsAuthor ? "following" : "for_you";
+  // Same rule as the feed paths: without this a genuine trip member would get a
+  // 404 on a single trip_only item, because the visibility gate fails closed
+  // when viewerTripIds is absent. for_you never reaches trip_only, so skip it.
+  const singleItemViewerTripIds = singleItemFeedType === "following"
+    ? await loadViewerTripIds(sc, user.id)
+    : undefined;
+
   const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
     [candidate],
-    { viewerUserId: user.id, feedType: singleItemFeedType, followedCreatorIds: followedIds },
+    {
+      viewerUserId: user.id,
+      feedType: singleItemFeedType,
+      followedCreatorIds: followedIds,
+      viewerTripIds: singleItemViewerTripIds,
+    },
     sc,
   );
 

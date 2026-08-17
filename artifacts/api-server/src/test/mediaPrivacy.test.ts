@@ -1397,12 +1397,35 @@ describe("GET /api/media/feed — auth + eligibility integration", () => {
     );
   });
 
-  it("private post media URLs use the relay path — never raw CDN — when served over the wire", async () => {
-    // Wire a state where VIEWER follows AUTHOR so the following feed returns
-    // both the public post (visibility='public') and the private post
-    // (visibility='private') from the same creator.
+  it("private-bucket media URLs use the relay path — never raw CDN — when served over the wire", async () => {
+    // Repointed. The subject here is the RELAY-URL rule, which is driven by the
+    // media row living in a private bucket with no public_url — not by the
+    // post's visibility. It used to reach that media through a followed
+    // creator's visibility='private' post, which the following feed no longer
+    // admits: a follow is not consent to someone's private posts.
+    //
+    // The relay itself keys on `row.visibility !== "public"` (mediaFeedItem.ts),
+    // so the substitute post must still be NON-public. It is now trip_only from
+    // the same followed creator, with the viewer a genuine accepted member of
+    // that trip — which the visibility gate admits and the relay still covers.
+    //
+    // Two substitutes that do NOT work, recorded so they are not retried:
+    //   • visibility='public' — reaches the feed, but the relay no longer
+    //     applies, so the assertions below stop testing anything.
+    //   • the viewer's OWN private post — the following feed constrains
+    //     author_id to followedCreatorIds at the query level (mediaFeed.ts), so
+    //     the viewer's own posts never enter the candidate set at all and the
+    //     gate's self-exemption is never reached here.
+    const TRIP_ID = "cc000000-0000-4000-a000-00000000000a";
     const state = baseState();
     state.userFollows = [{ follower_id: VIEWER_ID, following_id: AUTHOR_ID }];
+    state.posts = (state.posts ?? []).map((p: any) =>
+      p.id === POST_PRIVATE_ID ? { ...p, visibility: "trip_only", trip_id: TRIP_ID } : p,
+    );
+    state.tripMembers = [
+      ...(state.tripMembers ?? []),
+      { trip_id: TRIP_ID, user_id: VIEWER_ID, role: "member", status: "accepted" },
+    ];
     _setTestClient(makeClient(state) as any, true);
 
     const res = await request(
@@ -1416,12 +1439,12 @@ describe("GET /api/media/feed — auth + eligibility integration", () => {
     const privatePost = items.find((i: any) => i.id === POST_PRIVATE_ID);
     assert.ok(
       privatePost,
-      "private post from followed creator should appear in the following feed",
+      "the post carrying private-bucket media should appear in the following feed",
     );
 
     // Every media item on a private post must be served through the relay.
     const privateMedia: any[] = privatePost.media ?? [];
-    assert.ok(privateMedia.length > 0, "private post should have at least one media item");
+    assert.ok(privateMedia.length > 0, "post should have at least one private-bucket media item");
     for (const m of privateMedia) {
       assert.ok(
         typeof m.url === "string" && m.url.startsWith("/api/media/file/"),
