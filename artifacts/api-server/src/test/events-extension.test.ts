@@ -947,6 +947,71 @@ describe("Join request new paths", () => {
     assert.ok(body.ok);
   });
 
+  it("POST /join-requests/:id/approve on a FULL event with waitlisting disabled does not seat the attendee", async () => {
+    // Regression guard. Capacity and waitlist_enabled used to be ANDed, so a
+    // full event with waitlisting OFF failed the combined condition, skipped
+    // the whole block, and fell through to the unconditional going-upsert —
+    // seating an attendee past max_attendees. Capacity is now the outer
+    // condition and both full-event branches return.
+    const jrId = "00000000-0000-0000-ffff-000000000002";
+    const client2 = makeFakeClient({
+      events: { rows: [ makeEvent({
+        id: ID.ev1, host_id: ID.host1, visibility: "invite_only",
+        state: "full", max_attendees: 2, waitlist_enabled: false,
+      }) ] },
+      event_roles: { rows: [ { event_id: ID.ev1, user_id: ID.host1, role: "host" } ] },
+      event_join_requests: { rows: [
+        { id: jrId, event_id: ID.ev1, user_id: ID.user1, status: "pending", message: null, created_at: new Date().toISOString() },
+      ]},
+      // Both seats already taken.
+      event_rsvps: { rows: [
+        { event_id: ID.ev1, user_id: ID.host1, status: "going" },
+        { event_id: ID.ev1, user_id: ID.user2, status: "going" },
+      ]},
+      event_waitlist: { rows: [] },
+      event_activity_log: { rows: [] },
+      blocks: { rows: [] },
+      trust_profiles: { rows: [] },
+      profiles: { rows: [] },
+      event_roles_extra: { rows: [] },
+    });
+    _setTestClient(client2, true);
+    const { status, body } = await req(port, "POST", `/api/events/${ID.ev1}/join-requests/${jrId}/approve`, {}, ID.host1);
+
+    assert.equal(status, 200, "full + waitlist-off is not an error — the approval did persist");
+    assert.equal(body.status, "approved_pending_capacity",
+      `full event with waitlisting off must not report a seat, got: ${body.status}`);
+
+    const db = (client2 as any)._db;
+
+    // The actual overbook: no RSVP row may exist for the requester.
+    const requesterRsvps = db.event_rsvps.rows.filter((r: any) => r.user_id === ID.user1);
+    assert.equal(requesterRsvps.length, 0,
+      `requester must not be seated past max_attendees, got: ${JSON.stringify(requesterRsvps)}`);
+
+    // And the event must still hold exactly its two original attendees.
+    const going = db.event_rsvps.rows.filter((r: any) => r.status === "going");
+    assert.equal(going.length, 2, `going count must stay at max_attendees=2, got ${going.length}`);
+
+    // No fabricated waitlist row: promoteNextWaitlisted is gated on the GLOBAL
+    // events_waitlist_enabled flag, so a row here would later receive a real
+    // offer on an event whose host deliberately turned waitlisting off.
+    assert.equal(db.event_waitlist.rows.length, 0,
+      `no waitlist row may be created when the host disabled waitlisting, got: ${JSON.stringify(db.event_waitlist.rows)}`);
+
+    // The approval IS persisted — that is what lets the user seat themselves
+    // via POST /events/:id/join once a slot frees, so a 4xx would have lied.
+    const jr = db.event_join_requests.rows.find((r: any) => r.id === jrId);
+    assert.equal(jr?.status, "approved", `join request must remain approved, got: ${jr?.status}`);
+
+    // The branch used to return before logging, so a host approving into a
+    // full event produced no audit row at all.
+    const logged = (db.event_activity_log?.rows ?? []).filter((r: any) => r.action === "join_request_approved");
+    assert.equal(logged.length, 1, `expected one audit row, got ${logged.length}`);
+    assert.equal((logged[0] as any).metadata?.outcome, "pending_capacity",
+      `audit row must record the outcome, got: ${JSON.stringify((logged[0] as any).metadata)}`);
+  });
+
   it("POST /join-requests/:id/decline works", async () => {
     const jrId = "00000000-0000-0000-ffff-000000000002";
     const client2 = makeFakeClient({

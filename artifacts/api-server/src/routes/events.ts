@@ -4657,15 +4657,36 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
 
   const maxAtt = (evFull as any).max_attendees ?? null;
   const currentGoing = maxAtt != null ? await getGoingCount(sc, id) : 0;
-  if (maxAtt != null && currentGoing >= maxAtt && (evFull as any).waitlist_enabled) {
-    const { data: existingWl } = await sc.from("event_waitlist").select("position").eq("event_id", id).eq("user_id", targetId).maybeSingle();
-    if (!existingWl) {
-      const { data: maxPos } = await sc.from("event_waitlist").select("position").eq("event_id", id)
-        .order("position", { ascending: false }).limit(1).maybeSingle();
-      const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-      await sc.from("event_waitlist").insert({ event_id: id, user_id: targetId, position: nextPos });
+  // Capacity is the OUTER condition; waitlist_enabled only selects WHICH
+  // full-event outcome is returned. Both branches must return, because the
+  // going-upsert below is unconditional: when these were ANDed, a full event
+  // with waitlisting DISABLED fell through and seated an attendee past
+  // max_attendees. The legacy sibling PATCH /events/:id/requests/:userId
+  // already nests it this way.
+  if (maxAtt != null && currentGoing >= maxAtt) {
+    if ((evFull as any).waitlist_enabled) {
+      const { data: existingWl } = await sc.from("event_waitlist").select("position").eq("event_id", id).eq("user_id", targetId).maybeSingle();
+      if (!existingWl) {
+        const { data: maxPos } = await sc.from("event_waitlist").select("position").eq("event_id", id)
+          .order("position", { ascending: false }).limit(1).maybeSingle();
+        const nextPos = ((maxPos as any)?.position ?? 0) + 1;
+        await sc.from("event_waitlist").insert({ event_id: id, user_id: targetId, position: nextPos });
+      }
+      await logEventActivity(sc, id, user.id, "join_request_approved", { targetUserId: targetId, outcome: "waitlisted" });
+      res.json({ ok: true, status: "waitlisted" }); return;
     }
-    res.json({ ok: true, status: "waitlisted" }); return;
+
+    // Full, and the host turned waitlisting OFF. Not an error: the join-request
+    // row was already flipped to approved above, and that approval is what lets
+    // the user seat themselves via POST /events/:id/join once a slot frees, so
+    // nothing is lost — a 4xx here would lie about state we have persisted.
+    //
+    // Deliberately NOT a waitlist row either. That would be worse than the
+    // overbook it replaces: promoteNextWaitlisted is gated on the GLOBAL
+    // events_waitlist_enabled flag, not this event's, so a fabricated row on an
+    // event whose host disabled waitlisting would later receive a real offer.
+    await logEventActivity(sc, id, user.id, "join_request_approved", { targetUserId: targetId, outcome: "pending_capacity" });
+    res.json({ ok: true, status: "approved_pending_capacity" }); return;
   }
 
   await sc.from("event_rsvps").upsert(
@@ -4677,7 +4698,7 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
   await sc.from("events").update({ going_count: going }).eq("id", id);
   await syncAttendee(sc, id, targetId, "going");
 
-  await logEventActivity(sc, id, user.id, "join_request_approved", { targetUserId: targetId });
+  await logEventActivity(sc, id, user.id, "join_request_approved", { targetUserId: targetId, outcome: "going" });
 
   res.json({ ok: true, status: "approved" });
 });
