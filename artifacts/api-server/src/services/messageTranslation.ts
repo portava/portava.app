@@ -194,7 +194,7 @@ export async function translateMessageForThread(
         const result = await translateWithRetry(body, sourceLanguage, targetLanguage, 1);
 
         // Validate the translation before storing it.
-        const validation = validateTranslation(body, result.translatedText);
+        const validation = validateTranslation(body, result.translatedText, targetLanguage);
         if (!validation.valid) {
           await upsertTranslation(sc, {
             messageId,
@@ -351,7 +351,7 @@ export async function retranslateForUser(
 
       try {
         const result = await translateWithRetry(msg.body, sourceLanguage, newTargetLanguage, 1);
-        const validation = validateTranslation(msg.body, result.translatedText);
+        const validation = validateTranslation(msg.body, result.translatedText, newTargetLanguage);
         if (!validation.valid) {
           await upsertTranslation(sc, {
             messageId,

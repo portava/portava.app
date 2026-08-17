@@ -190,7 +190,7 @@ export async function translateContentFields(
     if (!originalText?.trim()) continue;
     try {
       const result = await translateWithRetry(originalText, sourceLanguage, targetLanguage);
-      const validation = validateTranslation(originalText, result.translatedText);
+      const validation = validateTranslation(originalText, result.translatedText, targetLanguage);
       if (!validation.valid) {
         logger?.warn(
           { entityType, entityId, field: fieldName, reason: validation.reason },

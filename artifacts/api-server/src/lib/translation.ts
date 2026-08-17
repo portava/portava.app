@@ -157,27 +157,52 @@ export interface ValidationOutcome {
 }
 
 /**
- * Sentence-terminal punctuation set (covers Latin, CJK, ellipsis).
+ * Sentence-terminal punctuation set (covers Latin, CJK, ellipsis, Devanagari
+ * danda/double danda, and Arabic question mark / full stop).
  * A translation whose original ends with terminal punctuation but whose
  * translation does not is considered potentially truncated.
  */
-const SENTENCE_TERMINAL_RE = /[.!?。！？…]$/u;
+const SENTENCE_TERMINAL_RE = /[.!?。！？…\u0964\u0965\u061F\u06D4]$/u;
+
+/**
+ * Languages whose script has no dedicated sentence-terminal punctuation mark
+ * (sentences are conventionally separated by a space or simply run on) — rule
+ * 4 must be skipped entirely for these, since it would otherwise reject every
+ * translation whose source ends in a full stop.
+ */
+const NO_TERMINAL_PUNCT_LANGS = new Set(['th', 'lo', 'km', 'my']);
+
+/**
+ * Target languages whose scripts compress Latin source text hard (CJK) — a
+ * correct, complete translation can legitimately be far shorter than 20% of
+ * the source character count, so rule 2's floor is relaxed for them.
+ */
+const COMPACT_SCRIPT_LANGS = new Set(['zh', 'zh-TW', 'ja', 'ko']);
+const COMPACT_SCRIPT_MIN_RATIO = 0.08;
+const DEFAULT_MIN_RATIO = 0.2;
 
 /**
  * validateTranslation — returns whether a translation result is safe to show.
  *
  * Rules (in order):
  *  1. Non-empty / non-whitespace
- *  2. At least 20% the character length of the original
+ *  2. At least `minRatio` (20%, or 8% for compact CJK targets) the character
+ *     length of the original
  *  3. Not character-identical to the original (no-op translation)
- *  4. If original ends with sentence-terminal punctuation, translation must too
- *     (guards against mid-sentence truncation)
+ *  4. If original ends with sentence-terminal punctuation, translation must
+ *     too (guards against mid-sentence truncation) — skipped for target
+ *     languages whose script has no terminal punctuation at all
+ *
+ * @param targetLanguage - ISO 639-1 (or zh-TW) code of the translation's
+ *   target language. Optional for backward compatibility; when omitted,
+ *   rules 2 and 4 fall back to their previous language-agnostic behavior.
  *
  * Privacy: callers must never log the original or translated text themselves.
  */
 export function validateTranslation(
   original: string,
   translated: string,
+  targetLanguage?: string,
 ): ValidationOutcome {
   const origTrimmed = original.trim();
   const transTrimmed = translated.trim();
@@ -186,7 +211,11 @@ export function validateTranslation(
     return { valid: false, reason: 'empty' };
   }
 
-  if (origTrimmed.length > 0 && transTrimmed.length < origTrimmed.length * 0.2) {
+  const minRatio = targetLanguage && COMPACT_SCRIPT_LANGS.has(targetLanguage)
+    ? COMPACT_SCRIPT_MIN_RATIO
+    : DEFAULT_MIN_RATIO;
+
+  if (origTrimmed.length > 0 && transTrimmed.length < origTrimmed.length * minRatio) {
     return { valid: false, reason: 'too_short' };
   }
 
@@ -194,7 +223,12 @@ export function validateTranslation(
     return { valid: false, reason: 'identical' };
   }
 
-  if (SENTENCE_TERMINAL_RE.test(origTrimmed) && !SENTENCE_TERMINAL_RE.test(transTrimmed)) {
+  const skipTerminalCheck = !!targetLanguage && NO_TERMINAL_PUNCT_LANGS.has(targetLanguage);
+  if (
+    !skipTerminalCheck &&
+    SENTENCE_TERMINAL_RE.test(origTrimmed) &&
+    !SENTENCE_TERMINAL_RE.test(transTrimmed)
+  ) {
     return { valid: false, reason: 'truncated' };
   }
 
