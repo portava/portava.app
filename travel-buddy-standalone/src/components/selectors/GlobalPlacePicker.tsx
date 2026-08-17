@@ -44,6 +44,7 @@ import * as ExpoLocation from 'expo-location';
 import { getCurrentGps } from '../../services/location.ts';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { usePlaceSearch } from '../../hooks/usePlaceSearch.ts';
+import { selectSearchRows } from '../../lib/location/searchSourceMerge.ts';
 import { useRecentPlaces } from '../../hooks/useRecentPlaces.ts';
 import { usePopularCities } from '../../hooks/usePopularCities.ts';
 import { resolveCanonicalPlace } from '../../lib/location/resolveCanonical.ts';
@@ -293,20 +294,15 @@ export function GlobalPlacePicker({
       popularRows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
     }
   } else {
-    // Google results are shown first with attribution. The existing API results
-    // backfill any suggestions not already covered by Google's top-5.
-    const useGoogle = googlePlaces.length > 0;
-    if (searchError && !searching && !useGoogle) items.push({ kind: 'error' });
-    if (useGoogle) {
-      items.push({ kind: 'google-attribution' });
-      googlePlaces.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
-      const googleDescriptions = new Set(googlePlaces.map((p) => p.displayName.toLowerCase()));
-      searchResults
-        .filter((p) => !googleDescriptions.has(p.displayName.toLowerCase()))
-        .forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
-    } else {
-      searchResults.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
-    }
+    // Source selection lives in lib/location/searchSourceMerge.ts. In CITY mode
+    // Google is the source and /places/search is a fallback that runs only when
+    // Google returns nothing — merging the two is what made city rows blink in
+    // and out mid-type, because Nominatim answers partial names erratically.
+    // Outside city mode the additive merge is unchanged.
+    const selection = selectSearchRows({ googlePlaces, searchResults, cityMode });
+    if (searchError && !searching && selection.rows.length === 0) items.push({ kind: 'error' });
+    if (selection.showGoogleAttribution) items.push({ kind: 'google-attribution' });
+    selection.rows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
     if (showCustom) items.push({ kind: 'custom' });
   }
 
