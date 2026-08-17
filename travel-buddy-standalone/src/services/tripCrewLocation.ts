@@ -6,6 +6,7 @@
  */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { serviceFailure, thrownFailure } from './serviceFailure.ts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,10 +82,10 @@ async function apiFetch<T>(
       headers: { ...headers, ...(opts.headers as any) },
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, error: (json as any).message ?? res.statusText };
+    if (!res.ok) return { ok: false, error: serviceFailure('tripCrewLocation', res, (json as any).message, 'Could not update crew location settings.') };
     return { ok: true, data: json as T };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Network error' };
+    return { ok: false, error: thrownFailure('tripCrewLocation', e) };
   }
 }
 

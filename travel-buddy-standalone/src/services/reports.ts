@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { serviceFailure, thrownFailure } from './serviceFailure.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -84,7 +85,7 @@ export async function reportContent(payload: ReportContentPayload): Promise<Repo
     const body = await res.json();
     return { ok: true, data: { reportId: body.reportId } };
   } catch (e: any) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: thrownFailure('reports', e) };
   }
 }
 
@@ -129,6 +130,6 @@ export async function submitReport(payload: SubmitReportPayload): Promise<Report
     const respBody = await res.json();
     return { ok: true, data: { reportId: respBody.reportId } };
   } catch (e: any) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: thrownFailure('reports', e) };
   }
 }

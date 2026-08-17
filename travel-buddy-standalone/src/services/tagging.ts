@@ -6,6 +6,7 @@
 
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { serviceFailure, thrownFailure } from './serviceFailure.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -28,12 +29,12 @@ async function apiGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?:
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any).message ?? `HTTP ${res.status}` };
+      return { ok: false, error: serviceFailure('tagging', res, (body as any).message, 'Could not complete that request.') };
     }
     const data = await res.json();
     return { ok: true, data };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Network error' };
+    return { ok: false, error: thrownFailure('tagging', e) };
   }
 }
 
@@ -48,11 +49,11 @@ async function apiPatch<T>(path: string, body: unknown): Promise<{ ok: boolean; 
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
+      return { ok: false, error: serviceFailure('tagging', res, (b as any)?.message, 'Could not complete that request.') };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Network error' };
+    return { ok: false, error: thrownFailure('tagging', e) };
   }
 }
 
@@ -66,11 +67,11 @@ async function apiDelete<T>(path: string): Promise<{ ok: boolean; data?: T; erro
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? `HTTP ${res.status}` };
+      return { ok: false, error: serviceFailure('tagging', res, (b as any)?.message, 'Could not complete that request.') };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Network error' };
+    return { ok: false, error: thrownFailure('tagging', e) };
   }
 }
 

@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { serviceFailure, thrownFailure } from './serviceFailure.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -45,7 +46,7 @@ export async function blockUser(userId: string): Promise<BlockResult> {
     }
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: thrownFailure('blocks', e) };
   }
 }
 
@@ -65,7 +66,7 @@ export async function unblockUser(userId: string): Promise<BlockResult> {
     }
     return { ok: true };
   } catch (e: any) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: thrownFailure('blocks', e) };
   }
 }
 
@@ -85,7 +86,7 @@ export async function getBlockList(): Promise<BlockResult<BlockedUser[]>> {
     const body = await res.json();
     return { ok: true, data: body.blocked ?? [] };
   } catch (e: any) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: thrownFailure('blocks', e) };
   }
 }
 
@@ -104,7 +105,7 @@ export async function getBlockerIds(): Promise<BlockResult<string[]>> {
     const body = await res.json();
     return { ok: true, data: body.ids ?? [] };
   } catch (e: any) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: thrownFailure('blocks', e) };
   }
 }
 
@@ -124,6 +125,6 @@ export async function getBlockStatus(userId: string): Promise<BlockResult<BlockS
     const body = await res.json();
     return { ok: true, data: body as BlockStatus };
   } catch (e: any) {
-    return { ok: false, error: e.message };
+    return { ok: false, error: thrownFailure('blocks', e) };
   }
 }

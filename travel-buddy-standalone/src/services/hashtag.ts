@@ -3,6 +3,7 @@
  */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { serviceFailure, thrownFailure } from './serviceFailure.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -25,11 +26,11 @@ async function apiGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?:
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any)?.message ?? res.statusText };
+      return { ok: false, error: serviceFailure('hashtag', res, (body as any)?.message, 'Could not complete that request.') };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: thrownFailure('hashtag', err) };
   }
 }
 
@@ -43,11 +44,11 @@ async function apiPost<T>(path: string): Promise<{ ok: boolean; data?: T; error?
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any)?.message ?? res.statusText };
+      return { ok: false, error: serviceFailure('hashtag', res, (body as any)?.message, 'Could not complete that request.') };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: thrownFailure('hashtag', err) };
   }
 }
 
@@ -62,11 +63,11 @@ async function apiPostJson<T>(path: string, body: unknown): Promise<{ ok: boolea
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
-      return { ok: false, error: (b as any)?.message ?? res.statusText };
+      return { ok: false, error: serviceFailure('hashtag', res, (b as any)?.message, 'Could not complete that request.') };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: thrownFailure('hashtag', err) };
   }
 }
 
@@ -80,11 +81,11 @@ async function apiDelete<T>(path: string): Promise<{ ok: boolean; data?: T; erro
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any)?.message ?? res.statusText };
+      return { ok: false, error: serviceFailure('hashtag', res, (body as any)?.message, 'Could not complete that request.') };
     }
     return { ok: true, data: (await res.json()) as T };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: thrownFailure('hashtag', err) };
   }
 }
 
