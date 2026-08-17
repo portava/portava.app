@@ -15,19 +15,30 @@
  * could recover, and one recoverable error permanently blanked the tile.
  *
  * So `onError` means "this image is not going to load", NOT "a load attempt
- * failed". The three tests below pin all three sides of that contract:
+ * failed". The four tests below pin all three sides of that contract, plus the
+ * symptom itself:
  *
  *   1. in flight  (hydrated[uri] === undefined) → parent NOT notified
  *   2. settled to a URL that still fails        → parent notified
  *   3. settled to null (server rejected)        → parent notified
+ *   4. a parent that LATCHES and unmounts       → image still recovers
  *
  * 2 and 3 exist so the guard cannot be satisfied by simply silencing the
  * callback — a genuinely dead image must still reach the parent.
+ *
+ * 4 exists because 1-3 assert the contract through a bare jest.fn(): "the spy
+ * was not called, so a latching parent would not have unmounted" is sound
+ * reasoning, but it is a proxy for the production symptom rather than the
+ * symptom itself. 4 renders a parent that really does latch and stop rendering
+ * the child, and asserts on what the live tree owns — the rendered source.uri
+ * after recovery — rather than on spy counts, because a detached component can
+ * still run a captured closure and report a false green.
  *
  * Run with: pnpm test:component
  */
 
 import React from 'react';
+import { View } from 'react-native';
 import { render, act } from '@testing-library/react-native';
 import { CachedImage } from '../CachedImage.tsx';
 
@@ -207,6 +218,60 @@ describe('CachedImage — parent onError contract', () => {
     // effect via onErrorRef rather than from the ExpoImage callback.
     expect(onErrorSpy).toHaveBeenCalledTimes(1);
     expect(isShowingFallback(view, 'tile')).toBe(true);
+
+    view.unmount();
+  });
+
+  /**
+   * The other three tests assert the contract through a bare jest.fn(): "the
+   * spy was not called, therefore a latching parent would not have unmounted
+   * us." Sound, but a proxy. This one reproduces the shipped symptom directly
+   * with a parent that behaves the way MediaCard and PostcardTile really do —
+   * a never-reset `imgFailed` that stops rendering the child for good.
+   *
+   * It asserts on what the LIVE tree owns (the rendered source.uri after
+   * recovery), not on spy counts: a detached component can still run a
+   * captured closure and report a false green, and no spy assertion can tell
+   * the difference.
+   */
+  it('a parent that latches on onError still shows the image after recovery', async () => {
+    mockHydrated = {}; // sign call in flight — the transient first-paint failure
+    const latched = jest.fn();
+
+    function LatchingParent() {
+      const [imgFailed, setImgFailed] = React.useState(false);
+      // Exactly the shape ~17 real parents use: one-way flag, never reset, and
+      // the child is not rendered at all once it flips.
+      if (imgFailed) return <View testID="parent-fallback" />;
+      return (
+        <CachedImage
+          source={{ uri: URI }}
+          onError={() => { latched(); setImgFailed(true); }}
+          testID="tile"
+        />
+      );
+    }
+
+    const view = await render(<LatchingParent />);
+    await flush();
+
+    // The bare private-bucket path 400s, exactly as it does in production.
+    await fireImageError();
+
+    // The parent must still be rendering the child — this is the unmount that
+    // used to destroy the component before its own recovery could run.
+    expect(view.queryByTestId('parent-fallback')).toBeNull();
+    expect(latched).not.toHaveBeenCalled();
+
+    // The signed URL lands. Only a still-mounted component can act on it.
+    await setHydrated({ [URI]: SIGNED_URL });
+    await flush();
+
+    // The live tree owns this: the image is really on screen with the signed
+    // URL. An unmounted child cannot produce it.
+    expect(view.queryByTestId('parent-fallback')).toBeNull();
+    expect(isShowingFallback(view, 'tile')).toBe(false);
+    expect(view.getByTestId('tile').props.source?.uri).toBe(SIGNED_URL);
 
     view.unmount();
   });
