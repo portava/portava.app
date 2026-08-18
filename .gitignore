@@ -97,3 +97,6 @@ _incoming/
 # Ignoring the path outright. If the tree is ever genuinely restored, delete
 # this rule in the same change that restores it.
 /artifacts/travel-buddy/
+
+# Claude Code config + credentials (persisted here because ~ is ephemeral on Replit)
+.claude-home/

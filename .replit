@@ -197,3 +197,12 @@ externalPort = 3001
 [[ports]]
 localPort = 20683
 externalPort = 5000
+
+# Claude Code stores its config and OAuth credentials in $CLAUDE_CONFIG_DIR
+# (default ~/.claude + ~/.claude.json). On Replit only /home/runner/workspace is
+# on the persistent volume -- the rest of $HOME is an overlay on a scratch disk
+# that is recreated with the container, which forced a browser re-login and a
+# first-run theme picker after every rebuild. Keep it on the persistent volume.
+# The directory is gitignored (.claude-home/); it holds live credentials.
+[env]
+CLAUDE_CONFIG_DIR = "/home/runner/workspace/.claude-home"
