@@ -126,30 +126,56 @@ describe("normalisePlaceKey — place identity", () => {
 
 describe("mintPhotoUrl — a stored Google row must never carry a credential", () => {
   const ORIGINAL_KEY = process.env.GOOGLE_MAPS_API_KEY;
+  const ORIGINAL_BASE = process.env.API_BASE_URL;
 
-  beforeEach(() => { process.env.GOOGLE_MAPS_API_KEY = "test-key-1"; });
+  beforeEach(() => {
+    process.env.GOOGLE_MAPS_API_KEY = "test-key-1";
+    // photoProxyUrl prefixes API_BASE_URL when set. Pinned to empty so these
+    // assertions are exact rather than dependent on the ambient environment.
+    process.env.API_BASE_URL = "";
+  });
   afterEach(() => {
     if (ORIGINAL_KEY === undefined) delete process.env.GOOGLE_MAPS_API_KEY;
     else process.env.GOOGLE_MAPS_API_KEY = ORIGINAL_KEY;
+    if (ORIGINAL_BASE === undefined) delete process.env.API_BASE_URL;
+    else process.env.API_BASE_URL = ORIGINAL_BASE;
   });
 
-  it("mints the Google media URL from the stored REFERENCE and the current key", () => {
+  // CONTRACT CHANGE, not a weakened assertion. This test previously required
+  // mintPhotoUrl to return Google's own media URL with the API key embedded as
+  // a query parameter. That is the credential leak 744a10d86 fixed: the URL was
+  // handed to clients from GET /api/places/photo, an unauthenticated route, so
+  // anyone could read GOOGLE_MAPS_API_KEY out of the response. The assertion
+  // below is the replacement contract — a URL pointing at this server's byte
+  // proxy, which resolves the key server-side — plus an explicit check that the
+  // key is absent, which is the property the describe block is named for and
+  // which the old assertion actively contradicted.
+  it("mints a proxy URL from the stored REFERENCE, with no credential in it", () => {
     const stored: StoredPlacePhoto = {
       source: "google",
       photoUrl: null,
       photoRef: "places/ChIJ123/photos/AeJb",
     };
 
-    assert.equal(
-      mintPhotoUrl(stored),
-      "https://places.googleapis.com/v1/places/ChIJ123/photos/AeJb/media?maxWidthPx=800&key=test-key-1",
-    );
+    const url = mintPhotoUrl(stored);
+
+    assert.equal(url, "/api/places/photo/media?ref=places%2FChIJ123%2Fphotos%2FAeJb&w=800");
+    assert.ok(!url!.includes("test-key-1"), "minted URL must not carry the API key");
+    assert.ok(!url!.includes("key="), "minted URL must not carry a key parameter at all");
   });
 
-  it("survives a key rotation — the same row mints a URL with the NEW key", () => {
+  it("survives a key rotation — the same row still mints a usable URL", () => {
     // This is the entire reason the ref is stored instead of the rendered URL.
     // A stored key-bearing URL would become a dead link on rotation, and a dead
     // link renders as "no photo" — indistinguishable from never resolving one.
+    //
+    // CONTRACT CHANGE, not a weakened assertion. The original asserted that the
+    // minted URL changed across a rotation, because the key was IN the URL.
+    // With the key resolved server-side by the proxy, the correct expectation
+    // inverts: the URL is now STABLE across rotation, and neither the old nor
+    // the new key ever appears in it. The property under test — a stored ref
+    // outlives a key rotation — is unchanged and is still what fails if
+    // mintPhotoUrl goes back to rendering a key-bearing URL.
     const stored: StoredPlacePhoto = {
       source: "google",
       photoUrl: null,
@@ -160,9 +186,12 @@ describe("mintPhotoUrl — a stored Google row must never carry a credential", (
     process.env.GOOGLE_MAPS_API_KEY = "test-key-2";
     const after = mintPhotoUrl(stored);
 
-    assert.ok(before?.includes("key=test-key-1"));
-    assert.ok(after?.includes("key=test-key-2"));
-    assert.notEqual(before, after);
+    assert.equal(before, after, "the proxy URL is key-independent, so rotation cannot change it");
+    for (const url of [before, after]) {
+      assert.ok(url, "a stored ref must still mint a URL after rotation");
+      assert.ok(!url!.includes("test-key-1"), "old key must never appear in a minted URL");
+      assert.ok(!url!.includes("test-key-2"), "new key must never appear in a minted URL");
+    }
   });
 
   it("returns null when the key is gone, so the row reads as unusable", () => {

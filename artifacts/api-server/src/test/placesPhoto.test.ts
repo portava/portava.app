@@ -41,6 +41,7 @@ function stubGoogle(responder: FetchResponder) {
 }
 
 const originalKey = process.env.GOOGLE_MAPS_API_KEY;
+const originalApiBase = process.env.API_BASE_URL;
 
 let server: Server;
 let port = 0;
@@ -74,11 +75,16 @@ after(async () => {
   globalThis.fetch = originalFetch;
   if (originalKey === undefined) delete process.env.GOOGLE_MAPS_API_KEY;
   else process.env.GOOGLE_MAPS_API_KEY = originalKey;
+  if (originalApiBase === undefined) delete process.env.API_BASE_URL;
+  else process.env.API_BASE_URL = originalApiBase;
   await new Promise<void>((r) => server.close(() => r()));
 });
 
 beforeEach(() => {
   process.env.GOOGLE_MAPS_API_KEY = "test-google-key";
+  // photoProxyUrl prefixes API_BASE_URL when set; pinned so the proxy-URL
+  // assertions are exact rather than dependent on the ambient environment.
+  process.env.API_BASE_URL = "";
   googleResponder = null;
 });
 
@@ -107,12 +113,22 @@ describe("GET /api/places/photo", () => {
     const { status, body } = await get("/places/photo?name=Cebu%20Zoo");
 
     assert.equal(status, 200);
-    // The server constructs the media URL from the photo name + key.
+    // CONTRACT CHANGE, not a weakened assertion. This previously required
+    // photoUrl to be Google's own media URL with GOOGLE_MAPS_API_KEY embedded
+    // in it. This route has no auth guard, so that response published the key
+    // to anyone who asked — the leak 744a10d86 closed. The route now returns a
+    // URL addressing this server's byte proxy, which holds the key server-side.
+    // The added negative assertion is the property that actually matters and is
+    // the one the old assertion required to be false.
     assert.equal(typeof body.photoUrl, "string", "photoUrl should be a string");
-    assert.match(
-      body.photoUrl as string,
-      /^https:\/\/places\.googleapis\.com\/v1\/places\/ChIJabc123\/photos\/AUGGfXnDef\/media\?maxWidthPx=800&key=/,
-      "photoUrl should be the fully-constructed Google Places media URL",
+    assert.equal(
+      body.photoUrl,
+      "/api/places/photo/media?ref=places%2FChIJabc123%2Fphotos%2FAUGGfXnDef&w=800",
+      "photoUrl should address the server-side byte proxy, keyed by photo reference",
+    );
+    assert.ok(
+      !String(body.photoUrl).includes("test-google-key"),
+      "an unauthenticated response must never carry the Google API key",
     );
     assert.equal(body.reason, undefined, "reason should be absent on success");
   });

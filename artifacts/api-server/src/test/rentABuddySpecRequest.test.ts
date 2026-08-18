@@ -226,8 +226,17 @@ beforeEach(() => {
     insertedBookings: [],
     // Gate stack open by default so the availability cases below keep testing
     // availability rather than the gates. Each gate case closes exactly one.
+    //
+    // "public_mvp", not "live": the status string is matched against
+    // KNOWN_CITY_STATUSES in rentABuddyRollout.ts, and anything outside that
+    // set hits the deliberate fail-closed branch and 403s with
+    // city_not_available. "live" is not a rollout status and never was — the
+    // fixture invented it, so every case in this describe block was rejected by
+    // the gate before reaching the availability logic it was written to test.
+    // The guard behaved correctly; the fixture named a state that does not
+    // exist. KNOWN_CITY_STATUSES is the source of truth for this value.
     featureFlags: OPEN_FLAGS(),
-    cityRollouts: [{ city: "Seoul", status: "live", is_active: true }],
+    cityRollouts: [{ city: "Seoul", status: "public_mvp", is_active: true }],
     userLimits: [],
   };
   const client = makeClient();

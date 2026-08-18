@@ -44,6 +44,7 @@ let googleCalls = 0;
 let fsqCalls = 0;
 
 const originalGoogleKey = process.env.GOOGLE_MAPS_API_KEY;
+const originalApiBase = process.env.API_BASE_URL;
 const originalFsqKey = process.env.FOURSQUARE_API_KEY;
 
 let server: Server;
@@ -87,6 +88,8 @@ after(async () => {
   globalThis.fetch = originalFetch;
   if (originalGoogleKey === undefined) delete process.env.GOOGLE_MAPS_API_KEY;
   else process.env.GOOGLE_MAPS_API_KEY = originalGoogleKey;
+  if (originalApiBase === undefined) delete process.env.API_BASE_URL;
+  else process.env.API_BASE_URL = originalApiBase;
   if (originalFsqKey === undefined) delete process.env.FOURSQUARE_API_KEY;
   else process.env.FOURSQUARE_API_KEY = originalFsqKey;
   _setTestServiceClient(null);
@@ -132,6 +135,9 @@ function installStore(rows: any[] = []) {
 
 beforeEach(() => {
   process.env.GOOGLE_MAPS_API_KEY = "test-google-key";
+  // photoProxyUrl prefixes API_BASE_URL when set; pinned so the proxy-URL
+  // assertions are exact rather than dependent on the ambient environment.
+  process.env.API_BASE_URL = "";
   process.env.FOURSQUARE_API_KEY = "test-fsq-key";
   googleResponder = null;
   fsqResponder = null;
@@ -170,9 +176,18 @@ describe("Google route — persists the reference, never the credential", () => 
     const { body } = await get("/places/photo?name=Cebu%20Zoo&placeKey=node%2F123");
     await settle();
 
-    // The client still receives a fully-minted URL — the response contract is
-    // unchanged.
-    assert.match(body.photoUrl as string, /\/media\?maxWidthPx=800&key=test-google-key$/);
+    // CONTRACT CHANGE, not a weakened assertion. The client still receives a
+    // fully-minted, directly-renderable URL, so the shape of the response is
+    // unchanged — but it now addresses this server's byte proxy instead of
+    // Google's media endpoint, because the Google one carries the API key as a
+    // query parameter and this route is unauthenticated. The row-level check
+    // below already required the key to stay out of STORAGE; this requires it
+    // to stay out of the RESPONSE, which is where it was actually leaking.
+    assert.equal(body.photoUrl, "/api/places/photo/media?ref=places%2FChIJabc123%2Fphotos%2FAUGGfXnDef&w=800");
+    assert.ok(
+      !String(body.photoUrl).includes("test-google-key"),
+      "the response must never carry the Google API key",
+    );
 
     assert.equal(store.upserts.length, 1, "the resolved photo should be persisted once");
     const row = store.upserts[0];
@@ -230,7 +245,14 @@ describe("A stored photo actually stops the provider being called", () => {
     const { body } = await get("/places/photo?name=Cebu%20Zoo&placeKey=node%2F123");
 
     assert.equal(googleCalls, 0, "a stored photo must skip the provider entirely");
-    assert.match(body.photoUrl as string, /\/media\?maxWidthPx=800&key=test-google-key$/);
+    // CONTRACT CHANGE, not a weakened assertion — see the note above. A stored
+    // row mints the same proxy URL as a freshly-resolved one; that the two
+    // paths agree is exactly what this file exists to check.
+    assert.equal(body.photoUrl, "/api/places/photo/media?ref=places%2FChIJabc123%2Fphotos%2FAUGGfXnDef&w=800");
+    assert.ok(
+      !String(body.photoUrl).includes("test-google-key"),
+      "the response must never carry the Google API key",
+    );
     assert.equal(body.source, "google");
     assert.equal(body.cached, true);
   });

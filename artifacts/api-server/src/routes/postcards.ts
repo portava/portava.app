@@ -543,6 +543,14 @@ const completeSchema = z.object({
   stampOverlay:    stampOverlaySchema.optional(),
 });
 
+/**
+ * The dimension-guard rejection, shared by the two places that can raise it:
+ * the cheap pre-check in the video branch and the final guard before the write.
+ * One literal because clients branch on this text — the hardening suite asserts
+ * it names both dimensions, and two copies would drift silently.
+ */
+const DIMENSIONS_REQUIRED_MESSAGE = 'width and height are required to complete this upload.';
+
 router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -652,7 +660,35 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
       return;
     }
   } else {
-    // VIDEO — verify the stored bytes are really a video, and really within the
+    // VIDEO — dimensions first, then bytes. ORDER IS LOAD-BEARING.
+    //
+    // For video, measuredWidth/measuredHeight are never set: the processing
+    // block above is gated on media_type === 'image'. So the dimension guard
+    // further down resolves to p.width/p.height — values that arrived in the
+    // request body and are knowable here for free.
+    //
+    // Running the storage round-trip first meant a request we could reject
+    // locally instead bought a signed URL and a range read, and then failed in
+    // the catch below with the generic 'Video could not be verified' — so on a
+    // dimensionless payload the specific message clients branch on was
+    // unreachable whenever the store was slow or down, and the guard that
+    // exists to report exactly this was dead for its own failure mode. It was
+    // reachable only when verification happened to succeed first.
+    //
+    // Images are deliberately NOT reordered this way: their dimensions ARE the
+    // storage read (processImage measures them), so there is nothing local to
+    // check first, and their guard is satisfied by construction or rejected.
+    //
+    // Fail-closed on storage is unchanged and still correct — nothing below is
+    // relaxed. This only stops us paying a network call to deliver a worse
+    // error for a request that was already invalid on its face.
+    if (p.width == null || p.height == null) {
+      req.log.warn({ mediaId, mediaType: 'video' }, 'postcards: complete rejected — width/height required (pre-verification)');
+      sendError(res, 'invalid_payload', DIMENSIONS_REQUIRED_MESSAGE);
+      return;
+    }
+
+    // Verify the stored bytes are really a video, and really within the
     // ceiling.
     //
     // Until now video got NO byte-level check on this transport: the whole
@@ -758,7 +794,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // silently skip on every future pass.
   if (baseUpdate.width === null || baseUpdate.height === null) {
     req.log.warn({ mediaId, mediaType: (mediaRow as any).media_type }, 'postcards: complete rejected — width/height required');
-    sendError(res, 'invalid_payload', 'width and height are required to complete this upload.');
+    sendError(res, 'invalid_payload', DIMENSIONS_REQUIRED_MESSAGE);
     return;
   }
 

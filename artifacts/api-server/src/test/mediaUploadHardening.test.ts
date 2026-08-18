@@ -468,6 +468,60 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
     assert.equal(client._wasUpdateAttempted(), false,
       "DB update must not be attempted when width/height are null — app guard fires first");
   });
+
+  it("rejects dimensionless video WITHOUT any storage round-trip — cheap check runs first", async () => {
+    // ORDERING REGRESSION TEST. The case above cannot see ordering: it mocks
+    // createSignedUrl to succeed, so the dimension guard is reached whether the
+    // storage verification runs before it or after it. That is precisely how
+    // the ordering defect survived — the verification was added ahead of the
+    // guard, and on a dimensionless payload the request paid a signed URL and a
+    // range read only to fail in the catch with the generic
+    // "Video could not be verified. Please re-upload.", losing the specific
+    // message the assertion above was deliberately written for.
+    //
+    // Here storage is armed to EXPLODE if touched. A dimensionless video must
+    // be rejected before anything reaches the store, with the specific message.
+    // If someone moves the verification back ahead of the guard, this fails on
+    // the storageTouched assertion; if someone deletes the pre-check, it fails
+    // on the message. Fail-closed on storage is not weakened by any of this —
+    // a payload WITH dimensions still goes through full byte verification, and
+    // the case above still covers that path.
+    let storageTouched = false;
+    const client: any = makePostcardsClient();
+    const realStorageFrom = client.storage.from.bind(client.storage);
+    client.storage.from = (...args: unknown[]) => {
+      const handle = realStorageFrom(...(args as []));
+      return {
+        ...handle,
+        async createSignedUrl() {
+          storageTouched = true;
+          throw new Error("storage must not be touched for a locally-rejectable payload");
+        },
+        async download() {
+          storageTouched = true;
+          throw new Error("storage must not be touched for a locally-rejectable payload");
+        },
+      };
+    };
+    setClients(client);
+
+    const r = await jsonReq(
+      "POST",
+      `/api/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: "video/mp4", fileSizeBytes: 1024, width: null, height: null },
+    );
+
+    assert.equal(storageTouched, false,
+      "a payload rejectable from the request body alone must not reach storage");
+    assert.equal(r.status, 400, `expected 400, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "invalid_payload");
+    assert.match(
+      String(r.body.message ?? r.body.detail ?? JSON.stringify(r.body)),
+      /width.*height|height.*width/i,
+      "the specific dimension message must survive — not the generic verification failure",
+    );
+    assert.equal(client._wasUpdateAttempted(), false);
+  });
 });
 
 describe("sweepExpiredStories — expired files are actually deleted", () => {

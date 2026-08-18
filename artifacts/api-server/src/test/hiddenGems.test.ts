@@ -81,6 +81,12 @@ interface FakeState {
   profiles?:        Record<string, any>[];
   trips?:           Record<string, any>[];
   tripMembers?:     Record<string, any>[];
+  /**
+   * message_thread_members — read by the share-telegraph membership check.
+   * Absent means "not a member", which is the correct default: the check exists
+   * precisely so an arbitrary thread id in the body cannot be posted into.
+   */
+  threadMembers?:   Record<string, any>[];
   locationTrust?:   Record<string, any>[];
   passportVizPrefs?: Record<string, any>[];
   /** Canonical places — used by the dedicated Add a Gem flow validation. */
@@ -191,6 +197,7 @@ function makeFakeClient(state: FakeState, userId: string) {
         profiles:                state.profiles ?? [],
         trips:                   state.trips ?? [],
         trip_members:            state.tripMembers ?? [],
+        message_thread_members:  state.threadMembers ?? [],
         location_trust_events:   state.locationTrust ?? [],
         passport_visibility_preferences: state.passportVizPrefs ?? [],
         places:                  state.places ?? [],
@@ -961,6 +968,17 @@ describe("Hidden Gems — Telegraph share privacy", () => {
         featureFlags: { hidden_gems_enabled: true },
         gems: [makeActiveGem({ sensitivity_level: "protected" })],
         gemSaves: [],
+        // CONTRACT CHANGE, not a weakened fixture. 744a10d86 added a
+        // message_thread_members check to share-telegraph, because threadId came
+        // straight from the request body and the insert runs on the service-role
+        // client — so any authenticated user could post a gem card into any
+        // thread id they could guess, with RLS not acting as a backstop. These
+        // two cases are about what the CARD contains, so the sender is made a
+        // real member of the thread they post into; they were never intended to
+        // assert anything about thread access. The membership check itself is
+        // covered separately by the two non-member cases at the end of this
+        // describe block, which are what fail if the check is removed.
+        threadMembers: [{ thread_id: "thread-123", user_id: USER_ID, left_at: null }],
       },
       USER_ID,
     );
@@ -984,6 +1002,8 @@ describe("Hidden Gems — Telegraph share privacy", () => {
         featureFlags: { hidden_gems_enabled: true },
         gems: [makeActiveGem({ sensitivity_level: "public" })],
         gemSaves: [],
+        // Member of the thread — see the note on the protected case above.
+        threadMembers: [{ thread_id: "thread-123", user_id: USER_ID, left_at: null }],
       },
       USER_ID,
     );
@@ -995,6 +1015,68 @@ describe("Hidden Gems — Telegraph share privacy", () => {
     });
     assert.equal(r.status, 200);
     assert.equal(r.body.card.neighborhood, "Shibuya");
+  });
+
+  // These two cases are NEW, and they are the reason the two cases above were
+  // allowed to seed membership rather than have the check relaxed. Before this,
+  // nothing in the suite exercised the membership check at all: both existing
+  // cases posted into "thread-123" with no membership rows, so once they were
+  // given membership, deleting the check from the route entirely would have
+  // left the whole suite green. A guard with no failing case is not covered.
+  it("refuses to share into a thread the sender does not belong to", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [makeActiveGem({ sensitivity_level: "public" })],
+        gemSaves: [],
+        // Someone ELSE is in the thread. The sender is not — which is the
+        // guessed-thread-id case: threadId comes from the request body and the
+        // insert runs on the service-role client, so RLS is not a backstop.
+        threadMembers: [{ thread_id: "thread-123", user_id: "someone-else", left_at: null }],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/share-telegraph`, {
+      threadId: "thread-123",
+    });
+
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(
+      client._inserted.filter((i: any) => i.table === "messages").length,
+      0,
+      "a non-member must not get a message written into the thread",
+    );
+  });
+
+  it("refuses to share into a thread the sender has left", async () => {
+    const client = makeFakeClient(
+      {
+        featureFlags: { hidden_gems_enabled: true },
+        gems: [makeActiveGem({ sensitivity_level: "public" })],
+        gemSaves: [],
+        // A row exists, but left_at is set. The route requires left_at === null;
+        // a membership row alone is not membership, and a check that only tested
+        // for row existence would pass this and still be wrong.
+        threadMembers: [{ thread_id: "thread-123", user_id: USER_ID, left_at: "2026-01-01T00:00:00.000Z" }],
+      },
+      USER_ID,
+    );
+    _setTestClient(client, true);
+    _setTestServiceClient(client);
+
+    const r = await req("POST", `/api/hidden-gems/${GEM_ID}/share-telegraph`, {
+      threadId: "thread-123",
+    });
+
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(
+      client._inserted.filter((i: any) => i.table === "messages").length,
+      0,
+      "a departed member must not get a message written into the thread",
+    );
   });
 });
 
