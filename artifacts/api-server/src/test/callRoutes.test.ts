@@ -138,7 +138,7 @@ function makeFakeGateway(overrides: Partial<CallContextGateway> = {}): CallConte
     isActiveCrewMember: async () => true,
     eventRoomIneligibility: async () => null,
     eventStaffRole: async (_eventId, userId) => (userId === CALLER_ID ? "host" : null),
-    isCallRestricted: async () => false,
+    isCallRestricted: async () => ({ restricted: false }),
     isSessionTerminated: async () => false,
     wasRemovedFromCall: async () => false,
     lastDeclineAt: async () => null,
@@ -355,6 +355,21 @@ describe("call routes", () => {
       assert.equal(r.status, 403);
       assert.equal(r.body.reason, "blocked");
       assert.equal(store.__sessions.size, 0, "no session persisted on deny");
+    });
+
+    it("a real caller restriction denies 403 caller_restricted; a degraded (could-not-check) read denies 503 degraded_unavailable with a retry signal, never 403", async () => {
+      wireDeps({ isCallRestricted: async () => ({ restricted: true }) });
+      const restricted = await req("POST", "/api/calls", startBody);
+      assert.equal(restricted.status, 403);
+      assert.equal(restricted.body.reason, "caller_restricted");
+      assert.equal(restricted.body.retryable, undefined);
+
+      wireDeps({ isCallRestricted: async () => ({ restricted: true, degraded: true }) });
+      const degraded = await req("POST", "/api/calls", startBody);
+      assert.equal(degraded.status, 503, "a degraded check must not be shown as a 403 restriction");
+      assert.equal(degraded.body.reason, "degraded_unavailable");
+      assert.equal(degraded.body.retryable, true, "must carry a retry signal for the client to act on");
+      assert.equal(store.__sessions.size, 0, "no session persisted on either deny");
     });
 
     it("denies video when callee disabled video (video_calls_disabled)", async () => {

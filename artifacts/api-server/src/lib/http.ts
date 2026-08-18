@@ -72,7 +72,8 @@ export type ApiErrorCode =
   | "gone"
   | "e2ee_thread"
   | "no_key_package"
-  | "upstream_error";
+  | "upstream_error"
+  | "degraded_unavailable";
 
 const STATUS: Record<ApiErrorCode, number> = {
   server_not_configured: 503,
@@ -100,7 +101,18 @@ const STATUS: Record<ApiErrorCode, number> = {
   e2ee_thread: 422,
   no_key_package: 404,
   upstream_error: 502,
+  degraded_unavailable: 503,
 };
+
+/**
+ * Codes whose response signals the client should offer a retry action rather
+ * than treat the request as rejected. `degraded_unavailable` is the case a
+ * permission check could not be performed (not that it was performed and
+ * failed) — see TrustRestrictionService's `degradedReason`.
+ */
+const RETRYABLE_CODES: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
+  "degraded_unavailable",
+]);
 
 /**
  * Error codes whose caller-supplied message must never reach the client.
@@ -133,7 +145,8 @@ export function sendError(
   const body = sanitize
     ? (GENERIC_MESSAGE[code] ?? code)
     : (message ?? code);
-  res.status(STATUS[code]).json({ error: code, message: body });
+  const retryable = RETRYABLE_CODES.has(code) ? { retryable: true } : {};
+  res.status(STATUS[code]).json({ error: code, message: body, ...retryable });
 }
 
 /**

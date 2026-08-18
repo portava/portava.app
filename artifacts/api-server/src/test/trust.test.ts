@@ -906,6 +906,7 @@ describe("getRestrictionState degraded-read semantics", () => {
     assert.equal(state.canJoinLocationPlans, true);
     assert.deepEqual(state.activeRestrictions, []);
     assert.ok(!state.degraded, "a clean read must not be flagged degraded");
+    assert.equal(state.degradedReason, undefined, "an authoritative read carries no degradedReason");
     assert.equal(warns.length, 0, "no warn on a successful read");
     assert.equal(errors.length, 0, "no error on a successful read");
   });
@@ -928,6 +929,7 @@ describe("getRestrictionState degraded-read semantics", () => {
       "a real restriction is an authoritative answer — it must be distinguishable " +
         "from a fail-closed guess, which is the whole point of the flag",
     );
+    assert.equal(state.degradedReason, undefined, "an authoritative read carries no degradedReason");
     assert.equal(warns.length, 0);
     assert.equal(errors.length, 0);
   });
@@ -957,6 +959,11 @@ describe("getRestrictionState degraded-read semantics", () => {
         `${error.code}: a fail-OPEN guess must carry the flag too, or callers can ` +
           "spot the fail-closed guess but not this one",
       );
+      assert.equal(
+        state.degradedReason,
+        "fail_open",
+        `${error.code}: the discriminant must say WHICH direction this degraded read went`,
+      );
       assert.equal(warns.length, 1, `${error.code}: exactly one warn`);
       assert.equal(errors.length, 0, `${error.code}: a missing table is not an ERROR`);
       assert.equal((warns[0].obj as any).userId, USER_A, `${error.code}: warn identifies the user`);
@@ -976,6 +983,12 @@ describe("getRestrictionState degraded-read semantics", () => {
     assert.equal(state.canJoinLocationPlans, true, "low-risk actions stay open");
     assert.deepEqual(state.activeRestrictions, []);
     assert.equal(state.degraded, true);
+    assert.equal(
+      state.degradedReason,
+      "fail_closed",
+      "a query-error guess must be distinguishable from a missing-table guess, " +
+        "not just from an authoritative read",
+    );
 
     // The otherwise-impossible combination the flag exists to explain.
     assert.ok(
@@ -1007,11 +1020,65 @@ describe("getRestrictionState degraded-read semantics", () => {
     assert.equal(state.canJoinPrivatePlans, true);
     assert.equal(state.canJoinLocationPlans, true);
     assert.equal(state.degraded, true);
+    assert.equal(state.degradedReason, "fail_closed", "a thrown failure is still a fail_closed guess");
     assert.equal(errors.length, 1);
     assert.equal(warns.length, 0);
     assert.match(
       String((errors[0].obj as any).err?.message ?? ""),
       /connection terminated/,
     );
+  });
+});
+
+describe("degraded state wired to the four getRestrictionState callers", () => {
+  describe("TrustPrivacyGuard.getSafeTrustSummary — passive summary, no action to fail", () => {
+    it("normal-allowed: a clean read carries no degraded fields", async () => {
+      const db = makeTrustClient(makeTables());
+      const summary = await getSafeTrustSummary(db, USER_A);
+      assert.equal(summary.restrictionsDegraded, undefined);
+      assert.equal(summary.restrictionsDegradedReason, undefined);
+      assert.deepEqual(summary.restrictions, []);
+    });
+
+    it("fail-open-silent: a missing table shows no restriction message, but marks the summary degraded for a future caller to act on", async () => {
+      const errorClient = makeRestrictionQueryClient({
+        kind: "tuple",
+        data: null,
+        error: { code: "42P01", message: 'relation "trust_restrictions" does not exist' },
+      });
+      // getTrustProfile/getRecoveryStatus need their own tables; reuse the
+      // full fake client for those and only swap trust_restrictions' query
+      // behaviour so the degraded path is exercised in isolation.
+      const full = makeTrustClient(makeTables());
+      const hybrid = {
+        ...full,
+        from(table: string) {
+          return table === "trust_restrictions" ? errorClient.from(table) : full.from(table);
+        },
+      };
+      const summary = await getSafeTrustSummary(hybrid, USER_A);
+      assert.deepEqual(summary.restrictions, [], "fail-open must show no restriction message, same as no restriction at all");
+      assert.equal(summary.restrictionsDegraded, true, "the summary must still record that this was a guess");
+      assert.equal(summary.restrictionsDegradedReason, "fail_open");
+    });
+
+    it("fail-closed-message: a read error shows no restriction message either (this is a passive summary, not an action) but is marked degraded with the closed reason", async () => {
+      const errorClient = makeRestrictionQueryClient({
+        kind: "tuple",
+        data: null,
+        error: { code: "57014", message: "canceling statement due to statement timeout" },
+      });
+      const full = makeTrustClient(makeTables());
+      const hybrid = {
+        ...full,
+        from(table: string) {
+          return table === "trust_restrictions" ? errorClient.from(table) : full.from(table);
+        },
+      };
+      const summary = await getSafeTrustSummary(hybrid, USER_A);
+      assert.deepEqual(summary.restrictions, [], "a passive summary must never fabricate a restriction message from a DB error");
+      assert.equal(summary.restrictionsDegraded, true);
+      assert.equal(summary.restrictionsDegradedReason, "fail_closed");
+    });
   });
 });

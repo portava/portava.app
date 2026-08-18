@@ -55,6 +55,26 @@ export interface RestrictionState {
    * object, and a fail-open guess is indistinguishable from a clean record.
    */
   degraded?: boolean;
+  /**
+   * Which way `degraded` failed. Only set alongside `degraded: true`.
+   *
+   *   'fail_open'   — trust_restrictions is unreachable (missing table). Every
+   *                    can* flag is true; this is not a restriction and must
+   *                    never produce a user-facing message — record telemetry
+   *                    only.
+   *   'fail_closed' — a real query error on a reachable table. canHost/canMessage
+   *                    are false as a precaution, but that false does NOT mean
+   *                    the user is restricted — it means the check could not be
+   *                    performed. Callers must show a "try again" message, never
+   *                    a restriction message, for this case.
+   *
+   * The bare `degraded` boolean alone cannot carry this: a caller checking only
+   * `degraded && !canHost` happens to work today because fail-open always sets
+   * every can* flag true and fail-closed sets exactly canHost/canMessage false —
+   * but that is an incidental property of the current defaults, not a contract.
+   * This field makes the distinction explicit and independent of those defaults.
+   */
+  degradedReason?: "fail_open" | "fail_closed";
 }
 
 /** Apply a restriction */
@@ -163,6 +183,7 @@ export async function getRestrictionState(
           canJoinLocationPlans: true,
           activeRestrictions:   [],
           degraded:             true,
+          degradedReason:       "fail_open",
         };
       }
       throw new Error(
@@ -197,6 +218,7 @@ export async function getRestrictionState(
       canJoinLocationPlans: true,
       activeRestrictions:   [],
       degraded:             true,
+      degradedReason:       "fail_closed",
     };
   }
 }

@@ -263,7 +263,15 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
 
     async isCallRestricted(userId) {
       const state = await getRestrictionState(sc, userId);
-      return !state.canMessage; // audit M3: messaging restriction implies calling restriction
+      // audit M3: messaging restriction implies calling restriction. A
+      // fail-closed degraded read also makes canMessage false — carry that
+      // forward so the engine denies with 'degraded_unavailable', not
+      // 'caller_restricted'. A fail-open degraded read leaves canMessage
+      // true, so it never reaches here restricted at all.
+      return {
+        restricted: !state.canMessage,
+        degraded: state.degradedReason === "fail_closed",
+      };
     },
 
     async isSessionTerminated(callId) {

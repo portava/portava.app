@@ -102,12 +102,14 @@ function denyStatus(reason: CallDenyReason): number {
     case "context_not_found": return 404;
     case "rate_limited":
     case "redial_cooldown": return 429;
+    case "degraded_unavailable": return 503;
     default: return 403;
   }
 }
 
 function sendDeny(res: any, reason: CallDenyReason): void {
-  res.status(denyStatus(reason)).json({ error: "call_denied", reason });
+  const retryable = reason === "degraded_unavailable" ? { retryable: true } : {};
+  res.status(denyStatus(reason)).json({ error: "call_denied", reason, ...retryable });
 }
 
 /** Resolve contextId for direct calls: booking id for RAB threads, else thread. */

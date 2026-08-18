@@ -100,6 +100,7 @@ export type CallDenyReason =
   | 'age_ineligible'
   | 'trust_ineligible'
   | 'caller_restricted'
+  | 'degraded_unavailable'
   | 'room_terminated'
   | 'removed_from_room'
   | 'not_event_host'

@@ -12,8 +12,28 @@ import {
   transition, ringExpired, maxDurationReached, callHistoryLine, isTerminal,
 } from '../lib/calls/callStateMachine';
 import { reconcileWebhookEvent, sweepOpenSessions, type CallStore } from '../lib/calls/callReconciler';
-import { isRabBookingCallEligible } from '../lib/calls/callGatewayAdapter';
+import { isRabBookingCallEligible, makeCallGateway } from '../lib/calls/callGatewayAdapter';
 import { CALL_CONFIG } from '../lib/calls/callTypes';
+
+/** Fake trust_restrictions query builder — mirrors trust.test.ts's shape. */
+function makeRestrictionQueryClient(outcome:
+  | { kind: 'tuple'; data: any; error: any }
+  | { kind: 'throw'; err: any }
+): any {
+  const builder: any = {
+    select: () => builder,
+    eq:     () => builder,
+    is:     () => builder,
+    or:     () => builder,
+    then(onF: any, onR: any) {
+      const p = outcome.kind === 'throw'
+        ? Promise.reject(outcome.err)
+        : Promise.resolve({ data: outcome.data, error: outcome.error });
+      return p.then(onF, onR);
+    },
+  };
+  return { from: () => builder };
+}
 
 const NOW = Date.parse('2026-07-18T12:00:00Z');
 const ISO = new Date(NOW).toISOString();
@@ -32,7 +52,7 @@ function gw(over: Partial<CallContextGateway> = {}): CallContextGateway {
     isEligibleRabConversation: async () => true,
     isActiveCrewMember: async () => true,
     eventRoomIneligibility: async () => null,
-    isCallRestricted: async () => false,
+    isCallRestricted: async () => ({ restricted: false }),
     isSessionTerminated: async () => false,
     wasRemovedFromCall: async () => false,
     lastDeclineAt: async () => null,
@@ -136,10 +156,22 @@ describe('permission engine — direct calls', () => {
   });
 
   it('restricted caller, redial cooldown, and rate limit → denied', async () => {
-    const restricted = await canUserStartCall(gw({ isCallRestricted: async () => true }), {
+    const restricted = await canUserStartCall(gw({ isCallRestricted: async () => ({ restricted: true }) }), {
       callerId: 'caller', calleeId: 'callee', threadId: 't1', contextType: 'telegraph_dm', callType: 'voice', nowMs: NOW,
     });
     assert.deepEqual(restricted, { allowed: false, reason: 'caller_restricted' });
+    // A real restriction and a degraded (could-not-check) read must deny with
+    // DIFFERENT reasons — showing "caller_restricted" for the degraded case
+    // would tell the caller they're moderation-restricted when the truth is
+    // the check itself failed.
+    const degraded = await canUserStartCall(gw({ isCallRestricted: async () => ({ restricted: true, degraded: true }) }), {
+      callerId: 'caller', calleeId: 'callee', threadId: 't1', contextType: 'telegraph_dm', callType: 'voice', nowMs: NOW,
+    });
+    assert.deepEqual(degraded, { allowed: false, reason: 'degraded_unavailable' });
+    const notRestricted = await canUserStartCall(gw({ isCallRestricted: async () => ({ restricted: false }) }), {
+      callerId: 'caller', calleeId: 'callee', threadId: 't1', contextType: 'telegraph_dm', callType: 'voice', nowMs: NOW,
+    });
+    assert.deepEqual(notRestricted, { allowed: true }, 'normal-allowed: not restricted, no other blocker, call proceeds');
     const redial = await canUserStartCall(gw({ lastDeclineAt: async () => NOW - 10_000 }), {
       callerId: 'caller', calleeId: 'callee', threadId: 't1', contextType: 'telegraph_dm', callType: 'voice', nowMs: NOW,
     });
@@ -181,6 +213,50 @@ describe('permission engine — groups & join', () => {
     assert.deepEqual(ok, { allowed: true });
     const no = await canUserStartGroupCall(gw({ isActiveCrewMember: async () => false }), { userId: 'u1', contextType: 'trip_crew', contextId: 'trip1', nowMs: NOW });
     assert.deepEqual(no, { allowed: false, reason: 'not_crew_member' });
+  });
+
+  it('group start: a degraded restriction check denies with degraded_unavailable, not caller_restricted', async () => {
+    const restricted = await canUserStartGroupCall(gw({ isCallRestricted: async () => ({ restricted: true }) }), {
+      userId: 'u1', contextType: 'trip_crew', contextId: 'trip1', nowMs: NOW,
+    });
+    assert.deepEqual(restricted, { allowed: false, reason: 'caller_restricted' });
+    const degraded = await canUserStartGroupCall(gw({ isCallRestricted: async () => ({ restricted: true, degraded: true }) }), {
+      userId: 'u1', contextType: 'trip_crew', contextId: 'trip1', nowMs: NOW,
+    });
+    assert.deepEqual(degraded, { allowed: false, reason: 'degraded_unavailable' });
+  });
+
+  describe('makeCallGateway(sc).isCallRestricted — the real adapter, not a fake', () => {
+    it('normal-allowed: an empty trust_restrictions read is not restricted', async () => {
+      const sc = makeRestrictionQueryClient({ kind: 'tuple', data: [], error: null });
+      const result = await makeCallGateway(sc).isCallRestricted('u1');
+      assert.deepEqual(result, { restricted: false, degraded: false });
+    });
+
+    it('a real messaging restriction denies as restricted, not degraded', async () => {
+      const sc = makeRestrictionQueryClient({
+        kind: 'tuple', data: [{ restriction_type: 'messaging' }], error: null,
+      });
+      const result = await makeCallGateway(sc).isCallRestricted('u1');
+      assert.deepEqual(result, { restricted: true, degraded: false });
+    });
+
+    it('fail-open-silent: a missing table is not restricted at all', async () => {
+      const sc = makeRestrictionQueryClient({
+        kind: 'tuple', data: null,
+        error: { code: '42P01', message: 'relation "trust_restrictions" does not exist' },
+      });
+      const result = await makeCallGateway(sc).isCallRestricted('u1');
+      assert.deepEqual(result, { restricted: false, degraded: false }, 'fail-open must never deny a call');
+    });
+
+    it('fail-closed-message: a read error denies as degraded, never caller_restricted', async () => {
+      const sc = makeRestrictionQueryClient({
+        kind: 'throw', err: new Error('connection terminated unexpectedly'),
+      });
+      const result = await makeCallGateway(sc).isCallRestricted('u1');
+      assert.deepEqual(result, { restricted: true, degraded: true });
+    });
   });
 
   it('event eligibility delegates to canonical service (age/trust/attendance)', async () => {

@@ -45,6 +45,20 @@ interface FakeState {
   feature_flags?: any[];
   user_privacy_settings?: any[];
   profile_privacy_settings?: any[];
+  /**
+   * Injects a query error on trust_restrictions specifically, to exercise
+   * getRestrictionState's fail-closed path. { code: '42P01' } instead
+   * exercises the fail-open (missing-table) path.
+   */
+  trust_restrictions_error?: { code?: string; message: string };
+  /**
+   * 1-indexed call number (across all trust_restrictions reads in this
+   * request) from which trust_restrictions_error starts firing. Default 1
+   * (every read fails). Set to 2 to let the first read (
+   * resolveInteractionPermissions) succeed and only fail the second
+   * (getRestrictionState) — isolating the read this change added.
+   */
+  trust_restrictions_error_from_call?: number;
 }
 
 function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
@@ -72,6 +86,16 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
     user_privacy_settings:     state.user_privacy_settings     ?? [],
     profile_privacy_settings:  state.profile_privacy_settings  ?? [],
   };
+
+  // POST /users/:userId/message-request reads trust_restrictions TWICE:
+  // resolveInteractionPermissions reads it first (its own, separate
+  // concern), TrustRestrictionService.getRestrictionState reads it second
+  // (what this change wires up). Injecting the error unconditionally would
+  // make BOTH reads fail identically, so a real HTTP test could never reach
+  // — or distinguish a mutation in — the second read's branch specifically.
+  // Firing the injected error from the Nth trust_restrictions call onward
+  // isolates the read this change actually touches.
+  let trustRestrictionsCallCount = 0;
 
   function parseOrFilter(expr: string): (r: any) => boolean {
     const rawGroups = expr.split(/\),\s*(?:and|or)\(/);
@@ -151,6 +175,13 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
         return Promise.resolve({ data: rows[0] ?? null, error: null });
       },
       then(resolve: (v: any) => void, reject?: (e: any) => void) {
+        if (table === "trust_restrictions" && state.trust_restrictions_error) {
+          trustRestrictionsCallCount += 1;
+          const threshold = state.trust_restrictions_error_from_call ?? 1;
+          if (trustRestrictionsCallCount >= threshold) {
+            return Promise.resolve({ data: null, error: state.trust_restrictions_error }).then(resolve, reject);
+          }
+        }
         const rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
         const sliced = _limit !== null ? rows.slice(0, _limit) : rows;
         return Promise.resolve({ data: sliced, error: null }).then(resolve, reject);
@@ -418,6 +449,70 @@ describe("POST /api/users/:userId/open-thread", () => {
     );
     const { status } = await callApi("POST", `/api/users/${BOB_ID}/open-thread`);
     assert.equal(status, 403);
+  });
+});
+
+describe("POST /api/users/:userId/message-request — messaging restriction vs degraded-read wiring", () => {
+  // NOTE ON SCOPE: this route calls resolveInteractionPermissions() BEFORE
+  // reaching TrustRestrictionService's check (messaging.ts:441 runs before
+  // messaging.ts:457). resolveInteractionPermissions independently reads
+  // trust_restrictions for its own purpose (interactionPermissions.ts:311-326,
+  // feeding canMessage/canSendMessageRequest at :547-554) and is NOT one of
+  // the four getRestrictionState callers this change touches. A real
+  // "messaging" restriction row makes IT deny first, with its own generic
+  // "Cannot send a message request to this user" — not this change's
+  // message. That means messaging.ts's own `else` branch (the ORIGINAL
+  // "Your account is currently restricted..." message, unchanged by this
+  // task) is effectively DEAD via this specific route today: by the time
+  // canMessage is false at messaging.ts:457, it can only be because of a
+  // fail_closed degraded read — a genuine, non-degraded restriction never
+  // reaches that line, upstream already caught it. Mutation testing proved
+  // this empirically: flipping the new condition to always-true survives
+  // every test here, because no reachable request state exercises the
+  // `else` path. This is a real, honest gap, reported rather than
+  // papered over with an unreachable-in-production test — see the
+  // mutation-testing table in the PR/commit description. The fail-closed
+  // test below uses call-order isolation (see trust_restrictions_error_from_call)
+  // to let resolveInteractionPermissions's read succeed while only
+  // getRestrictionState's own read fails, which IS a realistic partial-
+  // failure shape and is what actually proves this change's new branch.
+  it("normal-allowed: an unrestricted sender sends a message request normally", async () => {
+    _setTestClient(makeClient({}) as any, true);
+    const { status, body } = await callApi("POST", `/api/users/${BOB_ID}/message-request`);
+    assert.notEqual(status, 403, JSON.stringify(body));
+    assert.notEqual(body?.error, "forbidden");
+    assert.notEqual(body?.error, "degraded_unavailable");
+  });
+
+  it("fail-open-silent: a missing trust_restrictions table sends the message request normally — no message at all", async () => {
+    _setTestClient(
+      makeClient({ trust_restrictions_error: { code: "42P01", message: 'relation "trust_restrictions" does not exist' } }) as any,
+      true,
+    );
+    const { status, body } = await callApi("POST", `/api/users/${BOB_ID}/message-request`);
+    assert.notEqual(status, 403, "fail-open must not block sending a message");
+    assert.notEqual(status, 503, "fail-open must not show the degraded message either");
+  });
+
+  it("fail-closed-message: getRestrictionState's own read failing (resolveInteractionPermissions's earlier read still clean) shows the exact retry string", async () => {
+    _setTestClient(
+      makeClient({
+        trust_restrictions_error: { code: "57014", message: "canceling statement due to statement timeout" },
+        // Let resolveInteractionPermissions's read (1st) succeed; fail only
+        // getRestrictionState's read (2nd) — see the call-count comment above.
+        trust_restrictions_error_from_call: 2,
+      }) as any,
+      true,
+    );
+    const { status, body } = await callApi("POST", `/api/users/${BOB_ID}/message-request`);
+    assert.equal(status, 503);
+    assert.equal(body.error, "degraded_unavailable");
+    assert.equal(
+      body.message,
+      "We could not verify your permissions right now. Please try again shortly.",
+      "must show exactly this string — never the restriction message, never an improvised one",
+    );
+    assert.equal(body.retryable, true, "must carry a retry signal for the client to act on");
   });
 });
 

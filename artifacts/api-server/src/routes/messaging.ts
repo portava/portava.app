@@ -449,9 +449,21 @@ router.post('/users/:userId/message-request', async (req, res) => {
     return;
   }
 
-  // Trust Engine: check if sender is restricted from messaging
+  // Trust Engine: check if sender is restricted from messaging.
+  // canMessage=false means either a real restriction or a degraded read that
+  // failed CLOSED (the check itself could not be performed) — those must
+  // show different messages. A fail-OPEN degraded read never reaches here:
+  // canMessage is true in that case, same as a clean allowed read.
   const senderRestrictions = await getRestrictionState(sc, user.id);
   if (!senderRestrictions.canMessage) {
+    if (senderRestrictions.degradedReason === 'fail_closed') {
+      sendError(
+        res,
+        'degraded_unavailable',
+        'We could not verify your permissions right now. Please try again shortly.',
+      );
+      return;
+    }
     sendError(res, 'forbidden', 'Your account is currently restricted from sending messages.');
     return;
   }
