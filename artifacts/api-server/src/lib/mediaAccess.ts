@@ -314,6 +314,17 @@ async function decide(
       .limit(1);
     const story = (stories as any[])?.[0];
     if (story) {
+      // The story is found BY media_url, so the row claiming "this is my media"
+      // is the same row deciding whether to publish it. Require the OBJECT's
+      // owner to be the STORY's owner, or a public story pointing at another
+      // user's key republishes their bytes on its own authority. `owner` here is
+      // the canonical media_assets owner when that layer is lit, falling back to
+      // the path owner (§1 above). Null → cannot attribute the object → deny,
+      // matching this file's posture everywhere else.
+      //
+      // POST /stories now rejects such a row at write time. This covers rows
+      // written before that guard existed, and any future writer that skips it.
+      if (!owner || owner !== story.owner_id) return false;
       const live =
         (story.state === "active" || story.state === "saved") &&
         (!story.expires_at ||

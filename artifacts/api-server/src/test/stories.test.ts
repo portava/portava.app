@@ -249,7 +249,10 @@ describe("POST /api/stories", () => {
     _setTestClient(client, true);
 
     const { status, json } = await req("POST", "/api/stories", {
-      mediaUrl: "https://example.com/story.jpg",
+      // The bare key POST /api/media/upload returns: `post-media/<uid>/<ts>.<ext>`.
+      // Was "https://example.com/story.jpg" — an external URL the create path
+      // used to accept, which is the hole storyMediaOwnership.test.ts covers.
+      mediaUrl: `post-media/${owner.id}/1785019420319.jpg`,
       mediaType: "image/jpeg",
       caption: "My first story",
       visibility: "public",
@@ -279,7 +282,9 @@ describe("POST /api/stories", () => {
     const client = makeFakeClient({ _users: { rows: [] } });
     _setTestClient(client, true);
     const { status } = await req("POST", "/api/stories", {
-      mediaUrl: "https://example.com/story.jpg",
+      // Valid object key so a 401 here proves auth rejects first, rather than
+      // the media guard masking it with a 400.
+      mediaUrl: `post-media/${U.owner1}/1785019420319.jpg`,
       mediaType: "image/jpeg",
     });
     assert.equal(status, 401);

@@ -68,21 +68,28 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
     postLockRef.current = true;
     setPosting(true);
     try {
-      // Upload local file to Supabase Storage to get a shareable public URL
-      let publicUrl: string;
-      if (mediaUri.startsWith('http://') || mediaUri.startsWith('https://')) {
-        // Already a remote URL (e.g. re-share from another source)
-        publicUrl = mediaUri;
-      } else {
-        setUploadProgress('Uploading media...');
-        const uploaded = await uploadStoryMedia(mediaUri, mediaType);
-        setUploadProgress(null);
-        if (!uploaded) {
-          Alert.alert('Upload failed', 'Could not upload your media. Please check your connection and try again.');
-          return;
-        }
-        publicUrl = uploaded;
+      // Upload the local file through the server pipeline, which returns the
+      // storage path POST /stories will accept.
+      //
+      // A branch here used to forward mediaUri unchanged when it already looked
+      // like an http(s) URL, commented "already a remote URL (e.g. re-share from
+      // another source)". Re-share was evidently intended, but the branch was
+      // unreachable: setMediaUri is only ever called with ImagePickerAsset.uri
+      // (a file:// or content:// local URI) or null. It is removed rather than
+      // left dormant because POST /stories now rejects any mediaUrl that is not
+      // an app-storage object this user uploaded — so the branch would have
+      // turned into a silent 400 the moment someone revived it, and they would
+      // have had no reason to suspect the server. Reviving re-share needs a
+      // server-side upload-and-copy into the sharer's own object, not a URL
+      // passthrough.
+      setUploadProgress('Uploading media...');
+      const uploaded = await uploadStoryMedia(mediaUri, mediaType);
+      setUploadProgress(null);
+      if (!uploaded) {
+        Alert.alert('Upload failed', 'Could not upload your media. Please check your connection and try again.');
+        return;
       }
+      const publicUrl = uploaded;
 
       const result = await createStory({
         mediaUrl: publicUrl,

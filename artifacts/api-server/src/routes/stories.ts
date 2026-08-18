@@ -19,6 +19,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
+import { ownerFromPath } from "../lib/mediaAccess.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -152,6 +153,41 @@ router.post("/stories", asyncHandler(async (req, res) => {
     return;
   }
   const d = parsed.data;
+
+  /**
+   * mediaUrl must be OUR storage, and must be an object THIS user uploaded.
+   *
+   * The first half is the guard routes/events.ts:5347 and routes/messaging.ts:2016
+   * already carry — same helper, same error string. This create path is the
+   * sibling that never got it: createStorySchema types mediaUrl as
+   * z.string().min(1) and the insert below wrote it through untouched, so any
+   * client string became a story's media (external host, tracker, SSRF-on-render).
+   *
+   * The second half is new, and is what the first half alone does not buy.
+   * appStorageUrlInfo proves the bytes are ours; it says nothing about WHOSE.
+   * lib/mediaAccess.ts branch 3d resolves story media by looking the story up
+   * BY media_url and returning `story.visibility === "public"`, so a public
+   * story aimed at another user's object key published that user's bytes on the
+   * pointing story's own say-so. Both ends are closed: this stops the row being
+   * written, 3d stops an already-written row being served.
+   *
+   * This cannot reject a legitimate story. Stories upload through
+   * POST /api/media/upload (routes/posts.ts:75), which builds
+   * `${user.id}/${Date.now()}.${ext}` under post-media (posts.ts:172-173) and
+   * returns it as the bare key `post-media/<uid>/<ts>.<ext>` (posts.ts:216) —
+   * a uid-first path that ownerFromPath already reads, in a bucket
+   * appStorageUrlInfo already allows. No client builds a story path, so there
+   * is no client convention to drift from.
+   */
+  const mediaRef = appStorageUrlInfo(d.mediaUrl);
+  if (!mediaRef) {
+    sendError(res, "invalid_payload", "mediaUrl must be an uploaded app media URL (use /api/media/upload first)");
+    return;
+  }
+  if (ownerFromPath(mediaRef.path) !== user.id) {
+    sendError(res, "invalid_payload", "mediaUrl must be media you uploaded");
+    return;
+  }
 
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
