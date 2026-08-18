@@ -61,6 +61,21 @@ export interface MapTravelerPayload {
   lng: number;
 }
 
+/**
+ * Internal cached-row shape — never returned to a route directly. The
+ * candidate cache is viewer-independent (shared 20s across every client
+ * polling the same viewport), so whether THIS viewer follows/friends a given
+ * traveler can't be baked into avatarUrl at cache-build time — one viewer's
+ * follow graph would leak into another viewer's response. The raw flag rides
+ * along in the cache; listMapTravelers() resolves it per-request, after the
+ * cache, the same place self/block filtering already happens — and always
+ * builds a fresh MapTravelerPayload for the response rather than returning
+ * these objects by reference, so showProfilePicturePublicly can never leak.
+ */
+interface CachedTravelerRow extends MapTravelerPayload {
+  showProfilePicturePublicly: boolean;
+}
+
 export interface LocationPrefsRow {
   location_mode?: string | null;
   sharing_paused?: boolean | null;
@@ -154,7 +169,7 @@ export function freshnessBucket(updatedAtIso: string | null, now = Date.now()): 
 
 // ── Candidate cache (viewer-independent) ─────────────────────────────────────
 
-const candCache = new Map<string, { at: number; rows: MapTravelerPayload[] }>();
+const candCache = new Map<string, { at: number; rows: CachedTravelerRow[] }>();
 
 function cacheKey(lat: number, lng: number, radiusKm: number): string {
   return `${Math.round(lat * 20)}:${Math.round(lng * 20)}:${radiusKm}`;
@@ -172,7 +187,7 @@ async function loadCandidates(
   lat: number,
   lng: number,
   radiusKm: number,
-): Promise<MapTravelerPayload[]> {
+): Promise<CachedTravelerRow[]> {
   const cutoff = new Date(Date.now() - FRESH_MAX_MS).toISOString();
   const dLat = radiusKm / 111.32;
   const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
@@ -204,7 +219,7 @@ async function loadCandidates(
       .select("user_id, location_mode, sharing_paused, discovery_visibility")
       .in("user_id", ids),
     db.from("profiles")
-      .select("id, handle, name, display_name, avatar_url, verified, open_to_meet, is_private, account_status")
+      .select("id, handle, name, display_name, avatar_url, verified, open_to_meet, is_private, account_status, show_profile_picture_publicly")
       .in("id", ids),
     db.from("profile_privacy_settings")
       .select("user_id")
@@ -275,7 +290,7 @@ async function loadCandidates(
   // Universal display-name rule: map pins show @handle unless opted in.
   const allowedPinNames = await nameVisibilitySet(db, eligible.map((e) => e.loc.user_id));
 
-  const rows: MapTravelerPayload[] = eligible.map(({ loc, prof, vis, freshness }) => {
+  const rows: CachedTravelerRow[] = eligible.map(({ loc, prof, vis, freshness }) => {
     const id = loc.user_id;
     let pos: { lat: number; lng: number; precision: MapPrecision } | null = null;
     if (vis === "city_only" && loc.city) {
@@ -293,7 +308,11 @@ async function loadCandidates(
           (prof.handle as string | null) ??
           "Traveler")
         : (prof.handle ? `@${prof.handle as string}` : "Traveler"),
+      // Raw avatar_url rides along uncensored in the cache — the per-viewer
+      // gate in listMapTravelers() is what decides whether it reaches a
+      // response, using showProfilePicturePublicly below.
       avatarUrl: (prof.avatar_url as string | null) ?? null,
+      showProfilePicturePublicly: prof.show_profile_picture_publicly !== false,
       verified: prof.verified === true,
       openToMeet: prof.open_to_meet === true,
       city: (loc.city as string | null) ?? null,
@@ -331,7 +350,7 @@ export async function listMapTravelers(
 
   const key = cacheKey(opts.lat, opts.lng, opts.radiusKm);
   const hit = candCache.get(key);
-  let rows: MapTravelerPayload[];
+  let rows: CachedTravelerRow[];
   if (hit && Date.now() - hit.at < CAND_TTL_MS) {
     rows = hit.rows;
   } else {
@@ -344,7 +363,55 @@ export async function listMapTravelers(
   }
 
   const blocked = opts.blockedSet;
-  return rows
+  const survivors = rows
     .filter((r) => r.id !== opts.viewerId && !blocked.has(r.id))
     .slice(0, MAX_RESULTS);
+  if (survivors.length === 0) return [];
+
+  // Photo-visibility gate: viewer-specific, so it's resolved HERE — after the
+  // shared cache, same place self/block filtering already happens — never
+  // baked into the cached candidate rows shared across every viewer polling
+  // this viewport. Batched over the survivors only (self/blocks already
+  // narrowed the set), mirroring discoverySearch's follow+friend check.
+  const needsCheck = survivors.filter((r) => !r.showProfilePicturePublicly);
+  let followingSet = new Set<string>();
+  let friendSet = new Set<string>();
+  if (needsCheck.length > 0) {
+    const ids = needsCheck.map((r) => r.id);
+    const [{ data: followEdges }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
+      db.from("user_follows")
+        .select("following_id")
+        .eq("follower_id", opts.viewerId)
+        .in("following_id", ids),
+      // user_friendships stores the normalized (min, max) UUID pair — see
+      // normalizedFriendshipPair in lib/friendDecisions.ts — so both
+      // directions must be queried; which side viewerId lands on depends on
+      // UUID comparison, not on who sent the friend request.
+      db.from("user_friendships").select("user_b").eq("user_a", opts.viewerId).in("user_b", ids),
+      db.from("user_friendships").select("user_a").eq("user_b", opts.viewerId).in("user_a", ids),
+    ]);
+    followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string));
+    friendSet = new Set<string>([
+      ...(friendsAsA ?? []).map((e: any) => e.user_b as string),
+      ...(friendsAsB ?? []).map((e: any) => e.user_a as string),
+    ]);
+  }
+
+  return survivors.map((r): MapTravelerPayload => {
+    const showAvatar = r.showProfilePicturePublicly || followingSet.has(r.id) || friendSet.has(r.id);
+    return {
+      id: r.id,
+      handle: r.handle,
+      displayName: r.displayName,
+      avatarUrl: showAvatar ? r.avatarUrl : null,
+      verified: r.verified,
+      openToMeet: r.openToMeet,
+      city: r.city,
+      country: r.country,
+      freshness: r.freshness,
+      precision: r.precision,
+      lat: r.lat,
+      lng: r.lng,
+    };
+  });
 }

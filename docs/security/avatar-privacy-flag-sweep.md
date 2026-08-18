@@ -1,9 +1,19 @@
 # show_profile_picture_publicly — sweep results and follow-up
 
 **Severity: medium-high per instance (see below). Confidentiality gap, not a build problem.**
-Found 2026-08-18 while fixing the passport-cluster leak below. **Passport cluster fixed
-in this pass; the 9 items in §2 are NOT fixed — tracked here so the next pass doesn't
-have to re-derive the gating model for each route.**
+Found 2026-08-18 while fixing the passport-cluster leak below.
+
+**STATUS as of 2026-08-18: PAUSED, mid-sweep, by owner instruction — not a stopping
+point chosen for technical reasons.** The passport cluster (§1a) is merged to
+`origin/main`. `discoverySearch.ts` (§1b) is merged to `origin/main`. `mapTravelers.ts`
+(§1c) is committed on branch `claude/avatar-privacy-sweep-20260818` and is
+**NOT merged** — the owner changed policy mid-sweep to "nothing merges without an
+explicit handback" and separately reprioritized: the migration-tree reconciliation
+work is now P0, and this sweep is not being continued past mapTravelers.ts for now.
+**Seven of the nine §2 instances remain untouched**: `og.ts`, `pulse.ts`,
+`featured.ts`, `hashtags.ts`, `tags.ts`, `discovery.ts`, `stampAdmire.ts` — plus the
+still-unconfirmed `mediaFeed.ts`. Whoever resumes this: start from §2, the per-route
+gating models there are still accurate and nothing about them changed in this session.
 
 ---
 
@@ -24,7 +34,9 @@ more instances discovered in the same file (`passport.ts`'s `/profile` and
 `/og-image.png` routes, which never went through the gate at all). See commit for the
 passport-cluster fix and its mutation-proof.
 
-## 1. Fixed in this pass (passport cluster)
+## 1. Fixed
+
+### 1a. Passport cluster — merged to origin/main
 
 - `artifacts/api-server/src/lib/mediaAccess.ts` — avatar BYTES gate (`avatars/` storage
   path prefix only). Restored verbatim from `1f3aa3f3a`/`f054ca05c`.
@@ -42,34 +54,61 @@ passport-cluster fix and its mutation-proof.
   preview — Slack unfurls, iMessage previews, share bots — no auth wall to hide behind.
 
 All four verified with a mutation test: reverting the column out of each select fails
-exactly the test written for that route, not a nearby one (see the commit).
+exactly the test written for that route, not a nearby one.
 
-## 2. NOT fixed — confirmed instances outside the passport cluster
+### 1b. `routes/discoverySearch.ts` (`searchTravelers`) — merged to origin/main
+
+Fixing the column alone would have been wrong. The route's existing gate — `isPrivate =
+is_private && !isFollowing` — governs whether the *account* is private, not the photo
+flag; a public profile with the flag off fell straight through. But there was a SECOND
+defect underneath: the privacy copy promises "followers **and friends**", and this route
+only ever recognized follows — there was no friendship check anywhere in it. Fixing just
+the flag would have produced a gate that was correct about privacy and wrong about who
+counts as an insider, denying an accepted friend a photo they're entitled to see. Fixed
+by adding a `friendSet` alongside the existing `followingSet`, queried from
+`user_friendships`, which stores the NORMALIZED `(min, max)` UUID pair rather than
+requester/acceptor — both query directions are required, and the two tests covering each
+direction are not redundant with each other. Mutation-proof: 1 of 55 fails.
+
+### 1c. `lib/mapTravelers.ts` (discovery live map) — committed, NOT merged
+
+On branch `claude/avatar-privacy-sweep-20260818` only. Architecturally the hardest of
+the three fixed so far: this module's candidate list is a **shared, viewer-independent
+cache** (20s TTL per rounded viewport, so every client polling the same area shares one
+DB round-trip). Follow/friend status is inherently viewer-specific, so it cannot be
+baked into `avatarUrl` at cache-build time — doing so would leak one viewer's follow
+graph into every other viewer's response for the same cached candidates. Fixed by
+carrying the raw flag (`showProfilePicturePublicly`) on an internal `CachedTravelerRow`
+type that never leaves the module, and resolving the follow/friend check — batched,
+same normalized-pair handling as discoverySearch — per request, AFTER the cache, in the
+same place self/block filtering already happens. The final response is always a freshly
+built `MapTravelerPayload` per row (never the cached object by reference), so the
+internal flag can't leak into the JSON response; a test asserts that directly. A second
+test proves the cache-sharing property specifically: one viewer with a follow
+relationship populates the cache, a second unconnected viewer polling the same viewport
+within the TTL still gets `avatarUrl: null`. Mutation-proof: 2 of 21 fail (the two tests
+that depend on the flag actually being read).
+
+## 2. NOT fixed — confirmed instances outside §1 (untouched this session)
 
 Each of these has a **different** existing gating model, which is exactly why they
-weren't folded into the passport-cluster fix — a uniform patch across nine different
-privacy models is how four of them end up wrong while the diff still looks consistent.
-Whoever picks this up needs to understand each route's existing gate before touching it,
-not just add the column to the select.
+weren't folded into a single sweep — a uniform patch across nine different privacy
+models is how four of them end up wrong while the diff still looks consistent. Two
+routes in this list (`discoverySearch.ts`, `mapTravelers.ts`) have since been fixed —
+see §1b/§1c — and are left here struck through rather than deleted, so the numbering and
+original analysis stay intact for reference. The other seven, plus the one unconfirmed
+instance, are exactly as they were when first found; nothing here has changed.
 
 1. **`routes/og.ts:257-280,485`** (`resolveEntity("profile")` → `resolveOgImageBytes`).
    Builds `imageRef` straight from `avatar_url` and serves it as real image bytes for a
    link-preview card. Existing gate: none — `resolveProfileVisibility` decides
    full/blocked/etc. but nothing downstream checks the photo flag. Viewer: explicitly an
    anonymous crawler (no `viewerId` at all), same severity class as the og-image.png fix
-   above.
+   in §1a.
 
-2. **`routes/discoverySearch.ts:272,349`** (`searchTravelers`). Existing gate:
-   `isPrivate = p.is_private && !isFollowing` — only hides the avatar for a **private**
-   profile the searcher doesn't follow. A `is_private=false` (public) profile with the
-   photo flag off is not covered by this condition at all; `avatarUrl` falls straight
-   through to `p.avatar_url`. Fix has to add a second, independent check, not extend the
-   existing boolean.
+2. ~~`routes/discoverySearch.ts:272,349` (`searchTravelers`)~~ — **FIXED, see §1b.**
 
-3. **`lib/mapTravelers.ts:207,296`** (discovery live map). Existing gate: query excludes
-   rows where `is_private=true`. No reference to the photo flag anywhere in the query or
-   the row mapping. Any authenticated user browsing the map sees the avatar of any
-   public, location-opted-in nearby user regardless of the flag.
+3. ~~`lib/mapTravelers.ts:207,296` (discovery live map)~~ — **FIXED, see §1c.**
 
 4. **`routes/pulse.ts:157,351`** (main public post feed, `visibility='public'`, no
    follow filter). Existing gate: none — this is a fully public feed by design; the
@@ -98,6 +137,11 @@ not just add the column to the select.
    whether they're connected to each *admirer* listed underneath it. A public stamp's
    admirer list leaks every admirer's avatar to any viewer who can see the stamp.
 
+Before starting any of the remaining seven, check whether it has the same shape as §1b
+or §1c did — a second defect (missing friendship check, a shared cache, something else)
+hiding under the missing column. That pattern has now shown up in 2 of 3 routes fixed
+past the passport cluster; treat it as the default expectation, not a surprise.
+
 **Likely but unconfirmed** (ran out of investigation budget, not folded into the
 confirmed nine above): `routes/mediaFeed.ts:150,402` — appears to share the same
 `PROFILE_COLUMNS`/`GEM_PROFILE_COLUMNS` shape as `pulse.ts`/`featured.ts`, but the
@@ -121,14 +165,17 @@ conclusion:
 - `routes/wellKnownShare.ts` — delegates its `imageUrl` to the already-fixed
   `passport.ts` `og-image.png` route; no independent leak.
 
-## 4. Suggested approach for §2
+## 4. Suggested approach for the remaining seven (+1 unconfirmed)
 
-Given each route has its own gating model, treat this as nine (or ten) small,
-independent fixes rather than one sweep — pipeline them if using a workflow, but review
-each diff against its route's *existing* gate individually. Each needs: the column added
+Given each route has its own gating model, treat this as seven (or eight) small,
+independent fixes rather than one sweep — one commit per route, not merged until
+reviewed, is the pattern §1b and §1c already followed. Each needs: the column added
 to its profile select, a check against `show_profile_picture_publicly !== false` sited
 correctly relative to the route's *existing* connection check (don't just bolt it onto
-the wrong boolean the way `discoverySearch.ts`'s `isPrivate` would invite), a test for
-flag-off/stranger, flag-on, and (where the route has an owner-view path) owner-always,
-and the same mutation-proof discipline used in the passport-cluster commit — reverting
-the column from the select must fail a test, not just look right.
+the wrong boolean the way `discoverySearch.ts`'s `isPrivate` would have invited), a test
+for flag-off/stranger, flag-on, and (where the route has an owner-view path)
+owner-always, and the same mutation-proof discipline used in every fix so far —
+reverting the column from the select must fail a test, not just look right. And per §2's
+closing note: check first whether the route has a second defect hiding under the missing
+column (a missing friendship check, a shared/cached candidate list, something else
+specific to that route's architecture) before assuming the fix is just "add the column."
