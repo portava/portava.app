@@ -3,7 +3,7 @@
  * Only renders when plan_geofence_enabled feature flag is on.
  * Gated: shows nothing until featureEnabled=true from the API.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, Pressable, Modal, ScrollView, Switch,
   Alert, StyleSheet, TextInput,
@@ -11,6 +11,9 @@ import {
 import { X, MapPin, Clock, Users, Eye, Shield } from 'lucide-react-native';
 import { color, space, radius, type as t, icon, dot} from '../../theme/tokens.ts';
 import { GpsLocationCapture } from '../location/GpsLocationCapture.tsx';
+import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
+import { resolvePickedPlace } from '../../lib/location/applyPickedPlace.ts';
+import type { Place } from '../../lib/location/placeTypes.ts';
 import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import {
   setGeofence, revealExactLocation,
@@ -54,7 +57,49 @@ export function GeofenceSettingsSheet({
   const [city, setCity] = useState(existing?.city ?? '');
   const [neighborhood, setNeighborhood] = useState(existing?.neighborhood ?? '');
   const [venueName, setVenueName] = useState(existing?.venueName ?? '');
+  const [placePickerOpen, setPlacePickerOpen] = useState(false);
   const [publicPreviewLevel, setPublicPreviewLevel] = useState<PublicPreviewLevel>(existing?.publicPreviewLevel ?? 'neighborhood');
+
+  /**
+   * Picking a canonical place fills the public-preview labels.
+   *
+   * These three fields were free text with no autocomplete: whatever was typed
+   * was persisted verbatim, so "Bkk", "bangkok" and "Bangkok" were three
+   * different cities to every consumer that groups by this string.
+   *
+   * The picker is available and preferred, never required — a host whose venue
+   * is in a town no global place index carries must still be able to save. What
+   * a pick must NOT do is overwrite text the host already typed; that is the
+   * defect EventComposerSheet.tsx:604 and app/events/create/index.tsx:927 both
+   * carry a "QA round 2, bug 6" comment about. resolvePickedPlace draws that
+   * line once, here and in the other composers alike.
+   */
+  const handlePlacePicked = useCallback((place: Place) => {
+    setPlacePickerOpen(false);
+    const { fill, conflict, hasConflict } = resolvePickedPlace(place, {
+      city, neighborhood,
+    });
+    if (fill.city) setCity(fill.city);
+    if (fill.neighborhood) setNeighborhood(fill.neighborhood);
+    if (place.lat != null) setLat(String(place.lat));
+    if (place.lng != null) setLng(String(place.lng));
+    if (!locationName.trim() && place.displayName) setLocationName(place.displayName);
+    if (!hasConflict) return;
+    Alert.alert(
+      'Replace what you typed?',
+      `${place.displayName} is linked. Replace the public labels you entered with its own?`,
+      [
+        { text: 'Keep mine', style: 'cancel' },
+        {
+          text: 'Use this place',
+          onPress: () => {
+            if (conflict.city) setCity(conflict.city);
+            if (conflict.neighborhood) setNeighborhood(conflict.neighborhood);
+          },
+        },
+      ],
+    );
+  }, [city, neighborhood, locationName]);
   const [exactVisibility, setExactVisibility] = useState<ExactVisibility>(existing?.exactVisibility ?? 'exact_after_acceptance');
   const [checkInRequired, setCheckInRequired] = useState(existing?.checkInRequired ?? false);
   const [radiusM, setRadiusM] = useState(existing?.checkInRadiusM ?? 150);
@@ -189,6 +234,14 @@ export function GeofenceSettingsSheet({
                     <Text style={s.sectionTitle}>What non-accepted guests see</Text>
                   </View>
                   <Text style={s.fieldLabel}>City (for public preview)</Text>
+                  <Pressable
+                    testID="geofence-pick-place"
+                    style={s.pickPlaceBtn}
+                    onPress={() => setPlacePickerOpen(true)}
+                  >
+                    <MapPin size={13} color={color.signal} />
+                    <Text style={s.pickPlaceText}>Search for a place</Text>
+                  </Pressable>
                   <TextInput style={s.input} value={city} onChangeText={setCity} placeholder="e.g. Paris" placeholderTextColor={color.faint} />
                   <Text style={s.fieldLabel}>Neighborhood <Text style={s.opt}>(optional)</Text></Text>
                   <TextInput style={s.input} value={neighborhood} onChangeText={setNeighborhood} placeholder="e.g. Le Marais" placeholderTextColor={color.faint} />
@@ -313,6 +366,22 @@ export function GeofenceSettingsSheet({
           </ScrollView>
         </View>
       </KeyboardSafeScrollView>
+
+      {/* Mounted only while open: the picker reads safe-area insets and starts
+          its own location work on mount, and neither is worth paying for while
+          it is invisible. It also keeps this modal renderable without a
+          SafeAreaProvider, which is how its existing tests render it. */}
+      {placePickerOpen && (
+      <GlobalPlacePicker
+        visible={placePickerOpen}
+        title="Meetup location"
+        placeholder="City, venue or address…"
+        allowGPS
+        usedFor="geofence_location"
+        onSelect={handlePlacePicked}
+        onClose={() => setPlacePickerOpen(false)}
+      />
+      )}
     </Modal>
   );
 }
@@ -352,6 +421,8 @@ const s = StyleSheet.create({
   revealBtnText: { ...t.body, color: '#fff', fontWeight: '700' },
   revealedLabel: { ...t.small, color: color.success, fontWeight: '600' },
   errText:       { ...t.small, color: color.signal, marginTop: 4 },
+  pickPlaceBtn:  { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6 },
+  pickPlaceText: { ...t.small, color: color.signal, fontWeight: '600' },
   saveBtn:       { backgroundColor: color.deep, borderRadius: radius.md, padding: 14, alignItems: 'center', marginTop: space.lg },
   saveBtnText:   { ...t.body, color: '#fff', fontWeight: '700' },
 });

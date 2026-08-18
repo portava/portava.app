@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, Pressable, Image, ScrollView,
-  ActivityIndicator, Modal, TextInput,
+  ActivityIndicator, Modal, TextInput, Alert,
 } from 'react-native';
 import { CachedImage } from './CachedImage.tsx';
 import * as ImagePicker from 'expo-image-picker';
@@ -19,6 +19,9 @@ import {
 } from '../services/passportStamps.ts';
 import { uploadMedia } from '../services/media.ts';
 import { SaveButton } from './SaveButton.tsx';
+import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
+import { resolvePickedPlace } from '../lib/location/applyPickedPlace.ts';
+import type { Place } from '../lib/location/placeTypes.ts';
 import { color, space, radius, type as t, avatar, aspect } from '../theme/tokens.ts';
 
 const CATEGORIES = [
@@ -71,11 +74,74 @@ interface EditMemoryModalProps {
   onSaved: (memoryId: string, patch: EditMemoryPatch) => void;
 }
 
+/**
+ * usePlacePicker — the city/country picker wiring, shared by BOTH memory modals.
+ *
+ * This file renders the same city + country pair twice: once in
+ * EditMemoryModal and once in CreateMemoryModal. They are separate components
+ * over separate state, which is precisely why a fix applied to one of them
+ * looks complete and comes back through the other. The wiring lives here so
+ * there is one implementation and both call sites are visibly the same call.
+ *
+ * Both fields were free text with no autocomplete, persisted verbatim (patch at
+ * the edit path, createPassportMemory at the create path), so the same city
+ * arrived under as many spellings as people typed.
+ *
+ * Preferred, not required — a memory from a village no global place index
+ * carries must still save — and a pick never overwrites typed text without
+ * asking, which is the "QA round 2, bug 6" line drawn in
+ * EventComposerSheet.tsx:604 and app/events/create/index.tsx:927.
+ */
+function usePlacePicker(
+  city: string,
+  country: string,
+  setCity: (v: string) => void,
+  setCountry: (v: string) => void,
+) {
+  const [placePickerOpen, setPlacePickerOpen] = useState(false);
+
+  const handlePlacePicked = useCallback((place: Place) => {
+    setPlacePickerOpen(false);
+    const { fill, conflict, hasConflict } = resolvePickedPlace(place, { city, country });
+    if (fill.city) setCity(fill.city);
+    if (fill.country) setCountry(fill.country);
+    if (!hasConflict) return;
+    Alert.alert(
+      'Replace what you typed?',
+      `${place.displayName} is linked. Replace the city and country you entered with its own?`,
+      [
+        { text: 'Keep mine', style: 'cancel' },
+        {
+          text: 'Use this place',
+          onPress: () => {
+            if (conflict.city) setCity(conflict.city);
+            if (conflict.country) setCountry(conflict.country);
+          },
+        },
+      ],
+    );
+  }, [city, country, setCity, setCountry]);
+
+  return { placePickerOpen, setPlacePickerOpen, handlePlacePicked };
+}
+
+/** The picker entry point rendered above each city/country pair. */
+function PickPlaceRow({ onPress, testID }: { onPress: () => void; testID: string }) {
+  return (
+    <Pressable testID={testID} style={cm.pickPlaceBtn} onPress={onPress}>
+      <MapPin size={13} color={color.signal} />
+      <Text style={cm.pickPlaceText}>Search for a place</Text>
+    </Pressable>
+  );
+}
+
 function EditMemoryModal({ visible, memory, onClose, onSaved }: EditMemoryModalProps) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [city, setCity] = useState('');
   const [country, setCountry] = useState('');
+  const { placePickerOpen, setPlacePickerOpen, handlePlacePicked } =
+    usePlacePicker(city, country, setCity, setCountry);
 
   // Photo state
   // photoUri: newly picked local URI; null means no new pick
@@ -226,6 +292,8 @@ function EditMemoryModal({ visible, memory, onClose, onSaved }: EditMemoryModalP
             editable={!isBusy}
           />
 
+          <PickPlaceRow testID="memory-edit-pick-place" onPress={() => setPlacePickerOpen(true)} />
+
           <View style={cm.row}>
             <View style={{ flex: 1 }}>
               <Text style={cm.label}>City</Text>
@@ -313,6 +381,22 @@ function EditMemoryModal({ visible, memory, onClose, onSaved }: EditMemoryModalP
           </Pressable>
         </ScrollView>
       </KeyboardSafeView>
+
+      {/* Mounted only while open: the picker reads safe-area insets and starts
+          its own location work on mount, and neither is worth paying for while
+          it is invisible. It also keeps this modal renderable without a
+          SafeAreaProvider, which is how its existing tests render it. */}
+      {placePickerOpen && (
+      <GlobalPlacePicker
+        visible={placePickerOpen}
+        title="Where was this?"
+        placeholder="City, area or country…"
+        allowGPS
+        usedFor="memory_edit_location"
+        onSelect={handlePlacePicked}
+        onClose={() => setPlacePickerOpen(false)}
+      />
+      )}
     </Modal>
   );
 }
@@ -426,6 +510,8 @@ export function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalPr
   const [description, setDescription] = useState('');
   const [city, setCity] = useState('');
   const [country, setCountry] = useState('');
+  const { placePickerOpen, setPlacePickerOpen, handlePlacePicked } =
+    usePlacePicker(city, country, setCity, setCountry);
   const [category, setCategory] = useState('city');
   const [visibility, setVisibility] = useState<MemoryVisibility>('private');
   const [saving, setSaving] = useState(false);
@@ -537,6 +623,8 @@ export function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalPr
           <Text style={cm.label}>Description</Text>
           <TextInput style={[cm.input, cm.multiline]} value={description} onChangeText={setDescription} placeholder="Tell the story…" placeholderTextColor={color.faint} multiline maxLength={1000} textAlignVertical="top" editable={!isBusy} />
 
+          <PickPlaceRow testID="memory-create-pick-place" onPress={() => setPlacePickerOpen(true)} />
+
           <View style={cm.row}>
             <View style={{ flex: 1 }}>
               <Text style={cm.label}>City</Text>
@@ -643,6 +731,22 @@ export function CreateMemoryModal({ visible, onClose, onCreated }: CreateModalPr
           </Pressable>
         </View>
       </KeyboardSafeView>
+
+      {/* Mounted only while open: the picker reads safe-area insets and starts
+          its own location work on mount, and neither is worth paying for while
+          it is invisible. It also keeps this modal renderable without a
+          SafeAreaProvider, which is how its existing tests render it. */}
+      {placePickerOpen && (
+      <GlobalPlacePicker
+        visible={placePickerOpen}
+        title="Where was this?"
+        placeholder="City, area or country…"
+        allowGPS
+        usedFor="memory_create_location"
+        onSelect={handlePlacePicked}
+        onClose={() => setPlacePickerOpen(false)}
+      />
+      )}
     </Modal>
   );
 }
@@ -890,6 +994,8 @@ const mc = StyleSheet.create({
 });
 
 const cm = StyleSheet.create({
+  pickPlaceBtn:  { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6 },
+  pickPlaceText: { ...t.small, color: color.signal, fontWeight: '600' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: space.lg, borderBottomWidth: 1, borderColor: color.haze },
   title: { ...t.heading, color: color.ink, fontSize: 18 },
   body: { padding: space.lg, paddingBottom: 48 },

@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { X, MapPin, Star, ChevronDown, ChevronUp } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { submitCommunityPlace } from '../../services/discovery.ts';
+import { validateCommunityPlace } from '../../lib/discovery/communityPlaceSubmission.ts';
 import { GpsLocationCapture } from '../location/GpsLocationCapture.tsx';
 import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
 import { useMediaComposer } from '../../hooks/useMediaComposer.ts';
@@ -85,7 +86,11 @@ export function SubmitPlaceSheet({ visible, city, onClose, onSubmitted }: Submit
   };
 
   const handleSubmit = async () => {
-    if (!name.trim()) { setError('Place name is required.'); return; }
+    // Rules live in lib/discovery/communityPlaceSubmission so they can be tested
+    // exhaustively — this renderer commits one press-derived update per test
+    // file, so five submit attempts would need five component test files.
+    const invalid = validateCommunityPlace({ name, city });
+    if (invalid) { setError(invalid); return; }
 
     const latVal = latText.trim() ? parseFloat(latText.trim()) : null;
     const lngVal = lngText.trim() ? parseFloat(lngText.trim()) : null;

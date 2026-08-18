@@ -16,6 +16,8 @@ import { submitGem, type GemCategory, type GemSensitivity } from '../../src/serv
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { KeyboardSafeView } from '../../src/components/ui/KeyboardSafeView';
 import { GpsLocationCapture } from '../../src/components/location/GpsLocationCapture';
+import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
+import { resolvePickedPlace } from '../../src/lib/location/applyPickedPlace';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { canNext as wizardCanNext, buildSubmitPayload } from '../../src/lib/gems/submitMachine';
 import { GemLocationPreview } from '../../src/components/gems/GemLocationPreview';
@@ -94,16 +96,77 @@ const STEPS = ['Location', 'Details', 'Photo', 'Privacy', 'Review'];
 // ── Step components ────────────────────────────────────────────────────────────
 
 function LocationStep({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
+  const [placePickerOpen, setPlacePickerOpen] = useState(false);
+
   const handleCapture = useCallback((place: Place | null) => {
     update('gpsLat', place?.lat ?? undefined);
     update('gpsLng', place?.lng ?? undefined);
     update('gpsLabel', place?.displayName ?? undefined);
   }, [update]);
 
+  /**
+   * Picking a canonical place fills city / country / neighbourhood.
+   *
+   * All three were free text with no autocomplete, persisted verbatim by
+   * buildSubmitPayload, so the same town arrived at the server under as many
+   * spellings as people typed. City is a REQUIRED field here, which makes it
+   * the one most worth resolving.
+   *
+   * Preferred, not required: a gem in a village no global index carries must
+   * still be submittable, so typed text is never rejected — and never
+   * overwritten behind the user's back either. That second half is the defect
+   * EventComposerSheet.tsx:604 and app/events/create/index.tsx:927 both carry a
+   * "QA round 2, bug 6" comment about; resolvePickedPlace draws the line once
+   * for every composer.
+   *
+   * Coordinates ride along when the place has them — submitGem already accepts
+   * latitude/longitude, and a resolved place is a better source for them than
+   * a typed city name the server would have to geocode.
+   */
+  const handlePlacePicked = useCallback((place: Place) => {
+    setPlacePickerOpen(false);
+    const { fill, conflict, coords, hasConflict } = resolvePickedPlace(place, {
+      city: form.city, country: form.country, neighborhood: form.neighborhood,
+    });
+    if (fill.city) update('city', fill.city);
+    if (fill.country) update('country', fill.country);
+    if (fill.neighborhood) update('neighborhood', fill.neighborhood);
+    if (coords && form.gpsLat == null && form.gpsLng == null) {
+      update('gpsLat', coords.lat);
+      update('gpsLng', coords.lng);
+      update('gpsLabel', place.displayName);
+    }
+    if (!hasConflict) return;
+    Alert.alert(
+      'Replace what you typed?',
+      `${place.displayName} is linked. Replace the location details you entered with its own?`,
+      [
+        { text: 'Keep mine', style: 'cancel' },
+        {
+          text: 'Use this place',
+          onPress: () => {
+            if (conflict.city) update('city', conflict.city);
+            if (conflict.country) update('country', conflict.country);
+            if (conflict.neighborhood) update('neighborhood', conflict.neighborhood);
+          },
+        },
+      ],
+    );
+  }, [form.city, form.country, form.neighborhood, form.gpsLat, form.gpsLng, update]);
+
   return (
     <KeyboardSafeView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
       <Text style={styles.stepHeading}>Where is it?</Text>
       <Text style={styles.stepSub}>Tell us where the gem is located</Text>
+
+      <TouchableOpacity
+        testID="gem-pick-place"
+        style={styles.pickPlaceBtn}
+        onPress={() => setPlacePickerOpen(true)}
+      >
+        <Ionicons name="search" size={14} color="#2F6F8F" />
+        <Text style={styles.pickPlaceText}>Search for a place</Text>
+      </TouchableOpacity>
 
       <Field label="City *">
         <TextInput
@@ -141,6 +204,22 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
           initialLabel={form.gpsLabel}
         />
       </Field>
+
+      {/* Mounted only while open: the picker reads safe-area insets and starts
+          its own location work on mount, and neither is worth paying for while
+          it is invisible. It also keeps this modal renderable without a
+          SafeAreaProvider, which is how its existing tests render it. */}
+      {placePickerOpen && (
+      <GlobalPlacePicker
+        visible={placePickerOpen}
+        title="Where is this gem?"
+        placeholder="City, area or venue…"
+        allowGPS
+        usedFor="gem_location"
+        onSelect={handlePlacePicked}
+        onClose={() => setPlacePickerOpen(false)}
+      />
+      )}
     </KeyboardSafeView>
   );
 }
@@ -696,6 +775,8 @@ const styles = StyleSheet.create({
   nextBtn: {
     backgroundColor: '#4C8BF5', borderRadius: 14, paddingVertical: 15, alignItems: 'center',
   },
+  pickPlaceBtn:  { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 },
+  pickPlaceText: { fontSize: 13, fontWeight: '600', color: '#2F6F8F' },
   btnDisabled: { opacity: 0.5 },
   nextBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
 
