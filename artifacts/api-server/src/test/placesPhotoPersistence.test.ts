@@ -28,6 +28,7 @@ import pino from "pino";
 import placesRouter from "../routes/places.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { PHOTO_TTL_MS } from "../lib/discoveryPlacePhotoStore.js";
+import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js";
 
 // ── Upstream stubs ────────────────────────────────────────────────────────────
 
@@ -45,7 +46,7 @@ let fsqCalls = 0;
 
 const originalGoogleKey = process.env.GOOGLE_MAPS_API_KEY;
 const originalApiBase = process.env.API_BASE_URL;
-const originalFsqKey = process.env.FOURSQUARE_API_KEY;
+const originalFsqEnv = snapshotKeyEnv(FOURSQUARE_KEY_VARS);
 
 let server: Server;
 let port = 0;
@@ -90,8 +91,7 @@ after(async () => {
   else process.env.GOOGLE_MAPS_API_KEY = originalGoogleKey;
   if (originalApiBase === undefined) delete process.env.API_BASE_URL;
   else process.env.API_BASE_URL = originalApiBase;
-  if (originalFsqKey === undefined) delete process.env.FOURSQUARE_API_KEY;
-  else process.env.FOURSQUARE_API_KEY = originalFsqKey;
+  restoreKeyEnv(originalFsqEnv);
   _setTestServiceClient(null);
   await new Promise<void>((r) => server.close(() => r()));
 });
@@ -138,7 +138,11 @@ beforeEach(() => {
   // photoProxyUrl prefixes API_BASE_URL when set; pinned so the proxy-URL
   // assertions are exact rather than dependent on the ambient environment.
   process.env.API_BASE_URL = "";
-  process.env.FOURSQUARE_API_KEY = "test-fsq-key";
+  // Through the helper, not a bare assignment: resolveFoursquareApiKey prefers
+  // FSQ_API_KEY_DEV, so setting FOURSQUARE_API_KEY alone injected nothing here —
+  // the code kept using the real workspace secret while this test believed it
+  // had supplied a fake one.
+  setKeyEnv(FOURSQUARE_KEY_VARS, "test-fsq-key");
   googleResponder = null;
   fsqResponder = null;
   headResponder = null;

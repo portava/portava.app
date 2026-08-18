@@ -28,6 +28,7 @@ import {
 import { executeCompassTool, sanitizeToolResult } from "../compass/CompassTools.js";
 import { collectToolCandidates } from "../compass/CompassUiBlocks.js";
 import type { ToolExecution } from "../compass/CompassTools.js";
+import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, clearKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js";
 
 // ── fetch stub ────────────────────────────────────────────────────────────────
 
@@ -45,19 +46,18 @@ function stubFetch(responder: () => any) {
   }) as any;
 }
 
-const originalKey = process.env.FOURSQUARE_API_KEY;
+const originalFsqEnv = snapshotKeyEnv(FOURSQUARE_KEY_VARS);
 
 beforeEach(() => {
   fetchCalls = [];
   _clearLiveCache();
   _setSimulatedOutage("places_live", false);
-  process.env.FOURSQUARE_API_KEY = "test-key";
+  setKeyEnv(FOURSQUARE_KEY_VARS, "test-key");
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  if (originalKey === undefined) delete process.env.FOURSQUARE_API_KEY;
-  else process.env.FOURSQUARE_API_KEY = originalKey;
+  restoreKeyEnv(originalFsqEnv);
   _setSimulatedOutage("places_live", false);
 });
 
@@ -126,7 +126,7 @@ describe("Phase 8 — live fetch layer", () => {
   });
 
   it("returns null when no API key is configured", async () => {
-    delete process.env.FOURSQUARE_API_KEY;
+    clearKeyEnv(FOURSQUARE_KEY_VARS);
     stubFetch(() => FSQ_OPEN);
     const status = await getLiveVenueStatus("Cafe Uno", "Cebu");
     assert.equal(status, null);

@@ -48,6 +48,8 @@ import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { classifyApiKey, apiKeyFailureReason } from "../lib/apiKeyState.js";
+import { readFileSync } from "node:fs";
+import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, clearKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js";
 
 function makeFakeClient(): any {
   return { from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }) };
@@ -73,7 +75,7 @@ async function get(baseUrl: string, route: string, name: string): Promise<{ stat
 }
 
 const originalGoogleKey = process.env.GOOGLE_MAPS_API_KEY;
-const originalFsqKey = process.env.FOURSQUARE_API_KEY;
+const originalFsqEnv = snapshotKeyEnv(FOURSQUARE_KEY_VARS);
 const originalFetch = globalThis.fetch;
 
 /** Restore an env var, distinguishing "was absent" from "was set". */
@@ -215,7 +217,7 @@ describe("GET /api/places/fsq-photo — key absent vs present-but-empty", () => 
   after(async () => {
     _setTestClient(null, false);
     await closeServer(server);
-    restoreEnv("FOURSQUARE_API_KEY", originalFsqKey);
+    restoreKeyEnv(originalFsqEnv);
     globalThis.fetch = originalFetch;
   });
 
@@ -235,11 +237,11 @@ describe("GET /api/places/fsq-photo — key absent vs present-but-empty", () => 
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    restoreEnv("FOURSQUARE_API_KEY", originalFsqKey);
+    restoreKeyEnv(originalFsqEnv);
   });
 
   it("reports the existing 'no_foursquare_key' when the variable is not set", async () => {
-    delete process.env.FOURSQUARE_API_KEY;
+    clearKeyEnv(FOURSQUARE_KEY_VARS);
     const { status, body } = await get(url, "/api/places/fsq-photo", "Cebu Zoo");
     assert.equal(status, 200);
     assert.equal(body.photoUrl, null);
@@ -247,7 +249,7 @@ describe("GET /api/places/fsq-photo — key absent vs present-but-empty", () => 
   });
 
   it("reports 'foursquare_key_present_but_empty' when the value is empty", async () => {
-    process.env.FOURSQUARE_API_KEY = "";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "");
     const { body } = await get(url, "/api/places/fsq-photo", "Cebu Zoo");
     assert.equal(
       body.reason,
@@ -260,18 +262,60 @@ describe("GET /api/places/fsq-photo — key absent vs present-but-empty", () => 
     // A key fault is not a fact about the place. Caching it would keep serving
     // "no photo" for this place after the secret is corrected — a stale answer
     // outliving the fix, which is how the original silence worked.
-    process.env.FOURSQUARE_API_KEY = "";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "");
     const first = (await get(url, "/api/places/fsq-photo", "Cache Probe Venue")).body;
     assert.equal(first.reason, "foursquare_key_present_but_empty");
 
-    restoreEnv("FOURSQUARE_API_KEY", originalFsqKey);
-    process.env.FOURSQUARE_API_KEY = "now-a-real-looking-key";
+    restoreKeyEnv(originalFsqEnv);
+    setKeyEnv(FOURSQUARE_KEY_VARS, "now-a-real-looking-key");
     const second = (await get(url, "/api/places/fsq-photo", "Cache Probe Venue")).body;
 
     assert.notEqual(
       second.reason,
       "foursquare_key_present_but_empty",
       "the key fault was cached and survived the fix",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drift guard: the neutralise-list must track the resolver
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// This exists because the failure it prevents already happened. When the
+// Foursquare key gained a dev/prod split, resolveFoursquareApiKey started
+// preferring FSQ_API_KEY_DEV, and six tests across three files kept clearing
+// only FOURSQUARE_API_KEY. They read as absent-key tests and were not: the key
+// still resolved, the route called Foursquare, and the tests failed for a
+// reason unrelated to what they assert. Two further tests INJECTED a fake key
+// that the code never saw and passed anyway — green for the wrong reason, one
+// failed fetch stub away from spending live quota.
+//
+// Nothing in the type system connects a resolver's env reads to the list a test
+// must neutralise, so this asserts it by reading the resolver's own source. If
+// someone adds FSQ_API_KEY_STAGING to the resolver, this fails until
+// FOURSQUARE_KEY_VARS is updated — which is what makes the next split announce
+// itself instead of silently rotting the suite.
+describe("api key env: the neutralise-list tracks the resolver", () => {
+  it("FOURSQUARE_KEY_VARS names exactly the variables resolveFoursquareApiKey reads", () => {
+    const src = readFileSync(
+      new URL("../lib/foursquareApiKey.ts", import.meta.url),
+      "utf8",
+    );
+
+    // Strip block and line comments: the module documents the variables in
+    // prose, and matching prose would make this pass for the wrong reason.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+
+    const referenced = new Set(code.match(/\b(?:FSQ_API_KEY_[A-Z]+|FOURSQUARE_API_KEY)\b/g) ?? []);
+
+    assert.deepEqual(
+      [...referenced].sort(),
+      [...FOURSQUARE_KEY_VARS].sort(),
+      "resolveFoursquareApiKey reads a set of env vars that FOURSQUARE_KEY_VARS does not match — " +
+      "update src/test/helpers/apiKeyEnv.ts, or every absent-key test for this provider is now lying",
     );
   });
 });

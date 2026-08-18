@@ -24,6 +24,7 @@ import {
   _clearLiveCache,
   CANT_VERIFY_NOTE,
 } from "../lib/liveIntelligence.js";
+import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, clearKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js";
 
 // ── fetch stub (Foursquare only) ──────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ function stubFsq(responder: () => any) {
   fsqResponder = responder;
 }
 
-const originalKey = process.env.FOURSQUARE_API_KEY;
+const originalFsqEnv = snapshotKeyEnv(FOURSQUARE_KEY_VARS);
 
 let server: Server;
 let port = 0;
@@ -63,15 +64,14 @@ before(async () => {
 
 after(async () => {
   globalThis.fetch = originalFetch;
-  if (originalKey === undefined) delete process.env.FOURSQUARE_API_KEY;
-  else process.env.FOURSQUARE_API_KEY = originalKey;
+  restoreKeyEnv(originalFsqEnv);
   await new Promise<void>((r) => server.close(() => r()));
 });
 
 beforeEach(() => {
   _clearLiveCache();
   _setSimulatedOutage("places_live", false);
-  process.env.FOURSQUARE_API_KEY = "test-key";
+  setKeyEnv(FOURSQUARE_KEY_VARS, "test-key");
   fsqResponder = null;
 });
 

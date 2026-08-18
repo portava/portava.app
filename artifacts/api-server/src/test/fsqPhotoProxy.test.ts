@@ -26,6 +26,7 @@ import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setFsqPhotoCacheMaxForTest } from "../routes/places.js";
+import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, clearKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js";
 
 // ── Minimal fake Supabase client (route touches no DB tables) ─────────────────
 
@@ -76,7 +77,7 @@ async function getPhoto(
 // ── Saved originals ───────────────────────────────────────────────────────────
 
 const originalFetch = globalThis.fetch;
-const originalFsqKey = process.env.FOURSQUARE_API_KEY;
+const originalFsqEnv = snapshotKeyEnv(FOURSQUARE_KEY_VARS);
 
 // ── A. Key set + Foursquare returns a photo ───────────────────────────────────
 
@@ -95,7 +96,7 @@ describe("GET /api/places/fsq-photo — happy path (photo returned)", () => {
   });
 
   beforeEach(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "test-fsq-key");
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const reqUrl = String(input);
       // Intercept Foursquare Places API search call
@@ -124,7 +125,7 @@ describe("GET /api/places/fsq-photo — happy path (photo returned)", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   it("returns HTTP 200", async () => {
@@ -170,7 +171,7 @@ describe("GET /api/places/fsq-photo — no FOURSQUARE_API_KEY", () => {
   });
 
   beforeEach(() => {
-    delete process.env.FOURSQUARE_API_KEY;
+    clearKeyEnv(FOURSQUARE_KEY_VARS);
     // fetch should NOT be called at all; override to detect any accidental call
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
@@ -183,7 +184,7 @@ describe("GET /api/places/fsq-photo — no FOURSQUARE_API_KEY", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   it("returns HTTP 200", async () => {
@@ -229,7 +230,7 @@ describe("GET /api/places/fsq-photo — Foursquare 401 auth error", () => {
   });
 
   beforeEach(() => {
-    process.env.FOURSQUARE_API_KEY = "invalid-key";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "invalid-key");
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
       if (reqUrl.includes("foursquare.com")) {
@@ -245,7 +246,7 @@ describe("GET /api/places/fsq-photo — Foursquare 401 auth error", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   it("returns HTTP 200 (graceful degradation, never throws)", async () => {
@@ -295,7 +296,7 @@ describe("GET /api/places/fsq-photo — Foursquare 429 out of credits", () => {
   });
 
   beforeEach(() => {
-    process.env.FOURSQUARE_API_KEY = "valid-but-broke";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "valid-but-broke");
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
       if (reqUrl.includes("foursquare.com")) {
@@ -314,7 +315,7 @@ describe("GET /api/places/fsq-photo — Foursquare 429 out of credits", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   it("still degrades gracefully with HTTP 200 and a null photoUrl", async () => {
@@ -357,7 +358,7 @@ describe("GET /api/places/fsq-photo — Foursquare 403 auth error", () => {
   });
 
   beforeEach(() => {
-    process.env.FOURSQUARE_API_KEY = "forbidden-key";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "forbidden-key");
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
       if (reqUrl.includes("foursquare.com")) {
@@ -373,7 +374,7 @@ describe("GET /api/places/fsq-photo — Foursquare 403 auth error", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   it("returns HTTP 200 (graceful degradation, never throws)", async () => {
@@ -413,7 +414,7 @@ describe("GET /api/places/fsq-photo — photo entry has prefix: null", () => {
   });
 
   beforeEach(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "test-fsq-key");
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
       if (reqUrl.includes("foursquare.com")) {
@@ -437,7 +438,7 @@ describe("GET /api/places/fsq-photo — photo entry has prefix: null", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   it("returns photoUrl: null when prefix is null", async () => {
@@ -472,7 +473,7 @@ describe("GET /api/places/fsq-photo — photo entry has suffix: null", () => {
   });
 
   beforeEach(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "test-fsq-key");
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
       if (reqUrl.includes("foursquare.com")) {
@@ -496,7 +497,7 @@ describe("GET /api/places/fsq-photo — photo entry has suffix: null", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   it("returns photoUrl: null when suffix is null", async () => {
@@ -531,7 +532,7 @@ describe("GET /api/places/fsq-photo — photo entry has both prefix and suffix a
   });
 
   beforeEach(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "test-fsq-key");
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
       if (reqUrl.includes("foursquare.com")) {
@@ -553,7 +554,7 @@ describe("GET /api/places/fsq-photo — photo entry has both prefix and suffix a
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   it("returns photoUrl: null when both prefix and suffix are absent", async () => {
@@ -592,11 +593,11 @@ describe("GET /api/places/fsq-photo — HEAD check throws; result must NOT be ca
     _setTestClient(null, false);
     await closeServer(server);
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   before(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key-head-throw";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "test-fsq-key-head-throw");
     // Unique name + coords to avoid collisions with other describe blocks.
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const reqUrl = String(input);
@@ -664,11 +665,11 @@ describe("GET /api/places/fsq-photo — negative result is cached (no second FSQ
     _setTestClient(null, false);
     await closeServer(server);
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   before(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key-cache";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "test-fsq-key-cache");
     // Unique name + coords so this describe's entries don't collide with
     // any other describe block's cache entries.
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
@@ -742,11 +743,11 @@ describe("GET /api/places/fsq-photo — capacity cap: oldest entry evicted at ma
     _setTestClient(null, false);
     await closeServer(server);
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   before(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key-cap";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "test-fsq-key-cap");
     globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit) => {
       const reqUrl = String(input);
       if (reqUrl.includes("foursquare.com")) {
@@ -818,11 +819,11 @@ describe("GET /api/places/fsq-photo — dead CDN link: photoUrl null + result NO
     _setTestClient(null, false);
     await closeServer(server);
     globalThis.fetch = originalFetch;
-    process.env.FOURSQUARE_API_KEY = originalFsqKey;
+    restoreKeyEnv(originalFsqEnv);
   });
 
   before(() => {
-    process.env.FOURSQUARE_API_KEY = "test-fsq-key-dead-link";
+    setKeyEnv(FOURSQUARE_KEY_VARS, "test-fsq-key-dead-link");
     // Unique name + coords to avoid collisions with other describe blocks' cache entries.
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const reqUrl = String(input);
