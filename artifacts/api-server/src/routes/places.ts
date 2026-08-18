@@ -9,6 +9,7 @@
  */
 import { Router } from "express";
 import { checkRateLimit } from "../lib/rateLimit.js";
+import { pickLocalisedName } from "../lib/places/nominatimName.js";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
@@ -100,6 +101,14 @@ export function _resetPlaceSearchCache(): void {
   inFlightGoogleAutocomplete.clear();
 }
 
+/**
+ * Language asked of Nominatim, and the language names are resolved into. Named
+ * once so the Accept-Language header and the name preference cannot drift —
+ * asking for one language and then reading a field in another is the defect
+ * this constant exists to prevent.
+ */
+const NOMINATIM_LANG = "en";
+
 // ── Google autocomplete: cache key, in-flight dedup, rate limit ──────────────
 //
 // The Google proxy had NONE of the protections /places/search already had —
@@ -170,7 +179,7 @@ async function searchNominatim(
     {
       headers: {
         "User-Agent": "TravelBuddyApp/1.0",
-        "Accept-Language": "en",
+        "Accept-Language": NOMINATIM_LANG,
       },
       signal: AbortSignal.timeout(5000),
     },
@@ -205,10 +214,12 @@ function normalizeNominatim(raw: any) {
   const countryCode = addr.country_code?.toUpperCase() ?? null;
   const region = addr.state ?? addr.province ?? null;
 
-  const name =
-    raw.namedetails?.name ??
-    addr.city ?? addr.town ?? addr.village ?? addr.municipality ??
-    (raw.display_name as string | undefined)?.split(",")[0] ?? "Unknown";
+  // Accept-Language: en is sent with the request and Nominatim honours it —
+  // display_name, address.* and namedetails["name:en"] all come back localised.
+  // namedetails.name does NOT: it is the raw local-script name. Reading it
+  // first, as this did, offered a user in an English UI "กรุงเทพมหานคร" for
+  // Bangkok. See lib/places/nominatimName.ts.
+  const { name, localName } = pickLocalisedName(raw, NOMINATIM_LANG);
 
   const displayParts: string[] = [name];
   if (district && district !== name) displayParts.push(district);
@@ -229,6 +240,11 @@ function normalizeNominatim(raw: any) {
     lng: raw.lon != null ? parseFloat(raw.lon as string) : null,
     timezone: null,
     source: "nominatim" as const,
+    // The local-script name, kept rather than discarded: a surface can render
+    // "Bangkok (กรุงเทพมหานคร)", and a user who recognises only the local form
+    // is not left without it. Null when it does not differ from `name`, so a
+    // caller can render it unconditionally without producing "Paris (Paris)".
+    localName,
   };
 }
 
