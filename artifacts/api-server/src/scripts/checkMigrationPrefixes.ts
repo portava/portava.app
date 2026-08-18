@@ -20,6 +20,7 @@
 import { readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateAllPrefixBands } from "./migrationPrefixRules.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const migrationsDir = resolve(__dir, "../migrations");
@@ -135,6 +136,34 @@ if (collisions.length > 0) {
   process.exit(1);
 }
 
+// ── New-numeric-prefix band ──────────────────────────────────────────────────
+//
+// Closes the gap where a future 8-digit dated filename (e.g.
+// 20270101_foo.sql) would sort lexicographically BELOW the string "2100",
+// which some future tooling could otherwise use as a naive "authored after
+// baseline" boundary test. See migrationPrefixRules.ts for the full
+// reasoning. Reserves 2096-2099 as an unusable buffer and requires any new
+// 4-digit numeric prefix to land in 2100-2999.
+
+const bandViolations = validateAllPrefixBands(files);
+if (bandViolations.length > 0) {
+  console.error(
+    "\nERROR: Migration filename(s) violate the new-numeric-prefix band.\n" +
+      "       4-digit prefixes 2096-2099 are a reserved, permanently-unusable\n" +
+      "       buffer. A NEW 4-digit numeric prefix must be in 2100-2999\n" +
+      "       (matching /^2[1-9]\\d{2}_/) — this keeps the numbering convention\n" +
+      "       structurally distinct from the 8-digit dated convention\n" +
+      "       (20260815_...), so a filename >= \"2100\" test can never again be\n" +
+      "       fooled by a dated file sorting below it. If you meant to author a\n" +
+      "       dated migration, use the full YYYYMMDD_ prefix instead.\n",
+  );
+  for (const { file, reason } of bandViolations) {
+    console.error(`  • ${file}: ${reason}`);
+  }
+  console.error();
+  process.exit(1);
+}
+
 for (const { prefix, files: names } of excused) {
   console.log(
     `check:migration-prefixes NOTE: prefix ${prefix} is a documented collision ` +
@@ -145,6 +174,7 @@ for (const { prefix, files: names } of excused) {
 
 console.log(
   `check:migration-prefixes PASSED (${files.length} file(s), ` +
-    `${excused.length} documented collision(s), no undocumented collisions)`,
+    `${excused.length} documented collision(s), no undocumented collisions, ` +
+    "new-numeric-prefix band clean)",
 );
 process.exit(0);
