@@ -25,6 +25,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getRestrictionState, DegradedPermissionCheckError } from "./trust/TrustRestrictionService.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -305,24 +306,36 @@ export async function resolveInteractionPermissions(
   }
 
   // ── PRIORITY 3: Trust restriction on viewer (FAIL-CLOSED) ────────────────
-  // trust_restrictions is a pre-existing table.
-  let trustRestrictionTypes: string[] = [];
-  {
-    const { data: trustData, error: trustErr } = await sc
-      .from("trust_restrictions")
-      .select("restriction_type")
-      .eq("user_id", viewerId)
-      .is("lifted_at", null) as { data: Array<{ restriction_type: string }> | null; error: any };
-    if (trustErr) {
-      if (!isTableMissingError(trustErr)) {
-        throw new Error(`Trust restriction check failed: ${trustErr.message ?? trustErr.code}`);
-      }
-      // table missing → no restrictions (fail-open only for missing table)
-    } else {
-      trustRestrictionTypes = (trustData ?? []).map((r) => r.restriction_type);
-    }
+  // Delegates to TrustRestrictionService.getRestrictionState rather than
+  // querying trust_restrictions inline (as this used to) — that inline query
+  // had its own independent, duplicate fail-open/fail-closed handling
+  // (byte-for-byte the same isTableMissingError classifier as
+  // TrustRestrictionService, which is what let it drift out of sync: a real
+  // query error here threw a bare Error with no way for a caller to tell "the
+  // check failed" from "the check ran and found something", so a caller could
+  // only ever show a generic, non-retryable failure — never the honest
+  // "try again" message TrustRestrictionService's own callers now show for
+  // the same failure. Delegating fixes that at the source, for every caller
+  // of resolveInteractionPermissions, not just the one that surfaced it.
+  //
+  // Incidental correction, not the point of this change but worth recording:
+  // the inline query never filtered on expires_at, so an EXPIRED messaging
+  // restriction was enforced here forever. getRestrictionState excludes
+  // expired restrictions, matching every other consumer.
+  const restrictionState = await getRestrictionState(sc, viewerId);
+  if (restrictionState.degradedReason === "fail_closed") {
+    // Fail-OPEN is handled by getRestrictionState itself (canMessage stays
+    // true, logged there at WARN) and needs no special case here — it falls
+    // through to the normal computation below like a clean, unrestricted read.
+    // Fail-CLOSED must not read as "the viewer is trust-restricted": throw a
+    // discriminated error so the caller can show a retryable "try again"
+    // message instead of a real-restriction message.
+    throw new DegradedPermissionCheckError(
+      "Trust restriction check could not be completed",
+      "fail_closed",
+    );
   }
-  const viewerMessagingRestricted = trustRestrictionTypes.includes("messaging");
+  const viewerMessagingRestricted = !restrictionState.canMessage;
   if (viewerMessagingRestricted) safetyWarnings.push("viewer_messaging_restricted");
 
   // ── PRIORITY 3b: Admin moderation actions against target ──────────────────

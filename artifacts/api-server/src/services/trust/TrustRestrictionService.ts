@@ -74,7 +74,31 @@ export interface RestrictionState {
    * but that is an incidental property of the current defaults, not a contract.
    * This field makes the distinction explicit and independent of those defaults.
    */
-  degradedReason?: "fail_open" | "fail_closed";
+  degradedReason?: DegradedReason;
+}
+
+/**
+ * Shared with any other trust_restrictions consumer that needs to carry the
+ * open-vs-closed distinction — reuse this rather than a second string union.
+ * See RestrictionState.degradedReason for what each value means.
+ */
+export type DegradedReason = "fail_open" | "fail_closed";
+
+/**
+ * Thrown by a permission check that could not be completed (fail-closed) and
+ * needs to say so through an exception rather than a return value — e.g.
+ * resolveInteractionPermissions, whose other safety checks (blocks) are
+ * also throw-on-error by design. Carries the SAME degradedReason discriminator
+ * RestrictionState uses, so a catcher can tell "the check failed" from
+ * "the check ran and denied" without a second, differently-spelled signal.
+ */
+export class DegradedPermissionCheckError extends Error {
+  readonly degradedReason: DegradedReason;
+  constructor(message: string, degradedReason: DegradedReason) {
+    super(message);
+    this.name = "DegradedPermissionCheckError";
+    this.degradedReason = degradedReason;
+  }
 }
 
 /** Apply a restriction */

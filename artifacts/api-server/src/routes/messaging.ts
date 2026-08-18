@@ -47,7 +47,7 @@ import {
 import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
 import { invalidate as invalidateCompassCache } from '../compass/CompassCacheEngine.js';
 import { recordTrustEvent } from '../services/trust/TrustEventService.js';
-import { getRestrictionState } from '../services/trust/TrustRestrictionService.js';
+import { getRestrictionState, DegradedPermissionCheckError } from '../services/trust/TrustRestrictionService.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName';
@@ -436,7 +436,13 @@ router.post('/users/:userId/message-request', async (req, res) => {
     return;
   }
 
-  // Phase 4 permission engine gate — deny when blocked or suspended
+  // Phase 4 permission engine gate — deny when blocked or suspended.
+  // resolveInteractionPermissions' own trust-restriction check is
+  // fail-CLOSED and throws DegradedPermissionCheckError when the check
+  // itself couldn't run (not when it ran and found a restriction) — that
+  // must show the same retryable "try again" message TrustRestrictionService's
+  // direct callers show, never the generic 500 below, which is for every
+  // OTHER reason this permission engine can fail (e.g. the blocks check).
   try {
     const reqPerms = await resolveInteractionPermissions(sc, user.id, recipientId);
     if (!reqPerms.canMessage && !reqPerms.canSendMessageRequest) {
@@ -444,6 +450,14 @@ router.post('/users/:userId/message-request', async (req, res) => {
       return;
     }
   } catch (err) {
+    if (err instanceof DegradedPermissionCheckError && err.degradedReason === 'fail_closed') {
+      sendError(
+        res,
+        'degraded_unavailable',
+        'We could not verify your permissions right now. Please try again shortly.',
+      );
+      return;
+    }
     req.log.error({ err }, 'permission engine failed for message-request');
     sendError(res, 'db_error', 'Permission check failed');
     return;
