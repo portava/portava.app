@@ -22,6 +22,8 @@ const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-n
 import { Layers, MapPin, Navigation, Star, Users } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { MAP_STYLE_URL, FALLBACK_MAP_STYLE_URL } from '../../constants/mapStyle.ts';
+import { EntityMapLayers } from '../map/EntityMarkers.tsx';
+import type { MapEntity, ToggleableEntityType } from '../../types/mapTypes.ts';
 import { color, space, radius, type as t, avatar, icon, dot } from '../../theme/tokens.ts';
 import {
   loadMapFilter,
@@ -75,6 +77,36 @@ export interface DiscoveryMapViewProps {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   externalCameraRef?: React.RefObject<any>;
+
+  // ── Entity layers ───────────────────────────────────────────────────────────
+  //
+  // app/map/index.tsx has passed these four since entity layers were added, but
+  // this interface declared none of them, so React dropped all four on the
+  // floor. Buddies, events, gems, trips, friends and passport stamps got
+  // carousel cards and no pins. Declared here, they are checked.
+  //
+  // All optional: ForYouTab, DiscoveryCategoryTab and LayoverMapCard render
+  // this component as a plain place map and pass none of them.
+
+  /** Non-place pins — buddies, events, gems, trips, friends, passport stamps. */
+  entities?: MapEntity[];
+  /**
+   * Which entity layers the user has switched on. 'stamps' is deliberately not
+   * a ToggleableEntityType — EntityMapLayers always passes it through, because
+   * passport mode is a mode rather than a layer the user toggles.
+   */
+  enabledEntityLayers?: ToggleableEntityType[];
+  /** Tapping an entity pin. Without it the layer renders nothing — see below. */
+  onSelectEntity?: (entity: MapEntity) => void;
+  /**
+   * Overrides `topInset` for the filter row only.
+   *
+   * The /map route stacks MapTopControls above this component and passes
+   * insets.top + 68 so the filter row clears it. It does NOT pass topInset —
+   * that goes to MapTopControls — so without this the row renders at top: 14
+   * and lands underneath the floating controls.
+   */
+  filterRowOffset?: number;
 }
 
 // ── Category pin colours ──────────────────────────────────────────────────────
@@ -140,7 +172,21 @@ function computeViewport(places: DiscoveryPlace[]) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackLng, fallbackZoom, userLat, userLng, topInset = 0, externalCameraRef }: DiscoveryMapViewProps) {
+export function DiscoveryMapView({
+  places,
+  onSelectPlace,
+  fallbackLat,
+  fallbackLng,
+  fallbackZoom,
+  userLat,
+  userLng,
+  topInset = 0,
+  externalCameraRef,
+  entities,
+  enabledEntityLayers,
+  onSelectEntity,
+  filterRowOffset,
+}: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
   // remounts (e.g. Expo Router tab navigation) start with the correct filter
   // value and never flash to 'all' while waiting for AsyncStorage to resolve.
@@ -326,6 +372,35 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
             </Marker>
           );
         })}
+        {/* Entity layers — buddies, events, gems, trips, friends, passport
+            stamps. Rendered INSIDE <Map> because EntityMapLayers returns
+            <Marker> elements, which MapLibre only positions as map children.
+
+            onSelectEntity is required for the layer to be interactive, so it
+            gates the render: pins the user cannot tap would be worse than no
+            pins, because the carousel card is the only way to act on an entity.
+
+            onPressCluster is handled here rather than plumbed up to
+            app/map/index.tsx. That screen has no cluster behaviour of its own
+            to contribute — the useful response is a camera zoom, and the camera
+            lives in this component. Threading a prop upward just to satisfy the
+            type is how the ComponentType<any> hole opened in the first place.
+            The zoom step matches TravelerClusterMarkers directly below. */}
+        {entities && entities.length > 0 && onSelectEntity && (
+          <EntityMapLayers
+            entities={entities}
+            enabledLayers={enabledEntityLayers ?? []}
+            zoom={zoom ?? vp.zoom}
+            onSelectEntity={onSelectEntity}
+            onPressCluster={(lat, lng, currentZoom) => {
+              cameraRef.current?.setCamera({
+                centerCoordinate: [lng, lat],
+                zoomLevel: Math.min(currentZoom + 1.8, 17),
+                animationDuration: 450,
+              });
+            }}
+          />
+        )}
         {travelersOn && travelers.length > 0 && (
           <TravelerClusterMarkers
             travelers={travelers}
@@ -350,7 +425,7 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
       </Map>
 
       {/* ── Filter toggle ──────────────────────────────────────────────────── */}
-      <View style={[s.filterRow, { top: 14 + topInset }]}>
+      <View style={[s.filterRow, { top: 14 + (filterRowOffset ?? topInset) }]}>
         {FILTER_OPTIONS.map((opt) => {
           const active = filter === opt.key;
           return (

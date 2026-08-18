@@ -43,16 +43,29 @@ import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 import { MapStoreProvider, useMapStore } from '../../src/stores/mapStore.tsx';
+import type { DiscoveryMapViewProps } from '../../src/components/discovery/DiscoveryMapView.tsx';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
 // ── Lazy-load native map component only on native ─────────────────────────────
 // This avoids importing MapLibre on web where it would crash.
 
-let DiscoveryMapView: React.ComponentType<any> | null = null;
+// `import type` is erased at compile time — it emits no require, so naming the
+// props type here does NOT pull MapLibre into the web bundle. That is what lets
+// this be typed properly instead of `any`.
+//
+// It was `React.ComponentType<any>`, and `any` silently ate four real props:
+// entities, enabledEntityLayers, onSelectEntity and filterRowOffset were passed
+// below and dropped, because DiscoveryMapViewProps declared none of them and
+// `any` accepts anything. With the real props type, TypeScript checks this JSX.
+let DiscoveryMapView: React.ComponentType<DiscoveryMapViewProps> | null = null;
 if (Platform.OS !== 'web') {
   // Safe: this branch is never executed on web (tree-shaken by Metro).
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  DiscoveryMapView = require('../../src/components/discovery/DiscoveryMapView').DiscoveryMapView;
+  DiscoveryMapView = (
+    require('../../src/components/discovery/DiscoveryMapView') as {
+      DiscoveryMapView: React.ComponentType<DiscoveryMapViewProps>;
+    }
+  ).DiscoveryMapView;
 }
 
 // ── Passport helpers ──────────────────────────────────────────────────────────
