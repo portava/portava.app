@@ -19,45 +19,9 @@ function resolveApiUrl(url: string | null | undefined): string | null {
   return url;
 }
 
-/* ---------- Profiles ---------- */
-export interface ProfileRow {
-  id: string;
-  handle: string;
-  name: string;
-  avatarUrl: string | null;
-  homeCity: string | null;
-  homeCountry: string | null;
-  currentCity: string | null;
-  travelStyle: string | null;
-  interests: string[];
-  verified: boolean;
-  openToMeet: boolean;
-  isPrivate: boolean;
-  bio: string | null;
-}
-
-function mapProfile(r: any): ProfileRow {
-  return {
-    id: r.id, handle: r.handle, name: r.name, avatarUrl: r.avatar_url,
-    homeCity: r.home_city, homeCountry: r.home_country, currentCity: r.current_city,
-    travelStyle: r.travel_style, interests: r.interests ?? [], verified: r.verified,
-    openToMeet: r.open_to_meet, isPrivate: r.is_private, bio: r.bio,
-  };
-}
-
-export async function getMyProfile(): Promise<ProfileRow | null> {
-  if (!isSupabaseConfigured) return null;
-  const { data: s } = await supabase.auth.getSession();
-  const uid = s.session?.user?.id;
-  if (!uid) return null;
-  const { data, error } = await supabase.from('profiles').select('*').eq('id', uid).single();
-  if (error || !data) return null;
-  return mapProfile(data);
-}
-
-// NOTE: profile updates must go through `updateMyProfile` in services/profile.ts,
-// which surfaces partial saves (`partial_save` / unsavedFields) and typed errors.
-// A duplicate updater here previously swallowed those warnings — do not re-add it.
+// NOTE: profile reads/updates must go through services/profile.ts
+// (getMyProfile / updateMyProfile), which surfaces partial saves
+// (`partial_save` / unsavedFields) and typed errors — do not re-add them here.
 
 /* ---------- Trips ---------- */
 export interface TripRow {
