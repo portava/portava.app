@@ -99,9 +99,26 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
       let _rangeStart = 0;
       let _rangeEnd   = Infinity;
       let _limitN     = Infinity;
+      // Column projection for "profiles" only: this table is queried with
+      // several different column lists in discoverySearch.ts (traveler
+      // search, city/country aggregation, active-owner check). Without
+      // projection, a test asserting on a field the real SELECT doesn't
+      // request would pass for the wrong reason — the mock would return it
+      // anyway. Each `from()` call gets its own builder/closure, so this is
+      // scoped correctly per query even though all four hit "profiles".
+      let profileCols: string[] | null = null;
+      function project(rowsIn: any[]): any[] {
+        if (table !== "profiles" || !profileCols) return rowsIn;
+        return rowsIn.map((r) => Object.fromEntries(profileCols!.filter((c) => c in r).map((c) => [c, r[c]])));
+      }
 
       const builder: any = {
-        select()                      { return builder; },
+        select(cols?: string) {
+          if (table === "profiles" && typeof cols === "string" && cols !== "*") {
+            profileCols = cols.split(",").map((c) => c.trim());
+          }
+          return builder;
+        },
         eq(col: string, val: any)     { filters.push((r) => r[col] === val); return builder; },
         neq(col: string, val: any)    { filters.push((r) => r[col] !== val); return builder; },
         in(col: string, vals: any[])  { filters.push((r) => vals.includes(r[col])); return builder; },
@@ -156,11 +173,11 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
         limit(n: number) { _limitN = n; return builder; },
         range(start: number, end: number) { _rangeStart = start; _rangeEnd = end; return builder; },
         maybeSingle() {
-          const matched = sourceRows.filter((r) => filters.every((f) => f(r)));
+          const matched = project(sourceRows.filter((r) => filters.every((f) => f(r))));
           return Promise.resolve({ data: matched[0] ?? null, error: null });
         },
         then(onF: any, onR: any) {
-          const matched = sourceRows
+          const matched = project(sourceRows
             .filter((r) => filters.every((f) => f(r)))
             .slice(
               _rangeStart,
@@ -169,7 +186,7 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
                 : _limitN < Infinity
                   ? _limitN
                   : undefined,
-            );
+            ));
           return Promise.resolve({ data: matched, error: null }).then(onF, onR);
         },
       };
@@ -455,6 +472,104 @@ describe("GET /api/discovery/search — private accounts shown as a locked previ
     assert.equal(r.status, 200);
     const { results } = await r.json() as any;
     assert.ok(!(results as any[]).some((u: any) => u.id === ALICE), "Opt-out profile must not appear");
+  });
+});
+
+// ── show_profile_picture_publicly enforcement ───────────────────────────────────
+//
+// Independent of the is_private locked-preview gate above: a PUBLIC profile's
+// owner can still opt out of showing their photo to searchers who aren't
+// already a follower or friend. Before this fix, isPrivate = is_private &&
+// !isFollowing was the ONLY gate on avatarUrl — a public profile (is_private
+// = false) fell straight through to `p.avatar_url` regardless of the flag.
+
+describe("GET /api/discovery/search — show_profile_picture_publicly enforcement", () => {
+  it("hides avatarUrl for a public profile whose owner turned the photo off, for a stranger", async () => {
+    const DAVE = "ee000000-0000-4000-a000-000000000007";
+    setup({
+      profiles: [
+        { id: DAVE, handle: "dave_hidden", name: "Dave Hidden", avatar_url: "https://cdn/dave.jpg", is_private: false, home_city: null, home_country: null, account_status: "active", show_profile_picture_publicly: false },
+      ],
+      profile_privacy_settings: [{ user_id: DAVE, show_real_name: true }],
+      user_follows: [],
+      user_friendships: [],
+    });
+    const r = await get("/discovery/search?q=dave&type=travelers");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const dave = (results as any[]).find((u: any) => u.id === DAVE);
+    assert.ok(dave, "public profile must still be discoverable");
+    assert.equal(dave.privacyState?.isPrivate, false, "the ACCOUNT is public — this is not the locked-preview case");
+    assert.equal(dave.accessState?.canAccess, true);
+    assert.equal(dave.avatarUrl, null, "avatarUrl must be null when show_profile_picture_publicly=false and the viewer is unconnected");
+  });
+
+  it("shows avatarUrl for a public profile whose owner left the photo on", async () => {
+    const EVE = "ee000000-0000-4000-a000-000000000008";
+    setup({
+      profiles: [
+        { id: EVE, handle: "eve_shown", name: "Eve Shown", avatar_url: "https://cdn/eve.jpg", is_private: false, home_city: null, home_country: null, account_status: "active", show_profile_picture_publicly: true },
+      ],
+      profile_privacy_settings: [{ user_id: EVE, show_real_name: true }],
+      user_follows: [],
+      user_friendships: [],
+    });
+    const r = await get("/discovery/search?q=eve&type=travelers");
+    const { results } = await r.json() as any;
+    const eve = (results as any[]).find((u: any) => u.id === EVE);
+    assert.equal(eve.avatarUrl, "https://cdn/eve.jpg");
+  });
+
+  it("shows avatarUrl to a follower even when the flag is off", async () => {
+    const FRED = "ee000000-0000-4000-a000-000000000009";
+    setup({
+      profiles: [
+        { id: FRED, handle: "fred_hidden", name: "Fred Hidden", avatar_url: "https://cdn/fred.jpg", is_private: false, home_city: null, home_country: null, account_status: "active", show_profile_picture_publicly: false },
+      ],
+      profile_privacy_settings: [{ user_id: FRED, show_real_name: true }],
+      user_follows: [{ follower_id: ME, following_id: FRED }],
+      user_friendships: [],
+    });
+    const r = await get("/discovery/search?q=fred&type=travelers");
+    const { results } = await r.json() as any;
+    const fred = (results as any[]).find((u: any) => u.id === FRED);
+    assert.equal(fred.avatarUrl, "https://cdn/fred.jpg");
+  });
+
+  it("shows avatarUrl to a friend even when the flag is off (friendship stored as user_a < user_b, viewer on either side)", async () => {
+    const GINA = "ee000000-0000-4000-a000-00000000000a";
+    // GINA's uuid sorts AFTER ME, so the normalized row is (ME, GINA) — this
+    // exercises the "friendsAsA" query direction.
+    setup({
+      profiles: [
+        { id: GINA, handle: "gina_hidden", name: "Gina Hidden", avatar_url: "https://cdn/gina.jpg", is_private: false, home_city: null, home_country: null, account_status: "active", show_profile_picture_publicly: false },
+      ],
+      profile_privacy_settings: [{ user_id: GINA, show_real_name: true }],
+      user_follows: [],
+      user_friendships: [{ user_a: ME, user_b: GINA }],
+    });
+    const r = await get("/discovery/search?q=gina&type=travelers");
+    const { results } = await r.json() as any;
+    const gina = (results as any[]).find((u: any) => u.id === GINA);
+    assert.equal(gina.avatarUrl, "https://cdn/gina.jpg");
+  });
+
+  it("shows avatarUrl to a friend on the other normalized side (friendsAsB direction)", async () => {
+    const AAA = "01000000-0000-4000-a000-000000000001"; // uuid sorts BEFORE ME
+    // AAA's uuid sorts before ME's ("aa000000..."), so the normalized row is
+    // (AAA, ME) — this exercises the "friendsAsB" query direction.
+    setup({
+      profiles: [
+        { id: AAA, handle: "aaa_hidden", name: "Aaa Hidden", avatar_url: "https://cdn/aaa.jpg", is_private: false, home_city: null, home_country: null, account_status: "active", show_profile_picture_publicly: false },
+      ],
+      profile_privacy_settings: [{ user_id: AAA, show_real_name: true }],
+      user_follows: [],
+      user_friendships: [{ user_a: AAA, user_b: ME }],
+    });
+    const r = await get("/discovery/search?q=aaa&type=travelers");
+    const { results } = await r.json() as any;
+    const aaa = (results as any[]).find((u: any) => u.id === AAA);
+    assert.equal(aaa.avatarUrl, "https://cdn/aaa.jpg");
   });
 });
 

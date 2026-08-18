@@ -269,7 +269,7 @@ async function searchTravelers(
     const pat = sqlPattern(q);
     let query = sc
       .from("profiles")
-      .select("id, handle, username, name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official")
+      .select("id, handle, username, name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly")
       .or(`name.ilike.${pat},handle.ilike.${pat},username.ilike.${pat}`)
       .neq("id", userId)
       .in("account_status", ["active"])
@@ -316,7 +316,7 @@ async function searchTravelers(
     if (nameSafe.length === 0) return [];
 
     const visibleIds = nameSafe.map((p: any) => p.id as string);
-    const [{ data: followEdges }, { data: pendingRequests }] = await Promise.all([
+    const [{ data: followEdges }, { data: pendingRequests }, { data: friendsAsA }, { data: friendsAsB }] = await Promise.all([
       sc.from("user_follows")
         .select("following_id")
         .eq("follower_id", userId)
@@ -326,9 +326,19 @@ async function searchTravelers(
         .eq("requester_id", userId)
         .eq("status", "pending")
         .in("recipient_id", visibleIds),
+      // user_friendships stores the normalized (min, max) pair (see
+      // normalizedFriendshipPair in lib/friendDecisions.ts) — which side of
+      // the row `userId` lands on depends on UUID comparison, not who sent
+      // the request, so both directions must be queried.
+      sc.from("user_friendships").select("user_b").eq("user_a", userId).in("user_b", visibleIds),
+      sc.from("user_friendships").select("user_a").eq("user_b", userId).in("user_a", visibleIds),
     ]);
     const followingSet = new Set<string>((followEdges ?? []).map((e: any) => e.following_id as string));
     const pendingSet = new Set<string>((pendingRequests ?? []).map((e: any) => e.recipient_id as string));
+    const friendSet = new Set<string>([
+      ...(friendsAsA ?? []).map((e: any) => e.user_b as string),
+      ...(friendsAsB ?? []).map((e: any) => e.user_a as string),
+    ]);
 
     const type: Exclude<SearchType, "all"> = isBuddy ? "buddies" : "travelers";
     const mapped: SearchResult[] = nameSafe.map((p: any): SearchResult => {
@@ -337,16 +347,22 @@ async function searchTravelers(
       const presented = nameAllowed ? ((p.name as string | null) ?? null) : null;
       const fallbackLabel = presented ?? (p.handle as string) ?? "?";
       const isFollowing = followingSet.has(p.id as string);
+      const isFriend = friendSet.has(p.id as string);
       // Private accounts the viewer doesn't already follow get a locked
       // preview: no avatar/location/matchedReason leak, canAccess=false.
       // Once followed, the row behaves exactly like a public traveler.
       const isPrivate = ((p.is_private as boolean) ?? false) && !isFollowing;
+      // Independent of is_private: a PUBLIC profile's owner can still opt out
+      // of showing their photo to non-followers/non-friends via
+      // show_profile_picture_publicly. isPrivate's own gate above already
+      // covers the case where the account itself is private.
+      const showAvatar = isFollowing || isFriend || (p as any).show_profile_picture_publicly !== false;
       return {
         id: p.id,
         type,
         title: presented ?? (p.handle as string) ?? "",
         subtitle: p.handle ? `@${p.handle as string}` : null,
-        avatarUrl: isPrivate ? null : ((p.avatar_url as string | null) ?? null),
+        avatarUrl: (!isPrivate && showAvatar) ? ((p.avatar_url as string | null) ?? null) : null,
         imageUrl: null,
         fallbackInitials: initials(fallbackLabel),
         locationPreview: isPrivate
