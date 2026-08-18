@@ -13,6 +13,38 @@ falsely imply they are ready to apply. They stay here until each is reviewed,
 its blocking query (if any) has returned, and — for every policy-touching
 file — its rollback has been captured from live.
 
+## Findings caught by hand while authoring 2118
+
+These two are called out on their own, separate from the general corrections
+list below, because of what they are: exactly the class of defect
+`RECONCILIATION-PACKET.md` §5 Step 5's proposed bidirectional auditor
+(`audit:live-unexplained`) exists to catch mechanically, caught here instead
+by directly reading three trees' SQL side by side while authoring 2118. That
+auditor does not exist yet (Step 5 is not built). Until it is, this is the
+only record of these two, so they are surfaced here rather than only in
+2118's own header — the next person reads this file, not the SQL.
+
+1. **`discovery_places_public_read` is the same policy NAME with a
+   DIFFERENT PREDICATE across trees.** Canonical: `USING (status = 'active')`.
+   Legacy and root: `USING (true)` — unfiltered. This is a live instance of
+   the exact hole `RECONCILIATION-PACKET.md` §3.3 describes for the forward
+   auditor ("a live policy with a different predicate reads as present").
+   Only one of the three definitions can ever have successfully applied — a
+   second `CREATE POLICY` under an existing name errors rather than
+   silently no-opping — so whichever tree's file ran first is what is live
+   today, and Q3 is what settles it. **2118 converges on canonical's
+   stricter, filtered predicate. If the unfiltered version is what is
+   actually live, applying 2118 is a real behavior change** (provisional/
+   non-active places stop being publicly visible), not a cosmetic rename —
+   treat it as a product decision requiring sign-off, not just a schema fix.
+2. **Canonical's own `discovery_places_auth_insert` check is weaker than
+   legacy's or root's.** Canonical only requires `auth.uid() IS NOT NULL` —
+   it never checks that `submitted_by = auth.uid()`. As declared, any
+   authenticated user could insert a row attributing it to a different
+   user's profile id. Legacy's and root's checks both correctly require
+   `submitted_by = auth.uid()`. **2118 adopts the stricter legacy/root
+   check, not canonical's own** — canonical is the gap here, not the fix.
+
 ## Corrections made to the packet during authoring
 
 Flagging these rather than silently inheriting or silently fixing them,
@@ -75,25 +107,10 @@ overriding it:
     policy names with the exact same predicates, which is duplication, not
     disjointness. 2117 still reconciles all four sites; only the count
     description is corrected.
-11. **New finding, not previously documented anywhere in the packet:
-    `discovery_places_public_read` has the SAME NAME across canonical,
-    legacy, and root but a DIFFERENT predicate** — canonical's is `USING
-    (status = 'active')`, legacy's and root's is `USING (true)`. This is a
-    live instance of the exact "name-only hole" `RECONCILIATION-PACKET.md`
-    §3.3 describes for the forward auditor, found here by direct read
-    rather than by the auditor. Only one of the three definitions can have
-    ever successfully applied (a duplicate `CREATE POLICY` name errors, it
-    does not silently no-op). 2118 converges on canonical's stricter
-    predicate — if live is currently the unfiltered version, applying 2118
-    is a real behavior change, not a cosmetic rename. Flagged prominently
-    in 2118's header.
-12. **New finding: canonical's own `discovery_places_auth_insert` check is
-    looser than legacy's or root's.** Canonical only checks `auth.uid() IS
-    NOT NULL`; it never checks `submitted_by = auth.uid()`, so as declared
-    an authenticated user could attribute a submission to someone else's
-    profile id. 2118 adopts legacy/root's stricter check, not canonical's
-    own.
-13. **§7's 2118 grouping (`passport_stamps`, `trip_crew_location_sessions`,
+11. **`discovery_places_public_read` / `discovery_places_auth_insert`** —
+    see "Findings caught by hand while authoring 2118" above; not repeated
+    here.
+12. **§7's 2118 grouping (`passport_stamps`, `trip_crew_location_sessions`,
     `discovery_places`, `user_privacy_settings`) is split**, per the
     packet's own instruction to split out a materially riskier item —
     `passport_stamps` depends on a `visibility` column two of three trees
