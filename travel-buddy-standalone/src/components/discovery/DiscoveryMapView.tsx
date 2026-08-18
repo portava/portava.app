@@ -21,6 +21,7 @@ const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'
 const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { Layers, MapPin, Navigation, Star, Users } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
+import { MAP_STYLE_URL, FALLBACK_MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 import { color, space, radius, type as t, avatar, icon, dot } from '../../theme/tokens.ts';
 import {
   loadMapFilter,
@@ -40,10 +41,20 @@ const TRAVELERS_TOGGLE_KEY = 'discovery_map_travelers';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
-const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
-const MAP_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
-  : 'https://demotiles.maplibre.org/style.json';
+// Use the SHARED style, not a local copy. constants/mapStyle.ts documents why:
+// EXPO_PUBLIC_MAPTILER_KEY returns HTTP 403 on MapTiler's /styles endpoint even
+// when valid for its other APIs, so the shared module returns OpenFreeMap
+// Liberty unconditionally.
+//
+// The copy that used to live here diverged twice over: it bypassed that
+// decision AND pinned `maps/streets` — the v1 style id — where the shared
+// module's own re-enable instructions specify `streets-v2`. Its `else` branch
+// pointed at demotiles.maplibre.org, a grey country-outline debug basemap with
+// no streets, which is what a 403 actually produced on this surface.
+//
+// This is the flagship map (app/map/index.tsx renders this component), so it
+// was the one surface not using the shared style and the one most likely to be
+// judged as "the map looks broken".
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -133,6 +144,11 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
   // Lazy initialiser reads the module-level memory cache synchronously so
   // remounts (e.g. Expo Router tab navigation) start with the correct filter
   // value and never flash to 'all' while waiting for AsyncStorage to resolve.
+  // Style is state, not a constant, so onDidFailLoadingMap can swap to the
+  // fallback exactly as MapTab, RouteMinimapView, RouteFullMapModal and
+  // itinerary/MapView already do. This component had no failure handler at all,
+  // so a style-load failure had nothing to recover to.
+  const [mapStyle, setMapStyle] = useState<string>(MAP_STYLE_URL);
   const [filter, setFilterRaw] = useState<MapFilter>(() => getCachedFilter() ?? 'all');
   const [legendOpen, setLegendOpen] = useState(false);
   const [resetToast, setResetToast] = useState(false);
@@ -276,7 +292,10 @@ export function DiscoveryMapView({ places, onSelectPlace, fallbackLat, fallbackL
     <View style={s.root}>
       <Map
         style={StyleSheet.absoluteFill}
-        mapStyle={MAP_STYLE}
+        mapStyle={mapStyle}
+        onDidFailLoadingMap={() => {
+          if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL);
+        }}
         logo={false}
         attribution={false}
         onRegionDidChange={handleRegionChange}

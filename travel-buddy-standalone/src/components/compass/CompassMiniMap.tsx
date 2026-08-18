@@ -9,7 +9,7 @@
  * Web builds pick CompassMiniMap.web.tsx (MapLibre React Native is
  * native-only — see the maplibre web-split convention).
  */
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
 const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
@@ -17,12 +17,14 @@ const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'
 const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { Maximize2 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { MAP_STYLE_URL, FALLBACK_MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 import type { CompassMiniMapPoint } from './compassMiniMapShared.ts';
 
-const MAPTILER_KEY = process.env.EXPO_PUBLIC_MAPTILER_KEY ?? '';
-const MAP_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets/style.json?key=${MAPTILER_KEY}`
-  : 'https://demotiles.maplibre.org/style.json';
+// Shared style — see constants/mapStyle.ts. This file carried a second,
+// character-identical copy of the divergent MapTiler URL that DiscoveryMapView
+// had, with the same stale v1 `maps/streets` id and the same demotiles
+// debug-basemap fallback. Two copies of one wrong decision is why this is fixed
+// in both places rather than only on the flagship map.
 
 export interface CompassMiniMapProps {
   points: CompassMiniMapPoint[];
@@ -48,6 +50,9 @@ function computeViewport(points: CompassMiniMapPoint[]) {
 
 export function CompassMiniMap({ points, onPress, height = 160, testID }: CompassMiniMapProps) {
   const viewport = useMemo(() => computeViewport(points), [points]);
+  // Declared BEFORE the early return below — a hook after a conditional return
+  // would break the rules of hooks on the no-viewport path.
+  const [mapStyle, setMapStyle] = useState<string>(MAP_STYLE_URL);
   if (!viewport) return null;
 
   return (
@@ -61,7 +66,10 @@ export function CompassMiniMap({ points, onPress, height = 160, testID }: Compas
     >
       <Map
         style={StyleSheet.absoluteFill}
-        mapStyle={MAP_STYLE}
+        mapStyle={mapStyle}
+        onDidFailLoadingMap={() => {
+          if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL);
+        }}
         logo={false}
         attributionPosition={{ bottom: 4, right: 4 }}
         dragPan={false}
