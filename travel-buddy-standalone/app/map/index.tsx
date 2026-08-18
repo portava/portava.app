@@ -717,6 +717,15 @@ function FullScreenMapScreenInner() {
       setActiveIndex(index);
       const entity = entities[index];
       if (!entity) return;
+      // Keep selectedEntityId on the card the user is actually looking at.
+      // mapStore documents this field as "which entity marker / carousel card
+      // is active", but only marker taps ever set it, so after a swipe the
+      // selected pin stayed on the previously TAPPED entity while the camera
+      // and the card moved on — a highlight pointing at the wrong pin. This
+      // fires only on real user-driven index changes: handleMomentumScrollEnd
+      // guards on clamped !== activeIndex, and the tab-switch and restoration
+      // paths call setActiveIndex directly rather than going through here.
+      setSelectedEntityId(entity.id);
       const zoom = zoomForEntity(entity.type);
       // Capture camera position in the store so it can be restored on back.
       setCameraCenter({ lat: entity.lat, lng: entity.lng });
@@ -729,7 +738,7 @@ function FullScreenMapScreenInner() {
         });
       }
     },
-    [entities, setCameraCenter, setCameraZoom, setActiveIndex],
+    [entities, setCameraCenter, setCameraZoom, setActiveIndex, setSelectedEntityId],
   );
 
   /** Called when the user taps a marker on the map. */
@@ -877,6 +886,7 @@ function FullScreenMapScreenInner() {
         entities={entities}
         enabledEntityLayers={enabledLayers}
         onSelectEntity={handleSelectEntity}
+        selectedEntityId={selectedEntityId}
         filterRowOffset={insets.top + 68}
       />
 

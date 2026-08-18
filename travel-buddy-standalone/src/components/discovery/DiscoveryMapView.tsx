@@ -99,6 +99,12 @@ export interface DiscoveryMapViewProps {
   /** Tapping an entity pin. Without it the layer renders nothing — see below. */
   onSelectEntity?: (entity: MapEntity) => void;
   /**
+   * The entity whose card the carousel is showing, so its pin can be drawn as
+   * selected. mapStore has held this value all along and nothing on the map
+   * read it, so selection was state that never became pixels.
+   */
+  selectedEntityId?: string | null;
+  /**
    * Overrides `topInset` for the filter row only.
    *
    * The /map route stacks MapTopControls above this component and passes
@@ -185,6 +191,7 @@ export function DiscoveryMapView({
   entities,
   enabledEntityLayers,
   onSelectEntity,
+  selectedEntityId,
   filterRowOffset,
 }: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
@@ -392,6 +399,7 @@ export function DiscoveryMapView({
             enabledLayers={enabledEntityLayers ?? []}
             zoom={zoom ?? vp.zoom}
             onSelectEntity={onSelectEntity}
+            selectedEntityId={selectedEntityId}
             onPressCluster={(lat, lng, currentZoom) => {
               cameraRef.current?.setCamera({
                 centerCoordinate: [lng, lat],

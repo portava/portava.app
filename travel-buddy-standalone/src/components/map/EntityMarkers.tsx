@@ -88,18 +88,31 @@ function ClusterBubble({
   count,
   type,
   onPress,
+  selected = false,
 }: {
   count: number;
   type: MapEntityType;
   onPress: () => void;
+  /** True when this cluster contains the currently selected entity. */
+  selected?: boolean;
 }) {
   const cfg = MAP_LAYER_CONFIG[type];
-  return (
+  const body = (
     <Pressable onPress={onPress} hitSlop={6}>
       <View style={[bubble.wrap, { backgroundColor: cfg.color }]}>
         <Text style={bubble.count}>{count}</Text>
       </View>
     </Pressable>
+  );
+  // A selected entity can be INSIDE a cluster — it is still selected, and the
+  // carousel is showing its card. Without this the highlight would vanish the
+  // moment three entities collapsed, which is the zoom level where finding the
+  // right pin matters most.
+  if (!selected) return body;
+  return (
+    <View testID="entity-cluster-selected" style={[sel.ring, { borderColor: cfg.color }]}>
+      {body}
+    </View>
   );
 }
 
@@ -313,7 +326,54 @@ function StampMarker({ entity, onPress }: { entity: MapEntity<PassportCountryPay
 
 // ── Render single marker by type ──────────────────────────────────────────────
 
-function SingleMarker({ entity, onPress }: { entity: MapEntity; onPress: (e: MapEntity) => void }) {
+/**
+ * Selection ring.
+ *
+ * Applied in SingleMarker rather than inside each of the six marker components
+ * so "selected" is one decision in one place. Every marker type gets the same
+ * affordance, and a seventh marker added later inherits it without being told.
+ *
+ * The ring is a real visual change — a halo and an accent-coloured border in
+ * the layer's own colour — not a testID. A selected pin has to be findable on a
+ * map full of pins, and the colour ties it to the carousel card below it.
+ */
+const sel = StyleSheet.create({
+  ring: {
+    padding: 3,
+    borderRadius: 999,
+    borderWidth: 2,
+    backgroundColor: 'rgba(255,255,255,0.6)',
+    shadowColor: '#000',
+    shadowOpacity: 0.28,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 7,
+  },
+});
+
+function SingleMarker({
+  entity,
+  onPress,
+  selected = false,
+}: {
+  entity: MapEntity;
+  onPress: (e: MapEntity) => void;
+  /** True when this entity is the one the carousel card is showing. */
+  selected?: boolean;
+}) {
+  const inner = renderMarkerBody(entity, onPress);
+  if (!selected) return inner;
+  return (
+    <View
+      testID="entity-pin-selected"
+      style={[sel.ring, { borderColor: MAP_LAYER_CONFIG[entity.type].color }]}
+    >
+      {inner}
+    </View>
+  );
+}
+
+function renderMarkerBody(entity: MapEntity, onPress: (e: MapEntity) => void) {
   switch (entity.type) {
     case 'buddies':
       return <BuddyMarker entity={entity as MapEntity<BuddyProfile>} onPress={onPress} />;
@@ -340,6 +400,15 @@ export interface EntityMapLayersProps {
   zoom: number;
   onSelectEntity: (entity: MapEntity) => void;
   onPressCluster: (lat: number, lng: number, currentZoom: number) => void;
+  /**
+   * The entity the carousel card is currently showing, from mapStore.
+   *
+   * The store has held this value since the map screen was built and nothing on
+   * the map ever read it, so selection existed as state and never as pixels —
+   * tapping a pin moved the camera and the carousel but left every pin looking
+   * identical.
+   */
+  selectedEntityId?: string | null;
 }
 
 /**
@@ -352,6 +421,7 @@ export function EntityMapLayers({
   zoom,
   onSelectEntity,
   onPressCluster,
+  selectedEntityId = null,
 }: EntityMapLayersProps) {
   const filtered = useMemo(
     // 'stamps' is not a ToggleableEntityType (it's never user-toggled) but
@@ -372,13 +442,20 @@ export function EntityMapLayers({
       {clusters.map((c) =>
         c.items.length === 1 ? (
           <Marker key={`ent-${c.items[0].id}`} lngLat={[c.lng, c.lat]}>
-            <SingleMarker entity={c.items[0]} onPress={onSelectEntity} />
+            <SingleMarker
+              entity={c.items[0]}
+              onPress={onSelectEntity}
+              selected={c.items[0].id === selectedEntityId}
+            />
           </Marker>
         ) : (
           <Marker key={`entc-${c.key}`} lngLat={[c.lng, c.lat]}>
             <ClusterBubble
               count={c.items.length}
               type={c.type}
+              selected={
+                selectedEntityId != null && c.items.some((i) => i.id === selectedEntityId)
+              }
               onPress={() => onPressCluster(c.lat, c.lng, zoom)}
             />
           </Marker>
