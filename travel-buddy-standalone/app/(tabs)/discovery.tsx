@@ -15,6 +15,7 @@ import { getFeaturedHub } from '../../src/services/featured';
 import type { DiscoveryAgeFilter } from '../../src/services/discovery';
 import type { Place } from '../../src/lib/location/placeTypes';
 import { useLayoverAwareBottomInset } from '../../src/hooks/useBottomInset';
+import { useRecentPlaces } from '../../src/hooks/useRecentPlaces';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
 import type { DiscoveryCategory, DiscoveryPlace, DiscoveryContextMode, DiscoveryFilters } from '../../src/services/discovery';
 import { getDiscoveryCategoryCounts } from '../../src/services/discovery';
@@ -132,10 +133,22 @@ function DiscoveryHubScreen() {
   );
 
   const [activeTab, setActiveTab] = useState<DiscoveryCategory>(initialCategory);
-  // Seed from location context city if available; fall back to 'Paris' so
-  // content fetches start immediately without a blank screen.
+  // Seed from the location context's city when one is known, and from NOTHING
+  // when one is not.
+  //
+  // This used to fall back to 'Paris'. The fallback applied to the city NAME
+  // only — destinationLat/Lng below resolve from locationState.coords and fall
+  // back to null, never to Paris coordinates. So a GPS fix whose reverse
+  // geocode returned no city name rendered locally-correct content under the
+  // label "Paris": the owner saw that while sitting in Asia. A hardcoded
+  // default is indistinguishable on screen from a real answer, which is what
+  // made it a bug report rather than a shrug.
+  //
+  // Empty is a supported state on both sides of this value: DestinationBar
+  // renders "Pick a destination" (DestinationBar.tsx:21) and
+  // DiscoveryCategoryTab renders NoDestinationView (DiscoveryCategoryTab.tsx:585).
   const [destination, setDestination] = useState(
-    () => locationState.place.city ?? 'Paris'
+    () => locationState.place.city ?? ''
   );
   const [destinationLat, setDestinationLat] = useState<number | null>(
     () => finiteOrNull(locationState.coords?.lat)
@@ -148,7 +161,7 @@ function DiscoveryHubScreen() {
   // rapid city changes (e.g. quickly scrolling the city picker) only trigger one
   // Foursquare-backed request once the selection settles, not one per tap.
   const [debouncedDestination, setDebouncedDestination] = useState(
-    () => locationState.place.city ?? 'Paris'
+    () => locationState.place.city ?? ''
   );
   const [debouncedDestLat, setDebouncedDestLat] = useState<number | null>(
     () => finiteOrNull(locationState.coords?.lat)
@@ -468,6 +481,44 @@ function DiscoveryHubScreen() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [locationState.place.city, locationState.coords?.lat, locationState.coords?.lng]);
+
+  // Last-known-city fallback — the replacement for the old hardcoded 'Paris'.
+  //
+  // The cascade above already keeps a known city sticky: it only writes when
+  // `city` is non-null, so a later GPS fix that reverse-geocodes to nothing
+  // cannot blank a city already on screen. What it cannot do is produce a city
+  // that was never there — on a cold start where the location cascade lands on
+  // a place with no city name (buildGpsState discards the previous place
+  // wholesale, activeLocation.state.ts:48, which is the case its own
+  // userMessage at :52 exists for), `destination` stays empty.
+  //
+  // The user's most recently chosen place is the last city we actually know
+  // they were in, so it is the fallback the owner asked for. Its coordinates
+  // come with it: the entire defect being fixed here was a city NAME sourced
+  // from one place and coordinates from another, so name and coordinates move
+  // together or not at all.
+  //
+  // Runs only while `destination` is empty and no city is known, so it can
+  // never overwrite a real answer, and the effect above wins the moment the
+  // cascade produces one. With no recent place either, `destination` stays
+  // empty and the prompt state renders — never a default city.
+  const { recents } = useRecentPlaces();
+  useEffect(() => {
+    // One rule: fill in only when nothing is known. The two clauses are not
+    // independently reachable today — `destination` is only ever set from
+    // `place.city ?? place.name`, which is never empty, so it cannot be blank
+    // while a city is known — but the rule is the pair, and a mutation that
+    // drops the second clause is invisible to any test for exactly that reason.
+    // Recorded rather than trimmed: the day the effect order or a setter
+    // changes, the second clause is what stops a stale recent outranking the
+    // live cascade.
+    if (destination || locationState.place.city) return;
+    const lastKnown = recents.find((p) => p.city);
+    if (!lastKnown?.city) return;
+    setDestination(lastKnown.city);
+    setDestinationLat(finiteOrNull(lastKnown.lat));
+    setDestinationLng(finiteOrNull(lastKnown.lng));
+  }, [destination, locationState.place.city, recents]);
 
   // Debounce custom age inputs (500 ms) so that each keystroke while the user
   // is typing a number doesn't fire a batch of 7 parallel API requests.

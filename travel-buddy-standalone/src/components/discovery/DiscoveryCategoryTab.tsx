@@ -276,10 +276,10 @@ const fs = StyleSheet.create({
 
 // ── Popular destinations fallback ─────────────────────────────────────────────
 
-const POPULAR_CITIES = [
-  'Paris', 'Tokyo', 'Bali', 'Barcelona', 'London',
-  'New York', 'Rome', 'Amsterdam', 'Bangkok', 'Sydney',
-];
+// A second, Paris-first POPULAR_CITIES list lived here with zero references
+// anywhere in the tree. NoDestinationView below has always used POPULAR from
+// GlobalPlacePicker, which is Bangkok-first. Removed as dead code, not as a
+// fix: it rendered nothing, so it caused nothing.
 
 interface NoDestinationProps {
   onPickPlace: (place: Place) => void;
