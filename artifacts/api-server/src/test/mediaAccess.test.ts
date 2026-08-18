@@ -73,9 +73,27 @@ function makeClient(state: FakeState = {}) {
       table === "events" ? state.events ?? [] :
       table === "event_rsvps" ? state.eventRsvps ?? [] :
       table === "event_roles" ? state.eventRoles ?? [] : [];
-    const rows = () => src().filter((r: any) => filters.every((f) => f(r)));
+    // Column projection for "profiles" only: the avatar-gating tests below
+    // must actually exercise the SELECT string in mediaAccess.ts, not just
+    // the row data — a mock that ignores select() and always returns full
+    // rows would keep passing even if the code stopped selecting the column
+    // it gates on. Other tables aren't projected (nothing here reads a
+    // column via select() and checks its own row shape beyond truthiness).
+    let profileCols: string[] | null = null;
+    const rows = () => {
+      const base = src().filter((r: any) => filters.every((f) => f(r)));
+      if (table !== "profiles" || !profileCols) return base;
+      return base.map((r: any) =>
+        Object.fromEntries(profileCols!.filter((c) => c in r).map((c) => [c, r[c]])),
+      );
+    };
     const b: any = {
-      select() { return b; },
+      select(cols?: string) {
+        if (table === "profiles" && typeof cols === "string" && cols !== "*") {
+          profileCols = cols.split(",").map((c) => c.trim());
+        }
+        return b;
+      },
       eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
       is(col: string, val: any) { filters.push((r) => val === null ? r[col] == null : r[col] === val); return b; },
@@ -268,6 +286,95 @@ describe("authorizeMediaAccess — the matrix", () => {
       profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "private" }],
     });
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), false);
+  });
+
+  // ── avatar gating by show_profile_picture_publicly ─────────────────────────
+  // Only the "avatars/" path prefix is gated by this flag — cover photos and
+  // everything else on the profile stay governed by resolveProfileVisibility
+  // alone, same as before.
+
+  it("profile-media: public profile, flag=false → avatar denied to a stranger", async () => {
+    const sc = makeClient({
+      profiles: [{
+        id: OWNER, is_private: false, passport_visibility: "public", account_status: "active",
+        show_profile_picture_publicly: false,
+      }],
+      profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "public" }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), false);
+  });
+
+  it("profile-media: public profile, flag=false → COVER photo still allowed to a stranger", async () => {
+    // The gate only restricts "avatars/" paths — this proves it didn't widen
+    // to cover photos too.
+    const sc = makeClient({
+      profiles: [{
+        id: OWNER, is_private: false, passport_visibility: "public", account_status: "active",
+        show_profile_picture_publicly: false,
+      }],
+      profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "public" }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `covers/${OWNER}/a.webp`), true);
+  });
+
+  it("profile-media: public profile, flag=false, viewer follows owner → avatar allowed", async () => {
+    const sc = makeClient({
+      profiles: [{
+        id: OWNER, is_private: false, passport_visibility: "public", account_status: "active",
+        show_profile_picture_publicly: false,
+      }],
+      profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "public" }],
+      userFollows: [{ follower_id: VIEWER, following_id: OWNER }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), true);
+  });
+
+  it("profile-media: public profile, flag=false, viewer is a friend → avatar allowed", async () => {
+    const sc = makeClient({
+      profiles: [{
+        id: OWNER, is_private: false, passport_visibility: "public", account_status: "active",
+        show_profile_picture_publicly: false,
+      }],
+      profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "public" }],
+      userFriendships: [{ user_a: OWNER, user_b: VIEWER }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), true);
+  });
+
+  it("profile-media: public profile, flag=true (default) → avatar allowed to a stranger", async () => {
+    const sc = makeClient({
+      profiles: [{
+        id: OWNER, is_private: false, passport_visibility: "public", account_status: "active",
+        show_profile_picture_publicly: true,
+      }],
+      profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "public" }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), true);
+  });
+
+  it("profile-media: private profile, flag=false, approved viewer → avatar allowed (private bypass)", async () => {
+    // resolveProfileVisibility already proved a follow/friend relationship to
+    // reach "followers_only" for a private profile — the is_private bypass
+    // must not re-demand a SEPARATE follow/friend check on top of that.
+    const sc = makeClient({
+      profiles: [{
+        id: OWNER, is_private: true, passport_visibility: "private", account_status: "active",
+        show_profile_picture_publicly: false,
+      }],
+      profilePrivacySettings: [{ user_id: OWNER, profile_visibility: "private" }],
+      userFriendships: [{ user_a: OWNER, user_b: VIEWER }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "profile-media", `avatars/${OWNER}/a.webp`), true);
+  });
+
+  it("profile-media: owner always sees their own avatar, even with the flag off", async () => {
+    const sc = makeClient({
+      profiles: [{
+        id: OWNER, is_private: false, passport_visibility: "public", account_status: "active",
+        show_profile_picture_publicly: false,
+      }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "profile-media", `avatars/${OWNER}/a.webp`), true);
   });
 
   it("profile-media: blocked viewer denied even for a public profile", async () => {

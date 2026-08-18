@@ -19,10 +19,10 @@ import { countUserTrips } from "../lib/tripCounts.js";
 const router = Router();
 
 const PUBLIC_PROFILE_COLUMNS =
-  "id, username, display_name, name, bio, avatar_url, cover_photo_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, is_private, spoken_languages, travel_styles, travel_pace, looking_for, account_status, passport_tab_order, is_official, featured_count";
+  "id, username, display_name, name, bio, avatar_url, cover_photo_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, is_private, spoken_languages, travel_styles, travel_pace, looking_for, account_status, passport_tab_order, is_official, featured_count, show_profile_picture_publicly";
 
 const PUBLIC_PROFILE_COLUMNS_FALLBACK =
-  "id, username, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at";
+  "id, username, name, bio, avatar_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, show_profile_picture_publicly";
 
 const PUBLIC_POSTCARD_COLUMNS =
   "id, post_id, user_id, media_url, caption, location_name, location_city, location_country, location_verified, stamp_eligible, visibility, status, pinned_at, note, created_at";
@@ -747,7 +747,7 @@ router.get("/users/:username/profile", async (req, res) => {
 
   const { data: profile, error: profileErr } = await sc
     .from("profiles")
-    .select("id, username, display_name, name, avatar_url, cover_photo_url, passport_visibility, bio, is_private, featured_count, is_official")
+    .select("id, username, display_name, name, avatar_url, cover_photo_url, passport_visibility, bio, is_private, featured_count, is_official, show_profile_picture_publicly")
     .eq("handle", username)
     .maybeSingle();
 
@@ -777,6 +777,13 @@ router.get("/users/:username/profile", async (req, res) => {
     return;
   }
   const allowRealName = viewerId === profile.id || (await nameVisibleFor(sc, profile.id));
+  // Mirrors the FullProfileView/PublicProfilePreview split in profileSerializers.ts:
+  // owner and approved followers/friends always see the avatar; a "full" (public,
+  // non-owner, non-connected) viewer sees it only when the owner opted in.
+  const showAvatar =
+    viewerId === profile.id ||
+    visibility === "followers_only" ||
+    (profile as any).show_profile_picture_publicly !== false;
 
   if (visibility === "limited_preview") {
     res.status(200).json({
@@ -816,7 +823,7 @@ router.get("/users/:username/profile", async (req, res) => {
     username: profile.username ?? null,
     displayName: allowRealName ? (profile.display_name ?? profile.name ?? null) : null,
     bio: profile.bio ?? null,
-    avatarUrl: profile.avatar_url ?? null,
+    avatarUrl: showAvatar ? (profile.avatar_url ?? null) : null,
     coverUrl: profile.cover_photo_url ?? null,
     tripCount: tripCount ?? 0,
     stampCount: stampCount ?? 0,
@@ -1263,7 +1270,7 @@ router.get("/users/:username/og-image.png", async (req, res) => {
   try {
     const { data: profile, error: profileErr } = await sc
       .from("profiles")
-      .select("id, username, display_name, name, avatar_url, passport_visibility, is_private")
+      .select("id, username, display_name, name, avatar_url, passport_visibility, is_private, show_profile_picture_publicly")
       .eq("handle", username)
       .maybeSingle();
 
@@ -1315,7 +1322,13 @@ router.get("/users/:username/og-image.png", async (req, res) => {
       sc.from("passport_stamps").select("id", { count: "exact", head: true }).eq("user_id", profile.id),
     ]);
 
-    const avatarDataUri = profile.avatar_url ? await fetchImageAsDataUri(profile.avatar_url) : null;
+    // OG image requests are always unauthenticated crawlers (no viewer to be
+    // a follower/friend of) — the only tier reachable past the visibility
+    // check above is "full", so this is a direct flag check, not a bypass.
+    const avatarDataUri =
+      profile.avatar_url && (profile as any).show_profile_picture_publicly !== false
+        ? await fetchImageAsDataUri(profile.avatar_url)
+        : null;
 
     // Universal display-name rule: OG/share images fall back to @username
     // unless the subject opted in to showing their real name.

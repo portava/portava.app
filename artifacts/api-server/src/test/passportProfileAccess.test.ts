@@ -24,6 +24,9 @@ import profileRouter from "../routes/profile.js";
 const ME           = "aa000000-0000-4000-a000-000000000001";
 const ALICE        = "bb000000-0000-4000-a000-000000000002"; // public profile
 const BOB          = "cc000000-0000-4000-a000-000000000003"; // private profile
+const DAVE         = "dd000000-0000-4000-a000-000000000004"; // public, show_profile_picture_publicly=false
+const EVE          = "ee000000-0000-4000-a000-000000000005"; // public, show_profile_picture_publicly=true
+const FRAN         = "ff000000-0000-4000-a000-000000000006"; // private, show_profile_picture_publicly=false, friend of ME
 
 const ME_TOK = "tok-me";
 
@@ -143,14 +146,26 @@ function makeClient(state: FakeState) {
         return [];
       }
 
+      // Column projection for "profiles" only: without this, a mutation that
+      // strips a column from a route's SELECT string (e.g. reverting the
+      // show_profile_picture_publicly fix) would go unnoticed here, because
+      // the mock would keep returning the full fixture row regardless of what
+      // was actually requested.
+      let profileCols: string[] | null = null;
       function rows() {
         let r = source().filter((row) => filters.every((f) => f(row)));
+        if (table === "profiles" && profileCols) {
+          r = r.map((row) => Object.fromEntries(profileCols!.filter((c) => c in row).map((c) => [c, row[c]])));
+        }
         if (_limit !== null) r = r.slice(0, _limit);
         return r;
       }
 
       const builder: any = {
-        select(_col?: string, opts?: any) {
+        select(cols?: string, opts?: any) {
+          if (table === "profiles" && typeof cols === "string" && cols !== "*") {
+            profileCols = cols.split(",").map((c) => c.trim());
+          }
           if (opts?.count) _count = opts.count;
           if (opts?.head) _head = true;
           return builder;
@@ -312,7 +327,7 @@ const baseState: FakeState = {
     {
       id: ME, handle: "me_user", username: "me_user",
       display_name: "Me User", name: "Me User",
-      avatar_url: null, cover_photo_url: null,
+      avatar_url: "https://cdn.example.com/me.jpg", cover_photo_url: null,
       bio: null, is_private: false,
       passport_visibility: "public",
       home_city: null, home_country: null,
@@ -320,6 +335,48 @@ const baseState: FakeState = {
       verified: false, verification_status: "unverified", verified_at: null,
       spoken_languages: [], travel_styles: [], travel_pace: null,
       looking_for: [], account_status: "active",
+      // Owner's own flag is OFF — proves the owner-always-sees-own-avatar
+      // bypass is not just an accident of the flag defaulting true.
+      show_profile_picture_publicly: false,
+    },
+    {
+      id: DAVE, handle: "dave_hidden", username: "dave_hidden",
+      display_name: "Dave", name: "Dave",
+      avatar_url: "https://cdn.example.com/dave.jpg", cover_photo_url: null,
+      bio: "Hides my photo", is_private: false,
+      passport_visibility: "public",
+      home_city: null, home_country: null,
+      travel_style: null, interests: [],
+      verified: false, verification_status: "unverified", verified_at: null,
+      spoken_languages: [], travel_styles: [], travel_pace: null,
+      looking_for: [], account_status: "active",
+      show_profile_picture_publicly: false,
+    },
+    {
+      id: EVE, handle: "eve_shown", username: "eve_shown",
+      display_name: "Eve", name: "Eve",
+      avatar_url: "https://cdn.example.com/eve.jpg", cover_photo_url: null,
+      bio: "Shows my photo", is_private: false,
+      passport_visibility: "public",
+      home_city: null, home_country: null,
+      travel_style: null, interests: [],
+      verified: false, verification_status: "unverified", verified_at: null,
+      spoken_languages: [], travel_styles: [], travel_pace: null,
+      looking_for: [], account_status: "active",
+      show_profile_picture_publicly: true,
+    },
+    {
+      id: FRAN, handle: "fran_friend", username: "fran_friend",
+      display_name: "Fran", name: "Fran",
+      avatar_url: "https://cdn.example.com/fran.jpg", cover_photo_url: null,
+      bio: "Friends only", is_private: true,
+      passport_visibility: "private",
+      home_city: null, home_country: null,
+      travel_style: null, interests: [],
+      verified: false, verification_status: "unverified", verified_at: null,
+      spoken_languages: [], travel_styles: [], travel_pace: null,
+      looking_for: [], account_status: "active",
+      show_profile_picture_publicly: false,
     },
   ],
   blocks: [],
@@ -329,6 +386,12 @@ const baseState: FakeState = {
   // alice_public opted in to showing her real name; me_user did not.
   profile_privacy_settings: [
     { user_id: ALICE, show_real_name: true },
+  ],
+  // ME is an approved friend of FRAN — resolveProfileVisibility must grant
+  // "followers_only" so the owner-photo-off flag does NOT hide the avatar
+  // from an already-approved connection.
+  user_friendships: [
+    { user_a: ME, user_b: FRAN },
   ],
 };
 
@@ -340,6 +403,10 @@ let base: string;
 before(async () => {
   const app = express();
   app.use(express.json());
+  app.use((req: any, _res, next) => {
+    req.log = { info() {}, warn() {}, error() {}, debug() {} };
+    next();
+  });
 
   const client = makeClient(JSON.parse(JSON.stringify(baseState)));
   _setTestClient(client as any, true);
@@ -400,6 +467,33 @@ describe("GET /users/:username/profile", () => {
     assert.equal(r.body.stampCount, 0, "stampCount should be 0 for private profile");
     assert.ok(!("bio" in r.body), "bio should not be exposed for private profile");
   });
+
+  // ── show_profile_picture_publicly enforcement ───────────────────────────────
+
+  it("hides avatarUrl for a public profile whose owner turned the photo off", async () => {
+    const r = await req(server, "GET", "/users/dave_hidden/profile");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.avatarUrl, null, "avatarUrl must be null when show_profile_picture_publicly=false");
+  });
+
+  it("shows avatarUrl for a public profile whose owner left the photo on", async () => {
+    const r = await req(server, "GET", "/users/eve_shown/profile");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.avatarUrl, "https://cdn.example.com/eve.jpg");
+  });
+
+  it("the owner always sees their own avatarUrl, even with the flag off", async () => {
+    const r = await req(server, "GET", "/users/me_user/profile", { token: ME_TOK });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.avatarUrl, "https://cdn.example.com/me.jpg");
+  });
+
+  it("an approved friend of a private+flag-off profile still sees the avatar", async () => {
+    const r = await req(server, "GET", "/users/fran_friend/profile", { token: ME_TOK });
+    assert.equal(r.status, 200);
+    assert.ok(!r.body.private, "an approved friend must get the full shape, not the limited_preview one");
+    assert.equal(r.body.avatarUrl, "https://cdn.example.com/fran.jpg");
+  });
 });
 
 describe("GET /users/:username/passport", () => {
@@ -427,6 +521,38 @@ describe("GET /users/:username/passport", () => {
     assert.equal(r.body.visibility, "private", "visibility should be 'private'");
     assert.ok(!r.body.viewer, "viewer object should be absent for limited_preview");
     assert.ok(!r.body.bio, "bio should not be exposed");
+  });
+
+  // ── show_profile_picture_publicly enforcement (the priority leak) ──────────
+  // GET /users/:username/passport is the route toPublicProfilePreview /
+  // toFullProfileView actually feed (via PUBLIC_PROFILE_COLUMNS). Before this
+  // fix, the column was never selected, so r.show_profile_picture_publicly was
+  // always undefined and the gate's `!== false` check always passed.
+
+  it("hides avatarUrl for a public passport whose owner turned the photo off", async () => {
+    const r = await req(server, "GET", "/users/dave_hidden/passport");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.avatarUrl, null, "avatarUrl must be null when show_profile_picture_publicly=false");
+  });
+
+  it("shows avatarUrl for a public passport whose owner left the photo on", async () => {
+    const r = await req(server, "GET", "/users/eve_shown/passport");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.avatarUrl, "https://cdn.example.com/eve.jpg");
+  });
+
+  it("the owner always sees their own avatarUrl on their own passport, even with the flag off", async () => {
+    const r = await req(server, "GET", "/users/me_user/passport", { token: ME_TOK });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.viewer.is_me, true);
+    assert.equal(r.body.avatarUrl, "https://cdn.example.com/me.jpg");
+  });
+
+  it("an approved friend of a private+flag-off passport still sees the avatar", async () => {
+    const r = await req(server, "GET", "/users/fran_friend/passport", { token: ME_TOK });
+    assert.equal(r.status, 200);
+    assert.ok(r.body.viewer, "an approved friend must get the full viewer shape, not limited_preview");
+    assert.equal(r.body.avatarUrl, "https://cdn.example.com/fran.jpg");
   });
 });
 

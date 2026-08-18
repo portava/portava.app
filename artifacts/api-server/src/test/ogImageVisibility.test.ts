@@ -8,7 +8,7 @@
  *
  * Run: node --import tsx/esm --test src/test/ogImageVisibility.test.ts
  */
-import { describe, it, before, after } from "node:test";
+import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import http, { createServer } from "node:http";
 import express from "express";
@@ -19,6 +19,16 @@ import passportRouter from "../routes/passport.js";
 const ALICE = "bb000000-0000-4000-a000-000000000002"; // public
 const BOB   = "cc000000-0000-4000-a000-000000000003"; // private
 const CARL  = "dd000000-0000-4000-a000-000000000004"; // deactivated
+const FRED  = "ee000000-0000-4000-a000-000000000005"; // public, show_profile_picture_publicly=false
+const GINA  = "ff000000-0000-4000-a000-000000000006"; // public, show_profile_picture_publicly=true
+
+const TRUSTED_SUPABASE_URL = "https://sb.example.test";
+const TRUSTED_AVATAR_URL = `${TRUSTED_SUPABASE_URL}/storage/v1/object/public/profile-media/avatars/x.jpg`;
+// A valid, minimal 1x1 transparent PNG — stands in for a real avatar fetch.
+const STUB_AVATAR_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 
 // ── Binary-safe request helper ────────────────────────────────────────────────
 
@@ -61,13 +71,25 @@ function makeClient(state: FakeState) {
       const filters: Array<(r: any) => boolean> = [];
       let _head = false;
       let _count: string | null = null;
+      // Column projection for "profiles" only: without this, a mutation that
+      // strips a column from the og-image route's SELECT string would go
+      // unnoticed — the mock would keep returning the full fixture row
+      // regardless of what was actually requested.
+      let profileCols: string[] | null = null;
 
       function rows() {
-        return (state[table] ?? []).filter((row) => filters.every((f) => f(row)));
+        let r = (state[table] ?? []).filter((row) => filters.every((f) => f(row)));
+        if (table === "profiles" && profileCols) {
+          r = r.map((row) => Object.fromEntries(profileCols!.filter((c) => c in row).map((c) => [c, row[c]])));
+        }
+        return r;
       }
 
       const builder: any = {
-        select(_col?: string, opts?: any) {
+        select(cols?: string, opts?: any) {
+          if (table === "profiles" && typeof cols === "string" && cols !== "*") {
+            profileCols = cols.split(",").map((c) => c.trim());
+          }
           if (opts?.count) _count = opts.count;
           if (opts?.head) _head = true;
           return builder;
@@ -123,10 +145,32 @@ const baseState: FakeState = {
       avatar_url: null,
       is_private: false, passport_visibility: "public", account_status: "deactivated",
     },
+    {
+      id: FRED, handle: "fred_hidden", username: "fred_hidden",
+      display_name: "Fred Hidden", name: "Fred",
+      avatar_url: TRUSTED_AVATAR_URL,
+      is_private: false, passport_visibility: "public", account_status: "active",
+      show_profile_picture_publicly: false,
+    },
+    {
+      id: GINA, handle: "gina_shown", username: "gina_shown",
+      display_name: "Gina Shown", name: "Gina",
+      avatar_url: TRUSTED_AVATAR_URL,
+      is_private: false, passport_visibility: "public", account_status: "active",
+      show_profile_picture_publicly: true,
+    },
   ],
   blocks: [],
   user_follows: [],
-  user_account_states: [],
+  // og-image.png's own profiles SELECT does not include account_status (only
+  // "id, username, display_name, name, avatar_url, passport_visibility,
+  // is_private, show_profile_picture_publicly") — resolveProfileVisibility
+  // falls through to this table for account-state checks on that route.
+  // (Previously this test passed only because the mock ignored SELECT
+  // strings entirely and always returned the full fixture row, including a
+  // carl_gone.account_status the route never actually fetches — fixed by
+  // making CARL's deactivation reachable through the real fallback path.)
+  user_account_states: [{ user_id: CARL, state: "deactivated" }],
   profile_privacy_settings: [],
   user_friendships: [],
   trips: [
@@ -163,7 +207,29 @@ const PRIVATE_STAMP_ID = baseState.user_stamps[1].id;
 
 let server: ReturnType<typeof createServer>;
 
+const OLD_SUPABASE_URL = process.env.SUPABASE_URL;
+const OLD_FETCH = globalThis.fetch;
+let fetchCallUrls: string[] = [];
+
+beforeEach(() => { fetchCallUrls = []; });
+
 before(async () => {
+  process.env.SUPABASE_URL = TRUSTED_SUPABASE_URL;
+  // Stub the avatar fetch so the flag-gating tests below never touch the
+  // network — a spy that both records calls (to prove the gate ran BEFORE
+  // any fetch attempt, not just that the resulting image looks right) and
+  // returns a valid image so the "flag on" path still gets a real data URI.
+  globalThis.fetch = (async (url: any, init?: any) => {
+    fetchCallUrls.push(String(url));
+    if (String(url) === TRUSTED_AVATAR_URL) {
+      return new Response(STUB_AVATAR_PNG, {
+        status: 200,
+        headers: { "content-type": "image/png" },
+      });
+    }
+    return OLD_FETCH(url, init);
+  }) as typeof fetch;
+
   const app = express();
   // Minimal req.log shim (routes use req.log.warn/error on fallback paths).
   app.use((req: any, _res, next) => {
@@ -182,6 +248,8 @@ after(async () => {
   await new Promise<void>((r) => server.close(() => r()));
   _setTestClient(null as any, false);
   _setTestServiceClient(null as any);
+  process.env.SUPABASE_URL = OLD_SUPABASE_URL;
+  globalThis.fetch = OLD_FETCH;
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -265,4 +333,35 @@ describe("GET /users/:username/og-image.png visibility enforcement", () => {
     assert.equal(r.cacheControl, GENERIC_CACHE);
     assert.ok(r.body.equals(genericPng));
   });
+
+  // ── show_profile_picture_publicly enforcement ───────────────────────────────
+  // OG image requests come from crawlers — always unauthenticated (see the
+  // route's own comment) — so this is the surface that serves a switched-off
+  // user's avatar to literally anything that fetches a link preview: chat
+  // apps, Slack unfurls, social-share bots. No auth wall to hide behind.
+
+  it("flag off → the avatar is never even fetched (gate runs before the network call)", async () => {
+    const r = await getRaw(server, "/users/fred_hidden/og-image.png");
+    assert.equal(r.status, 200);
+    assert.match(r.contentType, /^image\/png/);
+    assert.equal(r.cacheControl, NO_STORE, "still a personalized card (name/stats), just no photo");
+    assert.deepEqual(
+      fetchCallUrls, [],
+      "the avatar URL must never be fetched when show_profile_picture_publicly=false",
+    );
+    // Falls back to the initials card, but the name/stats still personalize
+    // it — must not collapse to the fully-generic unknown-user card.
+    assert.ok(!r.body.equals(genericPng), "Fred's card must still be personalized (name/stats), not generic");
+  });
+
+  it("flag on → the avatar IS fetched and embedded", async () => {
+    const r = await getRaw(server, "/users/gina_shown/og-image.png");
+    assert.equal(r.status, 200);
+    assert.match(r.contentType, /^image\/png/);
+    assert.deepEqual(
+      fetchCallUrls, [TRUSTED_AVATAR_URL],
+      "the avatar URL must be fetched exactly once when show_profile_picture_publicly=true",
+    );
+  });
+
 });
