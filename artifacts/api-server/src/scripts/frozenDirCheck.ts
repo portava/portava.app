@@ -9,8 +9,8 @@
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname, join, relative, resolve } from "node:path";
-import type { FrozenRoot } from "./frozenMigrationRoots.js";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import type { AllowlistedRoot, FrozenRoot } from "./frozenMigrationRoots.js";
 
 export function sha256(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -91,6 +91,74 @@ export function checkLooseFiles(repoRoot: string, looseFiles: Record<string, str
   });
 }
 
+export interface NonExecutableOverlap {
+  relPath: string;
+  kind: "same-filename" | "identical-content";
+  /** The canonical-dir file it collides with. */
+  collidesWith: string;
+}
+
+/**
+ * For every AllowlistedRoot flagged `nonExecutable: true`, verify none of
+ * its .sql files shares a filename OR a content hash with anything in the
+ * canonical migration dir. A non-executable artifact (e.g. a baseline
+ * schema dump) copied — or even renamed to match — a canonical migration
+ * filename is exactly the mistake that would let it get applied by whatever
+ * process trusts "a file in the canonical dir is a migration to run."
+ *
+ * Deliberately does NOT check AllowlistedRoots with `nonExecutable: false`
+ * (e.g. a review-staging area) — for those, a file eventually matching a
+ * canonical migration is the INTENDED end state (it was reviewed and
+ * applied), not a defect.
+ */
+export function checkNonExecutableOverlap(
+  repoRoot: string,
+  canonicalRel: string,
+  nonExecutableRoots: Pick<AllowlistedRoot, "relPath" | "nonExecutable">[],
+): NonExecutableOverlap[] {
+  const canonicalAbs = resolve(repoRoot, canonicalRel);
+  let canonicalEntries: string[] = [];
+  try {
+    canonicalEntries = (readdirSync(canonicalAbs, { recursive: true }) as string[]).filter((f) =>
+      f.toLowerCase().endsWith(".sql"),
+    );
+  } catch {
+    canonicalEntries = [];
+  }
+  const canonicalBasenames = new Map<string, string>(); // basename -> relative canonical path
+  const canonicalHashes = new Map<string, string>(); // sha256 -> relative canonical path
+  for (const f of canonicalEntries) {
+    canonicalBasenames.set(basename(f), f);
+    canonicalHashes.set(sha256(join(canonicalAbs, f)), f);
+  }
+
+  const violations: NonExecutableOverlap[] = [];
+  for (const root of nonExecutableRoots) {
+    if (!root.nonExecutable) continue;
+    const abs = resolve(repoRoot, root.relPath);
+    let entries: string[];
+    try {
+      entries = (readdirSync(abs, { recursive: true }) as string[]).filter((f) =>
+        f.toLowerCase().endsWith(".sql"),
+      );
+    } catch {
+      continue;
+    }
+    for (const f of entries) {
+      const relFile = join(root.relPath, f);
+      const nameHit = canonicalBasenames.get(basename(f));
+      if (nameHit) {
+        violations.push({ relPath: relFile, kind: "same-filename", collidesWith: nameHit });
+      }
+      const hashHit = canonicalHashes.get(sha256(join(abs, f)));
+      if (hashHit) {
+        violations.push({ relPath: relFile, kind: "identical-content", collidesWith: hashHit });
+      }
+    }
+  }
+  return violations;
+}
+
 /** Directory names never descended into during the unlisted-root sweep. */
 export const DEFAULT_SKIP_DIR_NAMES = new Set([
   "node_modules", ".git", ".cache", ".local", "dist", "build", ".next",
@@ -166,6 +234,7 @@ export interface FrozenDirCheckResult {
   rootDiffs: RootDiff[];
   looseDiffs: LooseDiff[];
   unlistedHits: string[];
+  nonExecutableOverlaps: NonExecutableOverlap[];
   passed: boolean;
 }
 
@@ -174,17 +243,28 @@ export function runFrozenDirCheck(
   canonicalRel: string,
   roots: FrozenRoot[],
   looseFiles: Record<string, string>,
+  allowlistedRoots: AllowlistedRoot[] = [],
   skipDirNames?: Set<string>,
 ): FrozenDirCheckResult {
   const rootDiffs = roots.map((r) => checkRoot(repoRoot, r.relPath, r.label, r.files));
   const looseDiffs = checkLooseFiles(repoRoot, looseFiles);
-  const unlistedHits = sweepForUnlisted(repoRoot, canonicalRel, roots, looseFiles, skipDirNames);
+  // Allowlisted roots are exempt from the unlisted-root sweep (they are
+  // KNOWN, by name) but are NOT hash-pinned via checkRoot above — that's
+  // the whole point of the distinction from FrozenRoot.
+  const unlistedHits = sweepForUnlisted(
+    repoRoot,
+    canonicalRel,
+    [...roots, ...allowlistedRoots],
+    looseFiles,
+    skipDirNames,
+  );
+  const nonExecutableOverlaps = checkNonExecutableOverlap(repoRoot, canonicalRel, allowlistedRoots);
 
   const rootsOk = rootDiffs.every(
     (d) => !d.missingDirEntirely && d.added.length === 0 && d.removed.length === 0 && d.modified.length === 0,
   );
   const looseOk = looseDiffs.every((d) => d.status === "ok");
-  const passed = rootsOk && looseOk && unlistedHits.length === 0;
+  const passed = rootsOk && looseOk && unlistedHits.length === 0 && nonExecutableOverlaps.length === 0;
 
-  return { rootDiffs, looseDiffs, unlistedHits, passed };
+  return { rootDiffs, looseDiffs, unlistedHits, nonExecutableOverlaps, passed };
 }

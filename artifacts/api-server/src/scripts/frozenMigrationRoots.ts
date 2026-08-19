@@ -23,6 +23,52 @@ export interface FrozenRoot {
   files: Record<string, string>;
 }
 
+/**
+ * A non-canonical root that is deliberately EXEMPT from the unlisted-root
+ * sweep by name — unlike FrozenRoot, its file SET is not hash-pinned,
+ * because its contents are expected to change over time (new baseline
+ * captures added; staged migrations added/removed as they're
+ * reviewed/applied). Being allowlisted is not being unwatched: it is on
+ * this list explicitly, with a reason, and removing an entry here re-arms
+ * the sweep against it immediately.
+ */
+export interface AllowlistedRoot {
+  /** Path relative to the repo root. */
+  relPath: string;
+  /** Human-readable label, for status/error messages. */
+  label: string;
+  /** Why this directory legitimately holds migration-shaped .sql files. */
+  reason: string;
+  /**
+   * true: this root's .sql files must NEVER overlap (by filename OR by
+   * content hash) with the canonical migration chain — enforced by
+   * checkNonExecutableOverlap(), not merely documented. Use for artifacts
+   * that must never be replayed as a migration under any circumstance
+   * (e.g. a schema dump). Use false for a working/staging area whose files
+   * are EXPECTED to eventually be copied into canonical (e.g. a
+   * review-staging directory) — for those, overlap is the intended
+   * end state, not a defect.
+   */
+  nonExecutable: boolean;
+}
+
+export const ALLOWLISTED_ROOTS: AllowlistedRoot[] = [
+  {
+    relPath: "reconciliation-staging",
+    label: "P0 review-staging area for proposed reconciliation migrations",
+    reason:
+      "Working area, not a frozen historical root and not canonical: its .sql files are proposals awaiting owner review/apply; once applied they are committed into artifacts/api-server/src/migrations/ (the canonical chain) and removed from here, so content changing over time is expected and must not fail this guard the way an edit to a truly frozen root would.",
+    nonExecutable: false,
+  },
+  {
+    relPath: "artifacts/api-server/baseline",
+    label: "Schema-only production baseline snapshots",
+    reason:
+      "Non-executable artifact: a point-in-time pg_dump captured for reconciliation reference, never a migration to run — new dated captures may be added over time, so this is allowlisted by directory rather than hash-pinned to one file. checkNonExecutableOverlap() below additionally fails the build if anything here is ever copied into (or shares a filename/content hash with) the canonical migration chain, since a baseline dump run as a migration would be catastrophic.",
+    nonExecutable: true,
+  },
+];
+
 export const FROZEN_ROOTS: FrozenRoot[] = [
   {
     relPath: "artifacts/api-server/migrations",

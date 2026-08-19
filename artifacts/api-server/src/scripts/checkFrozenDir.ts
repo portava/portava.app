@@ -31,7 +31,7 @@
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FROZEN_ROOTS, FROZEN_LOOSE_FILES } from "./frozenMigrationRoots.js";
+import { FROZEN_ROOTS, FROZEN_LOOSE_FILES, ALLOWLISTED_ROOTS } from "./frozenMigrationRoots.js";
 import { runFrozenDirCheck } from "./frozenDirCheck.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -39,7 +39,7 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dir, "../../../..");
 const CANONICAL_REL = "artifacts/api-server/src/migrations";
 
-const result = runFrozenDirCheck(REPO_ROOT, CANONICAL_REL, FROZEN_ROOTS, FROZEN_LOOSE_FILES);
+const result = runFrozenDirCheck(REPO_ROOT, CANONICAL_REL, FROZEN_ROOTS, FROZEN_LOOSE_FILES, ALLOWLISTED_ROOTS);
 const fileCountByRelPath = new Map(FROZEN_ROOTS.map((r) => [r.relPath, Object.keys(r.files).length]));
 
 let anyFailed = false;
@@ -78,6 +78,12 @@ for (const diff of result.rootDiffs) {
   }
 }
 
+for (const root of ALLOWLISTED_ROOTS) {
+  console.log(
+    `check:frozen-dir [${root.relPath}] ALLOWLISTED (${root.nonExecutable ? "non-executable artifact" : "review-staging"}) — ${root.reason}`,
+  );
+}
+
 const looseProblems = result.looseDiffs.filter((d) => d.status !== "ok");
 if (looseProblems.length > 0) {
   console.error("\nERROR: Individually-pinned loose migration file(s) changed:");
@@ -104,6 +110,23 @@ if (result.unlistedHits.length > 0) {
   anyFailed = true;
 } else {
   console.log("check:frozen-dir [unlisted-root sweep] PASSED (no migration-shaped files outside known roots)");
+}
+
+if (result.nonExecutableOverlaps.length > 0) {
+  console.error(
+    "\nERROR: A non-executable artifact root (see ALLOWLISTED_ROOTS in frozenMigrationRoots.ts,\n" +
+      "       nonExecutable: true) has a file that collides with the canonical migration\n" +
+      "       chain. This root must NEVER be reachable by anything that applies migrations —\n" +
+      "       a collision here means it could be mistaken for one:\n\n" +
+      result.nonExecutableOverlaps
+        .map((o) => `         • ${o.relPath} — ${o.kind} as canonical file ${o.collidesWith}`)
+        .join("\n") + "\n",
+  );
+  anyFailed = true;
+} else {
+  console.log(
+    `check:frozen-dir [non-executable overlap] PASSED (no non-executable-root .sql file shares a filename or content hash with the canonical chain)`,
+  );
 }
 
 if (anyFailed) {
