@@ -647,6 +647,15 @@ function isVerifierWired(name: string | undefined, ci: CiSurface): boolean {
 
 type DispositionWithVerifier = RlsDisposition & { deep_verifier?: string };
 
+// Grant excess is only a signal for the UNTRUSTED client roles. role_*_grants
+// list the table OWNER (postgres) and Supabase's internal roles with full
+// privileges on every object; pg_dump never emits owner/internal grants, so the
+// model cannot carry them and every one would read as false "excess" (~20k of
+// them). service_role bypasses RLS entirely, so grants to it add no exposure.
+// The mobile app ships the anon key, so anon / authenticated / PUBLIC are the
+// surfaces where an unexplained grant is a real finding.
+const AUDITED_GRANT_ROLES = new Set(["anon", "authenticated", "public"]);
+
 export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
   const { model, live, ledger, ledgerShapeProblems, dispositions, ci } = input;
   const findings: Finding[] = [];
@@ -723,6 +732,7 @@ export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
     privs.has(p) || privs.has("all");
 
   for (const [k, livePrivs] of live.tableGrants) {
+    if (!AUDITED_GRANT_ROLES.has(k.slice(k.lastIndexOf(".") + 1))) continue;
     const modelPrivs = model.tableGrants.get(k) ?? new Set<string>();
     for (const p of livePrivs) {
       if (!covers(modelPrivs, p)) {
@@ -734,6 +744,7 @@ export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
     // k = "table.column.grantee"; a table grant "table.grantee" inherits to it.
     const parts = k.split(".");
     const grantee = parts[parts.length - 1];
+    if (!AUDITED_GRANT_ROLES.has(grantee)) continue;
     const table = parts.slice(0, parts.length - 2).join(".");
     const colPrivs = model.columnGrants.get(k) ?? new Set<string>();
     const tblPrivs =

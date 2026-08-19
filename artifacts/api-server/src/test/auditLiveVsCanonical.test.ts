@@ -236,6 +236,28 @@ describe("computeUnexplained — grant coverage (Postgres semantics)", () => {
     assert.equal(r.findings.filter((f) => f.code === "EXCESS_PRIVILEGE").length, 0);
   });
 
+  it("ignores owner/internal-role grants but still flags anon excess", () => {
+    const live = makeLive({
+      relations: new Map([["foo", "r"]]),
+      tableGrants: new Map([
+        ["foo.postgres", new Set(["select", "insert", "update", "delete"])],
+        ["foo.service_role", new Set(["select", "insert"])],
+        ["foo.anon", new Set(["select", "delete"])],
+      ]),
+      columnGrants: new Map([["foo.c.postgres", new Set(["update"])]]),
+    });
+    const model = makeModel({
+      relations: new Set(["foo"]),
+      rlsClaimTables: new Set(["foo"]),
+      tableGrants: new Map([["foo.anon", new Set(["select"])]]),
+    });
+    const r = run({ model, live, dispositions: { foo: { class: "RLS_REQUIRED", policyCount: 1 } } });
+    const ex = r.findings.filter((f) => f.code === "EXCESS_PRIVILEGE");
+    // postgres + service_role grants ignored; only anon 'delete' surfaces.
+    assert.equal(ex.length, 1);
+    assert.ok(ex[0].key === "foo.anon" && ex[0].detail.includes("delete"));
+  });
+
   it("still flags a TRUE column excess the table grant does not cover", () => {
     const live = makeLive({
       relations: new Map([["foo", "r"]]),
