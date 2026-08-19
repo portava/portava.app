@@ -1,14 +1,19 @@
 /**
  * Frozen-dir guard — standalone
  *
- * Checks that no new .sql files have been added to either of the two frozen
- * migration directories:
+ * Verifies every non-canonical migration root in the repo (everything except
+ * artifacts/api-server/src/migrations/) is EXACTLY what it was when frozen:
+ * no files added, none removed, none modified in place. Also fails if a new
+ * root appears anywhere in the repo that is neither the canonical dir nor one
+ * of the explicitly-listed frozen roots — an unlisted root is an error, not a
+ * silent pass, because that is exactly how artifacts/api-server/supabase/
+ * migrations/ went unnoticed: a directory named like the others, holding
+ * migration-shaped files, absent from every doc and guard that claimed to
+ * enumerate the trees.
  *
- *   1. artifacts/api-server/migrations/  — the legacy dir, frozen 2026-07-17
- *   2. migrations/                       — the repo-root historical dir,
- *                                          formally archived 2026-08-08
- *
- * All new database changes must go into artifacts/api-server/src/migrations/.
+ * The actual detection logic lives in frozenDirCheck.ts, parameterized on
+ * repoRoot/manifest so it's testable against a temp directory. This file is
+ * just the real-repo wiring plus reporting/exit-code plumbing.
  *
  * This script needs NO database credentials and is safe to run in any CI
  * environment, including branch preview builds and forks.
@@ -18,106 +23,110 @@
  * or directly:
  *   node --import tsx/esm src/scripts/checkFrozenDir.ts
  *
- * Exit code 0 → both frozen dirs contain only the known frozen sets (or don't exist)
- * Exit code 1 → one or more unexpected .sql files found in either frozen dir
+ * Exit code 0 → every known root matches its manifest exactly, and no
+ *               unlisted root exists
+ * Exit code 1 → added, removed, or modified files in a known root, or an
+ *               unlisted root/file was found
  */
 
-import { readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FROZEN_LEGACY_FILES } from "./frozenLegacyFiles.js";
-import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
+import { FROZEN_ROOTS, FROZEN_LOOSE_FILES, ALLOWLISTED_ROOTS } from "./frozenMigrationRoots.js";
+import { runFrozenDirCheck } from "./frozenDirCheck.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
+// __dir is artifacts/api-server/src/scripts — four levels up is the repo root.
+const REPO_ROOT = resolve(__dir, "../../../..");
+const CANONICAL_REL = "artifacts/api-server/src/migrations";
 
-// ── Helper ────────────────────────────────────────────────────────────────────
-
-/**
- * Scan a directory recursively for .sql files and return any that are not
- * in the provided frozen set.  Returns an empty array if the dir doesn't
- * exist (treated as passing).
- */
-function findRogueFiles(dir: string, frozenSet: Set<string>): string[] {
-  let entries: string[] = [];
-  try {
-    entries = (readdirSync(dir, { recursive: true }) as string[]).filter((f) =>
-      f.endsWith(".sql"),
-    );
-  } catch {
-    // Directory does not exist — nothing to check.
-    return [];
-  }
-  // A frozen file is stored as a bare filename (no path separator).
-  // Any entry that contains "/" (nested) or is not in the known set is rogue.
-  return entries.filter((f) => !frozenSet.has(f));
-}
-
-// ── Checks ────────────────────────────────────────────────────────────────────
+const result = runFrozenDirCheck(REPO_ROOT, CANONICAL_REL, FROZEN_ROOTS, FROZEN_LOOSE_FILES, ALLOWLISTED_ROOTS);
+const fileCountByRelPath = new Map(FROZEN_ROOTS.map((r) => [r.relPath, Object.keys(r.files).length]));
 
 let anyFailed = false;
 
-// 1. Legacy dir: artifacts/api-server/migrations/
-{
-  const legacyDir = resolve(__dir, "../../migrations");
-  const rogueFiles = findRogueFiles(legacyDir, FROZEN_LEGACY_FILES);
-
-  if (rogueFiles.length > 0) {
+for (const diff of result.rootDiffs) {
+  const problems = diff.added.length + diff.removed.length + diff.modified.length;
+  if (diff.missingDirEntirely) {
     console.error(
-      "\nERROR: The legacy migrations directory (artifacts/api-server/migrations/) is frozen.\n" +
-        "       New database changes must go into artifacts/api-server/src/migrations/ instead.\n" +
-        "       See artifacts/api-server/migrations/README.md for details.\n\n" +
-        "       Unexpected file(s) found in the frozen directory:\n" +
-        rogueFiles.map((f) => `         • ${f}`).join("\n") +
-        "\n",
+      `\nERROR: Frozen root "${diff.relPath}" (${diff.label}) is GONE entirely — ` +
+        `${diff.removed.length} known file(s) vanished with it:\n` +
+        diff.removed.map((f) => `         • ${f}`).join("\n") + "\n",
     );
     anyFailed = true;
+    continue;
+  }
+  if (problems > 0) {
+    console.error(`\nERROR: Frozen root "${diff.relPath}" (${diff.label}) has changed.`);
+    if (diff.added.length) {
+      console.error("       New file(s) added (frozen roots accept none):");
+      for (const f of diff.added) console.error(`         + ${f}`);
+    }
+    if (diff.removed.length) {
+      console.error("       Known file(s) deleted:");
+      for (const f of diff.removed) console.error(`         - ${f}`);
+    }
+    if (diff.modified.length) {
+      console.error("       Known file(s) modified in place (content hash changed):");
+      for (const f of diff.modified) console.error(`         ~ ${f}`);
+    }
+    console.error();
+    anyFailed = true;
   } else {
-    const total = (() => {
-      try {
-        return (readdirSync(legacyDir, { recursive: true }) as string[]).filter(
-          (f) => f.endsWith(".sql"),
-        ).length;
-      } catch {
-        return 0;
-      }
-    })();
     console.log(
-      `check:frozen-dir [legacy] PASSED (${total} known file(s), 0 rogue)`,
+      `check:frozen-dir [${diff.relPath}] PASSED (${fileCountByRelPath.get(diff.relPath)} known file(s), unchanged)`,
     );
   }
 }
 
-// 2. Repo-root dir: migrations/
-{
-  // Resolve from the api-server package root up four levels to the repo root.
-  // __dir is artifacts/api-server/src/scripts — so ../../../.. lands at root.
-  const rootMigrationsDir = resolve(__dir, "../../../../migrations");
-  const rogueFiles = findRogueFiles(rootMigrationsDir, FROZEN_ROOT_FILES);
+for (const root of ALLOWLISTED_ROOTS) {
+  console.log(
+    `check:frozen-dir [${root.relPath}] ALLOWLISTED (${root.nonExecutable ? "non-executable artifact" : "review-staging"}) — ${root.reason}`,
+  );
+}
 
-  if (rogueFiles.length > 0) {
-    console.error(
-      "\nERROR: The repo-root migrations/ directory is archived.\n" +
-        "       New database changes must go into artifacts/api-server/src/migrations/ instead.\n" +
-        "       See migrations/README.md for details.\n\n" +
-        "       Unexpected file(s) found in the archived directory:\n" +
-        rogueFiles.map((f) => `         • ${f}`).join("\n") +
-        "\n",
-    );
-    anyFailed = true;
-  } else {
-    const total = (() => {
-      try {
-        return (
-          readdirSync(rootMigrationsDir, { recursive: true }) as string[]
-        ).filter((f) => f.endsWith(".sql")).length;
-      } catch {
-        return 0;
-      }
-    })();
-    console.log(
-      `check:frozen-dir [root]   PASSED (${total} known file(s), 0 rogue)`,
-    );
+const looseProblems = result.looseDiffs.filter((d) => d.status !== "ok");
+if (looseProblems.length > 0) {
+  console.error("\nERROR: Individually-pinned loose migration file(s) changed:");
+  for (const d of looseProblems) {
+    console.error(`         ${d.status === "missing" ? "-" : "~"} ${d.relPath} (${d.status})`);
   }
+  console.error();
+  anyFailed = true;
+} else {
+  console.log(`check:frozen-dir [loose files] PASSED (${result.looseDiffs.length} known file(s), unchanged)`);
+}
+
+if (result.unlistedHits.length > 0) {
+  console.error(
+    "\nERROR: Found migration-shaped .sql file(s) outside the canonical dir and every\n" +
+      "       known frozen root/loose-file entry. A new root must be added to\n" +
+      "       frozenMigrationRoots.ts explicitly — or, if these files belong in the\n" +
+      "       canonical chain, moved to artifacts/api-server/src/migrations/ instead.\n" +
+      "       This is exactly how artifacts/api-server/supabase/migrations/ went\n" +
+      "       unnoticed: do not let this pass silently.\n\n" +
+      "       Unlisted file(s):\n" +
+      result.unlistedHits.map((f) => `         • ${f}`).join("\n") + "\n",
+  );
+  anyFailed = true;
+} else {
+  console.log("check:frozen-dir [unlisted-root sweep] PASSED (no migration-shaped files outside known roots)");
+}
+
+if (result.nonExecutableOverlaps.length > 0) {
+  console.error(
+    "\nERROR: A non-executable artifact root (see ALLOWLISTED_ROOTS in frozenMigrationRoots.ts,\n" +
+      "       nonExecutable: true) has a file that collides with the canonical migration\n" +
+      "       chain. This root must NEVER be reachable by anything that applies migrations —\n" +
+      "       a collision here means it could be mistaken for one:\n\n" +
+      result.nonExecutableOverlaps
+        .map((o) => `         • ${o.relPath} — ${o.kind} as canonical file ${o.collidesWith}`)
+        .join("\n") + "\n",
+  );
+  anyFailed = true;
+} else {
+  console.log(
+    `check:frozen-dir [non-executable overlap] PASSED (no non-executable-root .sql file shares a filename or content hash with the canonical chain)`,
+  );
 }
 
 if (anyFailed) {

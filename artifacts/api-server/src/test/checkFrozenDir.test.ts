@@ -1,13 +1,15 @@
 /**
- * Frozen-dir guard — rogue-file detection logic
+ * Bare-filename rogue-file detection — as used by auditMigrationsVsLive.ts's
+ * OWN embedded checkFrozenDirGuard() (a separate, still-bare-filename-only
+ * copy of frozen-dir checking that predates and is untouched by the
+ * checkFrozenDir.ts/frozenDirCheck.ts rewrite — see checkFrozenDirCheck.test.ts
+ * for that one, which tests content-hash-aware checking, missing-root
+ * detection, deletion detection, and the unlisted-root sweep).
  *
- * checkFrozenDir.ts itself is a top-level-executing standalone script (it
- * calls process.exit()), so it can't be imported directly in a test without
- * killing the test process. Instead this test exercises the same detection
- * logic checkFrozenDir.ts uses — filtering a directory listing against
- * FROZEN_LEGACY_FILES — to confirm a brand-new .sql file dropped into the
- * legacy migrations folder is classified as rogue, while every currently
- * allowlisted file is not.
+ * NOTE: this is the OLD, narrower logic. It cannot detect a file whose
+ * content was modified in place (same bare filename → still "known"), and it
+ * only ever checks two hardcoded roots. Kept here because it's still an
+ * accurate test of what auditMigrationsVsLive.ts's inline guard does today.
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
