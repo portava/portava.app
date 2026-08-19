@@ -842,6 +842,55 @@ export type Database = {
         }
         Relationships: []
       }
+      // hand-added; regenerate from live DB after apply (migration 2100_canonical_events.sql)
+      canonical_events: {
+        Row: {
+          actor_id: string | null
+          confidence: number | null
+          created_at: string
+          expires_at: string | null
+          freshness_seconds: number | null
+          id: string
+          occurred_at: string
+          payload: Json
+          privacy_eligible: boolean | null
+          source_count: number | null
+          subject_id: string | null
+          subject_kind: string | null
+          verb: string
+        }
+        Insert: {
+          actor_id?: string | null
+          confidence?: number | null
+          created_at?: string
+          expires_at?: string | null
+          freshness_seconds?: number | null
+          id?: string
+          occurred_at?: string
+          payload?: Json
+          privacy_eligible?: boolean | null
+          source_count?: number | null
+          subject_id?: string | null
+          subject_kind?: string | null
+          verb: string
+        }
+        Update: {
+          actor_id?: string | null
+          confidence?: number | null
+          created_at?: string
+          expires_at?: string | null
+          freshness_seconds?: number | null
+          id?: string
+          occurred_at?: string
+          payload?: Json
+          privacy_eligible?: boolean | null
+          source_count?: number | null
+          subject_id?: string | null
+          subject_kind?: string | null
+          verb?: string
+        }
+        Relationships: []
+      }
       canonical_locations: {
         Row: {
           aliases: string[]
@@ -5790,6 +5839,28 @@ export type Database = {
           responded_at?: string | null
           status?: string
           updated_at?: string | null
+        }
+        Relationships: []
+      }
+      // hand-added; regenerate from live DB after apply (migration 2102_freshness_policies.sql)
+      freshness_policies: {
+        Row: {
+          claim_type: string
+          note: string | null
+          ttl_seconds: number
+          updated_at: string
+        }
+        Insert: {
+          claim_type: string
+          note?: string | null
+          ttl_seconds: number
+          updated_at?: string
+        }
+        Update: {
+          claim_type?: string
+          note?: string | null
+          ttl_seconds?: number
+          updated_at?: string
         }
         Relationships: []
       }
@@ -17132,6 +17203,31 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      // hand-added; regenerate from live DB after apply (migration 2101_source_registry.sql)
+      sources: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          key: string
+          origin: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          key: string
+          origin: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          key?: string
+          origin?: string
+        }
+        Relationships: []
       }
       spatial_ref_sys: {
         Row: {
