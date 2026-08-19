@@ -672,9 +672,22 @@ export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
     constraint: model.constraints,
     extension: model.extensions,
   };
+  // View / matview columns appear in information_schema.columns, but the model
+  // (CREATE TABLE only) carries none — a view's columns follow from its SELECT
+  // and are explained by the view relation itself. Audit base-table columns.
+  const viewTables = new Set<string>();
+  for (const [name, kind] of live.relations) {
+    if (kind === "v" || kind === "m") viewTables.add(name);
+  }
+  const liveBaseColumns = new Set(
+    [...live.columns].filter(
+      (col) => !viewTables.has(col.slice(0, col.lastIndexOf("."))),
+    ),
+  );
+
   const liveByKind: Record<string, Set<string>> = {
     relation: new Set(live.relations.keys()),
-    column: live.columns,
+    column: liveBaseColumns,
     function: live.functions,
     index: live.indexes,
     policy: new Set(live.policies.keys()),

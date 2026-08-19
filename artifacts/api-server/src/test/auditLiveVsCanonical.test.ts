@@ -275,6 +275,27 @@ describe("extractConstraintBackedIndexes — PK/UNIQUE constraints", () => {
   });
 });
 
+describe("computeUnexplained — view columns are not audited", () => {
+  it("excludes columns of view/matview relations (model has none by design)", () => {
+    const live = makeLive({
+      relations: new Map([["foo", "r"], ["v_bar", "v"]]),
+      rlsEnabled: new Set(["foo"]),
+      policyCountByTable: new Map([["foo", 1]]),
+      columns: new Set(["foo.a", "v_bar.x"]),
+    });
+    const model = makeModel({
+      relations: new Set(["foo", "v_bar"]),
+      rlsClaimTables: new Set(["foo"]),
+      columns: new Set(["foo.a"]),
+    });
+    const r = run({ model, live, dispositions: { foo: { class: "RLS_REQUIRED", policyCount: 1 } } });
+    assert.deepEqual(
+      r.findings.filter((f) => f.code === "UNEXPLAINED_LIVE" && f.kind === "column"),
+      [],
+    );
+  });
+});
+
 describe("computeUnexplained — POLICY_PREDICATE_DRIFT", () => {
   it("ignores paren/role-order differences and flags real drift", () => {
     const live = makeLive({
