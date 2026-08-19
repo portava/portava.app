@@ -79,6 +79,7 @@ interface FakeState {
   }>;
   profiles: Array<{ id: string; name: string | null; avatar_url: string | null }>;
   blocks?: Array<{ blocker_id: string; blocked_id: string }>;
+  userPrivacySettings?: Array<{ user_id: string; allow_location_sharing: boolean }>;
 }
 
 function buildQuery(allRows: any[]) {
@@ -121,6 +122,7 @@ function makeClient(state: FakeState, tokenToUser: Record<string, string> = { [V
     user_location_state: state.locationState,
     profiles: state.profiles,
     blocks: state.blocks ?? [],
+    user_privacy_settings: state.userPrivacySettings ?? [],
   };
 
   return {
@@ -382,6 +384,72 @@ describe("GET /api/me/circle-locations", () => {
     const expected = coarsenPosition(USER_ID, OWN_LAT, OWN_LNG, effectiveDiscoveryVisibility(null) ?? "city_only");
     assert.equal(loc.lat, expected.lat);
     assert.equal(loc.lng, expected.lng);
+  });
+
+  it("excludes a member who turned the master location switch OFF (allow_location_sharing = false)", async () => {
+    // trusted_circle_share defaults to true (no opt-out here), but the master
+    // switch user_privacy_settings.allow_location_sharing is false → the member
+    // must disappear entirely, mirroring listMapTravelers' upsExcluded.
+    const client = makeClient({
+      circleMemberships: [
+        { user_id: USER_ID, other_id: MEMBER_A },
+        { user_id: USER_ID, other_id: MEMBER_B },
+      ],
+      locationPreferences: [],
+      locationState: [
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris", country: "FR", updated_at: "2026-07-01T10:00:00Z" },
+        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: "2026-07-01T08:00:00Z" },
+      ],
+      profiles: [
+        { id: MEMBER_A, name: "Alice", avatar_url: null },
+        { id: MEMBER_B, name: "Bob",   avatar_url: null },
+      ],
+      userPrivacySettings: [{ user_id: MEMBER_B, allow_location_sharing: false }],
+    });
+    _setTestClient(client as any, true);
+
+    const r = await req("/me/circle-locations");
+    assert.equal(r.status, 200);
+    const ids = r.body.locations.map((l: any) => l.userId);
+    assert.ok(ids.includes(MEMBER_A),  "member A (sharing on) should appear");
+    assert.ok(!ids.includes(MEMBER_B), "member B (allow_location_sharing=false) must not appear");
+    // The excluded member must leak nothing — no city/country row at all.
+    assert.ok(!r.body.locations.some((l: any) => l.city === "Tokyo"), "no field of the OFF member may leak");
+  });
+
+  it("excludes a member whose effective visibility is 'hide' — no city/country/updated_at leak", async () => {
+    // effectiveDiscoveryVisibility() returns null for sharing_paused,
+    // location_mode='off', and discovery_visibility='no_location'. In every
+    // such case the member must be EXCLUDED, not coarsened to city_only (which
+    // would still expose city/country/updated_at). trusted_circle_share is left
+    // at its default (true) so only the visibility=null path is under test.
+    const client = makeClient({
+      circleMemberships: [
+        { user_id: USER_ID, other_id: MEMBER_A }, // sharing_paused → null → exclude
+        { user_id: USER_ID, other_id: MEMBER_B }, // location_mode 'off' → null → exclude
+        { user_id: USER_ID, other_id: MEMBER_C }, // discovery_visibility 'no_location' → null → exclude
+      ],
+      locationPreferences: [
+        { user_id: MEMBER_A, trusted_circle_share: true, sharing_paused: true },
+        { user_id: MEMBER_B, trusted_circle_share: true, location_mode: "off" },
+        { user_id: MEMBER_C, trusted_circle_share: true, discovery_visibility: "no_location" },
+      ],
+      locationState: [
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris",  country: "FR", updated_at: "2026-07-01T10:00:00Z" },
+        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo",  country: "JP", updated_at: "2026-07-01T08:00:00Z" },
+        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278,  city: "London", country: "GB", updated_at: "2026-07-01T09:00:00Z" },
+      ],
+      profiles: [
+        { id: MEMBER_A, name: "Alice", avatar_url: null },
+        { id: MEMBER_B, name: "Bob",   avatar_url: null },
+        { id: MEMBER_C, name: "Carol", avatar_url: null },
+      ],
+    });
+    _setTestClient(client as any, true);
+
+    const r = await req("/me/circle-locations");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.locations, [], "all sharing-OFF members must be excluded, leaking nothing");
   });
 
   it("excludes a circle member the caller has blocked", async () => {

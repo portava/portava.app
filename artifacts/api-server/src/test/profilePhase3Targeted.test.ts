@@ -395,4 +395,170 @@ describe("Profile Phase 3 — targeted QA", () => {
       assert.equal(body.postImpressions7d, 0, "should be 0 when table is unavailable");
     });
   });
+
+  // ── Private-account privacy leaks (S2–S6) ────────────────────────────────────
+
+  const OTHER_ID = "dddddddd-4444-0000-0000-000000000004";
+
+  describe("GET /users/:userId/follow-status — private-count gating (S3)", () => {
+    it("nulls follower/following counts for a private target the caller does not follow", async () => {
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }],
+        profiles: [{ id: NORMAL_ID, is_private: true }],
+        // NORMAL_ID has one follower and follows one account → real counts are 1/1.
+        user_follows: [
+          { follower_id: OTHER_ID, following_id: NORMAL_ID },
+          { follower_id: NORMAL_ID, following_id: OTHER_ID },
+        ],
+      });
+      _setTestClient(client as any, true);
+      _setTestServiceClient(client as any);
+
+      const { status, body } = await req("GET", `/users/${NORMAL_ID}/follow-status`);
+      assert.equal(status, 200);
+      assert.equal(body.isFollowing, false);
+      assert.equal(body.followersCount, null, "private non-follower must not see follower count");
+      assert.equal(body.followingCount, null, "private non-follower must not see following count");
+    });
+
+    it("returns real counts for a private target the caller already follows", async () => {
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }],
+        profiles: [{ id: NORMAL_ID, is_private: true }],
+        user_follows: [
+          { follower_id: CALLER_ID, following_id: NORMAL_ID }, // caller follows target
+          { follower_id: OTHER_ID, following_id: NORMAL_ID },
+        ],
+      });
+      _setTestClient(client as any, true);
+      _setTestServiceClient(client as any);
+
+      const { status, body } = await req("GET", `/users/${NORMAL_ID}/follow-status`);
+      assert.equal(status, 200);
+      assert.equal(body.isFollowing, true);
+      assert.equal(body.followersCount, 2, "follower sees the real follower count");
+      assert.equal(body.followingCount, 0);
+    });
+
+    it("returns real counts for a public target regardless of follow state", async () => {
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }],
+        profiles: [{ id: NORMAL_ID, is_private: false }],
+        user_follows: [{ follower_id: OTHER_ID, following_id: NORMAL_ID }],
+      });
+      _setTestClient(client as any, true);
+      _setTestServiceClient(client as any);
+
+      const { status, body } = await req("GET", `/users/${NORMAL_ID}/follow-status`);
+      assert.equal(status, 200);
+      assert.equal(body.followersCount, 1, "public counts are always visible");
+      assert.equal(body.followingCount, 0);
+    });
+  });
+
+  describe("GET /users/:userId passport — private redaction (S2, S4)", () => {
+    const passportProfile = (over: Record<string, any>) => ({
+      id: NORMAL_ID, handle: "target", name: "Target", avatar_url: "https://cdn.example.com/t.jpg",
+      bio: "hi", home_city: null, home_country: null, current_city: null, travel_style: null,
+      interests: [], verified: false, verification_status: "unverified", verified_at: null,
+      open_to_meet: false, is_private: false, passport_visibility: "public", created_at: "2026-01-01T00:00:00Z",
+      spoken_languages: [], default_language: null, travel_styles: [], travel_pace: null, budget_style: null,
+      travel_group_style: [], looking_for: [], comfort_level: null, availability_tags: [], planning_style: null,
+      account_status: "active", is_official: false, ...over,
+    });
+
+    it("redacts a passport_visibility='private' account even when is_private=false (S2)", async () => {
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }],
+        profiles: [passportProfile({ is_private: false, passport_visibility: "private" })],
+        user_follows: [{ follower_id: OTHER_ID, following_id: NORMAL_ID }], // real follower count 1
+      });
+      _setTestClient(client as any, true);
+      _setTestServiceClient(client as any);
+
+      const { status, body } = await req("GET", `/users/${NORMAL_ID}`);
+      assert.equal(status, 200);
+      assert.equal(body.isPrivate, true, "passport_visibility='private' must make the account private");
+      assert.ok(!("bio" in body), "private preview must not include rich fields like bio");
+      // S4: locked preview leaks nothing sensitive.
+      assert.equal(body.avatarUrl, null, "private preview avatar must be null");
+      assert.equal(body.followersCount, null, "private preview omits follower count");
+      assert.equal(body.followingCount, null, "private preview omits following count");
+      assert.equal(body.reason, null, "private preview must not carry a shared-destination reason");
+    });
+
+    it("serves the full public passport (with avatar + counts) for a public account", async () => {
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }],
+        profiles: [passportProfile({})],
+        user_follows: [{ follower_id: OTHER_ID, following_id: NORMAL_ID }],
+      });
+      _setTestClient(client as any, true);
+      _setTestServiceClient(client as any);
+
+      const { status, body } = await req("GET", `/users/${NORMAL_ID}`);
+      assert.equal(status, 200);
+      assert.equal(body.isPrivate, false);
+      assert.equal(body.avatarUrl, "https://cdn.example.com/t.jpg");
+      assert.equal(body.followersCount, 1);
+    });
+  });
+
+  describe("GET /users/search — private row field nulling (S5)", () => {
+    it("keeps the private row but nulls avatar, follower count, and reason", async () => {
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }],
+        profiles: [{
+          id: NORMAL_ID, handle: "privuser", username: "privuser", name: "Priv",
+          avatar_url: "https://cdn.example.com/p.jpg", is_private: true, account_status: "active",
+          home_city: null, home_country: null, spoken_languages: [], interests: [],
+          verified: false, is_official: false,
+        }],
+        blocks: [],
+        profile_privacy_settings: [],
+        user_follows: [{ follower_id: OTHER_ID, following_id: NORMAL_ID }], // real count 1
+        friend_requests: [],
+      });
+      _setTestClient(client as any, true);
+      _setTestServiceClient(client as any);
+
+      const { status, body } = await req("GET", "/users/search?q=privuser");
+      assert.equal(status, 200);
+      const hit = (body.users ?? []).find((u: any) => u.id === NORMAL_ID);
+      assert.ok(hit, "private account is still returned as a search hit (for follow purposes)");
+      assert.equal(hit.isPrivate, true);
+      assert.equal(hit.avatarUrl, null, "private search hit must not leak avatar");
+      assert.equal(hit.followerCount, null, "private search hit must not leak follower count");
+      assert.equal(hit.reason, null, "private search hit must not leak a shared-destination reason");
+    });
+  });
+
+  describe("GET /users/suggestions — private follower-count gating (S6)", () => {
+    it("nulls followerCount on a private suggestion card, matching its sibling fields", async () => {
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }],
+        profiles: [
+          { id: CALLER_ID, account_status: "active", travel_styles: [], travel_pace: null, budget_style: null, travel_group_style: [], looking_for: [], comfort_level: null, planning_style: null },
+          { id: NORMAL_ID, handle: "privcand", name: "PrivCand", avatar_url: "https://cdn.example.com/pc.jpg", is_private: true, account_status: "active", travel_styles: [], travel_pace: null, budget_style: null, travel_group_style: [], looking_for: [], comfort_level: null, planning_style: null, verified: false, is_official: false },
+        ],
+        profile_privacy_settings: [],
+        // NORMAL_ID follows the caller (follow-back candidate) and has one follower.
+        user_follows: [
+          { follower_id: NORMAL_ID, following_id: CALLER_ID },
+          { follower_id: OTHER_ID, following_id: NORMAL_ID },
+        ],
+        friend_requests: [],
+      });
+      _setTestClient(client as any, true);
+      _setTestServiceClient(client as any);
+
+      const { status, body } = await req("GET", "/users/suggestions");
+      assert.equal(status, 200);
+      const card = (body.users ?? []).find((u: any) => u.id === NORMAL_ID);
+      assert.ok(card, "private follow-back candidate should appear in suggestions");
+      assert.equal(card.isPrivate, true);
+      assert.equal(card.avatarUrl, null, "private card avatar is null (existing behaviour)");
+      assert.equal(card.followerCount, null, "private card follower count must also be null");
+    });
+  });
 });
