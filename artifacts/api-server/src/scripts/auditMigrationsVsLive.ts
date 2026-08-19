@@ -65,7 +65,7 @@ import "../lib/ciProdReadOnlyAuditGuard.mjs";
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { FROZEN_LEGACY_FILES } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
 
@@ -115,21 +115,30 @@ function checkFrozenDirGuard(dir: string, frozenSet: Set<string>, label: string)
   }
 }
 
-// 1. Legacy dir: artifacts/api-server/migrations/ (frozen 2026-07-17)
-checkFrozenDirGuard(
-  resolve(__dir, "../../migrations"),
-  FROZEN_LEGACY_FILES,
-  "The legacy migrations directory (artifacts/api-server/migrations/)\n" +
-    "       See artifacts/api-server/migrations/README.md for details.",
-);
+// The two frozen-dir guards run inside main() (below), not at module scope, so
+// that importing this module for its exported parser/transport (parseMigration,
+// fetchLiveSchema, liveQuery — reused by the inverse auditor
+// src/scripts/auditLiveVsCanonical.ts) has no side effect: an import must never
+// read directories or exit a process, only an actual `main()` call may. The
+// order relative to the env check and the audit loop is unchanged for the
+// `audit:schema` entrypoint, which still runs them first.
+function runFrozenDirGuards(): void {
+  // 1. Legacy dir: artifacts/api-server/migrations/ (frozen 2026-07-17)
+  checkFrozenDirGuard(
+    resolve(__dir, "../../migrations"),
+    FROZEN_LEGACY_FILES,
+    "The legacy migrations directory (artifacts/api-server/migrations/)\n" +
+      "       See artifacts/api-server/migrations/README.md for details.",
+  );
 
-// 2. Repo-root dir: migrations/ (archived 2026-08-08)
-checkFrozenDirGuard(
-  resolve(__dir, "../../../../migrations"),
-  FROZEN_ROOT_FILES,
-  "The repo-root migrations/ directory\n" +
-    "       See migrations/README.md for details.",
-);
+  // 2. Repo-root dir: migrations/ (archived 2026-08-08)
+  checkFrozenDirGuard(
+    resolve(__dir, "../../../../migrations"),
+    FROZEN_ROOT_FILES,
+    "The repo-root migrations/ directory\n" +
+      "       See migrations/README.md for details.",
+  );
+}
 
 /** Migration files skipped entirely (superseded or known-drifted). */
 const SKIP_FILES = new Set([
@@ -273,32 +282,34 @@ const ALLOWLIST = new Set([
 
 // ── Environment ───────────────────────────────────────────────────────────────
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-// Prefer SUPABASE_PROJECT_TOKEN (project-scoped, safe for CI) over the personal
-// SUPABASE_ACCESS_TOKEN so CI runners never need a developer account token
-// (mirrors the convention in scripts/check-db-triggers.sh).
-const ACCESS_TOKEN =
-  process.env.SUPABASE_PROJECT_TOKEN || process.env.SUPABASE_ACCESS_TOKEN;
-
-if (!SUPABASE_URL || !ACCESS_TOKEN) {
-  console.error(
-    "ERROR: SUPABASE_URL and a Supabase token must be set.\n" +
-      "       Set SUPABASE_PROJECT_TOKEN (project-scoped, preferred for CI)\n" +
-      "       or SUPABASE_ACCESS_TOKEN (personal access token).\n" +
-      "       Run from artifacts/api-server with the .env loaded, or export them manually.",
-  );
-  process.exit(2);
+// projectRef and the access token are resolved LAZILY, inside liveQuery, rather
+// than at module scope. The old module-scope `new URL(SUPABASE_URL)` threw at
+// import time when SUPABASE_URL was unset — which meant merely importing this
+// module (as the inverse auditor now does, to reuse parseMigration /
+// fetchLiveSchema / liveQuery) could throw. With the derivation moved here the
+// import is pure: only an actual liveQuery call touches the environment, and it
+// does so after the env-presence check main() performs.
+function resolveProjectRef(): string {
+  const url = process.env.SUPABASE_URL;
+  if (!url) throw new Error("SUPABASE_URL not set");
+  return new URL(url).hostname.split(".")[0];
 }
 
-const projectRef = new URL(SUPABASE_URL).hostname.split(".")[0];
-
-async function liveQuery<T = Record<string, unknown>>(query: string): Promise<T[]> {
+export async function liveQuery<T = Record<string, unknown>>(
+  query: string,
+): Promise<T[]> {
+  const projectRef = resolveProjectRef();
+  // Prefer SUPABASE_PROJECT_TOKEN (project-scoped, safe for CI) over the
+  // personal SUPABASE_ACCESS_TOKEN so CI runners never need a developer account
+  // token (mirrors the convention in scripts/check-db-triggers.sh).
+  const accessToken =
+    process.env.SUPABASE_PROJECT_TOKEN || process.env.SUPABASE_ACCESS_TOKEN;
   const res = await fetch(
     `https://api.supabase.com/v1/projects/${projectRef}/database/query`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ query }),
@@ -312,7 +323,7 @@ async function liveQuery<T = Record<string, unknown>>(query: string): Promise<T[
 
 // ── Live schema snapshot ──────────────────────────────────────────────────────
 
-interface LiveSchema {
+export interface LiveSchema {
   relations: Set<string>; // tables + views + matviews
   columns: Set<string>; // "table.column"
   functions: Set<string>;
@@ -326,7 +337,7 @@ interface LiveSchema {
   routineGrants: Set<string>; // "function.grantee" (EXECUTE only)
 }
 
-async function fetchLiveSchema(): Promise<LiveSchema> {
+export async function fetchLiveSchema(): Promise<LiveSchema> {
   const [rels, cols, fns, idxs, pols, enums, trgs, rls, tgrants, rgrants] =
     await Promise.all([
     liveQuery<{ name: string }>(
@@ -411,7 +422,7 @@ async function fetchLiveSchema(): Promise<LiveSchema> {
 
 // ── Migration parsing ─────────────────────────────────────────────────────────
 
-interface Claim {
+export interface Claim {
   kind:
     | "table"
     | "column"
@@ -533,7 +544,7 @@ function parseColumnDefs(body: string): string[] {
   return cols;
 }
 
-function parseMigration(sql: string): Claim[] {
+export function parseMigration(sql: string): Claim[] {
   const src = stripSql(sql);
   const claims: Claim[] = [];
   const add = (kind: Claim["kind"], key: string, label: string) =>
@@ -779,59 +790,95 @@ function isMissing(claim: Claim, live: LiveSchema): boolean {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+//
+// The audit runs only when this file is the process ENTRYPOINT (audit:schema),
+// never on import. The inverse auditor (auditLiveVsCanonical.ts) imports this
+// module for parseMigration / fetchLiveSchema / liveQuery, and that import must
+// not fetch a schema, read a directory, or exit — only an actual `main()` call
+// may. The env-presence check and projectRef derivation live here (not at module
+// scope) for the same reason; the output for the audit:schema entrypoint is
+// unchanged.
 
-console.log(`Auditing migrations against live schema (project ${projectRef}) …`);
+async function main(): Promise<void> {
+  runFrozenDirGuards();
 
-let live: LiveSchema;
-try {
-  live = await fetchLiveSchema();
-} catch (err) {
-  console.error(`ERROR: failed to fetch live schema: ${(err as Error).message}`);
-  process.exit(2);
-}
-
-let totalClaims = 0;
-let filesWithGaps = 0;
-let missingCount = 0;
-let filesAudited = 0;
-
-for (const dir of MIGRATION_DIRS) {
-  let files: string[];
-  try {
-    files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
-  } catch {
-    continue; // dir may not exist
-  }
-  console.log(`\n── ${dir}`);
-  for (const file of files) {
-    if (SKIP_FILES.has(file)) {
-      console.log(`  ⤳ ${file} (skipped: known superseded/drifted)`);
-      continue;
-    }
-    filesAudited++;
-    const claims = parseMigration(readFileSync(join(dir, file), "utf8"));
-    totalClaims += claims.length;
-    const missing = claims.filter(
-      (c) => !ALLOWLIST.has(c.key) && isMissing(c, live),
+  const SUPABASE_URL = process.env.SUPABASE_URL;
+  const ACCESS_TOKEN =
+    process.env.SUPABASE_PROJECT_TOKEN || process.env.SUPABASE_ACCESS_TOKEN;
+  if (!SUPABASE_URL || !ACCESS_TOKEN) {
+    console.error(
+      "ERROR: SUPABASE_URL and a Supabase token must be set.\n" +
+        "       Set SUPABASE_PROJECT_TOKEN (project-scoped, preferred for CI)\n" +
+        "       or SUPABASE_ACCESS_TOKEN (personal access token).\n" +
+        "       Run from artifacts/api-server with the .env loaded, or export them manually.",
     );
-    if (missing.length > 0) {
-      filesWithGaps++;
-      missingCount += missing.length;
-      console.log(`  ✖ ${file}`);
-      for (const c of missing) console.log(`      missing ${c.label}`);
+    process.exit(2);
+  }
+
+  const projectRef = new URL(SUPABASE_URL).hostname.split(".")[0];
+  console.log(
+    `Auditing migrations against live schema (project ${projectRef}) …`,
+  );
+
+  let live: LiveSchema;
+  try {
+    live = await fetchLiveSchema();
+  } catch (err) {
+    console.error(
+      `ERROR: failed to fetch live schema: ${(err as Error).message}`,
+    );
+    process.exit(2);
+  }
+
+  let totalClaims = 0;
+  let filesWithGaps = 0;
+  let missingCount = 0;
+  let filesAudited = 0;
+
+  for (const dir of MIGRATION_DIRS) {
+    let files: string[];
+    try {
+      files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+    } catch {
+      continue; // dir may not exist
+    }
+    console.log(`\n── ${dir}`);
+    for (const file of files) {
+      if (SKIP_FILES.has(file)) {
+        console.log(`  ⤳ ${file} (skipped: known superseded/drifted)`);
+        continue;
+      }
+      filesAudited++;
+      const claims = parseMigration(readFileSync(join(dir, file), "utf8"));
+      totalClaims += claims.length;
+      const missing = claims.filter(
+        (c) => !ALLOWLIST.has(c.key) && isMissing(c, live),
+      );
+      if (missing.length > 0) {
+        filesWithGaps++;
+        missingCount += missing.length;
+        console.log(`  ✖ ${file}`);
+        for (const c of missing) console.log(`      missing ${c.label}`);
+      }
     }
   }
+
+  console.log(
+    `\nAudited ${filesAudited} migration files, ${totalClaims} claimed objects.`,
+  );
+  if (missingCount > 0) {
+    console.error(
+      `✖ ${missingCount} missing object(s) across ${filesWithGaps} file(s). ` +
+        "Apply the migrations via the Supabase Management API and update docs/migrations.md.",
+    );
+    process.exit(1);
+  }
+  console.log("✔ Live schema contains every object claimed by the migrations.");
+  process.exit(0);
 }
 
-console.log(
-  `\nAudited ${filesAudited} migration files, ${totalClaims} claimed objects.`,
-);
-if (missingCount > 0) {
-  console.error(
-    `✖ ${missingCount} missing object(s) across ${filesWithGaps} file(s). ` +
-      "Apply the migrations via the Supabase Management API and update docs/migrations.md.",
-  );
-  process.exit(1);
+// Entrypoint gate: run the audit only when invoked directly (audit:schema),
+// so importing this module for its exports runs nothing.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  await main();
 }
-console.log("✔ Live schema contains every object claimed by the migrations.");
-process.exit(0);

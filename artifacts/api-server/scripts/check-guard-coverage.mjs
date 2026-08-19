@@ -183,6 +183,17 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'on disk. Auditing production is its purpose: the drift list in docs/migrations.md came from it.',
   },
   {
+    file: 'src/scripts/auditLiveVsCanonical.ts',
+    reason:
+      'The INVERSE of audit:schema (audit:live-unexplained): issues only SELECTs to build the live-vs-canonical ' +
+      'census and errors on any live object the canonical model does not explain. Everything it sends is a read: ' +
+      'pg_class with relkind, information_schema.columns, pg_proc with pg_get_function_identity_arguments (extension' +
+      '-owned excluded via pg_depend), pg_indexes, pg_policies including qual/with_check/roles, pg_type/pg_enum, ' +
+      'pg_trigger, pg_constraint, pg_extension, information_schema.role_table_grants/role_column_grants/' +
+      'role_routine_grants, and server_version_num. It reuses the forward auditor transport and writes no file — in ' +
+      'particular no .sql under src/migrations. No INSERT/UPDATE/DELETE/DDL or auth-admin call anywhere.',
+  },
+  {
     file: 'src/scripts/reportDiscoveryServePoints.ts',
     reason:
       'One SELECT on rank_events (features, session_id, served_at) filtered to surface=discovery, ' +
