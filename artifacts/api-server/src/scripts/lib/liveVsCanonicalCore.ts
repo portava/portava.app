@@ -473,6 +473,21 @@ export function extractColumnGrants(sql: string): Map<string, Set<string>> {
   return out;
 }
 
+/** 'enumname.value' (lowercased) from CREATE TYPE ... AS ENUM ( 'a', 'b', … ).
+ *  parseMigration reads only ALTER TYPE ADD VALUE; pg_dump emits enum labels
+ *  inside the CREATE TYPE body, so without this the model carries zero enum
+ *  values and flags every live label as unexplained. */
+export function extractEnumValues(sql: string): Set<string> {
+  const out = new Set<string>();
+  const re =
+    /create\s+type\s+(?:[\w"]+\.)?"?([a-z_][a-z0-9_]*)"?\s+as\s+enum\s*\(([^)]*)\)/gi;
+  for (const m of sql.matchAll(re)) {
+    const name = m[1].toLowerCase();
+    for (const v of m[2].matchAll(/'([^']*)'/g)) out.add(`${name}.${v[1]}`.toLowerCase());
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MODEL BUILDER (pure)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -586,6 +601,7 @@ export function buildModel(args: {
     }
     for (const c of extractConstraints(sql)) constraints.add(c);
     for (const e of extractExtensions(sql)) extensions.add(e);
+    for (const ev of extractEnumValues(sql)) enumValues.add(ev);
   }
 
   return {
@@ -668,19 +684,36 @@ export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
     }
   }
 
-  // (2) EXCESS_PRIVILEGE — table AND column grants as EXACT sets per key.
+  // (2) EXCESS_PRIVILEGE — table AND column grants, honoring two Postgres
+  // semantics a naive exact-set compare gets wrong (each otherwise turns every
+  // default Supabase grant into a false "excess"):
+  //   * GRANT ALL is one privilege ("all") in the dump, but role_table_grants
+  //     NEVER returns "all" — it returns each implied privilege as its own row.
+  //     A model "all" covers them all.
+  //   * A TABLE grant is inherited by every column: role_column_grants derives
+  //     one row per (column, grantee). A live COLUMN privilege is explained if
+  //     the model grants it (or ALL) on the column OR on the whole table.
+  const covers = (privs: Set<string>, p: string): boolean =>
+    privs.has(p) || privs.has("all");
+
   for (const [k, livePrivs] of live.tableGrants) {
     const modelPrivs = model.tableGrants.get(k) ?? new Set<string>();
     for (const p of livePrivs) {
-      if (!modelPrivs.has(p)) {
+      if (!covers(modelPrivs, p)) {
         add("EXCESS_PRIVILEGE", "grant", k, `live holds '${p}' on ${k} beyond the model`);
       }
     }
   }
   for (const [k, livePrivs] of live.columnGrants) {
-    const modelPrivs = model.columnGrants.get(k) ?? new Set<string>();
+    // k = "table.column.grantee"; a table grant "table.grantee" inherits to it.
+    const parts = k.split(".");
+    const grantee = parts[parts.length - 1];
+    const table = parts.slice(0, parts.length - 2).join(".");
+    const colPrivs = model.columnGrants.get(k) ?? new Set<string>();
+    const tblPrivs =
+      model.tableGrants.get(`${table}.${grantee}`) ?? new Set<string>();
     for (const p of livePrivs) {
-      if (!modelPrivs.has(p)) {
+      if (!covers(colPrivs, p) && !covers(tblPrivs, p)) {
         add(
           "EXCESS_PRIVILEGE",
           "columngrant",

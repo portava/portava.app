@@ -74,3 +74,31 @@ This branch adds no new guard-coverage problems.
    Expect a non-empty first-run finding set — triage each into "add to a >= 2100 migration"
    or "explain in the ledger", then re-run to green.
 4. Clean-build proof job (§6.6) is **owner-only**; this deliverable stops at the npm script.
+
+## First read-only prod run (2026-08-19): 70,783 → grant-semantics fixes
+
+The first `audit:live-unexplained` read-only run against prod returned **70,783
+findings**. Diagnosed locally against the real 38k-line baseline (via a guard-free
+copy of the parser): **not** a parse failure — `buildModel` captures constraints
+(1436), indexes (697), policies (741), functions (76), triggers (23), tableGrants
+(1220) from the dump. The flood was two Postgres grant semantics a naive exact-set
+compare ignored, plus an enum gap:
+
+- **`GRANT ALL`** is stored as the single privilege `"all"` in the dump, but
+  `role_table_grants` never returns `all` — it returns each implied privilege as
+  its own row. A model `"all"` now covers them all.
+- **Column grants** — `role_column_grants` derives one row per column from a
+  TABLE-level grant. A live column privilege is now explained if the model grants
+  it (or ALL) on the column **or** on the whole table for that grantee.
+- **Enum values** — labels live in the `CREATE TYPE … AS ENUM ( … )` body that
+  pg_dump emits; `parseMigration` only read `ALTER TYPE ADD VALUE`. Added
+  `extractEnumValues` (0 → 360 modelled).
+
+**Validated locally** by synthesizing a self-consistent live from the baseline with
+Postgres grant expansion (12,339 derived column grants): `EXCESS_PRIVILEGE` → **0**
+(was the bulk of the 70,783). Fixture suite 33/33.
+
+Residual expected on the next real run: the **extension seed** (owner reconciles
+against `select extname from pg_extension`, per the ledger header — e.g. postgis,
+unaccent were unexplained), any true `POLICY_PREDICATE_DRIFT`, and genuine drift.
+Re-run after these fixes are pushed to see the collapsed set.

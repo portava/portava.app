@@ -20,6 +20,7 @@ import {
   extractFunctionSignatures,
   extractPolicyPredicates,
   extractColumnGrants,
+  extractEnumValues,
 } from "../scripts/lib/liveVsCanonicalCore.js";
 import type {
   LiveInventory,
@@ -196,6 +197,67 @@ describe("computeUnexplained — EXCESS_PRIVILEGE (table AND column grants)", ()
     assert.ok(excess.some((f) => f.kind === "grant" && f.detail.includes("insert")));
     assert.ok(excess.some((f) => f.kind === "columngrant" && f.detail.includes("update")));
     assert.equal(r.exitCode, 1);
+  });
+});
+
+describe("computeUnexplained — grant coverage (Postgres semantics)", () => {
+  it("GRANT ALL in the model covers every expanded live privilege", () => {
+    const live = makeLive({
+      relations: new Map([["foo", "r"]]),
+      tableGrants: new Map([
+        ["foo.service_role", new Set(["select", "insert", "update", "delete", "truncate", "references", "trigger"])],
+      ]),
+    });
+    const model = makeModel({
+      relations: new Set(["foo"]),
+      rlsClaimTables: new Set(["foo"]),
+      tableGrants: new Map([["foo.service_role", new Set(["all"])]]),
+    });
+    const r = run({ model, live, dispositions: { foo: { class: "RLS_REQUIRED", policyCount: 1 } } });
+    assert.equal(r.findings.filter((f) => f.code === "EXCESS_PRIVILEGE").length, 0);
+  });
+
+  it("a TABLE grant covers the column grants Postgres derives from it", () => {
+    const live = makeLive({
+      relations: new Map([["foo", "r"]]),
+      tableGrants: new Map([["foo.anon", new Set(["select"])]]),
+      columnGrants: new Map([
+        ["foo.a.anon", new Set(["select"])],
+        ["foo.b.anon", new Set(["select"])],
+      ]),
+    });
+    const model = makeModel({
+      relations: new Set(["foo"]),
+      rlsClaimTables: new Set(["foo"]),
+      tableGrants: new Map([["foo.anon", new Set(["select"])]]),
+    });
+    const r = run({ model, live, dispositions: { foo: { class: "RLS_REQUIRED", policyCount: 1 } } });
+    assert.equal(r.findings.filter((f) => f.code === "EXCESS_PRIVILEGE").length, 0);
+  });
+
+  it("still flags a TRUE column excess the table grant does not cover", () => {
+    const live = makeLive({
+      relations: new Map([["foo", "r"]]),
+      tableGrants: new Map([["foo.anon", new Set(["select"])]]),
+      columnGrants: new Map([["foo.a.anon", new Set(["update"])]]),
+    });
+    const model = makeModel({
+      relations: new Set(["foo"]),
+      rlsClaimTables: new Set(["foo"]),
+      tableGrants: new Map([["foo.anon", new Set(["select"])]]),
+    });
+    const r = run({ model, live, dispositions: { foo: { class: "RLS_REQUIRED", policyCount: 1 } } });
+    const ex = r.findings.filter((f) => f.code === "EXCESS_PRIVILEGE");
+    assert.equal(ex.length, 1);
+    assert.ok(ex[0].detail.includes("update"));
+  });
+});
+
+describe("extractEnumValues — multi-line CREATE TYPE AS ENUM", () => {
+  it("reads enum labels from the CREATE TYPE body pg_dump emits", () => {
+    const sql = "CREATE TYPE public.appeal_state AS ENUM (\n    'pending',\n    'approved',\n    'denied'\n);";
+    const got = [...extractEnumValues(sql)].sort();
+    assert.deepEqual(got, ["appeal_state.approved", "appeal_state.denied", "appeal_state.pending"]);
   });
 });
 
