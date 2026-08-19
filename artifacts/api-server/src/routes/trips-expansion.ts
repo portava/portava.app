@@ -2413,6 +2413,7 @@ router.delete("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req
     .select("id, assigned_to")
     .eq("id", itemId)
     .eq("checklist_id", checklistId)
+    .eq("trip_id", tripId)
     .maybeSingle();
   if (!item) { sendError(res, "not_found", "Checklist item not found"); return; }
 
@@ -2422,7 +2423,7 @@ router.delete("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req
     sendError(res, "forbidden", "Not a trip member"); return;
   }
 
-  await sc.from("trip_checklist_items").delete().eq("id", itemId);
+  await sc.from("trip_checklist_items").delete().eq("id", itemId).eq("trip_id", tripId);
   res.status(204).send();
 });
 
@@ -2455,6 +2456,7 @@ router.patch("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req,
     .update(patch)
     .eq("id", itemId)
     .eq("checklist_id", checklistId)
+    .eq("trip_id", tripId)
     .select("id, label, is_done, sort_order")
     .maybeSingle();
 
