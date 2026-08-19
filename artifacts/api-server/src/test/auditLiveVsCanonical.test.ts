@@ -21,6 +21,7 @@ import {
   extractPolicyPredicates,
   extractColumnGrants,
   extractEnumValues,
+  extractConstraintBackedIndexes,
 } from "../scripts/lib/liveVsCanonicalCore.js";
 import type {
   LiveInventory,
@@ -258,6 +259,19 @@ describe("extractEnumValues — multi-line CREATE TYPE AS ENUM", () => {
     const sql = "CREATE TYPE public.appeal_state AS ENUM (\n    'pending',\n    'approved',\n    'denied'\n);";
     const got = [...extractEnumValues(sql)].sort();
     assert.deepEqual(got, ["appeal_state.approved", "appeal_state.denied", "appeal_state.pending"]);
+  });
+});
+
+describe("extractConstraintBackedIndexes — PK/UNIQUE constraints", () => {
+  it("returns the constraint-named index for PK and UNIQUE, not CHECK/FK", () => {
+    const sql = [
+      "ALTER TABLE ONLY public.foo ADD CONSTRAINT foo_pkey PRIMARY KEY (id);",
+      "ALTER TABLE ONLY public.foo ADD CONSTRAINT foo_x_key UNIQUE (x);",
+      "ALTER TABLE ONLY public.foo ADD CONSTRAINT foo_chk CHECK (x > 0);",
+      "ALTER TABLE ONLY public.bar ADD CONSTRAINT bar_fk FOREIGN KEY (fid) REFERENCES public.foo(id);",
+    ].join("\n");
+    const got = [...extractConstraintBackedIndexes(sql)].sort();
+    assert.deepEqual(got, ["foo_pkey", "foo_x_key"]);
   });
 });
 

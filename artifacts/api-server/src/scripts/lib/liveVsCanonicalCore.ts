@@ -488,6 +488,18 @@ export function extractEnumValues(sql: string): Set<string> {
   return out;
 }
 
+/** Index names Postgres auto-creates for PRIMARY KEY / UNIQUE constraints — the
+ *  backing index takes the constraint's name. pg_dump emits these as ADD
+ *  CONSTRAINT (not CREATE INDEX), but pg_indexes lists them live, so without
+ *  this every PK/UNIQUE index reads as UNEXPLAINED_LIVE. */
+export function extractConstraintBackedIndexes(sql: string): Set<string> {
+  const out = new Set<string>();
+  const re =
+    /add\s+constraint\s+(?:"([^"]+)"|([a-z_][a-z0-9_]*))\s+(?:primary\s+key|unique)\b/gi;
+  for (const m of sql.matchAll(re)) out.add((m[1] ?? m[2]).toLowerCase());
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // MODEL BUILDER (pure)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -602,6 +614,7 @@ export function buildModel(args: {
     for (const c of extractConstraints(sql)) constraints.add(c);
     for (const e of extractExtensions(sql)) extensions.add(e);
     for (const ev of extractEnumValues(sql)) enumValues.add(ev);
+    for (const ix of extractConstraintBackedIndexes(sql)) indexes.add(ix);
   }
 
   return {
