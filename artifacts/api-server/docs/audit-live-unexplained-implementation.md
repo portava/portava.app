@@ -128,3 +128,23 @@ drift, and possibly a few auto-named CHECK-constraint mismatches. Suite 35/35.
 Branch: feat 6f8d3fe12 → grant semantics d17419a7c → constraint-backed indexes
 89254ce9d → view columns 237e9ce2c. Awaiting the owner's Mac-side push of the
 branch, then the Replit re-run.
+
+## Second re-run (20,186) → cleared to ~0
+
+Grant-role scoping dropped 70,783 → 20,186. Diagnosed the rest from the saved
+`/tmp/audit.txt` (no extra prod run) — three causes, all cleared:
+
+- **19,712 of 20,003 EXCESS were grants to the owner `postgres`** (+97 service_role):
+  pg_dump never emits owner/internal grants, so the model can't carry them. Scoped
+  grant-excess to the untrusted client roles `{anon, authenticated, public}` — the
+  mobile anon-key surfaces where excess is a real signal (`afc9161df`).
+- **16 UNEXPLAINED + 194 anon/authenticated EXCESS + 1 disposition were postgis-owned**
+  (`spatial_ref_sys`/`geometry_columns`/`geography_columns`). Excluded extension-owned
+  objects via `pg_depend deptype='e'`, like the function query already did (`d963f0691`).
+- **164 POLICY_PREDICATE_DRIFT + 3 functions were `public.` over-qualification**
+  (`model='…public.x…'` vs `live='…x…'`). pg_get_expr/pg_get_function_identity_arguments
+  never qualify `public`; pg_dump does. Stripped `public.` in the normalizers (`d963f0691`).
+- **2 STALE + 2 unexplained extensions**: reconciled the ledger to the live set
+  `{pgcrypto, plpgsql, pg_stat_statements, uuid-ossp, supabase_vault, postgis, unaccent}`.
+
+Suite 38/38. Predicted next run: **exit 0**, or a tiny handful of genuine drift.
