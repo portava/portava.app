@@ -23,6 +23,17 @@ describe("normalizers", () => {
     assert.ok(r.preview.badges.includes("verified"));
   });
 
+  it("passes a null avatarUrl through unchanged (A2: upstream flag-gate null is not resurrected)", () => {
+    // listMapTravelers already nulls avatarUrl when show_profile_picture_publicly
+    // is false; normalizeTraveler must carry that null through to thumbnailUrl
+    // rather than substituting a value — this is why fixing A1 auto-closes A2.
+    const r = normalizeTraveler({
+      id: "u2", displayName: "Blake", avatarUrl: null, verified: false, openToMeet: false,
+      city: "Cebu", country: "PH", freshness: "recent", precision: "area", lat: 10.3, lng: 123.9,
+    });
+    assert.equal(r.preview.thumbnailUrl, null, "null avatar must remain null after normalization");
+  });
+
   it("gem → carries coordsPrecision into permissions; distance into reason", () => {
     const exact = normalizeGem({ id: "g1", name: "Rooftop", category: "viewpoint", city: "Cebu", lat: 10.31, lng: 123.91, coordsPrecision: "exact", verification_level: "community" }, 1.2);
     assert.equal(exact.resultType, "gem");

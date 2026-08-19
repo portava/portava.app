@@ -1350,4 +1350,77 @@ describe("GET /api/compass/recommendations?surface=traveler", () => {
       assert.equal(row.session_id, "test-session-trav-1", "impression row must carry the sessionId — not null");
     }
   });
+
+  // ── Avatar privacy gate (A3) ────────────────────────────────────────────────
+  // Seeds travelers whose avatar_url is NON-null, so the assertions prove the
+  // gate actively nulls the avatar rather than passing an already-null value.
+  const TRAV_PRIV_AV = "00000000-0000-0000-0000-0000000avp1";
+  const TRAV_OPTOUT  = "00000000-0000-0000-0000-0000000avo1";
+  const TRAV_PUBLIC  = "00000000-0000-0000-0000-0000000avu1";
+
+  function avatarState(overrides: Partial<FakeState> = {}): FakeState {
+    return travelerState({
+      profiles: [
+        { id: ALICE_ID, spoken_languages: ["en"], budget_style: null, travel_styles: ["hiking"], interests: ["hiking"], travel_group_style: null, account_status: "active", is_private: false, verified: false },
+        // Private traveler with an avatar — must NOT leak to an unconnected viewer.
+        { id: TRAV_PRIV_AV, username: "priv_av", display_name: "Priv Av", avatar_url: "https://example.test/priv.jpg", home_city: "Cebu", spoken_languages: ["en"], interests: ["hiking"], verified: false, account_status: "active", is_private: true, show_profile_picture_publicly: true, created_at: new Date().toISOString() },
+        // Public traveler who opted out of showing their photo (flag=false).
+        { id: TRAV_OPTOUT, username: "optout", display_name: "Opt Out", avatar_url: "https://example.test/optout.jpg", home_city: "Cebu", spoken_languages: ["en"], interests: ["hiking"], verified: false, account_status: "active", is_private: false, show_profile_picture_publicly: false, created_at: new Date().toISOString() },
+        // Public traveler with the default flag — avatar visible (control).
+        { id: TRAV_PUBLIC, username: "pub_av", display_name: "Pub Av", avatar_url: "https://example.test/pub.jpg", home_city: "Cebu", spoken_languages: ["en"], interests: ["hiking"], verified: false, account_status: "active", is_private: false, show_profile_picture_publicly: true, created_at: new Date().toISOString() },
+      ],
+      blocks: [],
+      ...overrides,
+    });
+  }
+
+  it("nulls avatarUrl for a PRIVATE traveler the viewer doesn't follow (closes the private-avatar leak)", async () => {
+    const client = makeFakeClient(avatarState());
+    _setTestClient(client as any, true);
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+
+    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=traveler", { token: "alice-tok" });
+    const rec = body.recommendations.find((r: any) => r.id === TRAV_PRIV_AV);
+    assert.ok(rec, "private traveler must appear");
+    assert.equal(rec.data.avatarUrl, null, "private traveler's avatar must not leak to a non-follower");
+  });
+
+  it("nulls avatarUrl for a PUBLIC traveler who opted out (show_profile_picture_publicly=false), unconnected viewer", async () => {
+    const client = makeFakeClient(avatarState());
+    _setTestClient(client as any, true);
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+
+    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=traveler", { token: "alice-tok" });
+    const rec = body.recommendations.find((r: any) => r.id === TRAV_OPTOUT);
+    assert.ok(rec, "opted-out traveler must appear");
+    assert.equal(rec.data.avatarUrl, null, "avatar must be null when show_profile_picture_publicly=false");
+  });
+
+  it("exposes avatarUrl for a public traveler with the default flag", async () => {
+    const client = makeFakeClient(avatarState());
+    _setTestClient(client as any, true);
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+
+    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=traveler", { token: "alice-tok" });
+    const rec = body.recommendations.find((r: any) => r.id === TRAV_PUBLIC);
+    assert.ok(rec, "public traveler must appear");
+    assert.equal(rec.data.avatarUrl, "https://example.test/pub.jpg", "public traveler with default flag keeps their avatar");
+  });
+
+  it("exposes a private traveler's avatar once the viewer follows them (parity with discoverySearch)", async () => {
+    const client = makeFakeClient(avatarState({
+      user_follows: [{ follower_id: ALICE_ID, following_id: TRAV_PRIV_AV }],
+    }));
+    _setTestClient(client as any, true);
+    invalidateFlagsCache();
+    clearCompassProfileCache();
+
+    const { body } = await req(server, "GET", "/api/compass/recommendations?surface=traveler", { token: "alice-tok" });
+    const rec = body.recommendations.find((r: any) => r.id === TRAV_PRIV_AV);
+    assert.ok(rec, "followed private traveler must appear");
+    assert.equal(rec.data.avatarUrl, "https://example.test/priv.jpg", "follower sees the avatar of a private account");
+  });
 });

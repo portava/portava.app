@@ -2893,7 +2893,7 @@ router.get("/compass/recommendations", async (req, res) => {
       const { data: travelerRows } = await sc
         .from("profiles")
         .select(
-          "id, username, display_name, name, avatar_url, home_city, home_country, " +
+          "id, username, display_name, name, avatar_url, show_profile_picture_publicly, home_city, home_country, " +
           "spoken_languages, interests, verified, account_status, is_private, created_at",
         )
         .neq("id", user.id)
@@ -3033,6 +3033,7 @@ router.get("/compass/recommendations", async (req, res) => {
 
       // Batch-check which travelers the viewer already follows
       const followingSet  = new Set<string>();
+      const friendSet     = new Set<string>();
       const requestedSet  = new Set<string>();
       if (topTravIds.length > 0) {
         const { data: followRows } = await sc
@@ -3041,6 +3042,17 @@ router.get("/compass/recommendations", async (req, res) => {
           .eq("follower_id", user.id)
           .in("following_id", topTravIds);
         for (const r of (followRows ?? []) as any[]) followingSet.add(r.following_id);
+
+        // Friend set — user_friendships stores the normalized (min, max) pair
+        // (see normalizedFriendshipPair in lib/friendDecisions.ts), so which
+        // side `user.id` lands on depends on UUID comparison; both directions
+        // must be queried. Mirrors discoverySearch's friendSet construction.
+        const [friendsAsA, friendsAsB] = await Promise.all([
+          sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", topTravIds),
+          sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", topTravIds),
+        ]);
+        for (const r of (friendsAsA.data ?? []) as any[]) friendSet.add(r.user_b as string);
+        for (const r of (friendsAsB.data ?? []) as any[]) friendSet.add(r.user_a as string);
 
         // For private profiles not yet followed, check for a pending follow request
         const privateUnfollowed = topTravSlice
@@ -3062,6 +3074,14 @@ router.get("/compass/recommendations", async (req, res) => {
       const travelerRecommendations = topTravSlice.map((s) => {
         const nameOk = allowedTravNames.has(s.id);
         const isPrivate = s.row.is_private ?? false;
+        const isFollowing = followingSet.has(s.id);
+        const isFriend = friendSet.has(s.id);
+        // Avatar gate (mirrors discoverySearch): a private account the viewer
+        // already follows behaves like a public one, and a public account's
+        // owner can still opt out via show_profile_picture_publicly (default
+        // true). The !avatarPrivate term closes the private-avatar leak.
+        const avatarPrivate = isPrivate && !isFollowing;
+        const showAvatar = isFollowing || isFriend || s.row.show_profile_picture_publicly !== false;
         const followStatus: "following" | "requested" | "not_following" =
           followingSet.has(s.id) ? "following"
           : requestedSet.has(s.id) ? "requested"
@@ -3084,7 +3104,7 @@ router.get("/compass/recommendations", async (req, res) => {
             // Private profiles: suppress identifying details until followed
             username:        isPrivate ? null : ((s.row.username ?? null) as string | null),
             displayName:     nameOk ? ((s.row.display_name ?? s.row.name ?? null) as string | null) : null,
-            avatarUrl:       (s.row.avatar_url ?? null) as string | null,
+            avatarUrl:       (!avatarPrivate && showAvatar) ? ((s.row.avatar_url ?? null) as string | null) : null,
             homeCity:        isPrivate ? null : ((s.row.home_city ?? null) as string | null),
             isPrivate,
             verified:        s.row.verified ?? false,

@@ -204,7 +204,7 @@ async function loadCandidates(
       .select("user_id, location_mode, sharing_paused, discovery_visibility")
       .in("user_id", ids),
     db.from("profiles")
-      .select("id, handle, name, display_name, avatar_url, verified, open_to_meet, is_private, account_status")
+      .select("id, handle, name, display_name, avatar_url, show_profile_picture_publicly, verified, open_to_meet, is_private, account_status")
       .in("id", ids),
     db.from("profile_privacy_settings")
       .select("user_id")
@@ -293,7 +293,12 @@ async function loadCandidates(
           (prof.handle as string | null) ??
           "Traveler")
         : (prof.handle ? `@${prof.handle as string}` : "Traveler"),
-      avatarUrl: (prof.avatar_url as string | null) ?? null,
+      // Candidates are already private-excluded and viewer-independent (no
+      // follow/friend context), so this is a flag-only gate: a public profile's
+      // owner can still opt out via show_profile_picture_publicly (default true).
+      avatarUrl: (prof.show_profile_picture_publicly !== false)
+        ? ((prof.avatar_url as string | null) ?? null)
+        : null,
       verified: prof.verified === true,
       openToMeet: prof.open_to_meet === true,
       city: (loc.city as string | null) ?? null,

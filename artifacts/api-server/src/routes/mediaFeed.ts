@@ -147,7 +147,7 @@ const POST_MEDIA_COLUMNS =
   "width, height, sort_order, processing_status, moderation_status, storage_path, storage_bucket";
 
 const PROFILE_COLUMNS =
-  "id, username, full_name, avatar_url, is_private, verified, bio, account_status, is_official";
+  "id, username, full_name, avatar_url, show_profile_picture_publicly, is_private, verified, bio, account_status, is_official";
 
 // ── Linked entity resolution ──────────────────────────────────────────────────
 
@@ -399,7 +399,7 @@ const GEMS_EXCLUDED_SOURCE_TYPES = new Set(["ai_generated_generic"]);
 
 /** Columns selected for gem submitter profiles. */
 const GEM_PROFILE_COLUMNS =
-  "id, username, full_name, avatar_url, is_private, verified, bio, account_status, is_official";
+  "id, username, full_name, avatar_url, show_profile_picture_publicly, is_private, verified, bio, account_status, is_official";
 
 /**
  * Columns selected for the gems feed query (statically resolvable single-line
