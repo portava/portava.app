@@ -102,3 +102,29 @@ Residual expected on the next real run: the **extension seed** (owner reconciles
 against `select extname from pg_extension`, per the ledger header — e.g. postgis,
 unaccent were unexplained), any true `POLICY_PREDICATE_DRIFT`, and genuine drift.
 Re-run after these fixes are pushed to see the collapsed set.
+
+## Preemptive derivation-gap fixes (before re-run)
+
+The grant flood was the largest but not the only Postgres live-vs-dump derivation
+gap. Diagnosed the rest locally against the real baseline and fixed them so the
+next real run collapses in one step:
+
+- **Constraint-backed indexes** — Postgres auto-creates an index (named after the
+  constraint) for every PRIMARY KEY / UNIQUE; pg_indexes lists them, pg_dump emits
+  ADD CONSTRAINT. 393 PK + 121 UNIQUE = 514 were missing. model.indexes 697 → 1211.
+- **View/matview columns** — information_schema.columns includes them; the model
+  (CREATE TABLE only) has none. Now audits base-table (relkind r/p) columns only.
+
+Sampled the model's function identity keys (`admin_set_profile_role(uuid,text)`)
+and policy predicates (`((reviewer_id = auth.uid()) AND (entity_type =
+'place'::public.review_entity_type))`) against the real baseline — both read as
+clean pg_get_expr / identity-argument output, so POLICY_PREDICATE_DRIFT and
+function-overload findings should be near-zero on re-run.
+
+**Predicted re-run:** ~70,783 collapses to a small, triageable set — the documented
+extension seed (owner reconciles against `pg_extension`), genuine post-baseline
+drift, and possibly a few auto-named CHECK-constraint mismatches. Suite 35/35.
+
+Branch: feat 6f8d3fe12 → grant semantics d17419a7c → constraint-backed indexes
+89254ce9d → view columns 237e9ce2c. Awaiting the owner's Mac-side push of the
+branch, then the Replit re-run.
