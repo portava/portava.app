@@ -25,6 +25,19 @@ export interface SafeTrustSummary {
   onProbation: boolean;
   /** Ordered recovery hints (no category scores exposed) */
   recoveryHints: string[];
+  /**
+   * True when `restrictions` is a guess, not an authoritative read — the
+   * empty-vs-actually-empty distinction getRestrictionState's `degraded`
+   * flag exists to carry, otherwise lost the moment this summary flattens
+   * activeRestrictions into a message list. Not a UI trigger by itself:
+   * this is a passive summary, not an action being attempted, so it does
+   * not show the "try again" message that a blocked hosting/messaging
+   * action shows — a future caller decides what, if anything, to do with
+   * it (e.g. a "some info may be temporarily unavailable" indicator).
+   */
+  restrictionsDegraded?: boolean;
+  /** Which way the degraded read failed — see RestrictionState.degradedReason. */
+  restrictionsDegradedReason?: "fail_open" | "fail_closed";
 }
 
 const LEVEL_LABELS: Record<PublicTrustLevel, string> = {
@@ -92,6 +105,9 @@ export async function getSafeTrustSummary(
     restrictions: restrictionMessages,
     onProbation: recovery.onProbation,
     recoveryHints,
+    ...(restrictions.degraded
+      ? { restrictionsDegraded: true, restrictionsDegradedReason: restrictions.degradedReason }
+      : {}),
   };
 }
 

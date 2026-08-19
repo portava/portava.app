@@ -55,6 +55,50 @@ export interface RestrictionState {
    * object, and a fail-open guess is indistinguishable from a clean record.
    */
   degraded?: boolean;
+  /**
+   * Which way `degraded` failed. Only set alongside `degraded: true`.
+   *
+   *   'fail_open'   — trust_restrictions is unreachable (missing table). Every
+   *                    can* flag is true; this is not a restriction and must
+   *                    never produce a user-facing message — record telemetry
+   *                    only.
+   *   'fail_closed' — a real query error on a reachable table. canHost/canMessage
+   *                    are false as a precaution, but that false does NOT mean
+   *                    the user is restricted — it means the check could not be
+   *                    performed. Callers must show a "try again" message, never
+   *                    a restriction message, for this case.
+   *
+   * The bare `degraded` boolean alone cannot carry this: a caller checking only
+   * `degraded && !canHost` happens to work today because fail-open always sets
+   * every can* flag true and fail-closed sets exactly canHost/canMessage false —
+   * but that is an incidental property of the current defaults, not a contract.
+   * This field makes the distinction explicit and independent of those defaults.
+   */
+  degradedReason?: DegradedReason;
+}
+
+/**
+ * Shared with any other trust_restrictions consumer that needs to carry the
+ * open-vs-closed distinction — reuse this rather than a second string union.
+ * See RestrictionState.degradedReason for what each value means.
+ */
+export type DegradedReason = "fail_open" | "fail_closed";
+
+/**
+ * Thrown by a permission check that could not be completed (fail-closed) and
+ * needs to say so through an exception rather than a return value — e.g.
+ * resolveInteractionPermissions, whose other safety checks (blocks) are
+ * also throw-on-error by design. Carries the SAME degradedReason discriminator
+ * RestrictionState uses, so a catcher can tell "the check failed" from
+ * "the check ran and denied" without a second, differently-spelled signal.
+ */
+export class DegradedPermissionCheckError extends Error {
+  readonly degradedReason: DegradedReason;
+  constructor(message: string, degradedReason: DegradedReason) {
+    super(message);
+    this.name = "DegradedPermissionCheckError";
+    this.degradedReason = degradedReason;
+  }
 }
 
 /** Apply a restriction */
@@ -163,6 +207,7 @@ export async function getRestrictionState(
           canJoinLocationPlans: true,
           activeRestrictions:   [],
           degraded:             true,
+          degradedReason:       "fail_open",
         };
       }
       throw new Error(
@@ -197,6 +242,7 @@ export async function getRestrictionState(
       canJoinLocationPlans: true,
       activeRestrictions:   [],
       degraded:             true,
+      degradedReason:       "fail_closed",
     };
   }
 }

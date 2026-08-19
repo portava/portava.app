@@ -16,6 +16,20 @@ import {
   type CallContextType, type CallPermissionResult, type CallType,
 } from './callTypes';
 
+/**
+ * Shared by both start paths: a real restriction and a degraded (could-not-
+ * check) read must deny with different reasons, or a transient DB hiccup
+ * gets shown to the caller as "you are restricted from calling."
+ */
+async function denyIfCallRestricted(
+  gw: Pick<CallContextGateway, 'isCallRestricted'>,
+  userId: string,
+): Promise<CallPermissionResult | null> {
+  const check = await gw.isCallRestricted(userId);
+  if (!check.restricted) return null;
+  return deny(check.degraded ? 'degraded_unavailable' : 'caller_restricted');
+}
+
 // ── Gateway (implemented by the route layer with real queries) ───────────────
 
 export interface CallPreferences {
@@ -54,8 +68,13 @@ export interface CallContextGateway {
    * host-only room start rule and the moderation matrix.
    */
   eventStaffRole(eventId: string, userId: string): Promise<'host' | 'cohost' | null>;
-  /** Platform moderation: is the user suspended/restricted from calling? */
-  isCallRestricted(userId: string): Promise<boolean>;
+  /**
+   * Platform moderation: is the user suspended/restricted from calling?
+   * `degraded: true` means the underlying check could not be performed (a
+   * failed-closed guess) rather than a real restriction — the engine must
+   * deny with a different reason in that case, never `caller_restricted`.
+   */
+  isCallRestricted(userId: string): Promise<{ restricted: boolean; degraded?: boolean }>;
   /** Active session lookups for join/anti-abuse checks. */
   isSessionTerminated(callId: string): Promise<boolean>;
   wasRemovedFromCall(callId: string, userId: string): Promise<boolean>;
@@ -85,7 +104,8 @@ export async function canUserStartCall(
   if (!callerId) return deny('unauthenticated');
 
   // 10. Platform restriction
-  if (await gw.isCallRestricted(callerId)) return deny('caller_restricted');
+  const restrictedDeny = await denyIfCallRestricted(gw, callerId);
+  if (restrictedDeny) return restrictedDeny;
 
   // Rate limiting (spec §27) — before heavier checks
   if ((await gw.startsInLastHour(callerId)) >= CALL_CONFIG.MAX_STARTS_PER_HOUR) {
@@ -148,7 +168,8 @@ export async function canUserStartGroupCall(
   gw: CallContextGateway, input: StartGroupCallInput,
 ): Promise<CallPermissionResult> {
   if (!input.userId) return deny('unauthenticated');
-  if (await gw.isCallRestricted(input.userId)) return deny('caller_restricted');
+  const groupRestrictedDeny = await denyIfCallRestricted(gw, input.userId);
+  if (groupRestrictedDeny) return groupRestrictedDeny;
   if ((await gw.startsInLastHour(input.userId)) >= CALL_CONFIG.MAX_STARTS_PER_HOUR) {
     return deny('rate_limited');
   }

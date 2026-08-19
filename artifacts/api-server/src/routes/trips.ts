@@ -248,9 +248,23 @@ router.post("/trips", async (req, res) => {
     return;
   }
 
-  // Trust Engine: check if user is restricted from hosting
+  // Trust Engine: check if user is restricted from hosting.
+  // canHost=false means one of two different things, and they must never be
+  // shown the same message: a real restriction, or a degraded read that
+  // failed CLOSED as a precaution (the check itself could not be performed).
+  // Labelling the latter as "restricted" tells a user something false about
+  // their account. A degraded read that failed OPEN never reaches here at
+  // all — canHost is true in that case, same as a clean allowed read.
   const trustState = await getRestrictionState(client, user.id);
   if (!trustState.canHost) {
+    if (trustState.degradedReason === "fail_closed") {
+      sendError(
+        res,
+        "degraded_unavailable",
+        "We could not verify your permissions right now. Please try again shortly.",
+      );
+      return;
+    }
     res.status(403).json({ error: "trust_restriction", message: "Your account is currently restricted from creating trips." });
     return;
   }
