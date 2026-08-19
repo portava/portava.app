@@ -115,6 +115,8 @@ async function fetchLiveInventory(): Promise<LiveInventory> {
     exts,
     ver,
     trgs,
+    extRels,
+    extIdx,
   ] = await Promise.all([
     // relations WITH relkind (fetchLiveSchema collapses these into one set)
     liveQuery<{ name: string; kind: string }>(
@@ -190,10 +192,39 @@ async function fetchLiveInventory(): Promise<LiveInventory> {
        join pg_namespace n on n.oid = c.relnamespace
        where n.nspname = 'public' and not tr.tgisinternal`,
     ),
+    // extension-owned relations (postgis's spatial_ref_sys, geometry_columns,
+    // geography_columns, …): pg_dump excludes extension members from the
+    // baseline, so the model has none; exclude them from the live census too.
+    liveQuery<{ name: string }>(
+      `select c.relname as name from pg_class c
+       join pg_namespace n on n.oid = c.relnamespace
+       join pg_depend d on d.objid = c.oid and d.deptype = 'e'
+       where n.nspname = 'public'`,
+    ),
+    // extension-owned index names (the index, or its table, is an extension member)
+    liveQuery<{ name: string }>(
+      `select ci.relname as name from pg_index x
+       join pg_class ci on ci.oid = x.indexrelid
+       join pg_class ct on ct.oid = x.indrelid
+       join pg_namespace n on n.oid = ci.relnamespace
+       where n.nspname = 'public'
+         and exists (select 1 from pg_depend d
+                     where d.deptype = 'e' and (d.objid = ci.oid or d.objid = ct.oid))`,
+    ),
   ]);
 
+  // Extension-owned objects are excluded from the live census: pg_dump omits
+  // them from the baseline (so the model can't carry them) and they are
+  // Postgres/extension infrastructure, not app schema — same rationale as the
+  // function query's pg_depend exclusion above.
+  const E_RELS = new Set(extRels.map((r) => lc(r.name)));
+  const E_IDX = new Set(extIdx.map((r) => lc(r.name)));
+
   const relations = new Map<string, "r" | "p" | "v" | "m">();
-  for (const r of rels) relations.set(lc(r.name), r.kind as "r" | "p" | "v" | "m");
+  for (const r of rels) {
+    if (E_RELS.has(lc(r.name))) continue;
+    relations.set(lc(r.name), r.kind as "r" | "p" | "v" | "m");
+  }
 
   const functions = new Set<string>();
   for (const f of fns) functions.add(functionIdentityKey(f.name, f.args ?? ""));
@@ -219,6 +250,7 @@ async function fetchLiveInventory(): Promise<LiveInventory> {
 
   const tableGrants = new Map<string, Set<string>>();
   for (const g of tgrants) {
+    if (E_RELS.has(lc(g.table_name))) continue;
     const key = lc(`${g.table_name}.${g.grantee}`);
     if (!tableGrants.has(key)) tableGrants.set(key, new Set());
     tableGrants.get(key)!.add(normalizePrivilege(g.privilege_type));
@@ -226,6 +258,7 @@ async function fetchLiveInventory(): Promise<LiveInventory> {
 
   const columnGrants = new Map<string, Set<string>>();
   for (const g of cgrants) {
+    if (E_RELS.has(lc(g.table_name))) continue;
     const key = lc(`${g.table_name}.${g.column_name}.${g.grantee}`);
     if (!columnGrants.has(key)) columnGrants.set(key, new Set());
     columnGrants.get(key)!.add(normalizePrivilege(g.privilege_type));
@@ -239,20 +272,30 @@ async function fetchLiveInventory(): Promise<LiveInventory> {
   }
 
   const constraints = new Set<string>();
-  for (const c of cons) constraints.add(`${bareRelname(c.t)}.${lc(c.conname)}`);
+  for (const c of cons) {
+    if (E_RELS.has(bareRelname(c.t))) continue;
+    constraints.add(`${bareRelname(c.t)}.${lc(c.conname)}`);
+  }
 
   const extensions = new Set<string>();
   for (const e of exts) extensions.add(lc(e.extname));
 
   const triggers = new Set<string>();
-  for (const t of trgs) triggers.add(lc(`${t.t}.${t.g}`));
+  for (const t of trgs) {
+    if (E_RELS.has(lc(t.t))) continue;
+    triggers.add(lc(`${t.t}.${t.g}`));
+  }
 
   return {
     pgVersionNum: Number(ver[0]?.v ?? 0),
     relations,
-    columns: base.columns,
+    columns: new Set(
+      [...base.columns].filter(
+        (col) => !E_RELS.has(col.slice(0, col.lastIndexOf("."))),
+      ),
+    ),
     functions,
-    indexes: base.indexes,
+    indexes: new Set([...base.indexes].filter((ix) => !E_IDX.has(ix))),
     policies,
     enums: base.enums,
     enumValues: base.enumValues,

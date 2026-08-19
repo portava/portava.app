@@ -276,6 +276,18 @@ describe("computeUnexplained — grant coverage (Postgres semantics)", () => {
   });
 });
 
+describe("normalizers strip public. (pg_dump over-qualifies; pg_get_expr does not)", () => {
+  it("normalizePredicate drops public. schema qualification", () => {
+    assert.equal(
+      normalizePredicate("(x = public.can_see(a) AND y::public.my_enum = 'z')"),
+      "x = can_see(a) and y::my_enum = 'z'",
+    );
+  });
+  it("normalizeArgTypes drops public. from enum/array types", () => {
+    assert.equal(normalizeArgTypes("uuid, public.event_role_type[]"), "uuid,event_role_type[]");
+  });
+});
+
 describe("extractEnumValues — multi-line CREATE TYPE AS ENUM", () => {
   it("reads enum labels from the CREATE TYPE body pg_dump emits", () => {
     const sql = "CREATE TYPE public.appeal_state AS ENUM (\n    'pending',\n    'approved',\n    'denied'\n);";
@@ -499,7 +511,7 @@ describe("normalizers — golden cases", () => {
     assert.equal(normalizeArgTypes(""), "");
     assert.equal(normalizeArgTypes("p integer DEFAULT 5"), "integer");
     assert.equal(normalizeArgTypes("uuid, text"), "uuid,text"); // name-less (live identity form)
-    assert.equal(normalizeArgTypes("roles public.event_role_type[]"), "public.event_role_type[]");
+    assert.equal(normalizeArgTypes("roles public.event_role_type[]"), "event_role_type[]"); // public. stripped
     assert.equal(normalizeArgTypes("x timestamptz"), "timestamp with time zone");
     assert.equal(normalizeArgTypes("n int"), "integer");
     assert.equal(normalizeArgTypes("p double precision"), "double precision");

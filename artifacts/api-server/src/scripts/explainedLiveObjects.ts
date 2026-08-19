@@ -140,15 +140,6 @@ export const EXPLAINED_LIVE_OBJECTS: ReadonlyArray<ExplainedEntry> = [
     reviewed_on: "2026-08-19",
   },
   {
-    key: "extension:pg_graphql",
-    kind: "extension",
-    provenance: "docs/RECONCILIATION-PACKET.md:163",
-    disposition: "LEGACY_PROVENANCE",
-    reason:
-      "Supabase default-enabled extension; no canonical file installs it (packet §4.1 Q12). TODO: confirm against live pg_extension in Replit.",
-    reviewed_on: "2026-08-19",
-  },
-  {
     key: "extension:pg_stat_statements",
     kind: "extension",
     provenance: "docs/RECONCILIATION-PACKET.md:163",
@@ -158,12 +149,21 @@ export const EXPLAINED_LIVE_OBJECTS: ReadonlyArray<ExplainedEntry> = [
     reviewed_on: "2026-08-19",
   },
   {
-    key: "extension:pgjwt",
+    key: "extension:postgis",
     kind: "extension",
     provenance: "docs/RECONCILIATION-PACKET.md:163",
     disposition: "LEGACY_PROVENANCE",
     reason:
-      "Supabase default-enabled JWT helper extension; no canonical file installs it (packet §4.1 Q12). TODO: confirm against live pg_extension in Replit — some newer projects omit it.",
+      "PostGIS spatial extension, confirmed enabled on the live project by read-only audit 2026-08-19; no canonical file installs it. Its extension-owned objects (spatial_ref_sys, geometry_columns, geography_columns) are excluded from the live census, as pg_dump excludes them from the baseline.",
+    reviewed_on: "2026-08-19",
+  },
+  {
+    key: "extension:unaccent",
+    kind: "extension",
+    provenance: "docs/RECONCILIATION-PACKET.md:163",
+    disposition: "LEGACY_PROVENANCE",
+    reason:
+      "unaccent text-search extension, confirmed enabled on the live project by read-only audit 2026-08-19; no canonical file installs it.",
     reviewed_on: "2026-08-19",
   },
   {

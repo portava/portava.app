@@ -214,6 +214,9 @@ function readStatement(src: string, from: number): { stmt: string; end: number }
 export function normalizePredicate(expr: string | null): string | null {
   if (expr === null || expr === undefined) return null;
   let s = expr.toLowerCase().replace(/\s+/g, " ").trim();
+  // pg_get_expr never schema-qualifies public (it is in search_path); pg_dump
+  // does. Strip 'public.' so baseline-derived predicates match live's.
+  s = s.replace(/\bpublic\./g, "");
   // Strip one fully-enclosing paren pair at a time.
   let changed = true;
   while (changed && s.length >= 2 && s[0] === "(" && s[s.length - 1] === ")") {
@@ -298,7 +301,9 @@ export function normalizeArgTypes(identArgs: string): string {
     } else {
       type = tokens.slice(1).join(" "); // first token is the arg name
     }
-    types.push(foldTypeSynonyms(type.toLowerCase().trim()));
+    // pg_get_function_identity_arguments never qualifies public-schema types;
+    // pg_dump does (public.event_role_type[]). Strip so the two sides match.
+    types.push(foldTypeSynonyms(type.toLowerCase().replace(/\bpublic\./g, "").trim()));
   }
   return types.join(",");
 }
