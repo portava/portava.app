@@ -40,7 +40,13 @@ new post-cutover tables enter both only at apply-time (below), never by editing 
 
 ## Remaining build-here roadmap (ordered; each builds on the three above)
 Scaffold-only where an owner decision is embedded (no invented heuristics):
-4. Live-output envelope (`liveEnvelope.ts`) — depends on 2101+2102.
+4. ✅ BUILT (2026-08-20, branch claude/phase0-wiring-20260820): Live-output envelope
+   (`liveEnvelope.ts`) — composes source_count / freshness_seconds / expires_at from the
+   source registry (2101) + freshness policies (2102). confidence and privacy_eligible are
+   FAIL-CLOSED owner-decision seams (item 5 scorer / items 6-7 privacy), passed in and never
+   invented here. + liveEnvelope.test.ts (14 tests, all green). Also registered the three
+   phase0 tests (canonicalEvents/freshnessPolicy/sourceRegistry) that #94 left out of the
+   package.json `test` script.
 5. Claim/Observation/Verification/Contradiction (2106) — tables only; verification methods
    + contradiction resolution are OWNER decisions.
 6. Sensitive-zone exclusions + k-anonymity (2104) — code safe; the sensitive-zone REGISTRY
@@ -51,7 +57,16 @@ Scaffold-only where an owner decision is embedded (no invented heuristics):
 9. Opportunity family (2105) — interfaces/stubs only; opportunity semantics are OWNER product.
 10. Exposure/Action/Outcome/Satisfaction views over canonical_events.
 11. Ingestion trust-boundary tightening (2108) — flag-guarded; prod revoke env-gated on cutover.
-12. Place-supply provenance hardening onto the sources FK + freshness stamp.
+12. ✅ BUILT (source_id provenance; freshness tie-in deferred, branch phase0-wiring):
+    placeProvenance.ts — flag-guarded (`place_provenance_stamping_enabled`, a CAPABILITY flag
+    auto-classified by the _enabled suffix; fail-closed) source_id stamp via resolveSourceId
+    (2101), spread onto the three carrier-table writes (placeResolve -> external_place_references,
+    discovery + wishlist -> discovery_places). A no-op {} spread until the flag is on AND the
+    provider/source string resolves, so it is safe to ship dormant even on a DB where 2101's
+    source_id column does not yet exist. + placeProvenance.test.ts (8 tests). NOTE: the
+    freshness-policy (2102) tie-in is deferred — the place tables already carry
+    last_fetched_at/last_verified_at, and mapping those to freshness_policies claim_types is an
+    OWNER decision, not something to invent here.
 13. Event Truth acceptance suite — scaffold; runs meaningfully only on live data.
 
 ## Pass to Claude Code (Replit — environment / decision bound)

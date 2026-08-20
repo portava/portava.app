@@ -16,6 +16,7 @@
  * and nothing writes — the wave is fully dormant until switched on.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { provenanceStamp } from "../placeProvenance.js";
 import { normalizeLocationName } from "../canonicalLocations.js";
 import { isFlagEnabled } from "../featureFlags.js";
 
@@ -628,6 +629,7 @@ export async function resolveExternalPlace(
     {
       place_id: placeId,
       provider: rec.provider,
+      ...(await provenanceStamp(db, rec.provider)),
       provider_place_id: rec.providerPlaceId,
       provider_url: rec.providerUrl ?? null,
       raw_category: rec.rawCategory ?? rec.primaryCategory ?? null,

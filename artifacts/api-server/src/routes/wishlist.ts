@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { provenanceStamp } from "../lib/placeProvenance.js";
 import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger.js";
 import { requireUser, sendError } from "../lib/http.js";
@@ -55,6 +56,7 @@ export async function trackOsmPlaceSave(
         place_type: placeType ?? "place",
         category,
         source:     "osm",
+        ...(await provenanceStamp(svc, "osm")),
         status:     "active",
         saved_count: 0,
         lat,

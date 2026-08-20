@@ -18,6 +18,7 @@
  */
 
 import { Router } from "express";
+import { provenanceStamp } from "../lib/placeProvenance.js";
 import { z } from "zod";
 import { getServiceClient } from "../lib/supabase";
 import { osmNeighborhood } from "../lib/osmPlaceShape";
@@ -2317,6 +2318,7 @@ router.post("/discovery/community", async (req, res) => {
         lng:          finalLng,
         submitted_by: auth.user.id,
         source:       "traveler",
+        ...(await provenanceStamp(sc, "traveler")),
         status:       "active",
         verified:     false,
         photos:       photosArr && photosArr.length > 0 ? photosArr : null,
