@@ -451,17 +451,35 @@ describe("RLS hardening — wrong-user (signed-in non-member) reads", { skip: !C
   /**
    * Sign in as the *public* test user (who has no relationship with the
    * private event / trip) and verify they cannot read those rows.
+   *
+   * Signs in ONCE and reuses the session across every `it()` below, rather
+   * than re-authenticating per test. This describe block used to call
+   * signInWithPassword fresh in all six tests — six real password sign-ins
+   * for the same fixture account within a couple of seconds — which is
+   * exactly the shape Supabase Auth's sign-in rate limit throttles. Observed
+   * live 2026-08-20 (CI run 32333778070): 14/15 rlsHardening tests passed,
+   * one `it()` in this block failed with `Error: Test sign-in failed: {}` —
+   * an intermittent flake, not a deterministic failure (later runs against
+   * the same project passed 15/15). Caching the signed-in client cuts this
+   * block's sign-in calls from six to one; it is still a real password
+   * sign-in producing a real session, not a fabricated/injected token.
    */
-  async function publicUserClient(): Promise<SupabaseClient> {
-    const client = createClient(SUPABASE_URL, ANON_KEY, {
-      auth: { persistSession: false },
-    });
-    const { error } = await client.auth.signInWithPassword({
-      email: `${RLS_TEST_PREFIX}public@example.com`,
-      password: "test-password-123",
-    });
-    if (error) throw new Error(`Test sign-in failed: ${error.message}`);
-    return client;
+  let publicUserClientPromise: Promise<SupabaseClient> | null = null;
+  function publicUserClient(): Promise<SupabaseClient> {
+    if (!publicUserClientPromise) {
+      publicUserClientPromise = (async () => {
+        const client = createClient(SUPABASE_URL, ANON_KEY, {
+          auth: { persistSession: false },
+        });
+        const { error } = await client.auth.signInWithPassword({
+          email: `${RLS_TEST_PREFIX}public@example.com`,
+          password: "test-password-123",
+        });
+        if (error) throw new Error(`Test sign-in failed: ${error.message}`);
+        return client;
+      })();
+    }
+    return publicUserClientPromise;
   }
 
   it("non-member authenticated user cannot read private event row", async () => {
