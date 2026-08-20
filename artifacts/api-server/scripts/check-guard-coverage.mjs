@@ -554,6 +554,35 @@ const EXEMPT = [
       'unit suite red. This exemption is conditional: it is void the moment that pin leaves package.json, ' +
       'which is re-checked here on every run.',
   })),
+  {
+    file: 'src/test/ogImageVisibility.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Unit test in the `test` script that ci.yml runs. It never calls createClient — it installs a fully ' +
+      'in-memory fake client via _setTestClient/_setTestServiceClient before the test server handles a single ' +
+      'request, so no route in this process ever reaches lib/supabase.ts createClient(). It does reassign ' +
+      'process.env.SUPABASE_URL in its own before() to a fake https://sb.example.test host, but only to build ' +
+      'TRUSTED_AVATAR_URL, a string compared against fetch() calls the test itself stubs — not to construct a ' +
+      'client — and it restores the original value in after(). CI runs the whole `test` script with ' +
+      'SUPABASE_URL pinned to the loopback discard port and a dummy service key ON THE COMMAND LINE at process ' +
+      'start, so the pin holds regardless of this file\'s own reassignment. This exemption is conditional: it ' +
+      'is void the moment that pin leaves package.json, which is re-checked here on every run.',
+  },
+  {
+    file: 'src/test/storyMediaOwnership.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Unit test in the `test` script that ci.yml runs. Both parts stub Supabase entirely with hand-rolled ' +
+      'fake clients (makeFakeClient / makeRelayClient) installed via _setTestClient, and Part 2 calls ' +
+      'authorizeMediaAccess directly against a fake client rather than through the app — no createClient call ' +
+      'and no real request anywhere in the file. It reassigns process.env.SUPABASE_URL in before() to a fake ' +
+      'http://sb.example.test host only so lib/mediaAccess.ts (which reads SUPABASE_URL to recognize the ' +
+      'absolute-URL spelling of a media path) has a deterministic value to classify against, and restores the ' +
+      'original value in after(). CI runs the whole `test` script with SUPABASE_URL pinned to the loopback ' +
+      'discard port and a dummy service key ON THE COMMAND LINE at process start, so the pin holds regardless ' +
+      'of this file\'s own reassignment. This exemption is conditional: it is void the moment that pin leaves ' +
+      'package.json, which is re-checked here on every run.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
