@@ -149,6 +149,19 @@ const SKIP_FILES = new Set([
   // notifications_select_own), and notification_category_preferences is
   // intentionally keyed by (user_id, category) with no id column
   "0041_notifications.sql",
+  // 2095_discovery_place_photos.sql — DEFERRED; not applied to any environment.
+  // Authored 2026-08-15 but the prod apply sequence skipped it: it is ABSENT from
+  // the 2026-08-19 baseline (which post-dates it and records 2096-2100/2107/2119),
+  // so discovery_place_photos never landed on prod. It is numbered pre-cutover
+  // (< "2100"), so the clean-build proof (baseline + canonical >= "2100") does not
+  // reproduce it either — applying it would turn live-db audit:schema green while
+  // turning the clean-build audit red. Its table backs the discovery photo-cache
+  // unit (src/lib/discoveryPlacePhotoStore.ts), which is NOT yet opened; the code
+  // is dormant and the table's absence causes no live errors. Held per the owner's
+  // HOLD-until-opened ruling. When that unit is intentionally opened, PROMOTE this
+  // into the post-cutover band (renumber >= "2100") and apply it then, deleting
+  // this skip at that point.
+  "2095_discovery_place_photos.sql",
 ]);
 
 /**
