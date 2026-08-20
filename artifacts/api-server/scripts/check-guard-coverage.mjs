@@ -542,7 +542,9 @@ const EXEMPT = [
     'src/test/mediaSignBatchTransform.test.ts',
     'src/test/mediaUploadHardening.test.ts',
     'src/test/messaging.test.ts',
+    'src/test/ogImageVisibility.test.ts',
     'src/test/stamps.test.ts',
+    'src/test/storyMediaOwnership.test.ts',
   ].map((file) => ({
     file,
     pinnedTestEnv: true,
