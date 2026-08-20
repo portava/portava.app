@@ -290,19 +290,27 @@ router.get("/users/:userId/follow-status", async (req, res) => {
   const target = req.params.userId;
   if (!isUuid(target)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
 
-  const [mine, followers, following, theyFollow] = await Promise.all([
+  const [mine, followers, following, theyFollow, prof] = await Promise.all([
     client.from("user_follows").select("follower_id").eq("follower_id", user.id).eq("following_id", target).maybeSingle(),
     client.from("user_follows").select("*", { count: "exact", head: true }).eq("following_id", target),
     client.from("user_follows").select("*", { count: "exact", head: true }).eq("follower_id", target),
     client.from("user_follows").select("follower_id").eq("follower_id", target).eq("following_id", user.id).maybeSingle(),
+    client.from("profiles").select("is_private").eq("id", target).maybeSingle(),
   ]);
+
+  // A private account's exact follower/following counts must not leak to a
+  // caller who is neither the owner nor an (accepted) follower — same contract
+  // as mediaFeedItem.ts, which nulls counts for private non-followers.
+  const isFollowing = Boolean(mine.data);
+  const targetIsPrivate = Boolean((prof.data as any)?.is_private);
+  const canSeeCounts = !targetIsPrivate || target === user.id || isFollowing;
 
   res.status(200).json({
     userId: target,
-    isFollowing: Boolean(mine.data),
+    isFollowing,
     followsYou: Boolean(theyFollow.data),
-    followersCount: followers.count ?? 0,
-    followingCount: following.count ?? 0,
+    followersCount: canSeeCounts ? (followers.count ?? 0) : null,
+    followingCount: canSeeCounts ? (following.count ?? 0) : null,
   });
 });
 
@@ -752,19 +760,26 @@ router.get("/users/search", async (req, res) => {
       const un = ((p.username as string | null) ?? "").toLowerCase();
       return h.includes(qLower) || un.includes(qLower);
     })
-    .map((p: any) => ({
-      id: p.id,
-      displayName: allowedNames.has(p.id as string) ? ((p.name as string | null) ?? null) : null,
-      username: (p.handle as string | null) ?? null,
-      avatarUrl: (p.avatar_url as string | null) ?? null,
-      followerCount: followerCounts[p.id as string] ?? 0,
-      isFollowing: followingSet.has(p.id as string),
-      isPrivate: (p.is_private as boolean) ?? false,
-      friendRequestPending: pendingRequestSet.has(p.id as string),
-      reason: sharedDestinations[p.id as string] ?? null,
-      verified: (p.verified as boolean) ?? false,
-      isOfficial: (p.is_official as boolean) ?? false,
-    }));
+    .map((p: any) => {
+      // Private accounts leak nothing beyond the follow handle: no avatar,
+      // no follower count, no shared-destination reason — same locked-preview
+      // contract as discoverySearch.ts. The row itself is kept so the caller
+      // can still send a follow/friend request.
+      const isPrivate = (p.is_private as boolean) ?? false;
+      return {
+        id: p.id,
+        displayName: allowedNames.has(p.id as string) ? ((p.name as string | null) ?? null) : null,
+        username: (p.handle as string | null) ?? null,
+        avatarUrl: isPrivate ? null : ((p.avatar_url as string | null) ?? null),
+        followerCount: isPrivate ? null : (followerCounts[p.id as string] ?? 0),
+        isFollowing: followingSet.has(p.id as string),
+        isPrivate,
+        friendRequestPending: pendingRequestSet.has(p.id as string),
+        reason: isPrivate ? null : (sharedDestinations[p.id as string] ?? null),
+        verified: (p.verified as boolean) ?? false,
+        isOfficial: (p.is_official as boolean) ?? false,
+      };
+    });
 
   res.status(200).json({ users });
 });
@@ -1332,7 +1347,7 @@ router.get("/users/suggestions", async (req, res) => {
           : null,
         username: (p.handle as string | null) ?? null,
         avatarUrl: isPrivate ? null : ((p.avatar_url as string | null) ?? null),
-        followerCount: followerCounts[p.id as string] ?? 0,
+        followerCount: isPrivate ? null : (followerCounts[p.id as string] ?? 0),
         isFollowing: false,
         isPrivate,
         friendRequestPending: pendingSuggestionRequestSet.has(p.id as string),
@@ -1433,7 +1448,7 @@ async function getSharedDestinationReason(
  * Never returns private posts, trips, circle memberships, or location data.
  */
 const PUBLIC_PASSPORT_FIELDS =
-  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, account_status, is_official";
+  "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, account_status, is_official";
 
 /** Build the public passport JSON payload from a profile row + context. */
 function buildPassportResponse(
@@ -1447,20 +1462,25 @@ function buildPassportResponse(
 ): object {
   // Universal display-name rule: name only for the owner or opted-in subjects.
   const nameOk = isOwnProfile || allowRealName;
-  const isPrivate = p.is_private ?? false;
+  // passport_visibility='private' makes the account private independent of the
+  // is_private flag — mirror resolveProfileVisibility (lib/profileVisibility.ts).
+  const isPrivate = (p.is_private ?? false) || p.passport_visibility === "private";
   // Private profile viewed by a non-follower non-owner: redact rich fields.
+  // Locked-preview contract: no avatar (profileSerializers.toPrivateProfilePreview
+  // returns avatarUrl:null), no follower/following counts (passport.ts
+  // limited_preview omits them), and no shared-destination reason.
   if (isPrivate && !isOwnProfile && !isFollowing) {
     return {
       id: p.id,
       handle: p.handle,
       name: nameOk ? p.name : null,
-      avatarUrl: p.avatar_url ?? null,
+      avatarUrl: null,
       isPrivate: true,
       isOwnProfile,
-      followersCount,
-      followingCount,
+      followersCount: null,
+      followingCount: null,
       isFollowing,
-      reason,
+      reason: null,
       memberSince: p.created_at,
       isOfficial: (p.is_official as boolean) ?? false,
     };
@@ -1576,10 +1596,13 @@ router.get("/users/:userId", async (req, res) => {
   let isFollowing = false;
   let reason: string | null = null;
   if (callerId && !isOwnProfile) {
+    // A private target must not leak a shared-destination reason (locked
+    // preview). passport_visibility='private' counts as private too.
+    const targetIsPrivate = (p.is_private ?? false) || p.passport_visibility === "private";
     const [edgeRes, reasonResult] = await Promise.all([
       sc.from("user_follows").select("follower_id")
         .eq("follower_id", callerId).eq("following_id", target).maybeSingle(),
-      getSharedDestinationReason(sc, callerId, target),
+      targetIsPrivate ? Promise.resolve(null) : getSharedDestinationReason(sc, callerId, target),
     ]);
     isFollowing = Boolean(edgeRes.data);
     reason = reasonResult;
@@ -1670,10 +1693,13 @@ router.get("/users/by-handle/:handle", async (req, res) => {
   let isFollowing = false;
   let reason: string | null = null;
   if (callerId && !isOwnProfile) {
+    // A private target must not leak a shared-destination reason (locked
+    // preview). passport_visibility='private' counts as private too.
+    const targetIsPrivate = (p.is_private ?? false) || p.passport_visibility === "private";
     const [edgeRes, reasonResult] = await Promise.all([
       sc.from("user_follows").select("follower_id")
         .eq("follower_id", callerId).eq("following_id", target).maybeSingle(),
-      getSharedDestinationReason(sc, callerId, target),
+      targetIsPrivate ? Promise.resolve(null) : getSharedDestinationReason(sc, callerId, target),
     ]);
     isFollowing = Boolean(edgeRes.data);
     reason = reasonResult;
