@@ -1,0 +1,75 @@
+# Phase 0 foundation — buildout status (19 Aug 2026)
+
+First foundational slice of the rollout blueprint's Phase 0 ("verified foundation"),
+decomposed against the existing api-server. Code-level pieces are built on this branch;
+environment/deploy/decision pieces are handed to Claude Code (Replit) below.
+
+## Built here (this branch)
+Three bedrock items, each a post-cutover canonical forward migration (prefix >= 2100) +
+a lib module (30s-cache pattern from featureFlags.ts) + tests.
+
+- **2101 source registry** — `sources` table (6-origin CHECK), `source_id` FK on the
+  place/reference tables, deterministic fail-closed backfill; `src/lib/sourceRegistry.ts`
+  (`resolveSourceId`, unknown -> null, never guesses). = blueprint "source registry".
+- **2102 freshness policies** — `freshness_policies` table; seeds crowd=15m, vibe=30m,
+  price=48h, structural=180d (owner-tunable defaults); `src/lib/freshnessPolicy.ts`
+  (`isStale`/`expiresAt`, unknown -> stale). = blueprint "freshness policy by claim type".
+- **2100 canonical events** — `canonical_events` append-only ingestion spine (9-verb CHECK;
+  the 5-tuple live-output envelope columns source_count/freshness_seconds/confidence/
+  privacy_eligible/expires_at; RLS deny-default + own-row SELECT + service-role INSERT;
+  append-only triggers on UPDATE/DELETE/TRUNCATE, row+statement level, mirroring
+  discovery_shadow_serves 2092/2093 and the 2093 grant fix); `src/lib/canonicalEvents.ts`
+  (fire-and-forget writer; raw-GPS-key sanitizer + strict payload allow-list).
+  = blueprint "canonical telemetry schema (append-only event ingestion)".
+
+`database.types.ts` carries hand-added Row/Insert/Update stubs (regenerate after apply).
+**The baseline and rlsDispositions.ts are DELIBERATELY UNCHANGED**: the baseline is the
+immutable prod-at-cutover snapshot and the disposition ledger is bijected to it (387<->387);
+new post-cutover tables enter both only at apply-time (below), never by editing the snapshot.
+
+## Apply sequence (env-gated — owner / Claude Code, in order)
+1. Apply migrations 2100, 2101, 2102 to the DB. They sort >= "2100" (post-cutover);
+   `audit:schema` reports their objects missing-from-live until applied — expected.
+2. Recapture the schema-only baseline from the live DB (now with the 3 tables), then
+   regenerate `rlsDispositions.ts` via `parseBaselineSchema.ts` — keeps the
+   baseline<->disposition bijection and `audit:live-unexplained` green with the new tables.
+3. Regenerate `database.types.ts` from the live DB (replaces the hand-added stubs).
+4. Wire producers behind flags (env-gated): emit `canonical_events` from instrumentation;
+   stamp `source_id` on place writes; read TTLs from `freshness_policies`. Do not flip
+   ingestion until the client no longer depends on any removed path.
+
+## Remaining build-here roadmap (ordered; each builds on the three above)
+Scaffold-only where an owner decision is embedded (no invented heuristics):
+4. Live-output envelope (`liveEnvelope.ts`) — depends on 2101+2102.
+5. Claim/Observation/Verification/Contradiction (2106) — tables only; verification methods
+   + contradiction resolution are OWNER decisions.
+6. Sensitive-zone exclusions + k-anonymity (2104) — code safe; the sensitive-zone REGISTRY
+   data is owner/data.
+7. Privacy ledger (2103 consent_grants + privacy_audit_events) — tables + recorder;
+   retention durations + purpose vocabulary are OWNER decisions.
+8. Retention policy + reaper (2107) — dry-run only; live deletion is owner-gated (irreversible).
+9. Opportunity family (2105) — interfaces/stubs only; opportunity semantics are OWNER product.
+10. Exposure/Action/Outcome/Satisfaction views over canonical_events.
+11. Ingestion trust-boundary tightening (2108) — flag-guarded; prod revoke env-gated on cutover.
+12. Place-supply provenance hardening onto the sources FK + freshness stamp.
+13. Event Truth acceptance suite — scaffold; runs meaningfully only on live data.
+
+## Pass to Claude Code (Replit — environment / decision bound)
+- **A. Real-login QA** — owner creates a dedicated password QA account (credential entry is
+  owner-only); author an e2e script through the genuine login endpoint (no token injection).
+  Respect the $100 usage-credit stop during live QA.
+- **B. Google SSO defect** — reproduce against the live OAuth flow; inspect redirect URI /
+  client id+secret / callback in the deployed env (Google console owner-held). Do not accept
+  provider consent screens on the owner's behalf.
+- **C. Destination autocomplete (Google Places)** — scaffold behind the existing
+  `external_places_enabled` fail-closed flag, ship disabled; needs a Places API key (owner via
+  secret manager) + quota/billing.
+- **D. Production surface** — API-only vs Expo/TestFlight is an owner ruling; if mobile, set up
+  the build + distribution (respect the final-trigger preference for releases).
+- **Producer-cutover follow-ons** (once scaffolds land): canonical_events dual-write + backfill
+  + ingestion flip; DISCOVERY_ENGINE_MODE shadow->pde cohort rollout (owner presses the
+  production toggle); privacy-ledger producer wiring + AccountDeletionService erasure;
+  sensitive-zone registry population; retention reaper enable; compass_analytics client cutover.
+
+Nothing here is applied or deployed. Migrations are applied by the owner in the env (never
+from the Replit shell, which resolves to production).
