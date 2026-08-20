@@ -40,7 +40,13 @@ new post-cutover tables enter both only at apply-time (below), never by editing 
 
 ## Remaining build-here roadmap (ordered; each builds on the three above)
 Scaffold-only where an owner decision is embedded (no invented heuristics):
-4. Live-output envelope (`liveEnvelope.ts`) — depends on 2101+2102.
+4. ✅ BUILT (2026-08-20, branch claude/phase0-wiring-20260820): Live-output envelope
+   (`liveEnvelope.ts`) — composes source_count / freshness_seconds / expires_at from the
+   source registry (2101) + freshness policies (2102). confidence and privacy_eligible are
+   FAIL-CLOSED owner-decision seams (item 5 scorer / items 6-7 privacy), passed in and never
+   invented here. + liveEnvelope.test.ts (14 tests, all green). Also registered the three
+   phase0 tests (canonicalEvents/freshnessPolicy/sourceRegistry) that #94 left out of the
+   package.json `test` script.
 5. Claim/Observation/Verification/Contradiction (2106) — tables only; verification methods
    + contradiction resolution are OWNER decisions.
 6. Sensitive-zone exclusions + k-anonymity (2104) — code safe; the sensitive-zone REGISTRY
