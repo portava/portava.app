@@ -330,11 +330,20 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
       ? "following"
       : "none";
 
+  // Avatar gate (mirrors toPublicProfilePreview). This feed runs NO upstream
+  // private-author exclusion, so a private submitter the viewer doesn't follow
+  // must also have the avatar suppressed; a public submitter can still opt out
+  // via show_profile_picture_publicly (default true).
+  const showAvatar =
+    isOwnItem ||
+    isFollowing ||
+    (!creatorIsPrivate && submitterProfile?.show_profile_picture_publicly !== false);
+
   const creator: MediaFeedCreator = {
     id: creatorId,
     username: submitterProfile?.username ?? "",
     displayName,
-    avatarUrl: submitterProfile?.avatar_url ?? null,
+    avatarUrl: showAvatar ? (submitterProfile?.avatar_url ?? null) : null,
     isPrivate: creatorIsPrivate,
     relationshipStatus,
     isVerified: Boolean(submitterProfile?.is_verified),
@@ -622,11 +631,20 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   // Private profile: strip all sensitive fields when viewer is not a follower
   const viewerCanSeePrivateDetails = !creatorIsPrivate || isFollowing || isOwnPost;
 
+  // Avatar gate (mirrors toPublicProfilePreview): owner/follower always see it;
+  // otherwise it is shown only for a public creator who has not opted out via
+  // show_profile_picture_publicly (default true). A private creator the viewer
+  // doesn't follow never leaks the avatar.
+  const showAvatar =
+    isOwnPost ||
+    isFollowing ||
+    (!creatorIsPrivate && profile?.show_profile_picture_publicly !== false);
+
   const creator: MediaFeedCreator = {
     id: creatorId,
     username: profile?.username ?? "",
     displayName,
-    avatarUrl: profile?.avatar_url ?? null,
+    avatarUrl: showAvatar ? (profile?.avatar_url ?? null) : null,
     isPrivate: creatorIsPrivate,
     relationshipStatus,
     // Strip isVerified, counts, and bio for private profiles when viewer isn't following

@@ -33,6 +33,7 @@ import {
 } from "../lib/mediaEligibility.js";
 import {
   hydrateMediaFeedItem,
+  hydrateGemFeedItem,
   stripPrivateEventFields,
   stripPrivateTripFields,
 } from "../lib/mediaFeedItem.js";
@@ -952,7 +953,8 @@ describe("hydrateMediaFeedItem — field stripping + URL resolution", () => {
     // Safe fields must still be present
     assert.equal(item.creator.id, AUTHOR_ID);
     assert.equal(item.creator.username, "privateuser");
-    assert.ok(item.creator.avatarUrl, "avatarUrl should still be present");
+    // Avatar must NOT leak for a private profile the viewer doesn't follow.
+    assert.equal(item.creator.avatarUrl, null, "avatarUrl must be null for private profile (viewer not following)");
     assert.equal(item.creator.relationshipStatus, "none");
   });
 
@@ -978,6 +980,47 @@ describe("hydrateMediaFeedItem — field stripping + URL resolution", () => {
     assert.ok(item.creator.isVerified !== null, "isVerified should be visible when following");
     assert.ok(item.creator.followersCount !== null, "followersCount should be visible when following");
     assert.equal(item.creator.relationshipStatus, "following");
+  });
+
+  it("nulls avatarUrl for a PUBLIC creator who opted out of showing their photo (flag=false), unconnected viewer", () => {
+    const input = baseHydrateInput({
+      profiles: {
+        id: AUTHOR_ID,
+        username: "publicuser",
+        full_name: "Public User",
+        avatar_url: "https://example.test/avatar.jpg",
+        is_private: false,
+        show_profile_picture_publicly: false,
+        is_verified: true,
+        followers_count: 10,
+        following_count: 5,
+        bio: "Public bio",
+      },
+    });
+    // Viewer is NOT following — followedCreatorIds is empty.
+    const item = hydrateMediaFeedItem(input);
+    assert.equal(item.creator.isPrivate, false);
+    assert.equal(item.creator.avatarUrl, null, "avatarUrl must be null when show_profile_picture_publicly=false and viewer is unconnected");
+  });
+
+  it("exposes avatarUrl for a public creator with flag=false when the viewer follows them", () => {
+    const input = baseHydrateInput({
+      profiles: {
+        id: AUTHOR_ID,
+        username: "publicuser",
+        full_name: "Public User",
+        avatar_url: "https://example.test/avatar.jpg",
+        is_private: false,
+        show_profile_picture_publicly: false,
+        is_verified: true,
+        followers_count: 10,
+        following_count: 5,
+        bio: "Public bio",
+      },
+    });
+    input.followedCreatorIds = new Set([AUTHOR_ID]);
+    const item = hydrateMediaFeedItem(input);
+    assert.equal(item.creator.avatarUrl, "https://example.test/avatar.jpg", "follower always sees the avatar regardless of the flag");
   });
 
   it("location never contains latitude or longitude fields", () => {
@@ -1056,6 +1099,78 @@ describe("hydrateMediaFeedItem — field stripping + URL resolution", () => {
     const item = hydrateMediaFeedItem(input);
     assert.equal(item.media.length, 1, "only ready+approved media should be included");
     assert.equal(item.media[0].id, "m1");
+  });
+});
+
+// ── Unit tests: hydrateGemFeedItem avatar gate ────────────────────────────────
+
+describe("hydrateGemFeedItem — creator avatar privacy gate", () => {
+  const GEM_ID = "gem-0000-0000-0000-000000000001";
+  const SUBMITTER_ID = "sub00000-0000-0000-0000-000000000001";
+
+  function baseGemInput(submitterProfile: Record<string, any>, follows = false) {
+    return {
+      gem: {
+        id: GEM_ID,
+        submitted_by: SUBMITTER_ID,
+        source_type: "user_submitted",
+        image_url: "https://cdn.example.test/gem.jpg",
+        name: "Hidden spot",
+        city: "Lisbon",
+        country: "Portugal",
+        created_at: "2026-08-01T12:00:00Z",
+        verification_level: "unverified",
+        moderation_status: "approved",
+        status: "active",
+        save_count: 3,
+        visit_count: 20,
+        vibe_tags: [],
+      },
+      viewerUserId: VIEWER_ID,
+      allowedRealNameIds: new Set<string>(),
+      savedGemIds: new Set<string>(),
+      followedCreatorIds: follows ? new Set<string>([SUBMITTER_ID]) : new Set<string>(),
+      submitterProfile,
+      resolvedCoords: null,
+    };
+  }
+
+  it("nulls avatarUrl for a PRIVATE submitter the viewer doesn't follow (no upstream private exclusion on this feed)", () => {
+    const item = hydrateGemFeedItem(baseGemInput({
+      id: SUBMITTER_ID, username: "privsub", full_name: "Priv Sub",
+      avatar_url: "https://example.test/avatar.jpg",
+      is_private: true, show_profile_picture_publicly: true,
+    }));
+    assert.equal(item.creator.isPrivate, true);
+    assert.equal(item.creator.avatarUrl, null, "private submitter's avatar must not leak to a non-follower");
+  });
+
+  it("nulls avatarUrl for a PUBLIC submitter who opted out (flag=false), unconnected viewer", () => {
+    const item = hydrateGemFeedItem(baseGemInput({
+      id: SUBMITTER_ID, username: "pubsub", full_name: "Pub Sub",
+      avatar_url: "https://example.test/avatar.jpg",
+      is_private: false, show_profile_picture_publicly: false,
+    }));
+    assert.equal(item.creator.isPrivate, false);
+    assert.equal(item.creator.avatarUrl, null, "avatar must be null when show_profile_picture_publicly=false");
+  });
+
+  it("exposes avatarUrl for a public submitter with the default flag", () => {
+    const item = hydrateGemFeedItem(baseGemInput({
+      id: SUBMITTER_ID, username: "pubsub", full_name: "Pub Sub",
+      avatar_url: "https://example.test/avatar.jpg",
+      is_private: false, show_profile_picture_publicly: true,
+    }));
+    assert.equal(item.creator.avatarUrl, "https://example.test/avatar.jpg");
+  });
+
+  it("exposes avatarUrl to a follower of a private submitter", () => {
+    const item = hydrateGemFeedItem(baseGemInput({
+      id: SUBMITTER_ID, username: "privsub", full_name: "Priv Sub",
+      avatar_url: "https://example.test/avatar.jpg",
+      is_private: true, show_profile_picture_publicly: true,
+    }, true));
+    assert.equal(item.creator.avatarUrl, "https://example.test/avatar.jpg");
   });
 });
 
