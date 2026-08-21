@@ -55,7 +55,15 @@ Scaffold-only where an owner decision is embedded (no invented heuristics):
    retention durations + purpose vocabulary are OWNER decisions.
 8. Retention policy + reaper (2107) — dry-run only; live deletion is owner-gated (irreversible).
 9. Opportunity family (2105) — interfaces/stubs only; opportunity semantics are OWNER product.
-10. Exposure/Action/Outcome/Satisfaction views over canonical_events.
+10. ✅ BUILT (documented mapping — one line to change, branch phase0-item10):
+    view `canonical_event_families` (2109, security_invoker=true so canonical_events' RLS is
+    enforced for the querying role) tags each event exposure/action/outcome/satisfaction; grants
+    mirror canonical_events (authenticated + service_role SELECT, anon nothing) via the 2093
+    REVOKE-then-GRANT shape. src/lib/eventFamilies.ts holds the single verb->family map (the view
+    CASE mirrors it; eventFamilies.test.ts pins it). MAPPING (owner-adjustable): impression=exposure;
+    open/save/join/direction=action; arrival/completion/rejection=outcome; satisfaction=satisfaction.
+    Auditor-safe: parseMigration folds the view into model.relations (schema-stripped), so
+    audit:live-unexplained + audit:schema stay green after apply.
 11. Ingestion trust-boundary tightening (2108) — flag-guarded; prod revoke env-gated on cutover.
 12. ✅ BUILT (source_id provenance; freshness tie-in deferred, branch phase0-wiring):
     placeProvenance.ts — flag-guarded (`place_provenance_stamping_enabled`, a CAPABILITY flag
