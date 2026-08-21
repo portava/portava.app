@@ -15,7 +15,6 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Alert, Animated,
   useWindowDimensions,
 } from 'react-native';
-import { router, type Href } from 'expo-router';
 import {
   PenLine, Camera, Image, FileText, Columns, Star, Eye,
   Stamp, MapPin, Home, Globe, Heart, Calendar,
@@ -25,7 +24,7 @@ import {
   ChevronRight, X, MoreHorizontal, Edit2, Compass, PlusCircle,
   BarChart2,
 } from 'lucide-react-native';
-import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
+import { closeThenNavigate, closeThenRun } from '../../lib/deferredNavigate.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
 import { space, radius, avatar } from '../../theme/tokens.ts';
 
@@ -70,10 +69,6 @@ type ActionItem = {
   /** false = coming soon / disabled */
   live: boolean;
   action?: (props: PassportOwnerMenuSheetProps) => void;
-  /** Route that must wait for the native Modal to finish dismissing. */
-  dismissNavigationPath?: Href;
-  /** Parent-owned action that must wait for the native Modal to finish dismissing. */
-  dismissAction?: (props: PassportOwnerMenuSheetProps) => void;
 };
 
 const OWNER_MENU_ANIMATION_MS = 220;
@@ -353,7 +348,13 @@ const SECTIONS: Section[] = [
         Icon: Settings,
         iconColor: '#4A4A48',
         live: true,
-        dismissAction: (p) => { p.onSettings(); },
+        // Was `dismissAction`, which waited for the core <Modal>'s onDismiss —
+        // an iOS-only RN event that never fires on Android, so this row was a
+        // dead tap there. Defer through closeThenRun instead — the same
+        // setTimeout-based fix every other row already uses via
+        // closeThenNavigate — while still letting the parent own the
+        // destination via onSettings.
+        action: (p) => { closeThenRun(p.onClose, p.onSettings); },
       },
       {
         key: 'privacy',
@@ -538,20 +539,6 @@ export function PassportOwnerMenuSheet(props: PassportOwnerMenuSheetProps) {
   const { height: windowHeight } = useWindowDimensions();
   const animationProgress = React.useRef(new Animated.Value(1)).current;
   const closingRef = React.useRef(false);
-  const pendingNavigationRef = React.useRef<Href | null>(null);
-  const pendingDismissActionRef = React.useRef<(() => void) | null>(null);
-
-  const finishPendingNavigation = React.useCallback(() => {
-    const path = pendingNavigationRef.current;
-    const dismissAction = pendingDismissActionRef.current;
-    pendingNavigationRef.current = null;
-    pendingDismissActionRef.current = null;
-    if (path) {
-      router.push(path);
-      return;
-    }
-    dismissAction?.();
-  }, []);
 
   React.useEffect(() => {
     if (!visible) return;
@@ -582,33 +569,6 @@ export function PassportOwnerMenuSheet(props: PassportOwnerMenuSheetProps) {
     });
   }, [animationProgress, onClose]);
 
-  const closeAndNavigateAfterDismiss = React.useCallback((path: Href) => {
-    // A rapid second tap while the native sheet is sliding out must not queue a
-    // duplicate route or call the parent close callback twice.
-    const hasPendingNavigation = pendingNavigationRef.current !== null;
-    const hasPendingAction = pendingDismissActionRef.current !== null;
-    if (hasPendingNavigation || hasPendingAction) return;
-    pendingNavigationRef.current = path;
-    closeAfterAnimation();
-  }, [closeAfterAnimation]);
-
-  const closeAndRunAfterDismiss = React.useCallback((action: () => void) => {
-    const hasPendingNavigation = pendingNavigationRef.current !== null;
-    const hasPendingAction = pendingDismissActionRef.current !== null;
-    if (hasPendingNavigation || hasPendingAction) return;
-    pendingDismissActionRef.current = action;
-    closeAfterAnimation();
-  }, [closeAfterAnimation]);
-
-  React.useEffect(() => {
-    if (visible || (!pendingNavigationRef.current && !pendingDismissActionRef.current)) return;
-    // The core Modal has animationType="none"; the visible=false commit happens
-    // only after our own close animation completes, so the next frame is safely
-    // past both the visual exit and native host removal on every platform.
-    const frame = requestAnimationFrame(finishPendingNavigation);
-    return () => cancelAnimationFrame(frame);
-  }, [finishPendingNavigation, visible]);
-
   const actionProps = React.useMemo(
     () => ({ ...props, onClose: closeAfterAnimation }),
     [closeAfterAnimation, props],
@@ -625,7 +585,6 @@ export function PassportOwnerMenuSheet(props: PassportOwnerMenuSheetProps) {
       transparent
       animationType="none"
       onRequestClose={closeAfterAnimation}
-      onDismiss={finishPendingNavigation}
     >
       <AnimatedPressable
         style={[s.overlay, { opacity: Animated.subtract(1, animationProgress) }]}
@@ -658,13 +617,7 @@ export function PassportOwnerMenuSheet(props: PassportOwnerMenuSheetProps) {
                   item={item}
                   onAction={() => {
                     if (closingRef.current) return;
-                    if (item.dismissNavigationPath) {
-                      closeAndNavigateAfterDismiss(item.dismissNavigationPath);
-                    } else if (item.dismissAction) {
-                      closeAndRunAfterDismiss(() => item.dismissAction?.(actionProps));
-                    } else {
-                      item.action?.(actionProps);
-                    }
+                    item.action?.(actionProps);
                   }}
                 />
               ))}

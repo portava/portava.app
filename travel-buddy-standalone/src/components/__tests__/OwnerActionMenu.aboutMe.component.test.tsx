@@ -27,22 +27,11 @@ jest.mock('react-native', () => {
   const MockModal = ({
     children,
     visible,
-    onDismiss,
   }: {
     children: React.ReactNode;
     visible: boolean;
-    onDismiss?: () => void;
   }) => visible
-    ? R.createElement(
-        actual.View,
-        null,
-        children,
-        R.createElement(actual.Pressable, {
-          accessibilityRole: 'button',
-          accessibilityLabel: 'Complete menu dismissal',
-          onPress: onDismiss,
-        }),
-      )
+    ? R.createElement(actual.View, null, children)
     : null;
   const MockActivityIndicator = () => null;
   return new Proxy(actual, {
@@ -112,11 +101,12 @@ describe('OwnerActionMenu — Settings button', () => {
 
     fireEvent.press(screen.getByRole('button', { name: 'Settings' }));
 
+    // BUG: this used to wait for the core <Modal>'s onDismiss, which is
+    // iOS-only in React Native and never fires on Android — a dead tap there.
+    // It now defers via closeThenRun (setTimeout-based, cross-platform), same
+    // as closeThenNavigate above, so no Modal dismissal event is involved.
     expect(defaultProps.onSettings).not.toHaveBeenCalled();
-    await waitFor(() => expect(defaultProps.onClose).toHaveBeenCalledTimes(1));
-    fireEvent.press(screen.getByRole('button', { name: 'Complete menu dismissal' }));
-
-    expect(defaultProps.onSettings).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(defaultProps.onSettings).toHaveBeenCalledTimes(1));
     expect(defaultProps.onEditProfile).not.toHaveBeenCalled();
   });
 });

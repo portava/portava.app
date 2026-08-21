@@ -24,3 +24,15 @@ export function closeThenNavigate(close: () => void, path: string | Href): void 
   close();
   setTimeout(() => router.push(path as any), SHEET_CLOSE_MS);
 }
+
+/**
+ * closeThenRun — same deferred-close fix as closeThenNavigate, for a
+ * caller-owned action instead of a fixed route (e.g. a parent callback that
+ * decides its own destination). Use this instead of relying on a native
+ * <Modal>'s onDismiss: that event is iOS-only in React Native and never
+ * fires on Android, so anything gated on it is a dead tap there.
+ */
+export function closeThenRun(close: () => void, action: () => void): void {
+  close();
+  setTimeout(action, SHEET_CLOSE_MS);
+}

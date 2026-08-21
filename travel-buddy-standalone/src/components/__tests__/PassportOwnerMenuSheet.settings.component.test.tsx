@@ -1,5 +1,17 @@
 /**
- * PassportOwnerMenuSheet — Settings navigation waits for native dismissal.
+ * PassportOwnerMenuSheet — Settings navigates cross-platform.
+ *
+ * Regression test for the Android dead-tap bug: the Settings row used to wait
+ * for the core <Modal>'s onDismiss before calling onSettings, but onDismiss is
+ * iOS-only in React Native and never fires on Android — so the button did
+ * nothing there. It now defers through closeThenRun (setTimeout-based), the
+ * same cross-platform mechanism every other row already uses via
+ * closeThenNavigate, so it no longer depends on any Modal dismissal event.
+ *
+ * ## Mock strategy
+ * See .agents/memory/modal-proxy-mock.md — Modal renders as a synchronous
+ * View with no onDismiss wiring, matching production (this component no
+ * longer reads onDismiss at all).
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
@@ -13,33 +25,14 @@ jest.mock('expo-router', () => ({
 jest.mock('react-native', () => {
   const actual = jest.requireActual('react-native');
   const R = require('react');
-  const MockModal = ({
-    children,
-    visible,
-    onDismiss,
-  }: {
-    children: React.ReactNode;
-    visible: boolean;
-    onDismiss?: () => void;
-  }) => {
-    if (!visible) return null;
-    return R.createElement(
-      actual.View,
-      null,
-      children,
-      R.createElement(
-        actual.Pressable,
-        {
-          accessibilityRole: 'button',
-          accessibilityLabel: 'Complete menu dismissal',
-          onPress: onDismiss,
-        },
-      ),
-    );
-  };
+  // NOTE: Modal Proxy mock — see .agents/memory/modal-proxy-mock.md
+  const MockModal = ({ children, visible }: { children: React.ReactNode; visible: boolean }) =>
+    visible ? R.createElement(actual.View, null, children) : null;
+  const MockActivityIndicator = () => null;
   return new Proxy(actual, {
     get(target: typeof actual, prop: string, receiver: unknown) {
       if (prop === 'Modal') return MockModal;
+      if (prop === 'ActivityIndicator') return MockActivityIndicator;
       return Reflect.get(target, prop, receiver);
     },
   });
@@ -48,7 +41,7 @@ jest.mock('react-native', () => {
 import { PassportOwnerMenuSheet } from '../passport/PassportOwnerMenuSheet.tsx';
 
 describe('PassportOwnerMenuSheet — Settings', () => {
-  it('closes first and invokes the parent settings callback exactly once only after dismissal', async () => {
+  it('closes the sheet and invokes the parent settings callback exactly once, with no Modal dismissal event required', async () => {
     const onClose = jest.fn();
     const onSettings = jest.fn();
     const mockPush = router.push as jest.Mock;
@@ -66,20 +59,9 @@ describe('PassportOwnerMenuSheet — Settings', () => {
     fireEvent.press(settings);
     fireEvent.press(settings);
 
-    // The component owns the exit animation, so the parent is not asked to
-    // unmount the core Modal until the sheet has actually left the screen.
-    expect(onClose).not.toHaveBeenCalled();
-    expect(mockPush).not.toHaveBeenCalled();
     expect(onSettings).not.toHaveBeenCalled();
 
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-    expect(mockPush).not.toHaveBeenCalled();
-    expect(onSettings).not.toHaveBeenCalled();
-
-    fireEvent.press(screen.getByRole('button', { name: 'Complete menu dismissal' }));
-    fireEvent.press(screen.getByRole('button', { name: 'Complete menu dismissal' }));
-
-    expect(onSettings).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onSettings).toHaveBeenCalledTimes(1));
     expect(mockPush).not.toHaveBeenCalled();
   });
 });

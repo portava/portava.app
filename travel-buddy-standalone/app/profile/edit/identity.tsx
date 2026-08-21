@@ -17,6 +17,10 @@ import { getCurrentGps, reverseGeocodeToPlace } from '../../../src/services/loca
 import { runIdentityGpsFill } from '../../../src/services/identityGpsFill';
 import { ManualCityPicker } from '../../../src/components/ManualCityPicker';
 import { DatePickerField } from '../../../src/components/DatePickerField';
+import {
+  buildProfileLocationPatch,
+  normalizeProfileCitySelection,
+} from '../../../src/lib/location/profileLocationFields';
 import type { OwnProfile } from '../../../src/types/models';
 import { markProfileStale } from '../../../src/hooks/usePassport';
 import { PP } from '../../../src/theme/passportTokens';
@@ -235,15 +239,19 @@ export default function IdentityScreen() {
       if (form.bio !== (originalForm?.bio ?? '')) {
         patch.bio = form.bio;
       }
-      if (form.homeCity !== (originalForm?.homeCity ?? '')) {
-        patch.homeCity = form.homeCity.trim() || undefined;
-      }
-      if (form.homeCountry !== (originalForm?.homeCountry ?? '')) {
-        patch.homeCountry = form.homeCountry.trim() || undefined;
-      }
-      if (form.currentCity !== (originalForm?.currentCity ?? '')) {
-        patch.currentCity = form.currentCity.trim() || undefined;
-      }
+      // Canonical location patch (see src/lib/location/profileLocationFields.ts,
+      // also used by profile/edit/home-base.tsx): a cleared field is sent as an
+      // explicit `null` rather than `undefined`, so clearing a city or country
+      // actually reaches the server instead of silently dropping out of the
+      // JSON body (JSON.stringify strips `undefined`-valued keys).
+      Object.assign(patch, buildProfileLocationPatch(
+        { homeCity: form.homeCity, homeCountry: form.homeCountry, currentCity: form.currentCity },
+        {
+          homeCity: originalForm?.homeCity ?? '',
+          homeCountry: originalForm?.homeCountry ?? '',
+          currentCity: originalForm?.currentCity ?? '',
+        },
+      ));
       if (form.spokenLanguages.join(',') !== (originalForm?.spokenLanguages ?? []).join(',')) {
         patch.spokenLanguages = form.spokenLanguages;
       }
@@ -391,7 +399,12 @@ export default function IdentityScreen() {
       <SettingsSection title="Location">
         <View style={st.field}>
           <FieldLabel>Home City</FieldLabel>
-          <Pressable style={st.locationDisplay} onPress={() => setShowHomePicker(true)}>
+          <Pressable
+            style={st.locationDisplay}
+            onPress={() => setShowHomePicker(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Select home city"
+          >
             <Text style={form.homeCity ? st.locationText : st.locationPlaceholder}>
               {form.homeCity || 'Tap to select — or use GPS below'}
             </Text>
@@ -402,7 +415,12 @@ export default function IdentityScreen() {
                 ? <ActivityIndicator size="small" color={PP.ink} />
                 : <Text style={st.locationBtnText}>⊕ Use my current location</Text>}
             </Pressable>
-            <Pressable style={st.locationBtn} onPress={() => setShowHomePicker(true)}>
+            <Pressable
+              style={st.locationBtn}
+              onPress={() => setShowHomePicker(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Choose home city from list"
+            >
               <Text style={st.locationBtnText}>≡ Choose from list</Text>
             </Pressable>
           </View>
@@ -435,7 +453,12 @@ export default function IdentityScreen() {
                 ? <ActivityIndicator size="small" color={PP.ink} />
                 : <Text style={st.locationBtnText}>⊕ Use my current location</Text>}
             </Pressable>
-            <Pressable style={st.locationBtn} onPress={() => setShowCurrentPicker(true)}>
+            <Pressable
+              style={st.locationBtn}
+              onPress={() => setShowCurrentPicker(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Choose current city from list"
+            >
               <Text style={st.locationBtnText}>≡ Choose from list</Text>
             </Pressable>
           </View>
@@ -462,7 +485,14 @@ export default function IdentityScreen() {
         visible={showHomePicker}
         onClose={() => setShowHomePicker(false)}
         onSelect={(place) => {
-          setForm((f) => ({ ...f, homeCity: place.city ?? place.name, homeCountry: place.country ?? f.homeCountry }));
+          // Was `place.country ?? f.homeCountry`: a picker result with no
+          // country (e.g. a manual/GPS-fallback entry) fell back to whatever
+          // country was already in the form, silently pairing the newly
+          // selected city with a stale, unrelated country instead of clearing
+          // it. normalizeProfileCitySelection is the same canonical
+          // resolution home-base.tsx uses, and clears to '' instead.
+          const selected = normalizeProfileCitySelection(place);
+          setForm((f) => ({ ...f, homeCity: selected.city, homeCountry: selected.country }));
           setShowHomePicker(false);
         }}
       />
@@ -470,7 +500,8 @@ export default function IdentityScreen() {
         visible={showCurrentPicker}
         onClose={() => setShowCurrentPicker(false)}
         onSelect={(place) => {
-          setForm((f) => ({ ...f, currentCity: place.city ?? place.name }));
+          const selected = normalizeProfileCitySelection(place);
+          setForm((f) => ({ ...f, currentCity: selected.city }));
           setShowCurrentPicker(false);
         }}
       />
