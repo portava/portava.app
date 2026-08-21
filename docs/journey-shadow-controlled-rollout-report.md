@@ -24,6 +24,21 @@ aggregate evidence is reviewed, and retention remains fresh and healthy.
 behavioral inference, latent-needs inference, traveler-rhythm models,
 personalization, social trajectory, or product decisions.
 
+## Latest preflight — evidence window remains blocked
+
+On 2026-08-21, a fresh read-only preflight of the configured internal QA
+account confirmed that it is not currently eligible for Journey collection:
+current versioned Journey consent is not enabled and its location mode is not
+authorizing. The three Journey capability flags remain off, the global location
+emergency stop remains off, and there are no active stages, cohort assignments,
+or issued Journey sessions. Retention was fresh and `HEALTHY`.
+
+No account setting, consent record, location mode, capability flag, stage,
+cohort, session, observation, derived row, or truth record was changed by this
+check. The owner chose to keep the evidence window blocked until a named
+internal tester independently opts in and the owner later approves finite
+rollout controls.
+
 ## Controlled rollout boundary
 
 - Three service-controlled stages exist: `internal`, `qa`, and `consented`.

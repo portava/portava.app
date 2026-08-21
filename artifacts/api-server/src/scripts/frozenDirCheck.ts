@@ -163,6 +163,11 @@ export function checkNonExecutableOverlap(
 export const DEFAULT_SKIP_DIR_NAMES = new Set([
   "node_modules", ".git", ".cache", ".local", "dist", "build", ".next",
   "coverage", ".replit", ".config", "android", "ios", "vendor",
+  // Gitlink-backed artifact mirror managed outside this repository's canonical
+  // migration chain. Its checked-out copy intentionally mirrors this project;
+  // scanning it would treat every already-pinned historical migration as a new
+  // unlisted root.
+  "portava.app",
 ]);
 
 // 4-digit (e.g. 0011_, 2079_) or 8-digit dated (e.g. 20260815_) numeric-prefix

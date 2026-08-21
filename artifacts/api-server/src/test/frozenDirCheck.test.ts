@@ -238,6 +238,18 @@ describe("sweepForUnlisted — the new requirement", () => {
     }
   });
 
+  it("does not descend into the managed portava.app artifact mirror", () => {
+    const { root, cleanup } = makeTempRepo();
+    try {
+      write(root, "canonical/0001_c.sql", "canon");
+      write(root, "portava.app/artifacts/api-server/src/migrations/2123_mirrored.sql", "mirror");
+      const hits = sweepForUnlisted(root, "canonical", [], {});
+      assert.deepEqual(hits, [], "managed artifact mirrors must not be treated as new migration roots");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("recognizes both the 4-digit and 8-digit dated numeric-prefix conventions", () => {
     const { root, cleanup } = makeTempRepo();
     try {
