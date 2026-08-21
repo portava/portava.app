@@ -90,7 +90,7 @@ function makeFakeClient(state: FakeState = {}) {
     if (table === "profiles")                       return state.profiles ?? [];
     if (table === "trip_crew_location_preferences") return state.crewPrefs ?? [];
     if (table === "user_location_state")            return state.locationState ?? [];
-    if (table === "location_preferences")           return state.locationPreferences ?? [];
+    if (table === "user_location_preferences")      return state.locationPreferences ?? [];
     if (table === "plan_checkins")                  return state.planCheckins ?? [];
     if (table === "safe_return_sessions")           return state.safeReturnSessions ?? [];
     if (table === "trip_crew_location_sessions")    return state.crewSessions ?? [];

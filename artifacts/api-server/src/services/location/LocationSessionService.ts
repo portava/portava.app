@@ -12,7 +12,16 @@ import { logger as rootLogger } from "../../lib/logger";
 
 const logger = rootLogger.child({ service: "LocationSessionService" });
 
-export type SessionType = "private_stay" | "safe_return" | "trusted_circle" | "plan_checkin";
+export type SessionType =
+  | "private_stay"
+  | "safe_return"
+  | "trusted_circle"
+  | "plan_checkin"
+  | "manual"
+  | "trip_arrival"
+  | "live_share"
+  | "trip_check_in"
+  | "auto";
 
 export type SessionTimer = "15min" | "30min" | "1hr" | "until_plan_ends" | "manual";
 
@@ -121,6 +130,56 @@ export async function getActiveSessions(
     return (data as any[]).map(mapSession);
   } catch {
     return [];
+  }
+}
+
+export interface JourneySessionAuthorization {
+  id: string;
+  userId: string;
+  sessionType: string;
+  journeyPurpose: "journey_observation_v1";
+  startedAt: string;
+  expiresAt: string;
+}
+
+/**
+ * Fresh, owner-scoped authorization read for Journey ingestion.
+ *
+ * Journey requires a finite, active session. Null expiry is deliberately not
+ * accepted even though older location features support manual sessions.
+ */
+export async function getActiveJourneySession(
+  db: SupabaseClient,
+  userId: string,
+  sessionId: string,
+  now = new Date(),
+): Promise<JourneySessionAuthorization | null> {
+  try {
+    const { data, error } = await db
+      .from("location_sessions")
+      .select("id, user_id, session_type, journey_purpose, started_at, expires_at, ended_at")
+      .eq("id", sessionId)
+      .eq("user_id", userId)
+      .eq("journey_purpose", "journey_observation_v1")
+      .is("ended_at", null)
+      .maybeSingle();
+
+    if (error || !data || !data.expires_at) return null;
+    const expiresAtMs = new Date(data.expires_at).getTime();
+    const startedAtMs = new Date(data.started_at).getTime();
+    if (!Number.isFinite(expiresAtMs) || !Number.isFinite(startedAtMs)) return null;
+    if (expiresAtMs <= now.getTime() || startedAtMs > now.getTime() + 5 * 60_000) return null;
+
+    return {
+      id: data.id,
+      userId: data.user_id,
+      sessionType: data.session_type,
+      journeyPurpose: "journey_observation_v1",
+      startedAt: data.started_at,
+      expiresAt: data.expires_at,
+    };
+  } catch {
+    return null;
   }
 }
 

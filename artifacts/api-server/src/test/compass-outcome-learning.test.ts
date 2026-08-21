@@ -264,8 +264,16 @@ describe("recordOutcome — chain recording tied to the recommendation", () => {
 
   it("links an organic signal by item id to the most recent served rec", async () => {
     const store = fake.store;
-    seedServedRec(store, { recId: "older", itemId: "evt-9", createdAt: "2026-07-01T00:00:00Z" });
-    const newer = seedServedRec(store, { recId: "newer", itemId: "evt-9", createdAt: "2026-07-20T00:00:00Z" });
+    seedServedRec(store, {
+      recId: "older",
+      itemId: "evt-9",
+      createdAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    });
+    const newer = seedServedRec(store, {
+      recId: "newer",
+      itemId: "evt-9",
+      createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+    });
 
     const result = await recordOutcome(fake.fakeClient, USER_ID, {
       itemId: "evt-9", stage: "went", source: "route:event_rsvp",

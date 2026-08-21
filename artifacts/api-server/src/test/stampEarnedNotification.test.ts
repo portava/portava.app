@@ -84,7 +84,7 @@ function req(
 //   awardStamp:       feature_flags, stamp_definitions, stamp_award_events,
 //                     user_stamps
 //   NotificationService.create:  notifications, notification_preferences,
-//                     notification_category_preferences, location_preferences,
+//                     notification_category_preferences, user_location_preferences,
 //                     trip_members
 //   NotificationRouter.route:    notification_devices, profiles,
 //                     notification_delivery_attempts

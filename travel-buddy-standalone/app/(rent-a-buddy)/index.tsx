@@ -19,6 +19,7 @@ import { searchBuddies, getLaunchStatus, getAvailableNow, type BuddyProfile, typ
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlobalPlacePicker } from '../../src/components/selectors/GlobalPlacePicker';
 import type { Place } from '../../src/lib/location/placeTypes';
+import { useLocationContext } from '../../src/context/LocationContext';
 
 const CATEGORIES = [
   { key: 'city', label: 'City Explorer', icon: MapPin, desc: 'Navigate like a local' },
@@ -185,6 +186,7 @@ const bannerStyles = StyleSheet.create({
 
 export default function RentABuddyLanding() {
   const insets = useSafeAreaInsets();
+  const { setSessionLocation } = useLocationContext();
   const [city, setCity] = useState('');
   const [cityCoords, setCityCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [cityPickerOpen, setCityPickerOpen] = useState(false);
@@ -205,10 +207,17 @@ export default function RentABuddyLanding() {
   const [suggestedCityBuddies, setSuggestedCityBuddies] = useState<BuddyProfile[]>([]);
   const [suggestedCity, setSuggestedCity] = useState<string | null>(null);
 
-  const loadTopBuddies = useCallback(async (searchCity: string) => {
+  const loadTopBuddies = useCallback(async (
+    searchCity: string,
+    coords: { lat: number; lng: number } | null,
+  ) => {
     if (!searchCity.trim()) return;
     setLoadingTop(true);
-    const res = await searchBuddies({ city: searchCity, perPage: 4 });
+    const res = await searchBuddies(
+      coords
+        ? { city: searchCity, lat: coords.lat, lng: coords.lng, perPage: 4 }
+        : { city: searchCity, perPage: 4 },
+    );
     setLoadingTop(false);
     if (res.ok) setTopBuddies(res.data.buddies);
     else setTopBuddies([]);
@@ -275,12 +284,12 @@ export default function RentABuddyLanding() {
 
   useEffect(() => {
     if (city.trim().length > 2) {
-      const timer = setTimeout(() => loadTopBuddies(city), 600);
+      const timer = setTimeout(() => loadTopBuddies(city, cityCoords), 600);
       return () => clearTimeout(timer);
     } else {
       setTopBuddies([]);
     }
-  }, [city, loadTopBuddies]);
+  }, [city, cityCoords, loadTopBuddies]);
 
   return (
     <ScrollView
@@ -337,8 +346,15 @@ export default function RentABuddyLanding() {
         visible={cityPickerOpen}
         onClose={() => setCityPickerOpen(false)}
         onSelect={(place: Place) => {
-          setCity(place.city ?? place.name);
+          const selectedCity = place.city ?? place.name;
+          setCity(selectedCity);
           setCityCoords(place.lat != null && place.lng != null ? { lat: place.lat, lng: place.lng } : null);
+          setSessionLocation(place);
+          router.setParams({
+            city: selectedCity,
+            lat: place.lat != null ? String(place.lat) : undefined,
+            lng: place.lng != null ? String(place.lng) : undefined,
+          });
         }}
         mode="city"
         title="Where do you need a Buddy?"

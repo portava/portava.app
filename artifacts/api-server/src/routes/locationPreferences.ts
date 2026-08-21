@@ -10,6 +10,11 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { LOCATION_MODE_DESCRIPTIONS } from "../services/location/LocationPermissionService";
 import { asyncHandler } from "../lib/asyncHandler";
+import {
+  revokeJourneyConsentAndDeleteSegments,
+  revokesJourneyConsent,
+  type JourneyConsentRevocationPatch,
+} from "../lib/journeySegmentRetention";
 import { invalidateCompassHomeCache } from "./compassHome";
 
 const router = Router();
@@ -25,6 +30,7 @@ const patchSchema = z.object({
   safeReturnEnabled:    z.boolean().optional(),
   trustedCircleShare:   z.boolean().optional(),
   hotelBlurEnabled:     z.boolean().optional(),
+  journeyObservationEnabled: z.boolean().optional(),
 });
 
 // ── GET /api/me/location-preferences ─────────────────────────────────────────
@@ -38,7 +44,7 @@ router.get("/me/location-preferences", asyncHandler(async (req, res) => {
   if (!db) { sendError(res, "server_not_configured"); return; }
 
   const { data, error } = await db
-    .from("location_preferences")
+    .from("user_location_preferences")
     .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
@@ -59,6 +65,11 @@ router.get("/me/location-preferences", asyncHandler(async (req, res) => {
       safeReturnEnabled:   true,
       trustedCircleShare:  false,
       hotelBlurEnabled:    true,
+      journeyObservationEnabled: false,
+      journeyConsentScope: null,
+      journeyConsentVersion: null,
+      journeyConsentGrantedAt: null,
+      journeyConsentRevokedAt: null,
       modeDescriptions:    LOCATION_MODE_DESCRIPTIONS,
     });
     return;
@@ -72,6 +83,11 @@ router.get("/me/location-preferences", asyncHandler(async (req, res) => {
     safeReturnEnabled:   data.safe_return_enabled !== false,
     trustedCircleShare:  Boolean(data.trusted_circle_share),
     hotelBlurEnabled:    data.hotel_blur_enabled !== false,
+    journeyObservationEnabled: data.journey_observation_enabled === true,
+    journeyConsentScope: data.journey_consent_scope ?? null,
+    journeyConsentVersion: data.journey_consent_version ?? null,
+    journeyConsentGrantedAt: data.journey_consent_granted_at ?? null,
+    journeyConsentRevokedAt: data.journey_consent_revoked_at ?? null,
     updatedAt:           data.updated_at ?? null,
     modeDescriptions:    LOCATION_MODE_DESCRIPTIONS,
   });
@@ -89,14 +105,29 @@ router.patch("/me/location-preferences", asyncHandler(async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
+  if (
+    parsed.data.journeyObservationEnabled === true
+    && (
+      parsed.data.sharingPaused === true
+      || (
+        parsed.data.locationMode !== undefined
+        && parsed.data.locationMode !== "live_during_activity"
+        && parsed.data.locationMode !== "trusted_circle_live"
+      )
+    )
+  ) {
+    sendError(
+      res,
+      "invalid_payload",
+      "Journey observation consent requires an unpaused live location mode",
+    );
+    return;
+  }
 
   const db = getServiceClient();
   if (!db) { sendError(res, "server_not_configured"); return; }
 
-  const patch: Record<string, unknown> = {
-    user_id:    user.id,
-    updated_at: new Date().toISOString(),
-  };
+  const patch: JourneyConsentRevocationPatch = {};
 
   const d = parsed.data;
   if (d.locationMode         !== undefined) patch.location_mode          = d.locationMode;
@@ -106,15 +137,53 @@ router.patch("/me/location-preferences", asyncHandler(async (req, res) => {
   if (d.safeReturnEnabled    !== undefined) patch.safe_return_enabled     = d.safeReturnEnabled;
   if (d.trustedCircleShare   !== undefined) patch.trusted_circle_share    = d.trustedCircleShare;
   if (d.hotelBlurEnabled     !== undefined) patch.hotel_blur_enabled      = d.hotelBlurEnabled;
+  if (d.journeyObservationEnabled === false) {
+    patch.journey_observation_enabled = false;
+  }
+  if (revokesJourneyConsent(patch)) {
+    try {
+      await revokeJourneyConsentAndDeleteSegments(db, user.id, patch);
+    } catch (revocationError: any) {
+      req.log.error({ err: revocationError }, "location-preferences: atomic Journey revocation failed");
+      sendError(res, "db_error", revocationError?.message ?? "Location revocation failed");
+      return;
+    }
+  } else {
+    const { error } = await db
+      .from("user_location_preferences")
+      .upsert(
+        { user_id: user.id, ...patch, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" },
+      );
 
-  const { error } = await db
-    .from("location_preferences")
-    .upsert(patch, { onConflict: "user_id" });
+    if (error) {
+      req.log.error({ err: error }, "location-preferences: upsert failed");
+      sendError(res, "db_error", error.message);
+      return;
+    }
+  }
 
-  if (error) {
-    req.log.error({ err: error }, "location-preferences: upsert failed");
-    sendError(res, "db_error", error.message);
-    return;
+  if (d.journeyObservationEnabled === true) {
+    const { data: consentResult, error: consentError } = await db.rpc(
+      "set_journey_observation_consent_v1",
+      {
+        p_user_id: user.id,
+        p_enabled: true,
+      },
+    );
+    if (consentError) {
+      req.log.error({ err: consentError }, "location-preferences: Journey consent update failed");
+      sendError(res, "db_error", consentError.message);
+      return;
+    }
+    if (consentResult === "not_eligible") {
+      sendError(
+        res,
+        "invalid_payload",
+        "Journey observation consent requires an unpaused live location mode",
+      );
+      return;
+    }
   }
 
   invalidateCompassHomeCache(user.id);

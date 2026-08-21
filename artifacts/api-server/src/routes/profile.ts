@@ -205,12 +205,11 @@ router.post("/profile/ensure", async (req, res) => {
     return;
   }
 
-  // Also ensure a location_preferences row exists with safe defaults.
-  // NOTE: The table was originally called user_location_privacy and was renamed
-  // to location_preferences in migration 0032_location_preferences.sql.
+  // Also ensure a canonical user_location_preferences row exists with
+  // privacy-safe defaults.
   // Uses ignoreDuplicates so existing preferences are never overwritten.
   const { error: locError } = await sc
-    .from('location_preferences')
+    .from('user_location_preferences')
     .upsert(
       { user_id: user.id },
       { onConflict: 'user_id', ignoreDuplicates: true },
@@ -218,7 +217,7 @@ router.post("/profile/ensure", async (req, res) => {
   if (locError) {
     // Non-fatal: log but don't block the response. The row will be created
     // on first access to location features.
-    req.log.warn({ err: locError }, "profile/ensure location_preferences upsert failed (non-fatal)");
+    req.log.warn({ err: locError }, "profile/ensure user_location_preferences upsert failed (non-fatal)");
   }
 
   res.status(200).json({ ok: true });
@@ -1333,6 +1332,49 @@ router.post("/me/reactivate", async (req, res) => {
 
   const now = new Date().toISOString();
 
+  const { data: deletionRequest, error: deletionRequestErr } = await sc
+    .from("user_deletion_requests")
+    .select("status")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (deletionRequestErr) {
+    req.log.error({ err: deletionRequestErr }, "reactivate: deletion request lookup failed");
+    sendError(res, "db_error", "Failed to verify deletion request state");
+    return;
+  }
+  if ((deletionRequest as any)?.status === "executing") {
+    sendError(res, "forbidden", "Account deletion is already executing and can no longer be cancelled.");
+    return;
+  }
+  if ((deletionRequest as any)?.status === "executed") {
+    sendError(res, "forbidden", "Account deletion has already executed.");
+    return;
+  }
+  if ((deletionRequest as any)?.status === "pending") {
+    const { data: cancelled, error: cancelErr } = await sc
+      .from("user_deletion_requests")
+      .update({
+        status: "cancelled",
+        cancelled_at: now,
+        execution_token: null,
+        execution_started_at: null,
+        execution_lease_expires_at: null,
+      })
+      .eq("user_id", user.id)
+      .eq("status", "pending")
+      .select("user_id, status")
+      .maybeSingle();
+    if (cancelErr) {
+      req.log.error({ err: cancelErr }, "reactivate: deletion request cancellation failed");
+      sendError(res, "db_error", "Failed to cancel deletion request");
+      return;
+    }
+    if (!cancelled) {
+      sendError(res, "forbidden", "Account deletion started before cancellation could complete.");
+      return;
+    }
+  }
+
   // Fail closed: if the profile update fails, return an error (don't swallow it)
   const { error: profileUpdateErr } = await sc
     .from("profiles")
@@ -1344,16 +1386,6 @@ router.post("/me/reactivate", async (req, res) => {
     sendError(res, "db_error", "Failed to reactivate account");
     return;
   }
-
-  // Cancel any pending deletion request (awaited so that a subsequent
-  // GET /me/account-status call does not race with the cancellation write).
-  // Fail-open: if the table doesn't exist yet (pre-migration 0094) or the
-  // update fails for any reason, the reactivation itself already succeeded.
-  await sc.from("user_deletion_requests")
-    .update({ status: "cancelled", cancelled_at: now })
-    .eq("user_id", user.id)
-    .eq("status", "pending")
-    .then(undefined, () => {});
 
   // Secondary writes are best-effort after the primary write succeeds.
   // Note: user_account_states is unique on (user_id, state), so clear the
@@ -1449,15 +1481,77 @@ router.post("/me/delete-request", async (req, res) => {
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
-  const scheduledAt = new Date(nowMs + 30 * 24 * 60 * 60 * 1000).toISOString();
+  let scheduledAt = new Date(nowMs + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const pendingPatch = {
+    requested_at: now,
+    scheduled_at: scheduledAt,
+    status: "pending",
+    cancelled_at: null,
+    executed_at: null,
+    execution_token: null,
+    execution_started_at: null,
+    execution_lease_expires_at: null,
+  };
 
-  const { error } = await sc
+  const { data: existingRequest, error: existingRequestErr } = await sc
     .from("user_deletion_requests")
-    .upsert({ user_id: user.id, requested_at: now, scheduled_at: scheduledAt, status: "pending" }, { onConflict: "user_id" });
+    .select("user_id, status, scheduled_at")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (existingRequestErr) {
+    req.log.error({ err: existingRequestErr }, "delete-request: failed to inspect existing request");
+    sendError(res, "db_error", existingRequestErr.message);
+    return;
+  }
 
-  if (error) {
-    req.log.error({ err: error }, "delete-request: failed to create deletion request");
-    sendError(res, "db_error", error.message);
+  const existingStatus = (existingRequest as any)?.status as string | undefined;
+  if (existingStatus === "executing" || existingStatus === "executed") {
+    sendError(res, "forbidden", "Account deletion has already started and cannot be rescheduled.");
+    return;
+  }
+
+  if (existingStatus === "pending") {
+    // A duplicate request is idempotent. Do not move its hold date or write the
+    // row: a worker may atomically claim it immediately after this read.
+    scheduledAt = (existingRequest as any).scheduled_at;
+  } else if (existingStatus === "cancelled") {
+    const { data: renewed, error: renewErr } = await sc
+      .from("user_deletion_requests")
+      .update(pendingPatch)
+      .eq("user_id", user.id)
+      .eq("status", "cancelled")
+      .select("user_id, status, scheduled_at")
+      .maybeSingle();
+    if (renewErr) {
+      req.log.error({ err: renewErr }, "delete-request: failed to renew cancelled request");
+      sendError(res, "db_error", renewErr.message);
+      return;
+    }
+    if (!renewed) {
+      sendError(res, "forbidden", "Deletion request state changed before it could be renewed.");
+      return;
+    }
+  } else if (!existingRequest) {
+    const { data: inserted, error: insertErr } = await sc
+      .from("user_deletion_requests")
+      .insert({ user_id: user.id, ...pendingPatch })
+      .select("user_id, status, scheduled_at")
+      .maybeSingle();
+    if (insertErr) {
+      req.log.error({ err: insertErr }, "delete-request: failed to create deletion request");
+      if (insertErr.code === "23505") {
+        sendError(res, "forbidden", "A deletion request already exists and changed concurrently.");
+      } else {
+        sendError(res, "db_error", insertErr.message);
+      }
+      return;
+    }
+    if (!inserted) {
+      sendError(res, "db_error", "Deletion request was not created");
+      return;
+    }
+  } else {
+    sendError(res, "forbidden", "Deletion request is not in a renewable state.");
     return;
   }
 
@@ -1531,35 +1625,32 @@ router.delete("/me/delete-request", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  // Verify there is actually a pending deletion request to cancel
-  const { data: existing, error: fetchErr } = await sc
-    .from("user_deletion_requests")
-    .select("status")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  if (fetchErr) {
-    req.log.error({ err: fetchErr }, "delete-request DELETE: failed to fetch request");
-    sendError(res, "db_error", fetchErr.message);
-    return;
-  }
-
-  if (!existing || (existing as any).status !== "pending") {
-    sendError(res, "not_found", "No pending deletion request found");
-    return;
-  }
-
   const now = new Date().toISOString();
 
-  // Mark the deletion request as cancelled
-  const { error: cancelErr } = await sc
+  // The status predicate is the cancellation boundary: once a worker changes
+  // pending -> executing, this update returns no row and no profile state is
+  // restored.
+  const { data: cancelled, error: cancelErr } = await sc
     .from("user_deletion_requests")
-    .update({ status: "cancelled", cancelled_at: now })
-    .eq("user_id", user.id);
+    .update({
+      status: "cancelled",
+      cancelled_at: now,
+      execution_token: null,
+      execution_started_at: null,
+      execution_lease_expires_at: null,
+    })
+    .eq("user_id", user.id)
+    .eq("status", "pending")
+    .select("user_id, status")
+    .maybeSingle();
 
   if (cancelErr) {
     req.log.error({ err: cancelErr }, "delete-request DELETE: failed to cancel");
     sendError(res, "db_error", cancelErr.message);
+    return;
+  }
+  if (!cancelled) {
+    sendError(res, "not_found", "No cancellable pending deletion request found");
     return;
   }
 
@@ -1601,7 +1692,7 @@ router.delete("/me/delete-request", async (req, res) => {
  * cascade (services/accountDeletion/AccountDeletionService.ts — the same
  * implementation used by the admin execute route and the in-process
  * scheduler) for every user_deletion_requests row whose 30-day hold has
- * elapsed (scheduled_at <= now, status pending/confirmed).
+ * elapsed (scheduled_at <= now, status pending or an expired execution claim).
  *
  * Auth: X-Internal-Secret header must match INTERNAL_API_SECRET — the same
  * fail-closed pattern as routes/notifications.ts requireInternalSecret. When
@@ -1617,9 +1708,8 @@ router.delete("/me/delete-request", async (req, res) => {
  *   curl -X POST "$API_BASE_URL/api/internal/deletion-requests/execute-due" \
  *        -H "X-Internal-Secret: $INTERNAL_API_SECRET"
  * Batch is capped at 20 per run; the endpoint is idempotent (a request is
- * only marked completed when its cascade fully succeeds, and completed rows
- * are never re-selected — failed ones stay pending for retry), so overlapping
- * runs are safe.
+ * only marked executed when its cascade fully succeeds. Failed destructive
+ * runs keep a non-cancellable claim whose lease is expired for safe retry.
  */
 function requireInternalSecret(req: any, res: any): boolean {
   const secret = process.env.INTERNAL_API_SECRET;
@@ -1663,7 +1753,7 @@ router.post("/internal/deletion-requests/execute-due", async (req, res) => {
   const { data: due, error: dueErr } = await sc
     .from("user_deletion_requests")
     .select("user_id, scheduled_at, status")
-    .in("status", ["pending", "confirmed"])
+    .or(`status.eq.pending,and(status.eq.executing,execution_lease_expires_at.lte.${now})`)
     .lte("scheduled_at", now)
     .order("scheduled_at", { ascending: true })
     .limit(BATCH_CAP);
@@ -1681,10 +1771,10 @@ router.post("/internal/deletion-requests/execute-due", async (req, res) => {
   for (const row of (due ?? []) as { user_id: string }[]) {
     const userId = row.user_id;
     try {
-      // The service marks the request completed itself — but ONLY when the
+      // The service marks the request executed itself — but ONLY when the
       // cascade outcome is ok (profile anonymised + auth user removed). A
-      // failed cascade leaves the row pending/confirmed so the next run
-      // retries it.
+      // failed cascade expires its non-cancellable lease so the next run can
+      // safely reclaim it.
       const outcome = await executeAccountDeletion(sc, userId, {
         actorId: null, // executed by the worker, not an admin
         reason: "Scheduled account deletion executed",
@@ -1700,7 +1790,7 @@ router.post("/internal/deletion-requests/execute-due", async (req, res) => {
         failed.push({ userId, failedSteps });
         req.log.error(
           { userId, failedSteps },
-          "deletion worker: deletion did not complete; request left pending for retry",
+          "deletion worker: deletion did not complete; execution claim expired for retry",
         );
       }
     } catch (err: any) {

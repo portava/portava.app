@@ -20,7 +20,9 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react-
 // NOTE: intentional stub — only router.push is asserted; navigation internals
 // are not under test here.
 jest.mock('expo-router', () => ({
-  router: { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: () => false },
+  router: {
+    push: jest.fn(), back: jest.fn(), replace: jest.fn(), setParams: jest.fn(), canGoBack: () => false,
+  },
   useLocalSearchParams: () => ({}),
   useFocusEffect: (cb: () => unknown) => { require('react').useEffect(cb, []); },
 }));
@@ -32,6 +34,12 @@ const routerPush = router.push as jest.Mock;
 jest.mock('react-native-safe-area-context', () => ({
   ...jest.requireActual('react-native-safe-area-context'),
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
+}));
+
+const mockSetSessionLocation = jest.fn();
+// NOTE: intentional exhaustive stub — this screen only reads setSessionLocation.
+jest.mock('../../../src/context/LocationContext', () => ({
+  useLocationContext: () => ({ setSessionLocation: mockSetSessionLocation }),
 }));
 
 // ── rentABuddy services ───────────────────────────────────────────────────────

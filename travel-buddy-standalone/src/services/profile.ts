@@ -69,9 +69,9 @@ export interface UpdateProfileInput {
   displayName?: string;
   username?: string;
   bio?: string;
-  homeCity?: string;
-  homeCountry?: string;
-  currentCity?: string;
+  homeCity?: string | null;
+  homeCountry?: string | null;
+  currentCity?: string | null;
   interests?: string[];
   passportVisibility?: 'public' | 'followers_only' | 'private';
   avatarUrl?: string;

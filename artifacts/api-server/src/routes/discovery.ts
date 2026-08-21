@@ -17,11 +17,12 @@
  * Graceful degradation: any network/parse error returns an empty list.
  */
 
-import { Router } from "express";
+import { Router, type Response as ExpressResponse } from "express";
 import { z } from "zod";
 import { getServiceClient } from "../lib/supabase";
 import { osmNeighborhood } from "../lib/osmPlaceShape";
 import { sendError, requireUser } from "../lib/http";
+import { requireAdmin } from "../lib/requireAdmin";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
 import { loadPreferences } from "../services/location/LocationPermissionService";
@@ -2490,6 +2491,29 @@ interface WikidataCacheEntry {
 
 const _wikidataCache = new Map<string, WikidataCacheEntry>();
 
+/**
+ * Exposes the age of the server-side Wikidata entry without adding cache state
+ * to the public response body. Operators can use these headers to decide
+ * whether an entity needs an admin refresh.
+ */
+function setWikidataCacheHeaders(
+  res: ExpressResponse,
+  cachedAt: number,
+  cacheStatus: "HIT" | "MISS" | "REFRESH",
+): void {
+  res.set({
+    "X-Wikidata-Cache": cacheStatus,
+    "X-Wikidata-Cache-Age": String(Math.max(0, Math.floor((Date.now() - cachedAt) / 1_000))),
+    "X-Wikidata-Cache-TTL": String(WIKIDATA_CACHE_TTL_MS / 1_000),
+    "X-Wikidata-Cache-Created-At": new Date(cachedAt).toISOString(),
+  });
+}
+
+/** Test-only cache reset so route-level tests do not leak entity data between cases. */
+export function _resetWikidataCacheForTests(): void {
+  _wikidataCache.clear();
+}
+
 export interface WikidataEnrichment {
   /** English short description from Wikidata (e.g. "palace in Versailles, France"). */
   description: string | null;
@@ -2506,6 +2530,10 @@ export interface WikidataEnrichment {
  * No auth required — all data is public.
  *
  * Response: WikidataEnrichment
+ *
+ * `?refresh=1` bypasses the L1 entry and replaces it with a fresh Wikidata
+ * response. It is deliberately admin-only so public callers cannot turn this
+ * endpoint into an uncached upstream proxy.
  */
 router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
   const { wikidataId } = req.params;
@@ -2516,9 +2544,16 @@ router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
     return;
   }
 
+  const refreshRequested = req.query.refresh === "1";
+  if (refreshRequested) {
+    const admin = await requireAdmin(req, res);
+    if (!admin) return;
+  }
+
   // L1: in-process memory cache.
   const cached = _wikidataCache.get(wikidataId);
-  if (cached && Date.now() - cached.cachedAt < WIKIDATA_CACHE_TTL_MS) {
+  if (!refreshRequested && cached && Date.now() - cached.cachedAt < WIKIDATA_CACHE_TTL_MS) {
+    setWikidataCacheHeaders(res, cached.cachedAt, "HIT");
     res.json(cached.data);
     return;
   }
@@ -2561,7 +2596,9 @@ router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
   if (!item || (item as { missing?: string }).missing !== undefined) {
     // Entity doesn't exist on Wikidata — return empty enrichment and cache it.
     const empty: WikidataEnrichment = { description: null, wikipediaUrl: null, commonsImageUrl: null };
-    _wikidataCache.set(wikidataId, { data: empty, cachedAt: Date.now() });
+    const cachedAt = Date.now();
+    _wikidataCache.set(wikidataId, { data: empty, cachedAt });
+    setWikidataCacheHeaders(res, cachedAt, refreshRequested ? "REFRESH" : "MISS");
     res.json(empty);
     return;
   }
@@ -2594,7 +2631,9 @@ router.get("/discovery/wikidata/:wikidataId", async (req, res) => {
   }
 
   const enrichment: WikidataEnrichment = { description, wikipediaUrl, commonsImageUrl };
-  _wikidataCache.set(wikidataId, { data: enrichment, cachedAt: Date.now() });
+  const cachedAt = Date.now();
+  _wikidataCache.set(wikidataId, { data: enrichment, cachedAt });
+  setWikidataCacheHeaders(res, cachedAt, refreshRequested ? "REFRESH" : "MISS");
   res.json(enrichment);
 });
 

@@ -13,19 +13,34 @@
  */
 
 import React from 'react';
-import { render, act } from '@testing-library/react-native';
+import { render, act, waitFor } from '@testing-library/react-native';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // NOTE: intentional stub — expo-router is mocked so we can assert on router.push.
 // router.push uses jest.fn() inline so there is no hoisting issue.
 jest.mock('expo-router', () => ({
-  router: { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: () => false },
+  router: {
+    push: jest.fn(),
+    back: jest.fn(),
+    replace: jest.fn(),
+    setParams: jest.fn(),
+    canGoBack: () => false,
+  },
   useLocalSearchParams: () => ({}),
   useFocusEffect: (cb: () => unknown) => { require('react').useEffect(cb, []); },
 }));
 
 import { router } from 'expo-router';
 const routerPush = router.push as jest.Mock;
+const routerSetParams = router.setParams as jest.Mock;
+
+const mockSetSessionLocation = jest.fn();
+// NOTE: intentional exhaustive stub — this screen only reads setSessionLocation.
+jest.mock('../../../src/context/LocationContext', () => ({
+  useLocationContext: () => ({
+    setSessionLocation: mockSetSessionLocation,
+  }),
+}));
 
 // ── safe-area ─────────────────────────────────────────────────────────────────
 jest.mock('react-native-safe-area-context', () => ({
@@ -65,6 +80,8 @@ jest.mock('../../../src/services/rentABuddy', () => ({
   }),
   getLaunchStatus: jest.fn().mockResolvedValue({ ok: false }),
 }));
+import { searchBuddies } from '../../../src/services/rentABuddy';
+const mockSearchBuddies = searchBuddies as jest.Mock;
 
 // ── BuddyCard — prop-capture stub ─────────────────────────────────────────────
 // NOTE: intentional stub — we capture onBook from each rendered BuddyCard
@@ -105,8 +122,36 @@ import RentABuddyLanding from '../index';
 
 beforeEach(() => {
   routerPush.mockClear();
+  routerSetParams.mockClear();
+  mockSetSessionLocation.mockClear();
+  mockSearchBuddies.mockClear();
   delete capturedOnBook['avail-1'];
   delete capturedOnBook['top-1'];
+});
+
+describe('index.tsx — selected city propagation', () => {
+  it('stores the picked city in context and route params, then sends matching coordinates to the preview search', async () => {
+    await render(<RentABuddyLanding />);
+    await act(async () => {});
+
+    expect(mockSetSessionLocation).toHaveBeenCalledWith({
+      city: 'Lisbon',
+      name: 'Lisbon',
+      lat: 38.7,
+      lng: -9.1,
+    });
+    expect(routerSetParams).toHaveBeenCalledWith({
+      city: 'Lisbon',
+      lat: '38.7',
+      lng: '-9.1',
+    });
+    await waitFor(() => expect(mockSearchBuddies).toHaveBeenCalledWith({
+      city: 'Lisbon',
+      lat: 38.7,
+      lng: -9.1,
+      perPage: 4,
+    }), { timeout: 2_000 });
+  });
 });
 
 describe('index.tsx — Available Now strip', () => {

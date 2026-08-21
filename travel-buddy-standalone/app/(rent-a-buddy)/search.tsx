@@ -92,7 +92,7 @@ function computeCompatibility(answers: string[], buddy: BuddyProfile): { score: 
 export default function RentABuddySearch() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ city?: string; category?: string; mode?: string; bookingDate?: string; lat?: string; lng?: string }>();
-  const { resolvedLocation } = useLocationContext();
+  const { resolvedLocation, setSessionLocation, clearSessionLocation } = useLocationContext();
   // Same city resolution CompassBuddyRow uses (canonical location, not a
   // blank manual field) — so this screen's "All" tab never contradicts the
   // Compass-matched row rendered a few lines above it on the same screen.
@@ -189,7 +189,7 @@ export default function RentABuddySearch() {
 
   useEffect(() => {
     if (mode === 'results') doSearch(true);
-  }, [mode, selectedCategory]);
+  }, [mode, selectedCategory, city, cityLat, cityLng]);
 
   /** Quiz answers -> the backend's MatchPreferences shape, plus the raw Q&A for editing/reference. */
   const buildPreferencesFromQuiz = (answers: string[]): MatchPreferences => {
@@ -296,7 +296,15 @@ export default function RentABuddySearch() {
             </Text>
           </Pressable>
           {city.length > 0 && (
-            <Pressable onPress={() => { setCity(''); setCityLat(undefined); setCityLng(undefined); setBuddies([]); setMode('categories'); }}>
+            <Pressable onPress={() => {
+              setCity('');
+              setCityLat(undefined);
+              setCityLng(undefined);
+              setBuddies([]);
+              setMode('categories');
+              clearSessionLocation();
+              router.setParams({ city: undefined, lat: undefined, lng: undefined });
+            }}>
               <X size={14} color={color.mute} />
             </Pressable>
           )}
@@ -307,9 +315,16 @@ export default function RentABuddySearch() {
           visible={cityPickerOpen}
           onClose={() => setCityPickerOpen(false)}
           onSelect={(place: Place) => {
+            const selectedCity = place.city ?? place.name;
             setCityLat(place.lat ?? undefined);
             setCityLng(place.lng ?? undefined);
-            setCity(place.city ?? place.name);
+            setCity(selectedCity);
+            setSessionLocation(place);
+            router.setParams({
+              city: selectedCity,
+              lat: place.lat != null ? String(place.lat) : undefined,
+              lng: place.lng != null ? String(place.lng) : undefined,
+            });
             setMode('results');
           }}
           mode="city"

@@ -12,8 +12,10 @@
  */
 import React from 'react';
 import {
-  View, Text, Pressable, Modal, ScrollView, StyleSheet, Alert,
+  View, Text, Pressable, Modal, ScrollView, StyleSheet, Alert, Animated,
+  useWindowDimensions,
 } from 'react-native';
+import { router, type Href } from 'expo-router';
 import {
   PenLine, Camera, Image, FileText, Columns, Star, Eye,
   Stamp, MapPin, Home, Globe, Heart, Calendar,
@@ -35,6 +37,8 @@ export interface PassportOwnerMenuSheetProps {
   username: string | null;
   /** Navigate to /profile/edit */
   onEditProfile: () => void;
+  /** Open the profile settings hub after this sheet has fully dismissed. */
+  onSettings: () => void;
   /** Trigger avatar/photo picker */
   onChangeAvatar?: () => void;
   /** Trigger cover photo picker */
@@ -65,8 +69,15 @@ type ActionItem = {
   iconColor: string;
   /** false = coming soon / disabled */
   live: boolean;
-  action: (props: PassportOwnerMenuSheetProps) => void;
+  action?: (props: PassportOwnerMenuSheetProps) => void;
+  /** Route that must wait for the native Modal to finish dismissing. */
+  dismissNavigationPath?: Href;
+  /** Parent-owned action that must wait for the native Modal to finish dismissing. */
+  dismissAction?: (props: PassportOwnerMenuSheetProps) => void;
 };
+
+const OWNER_MENU_ANIMATION_MS = 220;
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 type Section = {
   title: string;
@@ -342,7 +353,7 @@ const SECTIONS: Section[] = [
         Icon: Settings,
         iconColor: '#4A4A48',
         live: true,
-        action: (p) => { closeThenNavigate(p.onClose, '/profile/edit'); },
+        dismissAction: (p) => { p.onSettings(); },
       },
       {
         key: 'privacy',
@@ -524,23 +535,110 @@ const mr = StyleSheet.create({
 
 export function PassportOwnerMenuSheet(props: PassportOwnerMenuSheetProps) {
   const { visible, onClose } = props;
+  const { height: windowHeight } = useWindowDimensions();
+  const animationProgress = React.useRef(new Animated.Value(1)).current;
+  const closingRef = React.useRef(false);
+  const pendingNavigationRef = React.useRef<Href | null>(null);
+  const pendingDismissActionRef = React.useRef<(() => void) | null>(null);
+
+  const finishPendingNavigation = React.useCallback(() => {
+    const path = pendingNavigationRef.current;
+    const dismissAction = pendingDismissActionRef.current;
+    pendingNavigationRef.current = null;
+    pendingDismissActionRef.current = null;
+    if (path) {
+      router.push(path);
+      return;
+    }
+    dismissAction?.();
+  }, []);
+
+  React.useEffect(() => {
+    if (!visible) return;
+    closingRef.current = false;
+    animationProgress.stopAnimation();
+    animationProgress.setValue(1);
+    Animated.timing(animationProgress, {
+      toValue: 0,
+      duration: OWNER_MENU_ANIMATION_MS,
+      useNativeDriver: true,
+    }).start();
+  }, [animationProgress, visible]);
+
+  const closeAfterAnimation = React.useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    animationProgress.stopAnimation();
+    Animated.timing(animationProgress, {
+      toValue: 1,
+      duration: OWNER_MENU_ANIMATION_MS,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished) {
+        closingRef.current = false;
+        return;
+      }
+      onClose();
+    });
+  }, [animationProgress, onClose]);
+
+  const closeAndNavigateAfterDismiss = React.useCallback((path: Href) => {
+    // A rapid second tap while the native sheet is sliding out must not queue a
+    // duplicate route or call the parent close callback twice.
+    const hasPendingNavigation = pendingNavigationRef.current !== null;
+    const hasPendingAction = pendingDismissActionRef.current !== null;
+    if (hasPendingNavigation || hasPendingAction) return;
+    pendingNavigationRef.current = path;
+    closeAfterAnimation();
+  }, [closeAfterAnimation]);
+
+  const closeAndRunAfterDismiss = React.useCallback((action: () => void) => {
+    const hasPendingNavigation = pendingNavigationRef.current !== null;
+    const hasPendingAction = pendingDismissActionRef.current !== null;
+    if (hasPendingNavigation || hasPendingAction) return;
+    pendingDismissActionRef.current = action;
+    closeAfterAnimation();
+  }, [closeAfterAnimation]);
+
+  React.useEffect(() => {
+    if (visible || (!pendingNavigationRef.current && !pendingDismissActionRef.current)) return;
+    // The core Modal has animationType="none"; the visible=false commit happens
+    // only after our own close animation completes, so the next frame is safely
+    // past both the visual exit and native host removal on every platform.
+    const frame = requestAnimationFrame(finishPendingNavigation);
+    return () => cancelAnimationFrame(frame);
+  }, [finishPendingNavigation, visible]);
+
+  const actionProps = React.useMemo(
+    () => ({ ...props, onClose: closeAfterAnimation }),
+    [closeAfterAnimation, props],
+  );
+
+  const sheetTranslateY = animationProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, Math.max(windowHeight, 1)],
+  });
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
-      onRequestClose={onClose}
+      animationType="none"
+      onRequestClose={closeAfterAnimation}
+      onDismiss={finishPendingNavigation}
     >
-      <Pressable style={s.overlay} onPress={onClose} />
-      <View style={s.sheet}>
+      <AnimatedPressable
+        style={[s.overlay, { opacity: Animated.subtract(1, animationProgress) }]}
+        onPress={closeAfterAnimation}
+      />
+      <Animated.View style={[s.sheet, { transform: [{ translateY: sheetTranslateY }] }]}>
         {/* Handle + title row */}
         <View style={s.topBar}>
           <View style={s.handle} />
         </View>
         <View style={s.titleRow}>
           <Text style={s.title}>My Passport</Text>
-          <Pressable style={s.closeBtn} onPress={onClose} hitSlop={10} accessibilityLabel="Close menu">
+          <Pressable style={s.closeBtn} onPress={closeAfterAnimation} hitSlop={10} accessibilityLabel="Close menu">
             <X size={18} color={PP.inkMuted} strokeWidth={2} />
           </Pressable>
         </View>
@@ -558,14 +656,23 @@ export function PassportOwnerMenuSheet(props: PassportOwnerMenuSheetProps) {
                 <MenuRow
                   key={item.key}
                   item={item}
-                  onAction={() => item.action(props)}
+                  onAction={() => {
+                    if (closingRef.current) return;
+                    if (item.dismissNavigationPath) {
+                      closeAndNavigateAfterDismiss(item.dismissNavigationPath);
+                    } else if (item.dismissAction) {
+                      closeAndRunAfterDismiss(() => item.dismissAction?.(actionProps));
+                    } else {
+                      item.action?.(actionProps);
+                    }
+                  }}
                 />
               ))}
             </View>
           ))}
           <View style={{ height: space.xl }} />
         </ScrollView>
-      </View>
+      </Animated.View>
     </Modal>
   );
 }

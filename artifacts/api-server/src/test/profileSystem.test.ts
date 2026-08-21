@@ -1375,25 +1375,38 @@ describe("pending_deletion account_status → unavailable on public endpoints", 
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 18. POST /me/delete-request — duplicate upsert succeeds (not 409)
+// 18. POST /me/delete-request — duplicate request is idempotent
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("POST /api/me/delete-request — duplicate upsert", () => {
-  it("second call to delete-request succeeds via upsert, not 409", async () => {
+describe("POST /api/me/delete-request — duplicate request", () => {
+  it("returns the existing hold date without rewriting a pending row", async () => {
     const state = baseState();
+    const existingSchedule = new Date(Date.now() + 29 * 24 * 60 * 60 * 1000).toISOString();
     // Seed an existing pending deletion request for ME
     state.user_deletion_requests = [
-      { user_id: ME, status: "pending", requested_at: new Date().toISOString(), scheduled_at: new Date().toISOString() },
+      { user_id: ME, status: "pending", requested_at: new Date().toISOString(), scheduled_at: existingSchedule },
     ];
     setup(state);
     const r = await req("/me/delete-request", { method: "POST" });
-    assert.equal(r.status, 200, "duplicate delete-request must return 200 via upsert, not 409");
+    assert.equal(r.status, 200);
     const body = await r.json() as any;
     assert.equal(body.deletionScheduled, true);
-    assert.ok(body.scheduledAt, "scheduledAt must be present on duplicate call");
-    const scheduled = new Date(body.scheduledAt).getTime();
-    const diff = scheduled - Date.now();
-    assert.ok(diff > 28 * 24 * 60 * 60 * 1000, "scheduledAt must still be ~30 days in future on duplicate call");
+    assert.equal(body.scheduledAt, existingSchedule);
+  });
+
+  it("cannot reset an executing request back to pending", async () => {
+    const state = baseState();
+    state.user_deletion_requests = [{
+      user_id: ME,
+      status: "executing",
+      scheduled_at: new Date().toISOString(),
+      execution_token: "22222222-2222-2222-2222-222222222222",
+    }];
+    setup(state);
+
+    const r = await req("/me/delete-request", { method: "POST" });
+    assert.equal(r.status, 403);
+    assert.equal(state.user_deletion_requests[0].status, "executing");
   });
 });
 

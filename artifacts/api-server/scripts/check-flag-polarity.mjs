@@ -298,7 +298,22 @@ const CLASSIFIED = [
       'question from its polarity.',
   },
   { flag: 'COMPASS_FEED_ENABLED',                kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: the Compass feed endpoint. `true` = available.' },
+  { flag: 'COMPASS_JOURNEY_SEGMENTATION_SHADOW_ENABLED', kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate for insert-only shadow segment revisions. `true` permits storage only after master, ingest, consent, and active-session gates pass; false-on-error rejects storage.' },
   { flag: 'COMPASS_FALLBACK_MODE_ENABLED',       kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: degraded-mode Compass feed builder. `true` = available.' },
+  {
+    flag: 'COMPASS_JOURNEY_ENGINE_ENABLED', kind: 'CAPABILITY',
+    reason:
+      'SCREAMING_CASE capability gate and Journey master authorization control. `true` permits Journey paths ' +
+      'to proceed to their narrower gates; false, a missing row, or any read failure rejects precise-location ' +
+      'ingestion. It is deliberately not a STOP-polarity flag: enabled=true means available.',
+  },
+  {
+    flag: 'COMPASS_JOURNEY_OBSERVATION_INGEST_ENABLED', kind: 'CAPABILITY',
+    reason:
+      'SCREAMING_CASE capability gate for the restricted Journey observation write boundary. `true` permits ' +
+      'an otherwise-authorized batch; false, a missing row, or any read failure rejects it. The separate ' +
+      'disable_location_sharing STOP remains independently effective in the same fresh direct read.',
+  },
   { flag: 'CREATOR_FATIGUE_ENABLED',             kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: creator-fatigue damping in ranking. `true` = damping applied.' },
   { flag: 'DISCOVERY_DIVERSITY_ENABLED',         kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: diversity re-ranking in discovery. `true` = applied.' },
   { flag: 'ACTIVITY_DISCOVERY_BOOST_ENABLED',    kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: creator-activity boost job. `true` = job runs.' },
@@ -847,6 +862,21 @@ const DIRECT_READS = [
   { file: 'compass/flags.ts',                        shape: 'bulk', reason: `Wildcard \`.like("flag", "COMPASS_%")\` — no flag-name literal exists to inventory. ${V}: catch → {}, all Compass flags read as undefined/falsy. Fail-closed.` },
   { file: 'compass/CompassPipeline.ts',              shape: 'bulk', reason: `Wildcard \`.like("flag", "COMPASS_%")\`. ${V}: catch → {} with a warning log, degrading to all-defaults. Fail-closed.` },
   { file: 'compass/CompassFrontLoadEngine.ts',       shape: 'bulk', reason: `Wildcard \`.like("flag", "COMPASS_%")\`. ${V}: catch is non-fatal and \`flags\` stays {} from its initializer. Fail-closed.` },
+  {
+    file: 'services/journey/JourneyObservationService.ts',
+    shape: 'bulk',
+    covers: [
+      'COMPASS_JOURNEY_ENGINE_ENABLED',
+      'COMPASS_JOURNEY_OBSERVATION_INGEST_ENABLED',
+      'disable_location_sharing',
+    ],
+    reason:
+      'Fresh `.in("flag", [...])` authorization read, verified by hand on 2026-08-21. Both Journey ' +
+      'CAPABILITY rows must be explicitly true. The disable_location_sharing STOP engages when explicitly ' +
+      'true; a missing STOP row does not engage, matching isKillSwitchEngaged. A returned error or thrown ' +
+      'query marks controls unavailable and rejects every observation, so the combined read fails closed. ' +
+      'No cache is consulted.',
+  },
   { file: 'services/ranking/DiscoveryRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over five SCREAMING_CASE ranking boosts, each individually present in CLASSIFIED. ${V}: catch → {}, boosts off. Fail-closed.` },
   { file: 'services/ranking/MediaFeedRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over eight SCREAMING_CASE media ranking flags, each individually present in CLASSIFIED. ${V}: a \`defaults\` object of all-false is returned on failure. Fail-closed.` },
   { file: 'routes/adminRankingConfig.ts',            shape: 'bulk', reason: `Admin listing of ranking flags for display. ${V}: not a gate.` },
@@ -1365,7 +1395,6 @@ for (const u of uses) {
   else if (conv) inventory.set(u.flag, { kind: conv, source: 'convention' });
   else inventory.set(u.flag, { kind: null, source: 'UNCLASSIFIED' });
 }
-
 // VACUITY: the inventory and the STOP class must both be non-empty.
 if (inventory.size === 0) {
   fail('VACUOUS: the flag inventory is empty. Either no flag is read anywhere in src/ (implausible) or the scan is broken.');
@@ -1521,7 +1550,9 @@ for (const e of INERT_SEEDED_FLAGS) {
 for (const e of CLASSIFIED) {
   if (!hasReason(e)) fail(`NO REASON: CLASSIFIED entry for "${e.flag}" has no reason. An unexplained classification is not a judgment, it is a guess.`);
   if (!['STOP', 'CAPABILITY', 'CONFIG'].includes(e.kind)) fail(`BAD KIND: CLASSIFIED entry for "${e.flag}" has kind "${e.kind}".`);
-  if (!inventory.has(e.flag)) fail(`STALE CLASSIFIED ENTRY: "${e.flag}" is classified here but no longer read anywhere under src/. Remove it.`);
+  if (!inventory.has(e.flag) && !coveredByDeclaration.has(e.flag)) {
+    fail(`STALE CLASSIFIED ENTRY: "${e.flag}" is classified here but no longer read anywhere under src/. Remove it.`);
+  }
 }
 for (const e of SHADOW_READERS) {
   if (!hasReason(e)) fail(`NO REASON: SHADOW_READERS entry for ${e.file} has no reason.`);

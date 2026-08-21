@@ -107,9 +107,22 @@ function makeFakeClient(opts: {
   } = opts;
 
   function builder(table: string, rows: unknown[]) {
-    let _rows = [...rows];
+    let _rows = rows;
     let _failed = false;
+    let _pendingUpdate: any = null;
+    const _updateFilters: Array<[string, any]> = [];
     const DB_ERR = { message: "simulated audit write failure", code: "XX000" };
+    const materialize = () => {
+      if (_pendingUpdate == null) return _rows;
+      const matchedIndices = _rows.reduce<number[]>((acc, row: any, index) => {
+        if (_updateFilters.every(([col, val]) => row?.[col] === val)) acc.push(index);
+        return acc;
+      }, []);
+      for (const index of matchedIndices) {
+        (_rows as any[])[index] = { ...(_rows as any[])[index], ..._pendingUpdate };
+      }
+      return matchedIndices.map((index) => (_rows as any[])[index]);
+    };
     const b: any = {
       select:      () => b,
       insert:      (data: any) => {
@@ -118,10 +131,20 @@ function makeFakeClient(opts: {
         _rows = Array.isArray(data) ? data : [data];
         return b;
       },
-      update:      (data: any) => { captureUpdates.push({ table, data }); _rows = _rows.map((r: any) => ({ ...r, ...data })); return b; },
+      update:      (data: any) => {
+        captureUpdates.push({ table, data });
+        _pendingUpdate = data;
+        return b;
+      },
       upsert:      (data: any) => { _rows = Array.isArray(data) ? data : [data]; return b; },
       delete:      () => { _rows = []; return b; },
-      eq:          (_col: string, _val: any) => b,
+      eq:          (col: string, val: any) => {
+        // AccountDeletionService verifies UPDATE ... RETURNING with
+        // maybeSingle(). Scope those returning rows like PostgREST does.
+        if (_pendingUpdate != null) _updateFilters.push([col, val]);
+        return b;
+      },
+      lte:         () => b,
       neq:         () => b,
       is:          () => b,
       ilike:       () => b,
@@ -133,9 +156,18 @@ function makeFakeClient(opts: {
       order:       () => b,
       limit:       () => b,
       range:       () => b,
-      then:        (resolve: any) => Promise.resolve(_failed ? { data: null, error: DB_ERR, count: 0 } : { data: _rows, error: null, count: _rows.length }).then(resolve),
-      maybeSingle: () => Promise.resolve(_failed ? { data: null, error: DB_ERR } : { data: _rows[0] ?? null, error: null }),
-      single:      () => Promise.resolve(_failed ? { data: null, error: DB_ERR } : { data: { ...(_rows[0] as any ?? {}), id: "new-row-id", performed_by: ADMIN_USER_ID, created_at: new Date().toISOString() }, error: null }),
+      then:        (resolve: any) => {
+        const data = materialize();
+        return Promise.resolve(_failed ? { data: null, error: DB_ERR, count: 0 } : { data, error: null, count: data.length }).then(resolve);
+      },
+      maybeSingle: () => {
+        const data = materialize();
+        return Promise.resolve(_failed ? { data: null, error: DB_ERR } : { data: data[0] ?? null, error: null });
+      },
+      single:      () => {
+        const data = materialize();
+        return Promise.resolve(_failed ? { data: null, error: DB_ERR } : { data: { ...(data[0] as any ?? {}), id: "new-row-id", performed_by: ADMIN_USER_ID, created_at: new Date().toISOString() }, error: null });
+      },
     };
     return b;
   }
@@ -145,6 +177,19 @@ function makeFakeClient(opts: {
   };
 
   return {
+    rpc: (name: string) => {
+      if (
+        name === "revoke_journey_consent_and_delete_segments"
+        || name === "delete_journey_observations_for_user_v1"
+        || name === "delete_journey_segments_for_user"
+      ) {
+        return Promise.resolve({ data: 0, error: null });
+      }
+      return Promise.resolve({
+        data: null,
+        error: { message: `unexpected RPC ${name}`, code: "PGRST202" },
+      });
+    },
     from: (table: string) => {
       if (table === "profiles")               return builder(table, profiles);
       if (table === "reports")                return builder(table, reports);
@@ -390,7 +435,7 @@ describe("GET /admin/deletion-requests", () => {
 });
 
 describe("POST /admin/deletion-requests/:id/execute", () => {
-  it("anonymises user data and marks request completed", async () => {
+  it("anonymises user data and marks request executed", async () => {
     const updates: any[] = [];
     setClient([], updates);
     const { status, body } = await req("POST", `/admin/deletion-requests/${DELETION_REQ_ID}/execute`);
@@ -401,6 +446,11 @@ describe("POST /admin/deletion-requests/:id/execute", () => {
     assert.ok(profileUpdate, "should update profiles");
     assert.equal(profileUpdate.data.account_status, "deleted");
     assert.strictEqual(profileUpdate.data.avatar_url, null);
+    assert.match(profileUpdate.data.handle, /^deleted_[a-f0-9]{22}$/);
+    const requestUpdate = updates.find(
+      (u) => u.table === "user_deletion_requests" && u.data.status === "executed",
+    );
+    assert.equal(requestUpdate?.data.status, "executed");
   });
 });
 

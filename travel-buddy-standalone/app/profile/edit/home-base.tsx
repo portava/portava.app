@@ -10,6 +10,12 @@ import { getCurrentGps, reverseGeocodeToPlace } from '../../../src/services/loca
 import { runIdentityGpsFill } from '../../../src/services/identityGpsFill';
 import { ManualCityPicker } from '../../../src/components/ManualCityPicker';
 import type { OwnProfile } from '../../../src/types/models';
+import {
+  buildProfileLocationPatch,
+  normalizeProfileCitySelection,
+  profileLocationFieldsFrom,
+  type ProfileLocationFields,
+} from '../../../src/lib/location/profileLocationFields';
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
 import {
@@ -17,16 +23,10 @@ import {
   FieldLabel, FieldHint, TextField, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
 
-interface FormState {
-  homeCity: string;
-  homeCountry: string;
-  currentCity: string;
-}
-
 export default function HomeBaseScreen() {
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState<FormState>({ homeCity: '', homeCountry: '', currentCity: '' });
-  const [originalForm, setOriginalForm] = useState<FormState | null>(null);
+  const [form, setForm] = useState<ProfileLocationFields>({ homeCity: '', homeCountry: '', currentCity: '' });
+  const [originalForm, setOriginalForm] = useState<ProfileLocationFields | null>(null);
 
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -43,6 +43,7 @@ export default function HomeBaseScreen() {
     form.homeCountry !== originalForm.homeCountry ||
     form.currentCity !== originalForm.currentCity
   );
+  const isSaving = saveState === 'saving';
   useUnsavedGuard(isDirty);
 
   useEffect(() => {
@@ -51,11 +52,7 @@ export default function HomeBaseScreen() {
       if (!alive) return;
       if (res.ok && res.data) {
         const p: OwnProfile = res.data;
-        const initial: FormState = {
-          homeCity: p.homeCity ?? '',
-          homeCountry: p.homeCountry ?? '',
-          currentCity: p.currentCity ?? '',
-        };
+        const initial = profileLocationFieldsFrom(p);
         setForm(initial);
         setOriginalForm(initial);
       }
@@ -87,12 +84,14 @@ export default function HomeBaseScreen() {
             { text: 'Cancel', style: 'cancel' },
           ],
         ),
-      onSuccess: (city, country) =>
+      onSuccess: (city, country) => {
+        if (saveLockRef.current) return;
         setForm((f) => ({
           ...f,
           homeCity: city ?? f.homeCity,
           homeCountry: country ?? f.homeCountry,
-        })),
+        }));
+      },
       setLoading: setGpsLoadingHome,
     });
   }, []);
@@ -120,11 +119,13 @@ export default function HomeBaseScreen() {
             { text: 'Cancel', style: 'cancel' },
           ],
         ),
-      onSuccess: (city, _country) =>
+      onSuccess: (city, _country) => {
+        if (saveLockRef.current) return;
         setForm((f) => ({
           ...f,
           currentCity: city ?? f.currentCity,
-        })),
+        }));
+      },
       setLoading: setGpsLoadingCurrent,
     });
   }, []);
@@ -135,16 +136,10 @@ export default function HomeBaseScreen() {
     setSaveState('saving');
     setSaveError(null);
     try {
-      const patch: Parameters<typeof updateMyProfile>[0] = {};
-      if (form.homeCity !== (originalForm?.homeCity ?? '')) {
-        patch.homeCity = form.homeCity.trim() || undefined;
-      }
-      if (form.homeCountry !== (originalForm?.homeCountry ?? '')) {
-        patch.homeCountry = form.homeCountry.trim() || undefined;
-      }
-      if (form.currentCity !== (originalForm?.currentCity ?? '')) {
-        patch.currentCity = form.currentCity.trim() || undefined;
-      }
+      const patch = buildProfileLocationPatch(
+        form,
+        originalForm ?? { homeCity: '', homeCountry: '', currentCity: '' },
+      );
 
       if (Object.keys(patch).length === 0) {
         setSaveState('idle');
@@ -161,7 +156,16 @@ export default function HomeBaseScreen() {
         return;
       }
 
-      setOriginalForm(form);
+      const savedProfile = res.data;
+      const savedForm = savedProfile
+        ? profileLocationFieldsFrom(savedProfile)
+        : profileLocationFieldsFrom({
+          homeCity: patch.homeCity === undefined ? form.homeCity : patch.homeCity,
+          homeCountry: patch.homeCountry === undefined ? form.homeCountry : patch.homeCountry,
+          currentCity: patch.currentCity === undefined ? form.currentCity : patch.currentCity,
+        });
+      setForm(savedForm);
+      setOriginalForm(savedForm);
       savedThenBack();
     } finally {
       saveLockRef.current = false;
@@ -183,20 +187,37 @@ export default function HomeBaseScreen() {
       <SettingsSection title="Location" subtitle="Where you're from and where you are now">
         <View style={st.field}>
           <FieldLabel>Home City</FieldLabel>
-          <Pressable style={st.locationDisplay} onPress={() => setShowHomePicker(true)}>
+          <Pressable
+            style={st.locationDisplay}
+            onPress={() => setShowHomePicker(true)}
+            disabled={isSaving}
+            accessibilityRole="button"
+            accessibilityLabel="Select home city"
+          >
             <Text style={form.homeCity ? st.locationText : st.locationPlaceholder}>
               {form.homeCity || 'Tap to select — or use GPS below'}
             </Text>
           </Pressable>
           <View style={st.locationActions}>
-            <Pressable style={st.locationBtn} onPress={fillHomeFromGps} disabled={gpsLoadingHome}>
+            <Pressable style={st.locationBtn} onPress={fillHomeFromGps} disabled={gpsLoadingHome || isSaving}>
               {gpsLoadingHome
                 ? <ActivityIndicator size="small" color={PP.ink} />
                 : <Text style={st.locationBtnText}>⊕ Use my current location</Text>}
             </Pressable>
-            <Pressable style={st.locationBtn} onPress={() => setShowHomePicker(true)}>
+            <Pressable style={st.locationBtn} onPress={() => setShowHomePicker(true)} disabled={isSaving}>
               <Text style={st.locationBtnText}>≡ Choose from list</Text>
             </Pressable>
+            {(form.homeCity || form.homeCountry) ? (
+              <Pressable
+                style={st.locationBtn}
+                onPress={() => setForm((f) => ({ ...f, homeCity: '', homeCountry: '' }))}
+                disabled={isSaving}
+                accessibilityRole="button"
+                accessibilityLabel="Clear home city"
+              >
+                <Text style={st.locationBtnText}>Clear home base</Text>
+              </Pressable>
+            ) : null}
           </View>
           <FieldHint>Shown on your public passport as your home.</FieldHint>
         </View>
@@ -216,18 +237,19 @@ export default function HomeBaseScreen() {
           <TextField
             value={form.currentCity}
             onChangeText={(text) => setForm((f) => ({ ...f, currentCity: text }))}
+            editable={!isSaving}
             placeholder="Where are you right now?"
             maxLength={100}
             autoCapitalize="words"
             returnKeyType="done"
           />
           <View style={st.locationActions}>
-            <Pressable style={st.locationBtn} onPress={fillCurrentFromGps} disabled={gpsLoadingCurrent}>
+            <Pressable style={st.locationBtn} onPress={fillCurrentFromGps} disabled={gpsLoadingCurrent || isSaving}>
               {gpsLoadingCurrent
                 ? <ActivityIndicator size="small" color={PP.ink} />
                 : <Text style={st.locationBtnText}>⊕ Use my current location</Text>}
             </Pressable>
-            <Pressable style={st.locationBtn} onPress={() => setShowCurrentPicker(true)}>
+            <Pressable style={st.locationBtn} onPress={() => setShowCurrentPicker(true)} disabled={isSaving}>
               <Text style={st.locationBtnText}>≡ Choose from list</Text>
             </Pressable>
           </View>
@@ -238,22 +260,26 @@ export default function HomeBaseScreen() {
       <SaveBar state={saveState} onPress={handleSave} disabled={!isDirty} error={saveError} />
 
       <ManualCityPicker
-        visible={showHomePicker}
+        visible={showHomePicker && !isSaving}
         onClose={() => setShowHomePicker(false)}
         onSelect={(place) => {
+          if (saveLockRef.current) return;
+          const selected = normalizeProfileCitySelection(place);
           setForm((f) => ({
             ...f,
-            homeCity: place.city ?? place.name,
-            homeCountry: place.country ?? f.homeCountry,
+            homeCity: selected.city,
+            homeCountry: selected.country,
           }));
           setShowHomePicker(false);
         }}
       />
       <ManualCityPicker
-        visible={showCurrentPicker}
+        visible={showCurrentPicker && !isSaving}
         onClose={() => setShowCurrentPicker(false)}
         onSelect={(place) => {
-          setForm((f) => ({ ...f, currentCity: place.city ?? place.name }));
+          if (saveLockRef.current) return;
+          const selected = normalizeProfileCitySelection(place);
+          setForm((f) => ({ ...f, currentCity: selected.city }));
           setShowCurrentPicker(false);
         }}
       />

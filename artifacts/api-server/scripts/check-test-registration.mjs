@@ -11,7 +11,8 @@
  *
  * This guard closes that gap without requiring an immediate mass-backfill:
  * every *.test.ts file under src/ must be either
- *   (a) present in the package.json `test` script's file list, or
+ *   (a) present in the package.json `test` or automatically-run `posttest`
+ *       script's file list, or
  *   (b) listed in ./UNREGISTERED_TESTS_ALLOWLIST.json, a dated, documented
  *       allowlist of pre-existing files not yet folded into the curated
  *       list (see docs/test-triage-2026-07.md for history).
@@ -32,7 +33,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
 
 const pkg = JSON.parse(readFileSync(path.join(pkgRoot, "package.json"), "utf8"));
-const testScript = pkg.scripts?.test ?? "";
+// pnpm runs posttest automatically after a successful test script. Keep both
+// phases in the registration inventory so a deliberately split curated suite
+// is represented truthfully.
+const testScript = [pkg.scripts?.test ?? "", pkg.scripts?.posttest ?? ""].join(" ");
 const registered = new Set(
   (testScript.match(/src\/[^\s'"]+\.test\.ts/g) ?? []).map((p) => p.trim()),
 );
@@ -68,7 +72,7 @@ if (unregisteredAndNotAllowed.length > 0) {
   );
   for (const f of unregisteredAndNotAllowed) console.error(`   - ${f}`);
   console.error(
-    `\nFix: add each new file's path to the "test" script in artifacts/api-server/package.json.\n` +
+    `\nFix: add each new file's path to the "test" or automatically-run "posttest" script in artifacts/api-server/package.json.\n` +
       `(If a file is a deliberate carry-over that isn't ready to join the curated run yet, add it to\n` +
       `scripts/UNREGISTERED_TESTS_ALLOWLIST.json with a comment explaining why — but new files should\n` +
       `almost always be registered directly, not allowlisted.)\n`,
@@ -119,7 +123,7 @@ const ghosts = [...registered].filter((f) => !found.includes(f));
 
 console.log(
   `✅ check-test-registration: ${found.length} test file(s) on disk under src/\n` +
-    `     ${registeredOnDisk.length} registered  → RUN under \`npm test\`\n` +
+    `     ${registeredOnDisk.length} registered  → RUN under \`pnpm test\` (test + posttest)\n` +
     `     ${excluded.length} not registered → NEVER RUN (allowlisted)\n` +
     `     ${registeredOnDisk.length} + ${excluded.length} = ${found.length}\n` +
     `   allowlist has ${allowlist.length} entr(y/ies): ${excluded.length} actually exclude, ` +

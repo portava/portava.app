@@ -143,7 +143,7 @@ function makeFakeClient(state: FakeState, userId: string) {
         })),
         passport_memories: state.memories ?? [],
         passport_contribution_events: state.contributions ?? [],
-        location_preferences: state.locationPrefs ?? [],
+        user_location_preferences: state.locationPrefs ?? [],
         passport_visibility_preferences: state.visibilityPrefs ?? [],
       };
       return (tableData[table] ?? []).filter((r) => filters.every((f) => f(r)));

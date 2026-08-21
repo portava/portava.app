@@ -484,7 +484,7 @@ router.get("/me/passport/map", async (req, res) => {
     const sc = getServiceClient();
     if (sc) {
       const { data: prefs } = await sc
-        .from("location_preferences")
+        .from("user_location_preferences")
         .select("hotel_blur_enabled")
         .eq("user_id", user.id)
         .maybeSingle();

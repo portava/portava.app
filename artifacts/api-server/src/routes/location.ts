@@ -496,7 +496,7 @@ router.get("/me/circle-locations", async (req, res) => {
   //    both in parallel and fail-closed on either error.
   const [prefsRes, upsRes] = await Promise.all([
     sc
-      .from("location_preferences")
+      .from("user_location_preferences")
       .select("user_id, trusted_circle_share, location_mode, sharing_paused, discovery_visibility")
       .in("user_id", memberIds),
     sc

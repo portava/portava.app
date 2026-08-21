@@ -6,7 +6,7 @@
  *   - Per-user location preferences (trip_crew_location_preferences)
  *   - Current location (user_location_state — city/district always; lat/lng
  *     only forwarded to buildCrewCard when viewer has active live-share)
- *   - Location preferences (location_preferences — hotel_blur_enabled)
+ *   - Location preferences (user_location_preferences — hotel_blur_enabled)
  *   - Plan check-in status (plan_checkins)
  *   - Safe Return active status (safe_return_sessions)
  *   - Active live-share sessions (trip_crew_location_sessions)
@@ -104,9 +104,9 @@ export async function getCrewMap(
     ((locationRes.data as any[]) ?? []).map((l) => [l.user_id, l]),
   );
 
-  // 4b. Load location_preferences for hotel/home blur flag
+  // 4b. Load canonical user_location_preferences for hotel/home blur flag
   const locPrefsRes = await db
-    .from("location_preferences")
+    .from("user_location_preferences")
     .select("user_id, hotel_blur_enabled")
     .in("user_id", allUserIds);
   const hotelBlurSet = new Set<string>(

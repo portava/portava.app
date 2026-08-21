@@ -36,9 +36,15 @@
  *
  * Run: node --import tsx/esm --test src/test/discoveryOsmTier1Mapping.test.ts
  */
-import { describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mapOsmElementToPlace } from "../routes/discovery.js";
+import { createServer, type Server } from "node:http";
+import express from "express";
+import discoveryRouter, {
+  _resetWikidataCacheForTests,
+  mapOsmElementToPlace,
+} from "../routes/discovery.js";
+import { _clearTestClient, _setTestClient } from "../lib/http.js";
 
 // Paris centre, so distances stay small and readable.
 const ORIGIN = { lat: 48.8566, lng: 2.3522 };
@@ -253,5 +259,150 @@ describe("Nothing that already worked was disturbed", () => {
     assert.equal(place.lat, 48.86);
     assert.equal(place.lng, 2.36);
     assert.ok(place.distanceKm != null && place.distanceKm > 0, "way centre still yields a distance");
+  });
+});
+
+// ── Wikidata enrichment cache controls ─────────────────────────────────────────
+
+const WIKIDATA_ADMIN_ID = "aa000000-0000-4000-a000-000000000001";
+const WIKIDATA_MEMBER_ID = "bb000000-0000-4000-b000-000000000002";
+const WIKIDATA_ADMIN_TOKEN = "admin-token";
+const WIKIDATA_MEMBER_TOKEN = "member-token";
+
+function makeWikidataAuthClient() {
+  return {
+    auth: {
+      getUser: async (token: string) => {
+        if (token === WIKIDATA_ADMIN_TOKEN) return { data: { user: { id: WIKIDATA_ADMIN_ID } }, error: null };
+        if (token === WIKIDATA_MEMBER_TOKEN) return { data: { user: { id: WIKIDATA_MEMBER_ID } }, error: null };
+        return { data: { user: null }, error: { message: "invalid token" } };
+      },
+    },
+    from: (table: string) => {
+      assert.equal(table, "profiles", "the admin guard should only need the caller profile");
+      let userId: string | null = null;
+      const query: any = {
+        select: () => query,
+        eq: (column: string, value: string) => {
+          if (column === "id") userId = value;
+          return query;
+        },
+        maybeSingle: async () => ({
+          data: {
+            role: userId === WIKIDATA_ADMIN_ID ? "admin" : "member",
+            account_status: "active",
+          },
+          error: null,
+        }),
+      };
+      return query;
+    },
+  };
+}
+
+let wikidataServer: Server;
+let wikidataBaseUrl: string;
+let wikidataUpstreamDescriptions: string[];
+let wikidataUpstreamCalls = 0;
+const originalFetch = globalThis.fetch;
+
+before(async () => {
+  const app = express();
+  app.use((req, _res, next) => {
+    (req as any).log = { error() {}, info() {}, warn() {}, debug() {} };
+    next();
+  });
+  app.use("/api", discoveryRouter);
+  wikidataServer = createServer(app);
+  await new Promise<void>((resolve) => wikidataServer.listen(0, "127.0.0.1", resolve));
+  wikidataBaseUrl = `http://127.0.0.1:${(wikidataServer.address() as { port: number }).port}`;
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.includes("www.wikidata.org/w/api.php")) return originalFetch(input, init);
+
+    const description = wikidataUpstreamDescriptions.shift();
+    assert.ok(description, "each upstream Wikidata fetch must have a fixture");
+    wikidataUpstreamCalls++;
+    return new Response(JSON.stringify({
+      entities: {
+        Q42: {
+          descriptions: { en: { value: description } },
+          sitelinks: { enwiki: { title: "Douglas Adams" } },
+          claims: {},
+        },
+      },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof globalThis.fetch;
+});
+
+after(async () => {
+  globalThis.fetch = originalFetch;
+  _clearTestClient();
+  await new Promise<void>((resolve) => wikidataServer.close(() => resolve()));
+});
+
+beforeEach(() => {
+  _resetWikidataCacheForTests();
+  _setTestClient(makeWikidataAuthClient(), true);
+  wikidataUpstreamDescriptions = ["original Wikidata description", "updated Wikidata description"];
+  wikidataUpstreamCalls = 0;
+});
+
+function getWikidata(path: string, token?: string) {
+  return fetch(`${wikidataBaseUrl}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+}
+
+describe("GET /api/discovery/wikidata/:wikidataId cache controls", () => {
+  it("reports cache age and lets only an admin replace a stale cached entity", async () => {
+    const first = await getWikidata("/api/discovery/wikidata/Q42");
+    assert.equal(first.status, 200);
+    assert.equal((await first.json() as { description: string }).description, "original Wikidata description");
+    assert.equal(first.headers.get("x-wikidata-cache"), "MISS");
+    assert.equal(first.headers.get("x-wikidata-cache-ttl"), "86400");
+    assert.ok(Number(first.headers.get("x-wikidata-cache-age")) >= 0);
+    assert.ok(
+      Number.isFinite(Date.parse(first.headers.get("x-wikidata-cache-created-at") ?? "")),
+      "fresh responses must say when their server-side entry was created",
+    );
+    assert.equal(wikidataUpstreamCalls, 1);
+
+    const cached = await getWikidata("/api/discovery/wikidata/Q42");
+    assert.equal(cached.status, 200);
+    assert.equal((await cached.json() as { description: string }).description, "original Wikidata description");
+    assert.equal(cached.headers.get("x-wikidata-cache"), "HIT");
+    assert.equal(wikidataUpstreamCalls, 1, "a fresh L1 entry must avoid another upstream request");
+
+    const anonymousRefresh = await getWikidata("/api/discovery/wikidata/Q42?refresh=1");
+    assert.equal(anonymousRefresh.status, 401);
+    assert.equal(wikidataUpstreamCalls, 1, "unauthenticated callers must not bypass the cache");
+
+    const memberRefresh = await getWikidata(
+      "/api/discovery/wikidata/Q42?refresh=1",
+      WIKIDATA_MEMBER_TOKEN,
+    );
+    assert.equal(memberRefresh.status, 403);
+    assert.equal(wikidataUpstreamCalls, 1, "non-admin callers must not bypass the cache");
+
+    const refreshed = await getWikidata(
+      "/api/discovery/wikidata/Q42?refresh=1",
+      WIKIDATA_ADMIN_TOKEN,
+    );
+    assert.equal(refreshed.status, 200);
+    assert.equal((await refreshed.json() as { description: string }).description, "updated Wikidata description");
+    assert.equal(refreshed.headers.get("x-wikidata-cache"), "REFRESH");
+    assert.ok(Number(refreshed.headers.get("x-wikidata-cache-age")) >= 0);
+    assert.equal(wikidataUpstreamCalls, 2, "an admin refresh must fetch the current entity");
+
+    const afterRefresh = await getWikidata("/api/discovery/wikidata/Q42");
+    assert.equal(afterRefresh.status, 200);
+    assert.equal((await afterRefresh.json() as { description: string }).description, "updated Wikidata description");
+    assert.equal(afterRefresh.headers.get("x-wikidata-cache"), "HIT");
+    assert.equal(wikidataUpstreamCalls, 2, "the refreshed result must become the new L1 entry");
   });
 });

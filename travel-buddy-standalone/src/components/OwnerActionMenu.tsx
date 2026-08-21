@@ -37,6 +37,7 @@ export function OwnerActionMenu({
   onClose,
   username,
   onEditProfile,
+  onSettings,
   onViewAsPublic,
   onArrangeSections,
   onArrangeTabs,
@@ -47,6 +48,7 @@ export function OwnerActionMenu({
       onClose={onClose}
       username={username}
       onEditProfile={onEditProfile}
+      onSettings={onSettings}
       onViewAsPublic={onViewAsPublic}
       onArrangeSections={onArrangeSections}
       onArrangeTabs={onArrangeTabs}

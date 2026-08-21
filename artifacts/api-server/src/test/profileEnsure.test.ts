@@ -126,7 +126,7 @@ describe("POST /api/profile/ensure", () => {
     const res = await post("/api/profile/ensure", { email: "alice@example.com" }, NEW_TOK);
     assert.ok([200, 201].includes(res.status), `expected 200/201, got ${res.status}: ${JSON.stringify(res.body)}`);
 
-    // ensure also upserts location_preferences defaults; assert the profiles
+    // ensure also upserts user_location_preferences defaults; assert the profiles
     // upsert specifically rather than a global count.
     const profileUpserts = client.__upserted.filter((u: any) => u.table === "profiles");
     assert.equal(profileUpserts.length, 1, "should have exactly one profiles upsert");

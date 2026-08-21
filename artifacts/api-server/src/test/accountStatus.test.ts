@@ -266,4 +266,62 @@ describe("POST /api/me/reactivate", () => {
     assert.equal(body.reactivated, true);
     assert.equal(profileRow.account_status, "active");
   });
+
+  it("refuses reactivation once a deletion execution owns the request", async () => {
+    const profileRow = { id: ME, account_status: "deactivated" };
+    const deletionRow = {
+      user_id: ME,
+      status: "executing",
+      execution_token: "22222222-2222-2222-2222-222222222222",
+      execution_started_at: "2026-08-21T10:00:00.000Z",
+      execution_lease_expires_at: "2026-08-21T11:00:00.000Z",
+      scheduled_at: DELETION_DATE,
+    };
+    setup(baseState({
+      profiles: [profileRow],
+      user_deletion_requests: [deletionRow],
+    }));
+
+    const res = await req("/me/reactivate", { method: "POST" });
+    assert.equal(res.status, 403);
+    assert.equal(profileRow.account_status, "deactivated");
+    assert.equal(deletionRow.status, "executing");
+  });
+});
+
+describe("DELETE /api/me/delete-request", () => {
+  it("atomically cancels a still-pending request before restoring the profile", async () => {
+    const profileRow = { id: ME, account_status: "deactivated" };
+    const deletionRow = { user_id: ME, status: "pending", scheduled_at: DELETION_DATE };
+    setup(baseState({
+      profiles: [profileRow],
+      user_deletion_requests: [deletionRow],
+    }));
+
+    const res = await req("/me/delete-request", { method: "DELETE" });
+    assert.equal(res.status, 200);
+    assert.equal(deletionRow.status, "cancelled");
+    assert.equal(profileRow.account_status, "active");
+  });
+
+  it("cannot cancel or restore a profile after the execution claim", async () => {
+    const profileRow = { id: ME, account_status: "deactivated" };
+    const deletionRow = {
+      user_id: ME,
+      status: "executing",
+      execution_token: "22222222-2222-2222-2222-222222222222",
+      execution_started_at: "2026-08-21T10:00:00.000Z",
+      execution_lease_expires_at: "2026-08-21T11:00:00.000Z",
+      scheduled_at: DELETION_DATE,
+    };
+    setup(baseState({
+      profiles: [profileRow],
+      user_deletion_requests: [deletionRow],
+    }));
+
+    const res = await req("/me/delete-request", { method: "DELETE" });
+    assert.equal(res.status, 404);
+    assert.equal(deletionRow.status, "executing");
+    assert.equal(profileRow.account_status, "deactivated");
+  });
 });

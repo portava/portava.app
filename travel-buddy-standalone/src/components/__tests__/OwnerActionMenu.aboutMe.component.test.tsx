@@ -24,8 +24,26 @@ jest.mock('react-native', () => {
   const actual = jest.requireActual('react-native');
   const R = require('react');
   // NOTE: Modal Proxy mock — avoids overlapping act() from Modal animation lifecycle
-  const MockModal = ({ children, visible }: { children: React.ReactNode; visible: boolean }) =>
-    visible ? R.createElement(actual.View, null, children) : null;
+  const MockModal = ({
+    children,
+    visible,
+    onDismiss,
+  }: {
+    children: React.ReactNode;
+    visible: boolean;
+    onDismiss?: () => void;
+  }) => visible
+    ? R.createElement(
+        actual.View,
+        null,
+        children,
+        R.createElement(actual.Pressable, {
+          accessibilityRole: 'button',
+          accessibilityLabel: 'Complete menu dismissal',
+          onPress: onDismiss,
+        }),
+      )
+    : null;
   const MockActivityIndicator = () => null;
   return new Proxy(actual, {
     get(target: typeof actual, prop: string, receiver: unknown) {
@@ -55,6 +73,8 @@ describe('OwnerActionMenu — Edit Bio button', () => {
   beforeEach(() => {
     mockPush.mockClear();
     defaultProps.onClose.mockClear();
+    defaultProps.onEditProfile.mockClear();
+    defaultProps.onSettings.mockClear();
   });
 
   it('navigates to /profile/edit/about when Edit Bio is tapped', async () => {
@@ -76,5 +96,27 @@ describe('OwnerActionMenu — Edit Bio button', () => {
     await waitFor(() => expect(mockPush).toHaveBeenCalled());
     const calledWith = mockPush.mock.calls.map((c) => c[0]);
     expect(calledWith).not.toContain('/profile/about');
+  });
+});
+
+describe('OwnerActionMenu — Settings button', () => {
+  beforeEach(() => {
+    mockPush.mockClear();
+    defaultProps.onClose.mockClear();
+    defaultProps.onEditProfile.mockClear();
+    defaultProps.onSettings.mockClear();
+  });
+
+  it('closes the sheet and invokes the parent profile-settings navigation callback', async () => {
+    await render(<OwnerActionMenu {...defaultProps} />);
+
+    fireEvent.press(screen.getByRole('button', { name: 'Settings' }));
+
+    expect(defaultProps.onSettings).not.toHaveBeenCalled();
+    await waitFor(() => expect(defaultProps.onClose).toHaveBeenCalledTimes(1));
+    fireEvent.press(screen.getByRole('button', { name: 'Complete menu dismissal' }));
+
+    expect(defaultProps.onSettings).toHaveBeenCalledTimes(1);
+    expect(defaultProps.onEditProfile).not.toHaveBeenCalled();
   });
 });

@@ -200,7 +200,7 @@ async function loadCandidates(
   const ids = locs.map((l) => l.user_id);
 
   const [prefsQ, profsQ, noDiscQ, upsQ] = await Promise.all([
-    db.from("location_preferences")
+    db.from("user_location_preferences")
       .select("user_id, location_mode, sharing_paused, discovery_visibility")
       .in("user_id", ids),
     db.from("profiles")

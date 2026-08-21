@@ -12,7 +12,7 @@
  */
 
 import React from 'react';
-import { render, act } from '@testing-library/react-native';
+import { render, act, waitFor } from '@testing-library/react-native';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // NOTE: intentional stub — expo-router is mocked so we can assert on router.push.
@@ -20,13 +20,20 @@ import { render, act } from '@testing-library/react-native';
 // useLocalSearchParams is overridden per-test via mockParams.
 let mockParams: Record<string, string> = {};
 jest.mock('expo-router', () => ({
-  router: { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: () => true },
+  router: {
+    push: jest.fn(),
+    back: jest.fn(),
+    replace: jest.fn(),
+    setParams: jest.fn(),
+    canGoBack: () => true,
+  },
   useLocalSearchParams: () => mockParams,
   useFocusEffect: (cb: () => unknown) => { require('react').useEffect(cb, []); },
 }));
 
 import { router } from 'expo-router';
 const routerPush = router.push as jest.Mock;
+const routerSetParams = router.setParams as jest.Mock;
 
 // ── safe-area ─────────────────────────────────────────────────────────────────
 jest.mock('react-native-safe-area-context', () => ({
@@ -52,6 +59,8 @@ jest.mock('../../../src/services/rentABuddy', () => ({
     data: { buddies: [RESULT_BUDDY], total: 1 },
   }),
 }));
+import { searchBuddies } from '../../../src/services/rentABuddy';
+const mockSearchBuddies = searchBuddies as jest.Mock;
 
 // ── ProfileCard — prop-capture stub ───────────────────────────────────────────
 // NOTE: intentional stub — we capture onPress to verify the destination
@@ -82,9 +91,13 @@ jest.mock('../../../src/components/ui/ErrorState', () => ({
 // ── LocationContext ───────────────────────────────────────────────────────────
 // NOTE: intentional stub — RentABuddySearch reads resolvedLocation for a
 // coordinate fallback; provider is not under test here.
+const mockSetSessionLocation = jest.fn();
+const mockClearSessionLocation = jest.fn();
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({
     resolvedLocation: { place: { city: null }, coords: null },
+    setSessionLocation: mockSetSessionLocation,
+    clearSessionLocation: mockClearSessionLocation,
   }),
 }));
 
@@ -92,8 +105,12 @@ jest.mock('../../../src/context/LocationContext', () => ({
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/ui', () => ({ Stamp: () => null }));
 // NOTE: intentional stub — not under test here.
+let capturedOnSelect: ((place: any) => void) | undefined;
 jest.mock('../../../src/components/selectors/GlobalPlacePicker', () => ({
-  GlobalPlacePicker: () => null,
+  GlobalPlacePicker: ({ onSelect }: { onSelect?: (place: any) => void }) => {
+    capturedOnSelect = onSelect;
+    return null;
+  },
 }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/compass/CompassBuddyRow', () => ({
@@ -106,9 +123,41 @@ import RentABuddySearch from '../search';
 
 beforeEach(() => {
   routerPush.mockClear();
+  routerSetParams.mockClear();
+  mockSetSessionLocation.mockClear();
+  mockClearSessionLocation.mockClear();
+  mockSearchBuddies.mockClear();
   capturedOnPress = undefined;
+  capturedOnSelect = undefined;
   // Start in results mode with a city pre-filled so doSearch fires on mount.
   mockParams = { city: 'Paris', category: 'culture' };
+});
+
+describe('search.tsx — selected city propagation', () => {
+  it('updates context and route params, then searches with the selected city and coordinates', async () => {
+    await render(<RentABuddySearch />);
+    await act(async () => {});
+    mockSearchBuddies.mockClear();
+
+    const lisbon = { city: 'Lisbon', name: 'Lisbon', lat: 38.7223, lng: -9.1393 };
+    await act(async () => {
+      capturedOnSelect?.(lisbon);
+    });
+
+    expect(mockSetSessionLocation).toHaveBeenCalledWith(lisbon);
+    expect(routerSetParams).toHaveBeenCalledWith({
+      city: 'Lisbon',
+      lat: '38.7223',
+      lng: '-9.1393',
+    });
+    await waitFor(() => expect(mockSearchBuddies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        city: 'Lisbon',
+        lat: 38.7223,
+        lng: -9.1393,
+      }),
+    ));
+  });
 });
 
 describe('search.tsx — results list onPress routing', () => {

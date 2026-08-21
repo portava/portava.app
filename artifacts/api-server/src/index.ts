@@ -38,6 +38,10 @@ import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
+import {
+  queryJourneyObservationPurgeHealth,
+  startJourneyObservationPurge,
+} from "./lib/journeyObservationPurge.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -111,6 +115,10 @@ app.listen(port, (err) => {
   // the `account_deletion_worker_enabled` feature flag and fails closed —
   // starting it here is safe even before the flag is turned on.
   startAccountDeletionScheduler();
+  // Privacy retention is unconditional: the one durable cycle purges raw
+  // observations, derived segment revisions, and expiring QA truth records.
+  // Disabling Journey ingestion must never disable deletion.
+  startJourneyObservationPurge();
   startInviteSlotReconciler();
   startInviteSlotSweeper();
   // Reload coordinate-learned city timezones so a restart doesn't reset
@@ -251,6 +259,25 @@ app.listen(port, (err) => {
     }
   }).catch((startupErr) => {
     logger.warn({ err: startupErr }, "startup: could not query cleanup job health");
+  });
+
+  queryJourneyObservationPurgeHealth().then(({ level, lastSuccessAt }) => {
+    if (level === "critical") {
+      logger.error(
+        { lastSuccessAt },
+        "startup: Journey raw-location purge is critically overdue",
+      );
+    } else if (level === "overdue") {
+      logger.warn(
+        { lastSuccessAt },
+        "startup: Journey raw-location purge heartbeat is overdue",
+      );
+    }
+  }).catch((startupErr) => {
+    logger.error(
+      { err: startupErr },
+      "startup: could not query Journey raw-location purge health",
+    );
   });
 
   // Startup push retry health check — warn if rows have been stuck in the

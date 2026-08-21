@@ -101,3 +101,8 @@
 - [Git branch can be swapped mid-session](git-branch-switch-mid-session.md) — a concurrent process can silently checkout a different branch in your working tree; verify `git branch --show-current` before every commit.
 - [node:test KNOWN_BROKEN wall](node-test-secure-store-wall.md) — any test importing a chain that reaches supabase.ts→SecureStoreAdapter hits an unfixable esbuild "Unexpected typeof" on react-native under plain `node --test`; write it Jest-style and add to run-node-tests.mjs's KNOWN_BROKEN list instead of debugging the transform.
 - [OSM-only Discovery photos never exercise the live chain](osm-only-photo-path-untested.md) — DB-backed seeded cities ship baked-in headerImageUrl, so testing only those cities never touches the live FSQ→Google photo fallback every other destination depends on.
+- [JSONB CHECK null semantics](jsonb-check-null-semantics.md) — missing JSON keys can evaluate to NULL and pass a PostgreSQL CHECK; require keys separately in closed-schema privacy data.
+- [Journey revocation erasure](journey-revocation-erasure.md) — leaving any authorizing location mode must atomically revoke and erase derived behavior under the append lock.
+- [Journey grant cutover ordering](journey-grant-cutover-ordering.md) — revoking legacy table grants before restarting RPC-only workers can cause a fail-closed retention cycle; keep flags off and verify recovery.
+- [PostgREST timestamp claim checks](postgrest-timestamp-claim-checks.md) — verify timestamptz claims by instant, not serialized text; PostgREST may return `+00:00` for an input ending in `Z`.
+- [Cross-platform RN Modal dismissal](cross-platform-modal-dismissal.md) — onDismiss is iOS-only; route-after-close sheets need an owned exit with native animation disabled.

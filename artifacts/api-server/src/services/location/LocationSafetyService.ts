@@ -30,6 +30,31 @@ export interface CoordSnapshot {
   capturedAt: string;
 }
 
+export type JourneyObservationTrustClass =
+  | "accepted"
+  | "low_accuracy"
+  | "suspicious"
+  | "manual";
+
+/**
+ * Pure classification for the restricted Journey boundary.
+ *
+ * This intentionally does not log coordinates or copy them to trust-event
+ * details. Persisted raw evidence stays in journey_observations and expires
+ * with that row.
+ */
+export function classifyJourneyObservationTrust(
+  accuracyM: number | null,
+  speedMps: number | null,
+): JourneyObservationTrustClass {
+  if (accuracyM === null) return "manual";
+  if (speedMps !== null && speedMps > MAX_REALISTIC_SPEED_KMH / 3.6) {
+    return "suspicious";
+  }
+  if (accuracyM > 100) return "low_accuracy";
+  return "accepted";
+}
+
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;

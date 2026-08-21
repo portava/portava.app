@@ -1974,7 +1974,7 @@ router.get("/admin/deletion-requests", async (req, res) => {
   res.json({ requests: rows, total: rows.length });
 });
 
-/** POST /admin/deletion-requests/:id/execute — anonymize user data and mark completed */
+/** POST /admin/deletion-requests/:id/execute — anonymize user data and mark executed */
 router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
   const admin = await requireAdmin(req, res, { withDisplayName: true });
   if (!admin) return;
@@ -1984,17 +1984,12 @@ router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
     .from("user_deletion_requests")
     .select("user_id, status")
     .eq("user_id", req.params.id)
-    .eq("status", "pending")
     .maybeSingle();
 
   if (reqErr) { sendError(res, "db_error", reqErr.message); return; }
-  if (!reqRow) { sendError(res, "not_found", "Deletion request not found or already executed"); return; }
+  if (!reqRow) { sendError(res, "not_found", "Deletion request not found"); return; }
 
   const userId = (reqRow as any).user_id as string;
-
-  // Audit first (fail-closed)
-  const auditR = await logModerationAction(sc, userId, adminUserId, "account_deleted", "Account deletion executed");
-  if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
   // The full cascade lives in AccountDeletionService so this manual path and
   // the scheduled worker can never drift apart. It removes posts + media (DB
@@ -2003,6 +1998,18 @@ router.post("/admin/deletion-requests/:id/execute", async (req, res) => {
   const outcome = await executeAccountDeletion(sc, userId, {
     actorId: adminUserId,
     reason: "Account deletion executed",
+    // Claim first so cancellation cannot race with the audit. The hook still
+    // runs before the first destructive write and fails closed.
+    beforeDestructiveWork: async () => {
+      const auditR = await logModerationAction(
+        sc,
+        userId,
+        adminUserId,
+        "account_deleted",
+        "Account deletion executed",
+      );
+      if (!auditR.ok) throw new Error(`Audit write failed: ${auditR.error}`);
+    },
   });
 
   // Profile city/visibility changed — drop any cached Compass Home payload

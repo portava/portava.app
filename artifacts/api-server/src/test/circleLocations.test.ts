@@ -118,7 +118,7 @@ function buildQuery(allRows: any[]) {
 function makeClient(state: FakeState, tokenToUser: Record<string, string> = { [VALID_TOKEN]: USER_ID }) {
   const tables: Record<string, any[]> = {
     circle_memberships: state.circleMemberships,
-    location_preferences: state.locationPreferences,
+    user_location_preferences: state.locationPreferences,
     user_location_state: state.locationState,
     profiles: state.profiles,
     blocks: state.blocks ?? [],

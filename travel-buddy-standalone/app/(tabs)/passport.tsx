@@ -877,6 +877,7 @@ function PassportContent({
         onClose={() => setMenuOpen(false)}
         username={profile.username}
         onEditProfile={() => { setMenuOpen(false); handleEditProfile(); }}
+        onSettings={() => { setMenuOpen(false); handleEditProfile(); }}
         onChangeAvatar={() => { setMenuOpen(false); onChangeAvatar?.(); }}
         onChangeCover={() => { setMenuOpen(false); handleChangeCover(); }}
         onArrangeTabs={() => { setMenuOpen(false); onArrangeTabs(); }}

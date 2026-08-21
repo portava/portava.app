@@ -66,7 +66,7 @@ export async function processDueDeletions(): Promise<{
   const { data, error } = await db
     .from("user_deletion_requests")
     .select("user_id, scheduled_at, status")
-    .eq("status", "pending")
+    .or(`status.eq.pending,and(status.eq.executing,execution_lease_expires_at.lte.${now})`)
     .lte("scheduled_at", now)
     .order("scheduled_at", { ascending: true })
     .limit(BATCH_LIMIT);
@@ -102,7 +102,7 @@ export async function processDueDeletions(): Promise<{
         failed += 1;
         logger.error(
           { userId, failedSteps: outcome.steps.filter((s) => !s.ok) },
-          "processDueDeletions: deletion did not complete; request left pending for retry",
+          "processDueDeletions: deletion did not complete; execution claim expired for retry",
         );
       }
     } catch (err) {

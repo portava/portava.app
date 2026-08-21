@@ -6,7 +6,7 @@
  *   - trust_profiles (overall_score, public_level)
  *   - user_preference_profiles (preferred cities from explicit_preferences_json)
  *   - user_location_state (current city/country)
- *   - location_preferences (visibility/safety preferences)
+ *   - user_location_preferences (visibility/safety preferences)
  *   - blocks (blockedUserIds, blockerUserIds, block/blocker counts)
  *   - trips + trip_members (hasActiveTrip, upcomingTripWithin48h, hasFutureTripScheduled)
  *   - rent_buddy_bookings (hasActiveBooking)
@@ -201,7 +201,7 @@ async function buildProfile(
     }
   }
 
-  // ── Safety / visibility from location_preferences ────────────────────────
+  // ── Safety / visibility from user_location_preferences ───────────────────
   const safetyPref: 'standard' | 'cautious' | 'relaxed' =
     locPref?.safe_return_enabled ? 'cautious' : 'standard';
 

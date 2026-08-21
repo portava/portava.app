@@ -27,6 +27,7 @@ import discoveryRouter from "./discovery";
 import blocksRouter from "./blocks";
 import locationRouter from "./location";
 import locationPreferencesRouter from "./locationPreferences";
+import journeyObservationsRouter from "./journeyObservations.js";
 import mapTravelersRouter from "./mapTravelers";
 import geofenceRouter from "./geofence";
 import safeReturnRouter from "./safeReturn";
@@ -119,6 +120,7 @@ import placeDaysRouter from "./placeDays.js";
 import contentTranslationRouter from "./contentTranslation.js";
 import sharedMomentsRouter from "./sharedMoments.js";
 import placeRecapsRouter from "./placeRecaps.js";
+import adminJourneyRouter from "./adminJourney.js";
 
 const router: IRouter = Router();
 
@@ -148,6 +150,7 @@ router.use(discoveryRouter);
 router.use(blocksRouter);
 router.use(locationRouter);
 router.use(locationPreferencesRouter);
+router.use(journeyObservationsRouter);
 router.use(mapTravelersRouter);
 router.use(geofenceRouter);
 router.use(safeReturnRouter);
@@ -249,5 +252,6 @@ router.use(placeDaysRouter);
 router.use(contentTranslationRouter);
 router.use(sharedMomentsRouter);
 router.use(placeRecapsRouter);
+router.use(adminJourneyRouter);
 
 export default router;

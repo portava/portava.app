@@ -86,7 +86,9 @@ jest.mock('../../../../src/services/identityGpsFill', () => ({
 // ── ManualCityPicker — not under test ────────────────────────────────────────
 
 // NOTE: exhaustive stub — ManualCityPicker renders a heavy GlobalPlacePicker
-// modal that is not under test; returning null keeps the render tree clean.
+// modal that is not under test in this baseline file. The picker integration
+// lives in home-base.cityPicker.component.test.tsx to avoid React 19 act-scope
+// contamination across several press-heavy cases in one renderer file.
 jest.mock('../../../../src/components/ManualCityPicker', () => ({
   ManualCityPicker: () => null,
 }));
@@ -216,4 +218,5 @@ describe('HomeBaseScreen — dirty/save/guard', () => {
 
     alertSpy.mockRestore();
   });
+
 });

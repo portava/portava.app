@@ -15,6 +15,7 @@ import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import {
   searchBuddies, type BuddyProfile, type BuddyCategory, type BuddySortBy, type CoordPair,
 } from '../../src/services/rentABuddy';
+import { useLocationContext } from '../../src/context/LocationContext';
 
 type SessionMode = 'any' | 'in_person' | 'remote';
 
@@ -62,11 +63,21 @@ const PER_PAGE = 10;
 export default function Marketplace() {
   const plainInset = usePlainBottomInset();
   const insets = useSafeAreaInsets();
-  const { fromQuiz, city: cityParam } = useLocalSearchParams<{ fromQuiz?: string; city?: string }>();
+  const { setSessionLocation } = useLocationContext();
+  const {
+    fromQuiz,
+    city: cityParam,
+    lat: latParam,
+    lng: lngParam,
+  } = useLocalSearchParams<{ fromQuiz?: string; city?: string; lat?: string; lng?: string }>();
 
   const [city, setCity]                       = useState(cityParam ?? '');
-  const [cityLat, setCityLat]                 = useState<number | undefined>(undefined);
-  const [cityLng, setCityLng]                 = useState<number | undefined>(undefined);
+  const [cityLat, setCityLat]                 = useState<number | undefined>(
+    latParam ? Number(latParam) : undefined,
+  );
+  const [cityLng, setCityLng]                 = useState<number | undefined>(
+    lngParam ? Number(lngParam) : undefined,
+  );
   const [category, setCategory]               = useState<BuddyCategory | 'all'>('all');
   const [sortBy, setSortBy]                   = useState<BuddySortBy>('best_match');
   const [language, setLanguage]               = useState('');
@@ -139,7 +150,7 @@ export default function Marketplace() {
 
   useEffect(() => {
     if (city.trim().length > 1) load(1);
-  }, [category, sortBy, verifiedOnly, budget, rating, sessionMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [load]);
 
   const onSearch   = () => load(1);
   const onLoadMore = () => load(page + 1);
@@ -177,9 +188,16 @@ export default function Marketplace() {
           visible={cityPickerOpen}
           onClose={() => setCityPickerOpen(false)}
           onSelect={(place: Place) => {
+          const selectedCity = place.city ?? place.name;
             setCityLat(place.lat ?? undefined);
             setCityLng(place.lng ?? undefined);
-            setCity(place.city ?? place.name);
+          setCity(selectedCity);
+          setSessionLocation(place);
+          router.setParams({
+            city: selectedCity,
+            lat: place.lat != null ? String(place.lat) : undefined,
+            lng: place.lng != null ? String(place.lng) : undefined,
+          });
           }}
           mode="city"
           title="Find Buddies in…"

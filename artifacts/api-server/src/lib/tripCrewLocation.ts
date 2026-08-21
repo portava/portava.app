@@ -11,7 +11,7 @@
  *   - Non-accepted members (pending, removed) must be rejected upstream; these
  *     helpers assume the caller has already verified membership.
  *   - Live share reveals at most "nearby" visibility (no higher level).
- *   - Hotel/home blur: when hotel_blur_enabled=true in location_preferences,
+ *   - Hotel/home blur: when hotel_blur_enabled=true in user_location_preferences,
  *     exact coords are withheld even during active live-share.
  */
 
@@ -52,7 +52,7 @@ export interface RawMemberLocation {
     lng?: number | null;
   } | null;
   /**
-   * True when the member's location_preferences has hotel_blur_enabled=true.
+   * True when the member's user_location_preferences has hotel_blur_enabled=true.
    * When set, exact coords are withheld even during live-share.
    */
   hotelBlurEnabled?: boolean;

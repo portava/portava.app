@@ -111,7 +111,7 @@ function makeFakeClient(state: FakeState = {}) {
     if (table === "notification_preferences")           return state.notificationPreferences ?? [];
     if (table === "notification_category_preferences")  return state.notificationCategoryPreferences ?? [];
     if (table === "notification_delivery_attempts")     return state.notificationDeliveryAttempts ?? [];
-    if (table === "location_preferences")               return state.locationPreferences ?? [];
+    if (table === "user_location_preferences")          return state.locationPreferences ?? [];
     if (table === "feature_flags")
       return Object.entries(state.featureFlags ?? {}).map(([flag, enabled]) => ({ flag, enabled }));
     return [];

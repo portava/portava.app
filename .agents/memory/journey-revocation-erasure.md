@@ -1,0 +1,10 @@
+---
+name: Journey revocation erasure
+description: Privacy rule for removing derived Journey behavior when location authorization ends.
+---
+
+Derived Journey behavior must be erased on every transition out of an authorizing location state: explicit off, city-only/nearby downgrades, sharing pause, explicit Journey-observation opt-out, consent revocation, or account deletion. Segment authorization must require the explicit observation opt-in even when location mode remains live. Apply the consent change and erasure in one database transaction, and never acknowledge a partial result. Route-only enforcement is insufficient when owners retain direct PostgREST preference writes: the database revocation trigger must erase derived rows too. Versioned consent metadata is server-authoritative; owner writes may retain ordinary preferences and direct opt-out, but must never enable consent or rewrite its scope, version, grant time, or revocation time.
+
+**Why:** Checking only explicit “off” or pause misses live-to-coarse mode changes and opt-out-with-live-mode, both of which end authorization for derived behavior. Separate consent and delete transactions create a crash window where derived behavior survives after revocation. A direct owner update can bypass an API RPC entirely, and unrestricted owner RLS can forge apparently valid server timestamps to reactivate an old grant.
+
+**How to apply:** Determine revocation from the resulting authorization state rather than one literal action. Any future behavioral-location store must serialize append against revocation and erase under the same transaction boundary. For direct row updates, use the preference row lock already shared with append authorization; do not add an advisory lock inside the row trigger after the update lock, because inverse lock ordering can deadlock. If ordinary owner writes must remain, run a server-authority guard before the revocation trigger: allow opt-out, deny owner grants and metadata edits, and let only validated server-side consent boundaries create a new grant.

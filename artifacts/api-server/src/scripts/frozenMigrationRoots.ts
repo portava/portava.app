@@ -242,6 +242,8 @@ export const FROZEN_ROOTS: FrozenRoot[] = [
       "0070_user_hidden_recommendations.sql": "a4686b0e2593598c1df594789dad5e015e20f4d152a61cfc25231819ee0f6953",
       "0071_reports.sql": "1ad8ff45ae8326bee26b6bcb2a737da21a96ed8b66c75cc80dfa1a62410176e7",
       "0072_report_evidence.sql": "41c81b5cca5916057682e6dec3a12c339353a80e1655d70cba9ce986758569ba",
+      "rollback_2119_journey_observation_foundation.sql": "2fa8645d2e93ec0e108b5eb425f5cfa0076f88ded709b88aa23596d12fb2d53c",
+      "rollback_2120_journey_privacy_foundation.sql": "acfc3e7aa15d5884bd14cb7abd61f483adefbda0806067baa4de83077155b600",
     },
   },
   {

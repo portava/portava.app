@@ -118,7 +118,7 @@ export class NotificationPrivacyGuard {
   private async isUserInGhostMode(userId: string): Promise<boolean> {
     try {
       const { data } = await this.db
-        .from('location_preferences')
+        .from('user_location_preferences')
         .select('location_mode')
         .eq('user_id', userId)
         .maybeSingle();

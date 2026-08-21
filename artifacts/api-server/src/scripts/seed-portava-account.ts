@@ -167,21 +167,21 @@ export async function upsertPortavaProfile(
   console.log("Profile inserted successfully.");
 }
 
-// ── Step 3: Ensure location_preferences row ───────────────────────────────────
+// ── Step 3: Ensure canonical user_location_preferences row ───────────────────
 
 async function ensureLocationPreferences(sc: SupabaseClient, userId: string): Promise<void> {
   if (DRY_RUN) {
-    console.log("[DRY-RUN] would ensure location_preferences row");
+    console.log("[DRY-RUN] would ensure user_location_preferences row");
     return;
   }
   const { error } = await sc
-    .from("location_preferences")
+    .from("user_location_preferences")
     .upsert({ user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true });
   if (error) {
     // Non-fatal: log and continue.
-    console.warn("location_preferences upsert warning (non-fatal):", error.message);
+    console.warn("user_location_preferences upsert warning (non-fatal):", error.message);
   } else {
-    console.log("location_preferences row ensured.");
+    console.log("user_location_preferences row ensured.");
   }
 }
 

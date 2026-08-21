@@ -6,7 +6,7 @@
  *   - Exact coordinates are NEVER exposed (we store city/neighborhood labels only)
  *   - Safe Return stamps default to private visibility
  *   - Hidden gems with is_sensitive=true have place details redacted
- *   - hotel_blur_enabled in location_preferences blurs hotel/private-stay location names
+ *   - hotel_blur_enabled in user_location_preferences blurs hotel/private-stay location names
  *   - Visibility tiers: public > circle_only > trip_crew > private
  */
 

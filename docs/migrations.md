@@ -1303,3 +1303,85 @@ The following tables existed in the live DB before or were created by this wave.
 - **Why `audit:schema` reads 0 and not 1 afterwards.** `auditMigrationsVsLive.ts:730` suppresses an `rls:` claim whose relation is absent ("declared for a table nobody created" is not drift), so `rls:post_event_links` was **not** among the 9 reported — it becomes a reported gap the instant the table exists without RLS. Creating the table promotes that claim from suppressed to live-checked. The count went 9 → 0 *because* the enable was included; it would have gone 9 → 1 had it been omitted. The audit would have caught it, but only after the table had already sat unprotected.
 - **Three declared RLS policies were NOT applied and remain deliberately unapplied** — `media_assets_public_select`, `media_attachments_public_select` (`20260811_media_rls.sql`) and `users_view_highlight_replies` (`0026_highlights.sql` / `2033_rls_hardening.sql`). They are allowlisted at `auditMigrationsVsLive.ts:221-236` with the reasoning written out in full there; all three are pure widenings or superseded declarations, and their absence is the restrictive direction. Of the twelve objects the 2026-08-10 production audit found declared-but-absent (`docs/schema-reconciliation-2026-08-08.md` §2), **nine are now applied and three are deliberately not**.
 - **Provenance, stated plainly given this file's own header warning.** The apply and the verification were executed by the operator in the Supabase SQL editor and reported back; this session composed the SQL, checked its structure offline, and recorded the outcome. Nothing here was observed by the session that wrote it. The two queries above are the way to re-establish it independently — do that before relying on this row.
+
+## 2026-08-21 — Location sharing schema convergence (2110)
+
+| Migration | Change | Applied |
+|---|---|---|
+| `2110_location_sharing_schema_convergence.sql` | Establishes `user_location_preferences` as the canonical sharing-mode/precision table; privacy-safe backfill from the incompatible legacy `location_preferences` table; adds/checks the full `LocationSessionService` column contract; widens `location_sessions.session_type` to the service and legacy values; retains all legacy tables, columns, and values for code rollback. Creates no Journey observation table, collector, scheduler, or feature flag. | 2026-08-21 via Supabase Management API |
+
+Live verification after commit:
+
+- `user_location_preferences`: 9 rows; `location_preferences`: 9 rows;
+  unmatched legacy rows: **0**. Every backfilled mode is `city_only`; incompatible
+  audience-style visibility values were not copied, and trusted-circle sharing
+  was not inferred from the legacy table's permissive default.
+- All 9 service columns are present on `location_sessions`: `expires_at`,
+  `city`, `district`, `country`, `country_code`, `lat`, `lng`,
+  `related_trip_id`, and `related_plan_id`.
+- `location_sessions_session_type_check` accepts the four service values
+  (`private_stay`, `safe_return`, `trusted_circle`, `plan_checkin`) plus every
+  prior canonical/deployed value. A transactionally rolled-back
+  `private_stay` insert proved the deployed write contract.
+- The canonical preference mode and two nullable precision CHECK constraints
+  are present; the existing three owner policies remain present.
+- `to_regclass('public.journey_observations')` is `NULL`.
+
+## 2026-08-21 — Journey observation and privacy foundation (2119 / 2120)
+
+| Migration | Change | Applied |
+|---|---|---|
+| `2119_journey_observation_foundation.sql` | Creates restricted, append-only Journey observation storage; a default-off ingestion RPC and feature flags; 24-hour raw expiry with a 72-hour hard cap. It does not add a collector or consumer. | 2026-08-21 via Supabase Management API |
+| `2120_journey_privacy_foundation.sql` | Adds versioned Journey consent, explicit Journey-purpose sessions, durable revocation jobs, serialized retention health/leases, hardened RPC-only ingestion, and least-privilege grants. | 2026-08-21 via Supabase Management API |
+
+The files were submitted unchanged, in order, as separate live-database
+transactions. Post-commit verification established:
+
+- both `COMPASS_JOURNEY_ENGINE_ENABLED` and
+  `COMPASS_JOURNEY_OBSERVATION_INGEST_ENABLED` remain `false`;
+- zero enabled Journey consents, zero active Journey-purpose sessions, and zero
+  Journey observations remain after synthetic verification cleanup;
+- direct `service_role` INSERT into `journey_observations` is denied, as are
+  direct service-role mutations of the revocation queue and retention health;
+- the managed API retention worker completed both empty and deletion cycles,
+  processed a durable session-expiry job in 58.4 seconds, and returned durable
+  health to `HEALTHY` with no retry or lag;
+- collection was not activated and no collector, Compass consumer, inference,
+  notification, movement-derived behavior, or Autopilot path was added.
+
+The controlled deployment gate remains **NO-GO** for future collection because
+the live centralized account-deletion proof failed closed at profile
+anonymization: `profiles.handle` is `NOT NULL`, while
+`AccountDeletionService` writes `handle = NULL`. All Journey/location deletion
+steps succeeded and the request was not falsely completed, but this live-schema
+compatibility blocker must be repaired and re-verified before activation.
+
+## 2026-08-21 — Controlled Journey shadow rollout schema (2103 / 2123)
+
+| Migration | Change | Applied |
+|---|---|---|
+| `2103_journey_segment_shadow.sql` | Creates the shadow-only segment-revision storage prerequisite. It does not enable collection or add a product consumer. | 2026-08-21 via Supabase Management API |
+| `2123_journey_shadow_controlled_rollout.sql` | Adds finite staged rollout controls, the single fail-closed SQL authority, quality-aware ingestion, sealed raw/derived access, unified retention and revocation, global stop, and aggregate-only internal QA evidence. All capability flags remain default-off. | 2026-08-21 via Supabase Management API |
+
+The files were submitted unchanged as separate Management API requests after
+the full API suite and a disposable PostgreSQL rehearsal passed. Post-commit
+verification established:
+
+- all rollout tables and required service-only RPCs exist;
+- owner-approved stages, active assignments, active issued sessions,
+  observations, segment revisions, ground-truth rows, and QA reports are all
+  zero;
+- `COMPASS_JOURNEY_ENGINE_ENABLED`,
+  `COMPASS_JOURNEY_OBSERVATION_INGEST_ENABLED`, and
+  `COMPASS_JOURNEY_SEGMENTATION_SHADOW_ENABLED` are all `false`;
+- direct `service_role` SELECT/INSERT/UPDATE/DELETE privileges on raw
+  observations and derived segments are absent;
+- after the API restarted onto the RPC-only worker, unified Journey retention
+  completed `HEALTHY` with zero backlog, lag, retries, consecutive failures, or
+  deletions.
+
+One pre-restart worker cycle failed closed during the grant cutover: the old
+process attempted its now-revoked direct-table path. Collection remained
+impossible because every capability flag was off and there were zero Journey
+rows. Restarting onto the reviewed RPC-only code restored healthy retention on
+the first cycle.
