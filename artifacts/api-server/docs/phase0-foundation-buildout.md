@@ -49,8 +49,11 @@ Scaffold-only where an owner decision is embedded (no invented heuristics):
    package.json `test` script.
 5. Claim/Observation/Verification/Contradiction (2106) — tables only; verification methods
    + contradiction resolution are OWNER decisions.
-6. Sensitive-zone exclusions + k-anonymity (2104) — code safe; the sensitive-zone REGISTRY
-   data is owner/data.
+6. 🟡 PARTIAL (branch phase0-item10): k-anonymity MATH built — kAnonymity.ts
+   (meetsKAnonymity / kAnonymize; the caller/owner supplies k, fail-closed below it; never
+   invents the threshold). It is one input to item 4's privacy_eligible seam. + kAnonymity.test.ts
+   (8 tests). DEFERRED: the sensitive-zone exclusion REGISTRY (2104) — owner data plus a
+   geometry-model decision, left unmade rather than guessed.
 7. Privacy ledger (2103 consent_grants + privacy_audit_events) — tables + recorder;
    retention durations + purpose vocabulary are OWNER decisions.
 8. Retention policy + reaper (2107) — dry-run only; live deletion is owner-gated (irreversible).
