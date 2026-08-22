@@ -38,6 +38,7 @@ import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
+import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -107,6 +108,12 @@ app.listen(port, (err) => {
   startCallSweepScheduler();
   startTripReminderScheduler();
   startIntelligenceGraphScheduler();
+  // Deletes location_snapshots past expires_at. The table's only reader already
+  // filters on expires_at, so purging expired rows changes no result; without
+  // this, raw coordinates accumulated permanently. DELETE is irreversible, so it
+  // is gated behind `location_snapshot_purge_enabled` and fails closed —
+  // starting it here is safe even before the flag is turned on.
+  startLocationSnapshotPurgeScheduler();
   // Executes due user_deletion_requests. Irreversible, so it is gated behind
   // the `account_deletion_worker_enabled` feature flag and fails closed —
   // starting it here is safe even before the flag is turned on.
