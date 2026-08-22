@@ -1,4 +1,4 @@
--- 2109_canonical_event_families.sql
+-- 2123_canonical_event_families.sql
 -- A read model over canonical_events that tags each event with its family:
 -- exposure / action / outcome / satisfaction. One row per event, same grain as
 -- canonical_events, plus a `family` column. Callers select a family with

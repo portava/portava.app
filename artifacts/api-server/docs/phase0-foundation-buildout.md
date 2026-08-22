@@ -59,7 +59,7 @@ Scaffold-only where an owner decision is embedded (no invented heuristics):
 8. Retention policy + reaper (2107) — dry-run only; live deletion is owner-gated (irreversible).
 9. Opportunity family (2105) — interfaces/stubs only; opportunity semantics are OWNER product.
 10. ✅ BUILT (documented mapping — one line to change, branch phase0-item10):
-    view `canonical_event_families` (2109, security_invoker=true so canonical_events' RLS is
+    view `canonical_event_families` (2123, security_invoker=true so canonical_events' RLS is
     enforced for the querying role) tags each event exposure/action/outcome/satisfaction; grants
     mirror canonical_events (authenticated + service_role SELECT, anon nothing) via the 2093
     REVOKE-then-GRANT shape. src/lib/eventFamilies.ts holds the single verb->family map (the view

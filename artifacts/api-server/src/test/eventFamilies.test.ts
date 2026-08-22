@@ -1,6 +1,6 @@
 /**
  * eventFamilies (Phase 0 item 10) — pins the verb -> family map that the SQL
- * read model canonical_event_families (2109) mirrors. If a verb is re-filed
+ * read model canonical_event_families (2123) mirrors. If a verb is re-filed
  * here without the view's CASE changing (or vice versa), the drift is a review
  * catch; this test at least keeps the map itself total, valid, and fail-closed.
  */
@@ -35,7 +35,7 @@ describe("eventFamilies — the map is total and valid", () => {
 });
 
 describe("eventFamilies — the documented categorization", () => {
-  it("pins the funnel mapping (change here => change the 2109 view too)", () => {
+  it("pins the funnel mapping (change here => change the 2123 view too)", () => {
     assert.deepEqual(VERB_FAMILY, {
       impression: "exposure",
       open: "action",

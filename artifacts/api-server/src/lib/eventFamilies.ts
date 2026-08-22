@@ -4,7 +4,7 @@
  * The nine canonical verbs (canonicalEvents.ts) roll up into four families that
  * describe where an interaction sits in the funnel. This module is the ONE place
  * the verb -> family categorization lives; the SQL read model
- * `canonical_event_families` (migration 2109) mirrors this map exactly, and
+ * `canonical_event_families` (migration 2123) mirrors this map exactly, and
  * eventFamilies.test.ts pins it. To re-file a verb, change it in BOTH places.
  *
  * The categorization (the one product judgement here, deliberately explicit and
