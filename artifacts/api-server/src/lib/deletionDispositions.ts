@@ -30,6 +30,15 @@
 
 /** Tables AccountDeletionService clears today. */
 export const ERASED_BY_CASCADE: readonly string[] = [
+  // IG-02 intel tables. Registered here in the SAME change that creates them:
+  // a new user-keyed table gets a deletion fate on day one, which is the whole
+  // point of this manifest. Their append-only triggers permit DELETE only inside
+  // a declared erasure (SET LOCAL portava.erasure_in_progress).
+  "intel_observations",
+  "intel_claims",
+  "intel_evidence",
+  "intel_confirmations",
+  "intel_state_snapshots",
   "comment_likes",
   "devices",
   "event_saves",
@@ -77,6 +86,15 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
  * for a new table — that is what the check enforces.
  */
 export const UNCLASSIFIED_BACKLOG: readonly string[] = [
+  // Live on production, migrations unpushed. Deletion fate is the Journey
+  // workstream's decision, not this manifest's.
+  "journey_observations",
+  "journey_revocation_jobs",
+  "journey_segment_revisions",
+  "journey_shadow_cohort_assignments",
+  "journey_shadow_ground_truth",
+  "journey_shadow_qa_reports",
+  "journey_shadow_session_issuances",
   "activity_events",
   "airport_profiles",
   "availability_nudges",
@@ -299,6 +317,32 @@ export const UNCLASSIFIED_BACKLOG: readonly string[] = [
   "user_suggestion_seen",
   "user_trust_scores",
   "viewer_creator_fatigue",
+];
+
+/**
+ * Tables created by canonical migrations AFTER the 2026-08-19 baseline. They are
+ * classified above but cannot be found in the baseline yet, so the coverage check
+ * must not report them as stale. They leave this list when the baseline is
+ * recaptured — which is part of the apply sequence, not an afterthought.
+ *
+ * The journey_* family belongs here too: those tables are LIVE ON PRODUCTION
+ * (verified 2026-08-22) while their migrations are still unpushed to git. They
+ * are listed as backlog rather than erased because their deletion fate is the
+ * Journey workstream's call, not this one's.
+ */
+export const POST_BASELINE_TABLES: readonly string[] = [
+  "intel_observations",
+  "intel_claims",
+  "intel_evidence",
+  "intel_confirmations",
+  "intel_state_snapshots",
+  "journey_observations",
+  "journey_revocation_jobs",
+  "journey_segment_revisions",
+  "journey_shadow_cohort_assignments",
+  "journey_shadow_ground_truth",
+  "journey_shadow_qa_reports",
+  "journey_shadow_session_issuances",
 ];
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */

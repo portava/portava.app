@@ -30,6 +30,7 @@ import {
   DELETION_FLOW_TABLES,
   RETAINED_WITH_REASON,
   UNCLASSIFIED_BACKLOG,
+  POST_BASELINE_TABLES,
   USER_IDENTIFYING_COLUMNS,
 } from "../lib/deletionDispositions.js";
 
@@ -86,8 +87,11 @@ export function computeProblems(tables: Map<string, string[]>): CoverageProblem[
     { name: "DELETION_FLOW_TABLES", items: DELETION_FLOW_TABLES },
     { name: "UNCLASSIFIED_BACKLOG", items: UNCLASSIFIED_BACKLOG },
   ]) {
+    const postBaseline = new Set(POST_BASELINE_TABLES);
     for (const t of list.items) {
-      if (!tables.has(t)) {
+      // Post-baseline tables are classified but not yet in the snapshot; they
+      // stop being exempt once the baseline is recaptured.
+      if (!tables.has(t) && !postBaseline.has(t)) {
         problems.push({
           kind: "STALE ENTRY",
           table: t,

@@ -19,6 +19,7 @@ import {
   DELETION_FLOW_TABLES,
   RETAINED_WITH_REASON,
   UNCLASSIFIED_BACKLOG,
+  POST_BASELINE_TABLES,
 } from "../lib/deletionDispositions.js";
 
 const BASELINE = readFileSync(BASELINE_PATH, "utf8");
@@ -50,9 +51,11 @@ describe("deletion coverage — the manifest matches the baseline", () => {
 describe("deletion coverage — the guard bites", () => {
   it("FAILS when a new user-keyed table is added and left unclassified", () => {
     const withNew = new Map(userKeyedTablesFromBaseline(BASELINE));
-    withNew.set("intel_observations", ["actor_id"]); // exactly the case this exists for
+    // A name that is deliberately in NO bucket. (intel_observations was used
+    // here until IG-02 classified it — which is the guard working, not failing.)
+    withNew.set("future_unclassified_table", ["actor_id"]);
     const problems = computeProblems(withNew);
-    const hit = problems.find((p) => p.table === "intel_observations");
+    const hit = problems.find((p) => p.table === "future_unclassified_table");
     assert.ok(hit, "a new user-keyed table passed unclassified — the guard does not bite");
     assert.equal(hit!.kind, "UNCLASSIFIED NEW TABLE");
     assert.match(hit!.detail, /Do NOT add it to UNCLASSIFIED_BACKLOG/,
@@ -61,7 +64,10 @@ describe("deletion coverage — the guard bites", () => {
 
   it("FLAGS a stale entry when a listed table leaves the baseline", () => {
     const shrunk = new Map(userKeyedTablesFromBaseline(BASELINE));
-    const victim = ERASED_BY_CASCADE[0];
+    // Must be an entry that IS in the baseline — post-baseline tables are
+    // deliberately exempt from the stale check until recapture.
+    const victim = ERASED_BY_CASCADE.find((t) => !POST_BASELINE_TABLES.includes(t))!;
+    assert.ok(victim, "expected at least one baseline-resident erased table");
     shrunk.delete(victim);
     const problems = computeProblems(shrunk);
     assert.ok(problems.some((p) => p.table === victim && p.kind === "STALE ENTRY"),

@@ -287,6 +287,13 @@ export async function executeAccountDeletion(
     { name: "delete_notifications_user",  run: () => sc.from("notifications").delete().eq("user_id", userId) },
     { name: "delete_notifications_actor", run: () => sc.from("notifications").delete().eq("actor_id", userId) },
     { name: "delete_notification_devices", run: () => sc.from("notification_devices").delete().eq("user_id", userId) },
+      // IG-02 intelligence contributions. Routed through the SECURITY DEFINER
+      // erasure function rather than a direct .delete(): the intel tables are
+      // append-only, and their triggers permit DELETE only inside a transaction
+      // that has declared an erasure — which PostgREST cannot do on its own.
+      // Derived claims/snapshots are intentionally not deleted; they are
+      // aggregate beliefs about a place and are recomputed.
+      { name: "erase_intel_contributions", run: () => sc.rpc("erase_intel_for_actor", { p_actor_id: userId }) },
     { name: "delete_search_history",      run: () => sc.from("search_history").delete().eq("user_id", userId) },
   ];
   for (const d of tailDeletes) {
