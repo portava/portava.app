@@ -842,7 +842,7 @@ export type Database = {
         }
         Relationships: []
       }
-      // hand-added; regenerate from live DB after apply (migration 2100_canonical_events.sql)
+      // hand-added; regenerate from live DB after apply (migration 2120_canonical_events.sql)
       canonical_events: {
         Row: {
           actor_id: string | null
@@ -5842,7 +5842,7 @@ export type Database = {
         }
         Relationships: []
       }
-      // hand-added; regenerate from live DB after apply (migration 2102_freshness_policies.sql)
+      // hand-added; regenerate from live DB after apply (migration 2122_freshness_policies.sql)
       freshness_policies: {
         Row: {
           claim_type: string
@@ -17204,7 +17204,7 @@ export type Database = {
           },
         ]
       }
-      // hand-added; regenerate from live DB after apply (migration 2101_source_registry.sql)
+      // hand-added; regenerate from live DB after apply (migration 2121_source_registry.sql)
       sources: {
         Row: {
           created_at: string

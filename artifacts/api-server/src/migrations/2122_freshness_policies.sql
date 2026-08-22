@@ -1,4 +1,4 @@
--- 2102_freshness_policies.sql
+-- 2122_freshness_policies.sql
 -- Per-claim-type freshness TTLs: how long a claim of a given kind may be
 -- labelled "live" before it must be treated as stale.
 --

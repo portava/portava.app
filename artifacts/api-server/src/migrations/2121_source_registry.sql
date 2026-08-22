@@ -1,4 +1,4 @@
--- 2101_source_registry.sql
+-- 2121_source_registry.sql
 -- The place-origin source registry, and a deterministic backfill that attaches
 -- an origin to every existing place row that already carries a provider/source
 -- string.

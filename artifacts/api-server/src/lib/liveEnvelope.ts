@@ -1,10 +1,10 @@
 /**
  * Live-output envelope — Phase 0 roadmap item 4.
  *
- * The five-column provenance/quality envelope that 2100_canonical_events
+ * The five-column provenance/quality envelope that 2120_canonical_events
  * declares: source_count, freshness_seconds, confidence, privacy_eligible,
  * expires_at. This module COMPOSES the deterministic columns from the source
- * registry (2101) and the freshness policies (2102). It deliberately does NOT
+ * registry (2121) and the freshness policies (2122). It deliberately does NOT
  * compute the two columns that encode owner decisions:
  *
  *   - confidence       — how sources / verification combine into a 0..1 score is
@@ -21,12 +21,12 @@
  *                         (null when none are known).
  *   - freshness_seconds — age of the freshest contributing observation, in whole
  *                         seconds (now - observedAt), floored at 0.
- *   - expires_at        — from freshnessPolicy.expiresAt (2102), fail-closed to
+ *   - expires_at        — from freshnessPolicy.expiresAt (2122), fail-closed to
  *                         null on an unknown claim_type.
  */
 import { expiresAt as policyExpiresAt } from "./freshnessPolicy.js";
 
-/** The five-column envelope, in the column names 2100 uses. */
+/** The five-column envelope, in the column names 2120 uses. */
 export interface LiveEnvelope {
   source_count: number | null;
   freshness_seconds: number | null;
@@ -36,7 +36,7 @@ export interface LiveEnvelope {
 }
 
 export interface LiveEnvelopeInputs {
-  /** The claim_type, keyed into freshness_policies (2102). */
+  /** The claim_type, keyed into freshness_policies (2122). */
   claimType: string;
   /** When the freshest contributing observation was made. */
   observedAt: string | number | Date;
