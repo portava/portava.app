@@ -309,17 +309,24 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['intel_observations','intel_evidence','intel_confirmations'] LOOP
-    EXECUTE format('DROP TRIGGER IF EXISTS %I_no_update_delete ON public.%I', t, t);
+    -- Build each trigger name BEFORE quoting. `format('%I_suffix', t)` would
+    -- quote only the table part, so a name that ever needed quoting would yield
+    -- "Foo"_no_update_delete — invalid SQL. Quoting the whole identifier once is
+    -- correct for any name, not just the lowercase ones in this array.
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I', t || '_no_update_delete', t);
     EXECUTE format(
-      'CREATE TRIGGER %I_no_update_delete BEFORE UPDATE OR DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.intel_append_only()', t, t);
-    EXECUTE format('DROP TRIGGER IF EXISTS %I_no_update_delete_stmt ON public.%I', t, t);
+      'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.intel_append_only()', t || '_no_update_delete', t);
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I', t || '_no_update_delete_stmt', t);
     -- Statement-level guard covers the 'DELETE FROM t' with no matching rows
     -- case, which fires no row trigger. It consults the same declaration.
     EXECUTE format(
-      'CREATE TRIGGER %I_no_update_delete_stmt BEFORE UPDATE OR DELETE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only_stmt()', t, t);
-    EXECUTE format('DROP TRIGGER IF EXISTS %I_no_truncate ON public.%I', t, t);
+      'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only_stmt()', t || '_no_update_delete_stmt', t);
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I', t || '_no_truncate', t);
+    -- TRUNCATE is refused unconditionally, erasure declaration or not: the
+    -- erasure path deletes by actor and never truncates, so a TRUNCATE here is
+    -- always a mistake.
     EXECUTE format(
-      'CREATE TRIGGER %I_no_truncate BEFORE TRUNCATE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only()', t, t);
+      'CREATE TRIGGER %I BEFORE TRUNCATE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only()', t || '_no_truncate', t);
   END LOOP;
 END $$;
 
