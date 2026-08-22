@@ -19,6 +19,7 @@
  */
 
 import { Router } from "express";
+import { readLiveCrowdLevel } from "../lib/liveClaimRead.js";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { optionalUser, sendError } from "../lib/http.js";
@@ -237,9 +238,16 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
     rating = { score: avgScore, voteCount: totalVotes, rawLikes: totalLikes };
   }
 
-  // ── bestTime + crowdLevel (from gems/community — null for now; worker populates) ─
-  const bestTime   = (group.place as any).best_time   ?? null;
-  const crowdLevel = (group.place as any).crowd_level ?? null;
+  // ── bestTime + crowdLevel ─────────────────────────────────────────────────────
+  // These were two dead reads: `places` has no best_time or crowd_level column
+  // (both live on hidden_gems), and the `as any` casts hid the type error, so
+  // each always evaluated to null while looking like a real read. crowdLevel now
+  // comes from the live-claim projection; with the flag off or no claim present
+  // it returns exactly the null it always did.
+  const crowdLevel = await readLiveCrowdLevel(sc, placeId);
+  // bestTime has no claim type in the IG-01 registry, so it stays honestly null
+  // rather than reading a column that does not exist.
+  const bestTime: string | null = null;
 
   // ── directionsUrl ─────────────────────────────────────────────────────────────
   const directionsUrl = coords
@@ -578,8 +586,10 @@ router.get("/places/:id/living/timeline", asyncHandler(async (req, res) => {
     like_count:   typeof p.like_count === 'number' ? p.like_count : 0,
   }));
 
-  // Inject current crowdLevel + weather brief in response
-  const crowdLevel = null; // populated by precompute worker
+  // Inject current crowdLevel + weather brief in response.
+  // Was a hardcoded null waiting on a worker that never existed; now reads the
+  // same projection as the other surface, so there is one source, not two.
+  const crowdLevel = await readLiveCrowdLevel(sc, (group.place as any)?.id ?? null);
   const weatherBrief = await safe(async () => {
     const wx = await getWeatherContext(
       (group.place as any).city ?? (group.place as any).name,
