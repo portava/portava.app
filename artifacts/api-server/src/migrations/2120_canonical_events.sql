@@ -1,4 +1,4 @@
--- 2100_canonical_events.sql
+-- 2120_canonical_events.sql
 -- The canonical event ingestion spine. Append-only by construction.
 --
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION
