@@ -320,6 +320,29 @@ const CLASSIFIED = [
   { flag: 'MEDIA_CREATOR_FATIGUE_ENABLED',       kind: 'CAPABILITY', reason: 'SCREAMING_CASE media ranking damping gate. `true` = damping applied.' },
   { flag: 'PORTAVA_PUBLISHER_BOOST_ENABLED',     kind: 'CAPABILITY', reason: 'SCREAMING_CASE ranking boost gate for first-party publisher content. `true` = boost applied.' },
   { flag: 'PORTAVA_FEATURED_BOOST_ENABLED',      kind: 'CAPABILITY', reason: 'SCREAMING_CASE ranking boost gate for featured content. `true` = boost applied.' },
+
+  {
+    flag: 'intel_live_label_crowd',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` lets a place surface show a LIVE crowd label from the intel projection. False-on-error is ' +
+      'correct and is the whole design: lib/liveClaimRead.ts returns an empty result when the flag is off ' +
+      'or unreadable, and the surface renders null — the same null it rendered before the projection ' +
+      'existed. An unreadable flag must never fall back to a stale value presented as current.',
+  },
+
+
+  {
+    flag: 'intel_claim_projection_crowd',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` lets lib/intelProjection.ts compute intel_state_snapshots from stored claims. False-on-error ' +
+      'is correct: no projection runs, no snapshot is written, and every reader already treats an absent ' +
+      'snapshot as "unknown". Note the projection writes SUPPRESSED aggregates too (privacy_eligible=false) ' +
+      'so a suppression is auditable — this flag gates whether projection happens at all, not whether the ' +
+      'privacy gate is honoured; that is never optional.',
+  },
+
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
