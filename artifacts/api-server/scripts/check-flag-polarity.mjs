@@ -331,6 +331,18 @@ const CLASSIFIED = [
       'existed. An unreadable flag must never fall back to a stale value presented as current.',
   },
 
+
+  {
+    flag: 'intel_claim_projection_crowd',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` lets lib/intelProjection.ts compute intel_state_snapshots from stored claims. False-on-error ' +
+      'is correct: no projection runs, no snapshot is written, and every reader already treats an absent ' +
+      'snapshot as "unknown". Note the projection writes SUPPRESSED aggregates too (privacy_eligible=false) ' +
+      'so a suppression is auditable — this flag gates whether projection happens at all, not whether the ' +
+      'privacy gate is honoured; that is never optional.',
+  },
+
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
