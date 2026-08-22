@@ -252,3 +252,14 @@ and `true→false` as `postgres`: both now succeed (rolled back).
 asserted "badge still true" and failed only because the self-demotion test had
 already cleared it, reporting the wrong defect at the wrong line. Each
 badge-dependent test now restores state via `ensureBadge()` first.
+
+
+## Intelligence Gathering (2128-2133)
+
+See [intelligence-gathering-buildout.md](./intelligence-gathering-buildout.md). All unapplied; every flag seeded false.
+
+- 2128 intel contracts seed (13 claim types, hard_expiry_seconds)
+- 2130 intel storage (5 tables, append-only + erasure function)
+- 2131 intel_live_label_crowd flag
+- 2132 intel_claim_projection_crowd flag
+- 2133 intel retention sweep + flag
