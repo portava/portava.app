@@ -264,8 +264,14 @@ describe("recordOutcome — chain recording tied to the recommendation", () => {
 
   it("links an organic signal by item id to the most recent served rec", async () => {
     const store = fake.store;
-    seedServedRec(store, { recId: "older", itemId: "evt-9", createdAt: "2026-07-01T00:00:00Z" });
-    const newer = seedServedRec(store, { recId: "newer", itemId: "evt-9", createdAt: "2026-07-20T00:00:00Z" });
+    // RELATIVE dates, not absolute. resolveServedRecommendation only considers
+    // recs newer than `now - LINK_WINDOW_DAYS` (30), so the original fixture —
+    // 2026-07-01 and 2026-07-20 — aged out of the window on 2026-08-19 and this
+    // test began failing on a date, not on a change. A test whose fixture is
+    // measured against Date.now() has to be written against Date.now() too.
+    const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+    seedServedRec(store, { recId: "older", itemId: "evt-9", createdAt: daysAgo(20) });
+    const newer = seedServedRec(store, { recId: "newer", itemId: "evt-9", createdAt: daysAgo(2) });
 
     const result = await recordOutcome(fake.fakeClient, USER_ID, {
       itemId: "evt-9", stage: "went", source: "route:event_rsvp",
