@@ -5,6 +5,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
+import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 
@@ -852,9 +853,64 @@ router.post("/rent-a-buddy/admin/buddies/:buddyId/approve", asyncHandler(async (
   const { buddyId } = req.params;
   const { note } = req.body ?? {};
 
+  // ── Safety-training gate ────────────────────────────────────────────────────
+  // This handler used to set admin_status and status to "active" with no checks
+  // at all. That pair is exactly what every search and booking gate reads, so
+  // this was a second door into a listable, bookable buddy that bypassed the
+  // 10-item safety training the OTHER approval door hard-blocks on
+  // (rentABuddy.ts, PATCH /admin/applications/:appId).
+  //
+  // Keyed on the checklist table rather than rent_buddy_profiles.training_completed,
+  // for the same reason the guarded door is: the checklist is written per
+  // application_id, whereas training_completed is updated by user_id and silently
+  // affects zero rows if the profile did not exist when the last item was ticked.
+  //
+  // FAILS CLOSED when the buddy has no application. That is not merely
+  // conservative — the only writer of the checklist table refuses to record
+  // anything without an application row, so "no application" is positive proof
+  // that training was never completed. The admin's remedy is cheap: have the
+  // buddy apply and tick the items, after which either door works.
+  {
+    const { data: prof } = await serviceClient
+      .from("rent_buddy_profiles")
+      .select("user_id")
+      .eq("id", buddyId)
+      .maybeSingle();
+    const buddyUserId = (prof as any)?.user_id ?? null;
+    if (!buddyUserId) return res.status(404).json({ error: "not_found" });
+
+    const { data: app } = await serviceClient
+      .from("rent_buddy_applications")
+      .select("id")
+      .eq("user_id", buddyUserId)
+      .maybeSingle();
+    const appId = (app as any)?.id ?? null;
+
+    let trainedCount = 0;
+    if (appId) {
+      const { count } = await serviceClient
+        .from("rent_buddy_training_checklist")
+        .select("id", { count: "exact" })
+        .eq("application_id", appId)
+        .eq("completed", true);
+      trainedCount = count ?? 0;
+    }
+    if (trainedCount < TRAINING_CHECKLIST_ITEMS.length) {
+      return res.status(400).json({
+        error: "training_incomplete",
+        message: "Applicant must complete all required training before being approved as a Buddy.",
+      });
+    }
+  }
+
   const { data, error } = await serviceClient
     .from("rent_buddy_profiles")
-    .update({ admin_status: "active", status: "active", updated_at: new Date().toISOString() })
+    .update({
+      admin_status: "active",
+      status: "active",
+      training_completed: true,
+      updated_at: new Date().toISOString(),
+    })
     .eq("id", buddyId)
     .select()
     .single();
@@ -889,9 +945,13 @@ router.post("/rent-a-buddy/admin/buddies/:buddyId/reject", asyncHandler(async (r
   const { buddyId } = req.params;
   const { reason } = req.body ?? {};
 
+  // `status` is written alongside admin_status. Previously only admin_status was
+  // set, so rejecting an already-active profile left status:"active" — and the
+  // status-only helper requireBuddyProfile treats that as bookable, meaning a
+  // rejected buddy stayed live to any surface that checks status alone.
   const { data, error } = await serviceClient
     .from("rent_buddy_profiles")
-    .update({ admin_status: "rejected", updated_at: new Date().toISOString() })
+    .update({ admin_status: "rejected", status: "rejected", updated_at: new Date().toISOString() })
     .eq("id", buddyId)
     .select()
     .single();

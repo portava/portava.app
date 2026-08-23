@@ -91,6 +91,7 @@ import {
 } from "../services/rentBuddy/CompatibilityScoreService.js";
 import { NotificationPreferenceService } from "../services/notifications/NotificationPreferenceService.js";
 import { syncFavoritesCount } from "../services/rentBuddy/ReliabilityCounters.js";
+import { ADDON_ALLOWED_STATUSES, UPCOMING_STATUSES } from "../lib/rentBuddyBookingStatus.js";
 import {
   getPricingSuggestion,
   calculateDeposit,
@@ -1497,7 +1498,13 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
   if (!booking) return sendError(res, 'not_found', "Booking not found.");
   const bk = booking as any;
   if (bk.traveler_id !== user.id) return sendError(res, 'forbidden', "Only the traveler can attach add-ons.");
-  if (!["pending", "confirmed"].includes(bk.status)) return sendError(res, 'invalid_payload', "Add-ons can only be attached to pending or confirmed bookings.");
+  // Was ["pending","confirmed"], which admitted only "pending" in practice: it
+  // omitted "requested" (canonical creation) AND "scheduled" (accept), while
+  // listing "confirmed", which nothing writes. Add-ons were unattachable at
+  // every point in a canonical booking's life.
+  if (!(ADDON_ALLOWED_STATUSES as readonly string[]).includes(bk.status)) {
+    return sendError(res, 'invalid_payload', "Add-ons can only be attached to a booking that has not started yet.");
+  }
 
   const { addonIds } = req.body ?? {};
   if (!Array.isArray(addonIds) || addonIds.length === 0) return sendError(res, 'invalid_payload', "addonIds array required.");
@@ -1847,7 +1854,10 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   const ledger = (ledgerRes.data ?? []) as any[];
 
   const todayBkgs = bookings.filter((b) => b.booking_date === today);
-  const upcoming = bookings.filter((b) => b.booking_date > today && ["pending", "confirmed"].includes(b.status));
+  // Same two-value blind spot as GET /me/requests, in JS rather than SQL: the
+  // buddy's expected-earnings figure omitted every canonically-created booking
+  // and every accepted one.
+  const upcoming = bookings.filter((b) => b.booking_date > today && (UPCOMING_STATUSES as readonly string[]).includes(b.status));
   const completed = bookings.filter((b) => b.status === "completed");
   const disputed = bookings.filter((b) => b.status === "disputed");
   const cancelled = bookings.filter((b) => b.status === "cancelled");

@@ -595,3 +595,100 @@ describe("C — Full-payload application: wizard fields persist and round-trip v
     assert.equal(stores.profile!.preferred_meetup_zones, undefined, "preferred_meetup_zones must not be set when not provided");
   });
 });
+
+// ── Suite D: end-early status guard ───────────────────────────────────────────
+//
+// POST /rent-a-buddy/bookings/:id/safety/end-early previously read only
+// traveler_id and buddy_id — never status — and wrote status:"completed"
+// unconditionally. Either party could therefore complete a booking from ANY
+// state. The case that matters is `disputed`: the party losing an adjudication
+// could close it themselves, taking the outcome away from the admin resolution
+// route, while stamping a false safety_status:"emergency" on the record.
+//
+// This endpoint had NO test coverage of any kind before these.
+
+describe("D — end-early: status guard", () => {
+  let server: ReturnType<typeof createServer>;
+  let port: number;
+
+  before(async () => {
+    const { default: rentABuddyRouter } = await import("../routes/rentABuddy.js");
+    const app = express();
+    app.use(express.json());
+    app.use("/api", rentABuddyRouter);
+    server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    port = (server.address() as { port: number }).port;
+  });
+
+  after(async () => {
+    await new Promise((r) => setTimeout(r, 250));
+    await new Promise<void>((resolve, reject) =>
+      server.close((e) => (e ? reject(e) : resolve())),
+    );
+  });
+
+  async function callEndEarly(userId: string, bookingStatus: string) {
+    _setTestClient(makeLifecycleClient(userId, { bookingStatus, rentBuddyEnabled: true }) as any, true);
+    return fetch(
+      `http://127.0.0.1:${port}/api/rent-a-buddy/bookings/${BOOKING_ID}/safety/end-early`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+        body: JSON.stringify({ reason: "felt unsafe" }),
+      },
+    );
+  }
+
+  it("a DISPUTED booking cannot be closed by a party — the whole point of the guard", async () => {
+    const res = await callEndEarly(TRAVELER_ID, "disputed");
+    assert.equal(res.status, 409, `expected 409, got ${res.status}`);
+    const body = await res.json() as any;
+    assert.equal(body.error, "invalid_transition");
+    assert.equal(body.currentStatus, "disputed");
+  });
+
+  it("a booking awaiting the traveller's confirmation cannot be closed early", async () => {
+    // Ending this would destroy the traveller's 24h dispute window.
+    const res = await callEndEarly(BUDDY_USER_ID, "completed_pending_traveler_confirmation");
+    assert.equal(res.status, 409);
+    assert.equal((await res.json() as any).error, "invalid_transition");
+  });
+
+  it("a session that never started cannot be 'ended' — that would fabricate one", async () => {
+    for (const st of ["requested", "pending", "scheduled"]) {
+      const res = await callEndEarly(TRAVELER_ID, st);
+      assert.equal(res.status, 409, `status ${st} should be refused, got ${res.status}`);
+    }
+  });
+
+  it("an already-terminal booking cannot be re-completed", async () => {
+    for (const st of ["completed", "cancelled_by_traveler", "expired", "declined"]) {
+      const res = await callEndEarly(TRAVELER_ID, st);
+      assert.equal(res.status, 409, `status ${st} should be refused, got ${res.status}`);
+    }
+  });
+
+  it("a no-show under adjudication cannot be closed by a party", async () => {
+    const res = await callEndEarly(BUDDY_USER_ID, "no_show_pending");
+    assert.equal(res.status, 409);
+  });
+
+  it("the traveller may end an in-progress session, which completes it", async () => {
+    const res = await callEndEarly(TRAVELER_ID, "in_progress");
+    assert.equal(res.status, 200, `expected 200, got ${res.status}`);
+    const body = await res.json() as any;
+    assert.equal(body.ok, true);
+    assert.equal(body.status, "completed");
+  });
+
+  it("the buddy ending a session leaves the traveller a dispute window", async () => {
+    // Mirrors the canonical completion route: a buddy must not be able to close
+    // the booking outright, or the buddy-side dispute-window bypass survives the
+    // guard.
+    const res = await callEndEarly(BUDDY_USER_ID, "in_progress");
+    assert.equal(res.status, 200, `expected 200, got ${res.status}`);
+    const body = await res.json() as any;
+    assert.equal(body.status, "completed_pending_traveler_confirmation");
+  });
+});
