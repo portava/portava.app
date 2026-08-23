@@ -24,6 +24,7 @@ import {
   type LocationMode,
   type LocationVisibility,
   type LocationPrivacy,
+  type LocationPrivacyPatch,
 } from '../../../src/services/map';
 import {
   getCircleSettings,
@@ -89,6 +90,39 @@ const CONTEXT_OPTIONS: Array<{ value: ContextSharingDefault; label: string; sub:
   { value: 'venue_checkin', label: 'Venue check-in', sub: 'Co-travelers see your venue name when you check in' },
 ];
 
+// Mirrors the eligibility check in set_journey_observation_consent_v1
+// (migration 2120): consent may only be granted while sharing is unpaused
+// and the location mode is one of the two live-sharing modes.
+function journeyEligible(prefs: LocationPrivacy): boolean {
+  return !prefs.sharingPaused
+    && (prefs.locationMode === 'live_during_activity' || prefs.locationMode === 'trusted_circle_live');
+}
+
+function journeyConsentSubtitle(prefs: LocationPrivacy): string {
+  if (prefs.journeyObservationEnabled) {
+    const granted = prefs.journeyConsentGrantedAt ? new Date(prefs.journeyConsentGrantedAt) : null;
+    return granted && !isNaN(granted.getTime())
+      ? `On — granted ${granted.toLocaleDateString()}`
+      : 'On';
+  }
+  if (journeyEligible(prefs)) {
+    return 'Off — turn on to allow Journey observation during this live-sharing window';
+  }
+  return 'Off — needs a live location mode and unpaused sharing';
+}
+
+// Mirrors the API's revokesJourneyConsent (journeySegmentRetention.ts): any
+// patch that can grant OR revoke Journey observation consent server-side.
+function touchesJourneyConsent(patch: LocationPrivacyPatch): boolean {
+  return patch.journeyObservationEnabled !== undefined
+    || patch.sharingPaused === true
+    || (
+      patch.locationMode !== undefined
+      && patch.locationMode !== 'live_during_activity'
+      && patch.locationMode !== 'trusted_circle_live'
+    );
+}
+
 // ── Location prefs hook (verbatim save semantics from settings/location.tsx) ─
 
 function useLocationPrefs() {
@@ -105,7 +139,7 @@ function useLocationPrefs() {
     return () => { alive = false; };
   }, []);
 
-  const save = useCallback(async (patch: Partial<LocationPrivacy>) => {
+  const save = useCallback(async (patch: LocationPrivacyPatch) => {
     if (!prefs) return;
     if (saveLock.current) return;
     saveLock.current = true;
@@ -115,6 +149,17 @@ function useLocationPrefs() {
     try {
       const ok = await updateMyLocationPrivacy(patch);
       if (!ok) throw new Error('save_failed');
+      // Journey consent grant/revocation is server-decided (versioned RPC,
+      // server-stamped timestamps) and can also be revoked as a side effect of
+      // this same patch (pausing sharing, or leaving a live location mode) —
+      // see revokesJourneyConsent in the API. The optimistic merge above
+      // cannot know any of that, so re-read authoritative state whenever the
+      // patch could plausibly touch Journey consent rather than display a
+      // guess.
+      if (touchesJourneyConsent(patch)) {
+        const fresh = await getMyLocationPrivacy();
+        setPrefs(fresh);
+      }
     } catch {
       setPrefs(previous);
       Alert.alert('Save failed', 'Could not save preferences. Please try again.');
@@ -319,6 +364,29 @@ function LocationAvailabilityScreenInner() {
               onPress={() => setShowModeSheet(true)}
             />
           </SettingsSection>
+
+          {/* Journey Privacy — journey_observation_v1 consent. A distinct,
+              versioned, server-managed purpose (see set_journey_observation_
+              consent_v1 in migration 2120) from ordinary location sharing
+              above: granting/revoking always goes through this explicit
+              toggle, never inferred from location mode alone. */}
+          <SettingsSection
+            title="Journey Privacy"
+            subtitle="Optional: let Portava observe your movement during a live-sharing window to build richer trip insights"
+          >
+            <ToggleRow
+              title="Journey observation"
+              subtitle={journeyConsentSubtitle(prefs)}
+              value={prefs.journeyObservationEnabled}
+              onValueChange={(v) => save({ journeyObservationEnabled: v })}
+              disabled={!journeyEligible(prefs) && !prefs.journeyObservationEnabled}
+            />
+          </SettingsSection>
+          {!journeyEligible(prefs) && !prefs.journeyObservationEnabled && (
+            <Text style={sx.note}>
+              Requires Location Mode set to "Live during activity" (or "Trusted circle") above, with sharing not paused.
+            </Text>
+          )}
 
           {/* Feature visibility overrides */}
           <SettingsSection

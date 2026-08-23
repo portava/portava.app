@@ -238,6 +238,7 @@ export function ToggleRow({
           value={value}
           onValueChange={onValueChange}
           disabled={disabled}
+          accessibilityLabel={title}
           trackColor={{ true: PP.inkLight, false: PP.paperShadow }}
           thumbColor="#FFFFFF"
         />

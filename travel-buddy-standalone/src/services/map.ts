@@ -42,6 +42,19 @@ export interface LocationPrivacy {
   safeReturnEnabled: boolean;
   trustedCircleShare: boolean;
   hotelBlurEnabled: boolean;
+  /**
+   * Journey observation (`journey_observation_v1`) consent — a distinct,
+   * versioned, server-managed purpose separate from ordinary location
+   * sharing. Granting/revoking goes through the authoritative
+   * set_journey_observation_consent_v1 RPC (see
+   * PATCH /api/me/location-preferences); the client only ever reads this
+   * back, it never derives or assumes it.
+   */
+  journeyObservationEnabled: boolean;
+  journeyConsentScope: string | null;
+  journeyConsentVersion: number | null;
+  journeyConsentGrantedAt: string | null;
+  journeyConsentRevokedAt: string | null;
 }
 
 const LOCATION_PRIVACY_FALLBACK: LocationPrivacy = {
@@ -52,6 +65,11 @@ const LOCATION_PRIVACY_FALLBACK: LocationPrivacy = {
   safeReturnEnabled: true,
   trustedCircleShare: false,
   hotelBlurEnabled: true,
+  journeyObservationEnabled: false,
+  journeyConsentScope: null,
+  journeyConsentVersion: null,
+  journeyConsentGrantedAt: null,
+  journeyConsentRevokedAt: null,
 };
 
 /** Loads the viewer's location-privacy settings from the API. */
@@ -74,15 +92,33 @@ export async function getMyLocationPrivacy(): Promise<LocationPrivacy> {
       safeReturnEnabled:   json.safeReturnEnabled   !== false,
       trustedCircleShare:  Boolean(json.trustedCircleShare),
       hotelBlurEnabled:    json.hotelBlurEnabled    !== false,
+      journeyObservationEnabled: Boolean(json.journeyObservationEnabled),
+      journeyConsentScope:       json.journeyConsentScope       ?? null,
+      journeyConsentVersion:     json.journeyConsentVersion     ?? null,
+      journeyConsentGrantedAt:   json.journeyConsentGrantedAt   ?? null,
+      journeyConsentRevokedAt:   json.journeyConsentRevokedAt   ?? null,
     };
   } catch {
     return LOCATION_PRIVACY_FALLBACK;
   }
 }
 
+/**
+ * Fields the client may request a change to. journeyConsentScope/Version/
+ * GrantedAt/RevokedAt are server-stamped audit fields (see
+ * guard_journey_consent_server_authority in migration 2120) — read-only from
+ * the client, so they are intentionally excluded here rather than merely
+ * ignored by the server.
+ */
+export type LocationPrivacyPatch = Partial<Pick<LocationPrivacy,
+  | 'locationMode' | 'sharingPaused' | 'pulseVisibility' | 'discoveryVisibility'
+  | 'safeReturnEnabled' | 'trustedCircleShare' | 'hotelBlurEnabled'
+  | 'journeyObservationEnabled'
+>>;
+
 /** Partially updates the viewer's location-privacy settings via the API. */
 export async function updateMyLocationPrivacy(
-  patch: Partial<LocationPrivacy>,
+  patch: LocationPrivacyPatch,
 ): Promise<boolean> {
   if (!isSupabaseConfigured) return false;
   const token = await authToken();
