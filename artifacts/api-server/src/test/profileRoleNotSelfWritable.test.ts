@@ -59,6 +59,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { purgeFixtureUsers } from "./liveFixtureUsers.js";
 
 // ── Env-var checks ────────────────────────────────────────────────────────────
 
@@ -132,6 +133,15 @@ async function readRole(userId: string): Promise<string | null> {
 before(async () => {
   if (!CREDS_AVAILABLE) return;
   const admin = adminClient();
+
+  // Heal leftovers from a run that died before its teardown. See
+  // liveFixtureUsers.ts — one crashed run otherwise wedges this job red
+  // permanently, which is exactly what had happened.
+  await purgeFixtureUsers(admin, [
+    `${PREFIX}attacker@example.com`,
+    `${PREFIX}victim@example.com`,
+    `${PREFIX}fresh@example.com`,
+  ]);
 
   const { data: attacker, error: aErr } = await admin.auth.admin.createUser({
     email: `${PREFIX}attacker@example.com`,

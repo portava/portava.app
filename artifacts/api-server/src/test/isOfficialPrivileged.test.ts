@@ -67,6 +67,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { purgeFixtureUsers } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -177,6 +178,16 @@ async function makeUser(tag: string): Promise<{ id: string; token: string }> {
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
+
+  // Heal leftovers from a run that died before its teardown. Without this, one
+  // crashed run makes every subsequent run fail in this hook with "A user with
+  // this email address has already been registered" — a self-perpetuating red
+  // that no code change can clear.
+  await purgeFixtureUsers(adminClient(), [
+    `${PREFIX}plain@example.com`,
+    `${PREFIX}official@example.com`,
+  ]);
+
   ({ id: plainId, token: plainToken } = await makeUser("plain"));
   ({ id: officialId, token: officialToken } = await makeUser("official"));
 

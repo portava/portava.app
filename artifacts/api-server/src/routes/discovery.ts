@@ -2318,7 +2318,15 @@ router.post("/discovery/community", async (req, res) => {
         lng:          finalLng,
         submitted_by: auth.user.id,
         source:       "traveler",
-        ...(await provenanceStamp(sc, "traveler")),
+
+        // Written as an explicit key rather than `...(await provenanceStamp(…))`.
+        // The spread made this payload statically unresolvable, so
+        // check:write-path-columns could not verify ANY column here against the
+        // live schema — the site was a blind spot, and the check fails on new
+        // blind spots by design. provenanceStamp can only ever contribute
+        // source_id ({ source_id } or {}), and source_id is nullable with no
+        // default, so writing NULL is equivalent to omitting the key.
+        source_id:  (await provenanceStamp(sc, "traveler")).source_id ?? null,
         status:       "active",
         verified:     false,
         photos:       photosArr && photosArr.length > 0 ? photosArr : null,
