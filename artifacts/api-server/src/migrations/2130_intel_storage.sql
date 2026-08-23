@@ -115,6 +115,20 @@ BEGIN
 END;
 $$;
 
+-- Lock both down. Postgres grants EXECUTE to PUBLIC by default on every new
+-- function, so without these REVOKEs anon and authenticated could reach
+-- /rest/v1/rpc/intel_append_only. A direct call only raises (TG_OP is null
+-- outside a trigger), but it puts two more functions into precisely the
+-- anon-executable class this codebase has been clearing out, and a trigger
+-- function has no business being callable over REST at all. Trigger execution
+-- does NOT depend on the invoking role holding EXECUTE, so this costs nothing.
+REVOKE ALL ON FUNCTION public.intel_append_only() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.intel_append_only() FROM anon;
+REVOKE ALL ON FUNCTION public.intel_append_only() FROM authenticated;
+REVOKE ALL ON FUNCTION public.intel_append_only_stmt() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.intel_append_only_stmt() FROM anon;
+REVOKE ALL ON FUNCTION public.intel_append_only_stmt() FROM authenticated;
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 1. intel_observations — raw reports, append-only
 -- ═══════════════════════════════════════════════════════════════════════════

@@ -13,6 +13,7 @@ import { coordinateTablesFromBaseline, computeProblems } from "../scripts/checkL
 import {
   LOCATION_PURPOSES, LAWFUL_BASES, PRECISION_PREFERENCE,
   precisePurposes, unboundedPrecisePurposes, purposeTables, RETENTION_BOUNDS,
+  undecidedRetentionPurposes, ACKNOWLEDGED_OPEN_DECISIONS,
 } from "../lib/locationPurposes.js";
 
 const TABLES = coordinateTablesFromBaseline(readFileSync(BASELINE_PATH, "utf8"));
@@ -91,6 +92,30 @@ describe("location purposes — minimising raw movement history", () => {
       const p = LOCATION_PURPOSES.find((x) => x.id === id)!;
       assert.equal(p.requiresSeparateControl, true, `${id} shares or infers location and needs its own control`);
     }
+  });
+});
+
+describe("location purposes — undecided retention is visible at ANY precision", () => {
+  it("surfaces open_decision regardless of precision class", () => {
+    // Regression: unboundedPrecisePurposes() only inspects PRECISE purposes, so
+    // intel_claim (derived + open_decision) was reported by no check at all.
+    const undecided = undecidedRetentionPurposes().map((p) => p.id);
+    assert.ok(undecided.includes("intel_claim"),
+      "a derived purpose with an undecided retention must still be surfaced");
+    assert.equal(unboundedPrecisePurposes().length, 0,
+      "and it must not be reported as an unbounded PRECISE purpose, which it is not");
+  });
+
+  it("every undecided purpose is acknowledged — known debt may exist, not grow", () => {
+    for (const p of undecidedRetentionPurposes()) {
+      assert.ok(ACKNOWLEDGED_OPEN_DECISIONS.includes(p.id), `${p.id} is undecided but unacknowledged`);
+    }
+  });
+
+  it("FAILS when a NEW purpose declares open_decision without acknowledgement", () => {
+    const ghost = { id: "ghost_purpose", retentionBound: "open_decision" };
+    assert.ok(!ACKNOWLEDGED_OPEN_DECISIONS.includes(ghost.id),
+      "an unacknowledged open_decision must not be silently permitted");
   });
 });
 

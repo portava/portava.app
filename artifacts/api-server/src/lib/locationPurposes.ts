@@ -275,7 +275,32 @@ export function unboundedPrecisePurposes(): LocationPurpose[] {
   return precisePurposes().filter((p) => {
     if (p.retentionBound === "clock") return p.retentionSeconds === null; // clock with no number is unbounded
     if (p.retentionBound === "registry_clock") return false; // bounded, by freshness_policies
-    if (p.retentionBound === "open_decision") return true; // undecided IS unbounded, and must show up
+    if (p.retentionBound === "open_decision") return true; // undecided IS unbounded
     return false; // session and content_lifetime are real bounds
   });
+}
+
+/**
+ * Purposes whose retention is explicitly UNDECIDED, at any precision.
+ *
+ * Kept separate from unboundedPrecisePurposes() on purpose. That function only
+ * looks at precise purposes, so an "open_decision" bound on a derived or coarse
+ * purpose — intel_claim is exactly that — was surfaced by no check at all. The
+ * whole point of the open_decision bound is to make an unresolved policy VISIBLE;
+ * a version of it that only shows up for one precision class is silent debt
+ * wearing the label of a warning.
+ */
+/**
+ * Open decisions that have been SEEN and accepted as outstanding. Same idiom as
+ * deletionDispositions.UNCLASSIFIED_BACKLOG: known debt is allowed to exist, but
+ * it cannot GROW without someone adding a line here. A new purpose that sets
+ * open_decision without being listed fails the check.
+ */
+export const ACKNOWLEDGED_OPEN_DECISIONS: readonly string[] = [
+  // Retention window for intelligence contributions — owner decision D6.
+  "intel_claim",
+];
+
+export function undecidedRetentionPurposes(): LocationPurpose[] {
+  return LOCATION_PURPOSES.filter((p) => p.retentionBound === "open_decision");
 }

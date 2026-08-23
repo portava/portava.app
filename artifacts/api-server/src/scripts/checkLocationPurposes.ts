@@ -28,6 +28,7 @@ import { BASELINE_PATH } from "./parseBaselineSchema.js";
 import {
   LOCATION_PURPOSES, REFERENCE_LOCATION_TABLES, LAWFUL_BASES, PRECISION_CLASSES,
   RETENTION_BOUNDS, purposeTables, unboundedPrecisePurposes, precisePurposes,
+  undecidedRetentionPurposes, ACKNOWLEDGED_OPEN_DECISIONS,
 } from "../lib/locationPurposes.js";
 // Reused rather than duplicated: deletionDispositions already tracks which
 // tables post-date the 2026-08-19 baseline, and a second list would drift.
@@ -100,6 +101,19 @@ export function computeProblems(tables: Map<string, string[]>): PurposeProblem[]
     }
   }
 
+  // An open_decision bound on a NON-precise purpose was previously reported by
+  // nothing: unboundedPrecisePurposes only inspects precise purposes. A warning
+  // that only fires for one precision class is silent debt wearing a label.
+  const acknowledged = new Set(ACKNOWLEDGED_OPEN_DECISIONS);
+  for (const p of undecidedRetentionPurposes()) {
+    if (!acknowledged.has(p.id)) {
+      problems.push({
+        kind: "NEW UNDECIDED RETENTION",
+        detail: `${p.id} declares retentionBound 'open_decision' but is not in ACKNOWLEDGED_OPEN_DECISIONS. Decide its retention, or add it there with the decision it is waiting on — known debt may exist, it may not grow unnoticed.`,
+      });
+    }
+  }
+
   for (const p of unboundedPrecisePurposes()) {
     problems.push({
       kind: "UNBOUNDED PRECISE RETENTION",
@@ -124,7 +138,8 @@ function main(): void {
       `   ${LOCATION_PURPOSES.length} declared purpose(s)\n` +
       `   ${precise.length} process PRECISE location — all must be bounded\n` +
       `   ${REFERENCE_LOCATION_TABLES.length} table(s) classified as venue reference data\n` +
-      `   ${LOCATION_PURPOSES.filter((p) => p.requiresSeparateControl).length} require a separate user control\n`,
+      `   ${LOCATION_PURPOSES.filter((p) => p.requiresSeparateControl).length} require a separate user control\n` +
+      `   ${undecidedRetentionPurposes().length} have an UNDECIDED retention window (${undecidedRetentionPurposes().map((p) => p.id).join(", ") || "none"})\n`,
   );
 
   if (problems.length > 0) {

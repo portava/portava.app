@@ -24,25 +24,41 @@ const INTERVAL_MS = 60 * 60 * 1000;
 
 let _timer: ReturnType<typeof setTimeout> | null = null;
 
-export interface SweepResult { purged: number; skipped: boolean }
+export interface SweepResult {
+  purged: number;
+  skipped: boolean;
+  /**
+   * WHY this run did nothing. An error and a disabled flag both used to return
+   * `{purged:0, skipped:true}`, which made a persistently failing sweep
+   * indistinguishable from one nobody had switched on — the same shape as the
+   * original defect (a documented expiry that nothing enforced).
+   */
+  reason: "disabled" | "no_client" | "error" | null;
+}
 
 export async function runIntelRetentionSweep(opts: { client?: any } = {}): Promise<SweepResult> {
   const db = opts.client ?? getServiceClient();
-  if (!db) return { purged: 0, skipped: true };
-  if (!(await isFlagEnabled(db, "intel_retention_sweep_enabled"))) return { purged: 0, skipped: true };
+  if (!db) return { purged: 0, skipped: true, reason: "no_client" };
+  if (!(await isFlagEnabled(db, "intel_retention_sweep_enabled"))) {
+    return { purged: 0, skipped: true, reason: "disabled" };
+  }
 
   try {
     const { data, error } = await db.rpc("purge_expired_intel_snapshots");
     if (error) {
       logger.warn({ err: error }, "intel retention sweep failed");
-      return { purged: 0, skipped: true };
+      return { purged: 0, skipped: true, reason: "error" };
     }
-    const purged = typeof data === "number" ? data : 0;
+    // The function returns bigint, which can arrive as a STRING over PostgREST
+    // (int8 exceeds JS safe-integer range, so it is not always emitted as a JSON
+    // number). A `typeof data === "number"` guard silently reported 0 for every
+    // successful purge. Coerce instead.
+    const purged = Number(data) || 0;
     if (purged > 0) logger.info({ purged }, "intel retention sweep removed expired snapshots");
-    return { purged, skipped: false };
+    return { purged, skipped: false, reason: null };
   } catch (err) {
     logger.warn({ err }, "intel retention sweep threw");
-    return { purged: 0, skipped: true };
+    return { purged: 0, skipped: true, reason: "error" };
   }
 }
 
