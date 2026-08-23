@@ -58,6 +58,7 @@ import {
   markSensitive,
   hideGem,
   mergeDuplicate,
+  resolveGemReport,
   getPendingQueue,
   getReportedGems,
   getGuideApplications,
@@ -1405,6 +1406,41 @@ router.post("/admin/hidden-gems/:id/merge", async (req, res) => {
   try {
     await mergeDuplicate(sc, req.params.id, canonicalGemId);
     res.json({ ok: true });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// Resolve the reports against a gem. This is the exit from the reported-gems
+// queue, which previously had none: reports accumulated and `hideGem` was
+// imported but never called from any route, so nothing could ever act on them.
+//
+// The outcome is explicit rather than inferred from report_count, because this
+// is also the only place a contribution costs its author trust. Upholding a
+// report charges the author GEM_DISPUTED against guide_accuracy; dismissing one
+// costs them nothing and restores the gem. Being reported is not a finding.
+router.post("/admin/hidden-gems/:id/resolve-report", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+
+  if (!await isAdmin(sc, user.id)) {
+    sendError(res, "forbidden", "Admin access required"); return;
+  }
+
+  const outcome = req.body?.outcome;
+  if (outcome !== "upheld" && outcome !== "dismissed") {
+    sendError(res, "invalid_payload", "outcome must be 'upheld' or 'dismissed'"); return;
+  }
+  const note = typeof req.body?.note === "string" ? req.body.note : undefined;
+
+  try {
+    const result = await resolveGemReport(sc, req.params.id, user.id, outcome, note);
+    if (!result.ok) { sendError(res, "not_found", "Gem not found"); return; }
+    res.json(result);
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }

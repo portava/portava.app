@@ -1516,3 +1516,215 @@ describe("Detail endpoint — coordinate safety", () => {
     assert.equal(gem.exactLocation,    undefined, "exactLocation must be absent");
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Intel → Trust link
+//
+// Users gain and lose trust by the quality of the intelligence they contribute.
+// The load-bearing property under test is that a penalty attaches to a DECISION
+// (an upheld report) and never to an ACCUSATION — otherwise the trust system
+// becomes a weapon: anyone could sink a rival by reporting their gems.
+// ══════════════════════════════════════════════════════════════════════════════
+
+import {
+  reportGem,
+  resolveGemReport,
+} from "../services/hiddenGems/HiddenGemModerationService.js";
+import { recomputeGuideAccuracy } from "../services/hiddenGems/LocalGuideService.js";
+
+const AUTHOR = "author-gems-1";
+const ADMIN2 = "admin-gems-2";
+
+interface IntelTables {
+  feature_flags: any[];
+  trust_settings: any[];
+  trust_events: any[];
+  hidden_gems: any[];
+  hidden_gem_reports: any[];
+  local_guide_profiles: any[];
+}
+
+function makeIntelTables(): IntelTables {
+  return {
+    feature_flags: [{ flag: "trust_engine_enabled", enabled: true }],
+    trust_settings: [{ id: 1, daily_cap_gem_save: 10, weekly_cap_gem_save: 40 }],
+    trust_events: [],
+    hidden_gems: [
+      { id: "g1", submitted_by: AUTHOR, status: "active", report_count: 3, guide_verified_by: null },
+    ],
+    hidden_gem_reports: [
+      { id: "r1", gem_id: "g1", reporter_id: OTHER_ID, reason: "inaccurate", status: "pending" },
+    ],
+    local_guide_profiles: [
+      { user_id: AUTHOR, contribution_count: 10, helpful_votes: 0, accuracy_score: 0, guide_level: 0 },
+    ],
+  };
+}
+
+function makeIntelClient(tables: IntelTables): any {
+  let n = 1;
+  function from(table: keyof IntelTables) {
+    const store = tables[table] as any[];
+    const filters: Array<(r: any) => boolean> = [];
+    let pendingInsert: any = null;
+    let pendingUpdate: any = null;
+
+    const b: any = {
+      select() { return b; },
+      insert(row: any) {
+        const r = { id: `x${n++}`, created_at: new Date().toISOString(), ...row };
+        store.push(r); pendingInsert = r; return b;
+      },
+      update(p: any) { pendingUpdate = p; return b; },
+      eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
+      in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return b; },
+      is(c: string, v: any) { filters.push((r) => v === null ? r[c] == null : r[c] === v); return b; },
+      gt(c: string, v: any) { filters.push((r) => r[c] > v); return b; },
+      lt(c: string, v: any) { filters.push((r) => r[c] < v); return b; },
+      neq(c: string, v: any) { filters.push((r) => r[c] !== v); return b; },
+      order() { return b; },
+      limit() { return b; },
+      maybeSingle() { return resolve(true); },
+      single() { return resolve(false); },
+      then(f: any, r: any) { return resolveList().then(f, r); },
+    };
+    const matched = () => store.filter((r) => filters.every((f) => f(r)));
+    async function resolve(_m: boolean) {
+      if (pendingInsert && !pendingUpdate) return { data: pendingInsert, error: null };
+      if (pendingUpdate) { const rows = matched(); rows.forEach((r) => Object.assign(r, pendingUpdate)); return { data: rows[0] ?? null, error: null }; }
+      return { data: matched()[0] ?? null, error: null };
+    }
+    async function resolveList() {
+      if (pendingInsert && !pendingUpdate) return { data: [pendingInsert], error: null };
+      if (pendingUpdate) { const rows = matched(); rows.forEach((r) => Object.assign(r, pendingUpdate)); return { data: rows, error: null }; }
+      return { data: matched(), error: null };
+    }
+    return b;
+  }
+  return { from };
+}
+
+const gemEvents = (t: IntelTables, type: string) =>
+  t.trust_events.filter((e) => e.event_type === type);
+
+describe("Intel → Trust: reporting is not a finding", () => {
+  it("filing a report costs the author NOTHING", async () => {
+    const t = makeIntelTables();
+    const db = makeIntelClient(t);
+
+    await reportGem(db, "g1", OTHER_ID, "inaccurate");
+
+    assert.equal(t.trust_events.length, 0, "a raw report must never move a trust score");
+    assert.equal(t.hidden_gems[0].status, "active", "a reported gem stays visible until adjudicated");
+  });
+
+  it("a dismissed report costs the author nothing and restores the gem", async () => {
+    const t = makeIntelTables();
+    const db = makeIntelClient(t);
+
+    const r = await resolveGemReport(db, "g1", ADMIN2, "dismissed");
+
+    assert.equal(r.penalised, false);
+    assert.equal(gemEvents(t, "gem_disputed").length, 0);
+    assert.equal(t.hidden_gems[0].status, "active");
+    assert.equal(t.hidden_gems[0].report_count, 0, "a dismissed report leaves no residue");
+    assert.equal(t.hidden_gem_reports[0].status, "dismissed");
+  });
+});
+
+describe("Intel → Trust: an upheld report is a finding", () => {
+  it("upholding hides the gem and charges its author guide_accuracy", async () => {
+    const t = makeIntelTables();
+    const db = makeIntelClient(t);
+
+    const r = await resolveGemReport(db, "g1", ADMIN2, "upheld", "fabricated");
+
+    assert.equal(r.penalised, true);
+    assert.equal(r.authorId, AUTHOR);
+    assert.equal(t.hidden_gems[0].status, "hidden");
+    assert.equal(t.hidden_gem_reports[0].status, "upheld");
+
+    const ev = gemEvents(t, "gem_disputed");
+    assert.equal(ev.length, 1);
+    assert.equal(ev[0].user_id, AUTHOR);
+    assert.equal(ev[0].category, "guide_accuracy");
+    assert.ok(ev[0].delta < 0, "an upheld dispute must be a negative delta");
+  });
+
+  it("re-resolving the same gem cannot charge its author twice", async () => {
+    const t = makeIntelTables();
+    const db = makeIntelClient(t);
+
+    await resolveGemReport(db, "g1", ADMIN2, "upheld");
+    await resolveGemReport(db, "g1", ADMIN2, "upheld");
+
+    assert.equal(gemEvents(t, "gem_disputed").length, 1, "source-keyed dedup must hold");
+  });
+
+  it("an admin resolving their OWN gem is not penalised", async () => {
+    const t = makeIntelTables();
+    t.hidden_gems[0].submitted_by = ADMIN2;
+    const db = makeIntelClient(t);
+
+    const r = await resolveGemReport(db, "g1", ADMIN2, "upheld");
+    assert.equal(r.penalised, false);
+    assert.equal(gemEvents(t, "gem_disputed").length, 0);
+  });
+});
+
+describe("Intel → Trust: guide accuracy is derived, not drifted", () => {
+  it("is 0 with no adjudicated submissions — unproven, not accurate", async () => {
+    const t = makeIntelTables();
+    t.hidden_gems = [{ id: "g1", submitted_by: AUTHOR, status: "active", guide_verified_by: null }];
+    const acc = await recomputeGuideAccuracy(makeIntelClient(t), AUTHOR);
+    assert.equal(acc, 0);
+  });
+
+  it("counts verified against hidden submissions", async () => {
+    const t = makeIntelTables();
+    t.hidden_gems = [
+      { id: "a", submitted_by: AUTHOR, status: "active", guide_verified_by: "guide-1" },
+      { id: "b", submitted_by: AUTHOR, status: "active", guide_verified_by: "guide-1" },
+      { id: "c", submitted_by: AUTHOR, status: "active", guide_verified_by: "guide-1" },
+      { id: "d", submitted_by: AUTHOR, status: "hidden", guide_verified_by: null },
+    ];
+    const acc = await recomputeGuideAccuracy(makeIntelClient(t), AUTHOR);
+    assert.equal(acc, 0.75);
+    assert.equal(t.local_guide_profiles[0].accuracy_score, 0.75);
+  });
+
+  it("recomputing is self-correcting — a reversal restores the score", async () => {
+    const t = makeIntelTables();
+    t.hidden_gems = [
+      { id: "a", submitted_by: AUTHOR, status: "active", guide_verified_by: "guide-1" },
+      { id: "b", submitted_by: AUTHOR, status: "hidden", guide_verified_by: null },
+    ];
+    const db = makeIntelClient(t);
+    assert.equal(await recomputeGuideAccuracy(db, AUTHOR), 0.5);
+
+    // Moderation reversed: the hidden gem is restored.
+    t.hidden_gems[1].status = "active";
+    t.hidden_gems[1].guide_verified_by = "guide-1";
+    assert.equal(await recomputeGuideAccuracy(db, AUTHOR), 1);
+  });
+
+  it("guide level responds to accuracy, not volume alone", async () => {
+    const t = makeIntelTables();
+    t.local_guide_profiles[0].contribution_count = 100;
+    t.hidden_gems = [
+      { id: "a", submitted_by: AUTHOR, status: "hidden", guide_verified_by: null },
+      { id: "b", submitted_by: AUTHOR, status: "hidden", guide_verified_by: null },
+    ];
+    const db = makeIntelClient(t);
+    await recomputeGuideAccuracy(db, AUTHOR);
+    const lowAccuracyLevel = t.local_guide_profiles[0].guide_level;
+
+    t.hidden_gems.forEach((g: any) => { g.status = "active"; g.guide_verified_by = "guide-1"; });
+    await recomputeGuideAccuracy(db, AUTHOR);
+    assert.ok(
+      t.local_guide_profiles[0].guide_level >= lowAccuracyLevel,
+      "accuracy must contribute to level",
+    );
+    assert.equal(t.local_guide_profiles[0].accuracy_score, 1);
+  });
+});
