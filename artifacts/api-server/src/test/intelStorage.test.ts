@@ -113,7 +113,11 @@ describe("IG-02 — deny-default access", () => {
     // Regression: Postgres grants EXECUTE to PUBLIC by default on every new
     // function, so without these the trigger functions land in the same
     // anon-executable class this codebase has been clearing out.
-    for (const fn of ["intel_append_only()", "intel_append_only_stmt()"]) {
+    // intel_append_only_stmt() was removed by 2137 — a statement-level BEFORE
+    // trigger fires even when zero rows would be deleted, so it refused any
+    // cascade that merely TOUCHED the table and broke the live-DB RLS suite's
+    // fixture teardown. The row-level guard is the one that matters and remains.
+    for (const fn of ["intel_append_only()"]) {
       assert.ok(SQL.includes(`REVOKE ALL ON FUNCTION public.${fn} FROM PUBLIC`), `${fn}: no PUBLIC revoke`);
       assert.ok(SQL.includes(`REVOKE ALL ON FUNCTION public.${fn} FROM anon`), `${fn}: no anon revoke`);
     }
