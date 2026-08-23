@@ -3,7 +3,9 @@
  *
  * Formula (weighted, deterministic, auditable):
  *   Baseline                         +20   (every account starts here)
- *   Identity verified (ID doc)       +20   (id_verified_at not null)
+ *   Identity verified (ID doc)       +20   (canonical predicate: verification_level
+ *                                          != none, verification_status = verified,
+ *                                          or id_verified_at set)
  *   Passport stamp count (capped 20) 0–15  (linear, 1 stamp ≈ 0.75 pts)
  *   Account age (capped 1 yr)        0–15  (linear, 1 year → full 15)
  *   Buddy review average             0–30  (5-star avg × confidence curve)
@@ -21,6 +23,8 @@
  */
 
 /** One factor contributing to (or deducting from) the trust score. */
+import { travelerIdentityFromProfile } from "./travelerVerification.js";
+
 export interface TrustScoreFactor {
   /** Machine-readable key, e.g. "baseline", "identity", "stamps", "age", "reviews", "safety_flags". */
   key: string;
@@ -77,9 +81,19 @@ export function computeTrustScoreFromData(
   });
 
   // ── Identity verification (+20) ──────────────────────────────────────────
-  // profiles has no id_verified_at column — treat it as null and rely on
-  // the boolean `verified` flag alone.
-  const isVerified = !!profileRow.verified;
+  // Identity uses the app's canonical predicate, not the bare `verified` boolean.
+  //
+  // The previous comment here claimed "profiles has no id_verified_at column".
+  // That is false — the column exists — and the fallback it justified is a real
+  // user-facing bug: the ID-verification flow (routes/verification.ts) writes
+  // verification_level and verified_at and NEVER touches `verified`, so a user
+  // who genuinely completes verification scored 0 of these 20 points. The only
+  // writer of `verified` is the audited admin endpoint.
+  //
+  // travelerIdentityFromProfile is the same predicate the booking gates use, and
+  // it deliberately refuses the bare `verified` boolean because that doubles as a
+  // display badge and is set directly by seed scripts.
+  const isVerified = travelerIdentityFromProfile(profileRow).idVerified;
   const identityPoints = isVerified ? 20 : 0;
   factors.push({
     key: "identity",
@@ -157,8 +171,14 @@ export function computeTrustScoreFromData(
   });
 
   // ── Safety flag penalty (−5 each, max −20) ───────────────────────────────
-  // profiles has no safety_flags_count column — the fallback keeps this at 0
-  // until such a column exists.
+  // safety_flags_count DOES exist on profiles (integer, NOT NULL DEFAULT 0). The
+  // previous comment claimed it did not.
+  //
+  // Correcting that must not swing to the opposite error: nothing in the codebase
+  // WRITES this column — no route, service, RPC, trigger or migration — so every
+  // row is 0 and this penalty is worth 0 points for every user today. Selecting
+  // it changes no score; it makes the three callers agree, which they previously
+  // did not (see the select below).
   const flagCount = Number(profileRow.safety_flags_count ?? 0);
   const flagPenalty = flagCount > 0 ? -Math.min(20, flagCount * 5) : 0;
   if (flagCount > 0) {
@@ -206,9 +226,13 @@ export async function computeTrustScore(
       ? Promise.resolve({ data: preloadedProfileRow })
       : sc
           .from("profiles")
-          // profiles has no id_verified_at / safety_flags_count columns —
-          // select only what exists; scoring treats the missing fields as null/0.
-          .select("verified, created_at")
+          // Must match what the PRELOADED callers already pass. GET /me/profile
+          // hands in a full profiles row (which includes safety_flags_count and
+          // the verification columns), while /passport and the buddy card pass
+          // nothing and fell back to this two-column select — so the SAME user
+          // scored differently depending on which endpoint was asked. Selecting
+          // the same columns here closes that split.
+          .select("verified, created_at, id_verified_at, safety_flags_count, verification_level, verification_status")
           .eq("id", userId)
           .maybeSingle(),
     sc

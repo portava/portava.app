@@ -8,7 +8,22 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
 
-/** Compute guide level 0–5 from stats. */
+/**
+ * Compute guide level 0-5 from stats.
+ *
+ * NOTE ON helpful_votes: it is read here and weighted 0.4/point, but NOTHING
+ * writes it — there is no vote endpoint, no vote table and no trigger — so the
+ * term is always 0. That is deliberate for now rather than an oversight to
+ * close: every candidate signal inspected (gem saves, GPS check-in visits, guide
+ * verifications, upheld reports) is either already spent on another term of this
+ * same score, or is a pre-verification popularity proxy that a fabricator earns
+ * as easily as an honest guide. A quality metric fed by a signal that does not
+ * mean quality is worse than an unused column, because the number would then be
+ * believed. Leave it at 0 until a real "another user found this useful" signal
+ * exists.
+ *
+ * accuracy_score, by contrast, IS now derived — see recomputeGuideAccuracy.
+ */
 function computeGuideLevel(
   contributionCount: number,
   helpfulVotes: number,
