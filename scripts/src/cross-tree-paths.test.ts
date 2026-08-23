@@ -110,6 +110,27 @@ const NON_LITERAL_PATTERN =
  * accidental dynamic strings, so they should not trigger an unresolvable
  * warning.
  */
+/**
+ * Returns true when `identifier` is the binding of a `for (const x of …)` loop.
+ *
+ * Such a variable holds a different path on every iteration by design — most
+ * often each file yielded by a directory walk over a root that is itself a
+ * static literal this guard has already checked. That is the same category as
+ * `isAssignedFromPathResolver` above: the guard cannot inline-verify the value,
+ * but it is deliberate code rather than an accidental dynamic string, and
+ * telling the author to "replace it with a static literal" is advice they
+ * cannot take without deleting the walk.
+ *
+ * Deliberately narrow: it matches only the loop BINDING form. A bare `let file;`
+ * reassigned somewhere still reports as unresolvable, which is the case the
+ * warning was written for.
+ */
+function isBoundByForOfLoop(identifier: string, fileContent: string): boolean {
+  return new RegExp(
+    `\\bfor\\s*\\(\\s*(?:const|let|var)\\s+${identifier}\\s+of\\b`,
+  ).test(fileContent);
+}
+
 function isAssignedFromPathResolver(identifier: string, fileContent: string, depth = 0): boolean {
   if (depth > 8) return false;
 
@@ -464,6 +485,9 @@ export function extractCrossTreePaths(testFile: string): ExtractedPath[] {
       // not fully trace (dynamic segments) are legitimate code — skip them to
       // avoid false positives.
       if (isAssignedFromPathResolver(identifier, content)) continue;
+
+      // A loop binding walks a static root; see isBoundByForOfLoop.
+      if (isBoundByForOfLoop(identifier, content)) continue;
 
       found.push({
         testFile,
