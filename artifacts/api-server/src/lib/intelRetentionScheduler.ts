@@ -37,7 +37,18 @@ export interface SweepResult {
 }
 
 export async function runIntelRetentionSweep(opts: { client?: any } = {}): Promise<SweepResult> {
-  const db = opts.client ?? getServiceClient();
+  // Explicit null means "no client"; undefined means "use the service client if
+  // available" — the house pattern (dailyBriefCleanup, inviteSlotSweeper).
+  //
+  // This was `opts.client ?? getServiceClient()`, and `??` does NOT short-circuit
+  // on an explicit null: `null ?? f()` calls f(). CI runs the suite with
+  // SUPABASE_URL=http://127.0.0.1:9, so a test passing `client: null` got a REAL
+  // client, spent ~7s failing to reach a closed port, and reported reason
+  // "error" instead of "no_client". It passed locally only because a dev machine
+  // has no SUPABASE_URL, so getServiceClient() returned null there. A unit test
+  // must not depend on the absence of an env var — or open a socket at all.
+  const db =
+    "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
   if (!db) return { purged: 0, skipped: true, reason: "no_client" };
   if (!(await isFlagEnabled(db, "intel_retention_sweep_enabled"))) {
     return { purged: 0, skipped: true, reason: "disabled" };
