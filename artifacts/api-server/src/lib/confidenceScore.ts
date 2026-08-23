@@ -89,11 +89,18 @@ function usable(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1;
 }
 
-function normalise<T extends Record<string, number>>(
+// `Record<keyof T, number>`, NOT `Record<string, number>`. A TypeScript
+// INTERFACE gets no implicit index signature, so ConfidenceComponents does not
+// satisfy Record<string, number> and the call fails TS2345 — while inference
+// simultaneously widened the return to Record<string, number>, so assigning it
+// back to the interface failed TS2740/TS2739. Constraining over `keyof T`
+// requires only that T's own keys map to number, which an interface does
+// satisfy, and keeps T exact through the return type.
+function normalise<T extends Record<keyof T, number>>(
   input: Partial<T> | null | undefined,
   zero: T,
 ): { values: T; invalid: boolean } {
-  const values = { ...zero };
+  const values: T = { ...zero };
   let invalid = false;
   for (const key of Object.keys(zero) as Array<keyof T>) {
     const raw = input?.[key];

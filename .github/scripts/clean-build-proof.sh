@@ -101,7 +101,15 @@ PSQL=(psql "$CLEAN_BUILD_DATABASE_URL" -v ON_ERROR_STOP=1 -X -q -w)
 # Belt-and-suspenders: prove at the wire that we are NOT on the prod ref, by
 # asking the server which project ref it thinks it is (Supabase sets it), and
 # abort if it somehow matches prod despite the string check above.
-SERVER_REF="$("${PSQL[@]}" -tA -c "select coalesce(current_setting('supabase.project_ref', true), '')" 2>/dev/null || true)"
+# NOT a soft-fail, despite the shape: an absent project_ref is a VALID answer
+# (the setting is Supabase-specific and need not exist), and the string check
+# above has already established the target. `set -e` is active from line 55, so
+# the tolerance has to be explicit — written as an if/else rather than `|| true`
+# so the no-soft-fail guard in ci.yml can stay absolute and pattern-free.
+# Behaviour is identical to the previous `|| true`.
+if ! SERVER_REF="$("${PSQL[@]}" -tA -c "select coalesce(current_setting('supabase.project_ref', true), '')" 2>/dev/null)"; then
+  SERVER_REF=""
+fi
 if [ -n "$SERVER_REF" ] && [ "$SERVER_REF" = "$KNOWN_PROD_PROJECT_REF" ]; then
   refuse "the live server reports it is the PRODUCTION project ($SERVER_REF) — refusing"
 fi
