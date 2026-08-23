@@ -199,3 +199,23 @@ Per `RECONCILIATION-PACKET.md` §7's closing note: most of the packet's
 baseline, the extended freeze guard (§5 Step 1), or the inverse auditor
 (§5 Step 5). Those remain separate, larger pieces of work the packet
 describes but does not ask this session to build.
+
+## Later addition, unrelated to the packet above (2026-08-23)
+
+`2134_rls_predicate_functions_private_schema.sql` is staged here for the
+same reason as everything above — a proposal awaiting review, not yet
+applied anywhere — but it is **not part of `RECONCILIATION-PACKET.md`'s
+19-item batch**; it belongs to a separate security-hardening effort (closing
+an enumeration oracle: several RLS-predicate SECURITY DEFINER functions are
+directly callable via PostgREST and two of them, `is_blocked` and
+`in_accepted_circle`, take arbitrary user-id pairs, so calling them straight
+through the REST API answers "does A block B" for anyone the caller names).
+It moves 16 functions from `public` into a new `private` schema PostgREST
+does not expose, without editing any RLS policy — PostgreSQL resolves a
+policy's function call by OID, not by schema-qualified name, so the move is
+invisible to every existing policy. That mechanism was verified empirically
+against a local disposable PostgreSQL 16 (see the file's own header) before
+this was written down as fact rather than assumed from documentation. Not
+yet run against portava-ci or production — the file's own trailing
+checklist is what that first CI run needs to satisfy before this is ever
+proposed for production.
