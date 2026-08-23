@@ -40,6 +40,21 @@ export const PRECISION_PREFERENCE: Record<PrecisionClass, number> = {
   precise: 3,   // least preferred — bounded retention REQUIRED
 };
 
+/**
+ * How a purpose's retention is bounded. Typed rather than inferred from prose:
+ * the first version of this file decided "is this bounded?" by regex-matching
+ * retentionNote for the words session/incident, which meant any purpose could
+ * become compliant by wording. A bound must be a claim, not a phrase.
+ */
+export const RETENTION_BOUNDS = [
+  "clock",            // retentionSeconds applies
+  "registry_clock",   // a clock, but the number is per-claim-type in freshness_policies
+  "session",          // ends when the session/incident ends
+  "content_lifetime", // lives as long as the user-authored item it belongs to
+  "open_decision",    // deliberately unresolved, awaiting an owner ruling
+] as const;
+export type RetentionBound = (typeof RETENTION_BOUNDS)[number];
+
 export const LAWFUL_BASES = [
   "contract",            // needed to deliver something the traveler asked for
   "consent",             // explicit, versioned, withdrawable
@@ -55,7 +70,9 @@ export interface LocationPurpose {
   description: string;
   precision: PrecisionClass;
   lawfulBasis: LawfulBasis;
-  /** Null ONLY for non-precise classes that are genuinely durable. */
+  /** How retention is bounded. A precise purpose may never be unbounded. */
+  retentionBound: RetentionBound;
+  /** Set when retentionBound is "clock". */
   retentionSeconds: number | null;
   retentionNote: string;
   /** Who can see it. */
@@ -74,6 +91,7 @@ const HOUR = 3600, DAY = 24 * HOUR;
 export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   {
     id: "safety_anti_spoof",
+    retentionBound: "clock",
     description: "Confirm a check-in really happened where it claims, to stop spoofed presence.",
     precision: "precise",
     lawfulBasis: "legitimate_interest",
@@ -86,6 +104,7 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   },
   {
     id: "live_session_sharing",
+    retentionBound: "session",
     description: "Share your live position with a trip crew or circle while a session is running.",
     precision: "precise",
     lawfulBasis: "consent",
@@ -99,6 +118,7 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   },
   {
     id: "derived_traveler_state",
+    retentionBound: "content_lifetime",
     description: "Keep the traveler's CURRENT coarse state (where they are now) to personalise what is shown.",
     precision: "derived",
     lawfulBasis: "contract",
@@ -111,6 +131,7 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   },
   {
     id: "geofence_checkin",
+    retentionBound: "content_lifetime",
     description: "Register arrival at a planned stop so a trip's itinerary reflects reality.",
     precision: "coarse",
     lawfulBasis: "contract",
@@ -123,6 +144,7 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   },
   {
     id: "presence_in_context",
+    retentionBound: "session",
     description: "Show crew or event attendees that you have arrived, at the precision you chose.",
     precision: "coarse",
     lawfulBasis: "consent",
@@ -135,6 +157,7 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   },
   {
     id: "safety_return",
+    retentionBound: "session",
     description: "Let a chosen contact find you if a Safe Return session is not closed.",
     precision: "precise",
     lawfulBasis: "vital_interest",
@@ -148,6 +171,7 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   },
   {
     id: "content_geotag",
+    retentionBound: "content_lifetime",
     description: "Attach a place to something the traveler chose to post, save or pin.",
     precision: "coarse",
     lawfulBasis: "contract",
@@ -160,19 +184,29 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
     requiresSeparateControl: false,
   },
   {
-    id: "stamp_verification",
-    description: "Prove a passport stamp was earned at the place it claims.",
+    id: "stamp_content",
+    retentionBound: "content_lifetime",
+    description: "Record where a passport stamp was earned, as part of the stamp the traveler created.",
     precision: "precise",
     lawfulBasis: "contract",
     retentionSeconds: null,
-    retentionNote: "OPEN: passport_stamps_gps has no expiry today. Under the ruling this needs either a bounded limit or downgrading to a derived attestation (distance bucket + verified flag) rather than stored coordinates. Flagged, not silently kept.",
-    visibility: "Own stamps; the stamp itself follows user_stamps visibility.",
-    deletionBehavior: "Deleted with the account.",
+    retentionNote:
+      "OWNER RULING 2026-08-23: a stamp is a POST — a permanent static item — and legitimately retains its " +
+      "precise coordinates for the life of that item. This is not movement history: the ruling targets a " +
+      "persistent trail derived from many involuntary observations, whereas a stamp is ONE artifact the " +
+      "traveler deliberately created about one place. The bound is the life of the content, not a clock.",
+    visibility: "Follows the stamp's own visibility (user_stamps).",
+    deletionBehavior:
+      "SHOULD be deleted with the stamp and the account, and TODAY IS NOT: passport_stamps_gps sits in " +
+      "deletionDispositions UNCLASSIFIED_BACKLOG and AccountDeletionService has zero references to it. " +
+      "Permanent-while-it-exists is not the same as surviving the user deleting their account, and the " +
+      "published policy promises content and verification records are removed. Tracked as part of D6.",
     tables: ["passport_stamps_gps"],
     requiresSeparateControl: false,
   },
   {
     id: "journey_observation",
+    retentionBound: "clock",
     description: "Restricted Journey ingestion for segment/shadow evaluation.",
     precision: "precise",
     lawfulBasis: "consent",
@@ -185,6 +219,7 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   },
   {
     id: "intel_claim",
+    retentionBound: "open_decision",
     description: "Record what a traveler reports about a PLACE (how busy, queue, access) to build live intelligence.",
     precision: "derived",
     lawfulBasis: "consent",
@@ -197,6 +232,7 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   },
   {
     id: "aggregate_live_state",
+    retentionBound: "registry_clock",
     description: "Publish how busy a place is, from many travelers' reports.",
     precision: "aggregate",
     lawfulBasis: "legitimate_interest",
@@ -236,7 +272,10 @@ export function precisePurposes(): LocationPurpose[] {
  * ruling forbids.
  */
 export function unboundedPrecisePurposes(): LocationPurpose[] {
-  return precisePurposes().filter(
-    (p) => p.retentionSeconds === null && !/session|incident|OPEN:/i.test(p.retentionNote),
-  );
+  return precisePurposes().filter((p) => {
+    if (p.retentionBound === "clock") return p.retentionSeconds === null; // clock with no number is unbounded
+    if (p.retentionBound === "registry_clock") return false; // bounded, by freshness_policies
+    if (p.retentionBound === "open_decision") return true; // undecided IS unbounded, and must show up
+    return false; // session and content_lifetime are real bounds
+  });
 }

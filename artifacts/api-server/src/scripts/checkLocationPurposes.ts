@@ -27,7 +27,7 @@ import { readFileSync } from "node:fs";
 import { BASELINE_PATH } from "./parseBaselineSchema.js";
 import {
   LOCATION_PURPOSES, REFERENCE_LOCATION_TABLES, LAWFUL_BASES, PRECISION_CLASSES,
-  purposeTables, unboundedPrecisePurposes, precisePurposes,
+  RETENTION_BOUNDS, purposeTables, unboundedPrecisePurposes, precisePurposes,
 } from "../lib/locationPurposes.js";
 // Reused rather than duplicated: deletionDispositions already tracks which
 // tables post-date the 2026-08-19 baseline, and a second list would drift.
@@ -72,6 +72,12 @@ export function computeProblems(tables: Map<string, string[]>): PurposeProblem[]
     if (!LAWFUL_BASES.includes(p.lawfulBasis)) {
       problems.push({ kind: "BAD LAWFUL BASIS", detail: `${p.id}: '${p.lawfulBasis}' is not a recognised basis.` });
     }
+    if (!RETENTION_BOUNDS.includes(p.retentionBound)) {
+      problems.push({ kind: "BAD RETENTION BOUND", detail: `${p.id}: '${p.retentionBound}' is not a recognised bound.` });
+    }
+    if (p.retentionBound === "clock" && p.retentionSeconds === null) {
+      problems.push({ kind: "CLOCK WITHOUT A NUMBER", detail: `${p.id} claims a clock bound but sets no retentionSeconds.` });
+    }
     if (!PRECISION_CLASSES.includes(p.precision)) {
       problems.push({ kind: "BAD PRECISION", detail: `${p.id}: '${p.precision}' is not a precision class.` });
     }
@@ -97,7 +103,7 @@ export function computeProblems(tables: Map<string, string[]>): PurposeProblem[]
   for (const p of unboundedPrecisePurposes()) {
     problems.push({
       kind: "UNBOUNDED PRECISE RETENTION",
-      detail: `${p.id} retains PRECISE location with no bound. The ruling requires purpose-specific limits — give it a retentionSeconds, or state the session/incident bound explicitly in retentionNote.`,
+      detail: `${p.id} retains PRECISE location with no bound (retentionBound='${p.retentionBound}'). The ruling requires purpose-specific limits — set a clock with retentionSeconds, or a real bound (session / content_lifetime).`,
     });
   }
 

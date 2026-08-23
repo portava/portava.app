@@ -12,7 +12,7 @@ import { BASELINE_PATH } from "../scripts/parseBaselineSchema.js";
 import { coordinateTablesFromBaseline, computeProblems } from "../scripts/checkLocationPurposes.js";
 import {
   LOCATION_PURPOSES, LAWFUL_BASES, PRECISION_PREFERENCE,
-  precisePurposes, unboundedPrecisePurposes, purposeTables,
+  precisePurposes, unboundedPrecisePurposes, purposeTables, RETENTION_BOUNDS,
 } from "../lib/locationPurposes.js";
 
 const TABLES = coordinateTablesFromBaseline(readFileSync(BASELINE_PATH, "utf8"));
@@ -49,11 +49,25 @@ describe("location purposes — minimising raw movement history", () => {
       "a precise purpose with no retention bound is exactly what the ruling forbids");
   });
 
-  it("every precise purpose states a clock or an explicit session/incident bound", () => {
+  it("every precise purpose declares a TYPED bound, not a phrase", () => {
     for (const p of precisePurposes()) {
-      const bounded = p.retentionSeconds !== null || /session|incident|OPEN:/i.test(p.retentionNote);
-      assert.ok(bounded, `${p.id} retains precise location with no stated bound`);
+      assert.ok(RETENTION_BOUNDS.includes(p.retentionBound), `${p.id}: bound must be typed`);
+      if (p.retentionBound === "clock") {
+        assert.ok(p.retentionSeconds !== null, `${p.id}: clock bound needs a number`);
+      }
+      assert.notEqual(p.retentionBound, "open_decision",
+        `${p.id} retains precise location under an undecided policy`);
     }
+  });
+
+  it("a stamp is content, not movement history (owner ruling 2026-08-23)", () => {
+    const stamp = LOCATION_PURPOSES.find((p) => p.id === "stamp_content")!;
+    assert.equal(stamp.precision, "precise", "a stamp legitimately keeps its precise coordinates");
+    assert.equal(stamp.retentionBound, "content_lifetime");
+    assert.equal(stamp.lawfulBasis, "contract");
+    // The gap that ruling exposes: permanent-while-it-exists is not immortality.
+    assert.match(stamp.deletionBehavior, /TODAY IS NOT/,
+      "the registry must state plainly that it is not yet deleted with the account");
   });
 
   it("aggregate and derived are preferred over precise", () => {
