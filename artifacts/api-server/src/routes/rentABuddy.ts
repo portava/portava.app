@@ -29,6 +29,10 @@ import { checkRentBuddyAccess, invalidateSuggestedCityCache } from "./rentABuddy
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { notifyBookingParty } from "../lib/bookingNotify.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
+import {
+  AWAITING_BUDDY_STATUSES, ACCEPTED_STATUSES, UPCOMING_STATUSES,
+  CANCELLABLE_STATUSES, CHANGE_ALLOWED_STATUSES,
+} from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
 import { isNonNumericCoord } from "../lib/coords.js";
@@ -1424,7 +1428,10 @@ router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
     return res.status(403).json({ error: "forbidden" });
   }
 
-  const cancellableStatuses = ["pending", "confirmed", "scheduled"];
+  // Was ["pending","confirmed","scheduled"] — omitting "requested", which is what
+  // the canonical route writes, so the booking the normal flow creates could not
+  // be cancelled by either party until the buddy accepted it.
+  const cancellableStatuses = CANCELLABLE_STATUSES;
   if (!cancellableStatuses.includes(b.status)) {
     return res.status(409).json({
       error: "invalid_transition",
@@ -3008,9 +3015,11 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req, re
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
+  // `status` was NOT selected here, which is the root of the defect below: a
+  // guard is impossible without reading the column.
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("traveler_id, buddy_id")
+    .select("traveler_id, buddy_id, status")
     .eq("id", bookingId)
     .maybeSingle();
   if (!booking) return res.status(404).json({ error: "not_found" });
@@ -3018,12 +3027,79 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req, re
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
-  const now = new Date().toISOString();
-  await serviceClient
-    .from("rent_buddy_bookings")
-    .update({ status: "completed", completed_at: now, safety_status: "emergency", updated_at: now })
-    .eq("id", bookingId);
+  // ── Status guard ────────────────────────────────────────────────────────────
+  // This handler previously wrote status:"completed" unconditionally, from ANY
+  // state. That let either party end a booking that had never started, and —
+  // the serious case — let a party close a booking that was `disputed`, taking
+  // the outcome away from the admin resolution route. Someone losing a dispute
+  // could simply end it themselves, and the write also stamped
+  // safety_status:"emergency", injecting a false safety signal into the record.
+  //
+  // in_progress is the ONLY legitimate source state:
+  //   requested/pending/scheduled — never started; /cancel already covers these,
+  //     and writing "completed" would fabricate a session that did not happen
+  //     (and open a review window for it).
+  //   completed / cancelled_by_* / declined / expired — terminal.
+  //   completed_pending_traveler_confirmation — ending it would destroy the
+  //     traveller's dispute window.
+  //   disputed / no_show_pending — an adjudication is in flight and the admin
+  //     route and the sweeper own the outcome.
+  if ((booking as any).status !== "in_progress") {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: `Cannot end a booking in status '${(booking as any).status}'. Only an in-progress session can be ended early.`,
+      currentStatus: (booking as any).status,
+    });
+  }
 
+  // Mirror the canonical completion route: a buddy ending the session leaves the
+  // traveller a 24h dispute window rather than closing it outright. Without this
+  // the guard would still leave the buddy-side dispute-window bypass open. The
+  // request sweeper closes the window automatically, so nothing gets stuck.
+  const nowMs = Date.now();
+  const disputeWindowH = 24;
+  const disputeWindowExpiresAt = party.isBuddy
+    ? new Date(nowMs + disputeWindowH * 3600 * 1000).toISOString()
+    : null;
+  const finalStatus = party.isBuddy ? "completed_pending_traveler_confirmation" : "completed";
+  const now = new Date(nowMs).toISOString();
+
+  // Conditional write: re-asserting the status makes this a compare-and-set, so
+  // a dispute opened between the read above and this write cannot be clobbered.
+  const { data: updated, error: updateErr } = await serviceClient
+    .from("rent_buddy_bookings")
+    .update({
+      status: finalStatus,
+      completed_at: now,
+      ...(disputeWindowExpiresAt ? { dispute_window_expires_at: disputeWindowExpiresAt } : {}),
+      safety_status: "emergency",
+      updated_at: now,
+    })
+    .eq("id", bookingId)
+    .eq("status", "in_progress")
+    .select("id");
+
+  if (updateErr) {
+    req.log?.error({ err: updateErr, bookingId }, "end-early: booking update failed");
+    return res.status(500).json({ error: "update_failed" });
+  }
+  if (!updated || (updated as any[]).length === 0) {
+    // Lost the race — something else moved the booking after our read.
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state. Refresh and try again.",
+    });
+  }
+
+  // The safety event is the point of this endpoint, so it is written even if the
+  // audit row below fails.
+  //
+  // target_user_id is deliberately left NULL. Ending early is genuinely
+  // ambiguous — illness, weather, a changed schedule, or the counter-party's
+  // conduct — and the handler cannot tell which. `end_early` is not one of the
+  // risk-scan threshold types, so nothing is made inert by omitting it, whereas
+  // populating it would manufacture an accusation against the other party out of
+  // what is often a blameless early finish.
   await serviceClient.from("rent_buddy_safety_events").insert({
     booking_id: bookingId,
     actor_user_id: auth.user.id,
@@ -3032,7 +3108,19 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req, re
     metadata: req.body ?? {},
   });
 
-  return res.json({ ok: true });
+  // Every other transition in this file writes a booking event; this one did not,
+  // which is what made the abuse above silent. Fire-and-forget: an audit failure
+  // must never block a safety exit.
+  void serviceClient.from("buddy_booking_events").insert({
+    booking_id: bookingId,
+    actor_user_id: auth.user.id,
+    event: "ended_early",
+    from_status: "in_progress",
+    to_status: finalStatus,
+    metadata: party.isBuddy ? { disputeWindowH, disputeWindowExpiresAt } : {},
+  });
+
+  return res.json({ ok: true, status: finalStatus });
 });
 
 router.post("/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", async (req, res) => {
@@ -3309,7 +3397,9 @@ router.get("/rent-a-buddy/me/requests", async (req, res) => {
     .from("rent_buddy_bookings")
     .select("*")
     .eq("buddy_id", (bp as any).id)
-    .in("status", ["pending", "confirmed"])
+    // "requested" (canonical creation) and "scheduled" (accept) were both absent,
+    // so this list showed neither new requests nor accepted upcoming bookings.
+    .in("status", UPCOMING_STATUSES as unknown as string[])
     .order("booking_date", { ascending: true });
 
   return res.json({ requests: (data ?? []).map(mapBooking) });
@@ -3443,8 +3533,10 @@ router.get("/rent-a-buddy/dashboard", async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10);
   const [upcomingRes, pendingRes, earningsRes] = await Promise.all([
-    serviceClient.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("buddy_id", (profile as any).id).eq("status", "confirmed").gte("booking_date", today),
-    serviceClient.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("buddy_id", (profile as any).id).eq("status", "pending"),
+    // .eq("status","confirmed") pinned this counter at 0 — nothing writes "confirmed".
+    serviceClient.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("buddy_id", (profile as any).id).in("status", ACCEPTED_STATUSES as unknown as string[]).gte("booking_date", today),
+    // "pending" alone dropped every booking made through the canonical route.
+    serviceClient.from("rent_buddy_bookings").select("id", { count: "exact" }).eq("buddy_id", (profile as any).id).in("status", AWAITING_BUDDY_STATUSES as unknown as string[]),
     serviceClient.from("rent_buddy_bookings").select("total_usd").eq("buddy_id", (profile as any).id).eq("status", "completed"),
   ]);
 
@@ -3473,7 +3565,9 @@ router.get("/rent-a-buddy/dashboard/requests", async (req, res) => {
     .from("rent_buddy_bookings")
     .select("*")
     .eq("buddy_id", (bp as any).id)
-    .eq("status", "pending")
+    // The list a buddy accepts from. With "pending" only, a canonically-created
+    // booking never appeared here at all — it just expired unseen.
+    .in("status", AWAITING_BUDDY_STATUSES as unknown as string[])
     .order("created_at", { ascending: false });
 
   return res.json({ requests: (data ?? []).map(mapBooking) });
@@ -5869,7 +5963,9 @@ router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res)
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
-  const changeAllowedStatuses = ["pending", "confirmed", "scheduled"];
+  // Same omission as the cancel guard above: "requested" was missing, so every
+  // canonically-created booking 409'd here.
+  const changeAllowedStatuses = CHANGE_ALLOWED_STATUSES;
   if (!changeAllowedStatuses.includes((booking as any).status)) {
     return res.status(409).json({
       error: "invalid_transition",
