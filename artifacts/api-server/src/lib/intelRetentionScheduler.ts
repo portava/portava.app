@@ -41,11 +41,12 @@ export async function runIntelRetentionSweep(opts: { client?: any } = {}): Promi
   // available" — the house pattern (dailyBriefCleanup, inviteSlotSweeper).
   //
   // This was `opts.client ?? getServiceClient()`, and `??` does NOT short-circuit
-  // on an explicit null: `null ?? f()` calls f(). CI runs the suite with
-  // SUPABASE_URL=http://127.0.0.1:9, so a test passing `client: null` got a REAL
-  // client, spent ~7s failing to reach a closed port, and reported reason
+  // on an explicit null: `null ?? f()` calls f(). CI runs the suite with the
+  // Supabase URL env var pointed at a closed port (127.0.0.1:9), so a test
+  // passing `client: null` got a REAL client, spent ~7s failing to connect, and
+  // reported reason
   // "error" instead of "no_client". It passed locally only because a dev machine
-  // has no SUPABASE_URL, so getServiceClient() returned null there. A unit test
+  // has that variable unset, so getServiceClient() returned null there. A unit test
   // must not depend on the absence of an env var — or open a socket at all.
   const db =
     "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
