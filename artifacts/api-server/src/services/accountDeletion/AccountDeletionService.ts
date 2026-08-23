@@ -303,6 +303,12 @@ export async function executeAccountDeletion(
   // cleared by hand (merged from the old services/accountDeletion.ts cascade).
   // One failing table records its own step and never aborts the rest.
   const contentDeletes: Array<{ name: string; run: () => PromiseLike<{ error?: any }> }> = [
+    // Outstanding phone-verification challenges. These carry a phone number and
+    // a live credential hash. The FK to profiles is ON DELETE CASCADE, but this
+    // service keeps an anonymised TOMBSTONE profile rather than deleting the
+    // profiles row, so that cascade never fires — the rows must be cleared here
+    // by hand like every other user-keyed table.
+    { name: "delete_phone_challenges", run: () => sc.from("phone_verification_challenges").delete().eq("user_id", userId) },
     // Stories + engagement the user left on OTHER users' stories.
     { name: "delete_story_reactions", run: () => sc.from("story_reactions").delete().eq("user_id", userId) },
     { name: "delete_story_replies",   run: () => sc.from("story_replies").delete().eq("user_id", userId) },

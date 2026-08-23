@@ -30,6 +30,15 @@
 
 /** Tables AccountDeletionService clears today. */
 export const ERASED_BY_CASCADE: readonly string[] = [
+  // PENDING BASELINE RECAPTURE — do not add the string yet.
+  //   "phone_verification_challenges" (migration 2142) holds a phone number and
+  //   a hashed live credential, and IS already deleted explicitly by
+  //   AccountDeletionService (step "delete_phone_challenges") — not by its FK,
+  //   because the tombstone profile means no cascade off profiles ever fires.
+  //   It cannot be listed here until the baseline snapshot is recaptured: this
+  //   gate reads baseline/20260819_baseline_structure.sql and rejects entries it
+  //   cannot see as "STALE". Add the string in the same change that recaptures
+  //   the baseline.
   // Erased by a DATABASE CONSTRAINT, not by service code — the one entry here
   // that AccountDeletionService never names. passport_stamps_gps.user_id
   // REFERENCES auth.users ON DELETE CASCADE, and step 5 calls

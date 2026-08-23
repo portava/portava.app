@@ -37,6 +37,7 @@ import locationsRouter from "./locations";
 import pulseRouter from "./pulse";
 import adminRouter from "./admin";
 import trustAdminRouter from "./trust-admin";
+import phoneVerificationRouter from "./phoneVerification";
 import passportStampsRouter from "./passportStamps";
 import hiddenGemsRouter from "./hiddenGems";
 import notificationsRouter from "./notifications";
@@ -158,6 +159,11 @@ router.use(locationsRouter);
 router.use(pulseRouter);
 router.use(adminRouter);
 router.use(trustAdminRouter);
+// Phone verification. Every rent_buddy_launch_controls row requires phone
+// verification, but the product had no way to perform one — the only phone
+// signal was rent_buddy_profiles.phone_verified, on the BUDDY table, written
+// by nothing. These routes are the missing capability.
+router.use(phoneVerificationRouter);
 router.use(hiddenGemsRouter);
 router.use(notificationsRouter);
 router.use(airportRouter);

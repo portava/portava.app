@@ -16,6 +16,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 
 const router = Router();
 
@@ -284,12 +285,11 @@ export async function checkRentBuddyAccess(opts: {
     if (!userId) {
       return { allowed: false, code: "unauthenticated", message: "Sign in to make bookings.", httpStatus: 401 };
     }
-    const { data: rbProf } = await sc
-      .from("rent_buddy_profiles")
-      .select("id_verified")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (!rbProf?.id_verified) {
+    // The booking ACTOR is the traveller, so their ID verification lives on
+    // `profiles`. Reading rent_buddy_profiles here meant MVP mode could only
+    // ever be satisfied by users who had applied to become a buddy.
+    const travIdentity = await loadTravelerIdentity(sc, userId);
+    if (!travIdentity.idVerified) {
       return {
         allowed: false,
         code: "verification_required",

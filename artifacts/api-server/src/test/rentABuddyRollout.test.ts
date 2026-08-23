@@ -1193,11 +1193,14 @@ describe("QA Gate: MVP mode ID-verification gate", () => {
     assert.equal(r.body.error, "verification_required");
   });
 
-  it("MVP mode allows booking when user has id_verified=true in rent_buddy_profile", async () => {
+  it("MVP mode allows booking when the TRAVELLER is ID-verified on their profile", async () => {
     state.featureFlags["RENT_BUDDY_MVP_MODE"].enabled = true;
-    state.buddyProfiles["user-prof-verified"] = {
-      id: "user-prof-verified", user_id: USER_ID, city: "Bangkok", status: "active", id_verified: true,
-    };
+    // The booking actor is the traveller, so their ID verification lives on
+    // `profiles` — not on a rent_buddy_profiles row, which only exists for
+    // users who applied to become a buddy. `verification_level` is what the
+    // real verification flow writes; the bare `verified` boolean is a display
+    // badge and is deliberately not accepted as identity evidence.
+    state.profiles[USER_ID].verification_level = "id";
     setupClient(USER_ID);
     const r = await req("POST", "/api/rent-a-buddy/bookings", bookingBody, USER_TOKEN);
     // idVerified check passes — route continues; must not return verification_required
