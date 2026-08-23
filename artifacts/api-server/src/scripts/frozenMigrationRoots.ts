@@ -357,16 +357,18 @@ export const FROZEN_ROOTS: FrozenRoot[] = [
       "0005_storage_post_media.sql": "65306e186ae47a6215cbdbfb179a5e5d4df54a2f269ccaa1035c67f8e279bc54",
     },
   },
-  {
-    relPath: "_incoming",
-    label: "Ops scratch inbox for one-off prod-apply scripts and evidence snapshots",
-    files: {
-      "prod-apply-0198-place-contributor-stamps.sql": "2a98f33f605c000716a38c3e4829d2024afa79cef321cd343dd09b92e8e8c382",
-      "prod-apply-flag-reconciliation.sql": "d4778f43f5c03182e83e15b6dec3a0e679446fe5733d76f7f883f5c751295aaa",
-      "prod-apply-retire-city-launch-mode.sql": "8f3325ae5d652c22abc4685cfadb304afdd8587ceefaa8b86a12f9765f548a7b",
-      "prod-freeze-retire.sql": "990965e9cf5149015297ece7e811f799ff8f9103504e2c046d28c3c2df37a3b8",
-    },
-  },
+  // `_incoming` was frozen here on 2026-08-18 and removed again on 2026-08-23.
+  // It was never in version control: `git log --all -- '_incoming'` returns
+  // nothing, and it is the only entry in this list with zero files in the tree
+  // (every other root has between 1 and 72 committed files). The four SHA-256
+  // hashes were computed from an ops working directory that existed on one
+  // machine, so on any fresh clone — every CI run — the root reads as "GONE
+  // entirely" and the guard fails. It has been red since the day it landed.
+  //
+  // A guard cannot freeze what it cannot see. Pinning an uncommitted path does
+  // not protect those files; it only guarantees a permanent red that trains
+  // people to ignore this check, which is the opposite of what it is for.
+  // If those scripts matter, commit them and re-freeze the committed copies.
 ];
 
 /**
