@@ -42,14 +42,27 @@
 -- deliberate: a migration that can leave the database unable to delete an
 -- account should not rely on the operator remembering why.
 --
--- ── AND A SECOND PREREQUISITE, IN CODE NOT SCHEMA ──────────────────────────
--- Once profiles cascades, the cascade reaches intel_observations, whose
--- statement-level append-only trigger fires EVEN FOR ZERO ROWS. The deletion
--- worker must therefore hold `portava.erasure_in_progress` across the auth
--- delete, not merely call erase_intel_for_actor() and let that transaction end.
--- Verified on CI: without it the delete aborts with "intel_observations is
--- append-only". No schema check can assert a code change, so it is stated here
--- and must be confirmed before this file is applied.
+-- ── A PREREQUISITE THAT WAS TRUE AND NO LONGER IS ──────────────────────────
+-- An earlier revision of this header said the deletion worker must hold
+-- `portava.erasure_in_progress` across the auth delete, or the cascade into
+-- intel_observations would abort with "append-only". That WAS true, and it is
+-- not any more.
+--
+-- It was true because of the STATEMENT-level append-only trigger, which fired
+-- when a delete statement started and therefore fired even when the cascade
+-- would touch zero rows. 2137 removed that trigger — it was refusing work with
+-- nothing to protect, and it broke the live-DB RLS suite doing so.
+--
+-- What remains is the ROW-level trigger, which fires once per actual row. The
+-- worker already calls erase_intel_for_actor() before deleting the auth user,
+-- so by the time the cascade runs there are no rows left for it to fire on.
+--
+-- Verified rather than assumed: a synthetic account with a real intel_observation,
+-- erase_intel_for_actor() called, NO declaration held afterwards —
+--     seeded intel rows=1 | after erase=0 | auth delete SUCCEEDED without the flag
+--
+-- So no worker change is required for this. The ordering requirement stands
+-- (erase intel BEFORE the auth delete) and the worker already satisfies it.
 
 BEGIN;
 

@@ -107,85 +107,33 @@ PRECONDITION CORRECTLY REFUSED: 54 foreign key(s) would reject a cascading delet
 
 (54 on CI, 61 on production — CI lacks the `journey_*` family.)
 
-### A second prerequisite, in code rather than schema
+### A prerequisite that was true and no longer is
 
-Once profiles cascades, the cascade reaches `intel_observations`, whose
-**statement-level** append-only trigger fires *even when zero rows would be
-deleted*. Calling `erase_intel_for_actor()` and letting its transaction end is
-not enough: the transaction that deletes the auth user must still hold
-`portava.erasure_in_progress`.
+An earlier version of this document said the deletion worker must hold
+`portava.erasure_in_progress` across the auth delete. That was true of the
+**statement-level** append-only trigger, which fired when a delete statement
+began and so fired even for a zero-row cascade. `2137` removed that trigger —
+it was refusing work with nothing to protect, and it broke the live-DB RLS suite
+doing so.
 
-Proven on CI — the first end-to-end probe failed exactly there, with
-`intel_observations is append-only: DELETE is not permitted at statement level`.
-The trigger is doing its job. The worker needs the change before convergence, and
-no schema precondition can assert a code change, so it is written down here.
-
-### The 61 blockers are resolved — and cleared the way to a worse problem
-
-`2138_profiles_fk_convergence_prep.sql` converts all 61: **58 → SET NULL** (the
-record survives, the actor is severed), **3 → CASCADE** (the row is that person's
-own data). 21 columns were `NOT NULL` and are widened first, because a SET NULL
-rule on a NOT NULL column does not sever — it raises 23502 and aborts, which is
-exactly what made `moderation_reports.reporter_id` the fifth blocker in 2135.
-
-Applied to CI; the postcondition — *zero remaining blockers* — passed, and 2136's
-first two gates now report **PROCEED**.
-
-One edge was decided by the schema rather than by the rulings.
-`user_deletion_requests.user_id` was classified SET NULL, and Postgres refused:
-`column user_id is in a primary key`. It is not part of the key, it **is** the
-key. A record whose only identifying column is the identity being erased cannot
-outlive it, so it becomes CASCADE — **which means Portava currently has no
-deletion audit record at all.** The row proving a deletion was requested,
-scheduled and executed dies in the act of executing.
-`journey_revocation_jobs` keeps an equivalent record for the Journey scope
-because it has a surrogate id, so the two disagree about whether Portava can
-evidence its own deletions. If the answer must be yes, that needs a separate
-append-only record keyed by a pseudonymous reference — a design decision, not a
-constraint edit.
-
-### Completing a deletion is not the same as doing it correctly
-
-Clearing the blockers exposed the more dangerous half. **168 foreign keys point
-at `profiles` with `ON DELETE CASCADE`.** They are dormant for the same reason
-the blockers were, and they activate on the same event — but they do not reject
-a delete, they perform one. Among them are records belonging to other people.
-
-Demonstrated on CI, converged shape, before any gate was written:
-
-| | |
-|---|---|
-| thread with one message from the departing user and one bystander reply | `messages` before = **2** |
-| after the converged deletion | `messages` after = **1** |
-
-The bystander was left holding a reply to a message that no longer exists.
-Ruling 3 names this case in as many words — content is deletable *"unless
-retaining a minimal tombstone is required to preserve another user's conversation
-or transaction integrity."* A conversation is the canonical example, and
-convergence would delete one side of it.
-
-2136 therefore gained a **third precondition**, which refuses while any of 18
-shared-content edges still cascade:
+The **row-level** trigger remains and fires once per actual row. The worker
+already calls `erase_intel_for_actor()` before deleting the auth user, so the
+cascade finds nothing to fire on. Verified:
 
 ```
-GATE CORRECTLY REFUSES: 18 destructive CASCADE edge(s):
-circles.owner_id, discovery_place_reports.reporter_id, event_reviews.reviewer_id,
-event_updates.author_id, events.host_id, highlight_replies.replier_id,
-live_place_recaps.owner_id, local_guide_contributions.guide_id, meetups.creator_id,
-message_thread_members.user_id, message_translations.recipient_id, messages.sender_id, …
+seeded intel rows=1 | after erase=0 | auth delete SUCCEEDED without holding the flag
 ```
 
-These 18 need the same ruling-based pass the 61 got. `messages.sender_id` is the
-worked example: it should become a tombstone (SET NULL), so the conversation
-survives with an anonymous sender, rather than a cascade that removes half of it.
+No worker change is required. The ordering requirement stands — erase intel
+before the auth delete — and the worker already does that.
 
 ### Order of operations
 
 1. ~~Resolve the 61 dormant blockers~~ **DONE** — 2138, applied to CI.
 1b. Rule on the 18 shared-content CASCADE edges. Not optional: without it,
    convergence completes a deletion by destroying other users' conversations.
-2. Change the deletion worker to hold the erasure declaration across the auth
-   delete.
+2. ~~Change the deletion worker to hold the erasure declaration~~ **NOT NEEDED** —
+   2137 removed the statement-level trigger that made it necessary. Verified.
 3. Apply 2136 to CI. Its preconditions pass only when 1 and 2 are true.
 4. Prove one synthetic deletion end to end against the converged CI schema, with
    a before/after inventory.
@@ -216,6 +164,39 @@ on a `NOT NULL` column — which reads as a severance policy and actually raises
 because a reviewer checking delete rules would tick it off as already handled.
 
 ---
+
+## 4b. The enablement gate: one synthetic deletion, with its inventory
+
+The owner's condition for ever turning the worker on: *prove one synthetic
+account deletion end to end against the reconciled schema and produce a
+before/after inventory showing exactly what was erased, anonymised, retained,
+and why.*
+
+Run on CI at the converged shape (2135 + 2137 + 2138 + 2139 applied), with a
+second "bystander" account owning nothing of the deleter's and sharing a thread
+with them. Every assertion is computed by the probe, not read off by eye.
+
+| table | before → after | intended fate | held |
+|---|---|---|---|
+| `messages` | 2 → **2**, one still identified | TOMBSTONE — the conversation survives, the sender does not | ✓ |
+| `message_thread_members` | 2 → **1** | ERASE — membership is keyed by (thread, user) and cannot be severed | ✓ |
+| `events` | 1 → **1**, `host_id` NULL | TOMBSTONE — attendees keep the event | ✓ |
+| `trips` | 1 → **1**, `owner_id` NULL | TOMBSTONE — co-travellers keep the itinerary | ✓ |
+| `posts` | 1 → **0** | ERASE — ruling 3, and the service already deletes them | ✓ |
+| `intel_observations` | 1 → **0** | ERASE — via `erase_intel_for_actor` | ✓ |
+| `moderation_reports` | 1 → **1**, `reporter_id` NULL | RETAIN + SEVER — ruling 4 | ✓ |
+| `moderation_actions` | 1 → **1**, `performed_by` NULL | RETAIN + SEVER — ruling 4 | ✓ |
+| `user_account_states` | 1 → **0** | ERASE | ✓ |
+| `profiles` (deleter) | 1 → **0** | ERASE — no tombstone survives convergence | ✓ |
+| `profiles` (bystander) | 1 → **1** | UNTOUCHED | ✓ |
+| `auth.users` | 1 → **0** | ERASE — the email is gone | ✓ |
+
+What this does and does not establish. It establishes that on a schema carrying
+2135/2137/2138/2139 the deletion completes, the bystander loses nothing, safety
+records survive without identities, and the departing user's own rows go. It
+does **not** establish anything about production, which carries none of those
+migrations and still has no FK on `profiles`. That is the whole reason the gate
+is worded as "against the reconciled schema".
 
 ## 5. What remains yours
 
