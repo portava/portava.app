@@ -139,11 +139,14 @@ BEGIN
      AND c.confrelid = 'public.profiles'::regclass
      AND c.confdeltype = 'c'
      AND c.conrelid::regclass::text IN (
-       -- Conversations and their parts
-       'messages', 'message_threads', 'message_thread_members', 'message_translations',
-       'saved_messages',
-       -- Content other people read, reply to, or depend on
-       'posts', 'event_updates', 'event_reviews', 'highlight_replies',
+       -- Conversations and their parts. message_thread_members, message_translations
+       -- and saved_messages are NOT here: 2139 rules them CASCADE deliberately —
+       -- a membership row keyed by (thread,user) cannot be nulled at all, and the
+       -- other two are the departing person's own copies.
+       'messages', 'message_threads',
+       -- Content other people read, reply to, or depend on. posts is likewise
+       -- deliberately CASCADE (the service already deletes them in step 2).
+       'event_updates', 'event_reviews', 'highlight_replies',
        'shared_moment_contributions', 'live_place_recaps', 'local_guide_contributions',
        'discovery_place_reports', 'hidden_gems',
        -- Shared containers other members belong to
