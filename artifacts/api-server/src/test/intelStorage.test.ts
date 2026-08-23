@@ -109,6 +109,16 @@ describe("IG-02 — deny-default access", () => {
       "projected state must reach clients through a server-controlled projection");
   });
 
+  it("the trigger functions are not callable over REST", () => {
+    // Regression: Postgres grants EXECUTE to PUBLIC by default on every new
+    // function, so without these the trigger functions land in the same
+    // anon-executable class this codebase has been clearing out.
+    for (const fn of ["intel_append_only()", "intel_append_only_stmt()"]) {
+      assert.ok(SQL.includes(`REVOKE ALL ON FUNCTION public.${fn} FROM PUBLIC`), `${fn}: no PUBLIC revoke`);
+      assert.ok(SQL.includes(`REVOKE ALL ON FUNCTION public.${fn} FROM anon`), `${fn}: no anon revoke`);
+    }
+  });
+
   it("privacy_eligible defaults false", () => {
     assert.match(SQL, /privacy_eligible boolean NOT NULL DEFAULT false/);
   });

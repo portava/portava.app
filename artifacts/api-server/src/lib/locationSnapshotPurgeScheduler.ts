@@ -62,7 +62,15 @@ export interface PurgeResult {
 export async function runLocationSnapshotPurge(
   opts: { client?: any } = {},
 ): Promise<PurgeResult> {
-  const db = opts.client ?? getServiceClient();
+  // Explicit null means "no client"; undefined means "use the service client if
+  // available". Same defect as intelRetentionScheduler: `??` does not
+  // short-circuit on an explicit null, so `client: null` in a test reached for
+  // the real service client and made a live connection attempt under CI, whose
+  // Supabase URL env var points at a closed port. This test only ever asserted `skipped`,
+  // which is true on the error path too, so it passed while quietly opening a
+  // socket and testing the wrong branch.
+  const db =
+    "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
   if (!db) return { purged: 0, skipped: true };
 
   if (!(await isFlagEnabled(db, "location_snapshot_purge_enabled"))) {

@@ -115,6 +115,20 @@ BEGIN
 END;
 $$;
 
+-- Lock both down. Postgres grants EXECUTE to PUBLIC by default on every new
+-- function, so without these REVOKEs anon and authenticated could reach
+-- /rest/v1/rpc/intel_append_only. A direct call only raises (TG_OP is null
+-- outside a trigger), but it puts two more functions into precisely the
+-- anon-executable class this codebase has been clearing out, and a trigger
+-- function has no business being callable over REST at all. Trigger execution
+-- does NOT depend on the invoking role holding EXECUTE, so this costs nothing.
+REVOKE ALL ON FUNCTION public.intel_append_only() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.intel_append_only() FROM anon;
+REVOKE ALL ON FUNCTION public.intel_append_only() FROM authenticated;
+REVOKE ALL ON FUNCTION public.intel_append_only_stmt() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.intel_append_only_stmt() FROM anon;
+REVOKE ALL ON FUNCTION public.intel_append_only_stmt() FROM authenticated;
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- 1. intel_observations — raw reports, append-only
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -309,17 +323,24 @@ DO $$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['intel_observations','intel_evidence','intel_confirmations'] LOOP
-    EXECUTE format('DROP TRIGGER IF EXISTS %I_no_update_delete ON public.%I', t, t);
+    -- Build each trigger name BEFORE quoting. `format('%I_suffix', t)` would
+    -- quote only the table part, so a name that ever needed quoting would yield
+    -- "Foo"_no_update_delete — invalid SQL. Quoting the whole identifier once is
+    -- correct for any name, not just the lowercase ones in this array.
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I', t || '_no_update_delete', t);
     EXECUTE format(
-      'CREATE TRIGGER %I_no_update_delete BEFORE UPDATE OR DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.intel_append_only()', t, t);
-    EXECUTE format('DROP TRIGGER IF EXISTS %I_no_update_delete_stmt ON public.%I', t, t);
+      'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.intel_append_only()', t || '_no_update_delete', t);
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I', t || '_no_update_delete_stmt', t);
     -- Statement-level guard covers the 'DELETE FROM t' with no matching rows
     -- case, which fires no row trigger. It consults the same declaration.
     EXECUTE format(
-      'CREATE TRIGGER %I_no_update_delete_stmt BEFORE UPDATE OR DELETE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only_stmt()', t, t);
-    EXECUTE format('DROP TRIGGER IF EXISTS %I_no_truncate ON public.%I', t, t);
+      'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only_stmt()', t || '_no_update_delete_stmt', t);
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON public.%I', t || '_no_truncate', t);
+    -- TRUNCATE is refused unconditionally, erasure declaration or not: the
+    -- erasure path deletes by actor and never truncates, so a TRUNCATE here is
+    -- always a mistake.
     EXECUTE format(
-      'CREATE TRIGGER %I_no_truncate BEFORE TRUNCATE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only()', t, t);
+      'CREATE TRIGGER %I BEFORE TRUNCATE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only()', t || '_no_truncate', t);
   END LOOP;
 END $$;
 

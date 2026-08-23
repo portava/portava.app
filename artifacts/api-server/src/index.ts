@@ -39,6 +39,7 @@ import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
+import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -114,6 +115,11 @@ app.listen(port, (err) => {
   // is gated behind `location_snapshot_purge_enabled` and fails closed —
   // starting it here is safe even before the flag is turned on.
   startLocationSnapshotPurgeScheduler();
+  // Sweeps expired intel_state_snapshots. Derived and recomputable, and already
+  // invisible to readers once expired, so this is hygiene. Ships with the tables
+  // it sweeps so they never repeat the location_snapshots defect (expires_at with
+  // no cleanup job). Flag-gated and fail-closed; safe to start before enabling.
+  startIntelRetentionScheduler();
   // Executes due user_deletion_requests. Irreversible, so it is gated behind
   // the `account_deletion_worker_enabled` feature flag and fails closed —
   // starting it here is safe even before the flag is turned on.
