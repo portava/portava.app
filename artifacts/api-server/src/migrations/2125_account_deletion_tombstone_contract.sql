@@ -1,4 +1,4 @@
--- 2121_account_deletion_tombstone_contract.sql
+-- 2125_account_deletion_tombstone_contract.sql
 --
 -- Preserve the anonymised profile and deletion-request audit record after the
 -- Supabase Auth identity is removed. This migration does not enable Journey

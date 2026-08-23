@@ -1,10 +1,10 @@
--- 2123_journey_shadow_controlled_rollout.sql
+-- 2127_journey_shadow_controlled_rollout.sql
 --
 -- Controlled-rollout scaffold for the Journey shadow-segmentation path
 -- introduced by 2103. Nothing here enables a flag, grants user-facing access,
 -- or creates a product consumer. Every table and RPC is internal/service-only.
 --
--- Builds on: 2103, 2119, 2120, 2122 (must all be applied first).
+-- Builds on: 2103, 2119, 2124, 2126 (must all be applied first).
 -- Does NOT rewrite those migrations.
 --
 -- Hardening (in-file, no new file):
@@ -104,7 +104,7 @@ BEGIN
        AND column_name  = 'journey_consent_scope'
   ) THEN
     RAISE EXCEPTION
-      'PRECONDITION FAILED: user_location_preferences.journey_consent_scope missing; apply 2120';
+      'PRECONDITION FAILED: user_location_preferences.journey_consent_scope missing; apply 2124';
   END IF;
 
   IF NOT EXISTS (
@@ -114,7 +114,7 @@ BEGIN
        AND column_name  = 'journey_purpose'
   ) THEN
     RAISE EXCEPTION
-      'PRECONDITION FAILED: location_sessions.journey_purpose missing; apply 2120';
+      'PRECONDITION FAILED: location_sessions.journey_purpose missing; apply 2124';
   END IF;
 
   -- profiles.role must exist (established pre-2078)
@@ -1734,7 +1734,7 @@ REVOKE SELECT, DELETE ON TABLE public.journey_observations FROM service_role;
 -- journey_segment_revisions. 2103 granted service_role SELECT,DELETE for private
 -- shadow analysis and retention/erasure; that direct access is a TOCTOU/consent
 -- gap (the row can be read without re-checking consent inside the same
--- transaction). After 2123, derived-segment reads MUST go through the
+-- transaction). After 2127, derived-segment reads MUST go through the
 -- SECURITY DEFINER RPCs below (read_journey_shadow_qa_segment_revisions_v1 for
 -- QA, aggregate_journey_shadow_segment_revisions_v1 for report counts) which run
 -- journey_shadow_authorize_v1 in-transaction. Erasure MUST go through the sealed

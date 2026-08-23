@@ -1,8 +1,8 @@
--- 2122_account_deletion_journey_revocation_compat.sql
+-- 2126_account_deletion_journey_revocation_compat.sql
 --
 -- Deletion-only compatibility for the controlled Journey privacy foundation.
--- Production has 2119/2120 but intentionally does not have the optional 2103
--- shadow-segmentation tables. The 2120 revocation trigger and the centralized
+-- Production has 2119/2124 but intentionally does not have the optional 2103
+-- shadow-segmentation tables. The 2124 revocation trigger and the centralized
 -- account-deletion service must therefore tolerate journey_segment_revisions
 -- being absent. This migration does not create that table, enable either
 -- Journey flag, add a collector, or add a product consumer.
@@ -36,7 +36,7 @@ BEGIN
   END IF;
 END $$;
 
--- Preserve 2120's same-transaction observation purge and durable retry record,
+-- Preserve 2124's same-transaction observation purge and durable retry record,
 -- but make the optional future segment table genuinely optional.
 CREATE OR REPLACE FUNCTION public.purge_journey_observations_on_consent_revocation()
 RETURNS trigger

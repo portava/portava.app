@@ -1,4 +1,4 @@
--- 2120_journey_privacy_foundation.sql
+-- 2124_journey_privacy_foundation.sql
 --
 -- Privacy lifecycle for the restricted Journey observation boundary introduced
 -- by 2119. This migration does not enable either Journey feature flag, create a
