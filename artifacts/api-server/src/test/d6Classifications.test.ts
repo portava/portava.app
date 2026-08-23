@@ -55,11 +55,12 @@ describe("D6 classifications — the escalation set is a ratchet", () => {
       `Apply the rulings rather than adding to this list.`);
   });
 
-  it("the two known escalations are the ones the owner was asked about", () => {
-    assert.deepEqual(
-      d6StillUndecided().map((c) => c.table).sort(),
-      ["journey_shadow_cohort_assignments", "rent_buddy_review_notes"],
-    );
+  it("only rent_buddy_review_notes is still open", () => {
+    // journey_shadow_cohort_assignments was ruled on 2026-08-23: consent must not
+    // outlive the consenter, so it is ERASE. rent_buddy_review_notes remains open
+    // because the ruling's premise (staff-authored) is contradicted by its only
+    // write path, which is guarded by requireUser rather than an admin check.
+    assert.deepEqual(d6StillUndecided().map((c) => c.table), ["rent_buddy_review_notes"]);
   });
 });
 

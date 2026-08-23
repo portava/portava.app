@@ -207,26 +207,39 @@ export const D6_CLASSIFICATIONS: readonly D6Classification[] = [
   // ── STILL YOURS — genuinely straddles two rulings ─────────────────────────
   {
     table: "rent_buddy_review_notes",
-    fate: "NEEDS_OWNER_DECISION", rule: 4,
-    ambiguousColumns: ["author_id", "note", "booking_id", "review_id"],
+    fate: "NEEDS_OWNER_DECISION", rule: 3,
+    ambiguousColumns: ["reviewer_admin_id", "note", "booking_id", "review_id"],
     reason:
-      "Straddles rulings 3 and 4, and the schema cannot tell them apart. If `author_id` is a TRAVELLER or " +
-      "BUDDY writing about their own booking, `note` is user content and ruling 3 erases it. If it is an " +
-      "ADMIN annotating a disputed review, the same row is dispute evidence attached to a transaction and " +
-      "ruling 4 retains it with the author severed. Nothing in the columns distinguishes the two, and the " +
-      "table is empty on production, so no data settles it either. The question is: who writes these notes?",
+      "STILL OPEN, and the reason changed. The owner ruled on 2026-08-23 that the author is an " +
+      "authorised admin or staff reviewer, and asked for author_id to be renamed reviewer_admin_id " +
+      "and the note retained as moderation evidence. Reading the code before implementing that " +
+      "shows the premise does not hold: the table has exactly ONE writer, " +
+      "POST /rent-a-buddy/bookings/:bookingId/review at routes/rentABuddy.ts:2581, which is guarded " +
+      "by requireUser (NOT an admin check) and inserts author_id = auth.user.id with the note taken " +
+      "from a `privateNote` field in the request body. That is an ordinary traveller or buddy " +
+      "attaching a private note to their OWN review. It also has zero readers anywhere in " +
+      "routes/services/lib, and zero rows on production.\n" +
+      "Renaming it reviewer_admin_id would therefore label ordinary users' free text as " +
+      "staff-authored and move their personal content into a retain-indefinitely moderation " +
+      "bucket — worse than the ambiguity that prompted the question. Under the actual behaviour " +
+      "ruling 3 applies and the note is the reviewer's own content.\n" +
+      "The question to settle is not which fate but which system is wrong: should this table become " +
+      "staff-authored as ruled (which needs the write path moved behind an admin guard), or is it " +
+      "a user's private note and simply misnamed?",
   },
   {
     table: "journey_shadow_cohort_assignments",
-    fate: "NEEDS_OWNER_DECISION", rule: 4,
-    ambiguousColumns: ["user_id", "consent_scope", "consent_version", "assigned_at", "revoked_at"],
+    fate: "ERASE", rule: 1,
     reason:
-      "Straddles rulings 1 and 4. The row is a CONSENT RECORD — scope and version, with grant and revoke " +
-      "timestamps — and ruling 4 names consent records as retainable. But ruling 4 permits that only for a " +
-      "STATED retention requirement, and none exists for research-programme consent; ruling 1's default is " +
-      "then erase. Severance does not resolve it either: a consent record with the consenting person removed " +
-      "no longer evidences anything. The question is whether Portava must be able to show, after the account " +
-      "is gone, that this person consented to the shadow programme — and if so, for how long.",
+      "RULED 2026-08-23: research consent must NOT outlive the consenter. Account deletion or " +
+      "consent withdrawal deletes the identifiable assignment — production already has " +
+      "user_id -> profiles ON DELETE CASCADE, so this is the behaviour today. Aggregate statistics " +
+      "already produced may survive ONLY if genuinely anonymous. The owner ruled out the tempting " +
+      "middle option explicitly: no stable user hash, no encrypted user id, no reversible linkage " +
+      "kept and called anonymous, because a value anyone can relink is pseudonymous and " +
+      "pseudonymous data is still personal data (ICO anonymisation guidance). Where an aggregate " +
+      "must record that it lost a participant, record THAT — a decrement — not a token standing in " +
+      "for the person. The staff columns assigned_by and revoked_by are severed by 2138.",
   },
 ] as const;
 
