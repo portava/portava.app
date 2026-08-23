@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { AppState } from 'react-native';
-import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile } from '../services/auth.ts';
+import { getSessionUserId, onAuthChange, signOut as svcSignOut, ensureProfile, reportEnsureProfileFailure } from '../services/auth.ts';
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { getAccountStatus, TOKEN_UNAVAILABLE } from '../services/profile.ts';
 import type { AccountStatus } from '../services/profile.ts';
@@ -248,10 +248,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         const email = session.user?.email ?? '';
         const name = session.user?.user_metadata?.name ?? undefined;
         await ensureProfile(session.user.id, email, { name });
-      } catch {
+      } catch (e) {
         // Transient failure — reset the guard so the next sign-in attempt
-        // can trigger another recovery attempt.
+        // can trigger another recovery attempt. Still fire-and-forget: this
+        // must never block the UI or show an error (see comment above).
         lastRecoveredUserId.current = null;
+        reportEnsureProfileFailure('sessionRecovery', userId, e);
       }
     };
 
