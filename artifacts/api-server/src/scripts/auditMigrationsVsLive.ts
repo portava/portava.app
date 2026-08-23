@@ -190,20 +190,16 @@ const ALLOWLIST = new Set([
   // which is strictly tighter. Allowlisted because live is deliberately not what
   // 0035 says — the auditor's own contract for this list.
   //
-  // TWO THINGS THIS ENTRY DOES NOT RESOLVE, recorded so they are not lost:
-  //   1. That 2100 file's header still reads "STATUS: STAGED — NOT APPLIED" and
-  //      "BLOCKED ON: Q3", yet CI carries exactly the policies it creates and
-  //      lacks the one it drops. The header is stale for CI, or it was applied
-  //      out of process. Either way the file no longer describes reality.
-  //   2. PRODUCTION IS A THIRD STATE. It has neither 0035's policy nor CI's four:
-  //      it carries pgf_{select,insert,update,delete}_accepted plus a redundant
-  //      plan_geofences_service [ALL]. Its DELETE is pgf_delete_accepted — any
-  //      accepted member may delete — where CI restricts delete to the owner. So
-  //      production is LOOSER than CI on exactly the operation the convergence
-  //      tightened. plan_geofences is empty on production today, so nothing is
-  //      exposed, but this is the DISJOINT_POLICY_FAMILY case the reconciliation
-  //      packet called its highest-priority item. Converging production is an
-  //      owner decision, not an audit annotation.
+  // RESOLVED 2026-08-23 by migration 2143_plan_geofences_policy_convergence.sql.
+  // Production and CI now carry the identical four-policy family — verified by
+  // md5 fingerprint over every polqual/polwithcheck on both (54638f2c…). Before
+  // that, three disjoint families existed and production was LOOSER on DELETE:
+  // its pgf_delete_accepted permitted `owner OR member with role='member'`,
+  // where CI permitted the trip owner alone.
+  //
+  // This entry stays regardless, because 0035 still CLAIMS the superseded broad
+  // policy and the auditor reads each migration's claims independently. It is
+  // removable only if 0035 itself is rewritten.
   "policy:plan_geofences.trip_members_manage_geofences",
   "column:feature_flags.key", // live column is `flag`
   "column:highlights.user_id", // live column is `owner_id`

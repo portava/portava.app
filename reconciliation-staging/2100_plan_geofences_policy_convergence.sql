@@ -1,3 +1,22 @@
+-- ╔═══════════════════════════════════════════════════════════════════════════╗
+-- ║ SUPERSEDED 2026-08-23 — DO NOT RUN THIS FILE.                             ║
+-- ║                                                                           ║
+-- ║ Promoted to src/migrations/2143_plan_geofences_policy_convergence.sql and ║
+-- ║ APPLIED to both portava-ci and PRODUCTION. Both now carry the identical   ║
+-- ║ four-policy family (md5 fingerprint 54638f2c… over every predicate).      ║
+-- ║                                                                           ║
+-- ║ Its Q3 blocker was resolved by capturing live policy text read-only.      ║
+-- ║                                                                           ║
+-- ║ THIS FILE HAD A DEFECT — do not resurrect it. Its DROP list named only    ║
+-- ║ pgf_select_accepted among the pgf_* family, but production also carried   ║
+-- ║ pgf_insert_accepted, pgf_update_accepted and pgf_delete_accepted.         ║
+-- ║ Applying it verbatim to production would have left those three in force   ║
+-- ║ alongside the four new ones. RLS policies OR together, so the looser      ║
+-- ║ DELETE would have SURVIVED the convergence, and the file's own            ║
+-- ║ "exactly 4" postcondition would have failed only after the change had     ║
+-- ║ already been made. 2143 drops every name observed in either environment.  ║
+-- ╚═══════════════════════════════════════════════════════════════════════════╝
+--
 -- 2100_plan_geofences_policy_convergence.sql
 --
 -- STATUS: STAGED — NOT APPLIED. Lives in reconciliation-staging/, outside the
