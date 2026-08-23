@@ -15,7 +15,12 @@ export async function writePreferenceEvent(
 ): Promise<void> {
   const { error } = await client.from("user_preference_events").insert({
     user_id:           event.userId,
-    recommendation_id: event.recommendationId ?? null,
+    // `?? null` was wrong: recommendation_id is `text NOT NULL`, so every caller
+    // that omitted recommendationId — which this interface explicitly invites by
+    // typing it optional — produced a 23502 that the catch below swallowed as a
+    // warning. The event was silently dropped. Falls back to a synthetic
+    // signal:category id, following telegraphCommands' composite-id precedent.
+    recommendation_id: event.recommendationId ?? `${event.signal}:${event.category}`,
     category:          event.category,
     signal:            event.signal,
     created_at:        new Date().toISOString(),

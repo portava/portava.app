@@ -313,7 +313,18 @@ export async function executeAccountDeletion(
       await sc
         .from("profiles")
         .update({
-          handle: null,
+          // NOT `null`. public.profiles.handle is `text NOT NULL UNIQUE`, so
+          // nulling it raised 23502 and — because this step is FATAL — aborted
+          // the deletion before step 5 removed the auth user. Every content step
+          // above had already succeeded, so the outcome was the exact inverse of
+          // a deletion: the user's content destroyed, their email retained, and
+          // the request left pending to retry and fail identically forever.
+          //
+          // Derived from userId so it is UNIQUE (the index demands it) and
+          // deterministic (a retry rewrites the same value, keeping this step
+          // idempotent like every other one). This leaks nothing new: the
+          // tombstone row is keyed by that same uuid as its primary key.
+          handle: `deleted_${userId.replace(/-/g, "")}`,
           username: null,
           display_name: "Deleted User",
           name: "Deleted User",

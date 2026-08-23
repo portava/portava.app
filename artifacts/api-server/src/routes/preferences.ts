@@ -237,7 +237,14 @@ router.post("/me/preferences/mute-category", async (req, res) => {
   {
     const { error } = await client.from("user_preference_events").insert({
       user_id:           user.id,
-      recommendation_id: null,
+      // NOT `null`. user_preference_events.recommendation_id is `text NOT NULL`,
+      // so this insert raised 23502 every time — and because the failure is
+      // swallowed as best-effort below, the endpoint still answered 200
+      // {muted:true} while writing nothing. Muting a category silently did not
+      // work. A mute has no originating recommendation, so this uses a synthetic
+      // id, exactly as telegraphCommands does with `${commandId}:${actionId}`;
+      // the column is text, not a uuid reference.
+      recommendation_id: `mute:${category}`,
       category,
       signal:            "mute",
       created_at:        new Date().toISOString(),
