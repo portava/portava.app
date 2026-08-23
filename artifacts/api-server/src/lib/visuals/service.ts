@@ -521,8 +521,14 @@ async function finalizeVisual(sc: any, job: any, args: FinalizeArgs): Promise<vo
     storage_path: args.paths?.master ?? null,
     source_image_url: heroUrl ?? null,
     generation_cost_estimate: args.cost ?? null,
-    accuracy_status: args.accuracyStatus ?? null,
-    disclaimer_required: args.disclaimerRequired ?? null,
+    // OMITTED when absent, never `?? null`. Both columns are NOT NULL with
+    // defaults ('unverified' and false), and an explicit null overrides a
+    // default rather than falling back to it — so the whole finalize UPDATE
+    // raised 23502 whenever a provider returned no accuracy metadata, leaving
+    // the visual stuck un-ready. Nothing surfaced it because this call discards
+    // its result. Omitting the key leaves the column at its existing value.
+    ...(args.accuracyStatus != null ? { accuracy_status: args.accuracyStatus } : {}),
+    ...(args.disclaimerRequired != null ? { disclaimer_required: args.disclaimerRequired } : {}),
     disclaimer_text: args.disclaimerText ?? null,
     generated_at: now,
     updated_at: now,
