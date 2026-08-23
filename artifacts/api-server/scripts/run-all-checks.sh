@@ -129,6 +129,10 @@ run_check "check:migration-prefixes" pnpm run check:migration-prefixes
 # content destroyed, auth user and email retained, request left retrying forever.
 # Widening it to the whole tree found three more of the same class.
 # Static, so it needs no database and runs on every push.
+# check:compiler-authentic — proves the resolved TypeScript compiler REJECTS a
+# program it must reject. A tool that exits 0 on a type error is not a checker,
+# and a green from it means nothing; this ran first in CI for that reason.
+run_check "check:compiler-authentic" pnpm run check:compiler-authentic
 run_check "check:not-null-writes" pnpm run check:not-null-writes
 run_check "check:test-runner-flags" pnpm run check:test-runner-flags
 run_check "check:write-path-columns" pnpm run check:write-path-columns

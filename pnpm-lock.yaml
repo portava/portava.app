@@ -81,7 +81,7 @@ importers:
         specifier: ^7.1.1
         version: 7.1.1(eslint@10.6.0(jiti@2.7.0))
       typescript:
-        specifier: ~5.9.2
+        specifier: 5.9.3
         version: 5.9.3
       typescript-eslint:
         specifier: ^8.62.0
@@ -276,6 +276,9 @@ importers:
       tsx:
         specifier: 'catalog:'
         version: 4.22.4
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
   artifacts/mockup-sandbox:
     devDependencies:
@@ -526,6 +529,9 @@ importers:
       tsx:
         specifier: 'catalog:'
         version: 4.22.4
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
 
 packages:
 
