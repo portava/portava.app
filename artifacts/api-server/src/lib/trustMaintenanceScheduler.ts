@@ -48,6 +48,7 @@ import { logger as rootLogger } from "./logger.js";
 import { recalculateTrustScore } from "../services/trust/TrustScoreService.js";
 import { expireOldCaps } from "../services/trust/TrustCapService.js";
 import { runGamingDetectionScan } from "../services/trust/TrustGamingDetectionService.js";
+import { isTrustEnabled } from "../services/trust/TrustEventService.js";
 
 const logger = rootLogger.child({ service: "TrustMaintenanceScheduler" });
 
@@ -117,26 +118,6 @@ export function _resetStatus(): void {
   _status.lastGamingFlagged = 0;
   _status.lastSkippedReason = null;
   _status.consecutiveFailures = 0;
-}
-
-// ── Flag gate ─────────────────────────────────────────────────────────────────
-
-/**
- * Mirrors TrustEventService.isTrustEnabled exactly, including its fail-closed
- * catch. Deliberately duplicated rather than imported because that function is
- * module-private; if it ever becomes exported, replace this with the import.
- */
-async function isTrustEnabled(db: any): Promise<boolean> {
-  try {
-    const { data } = await db
-      .from("feature_flags")
-      .select("enabled")
-      .eq("flag", "trust_engine_enabled")
-      .maybeSingle();
-    return Boolean((data as any)?.enabled);
-  } catch {
-    return false;
-  }
 }
 
 // ── Probation ─────────────────────────────────────────────────────────────────

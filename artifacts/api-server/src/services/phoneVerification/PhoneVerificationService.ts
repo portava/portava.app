@@ -174,11 +174,16 @@ export async function startPhoneVerification(
     return { ok: false, failure: "phone_in_use" };
   }
 
+  // ONE clock reading for the whole call. Taking Date.now() here and a separate
+  // no-arg new Date() below would be two independent reads of a moving clock,
+  // which can produce a challenge whose consumed_at precedes its own created_at.
+  const nowMs = Date.now();
+
   // Retire any outstanding challenge so an abandoned code cannot be redeemed.
   try {
     await db
       .from("phone_verification_challenges")
-      .update({ consumed_at: new Date().toISOString() })
+      .update({ consumed_at: new Date(nowMs).toISOString() })
       .eq("user_id", userId)
       .is("consumed_at", null);
   } catch (err) {
@@ -188,7 +193,7 @@ export async function startPhoneVerification(
   // The id is generated here, not by the database, because it salts the hash.
   const id = randomUUID();
   const code = generateCode();
-  const expiresAt = new Date(Date.now() + CHALLENGE_TTL_MS).toISOString();
+  const expiresAt = new Date(nowMs + CHALLENGE_TTL_MS).toISOString();
 
   const { error: insErr } = await db
     .from("phone_verification_challenges")
@@ -217,7 +222,7 @@ export async function startPhoneVerification(
     try {
       await db
         .from("phone_verification_challenges")
-        .update({ consumed_at: new Date().toISOString() })
+        .update({ consumed_at: new Date(nowMs).toISOString() })
         .eq("id", id);
     } catch { /* non-fatal */ }
     logger.error({ err, userId }, "SMS send failed");
@@ -239,6 +244,10 @@ export async function confirmPhoneVerification(
   const perUser = checkRateLimit("phone_verify_confirm", userId, CONFIRM_LIMIT_PER_USER, CONFIRM_WINDOW_MS);
   if (!perUser.allowed) return { ok: false, failure: "rate_limited" };
 
+  // One clock reading, as above: expiry is judged and verification is stamped
+  // against the same instant.
+  const nowMs = Date.now();
+
   const code = typeof submittedCode === "string" ? submittedCode.trim() : "";
   if (!code) return { ok: false, failure: "incorrect_code" };
 
@@ -257,7 +266,7 @@ export async function confirmPhoneVerification(
   const challenge = ((rows as any[]) ?? [])[0];
   if (!challenge) return { ok: false, failure: "no_challenge" };
 
-  if (new Date(challenge.expires_at).getTime() <= Date.now()) {
+  if (new Date(challenge.expires_at).getTime() <= nowMs) {
     return { ok: false, failure: "expired" };
   }
 
@@ -290,7 +299,7 @@ export async function confirmPhoneVerification(
     return { ok: false, failure: "phone_in_use" };
   }
 
-  const verifiedAt = new Date().toISOString();
+  const verifiedAt = new Date(nowMs).toISOString();
   const { error: profErr } = await db
     .from("profiles")
     .update({ phone_e164: challenge.phone_e164, phone_verified_at: verifiedAt })

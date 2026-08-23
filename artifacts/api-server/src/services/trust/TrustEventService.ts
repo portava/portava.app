@@ -47,8 +47,15 @@ export interface RecordEventResult {
   pendingReview?: boolean;
 }
 
-/** Check if trust engine is enabled */
-async function isTrustEnabled(db: SupabaseClient): Promise<boolean> {
+/**
+ * Check if trust engine is enabled.
+ *
+ * Exported so the maintenance scheduler uses this exact gate rather than its own
+ * copy: events and scoring must never disagree about whether the engine is on,
+ * and a second direct feature_flags read would need its own DIRECT_READS entry
+ * recording a separately-verified failure direction. One read, one judgement.
+ */
+export async function isTrustEnabled(db: SupabaseClient): Promise<boolean> {
   try {
     const { data } = await db
       .from("feature_flags")
