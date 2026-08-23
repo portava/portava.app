@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "hello": "tsx ./src/hello.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "./node_modules/.bin/tsc -p tsconfig.json --noEmit",
     "routes:guard": "tsx ./src/guard-expo-router-duplicates.ts",
     "routes:self-heal": "SELF_HEAL_EXPO_ROUTES=1 tsx ./src/guard-expo-router-duplicates.ts",
     "test:routes-guard": "node --import tsx/esm --test ./src/guard-expo-router-duplicates.test.ts",
@@ -26,6 +26,7 @@
     "@supabase/supabase-js": "^2.108.2",
     "@types/node": "catalog:",
     "dotenv": "^16.4.7",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "typescript": "5.9.3"
   }
 }

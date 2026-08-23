@@ -1919,7 +1919,19 @@ describe("Rent a Buddy — booking: launch control and age enforcement", () => {
         RENT_BUDDY_NIGHTLIFE_ENABLED: { flag: "RENT_BUDDY_NIGHTLIFE_ENABLED", enabled: true },
       },
       profiles: {
-        [USER_ID]:   { id: USER_ID,   trust_score: 80 },
+        // The traveller's identity now lives on `profiles`, not on the buddy
+        // table. These tests express the traveller's state through the
+        // `travelerBuddyProfile` argument, so it is mirrored across here: the
+        // intent of each test is unchanged, only the column's home is corrected.
+        // (`profiles` has no id_verified/phone_verified booleans — ID is
+        // verification_level, phone is the phone_verified_at timestamp.)
+        [USER_ID]: {
+          id: USER_ID,
+          trust_score: 80,
+          date_of_birth: travelerBuddyProfile?.date_of_birth ?? null,
+          verification_level: travelerBuddyProfile?.id_verified ? "id" : "none",
+          phone_verified_at: travelerBuddyProfile?.phone_verified ? "2026-01-01T00:00:00Z" : null,
+        },
         [BUDDY_USER]:{ id: BUDDY_USER, trust_score: 80 },
       },
       buddyProfiles: {

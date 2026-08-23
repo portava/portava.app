@@ -7,7 +7,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getUserTrustLevel, checkAndRecordSnapshot } from "../location/LocationSafetyService.js";
-import { recordTrustEvent } from "../trust/TrustEventService.js";
+import { recordTrustEvent, TRUST_EVENT_TYPES } from "../trust/TrustEventService.js";
+import { recomputeGuideAccuracy } from "./LocalGuideService.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 
 const logger = rootLogger.child({ service: "HiddenGemVerificationService" });
@@ -222,6 +223,7 @@ export async function recordGuideVerification(
       .eq("id", gemId);
 
     // Feed guide verification into Trust Engine (fire-and-forget; flag-gated internally)
+    // This credits the guide who DID the verification work.
     void recordTrustEvent(db, {
       userId: guideId,
       eventType: "gem_verified_by_guide",
@@ -232,6 +234,39 @@ export async function recordGuideVerification(
       sourceId: gemId,
       dedupWindowHours: 24,
     });
+
+    // …and this credits the AUTHOR for producing intelligence that survived
+    // verification. Previously only the verifier earned anything, so the trust
+    // system rewarded checking other people's contributions but not making
+    // good ones — the earn side of "gain or lose by trusted intelligence" was
+    // missing for the person who actually supplied the intelligence.
+    //
+    // Keyed on the gem id with a one-year dedup window so a gem can only ever
+    // pay its author once, no matter how many times it is re-verified.
+    try {
+      const { data: gem } = await db
+        .from("hidden_gems")
+        .select("submitted_by")
+        .eq("id", gemId)
+        .maybeSingle();
+      const authorId = (gem as any)?.submitted_by ?? null;
+      if (authorId && authorId !== guideId) {
+        const t = TRUST_EVENT_TYPES.GEM_VERIFIED_BY_GUIDE;
+        void recordTrustEvent(db, {
+          userId: authorId,
+          eventType: "gem_verified_by_guide_author",
+          category: t.category,
+          delta: t.delta,
+          severity: t.severity,
+          sourceType: "hidden_gem",
+          sourceId: gemId,
+          dedupWindowHours: 24 * 365,
+          metadata: { gemId, verifiedBy: guideId },
+        }).catch(() => {/* non-fatal */});
+        // Derived accuracy now counts this gem as verified.
+        void recomputeGuideAccuracy(db, authorId).catch(() => {/* non-fatal */});
+      }
+    } catch { /* non-fatal — verification itself has already succeeded */ }
   }
 }
 

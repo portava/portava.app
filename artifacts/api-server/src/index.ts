@@ -33,6 +33,8 @@ import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
 import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler";
 import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
+import { startTrustMaintenanceScheduler } from "./lib/trustMaintenanceScheduler";
+import { startBuddyRequestSweeper } from "./lib/rentBuddyRequestSweeper";
 import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWorker";
 import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
@@ -196,6 +198,22 @@ app.listen(port, (err) => {
   // Viewer-creator fatigue row cleanup — deletes rows older than 30 days so
   // the viewer_creator_fatigue table doesn't grow unbounded.
   startRankingFatigueSweeper();
+  // Drives the Trust engine. The engine was fully built but had no driver:
+  // `recalculateTrustScore` ran only on admin action, so on production
+  // trust_events accumulated while trust_profiles stayed EMPTY and
+  // last_recalculated_at was NULL for every user — no score was ever computed,
+  // while trust_profiles.overall_score already gates event RSVPs and ranks the
+  // buddy marketplace and Pulse. This pass also lifts expired trust_caps
+  // (time-limited ceilings were previously permanent) and ends probation whose
+  // term has run. Gated behind `trust_engine_enabled` and fails closed — the
+  // same gate recordTrustEvent uses, so events and scoring can never disagree.
+  startTrustMaintenanceScheduler();
+  // Drives the three time-based Rent-a-Buddy booking transitions. The logic
+  // existed as POST /api/internal/buddy-requests/expire but had NO caller —
+  // referenced only from a test. Without it no unanswered request expires, no
+  // dispute window closes (so a completed booking never auto-confirms), and no
+  // reported no-show ever escalates to a dispute.
+  startBuddyRequestSweeper();
 
   // Startup stamp-worker health summary — log pending queue depth and any
   // jobs stuck in `generating` past their lock (a crashed worker never

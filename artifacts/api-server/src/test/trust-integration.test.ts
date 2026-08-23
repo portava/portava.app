@@ -30,6 +30,7 @@ import {
 import { getSafeTrustSummary, getPublicTrustBadge } from "../services/trust/TrustPrivacyGuard.js";
 import { getRecoveryStatus } from "../services/trust/TrustRecoveryService.js";
 import { runGamingDetectionScan } from "../services/trust/TrustGamingDetectionService.js";
+import { runTrustMaintenance } from "../lib/trustMaintenanceScheduler.js";
 
 // ── Fake users ────────────────────────────────────────────────────────────────
 
@@ -824,5 +825,243 @@ describe("Service: probation lifecycle on severe confirmed event", () => {
     const recovery = await getRecoveryStatus(db, USER_A);
     assert.equal(recovery.onProbation, true);
     assert.ok(recovery.probationEndsAt);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PART 3: Earn/lose asymmetry + the maintenance driver
+//
+// These pin the two properties the engine is supposed to have and previously
+// did not: a score must be SLOW TO EARN and IMMEDIATE TO LOSE, and something
+// must actually drive recalculation. Before this, `computeCategoryScore` was a
+// raw decay-weighted mean, so one +6 event put a category at 80; and
+// `recalculateTrustScore` ran only on admin action, so on production
+// trust_events accumulated while trust_profiles stayed empty.
+// ══════════════════════════════════════════════════════════════════════════════
+
+const DAY = 24 * 60 * 60 * 1000;
+
+/** Seed an already-`applied` event directly, bypassing caps/dedup/flag routing. */
+function seedEvent(
+  tables: FakeTables,
+  userId: string,
+  category: string,
+  delta: number,
+  ageDays = 0,
+  status = "applied",
+) {
+  tables.trust_events.push({
+    id: `ev-${tables.trust_events.length + 1}`,
+    user_id: userId,
+    event_type: "seeded",
+    category,
+    delta,
+    severity: delta < 0 ? "moderate" : "minor",
+    status,
+    source_type: "system",
+    created_at: new Date(Date.now() - ageDays * DAY).toISOString(),
+  });
+}
+
+describe("Scoring: positive movement is ramped, negative movement is not", () => {
+  it("a single positive event no longer maxes a category (was 80, now 56)", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    seedEvent(tables, USER_A, "host_quality", 6);
+
+    const r = await recalculateTrustScore(db, USER_A);
+    // 50 + (6*5) * confidence(1/5) = 56 — not the old 50 + 30 = 80.
+    assert.ok(
+      r.categories.host_quality > 50 && r.categories.host_quality < 60,
+      `expected a damped gain in 50..60, got ${r.categories.host_quality}`,
+    );
+  });
+
+  it("sustained positive history earns the full gain", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 5; i++) seedEvent(tables, USER_A, "host_quality", 6);
+
+    const r = await recalculateTrustScore(db, USER_A);
+    // Five events of equal weight → confidence 1 → the full 50 + 30.
+    assert.equal(Math.round(r.categories.host_quality), 80);
+  });
+
+  it("volume alone cannot inflate a score beyond the honest mean", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 200; i++) seedEvent(tables, USER_A, "host_quality", 6);
+
+    const r = await recalculateTrustScore(db, USER_A);
+    // The mean (not the sum) is used, so 200 events land where 5 do.
+    assert.equal(Math.round(r.categories.host_quality), 80);
+  });
+
+  it("a single negative event bites at FULL strength on first occurrence", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    seedEvent(tables, USER_A, "respect_safety", -20);
+
+    const r = await recalculateTrustScore(db, USER_A);
+    // No confidence ramp on the negative branch — a user must never have to
+    // "earn" their way into a penalty.
+    assert.equal(r.categories.respect_safety, 0);
+  });
+
+  // ── The limit of the delta model, stated explicitly ────────────────────────
+  //
+  // These two tests exist as a pair and must be read together. The first
+  // documents a REAL LIMITATION rather than asserting a desired property: a
+  // decay-weighted mean cannot let one bad event dominate a long good history.
+  // Ten +3 events against one -20 still average positive (54.55), so a severe
+  // finding does NOT by itself drag a well-regarded user below neutral.
+  //
+  // That is why "fast loss on something horrible" is delivered by the CEILING
+  // (trust_caps), not by the delta — a ceiling clamps the category no matter how
+  // much good history surrounds it. The second test proves that path.
+  //
+  // Consequence worth knowing: the ceiling is applied by
+  // TrustCapService.applyEventCaps, which today runs only from the admin
+  // confirmEvent path. Until a severe event is confirmed by a human, a
+  // well-regarded user's score barely moves.
+  it("delta alone does NOT sink a good history — this is the model's limit, not a bug", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 10; i++) seedEvent(tables, USER_A, "respect_safety", 3);
+    seedEvent(tables, USER_A, "respect_safety", -20);
+
+    const r = await recalculateTrustScore(db, USER_A);
+    assert.ok(
+      r.categories.respect_safety > 50,
+      `documents the limitation: the mean stays positive, got ${r.categories.respect_safety}`,
+    );
+  });
+
+  it("the CEILING is what delivers the sharp drop, regardless of good history", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 10; i++) seedEvent(tables, USER_A, "respect_safety", 3);
+    seedEvent(tables, USER_A, "respect_safety", -20);
+    // What confirmEvent → applyEventCaps writes for behavior_report_confirmed.
+    tables.trust_caps.push({
+      id: "cap-severe", user_id: USER_A, category: "respect_safety",
+      ceiling_score: 40, reason_code: "behavior_confirmed",
+      expires_at: null, lifted_at: null,
+      created_at: new Date().toISOString(),
+    });
+
+    const r = await recalculateTrustScore(db, USER_A);
+    assert.equal(r.categories.respect_safety, 40);
+    assert.ok(r.capsApplied.includes("respect_safety"));
+  });
+
+  it("decayed evidence loses confidence, so trust must be maintained not banked", async () => {
+    const fresh = makeTables();
+    const stale = makeTables();
+    for (let i = 0; i < 5; i++) seedEvent(fresh, USER_A, "host_quality", 6, 0);
+    for (let i = 0; i < 5; i++) seedEvent(stale, USER_A, "host_quality", 6, 180);
+
+    const rFresh = await recalculateTrustScore(makeTrustClient(fresh), USER_A);
+    const rStale = await recalculateTrustScore(makeTrustClient(stale), USER_A);
+    assert.ok(
+      rStale.categories.host_quality < rFresh.categories.host_quality,
+      `stale evidence must confer less credit (fresh=${rFresh.categories.host_quality}, stale=${rStale.categories.host_quality})`,
+    );
+  });
+});
+
+describe("Maintenance: the driver the engine was missing", () => {
+  it("fails CLOSED when trust_engine_enabled is off", async () => {
+    const tables = makeTables();
+    tables.feature_flags = [{ flag: "trust_engine_enabled", enabled: false }];
+    seedEvent(tables, USER_A, "host_quality", 6);
+
+    const r = await runTrustMaintenance(makeTrustClient(tables));
+    assert.equal(r.skipped, true);
+    assert.equal(r.skipReason, "flag_off");
+    assert.equal(tables.trust_profiles.length, 0);
+  });
+
+  it("scores a user who has events but NO trust_profiles row (the production case)", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    seedEvent(tables, USER_A, "host_quality", 6);
+    assert.equal(tables.trust_profiles.length, 0);
+
+    const r = await runTrustMaintenance(db);
+    assert.equal(r.usersRecalculated, 1);
+    assert.equal(tables.trust_profiles.length, 1);
+    assert.equal(tables.trust_profiles[0].user_id, USER_A);
+    assert.ok(tables.trust_profiles[0].last_recalculated_at, "must stamp last_recalculated_at");
+  });
+
+  it("ignores pending_review events — an unconfirmed report generates no work", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    seedEvent(tables, USER_A, "respect_safety", -20, 0, "pending_review");
+
+    const r = await runTrustMaintenance(db);
+    assert.equal(r.usersRecalculated, 0);
+    assert.equal(tables.trust_profiles.length, 0);
+  });
+
+  it("lifts an expired cap, and the lifted ceiling no longer clamps the score", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 5; i++) seedEvent(tables, USER_A, "host_quality", 6);
+    tables.trust_caps.push({
+      id: "cap-1", user_id: USER_A, category: "host_quality",
+      ceiling_score: 55, reason_code: "expired_test",
+      expires_at: new Date(Date.now() - DAY).toISOString(),
+      lifted_at: null, created_at: new Date(Date.now() - 30 * DAY).toISOString(),
+    });
+
+    const r = await runTrustMaintenance(db);
+    assert.equal(r.capsExpired, 1);
+    assert.ok(tables.trust_caps[0].lifted_at, "expired cap must be lifted");
+    // Caps are lifted BEFORE recalculation, so this pass already reflects it.
+    assert.equal(Math.round(tables.trust_profiles[0].host_quality), 80);
+  });
+
+  it("ends probation whose term has run", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    tables.trust_profiles.push({
+      user_id: USER_B, overall_score: 40, public_level: "building_trust",
+      on_probation: true,
+      probation_ends_at: new Date(Date.now() - DAY).toISOString(),
+      last_recalculated_at: new Date(Date.now() - 30 * DAY).toISOString(),
+    });
+
+    const r = await runTrustMaintenance(db);
+    assert.equal(r.probationCleared, 1);
+    assert.equal(tables.trust_profiles[0].on_probation, false);
+  });
+
+  it("leaves unexpired probation alone", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    tables.trust_profiles.push({
+      user_id: USER_B, overall_score: 40, public_level: "building_trust",
+      on_probation: true,
+      probation_ends_at: new Date(Date.now() + 7 * DAY).toISOString(),
+      last_recalculated_at: new Date().toISOString(),
+    });
+
+    const r = await runTrustMaintenance(db);
+    assert.equal(r.probationCleared, 0);
+    assert.equal(tables.trust_profiles[0].on_probation, true);
+  });
+
+  it("refreshes a score that is merely stale, so decay is reflected without new events", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    tables.trust_profiles.push({
+      user_id: USER_C, overall_score: 70, public_level: "trusted_traveler",
+      last_recalculated_at: new Date(Date.now() - 60 * DAY).toISOString(),
+    });
+
+    const r = await runTrustMaintenance(db);
+    assert.equal(r.usersRecalculated, 1);
   });
 });

@@ -27,6 +27,9 @@ import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { checkRentBuddyAccess, invalidateSuggestedCityCache } from "./rentABuddyRollout.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
+import { notifyBookingParty } from "../lib/bookingNotify.js";
+import { loadTravelerIdentity } from "../lib/travelerVerification.js";
+import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
@@ -425,31 +428,8 @@ async function emitBookingCard(
 // eventType is a free-form string; the NotificationTemplateService renders title/body.
 // Silent no-op on any error — never fails the main request.
 
-async function notifyBookingParty(
-  client: ReturnType<typeof getServiceClient>,
-  userId: string,
-  eventType: string,
-  bookingId: string,
-  params: Record<string, string> = {},
-): Promise<void> {
-  if (!client || !userId) return;
-  void (async () => {
-    try {
-      const { NotificationService } = await import("../services/notifications/NotificationService.js");
-      const { NotificationRouter }  = await import("../services/notifications/NotificationRouter.js");
-      const ns = new NotificationService(client);
-      const nr = new NotificationRouter(client);
-      const row = await ns.create({
-        userId,
-        eventType,
-        sourceType: "booking",
-        sourceId: bookingId,
-        params,
-      });
-      if (row) await nr.route(row);
-    } catch { /* non-critical */ }
-  })();
-}
+// notifyBookingParty now lives in lib/bookingNotify.ts so background jobs can
+// reuse it without importing from routes/ (which would create an import cycle).
 
 // ── City availability (public, no auth) ──────────────────────────────────────
 // GET /api/rent-a-buddy/cities/:city/available
@@ -1100,27 +1080,23 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
         ? res.status(403).json({ error: "waitlist_only", message: "Rent a Buddy bookings for this location are currently waitlist-only. Join the waitlist to be notified when it opens." })
         : res.status(403).json({ error: "location_unavailable", message: "Rent a Buddy is not yet available in this location or category." });
     }
-    // Fetch traveler profile for verification + age checks
-    const { data: travProf } = await serviceClient
-      .from("rent_buddy_profiles")
-      .select("id_verified, phone_verified, date_of_birth")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (launchCtrl.requireIdVerification && !travProf?.id_verified) {
+    // Traveller identity comes from `profiles`, NOT from rent_buddy_profiles.
+    // This block used to read the BUDDY table, where a row exists only for users
+    // who applied to become a buddy — so an ordinary traveller had no row and
+    // was hard-403'd with age_verification_required no matter what they did.
+    // See lib/travelerVerification.ts for where each signal actually lives.
+    const travIdentity = await loadTravelerIdentity(serviceClient, user.id);
+    if (launchCtrl.requireIdVerification && !travIdentity.idVerified) {
       return res.status(403).json({ error: "verification_required", message: "ID verification is required to book in this location. Please verify your ID to continue." });
     }
-    if (launchCtrl.requirePhoneVerification && !travProf?.phone_verified) {
+    if (launchCtrl.requirePhoneVerification && !travIdentity.phoneVerified) {
       return res.status(403).json({ error: "verification_required", message: "Phone verification is required to book in this location. Please verify your phone number to continue." });
     }
     // Missing DOB is an explicit block — age cannot be verified without it
-    if (!travProf?.date_of_birth) {
+    if (travIdentity.age === null) {
       return res.status(403).json({ error: "age_verification_required", message: "Date of birth verification is required to make a booking in this location." });
     }
-    const bd = new Date(travProf.date_of_birth);
-    const today = new Date(nowMs);
-    let calcAge = today.getFullYear() - bd.getFullYear();
-    const m = today.getMonth() - bd.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) calcAge--;
+    const calcAge = travIdentity.age;
     const minAge = category === "nightlife" ? launchCtrl.nightlifeMinAge : launchCtrl.minAge;
     if (calcAge < minAge) {
       return res.status(403).json({
@@ -4686,11 +4662,20 @@ router.get("/rent-a-buddy/me/eligibility", async (req, res) => {
 
   // Load launch-control requirements for this city/country/category so eligibility
   // reflects the policy-of-record rather than hardcoded constants
-  const [launchCtrl, profileRes, limits] = await Promise.all([
+  // This endpoint answers "can I, the TRAVELLER, book?" — so identity, age and
+  // phone come from `profiles`. It previously read them from rent_buddy_profiles
+  // and so returned eligible:false with reason "age_unverified" for every user
+  // who had never applied to become a buddy, i.e. for every actual traveller.
+  // The buddy row is still loaded, but only for the buddy-side risk status.
+  // `training_completed` was selected here and then never used — dropped rather
+  // than gated on, since a traveller's eligibility to book cannot depend on
+  // whether they finished BUDDY safety training.
+  const [launchCtrl, travIdentity, profileRes, limits] = await Promise.all([
     getLaunchControl(serviceClient, { city, countryCode, category: category ?? undefined }),
+    loadTravelerIdentity(serviceClient, user.id),
     serviceClient
       .from("rent_buddy_profiles")
-      .select("id, age_verified, phone_verified, id_verified, risk_review_status, date_of_birth, training_completed")
+      .select("id, risk_review_status")
       .eq("user_id", user.id)
       .maybeSingle(),
     getUserLimits(serviceClient, user.id),
@@ -4699,8 +4684,11 @@ router.get("/rent-a-buddy/me/eligibility", async (req, res) => {
   const profile = profileRes.data;
   const minAge = launchCtrl?.minAge ?? 18;
   const nightlifeMinAge = launchCtrl?.nightlifeMinAge ?? 21;
-  const requireId = launchCtrl?.requireIdVerification ?? false;
-  const requirePhone = launchCtrl?.requirePhoneVerification ?? false;
+  // Fail CLOSED when no launch-control row matches. getLaunchControl already
+  // defaults these to true when a row EXISTS; defaulting to false when none did
+  // meant "no policy of record" was the most permissive state in the system.
+  const requireId = launchCtrl?.requireIdVerification ?? true;
+  const requirePhone = launchCtrl?.requirePhoneVerification ?? true;
 
   const reasons: string[] = [];
 
@@ -4712,21 +4700,15 @@ router.get("/rent-a-buddy/me/eligibility", async (req, res) => {
   if (riskStatus === "suspended") reasons.push("account_suspended");
   if (riskStatus === "under_review") reasons.push("account_under_review");
 
-  const phoneVerified = profile ? !!(profile as any).phone_verified : false;
+  const phoneVerified = travIdentity.phoneVerified;
   if (requirePhone && !phoneVerified) reasons.push("phone_not_verified");
 
-  const idVerified = profile ? !!(profile as any).id_verified : false;
+  const idVerified = travIdentity.idVerified;
   if (requireId && !idVerified) reasons.push("id_not_verified");
 
-  const dob: string | null = profile ? (profile as any).date_of_birth : null;
   let ageOk = true;
-  let age: number | null = null;
-  if (dob) {
-    const bd = new Date(dob);
-    const today = new Date();
-    age = today.getFullYear() - bd.getFullYear();
-    const m = today.getMonth() - bd.getMonth();
-    if (m < 0 || (m === 0 && today.getDate() < bd.getDate())) age--;
+  const age: number | null = travIdentity.age;
+  if (age !== null) {
     if (age < minAge) { reasons.push(`age_under_${minAge}`); ageOk = false; }
     if (isNightlife && age < nightlifeMinAge) { reasons.push(`nightlife_requires_${nightlifeMinAge}`); ageOk = false; }
   } else {
@@ -5719,182 +5701,21 @@ router.post("/internal/buddy-requests/expire", async (req, res) => {
     return res.status(401).json({ error: "unauthorized", message: "Missing or invalid internal key." });
   }
 
-  const serviceClient = getServiceClient();
-  if (!serviceClient) return res.status(503).json({ error: "service_unavailable" });
+  // The sweep logic lives in lib/rentBuddyRequestSweeper.ts so that the
+  // scheduler and this endpoint share ONE implementation. This route previously
+  // held the only copy and had no caller — src/index.ts started ~25 schedulers
+  // and this was not one of them, so nothing expired, no dispute window closed
+  // and no no-show escalated. The endpoint is kept for manual replay and for an
+  // external cron; it now delegates.
+  const result = await runBuddyRequestSweep();
+  if (result.unavailable) return res.status(503).json({ error: "service_unavailable" });
 
-  const now = new Date().toISOString();
-
-  // 1. Expire unanswered requests in requested or pending status
-  let staleRequests: { id: string; traveler_id: string; status: string }[] | null = null;
-  try {
-    const { data, error: staleErr } = await serviceClient
-      .from("rent_buddy_bookings")
-      .select("id, traveler_id, status")
-      .in("status", ["pending", "requested"])
-      .lt("expires_at", now);
-    if (staleErr) {
-      req.log?.error({ err: staleErr }, "buddy-requests/expire: stale-request fetch failed");
-    } else {
-      staleRequests = data as { id: string; traveler_id: string; status: string }[] | null;
-    }
-  } catch (err) {
-    req.log?.error({ err }, "buddy-requests/expire: stale-request fetch threw");
-  }
-
-  let expiredCount = 0;
-  if (staleRequests && staleRequests.length > 0) {
-    const ids = staleRequests.map((r: any) => r.id as string);
-    const { error: expireErr } = await serviceClient
-      .from("rent_buddy_bookings")
-      .update({ status: "expired", updated_at: now })
-      .in("id", ids);
-
-    if (!expireErr) {
-      for (const bk of staleRequests) {
-        void serviceClient.from("buddy_booking_events").insert({
-          booking_id: bk.id, actor_user_id: bk.traveler_id, event: "request_expired",
-          from_status: bk.status as string, to_status: "expired", metadata: {},
-        });
-        notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
-      }
-      expiredCount = staleRequests.length;
-    }
-  }
-
-  // 2. Auto-complete bookings whose dispute window closed without a dispute
-  const { data: pendingConfirm } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("id, traveler_id, buddy_id")
-    .eq("status", "completed_pending_traveler_confirmation")
-    .lt("dispute_window_expires_at", now);
-
-  let autoCompletedCount = 0;
-  if (pendingConfirm && pendingConfirm.length > 0) {
-    const ids2 = pendingConfirm.map((r: any) => r.id as string);
-    const { error: autoCompleteErr } = await serviceClient
-      .from("rent_buddy_bookings")
-      .update({ status: "completed", updated_at: now })
-      .in("id", ids2);
-
-    if (!autoCompleteErr) {
-      // Resolve buddy user IDs in one batch for completion notifications.
-      // Wrapped in try/catch (rather than just checking `error`) so that an
-      // actual thrown/rejected lookup — not just a returned DB error — can
-      // never abort the loop below and silence the TRAVELER's notification.
-      // A failed lookup only means the buddy-side notification is skipped;
-      // it must never suppress the traveler side.
-      const buddyProfileIds = [...new Set(pendingConfirm.map((r: any) => r.buddy_id as string))];
-      const buddyUserIdMap: Record<string, string> = {};
-      try {
-        const { data: buddyProfiles, error: buddyLookupErr } = await serviceClient
-          .from("rent_buddy_profiles")
-          .select("id, user_id")
-          .in("id", buddyProfileIds);
-        if (buddyLookupErr) {
-          req.log?.error({ err: buddyLookupErr }, "buddy-requests/expire: buddy-profile lookup failed during auto-completion — traveler notifications still proceed");
-        } else {
-          for (const bp of buddyProfiles ?? []) {
-            buddyUserIdMap[(bp as any).id] = (bp as any).user_id;
-          }
-        }
-      } catch (err) {
-        req.log?.error({ err }, "buddy-requests/expire: buddy-profile lookup threw during auto-completion — traveler notifications still proceed");
-      }
-
-      for (const bk of pendingConfirm) {
-        void serviceClient.from("buddy_booking_events").insert({
-          booking_id: bk.id, actor_user_id: bk.traveler_id, event: "auto_completed",
-          from_status: "completed_pending_traveler_confirmation", to_status: "completed",
-          metadata: { reason: "dispute_window_expired" },
-        });
-        // Notify both parties that the booking auto-completed
-        notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_completed", bk.id as string);
-        const buddyUserId = buddyUserIdMap[bk.buddy_id as string];
-        if (buddyUserId) {
-          notifyBookingParty(serviceClient, buddyUserId, "rent_buddy.booking_completed", bk.id as string);
-        }
-      }
-      autoCompletedCount = pendingConfirm.length;
-    }
-  }
-
-  // 3. Escalate no_show_pending bookings past grace period → disputed
-  const { data: staleNoShows } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("id, traveler_id, buddy_id")
-    .eq("status", "no_show_pending")
-    .lt("no_show_grace_expires_at", now);
-
-  let noShowEscalatedCount = 0;
-  if (staleNoShows && staleNoShows.length > 0) {
-    for (const bk of staleNoShows) {
-      // Derive the original reporter from the no_show_reported event —
-      // do NOT assume traveler; either party can file a no-show report.
-      const { data: noShowEvent } = await serviceClient
-        .from("buddy_booking_events")
-        .select("actor_user_id")
-        .eq("booking_id", bk.id as string)
-        .eq("event", "no_show_reported")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      // Fall back to traveler_id only if the event row is missing (data inconsistency)
-      const reporterUserId: string = (noShowEvent as any)?.actor_user_id ?? (bk.traveler_id as string);
-
-      // Resolve or create the dispute row FIRST.  If the insert fails we
-      // skip the booking update entirely, so the booking stays no_show_pending
-      // and noShowEscalatedCount is never incremented.
-      const { data: existingDispute } = await serviceClient
-        .from("rent_buddy_disputes")
-        .select("id")
-        .eq("booking_id", bk.id as string)
-        .eq("reason", "no_show")
-        .maybeSingle();
-
-      let disputeId: string | null = (existingDispute as any)?.id ?? null;
-
-      if (!disputeId) {
-        const { data: newDispute, error: disputeInsertError } = await serviceClient
-          .from("rent_buddy_disputes")
-          .insert({ booking_id: bk.id, raised_by: reporterUserId, reason: "no_show", status: "open" })
-          .select("id")
-          .maybeSingle();
-        if (disputeInsertError) {
-          console.error("[sweep] failed to insert no_show dispute row for booking", bk.id, disputeInsertError);
-          continue;
-        }
-        disputeId = (newDispute as any)?.id ?? null;
-      }
-
-      // Dispute row is confirmed — now promote the booking to disputed.
-      const { error: updateError } = await serviceClient
-        .from("rent_buddy_bookings")
-        .update({ status: "disputed", updated_at: now })
-        .eq("id", bk.id as string);
-
-      if (updateError) {
-        console.error("[sweep] failed to promote booking to disputed after dispute insert", bk.id, updateError);
-        continue;
-      }
-
-      noShowEscalatedCount++;
-
-      try {
-        const { error: eventInsertError } = await serviceClient.from("buddy_booking_events").insert({
-          booking_id: bk.id, actor_user_id: reporterUserId, event: "no_show_escalated",
-          from_status: "no_show_pending", to_status: "disputed",
-          metadata: { reason: "grace_period_expired", dispute_id: disputeId },
-        });
-        if (eventInsertError) {
-          console.error("[sweep] failed to write no_show_escalated event for booking", bk.id, eventInsertError);
-        }
-      } catch (eventErr) {
-        console.error("[sweep] unexpected error writing no_show_escalated event for booking", bk.id, eventErr);
-      }
-    }
-  }
-
-  return res.json({ ok: true, expired: expiredCount, autoCompleted: autoCompletedCount, noShowEscalated: noShowEscalatedCount });
+  return res.json({
+    ok: true,
+    expired: result.expired,
+    autoCompleted: result.autoCompleted,
+    noShowEscalated: result.noShowEscalated,
+  });
 });
 
 // ── Traveler confirm ──────────────────────────────────────────────────────────

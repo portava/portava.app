@@ -157,6 +157,18 @@ jobs:
       # The guard on steps.install.outcome stops these from running (and
       # producing confusing secondary failures) when the install itself broke.
 
+      # Runs BEFORE typecheck, deliberately. On 2026-08-23 a branch was reported
+      # "typecheck clean" while carrying four type errors, because `npx tsc`
+      # resolved to the decoy npm package named `tsc`, which prints a banner and
+      # exits 0. A version string cannot distinguish that from the real compiler;
+      # only behaviour can. This step compiles a fixture that MUST fail and stops
+      # the job if the compiler accepts it, so the typecheck below can never
+      # report a green produced by something incapable of red.
+      - name: 'check:compiler-authentic (the typecheck below is meaningless without it)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:compiler-authentic
+
       - name: typecheck
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash

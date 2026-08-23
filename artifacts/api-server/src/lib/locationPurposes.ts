@@ -88,6 +88,16 @@ export interface LocationPurpose {
 
 const HOUR = 3600, DAY = 24 * HOUR;
 
+/**
+ * Identifiable retention for intelligence contributions, in seconds.
+ *
+ * Owner ruling 2026-08-23: 180 days. After this the claim may survive only with
+ * the contributor severed. Named rather than inlined because the sweep that will
+ * enforce it must read the same number this registry publishes — a policy and an
+ * enforcement each carrying their own copy of a constant drift apart silently.
+ */
+export const INTEL_IDENTIFIABLE_RETENTION_SECONDS = 180 * DAY;
+
 export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   {
     id: "safety_anti_spoof",
@@ -228,12 +238,28 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
   },
   {
     id: "intel_claim",
-    retentionBound: "open_decision",
+    retentionBound: "clock",
     description: "Record what a traveler reports about a PLACE (how busy, queue, access) to build live intelligence.",
     precision: "derived",
     lawfulBasis: "consent",
-    retentionSeconds: null,
-    retentionNote: "Stores NO coordinates: an observation is keyed to a canonical place (subject_id -> places.id) and carries a presence ATTESTATION (level, bucket, method), never a pointer to a coordinate row. This is the 'semantic event' shape the ruling prefers. Its own retention window is still an open owner decision (D6).",
+    retentionSeconds: INTEL_IDENTIFIABLE_RETENTION_SECONDS,
+    retentionNote:
+      "Stores NO coordinates: an observation is keyed to a canonical place (subject_id -> places.id) and " +
+      "carries a presence ATTESTATION (level, bucket, method), never a pointer to a coordinate row — the " +
+      "'semantic event' shape the D4 ruling prefers.\n" +
+      "OWNER RULING 2026-08-23, closing the last open window in this registry: IDENTIFIABLE retention is " +
+      "180 days. Past 180 days the useful claim may be preserved ONLY if contributor identity can be " +
+      "severed; where it cannot be severed, the row is erased. The intelligence outlives the contributor, " +
+      "not the other way round.\n" +
+      "WHY 180 RATHER THAN THE 90 IN docs/ops/retention-policy.md: pattern and cohort work needs more than " +
+      "a single quarter to see a seasonal shape at all, and 90 was a placeholder nobody had ruled on. 180 " +
+      "doubles the usable history without turning contributor identity into indefinite storage, which is " +
+      "the thing D4 exists to prevent. Aggregated intelligence may live longer once it is no longer " +
+      "reasonably linkable to a person — governed by aggregate_live_state and the privacy gate, not by " +
+      "this clock.\n" +
+      "NOT YET ENFORCED: nothing sweeps intel_observations today; intelRetentionScheduler sweeps " +
+      "intel_state_snapshots only. This entry is the policy, not yet the behaviour. Stated plainly because " +
+      "a retention policy nobody implements has the same shape as no policy at all.",
     visibility: "Own rows only; published state is thresholded aggregate.",
     deletionBehavior: "Deleted with the account via erase_intel_for_actor().",
     tables: ["intel_observations", "intel_evidence", "intel_confirmations"],
@@ -306,8 +332,12 @@ export function unboundedPrecisePurposes(): LocationPurpose[] {
  * open_decision without being listed fails the check.
  */
 export const ACKNOWLEDGED_OPEN_DECISIONS: readonly string[] = [
-  // Retention window for intelligence contributions — owner decision D6.
-  "intel_claim",
+  // EMPTY, and that is the point. `intel_claim` sat here as the one acknowledged
+  // open window until the owner ruled 180 days on 2026-08-23. Every declared
+  // purpose now carries a decided retention bound.
+  //
+  // An entry here is debt, not permission: it says a window is undecided and
+  // someone knows. Adding one should feel like filing a ticket against yourself.
 ];
 
 export function undecidedRetentionPurposes(): LocationPurpose[] {

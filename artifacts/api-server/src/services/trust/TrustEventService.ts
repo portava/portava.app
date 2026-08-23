@@ -47,8 +47,15 @@ export interface RecordEventResult {
   pendingReview?: boolean;
 }
 
-/** Check if trust engine is enabled */
-async function isTrustEnabled(db: SupabaseClient): Promise<boolean> {
+/**
+ * Check if trust engine is enabled.
+ *
+ * Exported so the maintenance scheduler uses this exact gate rather than its own
+ * copy: events and scoring must never disagree about whether the engine is on,
+ * and a second direct feature_flags read would need its own DIRECT_READS entry
+ * recording a separately-verified failure direction. One read, one judgement.
+ */
+export async function isTrustEnabled(db: SupabaseClient): Promise<boolean> {
   try {
     const { data } = await db
       .from("feature_flags")
@@ -104,6 +111,28 @@ const EVENT_TYPE_CAP_BUCKET: Record<string, "plan_attend" | "guide_verify" | "ge
   checkin_verified:        "gem_save",
 };
 
+/**
+ * Earning cap for positive event types with no explicit bucket.
+ *
+ * This used to be 999/999 — i.e. no cap at all. Only 9 literal event-type
+ * strings are bucketed, but far more positive types are actually emitted
+ * (event_attended, event_hosted, review_submitted, pulse_post_created,
+ * passport_stamp_earned, rent_buddy_completed, telegraph_connection_accepted,
+ * identity_verified, appeal_approved …), so in practice the main earning
+ * surfaces were entirely uncapped.
+ *
+ * Chosen to sit at the most permissive existing bucket (gem_save, 10/40) so it
+ * cannot bind ordinary heavy use — nobody legitimately completes more than ten
+ * trust-earning actions of one type in a day — while still removing the
+ * unbounded-accrual path. Naturally one-shot types (identity_verified,
+ * first_event_joined) are unaffected: they fire once and never approach it.
+ *
+ * These are counts of EVENTS ACCEPTED, not score. The confidence ramp in
+ * TrustScoreService is what actually governs how fast a score can rise; this
+ * cap bounds ledger volume and the load a farming loop can generate.
+ */
+const DEFAULT_EARNING_CAP: EarningCaps = { daily: 10, weekly: 40 };
+
 /** Returns daily and weekly caps for an event type from trust_settings */
 async function getEarningCaps(
   db: SupabaseClient,
@@ -111,7 +140,7 @@ async function getEarningCaps(
 ): Promise<EarningCaps> {
   try {
     const bucket = EVENT_TYPE_CAP_BUCKET[eventType.toLowerCase()];
-    if (!bucket) return { daily: 999, weekly: 999 };
+    if (!bucket) return DEFAULT_EARNING_CAP;
     const { data } = await db.from("trust_settings").select(
       "daily_cap_plan_attend,daily_cap_guide_verify,daily_cap_gem_save," +
       "weekly_cap_plan_attend,weekly_cap_guide_verify,weekly_cap_gem_save",
@@ -125,7 +154,12 @@ async function getEarningCaps(
     if (bucket === "guide_verify") return { daily: s.daily_cap_guide_verify ?? 5,  weekly: s.weekly_cap_guide_verify ?? 20 };
     /* gem_save */                 return { daily: s.daily_cap_gem_save     ?? 10, weekly: s.weekly_cap_gem_save     ?? 40 };
   } catch {
-    return { daily: 999, weekly: 999 };
+    // Restrict rather than open on error. This path only ever delays ACCRUAL —
+    // it can never reduce an existing score — so failing closed costs a user at
+    // most a postponed positive event, whereas failing open (the previous
+    // 999/999) turned any transient trust_settings read failure into an
+    // uncapped earning window.
+    return DEFAULT_EARNING_CAP;
   }
 }
 

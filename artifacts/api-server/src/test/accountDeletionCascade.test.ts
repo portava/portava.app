@@ -34,7 +34,10 @@ function makeClient(opts: {
   authDeleteError?: string;
   storageError?: string;
 } = {}) {
-  const rows = opts.rows ?? {};
+  // A post by default. Since owner ruling 4 (2026-08-23) the worker SELECTS the
+  // user's posts and decides per post — tombstone if others have contributed,
+  // delete otherwise — so a fixture with no posts exercises neither branch.
+  const rows = { posts: [{ id: "post-1" }], ...(opts.rows ?? {}) };
   const fail = opts.fail ?? {};
   const ops: Op[] = [];
   const storageRemoved: Array<{ bucket: string; paths: string[] }> = [];
@@ -52,6 +55,12 @@ function makeClient(opts: {
       upsert(v: any) { q._op = "upsert"; q._values = v; return q; },
       insert(v: any) { q._op = "insert"; q._values = v; return q; },
       eq(c: string, v: any) { q._filters.push(["eq", c, v]); return q; },
+      // neq/not exist because the ruling-4 third-party check chains them
+      // (`.not("user_id","is",null).neq("user_id", userId)`). Without them the
+      // builder throws and the whole posts step fails — which is how these four
+      // tests started failing, not because the behaviour was wrong.
+      neq(c: string, v: any) { q._filters.push(["neq", c, v]); return q; },
+      not(c: string, op: string, v: any) { q._filters.push(["not", c, op, v]); return q; },
       lte(c: string, v: any) { q._filters.push(["lte", c, v]); return q; },
       in(c: string, v: any[]) { q._filters.push(["in", c, v]); return q; },
       or(expr: string) { q._filters.push(["or", expr]); return q; },
@@ -140,8 +149,13 @@ describe("executeAccountDeletion — full cascade", () => {
     assert.equal(out.ok, true, JSON.stringify(out.steps));
 
     // Content rows deleted, each scoped to this user.
+    // Ruling 4: no third-party comments on post-1, so it is hard-deleted — but
+    // per post id, not by a blanket sweep on author_id. The sweep is what used to
+    // take other people's comments with it.
     assert.ok(opFor(c, "posts", "delete"), "posts deleted");
-    assert.deepEqual(opFor(c, "posts", "delete")!.filters, [["eq", "author_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "posts", "delete")!.filters, [["eq", "id", "post-1"]]);
+    assert.equal(out.deletedCounts.posts, 1);
+    assert.equal(out.tombstonedCounts.posts, 0);
     assert.ok(opFor(c, "messages", "delete"), "message ciphertext deleted");
     assert.deepEqual(opFor(c, "messages", "delete")!.filters, [["eq", "sender_id", USER_ID]]);
     assert.ok(opFor(c, "identity_verifications", "delete"), "verification rows deleted");
@@ -174,12 +188,16 @@ describe("executeAccountDeletion — full cascade", () => {
     const c = makeClient({
       rows: { post_media: [{ storage_bucket: "post-media", storage_path: "p/1.jpg" }] },
     });
-    await executeAccountDeletion(c, USER_ID, { actorId: null });
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
 
     const idxCollect = c._ops.findIndex((o: Op) => o.table === "post_media" && o.op === "select");
     const idxDelete = c._ops.findIndex((o: Op) => o.table === "posts" && o.op === "delete");
     assert.ok(idxCollect >= 0 && idxDelete >= 0);
     assert.ok(idxCollect < idxDelete, "must read post_media paths before posts cascade removes them");
+    // The step was renamed when the tombstone branch was added; the ordering
+    // guarantee it protects is unchanged.
+    assert.ok(out.steps.some((st) => st.step === "tombstone_or_delete_posts"),
+      "the posts step should be the tombstone-or-delete one");
   });
 
   it("aborts before touching the auth user when profile anonymisation fails", async () => {

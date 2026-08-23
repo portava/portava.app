@@ -43,6 +43,17 @@ const logger = rootLogger.child({ service: "AccountDeletionService" });
 export const PROFILE_MEDIA_BUCKET = "profile-media";
 export const POST_MEDIA_BUCKET = "post-media";
 
+/**
+ * Stamped onto every completed deletion receipt (owner ruling 3, 2026-08-23).
+ *
+ * A receipt that does not say which rules it ran under cannot be read later: the
+ * counts alone do not tell you whether a post was kept because the doctrine said
+ * to, or because the worker of the day had a bug. Bump the worker version when
+ * the STEPS change; bump the policy version when the RULES do.
+ */
+export const DELETION_POLICY_VERSION = "d6-2026-08-23";
+export const DELETION_WORKER_VERSION = "2026-08-23.1";
+
 /** Per-step outcome. Steps are independent so one failure cannot hide another. */
 export interface DeletionStepResult {
   step: string;
@@ -59,6 +70,13 @@ export interface DeletionOutcome {
   steps: DeletionStepResult[];
   /** Steps that failed but are not fatal (storage, caches, best-effort writes). */
   warnings: string[];
+  /**
+   * Per-domain counts, mirrored onto the deletion receipt. Two separate maps
+   * because "we removed 12 things" and "we kept 12 things without your name on
+   * them" are different promises, and a single total would blur them.
+   */
+  deletedCounts: Record<string, number>;
+  tombstonedCounts: Record<string, number>;
 }
 
 export interface ExecuteOptions {
@@ -192,10 +210,64 @@ export async function executeAccountDeletion(
   }
 
   // ── 3. Content rows ───────────────────────────────────────────────────────
-  // posts CASCADEs to post_media, posts_comments, posts_likes, post_reactions,
-  // post_saves, post_shares, post_edits, post_hides, pulse_geo_tags, …
-  const postsOk = await step(steps, "delete_posts", async () => {
-    must(await sc.from("posts").delete().eq("author_id", userId), "delete posts");
+  // ── Posts: tombstone or delete, per owner ruling 4 (2026-08-23) ──────────
+  //
+  // "Posts become tombstones whenever other people have contributed to their
+  //  thread ... Hard-delete a post only when it has no third-party comments,
+  //  moderation dependency, dispute hold, or shared-history dependency."
+  //
+  // This used to be one unconditional DELETE, and posts CASCADEs to
+  // posts_comments — so deleting a post took every reply other people had
+  // written under it. The rule is conditional, and a foreign key cannot ask a
+  // question, so the decision is made here, per post.
+  //
+  // What is checked, stated plainly rather than implied: a comment authored by
+  // anyone other than the departing user, and a moderation report naming the
+  // post. Dispute holds and other shared-history dependencies are NOT checked —
+  // no such marker exists on posts today. When one does, it belongs in
+  // hasThirdPartyInterest() and nowhere else.
+  const tombstonedCounts: Record<string, number> = {};
+  const deletedCounts: Record<string, number> = {};
+
+  async function hasThirdPartyInterest(postId: string): Promise<boolean> {
+    const { data: otherComments } = await sc
+      .from("posts_comments")
+      .select("id")
+      .eq("post_id", postId)
+      .not("user_id", "is", null)
+      .neq("user_id", userId)
+      .limit(1);
+    if (((otherComments as any[]) ?? []).length > 0) return true;
+
+    const { data: reports } = await sc
+      .from("moderation_reports")
+      .select("id")
+      .eq("subject_type", "post")
+      .eq("subject_id", postId)
+      .limit(1);
+    return ((reports as any[]) ?? []).length > 0;
+  }
+
+  const postsOk = await step(steps, "tombstone_or_delete_posts", async () => {
+    const { data, error } = await sc.from("posts").select("id").eq("author_id", userId);
+    if (error) throw new Error(error.message);
+
+    let tombstoned = 0;
+    let deleted = 0;
+    for (const row of ((data as any[]) ?? [])) {
+      if (await hasThirdPartyInterest(row.id)) {
+        // One auditable blanking path — see migration 2141. Assembling the
+        // UPDATE here would miss a column the day someone adds one; posts has 70.
+        const { error: rpcErr } = await sc.rpc("tombstone_post", { p_post_id: row.id });
+        if (rpcErr) throw new Error(`tombstone_post(${row.id}): ${rpcErr.message}`);
+        tombstoned += 1;
+      } else {
+        must(await sc.from("posts").delete().eq("id", row.id), `delete post ${row.id}`);
+        deleted += 1;
+      }
+    }
+    tombstonedCounts.posts = tombstoned;
+    deletedCounts.posts = deleted;
   });
   if (!postsOk) warnings.push("posts may remain");
 
@@ -231,6 +303,12 @@ export async function executeAccountDeletion(
   // cleared by hand (merged from the old services/accountDeletion.ts cascade).
   // One failing table records its own step and never aborts the rest.
   const contentDeletes: Array<{ name: string; run: () => PromiseLike<{ error?: any }> }> = [
+    // Outstanding phone-verification challenges. These carry a phone number and
+    // a live credential hash. The FK to profiles is ON DELETE CASCADE, but this
+    // service keeps an anonymised TOMBSTONE profile rather than deleting the
+    // profiles row, so that cascade never fires — the rows must be cleared here
+    // by hand like every other user-keyed table.
+    { name: "delete_phone_challenges", run: () => sc.from("phone_verification_challenges").delete().eq("user_id", userId) },
     // Stories + engagement the user left on OTHER users' stories.
     { name: "delete_story_reactions", run: () => sc.from("story_reactions").delete().eq("user_id", userId) },
     { name: "delete_story_replies",   run: () => sc.from("story_replies").delete().eq("user_id", userId) },
@@ -304,7 +382,7 @@ export async function executeAccountDeletion(
   }
 
   if (opts.contentOnly) {
-    return { ok: steps.every((s) => s.ok), userId, executedAt, steps, warnings };
+    return { ok: steps.every((s) => s.ok), userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
   // ── 4. Anonymise the tombstone profile (FATAL on failure) ─────────────────
@@ -344,7 +422,7 @@ export async function executeAccountDeletion(
 
   if (!profileOk) {
     logger.error({ userId, steps }, "executeAccountDeletion: profile anonymisation failed — aborting");
-    return { ok: false, userId, executedAt, steps, warnings };
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
   // ── 5. Remove the auth user (this is what finally drops the email) ────────
@@ -391,7 +469,21 @@ export async function executeAccountDeletion(
       must(
         await sc
           .from("user_deletion_requests")
-          .update({ status: "completed", executed_at: executedAt })
+          .update({
+            status: "completed",
+            executed_at: executedAt,
+            completed_at: executedAt,
+            // Owner ruling 3: on completion the receipt stops naming a person.
+            // The WHERE below is evaluated before this SET, so clearing user_id
+            // in the same statement is safe — and doing it in a SECOND statement
+            // would leave a window where a completed receipt still identifies
+            // someone, which is the state the ruling forbids.
+            user_id: null,
+            policy_version: DELETION_POLICY_VERSION,
+            worker_version: DELETION_WORKER_VERSION,
+            deleted_counts: deletedCounts,
+            tombstoned_counts: tombstonedCounts,
+          })
           .eq("user_id", userId),
         "mark request completed",
       );
@@ -412,5 +504,5 @@ export async function executeAccountDeletion(
     "executeAccountDeletion: finished",
   );
 
-  return { ok, userId, executedAt, steps, warnings };
+  return { ok, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
 }

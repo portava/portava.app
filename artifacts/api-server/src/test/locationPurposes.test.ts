@@ -14,6 +14,7 @@ import {
   LOCATION_PURPOSES, LAWFUL_BASES, PRECISION_PREFERENCE,
   precisePurposes, unboundedPrecisePurposes, purposeTables, RETENTION_BOUNDS,
   undecidedRetentionPurposes, ACKNOWLEDGED_OPEN_DECISIONS,
+  INTEL_IDENTIFIABLE_RETENTION_SECONDS,
 } from "../lib/locationPurposes.js";
 
 const TABLES = coordinateTablesFromBaseline(readFileSync(BASELINE_PATH, "utf8"));
@@ -105,14 +106,24 @@ describe("location purposes — minimising raw movement history", () => {
 });
 
 describe("location purposes — undecided retention is visible at ANY precision", () => {
-  it("surfaces open_decision regardless of precision class", () => {
-    // Regression: unboundedPrecisePurposes() only inspects PRECISE purposes, so
-    // intel_claim (derived + open_decision) was reported by no check at all.
-    const undecided = undecidedRetentionPurposes().map((p) => p.id);
-    assert.ok(undecided.includes("intel_claim"),
-      "a derived purpose with an undecided retention must still be surfaced");
-    assert.equal(unboundedPrecisePurposes().length, 0,
-      "and it must not be reported as an unbounded PRECISE purpose, which it is not");
+  it("no purpose has an undecided retention window", () => {
+    // intel_claim was the last one; the owner ruled 180 days on 2026-08-23.
+    // Asserting EMPTY rather than asserting intel_claim is absent, so a new
+    // undecided purpose fails here too rather than sliding in beside it.
+    assert.deepEqual(undecidedRetentionPurposes().map((p) => p.id), []);
+    assert.deepEqual([...ACKNOWLEDGED_OPEN_DECISIONS], [],
+      "the acknowledgement list is debt, not permission — it should stay empty");
+  });
+
+  it("intel_claim carries the ruled 180-day identifiable window", () => {
+    const p = LOCATION_PURPOSES.find((x) => x.id === "intel_claim")!;
+    assert.equal(p.retentionBound, "clock");
+    assert.equal(p.retentionSeconds, INTEL_IDENTIFIABLE_RETENTION_SECONDS);
+    assert.equal(p.retentionSeconds, 180 * 24 * 3600, "180 days, per the ruling");
+    // The mechanism that surfaced it must still work for the NEXT purpose:
+    // a derived+open_decision entry is reported by undecidedRetentionPurposes(),
+    // never by unboundedPrecisePurposes(), which only inspects PRECISE ones.
+    assert.equal(unboundedPrecisePurposes().length, 0);
   });
 
   it("every undecided purpose is acknowledged — known debt may exist, not grow", () => {

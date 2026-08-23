@@ -140,6 +140,43 @@ async function loadCaps(
 }
 
 /** Compute score for one category from events, applying decay */
+/**
+ * Decay-weighted evidence required before a category earns FULL positive credit.
+ *
+ * Expressed in decayed-event-weight, not raw event count, so evidence erodes on
+ * the same half-life as the score itself: trust has to be maintained, not banked
+ * once and left. At the 90-day default half-life, five events today count as 5.0,
+ * but the same five events count ~2.5 after 90 days and ~1.25 after 180.
+ */
+const EARN_CONFIDENCE_WEIGHT = 5;
+
+/**
+ * Category score, centred on a neutral 50.
+ *
+ * The mean (not the sum) of decayed deltas is used, so volume alone cannot
+ * inflate a score — a thousand small positives land in the same place as one.
+ *
+ * Positive and negative movement are DELIBERATELY ASYMMETRIC:
+ *
+ *   - Positive movement is scaled by a confidence ramp, so a single good event
+ *     no longer maxes a category. Previously one HOST_POSITIVE_REVIEW (delta +6)
+ *     produced 50 + 6*5 = 80 — "trusted" off one review, on a brand-new account.
+ *     Now that same lone event yields 50 + 30*(1/5) = 56, and reaching the full
+ *     80 takes a sustained record rather than a single data point.
+ *   - Negative movement applies at FULL strength immediately, with no ramp.
+ *     One confirmed serious violation must bite on the first occurrence; making
+ *     a user "earn" their way into a penalty would be perverse.
+ *
+ * That asymmetry is the whole point: slow to earn, immediate to lose. It is also
+ * why the ramp must never be applied to the negative branch — doing so would
+ * silently protect first-time offenders.
+ *
+ * Severity is not read here. It governs routing and ceilings, not the delta:
+ * serious/severe events additionally impose a trust_caps ceiling (see
+ * TrustCapService.applyEventCaps), which clamps the category from above no
+ * matter how much positive history surrounds it. The ceiling — not the delta —
+ * is what makes a severe finding survive an otherwise glowing record.
+ */
 function computeCategoryScore(
   events: any[],
   category: string,
@@ -152,12 +189,20 @@ function computeCategoryScore(
   let totalWeight = 0;
   for (const e of relevant) {
     const w = decayWeight(e.created_at, halfLifeDays);
-    weightedSum += e.delta * w;
+    weightedSum += Number(e.delta ?? 0) * w;
     totalWeight += w;
   }
-  // Centre on 50 then apply weighted change
+
+  // Centre on 50 then apply weighted change. Scale: 1 delta point ≈ 5 score points.
   const delta = totalWeight > 0 ? weightedSum / totalWeight : 0;
-  return Math.min(100, Math.max(0, 50 + delta * 5)); // scale: 1 delta point ≈ 5 score points
+  let movement = delta * 5;
+
+  if (movement > 0) {
+    const confidence = Math.min(1, totalWeight / EARN_CONFIDENCE_WEIGHT);
+    movement *= confidence;
+  }
+
+  return Math.min(100, Math.max(0, 50 + movement));
 }
 
 function scoreToLevel(score: number, s: Settings): PublicTrustLevel {
