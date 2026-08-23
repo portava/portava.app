@@ -122,13 +122,14 @@ run_check "check:flag-polarity" pnpm run check:flag-polarity
 run_check "check:frozen-dir" pnpm run check:frozen-dir
 run_check "check:async-handlers" pnpm run check:async-handlers
 run_check "check:migration-prefixes" pnpm run check:migration-prefixes
-# check:anonymisation-payload — an account-deletion UPDATE may not null a NOT NULL
-# column. Wired because the anonymise_profile step nulled profiles.handle (text
+# check:not-null-writes — no write payload anywhere may put null in a NOT NULL
+# column. Wired for the anonymise_profile step, which nulled profiles.handle (text
 # NOT NULL UNIQUE), which made it raise 23502 on every run. That step is fatal, so
 # deletion aborted AFTER the irreversible content steps had already succeeded:
 # content destroyed, auth user and email retained, request left retrying forever.
+# Widening it to the whole tree found three more of the same class.
 # Static, so it needs no database and runs on every push.
-run_check "check:anonymisation-payload" pnpm run check:anonymisation-payload
+run_check "check:not-null-writes" pnpm run check:not-null-writes
 run_check "check:test-runner-flags" pnpm run check:test-runner-flags
 run_check "check:write-path-columns" pnpm run check:write-path-columns
 run_check "check:missing-live-columns" pnpm run check:missing-live-columns

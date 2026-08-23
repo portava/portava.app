@@ -362,7 +362,13 @@ router.delete('/messages/:messageId', asyncHandler(async (req, res) => {
   const now = new Date().toISOString();
   const { error } = await sc
     .from('messages')
-    .update({ deleted_at: now, body: null })
+    // body: '' not null. messages.body is `text NOT NULL` (verified on production),
+    // so `body: null` raised 23502 and this handler returned db_error to the
+    // caller — deleting your own group-chat message failed outright. The empty
+    // string still redacts the content, which is the point of the write; readers
+    // never surface it either way, because they substitute
+    // `body: isDeleted ? null : m.body` off deleted_at.
+    .update({ deleted_at: now, body: '' })
     .eq('id', messageId);
 
   if (error) {
