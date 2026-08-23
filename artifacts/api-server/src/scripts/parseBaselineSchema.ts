@@ -83,3 +83,28 @@ export function parseBaselineTables(sql: string): Map<string, BaselineTableInfo>
 export function loadBaselineTables(): Map<string, BaselineTableInfo> {
   return parseBaselineTables(readFileSync(BASELINE_PATH, "utf8"));
 }
+
+/**
+ * Every NOT NULL column of one `public` table, read from a schema-only dump's
+ * TEXT. Pure, so it unit-tests against fixture strings.
+ *
+ * Exists because a NOT NULL column is a constraint that application code can
+ * violate silently until the one code path that violates it finally runs —
+ * which is precisely how the account-deletion anonymisation step came to be
+ * guaranteed-fatal on its first real invocation while every test passed.
+ */
+export function notNullColumns(sql: string, table: string): Set<string> {
+  const cols = new Set<string>();
+  const start = sql.indexOf(`CREATE TABLE public.${table} (`);
+  if (start === -1) return cols;
+  const end = sql.indexOf("\n);", start);
+  if (end === -1) return cols;
+
+  for (const raw of sql.slice(start, end).split("\n").slice(1)) {
+    const line = raw.trim().replace(/,$/, "");
+    if (!line.endsWith("NOT NULL")) continue;
+    const name = /^([A-Za-z0-9_]+)\s/.exec(line)?.[1];
+    if (name) cols.add(name);
+  }
+  return cols;
+}
