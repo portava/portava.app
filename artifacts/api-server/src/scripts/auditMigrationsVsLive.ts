@@ -172,6 +172,39 @@ const SKIP_FILES = new Set([
  * "view:name".
  */
 const ALLOWLIST = new Set([
+  // 2130_intel_storage.sql creates intel_append_only_stmt(), and
+  // 2137_intel_stmt_trigger_removal.sql DROPS it. The drop was deliberate: the
+  // statement-level trigger fired on zero-row cascades and broke the live-DB RLS
+  // suite's purgeFixtures, which had passed for weeks. The auditor reads each
+  // migration's claimed objects independently, so it cannot see that a later
+  // migration removed this one — hence an entry here rather than skipping all of
+  // 2130, whose other claimed objects must still be verified.
+  //
+  // The ROW-level intel_append_only() guard that actually enforces append-only is
+  // untouched and still audited; only the statement-level variant is gone.
+  "function:intel_append_only_stmt",
+  // 0035_plan_geofences.sql claims a single broad policy, FOR ALL, granting any
+  // trip member full control. Live CI instead carries the four granular policies
+  // from reconciliation-staging/2100_plan_geofences_policy_convergence.sql
+  // (select/insert/update restricted to ACCEPTED members, delete to the owner),
+  // which is strictly tighter. Allowlisted because live is deliberately not what
+  // 0035 says — the auditor's own contract for this list.
+  //
+  // TWO THINGS THIS ENTRY DOES NOT RESOLVE, recorded so they are not lost:
+  //   1. That 2100 file's header still reads "STATUS: STAGED — NOT APPLIED" and
+  //      "BLOCKED ON: Q3", yet CI carries exactly the policies it creates and
+  //      lacks the one it drops. The header is stale for CI, or it was applied
+  //      out of process. Either way the file no longer describes reality.
+  //   2. PRODUCTION IS A THIRD STATE. It has neither 0035's policy nor CI's four:
+  //      it carries pgf_{select,insert,update,delete}_accepted plus a redundant
+  //      plan_geofences_service [ALL]. Its DELETE is pgf_delete_accepted — any
+  //      accepted member may delete — where CI restricts delete to the owner. So
+  //      production is LOOSER than CI on exactly the operation the convergence
+  //      tightened. plan_geofences is empty on production today, so nothing is
+  //      exposed, but this is the DISJOINT_POLICY_FAMILY case the reconciliation
+  //      packet called its highest-priority item. Converging production is an
+  //      owner decision, not an audit annotation.
+  "policy:plan_geofences.trip_members_manage_geofences",
   "column:feature_flags.key", // live column is `flag`
   "column:highlights.user_id", // live column is `owner_id`
   "column:highlight_replies.user_id", // live column is `replier_id`
