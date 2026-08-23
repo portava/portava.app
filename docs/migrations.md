@@ -1385,3 +1385,77 @@ process attempted its now-revoked direct-table path. Collection remained
 impossible because every capability flag was off and there were zero Journey
 rows. Restarting onto the reviewed RPC-only code restored healthy retention on
 the first cycle.
+
+## 2026-08-23 — Journey files renumbered 2120-2123 → 2124-2127 (content unchanged)
+
+`2120_journey_privacy_foundation.sql`, `2121_account_deletion_tombstone_contract.sql`,
+`2122_account_deletion_journey_revocation_compat.sql`, and
+`2123_journey_shadow_controlled_rollout.sql` were renamed on disk to
+`2124_journey_privacy_foundation.sql`, `2125_account_deletion_tombstone_contract.sql`,
+`2126_account_deletion_journey_revocation_compat.sql`, and
+`2127_journey_shadow_controlled_rollout.sql`, to resolve a prefix collision:
+`main` independently used 2120-2123 for the unrelated `canonical_events` /
+`source_registry` (table `sources`) / `freshness_policies` /
+`canonical_event_families` chain (merged via #104/#105).
+
+**These four files were authored and applied to production as 2120-2123** —
+see the two entries above, both dated 2026-08-21. That is still the accurate
+record of what ran against production. The rename does not change that; it
+only changes which filename in the canonical tree now carries that content.
+
+**Verified before renaming, not assumed:**
+- Live read-only checks (portava-ci and production, 2026-08-23) found the two
+  colliding sets applied to *different* databases: `canonical_events`,
+  `sources`, `freshness_policies`, and `canonical_event_families` exist on
+  portava-ci with zero Journey tables present; production has all nine live
+  Journey tables (`journey_observations`, `journey_retention_health`,
+  `journey_revocation_jobs`, `journey_segment_revisions`,
+  `journey_shadow_cohort_assignments`, `journey_shadow_ground_truth`,
+  `journey_shadow_qa_reports`, `journey_shadow_session_issuances`,
+  `journey_shadow_stages`) with none of the canonical_events-family objects.
+  Neither side is applied to both databases, so the general "both applied,
+  don't rename" rule (see the 2059/2089 documented collisions below) does not
+  cleanly cover this case.
+- `2128_intel_contracts_seed.sql` and `2130_intel_storage.sql` already state
+  that prefix 2128 "deliberately skips 2124-2127, which are reserved for the
+  Journey observation files currently unpushed in the Replit workspace" — the
+  four new numbers were already reserved in merged code before this rename,
+  so this executes a decision already made rather than a new one.
+- All six journey-family files (2103, 2119, and the four renamed here)
+  collectively create exactly the nine live Journey tables above; none
+  references `canonical_events`, `sources`, `freshness_policies`,
+  `canonical_event_families`, `external_place_references`,
+  `discovery_places`, or `fsq_places`; and no function/index/trigger/policy/
+  table name in the Journey chain collides with the four `main` files — so
+  applying both chains to the same database later (once `main`'s set reaches
+  production) is expected to be safe.
+- Internal self-references to the old numbers were updated in the same
+  commit throughout the four renamed files (headers, "Builds on:" lines,
+  `RAISE EXCEPTION` precondition messages) and in the test suites that path
+  to them by filename (`journeyShadowBoundary.test.ts`,
+  `journeyControlledRolloutMigration.test.ts`, `journeyPrivacyFoundation.test.ts`,
+  `locationGps.test.ts`, `accountDeletionCascade.test.ts`) — 361 tests across
+  those five files pass, including the disposable-PostgreSQL integration
+  suite that replays 2103+2119+2124+2127 end to end.
+- **Two things this rename intentionally left untouched.** The JSONB literal
+  `'{"...,"migration":"2123"}'` seeded by (now) `2127_journey_shadow_controlled_rollout.sql`
+  into `feature_flags.metadata` keeps the string `"2123"` — that value is
+  already persisted on production under that content, and changing the
+  source would misrepresent what the live row actually stores. And
+  `docs/sql/rollback_2119_journey_observation_foundation.sql` /
+  `docs/sql/rollback_2120_journey_privacy_foundation.sql` were not renamed or
+  touched — they are checksum-pinned under a frozen root in
+  `frozenMigrationRoots.ts` and keep their original numbers permanently.
+- `DOCUMENTED_COLLISIONS` in `checkMigrationPrefixes.ts` was left untouched —
+  this is an active rename, not a permanent both-sides-applied collision
+  being excused in place.
+
+**Two related gaps, flagged but out of scope for this rename:** `main`'s
+2120-2123 (canonical_events family) are applied to portava-ci but — per the
+live check above — not yet to production, and have no ledger row in this
+file recording that; and no migration file anywhere in this repository
+creates any of the nine live Journey tables under their *current* numbers
+before this entry, and the 2026-08-19 baseline schema dump contains none of
+them either — the only place their DDL exists in git is the six Journey
+migration files themselves. Both are worth someone's attention independent
+of this renumber.

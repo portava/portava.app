@@ -1,12 +1,12 @@
 /**
  * journeyControlledRolloutMigration.test.ts
  *
- * Focused integration suite that applies migrations 2103, 2119, 2120, and 2123
+ * Focused integration suite that applies migrations 2103, 2119, 2124, and 2127
  * in order against a disposable local PostgreSQL cluster. All assertions are
  * executed via real SQL — no mocks, no live DB, no external network.
  *
  * Covers:
- *  - migration applies and replays idempotently (2103 → 2119 → 2120 → 2123)
+ *  - migration applies and replays idempotently (2103 → 2119 → 2124 → 2127)
  *  - all Journey flags remain false after each migration
  *  - non-admin cannot configure/assign/issue/stop/truth/report even through
  *    service_role RPC
@@ -20,7 +20,7 @@
  *  - v2 quality rejects missing/wrong/out-of-range and unknown class;
  *    unusable IS accepted and persisted (for QA distribution measurement);
  *    segmentation excludes unusable at read time
- *  - service_role direct SELECT on journey_observations denied after 2123
+ *  - service_role direct SELECT on journey_observations denied after 2127
  *  - read_journey_shadow_observations_v1: authorized success returns rows,
  *    excludes unusable, returns zero rows on denial (flags off / wrong owner)
  *  - aggregate_journey_shadow_observations_v1: admin aggregate returns counts
@@ -67,8 +67,8 @@ function migrationUrl(name: string): string {
 
 const MIGRATION_2103 = migrationUrl("2103_journey_segment_shadow.sql");
 const MIGRATION_2119 = migrationUrl("2119_journey_observation_foundation.sql");
-const MIGRATION_2120 = migrationUrl("2120_journey_privacy_foundation.sql");
-const MIGRATION_2123 = migrationUrl("2123_journey_shadow_controlled_rollout.sql");
+const MIGRATION_2124 = migrationUrl("2124_journey_privacy_foundation.sql");
+const MIGRATION_2127 = migrationUrl("2127_journey_shadow_controlled_rollout.sql");
 
 // ─── Fixed UUIDs ──────────────────────────────────────────────────────────────
 
@@ -317,8 +317,8 @@ async function stopPostgres(cluster: PostgresCluster): Promise<void> {
 // 2119 requires: public.user_location_preferences, public.location_sessions,
 //   public.profiles, public.feature_flags.
 // 2103 requires: public.profiles, public.feature_flags.
-// 2120 requires all of the above + public.journey_observations (from 2119).
-// 2123 requires all of the above + public.journey_segment_revisions (from 2103).
+// 2124 requires all of the above + public.journey_observations (from 2119).
+// 2127 requires all of the above + public.journey_segment_revisions (from 2103).
 //
 // We build the minimal live-compatible schema here. We do NOT apply any live
 // migrations; this is a purpose-built prerequisite sandbox.
@@ -345,7 +345,7 @@ async function seedMinimalPrerequisites(cluster: PostgresCluster): Promise<void>
       END IF;
     END $$;
 
-    -- profiles (minimal; 2123 requires role column)
+    -- profiles (minimal; 2127 requires role column)
     CREATE TABLE IF NOT EXISTS public.profiles (
       id          uuid PRIMARY KEY,
       handle      text NOT NULL UNIQUE,
@@ -364,7 +364,7 @@ async function seedMinimalPrerequisites(cluster: PostgresCluster): Promise<void>
       metadata    jsonb
     );
 
-    -- user_location_preferences (required by 2119/2120)
+    -- user_location_preferences (required by 2119/2124)
     CREATE TABLE IF NOT EXISTS public.user_location_preferences (
       user_id                     uuid PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
       location_mode               text NOT NULL DEFAULT 'city_only',
@@ -414,10 +414,10 @@ async function applyMigrations(cluster: PostgresCluster): Promise<void> {
   await execPsql(cluster, ["-f", MIGRATION_2103]);
   // 2119 wraps in BEGIN/COMMIT
   await execPsql(cluster, ["-f", MIGRATION_2119]);
-  // 2120 wraps in BEGIN/COMMIT
-  await execPsql(cluster, ["-f", MIGRATION_2120]);
-  // 2123 wraps in BEGIN/COMMIT
-  await execPsql(cluster, ["-f", MIGRATION_2123]);
+  // 2124 wraps in BEGIN/COMMIT
+  await execPsql(cluster, ["-f", MIGRATION_2124]);
+  // 2127 wraps in BEGIN/COMMIT
+  await execPsql(cluster, ["-f", MIGRATION_2127]);
 }
 
 // ─── Authorization helpers ────────────────────────────────────────────────────
@@ -564,7 +564,7 @@ async function seedSegment(
 
 // ─── Test suite ───────────────────────────────────────────────────────────────
 
-describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2123)", { timeout: 280_000, concurrency: 6 }, () => {
+describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2124+2127)", { timeout: 280_000, concurrency: 6 }, () => {
   // A single cluster is booted once; the four migrations are applied into a
   // template database. Each test clones the template (fast in-cluster copy)
   // for full isolation, so we pay the expensive initdb/start cost only once.
@@ -608,7 +608,7 @@ describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2
     }
   });
 
-  it("replays 2103, 2120, 2123 idempotently (2119 uses CREATE FUNCTION, not OR REPLACE)", async () => {
+  it("replays 2103, 2124, 2127 idempotently (2119 uses CREATE FUNCTION, not OR REPLACE)", async () => {
     const cluster = await startEmptyPostgres();
     try {
       await seedMinimalPrerequisites(cluster);
@@ -625,10 +625,10 @@ describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2
       await execPsql(cluster, ["-f", MIGRATION_2103]);
       // 2119 uses CREATE FUNCTION (not OR REPLACE) so it is NOT safe to replay;
       // skipped here. Tables use IF NOT EXISTS so those are fine.
-      // Replay 2120 (idempotent: DROP IF EXISTS, IF NOT EXISTS, ON CONFLICT DO NOTHING)
-      await execPsql(cluster, ["-f", MIGRATION_2120]);
-      // Replay 2123 (idempotent: OR REPLACE, IF NOT EXISTS, ON CONFLICT DO NOTHING)
-      await execPsql(cluster, ["-f", MIGRATION_2123]);
+      // Replay 2124 (idempotent: DROP IF EXISTS, IF NOT EXISTS, ON CONFLICT DO NOTHING)
+      await execPsql(cluster, ["-f", MIGRATION_2124]);
+      // Replay 2127 (idempotent: OR REPLACE, IF NOT EXISTS, ON CONFLICT DO NOTHING)
+      await execPsql(cluster, ["-f", MIGRATION_2127]);
 
       // Flags must be the same after idempotent replays
       const flagsAfter = await sql(cluster, `
@@ -668,11 +668,11 @@ describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2
       await execPsql(cluster, ["-f", MIGRATION_2119]);
       await assertAllFalse("after 2119");
 
-      await execPsql(cluster, ["-f", MIGRATION_2120]);
-      await assertAllFalse("after 2120");
+      await execPsql(cluster, ["-f", MIGRATION_2124]);
+      await assertAllFalse("after 2124");
 
-      await execPsql(cluster, ["-f", MIGRATION_2123]);
-      await assertAllFalse("after 2123");
+      await execPsql(cluster, ["-f", MIGRATION_2127]);
+      await assertAllFalse("after 2127");
     } finally {
       await stopPostgres(cluster);
     }
@@ -1183,7 +1183,7 @@ describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2
           10.3, 123.9, 5.0, NULL, NULL, NULL,
           'journey_observation_v1', 'test-key-v1', 'accepted'
         )
-      `, "v1 ingest RPC must be denied after 2123");
+      `, "v1 ingest RPC must be denied after 2127");
     } finally {
       await stopPostgres(cluster);
     }
@@ -1806,7 +1806,7 @@ describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2
       `);
       assert.equal(result, "accepted");
 
-      // Observation expires_at stored as received_at + 24h (per 2119/2120 ingest logic)
+      // Observation expires_at stored as received_at + 24h (per 2119/2124 ingest logic)
       const expiryGap = await sql(cluster, `
         SELECT (expires_at - received_at) <= interval '24 hours' AND expires_at > received_at
         FROM public.journey_observations WHERE idempotency_key = 'expiry-test-obs-1'
@@ -2425,7 +2425,7 @@ describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2
 
   // ── Section P: SELECT revoke + raw-read / aggregate RPCs ─────────────────
 
-  it("service_role direct SELECT and DELETE on journey_observations are denied after 2123", async () => {
+  it("service_role direct SELECT and DELETE on journey_observations are denied after 2127", async () => {
     const cluster = await startPostgres();
     try {
       // First ensure a row exists so a SELECT would have returned data if allowed.
@@ -2444,11 +2444,11 @@ describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2
       await assertRaises(cluster, `
         SET ROLE service_role;
         SELECT * FROM public.journey_observations LIMIT 1
-      `, "direct service_role SELECT on journey_observations must be denied after 2123");
+      `, "direct service_role SELECT on journey_observations must be denied after 2127");
       await assertRaises(cluster, `
         SET ROLE service_role;
         DELETE FROM public.journey_observations
-      `, "direct service_role DELETE on journey_observations must be denied after 2123");
+      `, "direct service_role DELETE on journey_observations must be denied after 2127");
     } finally {
       await stopPostgres(cluster);
     }
@@ -2793,9 +2793,9 @@ describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2
     }
   });
 
-  // ── Section S: journey_segment_revisions sealed after 2123 ────────────────
+  // ── Section S: journey_segment_revisions sealed after 2127 ────────────────
 
-  it("service_role direct SELECT, INSERT and DELETE on journey_segment_revisions are denied after 2123", async () => {
+  it("service_role direct SELECT, INSERT and DELETE on journey_segment_revisions are denied after 2127", async () => {
     const cluster = await startPostgres();
     try {
       // Seed one row through the sole SECURITY DEFINER writer so a direct SELECT
@@ -2811,15 +2811,15 @@ describe("Journey Controlled Rollout Migration SQL integration (2103+2119+2120+2
       await assertRaises(cluster, `
         SET ROLE service_role;
         SELECT * FROM public.journey_segment_revisions LIMIT 1
-      `, "direct service_role SELECT on journey_segment_revisions must be denied after 2123");
+      `, "direct service_role SELECT on journey_segment_revisions must be denied after 2127");
       await assertRaises(cluster, `
         SET ROLE service_role;
         DELETE FROM public.journey_segment_revisions
-      `, "direct service_role DELETE on journey_segment_revisions must be denied after 2123");
+      `, "direct service_role DELETE on journey_segment_revisions must be denied after 2127");
       await assertRaises(cluster, `
         SET ROLE service_role;
         INSERT INTO public.journey_segment_revisions (id) VALUES (gen_random_uuid())
-      `, "direct service_role INSERT on journey_segment_revisions must be denied after 2123");
+      `, "direct service_role INSERT on journey_segment_revisions must be denied after 2127");
     } finally {
       await stopPostgres(cluster);
     }

@@ -3079,7 +3079,7 @@ function makeJourneyPurgeClient(options: {
         return { data: [], error: null };
       }
       // Maintenance purge RPC (service_role can no longer directly DELETE
-      // journey_observations after 2123). Returns aggregate-only counts/ages.
+      // journey_observations after 2127). Returns aggregate-only counts/ages.
       if (name === "purge_expired_journey_shadow_table_v1") {
         if (options.error) return { data: null, error: options.error };
         if (args?.p_kind === "observation") {
@@ -3098,7 +3098,7 @@ function makeJourneyPurgeClient(options: {
           error: null,
         };
       }
-      // v2 is the current RPC (v1 was replaced in 2123 rollout)
+      // v2 is the current RPC (v1 was replaced in 2127 rollout)
       if (name === "finish_journey_retention_cycle_v2") {
         return { data: true, error: null };
       }
@@ -3275,7 +3275,7 @@ describe("Journey migration, RLS, rollback, and non-consumer contract", () => {
       "utf8",
     );
     const finalPrivacyMigration = await readFile(
-      new URL("../migrations/2120_journey_privacy_foundation.sql", import.meta.url),
+      new URL("../migrations/2124_journey_privacy_foundation.sql", import.meta.url),
       "utf8",
     );
     assert.match(migration, /source IN \('foreground_gps', 'background_gps'\)[\s\S]*world_ref IS NULL/);
@@ -3360,9 +3360,9 @@ describe("Journey migration, RLS, rollback, and non-consumer contract", () => {
     assert.deepEqual(matches, [
       "src/lib/journeyObservationPurge.ts",
       "src/migrations/2119_journey_observation_foundation.sql",
-      "src/migrations/2120_journey_privacy_foundation.sql",
-      "src/migrations/2122_account_deletion_journey_revocation_compat.sql",
-      "src/migrations/2123_journey_shadow_controlled_rollout.sql",
+      "src/migrations/2124_journey_privacy_foundation.sql",
+      "src/migrations/2126_account_deletion_journey_revocation_compat.sql",
+      "src/migrations/2127_journey_shadow_controlled_rollout.sql",
       "src/services/accountDeletion/AccountDeletionService.ts",
       "src/services/location/LocationSafetyService.ts",
     ]);

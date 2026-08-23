@@ -183,10 +183,10 @@ const ALLOWED_JOURNEY_SRC_FILES = new Set([
 const ALLOWED_JOURNEY_MIGRATION_FILES = new Set([
   path.join(srcRoot, "migrations", "2103_journey_segment_shadow.sql"),
   path.join(srcRoot, "migrations", "2119_journey_observation_foundation.sql"),
-  path.join(srcRoot, "migrations", "2120_journey_privacy_foundation.sql"),
-  path.join(srcRoot, "migrations", "2122_account_deletion_journey_revocation_compat.sql"),
+  path.join(srcRoot, "migrations", "2124_journey_privacy_foundation.sql"),
+  path.join(srcRoot, "migrations", "2126_account_deletion_journey_revocation_compat.sql"),
   // Controlled-rollout scaffold: internal/service-only, no product consumer
-  path.join(srcRoot, "migrations", "2123_journey_shadow_controlled_rollout.sql"),
+  path.join(srcRoot, "migrations", "2127_journey_shadow_controlled_rollout.sql"),
 ]);
 
 // ── Forbidden consumer directory roots ────────────────────────────────────────

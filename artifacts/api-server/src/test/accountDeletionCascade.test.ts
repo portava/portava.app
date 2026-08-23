@@ -319,7 +319,7 @@ describe("deleted profile handle contract", () => {
 
   it("migration preserves handle integrity and rebinds audit rows to the tombstone", async () => {
     const sql = await readFile(
-      new URL("../migrations/2121_account_deletion_tombstone_contract.sql", import.meta.url),
+      new URL("../migrations/2125_account_deletion_tombstone_contract.sql", import.meta.url),
       "utf8",
     );
     assert.match(sql, /profiles\.handle must remain NOT NULL/);
@@ -340,7 +340,7 @@ describe("account-deletion Journey revocation compatibility contract", () => {
   it("installs only the deletion RPC and optional-table-safe revocation trigger", async () => {
     const migration = await readFile(
       new URL(
-        "../migrations/2122_account_deletion_journey_revocation_compat.sql",
+        "../migrations/2126_account_deletion_journey_revocation_compat.sql",
         import.meta.url,
       ),
       "utf8",
@@ -366,7 +366,7 @@ describe("account-deletion Journey revocation compatibility contract", () => {
   it("fails closed unless both Journey flags exist and remain disabled", async () => {
     const migration = await readFile(
       new URL(
-        "../migrations/2122_account_deletion_journey_revocation_compat.sql",
+        "../migrations/2126_account_deletion_journey_revocation_compat.sql",
         import.meta.url,
       ),
       "utf8",

@@ -1,8 +1,8 @@
 /**
  * journeyPrivacyFoundation.test.ts
  *
- * Focused automated tests for Task #3705 — Journey Privacy Foundation (2120)
- * and Task #3723 — Journey Shadow Controlled Rollout (2123).
+ * Focused automated tests for Task #3705 — Journey Privacy Foundation (2124)
+ * and Task #3723 — Journey Shadow Controlled Rollout (2127).
  *
  * Covers:
  *   (1) readJourneyIngestionControls — requires all four known flag rows
@@ -19,14 +19,14 @@
  *       completion; records durable retry/failure when deletion fails; persists
  *       monitoring fields via finish_journey_retention_cycle_v2 with
  *       observation/segment/ground-truth counts.
- *   (5) 2120 migration source — versioned consent, legacy default + explicit
+ *   (5) 2124 migration source — versioned consent, legacy default + explicit
  *       Journey session purpose, finite expiry, durable queue/claim lease,
  *       trigger-based revocation/session termination, service-only RLS/grants,
  *       HEALTHY/DEGRADED/FAILED/STALE, 24h TTL, 10m stale authorization,
  *       default-off flags preserved, no product consumers.
  *   (6) Rollback source is fail-closed containment and does not drop durable
  *       evidence.
- *   (7) 2123 migration source — central authority called by v2 ingest+append,
+ *   (7) 2127 migration source — central authority called by v2 ingest+append,
  *       old execute revoked, admin role SQL check, time-limited stage/cohort/
  *       issuance, flags default off, unified health v2, atomic revocation
  *       erasure, FORCE RLS, no user access.
@@ -66,14 +66,14 @@ import {
 
 const migrationSql = readFileSync(
   fileURLToPath(
-    new URL("../migrations/2120_journey_privacy_foundation.sql", import.meta.url),
+    new URL("../migrations/2124_journey_privacy_foundation.sql", import.meta.url),
   ),
   "utf8",
 );
 
-const migration2123Sql = readFileSync(
+const migration2127Sql = readFileSync(
   fileURLToPath(
-    new URL("../migrations/2123_journey_shadow_controlled_rollout.sql", import.meta.url),
+    new URL("../migrations/2127_journey_shadow_controlled_rollout.sql", import.meta.url),
   ),
   "utf8",
 );
@@ -494,7 +494,7 @@ function makeFakeClient(state: FakeWorkerState): any {
 
     rpc(name: string, args: Record<string, unknown>) {
       // Maintenance purge RPC (service_role can no longer directly SELECT/DELETE
-      // journey_observations after 2123). One transaction per kind: computes
+      // journey_observations after 2127). One transaction per kind: computes
       // oldest-before age, deletes expired rows, reports oldest-after age.
       if (name === "purge_expired_journey_shadow_table_v1") {
         const kind = args.p_kind as string;
@@ -1796,9 +1796,9 @@ describe("(4) runJourneyRetentionCycle", () => {
   });
 });
 
-// ─── (5) 2120 migration source assertions ─────────────────────────────────────
+// ─── (5) 2124 migration source assertions ─────────────────────────────────────
 
-describe("(5) 2120 migration source", () => {
+describe("(5) 2124 migration source", () => {
   it("asserts versioned consent columns on user_location_preferences", () => {
     assert.match(migrationSql, /ADD COLUMN IF NOT EXISTS journey_consent_scope/);
     assert.match(migrationSql, /ADD COLUMN IF NOT EXISTS journey_consent_version/);
@@ -1973,9 +1973,9 @@ describe("(5) 2120 migration source", () => {
   });
 
   it("feature flags inserted with DEFAULT false (default-off)", () => {
-    // 2119 seeded the flags; 2120 reuses them — 2120 does not override to true
-    // but the combined contract is: flags are default-off in 2119 and 2120 does not enable them.
-    // Verify 2120 does not INSERT enabled=true for either Journey flag.
+    // 2119 seeded the flags; 2124 reuses them — 2124 does not override to true
+    // but the combined contract is: flags are default-off in 2119 and 2124 does not enable them.
+    // Verify 2124 does not INSERT enabled=true for either Journey flag.
     const journeyFlagInserts = migrationSql.match(
       /INSERT INTO public\.feature_flags[\s\S]*?ON CONFLICT/g,
     ) ?? [];
@@ -1985,7 +1985,7 @@ describe("(5) 2120 migration source", () => {
         block.includes("COMPASS_JOURNEY_ENGINE_ENABLED") ||
         block.includes("COMPASS_JOURNEY_OBSERVATION_INGEST_ENABLED")
       ) {
-        assert.doesNotMatch(block, /,\s*true\s*,/, "Journey flags must not be enabled by 2120");
+        assert.doesNotMatch(block, /,\s*true\s*,/, "Journey flags must not be enabled by 2124");
       }
     }
   });
@@ -2089,7 +2089,7 @@ describe("(6) rollback source — fail-closed containment", () => {
   });
 
   it("migration comment confirms rollback is intentionally separate", () => {
-    // The comment pattern from 2119/2120 is: "Rollback is intentionally separate"
+    // The comment pattern from 2119/2124 is: "Rollback is intentionally separate"
     assert.match(
       migrationSql,
       /[Rr]ollback is intentionally separate/,
@@ -2110,45 +2110,45 @@ describe("(6) rollback source — fail-closed containment", () => {
   });
 });
 
-// ─── (7) 2123 migration source assertions — controlled rollout ────────────────
+// ─── (7) 2127 migration source assertions — controlled rollout ────────────────
 
-describe("(7) 2123 migration source — controlled rollout", () => {
+describe("(7) 2127 migration source — controlled rollout", () => {
   // ── 7a. Central authorization authority ──
 
   it("defines journey_shadow_authorize_v1 as the central authorization authority", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /CREATE OR REPLACE FUNCTION public\.journey_shadow_authorize_v1/,
     );
   });
 
   it("central authority locks and re-reads all three capability flags + global stop", () => {
     // All four flags are re-read FOR SHARE inside journey_shadow_authorize_v1
-    assert.match(migration2123Sql, /COMPASS_JOURNEY_ENGINE_ENABLED[\s\S]*?FOR SHARE/);
-    assert.match(migration2123Sql, /COMPASS_JOURNEY_OBSERVATION_INGEST_ENABLED[\s\S]*?FOR SHARE/);
-    assert.match(migration2123Sql, /COMPASS_JOURNEY_SEGMENTATION_SHADOW_ENABLED[\s\S]*?FOR SHARE/);
-    assert.match(migration2123Sql, /disable_location_sharing[\s\S]*?FOR SHARE/);
+    assert.match(migration2127Sql, /COMPASS_JOURNEY_ENGINE_ENABLED[\s\S]*?FOR SHARE/);
+    assert.match(migration2127Sql, /COMPASS_JOURNEY_OBSERVATION_INGEST_ENABLED[\s\S]*?FOR SHARE/);
+    assert.match(migration2127Sql, /COMPASS_JOURNEY_SEGMENTATION_SHADOW_ENABLED[\s\S]*?FOR SHARE/);
+    assert.match(migration2127Sql, /disable_location_sharing[\s\S]*?FOR SHARE/);
   });
 
   it("ingest_journey_observation_v2 calls central authority for ingest operation", () => {
     // v2 must delegate to journey_shadow_authorize_v1 for ingest
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /CREATE OR REPLACE FUNCTION public\.ingest_journey_observation_v2/,
     );
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /journey_shadow_authorize_v1[\s\S]*?'ingest'/,
     );
   });
 
   it("append_journey_segment_revisions_v2 calls central authority for derived_write operation", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /CREATE OR REPLACE FUNCTION public\.append_journey_segment_revisions_v2/,
     );
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /journey_shadow_authorize_v1[\s\S]*?'derived_write'/,
     );
   });
@@ -2157,21 +2157,21 @@ describe("(7) 2123 migration source — controlled rollout", () => {
 
   it("revokes EXECUTE on ingest_journey_observation_v1 from service_role (v2 is the only writer)", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /REVOKE EXECUTE ON FUNCTION public\.ingest_journey_observation_v1[\s\S]*?FROM service_role/,
     );
   });
 
   it("revokes EXECUTE on old append_journey_segment_revisions (v1) from service_role", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /REVOKE EXECUTE ON FUNCTION public\.append_journey_segment_revisions\(jsonb\)[\s\S]*?FROM service_role/,
     );
   });
 
   it("re-asserts that direct INSERT on journey_observations is revoked from service_role", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /REVOKE INSERT ON TABLE public\.journey_observations FROM service_role/,
     );
   });
@@ -2180,11 +2180,11 @@ describe("(7) 2123 migration source — controlled rollout", () => {
 
   it("_journey_shadow_require_admin_actor checks profiles.role = 'admin'", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /CREATE OR REPLACE FUNCTION public\._journey_shadow_require_admin_actor/,
     );
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /role = 'admin'/,
     );
   });
@@ -2192,14 +2192,14 @@ describe("(7) 2123 migration source — controlled rollout", () => {
   it("_journey_shadow_require_admin_actor fails closed on missing row or wrong role", () => {
     // The check: NOT EXISTS (SELECT 1 FROM profiles WHERE id = p_actor AND role = 'admin')
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /NOT EXISTS[\s\S]*?FROM public\.profiles[\s\S]*?AND role = 'admin'/,
     );
   });
 
   it("_journey_shadow_require_admin_actor is revoked from all roles including service_role", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /REVOKE ALL ON FUNCTION public\._journey_shadow_require_admin_actor\(uuid\)[\s\S]*?FROM PUBLIC, anon, authenticated, service_role/,
     );
   });
@@ -2208,46 +2208,46 @@ describe("(7) 2123 migration source — controlled rollout", () => {
 
   it("stage window is time-limited to at most 30 days", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /ends_at <= starts_at \+ interval '30 days'/,
     );
   });
 
   it("configure_journey_shadow_stage_v1 rejects stages longer than 30 days", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /stage duration must not exceed 30 days/,
     );
   });
 
   it("approved_at for stage configuration must be within 5 minutes of server clock", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /approved_at must be within 5 minutes of server time/,
     );
   });
 
   it("cohort window must fit within stage window", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /cohort window must be within stage window/,
     );
   });
 
   it("session issuance is limited to at most 24 hours", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /session.*expires_at <= issued_at \+ interval '24 hours'/s,
     );
   });
 
   it("session expires_at must not exceed cohort or stage end", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /session expires_at must not exceed cohort end/,
     );
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /session expires_at must not exceed stage end/,
     );
   });
@@ -2255,24 +2255,24 @@ describe("(7) 2123 migration source — controlled rollout", () => {
   // ── 7e. Flags default off ──
 
   it("COMPASS_JOURNEY_SEGMENTATION_SHADOW_ENABLED is inserted with enabled=false", () => {
-    const insertBlocks = migration2123Sql.match(
+    const insertBlocks = migration2127Sql.match(
       /INSERT INTO public\.feature_flags[\s\S]*?ON CONFLICT[\s\S]*?DO NOTHING/g,
     ) ?? [];
     const shadowInserts = insertBlocks.filter((b) =>
       b.includes("COMPASS_JOURNEY_SEGMENTATION_SHADOW_ENABLED"),
     );
-    assert.ok(shadowInserts.length >= 1, "shadow flag must be seeded in 2123");
+    assert.ok(shadowInserts.length >= 1, "shadow flag must be seeded in 2127");
     for (const block of shadowInserts) {
       assert.doesNotMatch(
         block,
         /,\s*true\s*[,)]/,
-        "COMPASS_JOURNEY_SEGMENTATION_SHADOW_ENABLED must default to false in 2123",
+        "COMPASS_JOURNEY_SEGMENTATION_SHADOW_ENABLED must default to false in 2127",
       );
     }
   });
 
-  it("no Journey flag is enabled by 2123 (all remain default-off)", () => {
-    const insertBlocks = migration2123Sql.match(
+  it("no Journey flag is enabled by 2127 (all remain default-off)", () => {
+    const insertBlocks = migration2127Sql.match(
       /INSERT INTO public\.feature_flags[\s\S]*?ON CONFLICT[\s\S]*?DO NOTHING/g,
     ) ?? [];
     for (const block of insertBlocks) {
@@ -2284,7 +2284,7 @@ describe("(7) 2123 migration source — controlled rollout", () => {
         assert.doesNotMatch(
           block,
           /,\s*true\s*[,)]/,
-          "No Journey flag must be enabled by 2123",
+          "No Journey flag must be enabled by 2127",
         );
       }
     }
@@ -2294,40 +2294,40 @@ describe("(7) 2123 migration source — controlled rollout", () => {
 
   it("defines finish_journey_retention_cycle_v2 with per-table deleted counts", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /CREATE OR REPLACE FUNCTION public\.finish_journey_retention_cycle_v2/,
     );
     // Must have observation, segment, and ground-truth count parameters
-    assert.match(migration2123Sql, /p_observation_deleted_count/);
-    assert.match(migration2123Sql, /p_segment_deleted_count/);
-    assert.match(migration2123Sql, /p_ground_truth_deleted_count/);
+    assert.match(migration2127Sql, /p_observation_deleted_count/);
+    assert.match(migration2127Sql, /p_segment_deleted_count/);
+    assert.match(migration2127Sql, /p_ground_truth_deleted_count/);
   });
 
   // ── 7g. Atomic revocation erasure ──
 
   it("revoke_journey_shadow_cohort_v1 atomically revokes assignment, issuances, ends sessions, deletes observations and segments", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /CREATE OR REPLACE FUNCTION public\.revoke_journey_shadow_cohort_v1/,
     );
     // Revokes assignment
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /UPDATE public\.journey_shadow_cohort_assignments[\s\S]*?SET revoked_at[\s\S]*?revoke_journey_shadow_cohort_v1/s,
     );
     // Revokes issuances
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /UPDATE public\.journey_shadow_session_issuances[\s\S]*?SET revoked_at[\s\S]*?revoke_journey_shadow_cohort_v1/s,
     );
     // Deletes observations
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /DELETE FROM public\.journey_observations[\s\S]*?WHERE user_id = v_assignment\.user_id/,
     );
     // Deletes segments
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /DELETE FROM public\.journey_segment_revisions[\s\S]*?WHERE user_id = v_assignment\.user_id/,
     );
   });
@@ -2335,11 +2335,11 @@ describe("(7) 2123 migration source — controlled rollout", () => {
   it("consent revocation trigger atomically revokes shadow assignments and issuances", () => {
     // purge_journey_observations_on_consent_revocation must also revoke cohort assignments
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /UPDATE public\.journey_shadow_cohort_assignments[\s\S]*?SET revoked_at[\s\S]*?WHERE user_id = v_user_id/,
     );
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /UPDATE public\.journey_shadow_session_issuances[\s\S]*?SET revoked_at[\s\S]*?WHERE user_id = v_user_id/,
     );
   });
@@ -2347,21 +2347,21 @@ describe("(7) 2123 migration source — controlled rollout", () => {
   it("revoked_by = v_user_id (owner UUID) for owner/trigger revocation — not admin actor", () => {
     // The trigger sets revoked_by = v_user_id, not a separate admin actor
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /revoked_by = v_user_id/,
     );
   });
 
   it("account-deletion path sets revoked_by = NULL (no meaningful actor UUID)", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /revoked_by = NULL/,
     );
   });
 
   it("advisory lock serialises revocation with append (journey-segments key)", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /pg_advisory_xact_lock[\s\S]*?journey-segments:/,
     );
   });
@@ -2370,35 +2370,35 @@ describe("(7) 2123 migration source — controlled rollout", () => {
 
   it("journey_shadow_stages has FORCE ROW LEVEL SECURITY", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /ALTER TABLE public\.journey_shadow_stages FORCE ROW LEVEL SECURITY/,
     );
   });
 
   it("journey_shadow_cohort_assignments has FORCE ROW LEVEL SECURITY", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /ALTER TABLE public\.journey_shadow_cohort_assignments FORCE ROW LEVEL SECURITY/,
     );
   });
 
   it("journey_shadow_session_issuances has FORCE ROW LEVEL SECURITY", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /ALTER TABLE public\.journey_shadow_session_issuances FORCE ROW LEVEL SECURITY/,
     );
   });
 
   it("journey_shadow_ground_truth has FORCE ROW LEVEL SECURITY", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /ALTER TABLE public\.journey_shadow_ground_truth FORCE ROW LEVEL SECURITY/,
     );
   });
 
   it("journey_shadow_qa_reports has FORCE ROW LEVEL SECURITY", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /ALTER TABLE public\.journey_shadow_qa_reports FORCE ROW LEVEL SECURITY/,
     );
   });
@@ -2407,35 +2407,35 @@ describe("(7) 2123 migration source — controlled rollout", () => {
 
   it("journey_shadow_stages revokes all from anon and authenticated", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /REVOKE ALL ON TABLE public\.journey_shadow_stages FROM PUBLIC, anon, authenticated/,
     );
   });
 
   it("journey_shadow_cohort_assignments revokes all from anon and authenticated", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /REVOKE ALL ON TABLE public\.journey_shadow_cohort_assignments FROM PUBLIC, anon, authenticated/,
     );
   });
 
   it("journey_shadow_session_issuances revokes all from anon and authenticated", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /REVOKE ALL ON TABLE public\.journey_shadow_session_issuances FROM PUBLIC, anon, authenticated/,
     );
   });
 
   it("journey_shadow_ground_truth revokes all from anon and authenticated", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /REVOKE ALL ON TABLE public\.journey_shadow_ground_truth FROM PUBLIC, anon, authenticated/,
     );
   });
 
   it("journey_shadow_qa_reports revokes all from anon and authenticated", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /REVOKE ALL ON TABLE public\.journey_shadow_qa_reports FROM PUBLIC, anon, authenticated/,
     );
   });
@@ -2451,12 +2451,12 @@ describe("(7) 2123 migration source — controlled rollout", () => {
     ];
     for (const table of shadowTables) {
       assert.match(
-        migration2123Sql,
+        migration2127Sql,
         new RegExp(`GRANT SELECT ON TABLE public\\.${table} TO service_role`),
         `${table} must grant only SELECT to service_role`,
       );
       assert.match(
-        migration2123Sql,
+        migration2127Sql,
         new RegExp(`REVOKE INSERT, UPDATE, DELETE ON TABLE public\\.${table} FROM service_role`),
         `${table} must revoke INSERT/UPDATE/DELETE from service_role`,
       );
@@ -2467,21 +2467,21 @@ describe("(7) 2123 migration source — controlled rollout", () => {
 
   it("ingest_journey_observation_v2 rejects missing quality fields (all four mandatory)", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /p_quality_version IS NULL OR p_quality_score IS NULL[\s\S]*?OR p_quality_class IS NULL OR p_quality_reasons IS NULL/,
     );
   });
 
   it("ingest_journey_observation_v2 requires quality_version = 'journey-observation-quality-v1'", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /p_quality_version <> 'journey-observation-quality-v1'/,
     );
   });
 
   it("ingest_journey_observation_v2 rejects quality_score outside [0,1]", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /p_quality_score < 0 OR p_quality_score > 1/,
     );
   });
@@ -2491,7 +2491,7 @@ describe("(7) 2123 migration source — controlled rollout", () => {
     // QA/report distribution measurement; only truly unknown classes are rejected.
     // Segmentation excludes unusable at read time via .neq("quality_class", "unusable").
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /p_quality_class NOT IN \('high', 'usable', 'degraded', 'unusable'\)/,
     );
   });
@@ -2500,14 +2500,14 @@ describe("(7) 2123 migration source — controlled rollout", () => {
 
   it("journey_shadow_ground_truth expires_at is bounded to 30 days from submitted_at", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /expires_at <= submitted_at \+ interval '30 days'/,
     );
   });
 
   it("record_journey_shadow_ground_truth_v1 sets expires_at = submitted_at + 30 days", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /v_now \+ interval '30 days'/,
     );
   });
@@ -2515,20 +2515,20 @@ describe("(7) 2123 migration source — controlled rollout", () => {
   // ── 7l. Preconditions + transactional DDL ──
 
   it("is wrapped in BEGIN…COMMIT (transactional DDL)", () => {
-    assert.match(migration2123Sql, /^\s*BEGIN\s*;/m);
-    assert.match(migration2123Sql, /^\s*COMMIT\s*;/m);
+    assert.match(migration2127Sql, /^\s*BEGIN\s*;/m);
+    assert.match(migration2127Sql, /^\s*COMMIT\s*;/m);
   });
 
   it("checks for profiles.role column in preconditions (admin gate cannot be enforced without it)", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /profiles\.role missing; admin gate cannot be enforced in SQL/,
     );
   });
 
   it("precondition verifies all three Journey capability flags exist before proceeding", () => {
     assert.match(
-      migration2123Sql,
+      migration2127Sql,
       /all three Journey capability flags must exist/,
     );
   });
