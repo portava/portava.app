@@ -28,15 +28,15 @@
 -- ── WHY CONVERGING IS NOT SAFE YET ─────────────────────────────────────────
 -- This is the finding that decides the ordering, and it is not obvious.
 --
--- 62 foreign keys point at public.profiles with ON DELETE NO ACTION or RESTRICT.
+-- 61 foreign keys point at public.profiles with ON DELETE NO ACTION or RESTRICT.
 -- They block nothing today, for one reason only: production never deletes the
 -- profiles row — executeAccountDeletion anonymises it. The parent delete that
 -- those rules would reject simply never happens.
 --
 -- Add this FK and that changes. Deleting an auth user would cascade into
--- profiles, and every one of those 62 rules would then reject the delete. The
+-- profiles, and every one of those 61 rules would then reject the delete. The
 -- result is not "deletion works properly" — it is the SAME failure this quarter's
--- work has been removing, relocated from five edges to sixty-two.
+-- work has been removing, relocated from five edges to sixty-one.
 --
 -- So this migration refuses to apply while any of them remain. That is
 -- deliberate: a migration that can leave the database unable to delete an
@@ -97,6 +97,63 @@ BEGIN
     RAISE EXCEPTION
       'PRECONDITION FAILED: % foreign key(s) to public.profiles would reject a cascading delete once this migration lands, turning one broken deletion path into % of them. They are dormant today only because production never deletes the profiles row. Resolve each under the D6 rulings first. Offenders: %',
       blockers, blockers, sample;
+  END IF;
+END $$;
+
+-- ── Precondition 3: converging must not DESTROY another user's records ─────
+-- The second thing 2138 taught, and the more dangerous one. Clearing the
+-- blockers makes deletion COMPLETE; it does not make it CORRECT.
+--
+-- 168 foreign keys point at public.profiles with ON DELETE CASCADE. Like the
+-- blockers they are dormant, and like the blockers they all activate here. But
+-- these do not reject the delete — they perform one. Among them are tables that
+-- hold records belonging to OTHER people.
+--
+-- Demonstrated on CI before this gate was written: a thread with one message
+-- from the departing user and one reply from a bystander. After the converged
+-- deletion, `messages` went from 2 rows to 1. The bystander was left holding a
+-- reply to a message that no longer exists.
+--
+-- Ruling 3 names this case exactly: user content is deletable "unless retaining
+-- a minimal tombstone is required to preserve another user's conversation or
+-- transaction integrity." A conversation is the canonical example, and today
+-- convergence would delete one side of it.
+--
+-- So these tables must be ruled on — tombstone or erase — BEFORE the FK lands.
+-- The list is not every CASCADE edge; it is the ones whose rows plainly belong
+-- to, or are shared with, someone other than the departing user.
+DO $$
+DECLARE
+  unreviewed int;
+  sample text;
+BEGIN
+  SELECT count(*), string_agg(format('%s.%s', c.conrelid::regclass::text, a.attname), ', ')
+    INTO unreviewed, sample
+    FROM pg_constraint c
+    JOIN unnest(c.conkey) k(attnum) ON TRUE
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+    JOIN pg_class r ON r.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = r.relnamespace
+   WHERE c.contype = 'f'
+     AND n.nspname = 'public'
+     AND c.confrelid = 'public.profiles'::regclass
+     AND c.confdeltype = 'c'
+     AND c.conrelid::regclass::text IN (
+       -- Conversations and their parts
+       'messages', 'message_threads', 'message_thread_members', 'message_translations',
+       'saved_messages',
+       -- Content other people read, reply to, or depend on
+       'posts', 'event_updates', 'event_reviews', 'highlight_replies',
+       'shared_moment_contributions', 'live_place_recaps', 'local_guide_contributions',
+       'discovery_place_reports', 'hidden_gems',
+       -- Shared containers other members belong to
+       'trips', 'trip_notes', 'trip_documents', 'events', 'circles', 'meetups'
+     );
+
+  IF unreviewed > 0 THEN
+    RAISE EXCEPTION
+      'PRECONDITION FAILED: % CASCADE edge(s) would DELETE records belonging to other users once this migration lands. Deletion would complete and destroy someone else''s conversation doing it. Rule each under D6 (tombstone via SET NULL, or erase deliberately) first. Offenders: %',
+      unreviewed, left(sample, 400);
   END IF;
 END $$;
 

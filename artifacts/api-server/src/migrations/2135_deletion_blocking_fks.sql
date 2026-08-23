@@ -66,7 +66,7 @@
 -- non-null will show a blank where a name was.
 --
 -- ── WHAT THIS FILE DELIBERATELY DOES NOT DO ─────────────────────────────────
--- 62 further NO ACTION / RESTRICT edges point at public.profiles. They do not
+-- 61 further NO ACTION / RESTRICT edges point at public.profiles. They do not
 -- block anything today, because production's profiles row is anonymised rather
 -- than deleted and so the parent delete never happens. They WOULD all become
 -- blockers the moment production converges to the migration-defined
