@@ -30,6 +30,17 @@
 
 /** Tables AccountDeletionService clears today. */
 export const ERASED_BY_CASCADE: readonly string[] = [
+  // Erased by a DATABASE CONSTRAINT, not by service code — the one entry here
+  // that AccountDeletionService never names. passport_stamps_gps.user_id
+  // REFERENCES auth.users ON DELETE CASCADE, and step 5 calls
+  // auth.admin.deleteUser, so the coordinates go. Verified against the live
+  // schema on 2026-08-23; it sat in UNCLASSIFIED_BACKLOG until then because the
+  // absence of a service reference was read as absence of deletion.
+  //
+  // Its PARENT is the open question, not this: passport_stamps references
+  // profiles, which on production has no FK to auth.users, so the stamp itself
+  // survives while its coordinates do not. That stays with D6.
+  "passport_stamps_gps",
   // IG-02 intel tables. Registered here in the SAME change that creates them:
   // a new user-keyed table gets a deletion fate on day one, which is the whole
   // point of this manifest. Their append-only triggers permit DELETE only inside
@@ -214,7 +225,6 @@ export const UNCLASSIFIED_BACKLOG: readonly string[] = [
   "passport_memories",
   "passport_postcards",
   "passport_stamps",
-  "passport_stamps_gps",
   "passport_visibility_preferences",
   "place_mismatch_reports",
   "place_top_contributors",

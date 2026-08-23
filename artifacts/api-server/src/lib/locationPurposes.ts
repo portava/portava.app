@@ -197,10 +197,19 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
       "traveler deliberately created about one place. The bound is the life of the content, not a clock.",
     visibility: "Follows the stamp's own visibility (user_stamps).",
     deletionBehavior:
-      "SHOULD be deleted with the stamp and the account, and TODAY IS NOT: passport_stamps_gps sits in " +
-      "deletionDispositions UNCLASSIFIED_BACKLOG and AccountDeletionService has zero references to it. " +
-      "Permanent-while-it-exists is not the same as surviving the user deleting their account, and the " +
-      "published policy promises content and verification records are removed. Tracked as part of D6.",
+      "DELETED on account deletion, by database cascade rather than by application code. Verified against " +
+      "the live schema on 2026-08-23: passport_stamps_gps.user_id REFERENCES auth.users ON DELETE CASCADE, " +
+      "and AccountDeletionService step 5 calls auth.admin.deleteUser, so the coordinates go even though the " +
+      "service never names the table. An earlier revision of this note claimed the opposite; it reasoned from " +
+      "the absence of a reference in AccountDeletionService and from the table's presence in " +
+      "deletionDispositions UNCLASSIFIED_BACKLOG, without checking the constraint. Both those things are " +
+      "true and neither one means what it looked like it meant.\n" +
+      "OPEN, AND THE REAL GAP IS THE OTHER WAY ROUND: the PARENT survives. passport_stamps.user_id " +
+      "REFERENCES profiles, and on production profiles has NO foreign key to auth.users, so the anonymised " +
+      "tombstone and every stamp attached to it outlive the account while their coordinates do not. Posts " +
+      "are deleted explicitly by the service; stamps are content by the same owner ruling and are not. " +
+      "Note this differs by environment — CI DOES have profiles_id_fkey -> auth.users ON DELETE CASCADE, so " +
+      "CI erases the stamps and production does not. Tracked as part of D6.",
     tables: ["passport_stamps_gps"],
     requiresSeparateControl: false,
   },

@@ -66,9 +66,18 @@ describe("location purposes — minimising raw movement history", () => {
     assert.equal(stamp.precision, "precise", "a stamp legitimately keeps its precise coordinates");
     assert.equal(stamp.retentionBound, "content_lifetime");
     assert.equal(stamp.lawfulBasis, "contract");
-    // The gap that ruling exposes: permanent-while-it-exists is not immortality.
-    assert.match(stamp.deletionBehavior, /TODAY IS NOT/,
-      "the registry must state plainly that it is not yet deleted with the account");
+    // The GPS child IS deleted — verified against the live schema, not inferred
+    // from AccountDeletionService, which never names the table. The earlier
+    // version of this assertion pinned the opposite claim, which is exactly how
+    // an unverified belief becomes a test that defends it.
+    assert.match(stamp.deletionBehavior, /ON DELETE CASCADE/,
+      "the registry must name the constraint that actually deletes the coordinates");
+    assert.doesNotMatch(stamp.deletionBehavior, /TODAY IS NOT/,
+      "the superseded claim that stamp GPS survives deletion must not come back");
+    // The real gap the ruling exposes is the PARENT: the stamp outlives the
+    // account on production, where profiles has no FK to auth.users.
+    assert.match(stamp.deletionBehavior, /the PARENT survives/,
+      "the registry must record that the stamp itself is not deleted on production");
   });
 
   it("aggregate and derived are preferred over precise", () => {
