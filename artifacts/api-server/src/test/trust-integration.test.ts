@@ -17,7 +17,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import trustAdminRouter from "../routes/trust-admin.js";
 
-import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import { recordTrustEvent, recordAdjudicatedTrustEvent } from "../services/trust/TrustEventService.js";
 import { recalculateTrustScore, getTrustProfile } from "../services/trust/TrustScoreService.js";
 import { getActiveCaps } from "../services/trust/TrustCapService.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
@@ -26,6 +26,7 @@ import {
   adminApplyRestriction, adminLiftRestriction,
   adminOverrideScore, adminRemoveOverride,
   getPendingEvents, getOpenReviews,
+  revokeModerationTrustConsequences,
 } from "../services/trust/TrustAdminService.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../services/trust/TrustPrivacyGuard.js";
 import { getRecoveryStatus } from "../services/trust/TrustRecoveryService.js";
@@ -1063,5 +1064,175 @@ describe("Maintenance: the driver the engine was missing", () => {
 
     const r = await runTrustMaintenance(db);
     assert.equal(r.usersRecalculated, 1);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PART 4: Moderation → trust
+//
+// Every declared moderation trust type (CONTENT_REMOVED, BEHAVIOR_REPORT_CONFIRMED,
+// MESSAGE_REPORT_CONFIRMED, STAMP_DISPUTED…) was emitted by nothing, so a
+// confirmed ban cost the user exactly zero trust. Wiring it raised two questions
+// these tests pin: a severe finding must APPLY (not sit in a queue waiting for a
+// second admin to re-adjudicate a decision one already made), and reversing the
+// sanction must reverse its consequence — including the ceiling, which has no
+// expiry and would otherwise stand forever.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("Moderation → trust: an adjudicated finding applies immediately", () => {
+  it("a severe event from an admin action is confirmed in the same request", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    const r = await recordAdjudicatedTrustEvent(db, ADMIN, {
+      userId: USER_A,
+      eventType: "behavior_report_confirmed",
+      category: "respect_safety",
+      delta: -20,
+      severity: "severe",
+      sourceType: "moderation",
+      sourceId: "mod-action-1",
+    });
+
+    assert.equal(r.ok, true);
+    assert.equal(r.confirmed, true, "an already-adjudicated finding must not wait in the queue");
+
+    const ev = tables.trust_events.find((e) => e.id === r.eventId);
+    assert.equal(ev.status, "confirmed", "the scorer only counts applied/confirmed");
+    assert.equal(ev.reviewed_by, ADMIN, "the audit trail must name the human who decided");
+  });
+
+  it("confirming imposes the CEILING, which is what actually bites", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    await recordAdjudicatedTrustEvent(db, ADMIN, {
+      userId: USER_A,
+      eventType: "behavior_report_confirmed",
+      category: "respect_safety",
+      delta: -20,
+      severity: "severe",
+      sourceType: "moderation",
+      sourceId: "mod-action-2",
+    });
+
+    const caps = tables.trust_caps.filter((c) => c.user_id === USER_A && !c.lifted_at);
+    assert.ok(caps.length > 0, "a severe adjudicated finding must impose a ceiling");
+    assert.equal(caps[0].category, "respect_safety");
+  });
+
+  it("a moderate event needs no confirmation — it applies on its own", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    const r = await recordAdjudicatedTrustEvent(db, ADMIN, {
+      userId: USER_A,
+      eventType: "stamp_disputed",
+      category: "passport_authenticity",
+      delta: -6,
+      severity: "moderate",
+      sourceType: "moderation",
+      sourceId: "user-stamp-1",
+    });
+
+    assert.equal(r.confirmed, true);
+    assert.equal(tables.trust_events.find((e) => e.id === r.eventId).status, "applied");
+  });
+
+  it("one adjudication charges once, however many times it is retried", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    const input = {
+      userId: USER_A,
+      eventType: "behavior_report_confirmed",
+      category: "respect_safety" as const,
+      delta: -20,
+      severity: "severe" as const,
+      sourceType: "moderation",
+      sourceId: "mod-action-same",
+      dedupWindowHours: 24 * 365,
+    };
+
+    await recordAdjudicatedTrustEvent(db, ADMIN, input);
+    const second = await recordAdjudicatedTrustEvent(db, ADMIN, input);
+
+    assert.equal(second.skipped, true, "a retried ban must not charge the user twice");
+    assert.equal(second.skipReason, "dedup");
+    assert.equal(tables.trust_events.filter((e) => e.event_type === "behavior_report_confirmed").length, 1);
+  });
+});
+
+describe("Moderation → trust: reversing the sanction reverses the consequence", () => {
+  it("restoring an account lifts the ceiling the ban imposed", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    await recordAdjudicatedTrustEvent(db, ADMIN, {
+      userId: USER_A,
+      eventType: "behavior_report_confirmed",
+      category: "respect_safety",
+      delta: -20,
+      severity: "severe",
+      sourceType: "moderation",
+      sourceId: "mod-action-3",
+    });
+    assert.ok(tables.trust_caps.some((c) => c.user_id === USER_A && !c.lifted_at));
+
+    const out = await revokeModerationTrustConsequences(db, ADMIN, USER_A, "Account restored");
+
+    assert.ok(out.eventsDismissed >= 1);
+    assert.ok(out.capsLifted >= 1, "a behavior_confirmed ceiling has NO expiry — it must be lifted explicitly");
+    assert.equal(
+      tables.trust_caps.filter((c) => c.user_id === USER_A && !c.lifted_at).length, 0,
+      "no active cap may survive the reversal",
+    );
+    assert.ok(tables.trust_events.every((e) => e.user_id !== USER_A || e.status === "dismissed"));
+  });
+
+  it("reversal is scoped to moderation — an unrelated finding still stands", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    // A machine-detected GPS finding, on its own evidence.
+    tables.trust_events.push({
+      id: "ev-gps", user_id: USER_A, event_type: "fake_gps_confirmed",
+      category: "location_honesty", delta: -20, severity: "severe",
+      status: "confirmed", source_type: "gps",
+      created_at: new Date().toISOString(),
+    });
+
+    await recordAdjudicatedTrustEvent(db, ADMIN, {
+      userId: USER_A,
+      eventType: "behavior_report_confirmed",
+      category: "respect_safety",
+      delta: -20,
+      severity: "severe",
+      sourceType: "moderation",
+      sourceId: "mod-action-4",
+    });
+
+    await revokeModerationTrustConsequences(db, ADMIN, USER_A, "Account restored");
+
+    const gps = tables.trust_events.find((e) => e.id === "ev-gps");
+    assert.equal(gps.status, "confirmed", "un-banning must not clear an unrelated GPS finding");
+  });
+
+  it("reversing clears probation the finding set", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+
+    await recordAdjudicatedTrustEvent(db, ADMIN, {
+      userId: USER_A,
+      eventType: "behavior_report_confirmed",
+      category: "respect_safety",
+      delta: -20,
+      severity: "severe",
+      sourceType: "moderation",
+      sourceId: "mod-action-5",
+    });
+    await revokeModerationTrustConsequences(db, ADMIN, USER_A, "Appeal upheld");
+
+    const prof = tables.trust_profiles.find((p) => p.user_id === USER_A);
+    if (prof) assert.notEqual(prof.on_probation, true, "a reversed finding must not leave probation running");
   });
 });

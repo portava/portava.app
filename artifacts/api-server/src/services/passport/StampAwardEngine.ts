@@ -642,6 +642,35 @@ export async function revokeStamp(
     return { revoked: false, reason: `audit_write_failed: ${auditErr.message}` };
   }
 
+  // Charge the adjudicated finding: an admin has determined this stamp was not
+  // legitimately earned. STAMP_DISPUTED was declared in TRUST_EVENT_TYPES and
+  // emitted by nothing, so a revoked stamp cost its owner zero trust — while its
+  // positive sibling (STAMP_VERIFIED) was wired.
+  //
+  // Emitted here rather than in the route so every caller of revokeStamp is
+  // covered, and because row.user_id is only available at this level. Keyed on
+  // userStampId so one revocation charges once, and fire-and-forget so trust
+  // bookkeeping can never undo a completed revocation.
+  //
+  // Severity is moderate, so this applies immediately and imposes no ceiling —
+  // this is the one adjudicated event that needs no auto-confirm.
+  try {
+    const { recordAdjudicatedTrustEvent, TRUST_EVENT_TYPES } =
+      await import("../trust/TrustEventService.js");
+    const t = TRUST_EVENT_TYPES.STAMP_DISPUTED;
+    void recordAdjudicatedTrustEvent(sc, adminId, {
+      userId: row.user_id,
+      eventType: "stamp_disputed",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "moderation",
+      sourceId: userStampId,
+      dedupWindowHours: 24 * 365,
+      metadata: { userStampId, stampDefinitionId: row.stamp_definition_id, reason },
+    }).catch(() => {});
+  } catch { /* non-fatal */ }
+
   return { revoked: true, reason: "revoked" };
 }
 

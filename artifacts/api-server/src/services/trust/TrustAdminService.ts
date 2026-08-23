@@ -88,6 +88,72 @@ export async function confirmEvent(
   return { ok: true };
 }
 
+/**
+ * Reverse the trust consequences of moderation actions against a user.
+ *
+ * Called when a sanction is itself reversed — an account restored, an appeal
+ * upheld. Dismisses the moderation-sourced trust events, lifts the caps those
+ * events created, clears probation, and recalculates.
+ *
+ * WHY THIS HAD TO EXIST BEFORE THE EMITTERS. Confirming an event applies a cap,
+ * and `behavior_report_confirmed` writes a respect_safety ceiling of 40 with no
+ * expiry. Nothing lifted a cap by source event, so a reversed ban left that
+ * ceiling standing forever: the ban was undoable and its trust penalty was not.
+ * Wiring moderation to trust makes caps routine, which turns that gap from
+ * theoretical into load-bearing. So the reversal path ships first.
+ *
+ * Scoped to source_type='moderation' so it reverses only what a moderation
+ * action charged — a GPS finding or a gaming flag against the same user stands
+ * on its own evidence and is untouched.
+ *
+ * Never throws: an admin restoring an account must not be blocked by trust
+ * bookkeeping. Returns what it did so the caller can log it.
+ */
+export async function revokeModerationTrustConsequences(
+  db: SupabaseClient,
+  adminId: string,
+  userId: string,
+  reason: string,
+): Promise<{ eventsDismissed: number; capsLifted: number }> {
+  try {
+    const { data: events, error } = await db
+      .from("trust_events")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("source_type", "moderation")
+      .in("status", ["applied", "confirmed", "pending_review"]);
+    if (error) return { eventsDismissed: 0, capsLifted: 0 };
+
+    const ids = ((events as any[]) ?? []).map((e) => e.id).filter(Boolean);
+    if (ids.length === 0) return { eventsDismissed: 0, capsLifted: 0 };
+
+    const { liftCapsBySourceEvents } = await import("./TrustCapService.js");
+    const capsLifted = await liftCapsBySourceEvents(db, ids, adminId);
+
+    await db
+      .from("trust_events")
+      .update({ status: "dismissed", reviewed_by: adminId, reviewed_at: new Date().toISOString() })
+      .in("id", ids);
+
+    // A reversed finding must not leave the user on probation for it.
+    await setProbation(db, userId, false, null).catch(() => {});
+    await recalculateTrustScore(db, userId).catch(() => {});
+
+    // Logged as "lift_cap" rather than a more precise label because
+    // trust_admin_actions.action_type carries a CHECK constraint limited to nine
+    // values, and adding one would need a migration for an audit string. The
+    // metadata carries what actually happened.
+    await logAdminAction(
+      db, adminId, userId, "lift_cap", reason,
+      { op: "revoke_moderation_trust", eventsDismissed: ids.length, capsLifted },
+    ).catch(() => {});
+
+    return { eventsDismissed: ids.length, capsLifted };
+  } catch {
+    return { eventsDismissed: 0, capsLifted: 0 };
+  }
+}
+
 /** Dismiss a pending_review event → 'dismissed', recalc (no caps) */
 export async function dismissEvent(
   db: SupabaseClient,
