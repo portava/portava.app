@@ -131,7 +131,8 @@
     "test:fsq-photo-proxy": "node --import tsx/esm --test src/test/fsqPhotoProxy.test.ts",
     "test:local-guide-self-promotion": "node --import tsx/esm --env-file-if-exists=.env --test src/test/localGuideSelfPromotion.test.ts",
     "test:rbp-self-verification": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyProfileSelfVerification.test.ts",
-    "test:rba-self-approval": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyApplicationSelfApproval.test.ts"
+    "test:rba-self-approval": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyApplicationSelfApproval.test.ts",
+    "test:gem-self-publish": "node --import tsx/esm --env-file-if-exists=.env --test src/test/hiddenGemSelfPublish.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
