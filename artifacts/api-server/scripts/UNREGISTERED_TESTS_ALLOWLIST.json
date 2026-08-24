@@ -104,6 +104,7 @@
   "src/test/rentABuddySpecNoShow.test.ts",
   "src/test/rentABuddySpecRebook.test.ts",
   "src/test/rentABuddySpecRequest.test.ts",
+  "src/test/rentBuddyApplicationSelfApproval.test.ts",
   "src/test/rentBuddyProfileSelfVerification.test.ts",
   "src/test/rentaBuddyScanner.test.ts",
   "src/test/reportsHistory.test.ts",
