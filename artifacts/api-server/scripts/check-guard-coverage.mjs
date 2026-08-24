@@ -231,6 +231,17 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'to choose. Production is where its 114 broken images were found.',
   },
   {
+    file: 'src/scripts/checkAuthorizationContract.ts',
+    reason:
+      'The client-write authorization regression guard (check:authorization-contract). Reads the live ' +
+      'authorization state through the Management API with three SELECTs — ' +
+      'information_schema.role_table_grants, information_schema.column_privileges, and pg_policy joined to ' +
+      'pg_class/pg_namespace/pg_roles — and diffs them against the approved contract in ' +
+      'src/security/authorization-contract.json. It writes nothing and mutates nothing; auditing the live ' +
+      'grant/RLS boundary is its entire purpose, so a migration that reopens one of the 2144-2154 holes ' +
+      'fails CI. The pure model/evaluator live in src/security/authorizationContract.ts (no DB contact).',
+  },
+  {
     file: 'src/scripts/checkWritePathColumns.ts',
     reason:
       'Named for what it READS, not what it does: it extracts insert/upsert/update call sites from the ' +
