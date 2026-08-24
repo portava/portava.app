@@ -139,8 +139,12 @@ before(async () => {
   // Two guide rows, created through the service role exactly as applyForGuide does.
   const { error } = await sc.from(TABLE).upsert(
     [
-      { user_id: guideId, guide_level: 0, accuracy_score: 0, helpful_votes: 0, status: "applicant", bio: "before" },
-      { user_id: otherId, guide_level: 3, accuracy_score: 0.5, status: "active", bio: "theirs" },
+      // Identical key sets on both rows. In a batch upsert PostgREST builds one
+      // column list from the union of keys and sends explicit NULL for any key a
+      // row omits — so a column with a default (helpful_votes) still receives
+      // NULL and trips its NOT NULL constraint. Every row lists every column.
+      { user_id: guideId, guide_level: 0, accuracy_score: 0, helpful_votes: 0, contribution_count: 0, status: "applicant", bio: "before" },
+      { user_id: otherId, guide_level: 3, accuracy_score: 0.5, helpful_votes: 0, contribution_count: 0, status: "active", bio: "theirs" },
     ],
     { onConflict: "user_id" },
   );

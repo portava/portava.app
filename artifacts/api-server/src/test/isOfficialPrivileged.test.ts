@@ -186,6 +186,10 @@ before(async () => {
   await purgeFixtureUsers(adminClient(), [
     `${PREFIX}plain@example.com`,
     `${PREFIX}official@example.com`,
+    // Created mid-test with finally-cleanup; they leak only when a run crashes
+    // before teardown, which is exactly the state that wedges the next run red.
+    `${PREFIX}normal@example.com`,
+    `${PREFIX}fresh@example.com`,
   ]);
 
   ({ id: plainId, token: plainToken } = await makeUser("plain"));
