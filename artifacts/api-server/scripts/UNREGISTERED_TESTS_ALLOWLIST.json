@@ -68,6 +68,7 @@
   "src/test/messagingOffApp.test.ts",
   "src/test/moderationReportImageUrl.test.ts",
   "src/test/ogMetaTags.test.ts",
+  "src/test/passportStampSelfVerification.test.ts",
   "src/test/passportStampsCountFallback.test.ts",
   "src/test/passportStampsPagination.test.ts",
   "src/test/placeCategories.test.ts",

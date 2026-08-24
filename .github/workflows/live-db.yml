@@ -699,7 +699,7 @@ jobs:
           pnpm install --frozen-lockfile
 
       # Each suite is its own step so a failure names the boundary it guards.
-      # All eight run even if an earlier one failed.
+      # All nine run even if an earlier one failed.
       - name: 'test:rls-hardening (RLS policies, anon + wrong-user reads)'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
@@ -755,6 +755,13 @@ jobs:
         run: |
           set -uo pipefail
           bash .github/scripts/run-live-suite.sh post-verify-boundary artifacts/api-server @workspace/api-server test:post-verify-boundary
+
+      - name: 'test:passport-stamp-verify (passport_stamps verification boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh passport-stamp-verify artifacts/api-server @workspace/api-server test:passport-stamp-verify
 
   # ───────────────────────────────────────────────────────────────────────────
   # THE VERDICT. A cancelled, skipped or failed job must not read as a pass.
