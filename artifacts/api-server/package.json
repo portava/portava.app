@@ -137,7 +137,8 @@
     "test:passport-stamp-verify": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportStampSelfVerification.test.ts",
     "test:passport-memory-verify": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportMemorySelfVerification.test.ts",
     "test:passport-postcard-verify": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportPostcardLocationVerification.test.ts",
-    "test:passport-postcard-status": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportPostcardStatusModeration.test.ts"
+    "test:passport-postcard-status": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportPostcardStatusModeration.test.ts",
+    "test:discovery-place-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/discoveryPlaceWriteBoundary.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
