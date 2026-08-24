@@ -78,6 +78,7 @@
   "src/test/portavaFeed.test.ts",
   "src/test/portavaRank.test.ts",
   "src/test/postHide.test.ts",
+  "src/test/postLocationVerificationBoundary.test.ts",
   "src/test/postSave.test.ts",
   "src/test/postSaves.test.ts",
   "src/test/postcards.test.ts",
