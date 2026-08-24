@@ -70,6 +70,7 @@
   "src/test/ogMetaTags.test.ts",
   "src/test/passportMemorySelfVerification.test.ts",
   "src/test/passportPostcardLocationVerification.test.ts",
+  "src/test/passportPostcardStatusModeration.test.ts",
   "src/test/passportStampSelfVerification.test.ts",
   "src/test/passportStampsCountFallback.test.ts",
   "src/test/passportStampsPagination.test.ts",
