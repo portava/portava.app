@@ -47,6 +47,7 @@
   "src/test/featured.test.ts",
   "src/test/geofenceAdminSettings.test.ts",
   "src/test/hiddenGemSelfPublish.test.ts",
+  "src/test/hiddenGemVisitTrustBoundary.test.ts",
   "src/test/intelligenceGraphScheduler.test.ts",
   "src/test/inviteLinkPreviewFull.test.ts",
   "src/test/inviteLinkRemovedFlag.test.ts",
