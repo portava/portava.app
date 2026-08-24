@@ -34,6 +34,7 @@
   "src/test/discoveryCommunityRequiredFields.test.ts",
   "src/test/discoveryCommunityStatusFilter.test.ts",
   "src/test/discoveryFeed.test.ts",
+  "src/test/discoveryPlaceWriteBoundary.test.ts",
   "src/test/discoveryPopularVsRating.test.ts",
   "src/test/discoverySearchIntelligence.test.ts",
   "src/test/discoverySuggest.test.ts",
