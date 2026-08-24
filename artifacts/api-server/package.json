@@ -144,7 +144,8 @@
     "test:rb-addon-approval": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyAddonApprovalBoundary.test.ts",
     "test:rb-package-review": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyPackageReviewBoundary.test.ts",
     "test:post-media-moderation": "node --import tsx/esm --env-file-if-exists=.env --test src/test/postMediaModerationBoundary.test.ts",
-    "test:geo-zone-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/geoZoneWriteBoundary.test.ts"
+    "test:geo-zone-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/geoZoneWriteBoundary.test.ts",
+    "test:portava-featured-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/portavaFeaturedWriteBoundary.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

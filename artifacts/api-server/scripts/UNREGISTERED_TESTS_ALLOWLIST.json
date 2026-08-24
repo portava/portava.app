@@ -86,6 +86,7 @@
   "src/test/portavaFeed.test.ts",
   "src/test/portavaRank.test.ts",
   "src/test/postHide.test.ts",
+  "src/test/portavaFeaturedWriteBoundary.test.ts",
   "src/test/postLocationVerificationBoundary.test.ts",
   "src/test/postMediaModerationBoundary.test.ts",
   "src/test/postSave.test.ts",
