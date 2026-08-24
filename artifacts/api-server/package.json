@@ -134,7 +134,8 @@
     "test:rba-self-approval": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyApplicationSelfApproval.test.ts",
     "test:gem-self-publish": "node --import tsx/esm --env-file-if-exists=.env --test src/test/hiddenGemSelfPublish.test.ts",
     "test:post-verify-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/postLocationVerificationBoundary.test.ts",
-    "test:passport-stamp-verify": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportStampSelfVerification.test.ts"
+    "test:passport-stamp-verify": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportStampSelfVerification.test.ts",
+    "test:passport-memory-verify": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportMemorySelfVerification.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
