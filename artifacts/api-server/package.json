@@ -139,7 +139,12 @@
     "test:passport-postcard-verify": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportPostcardLocationVerification.test.ts",
     "test:passport-postcard-status": "node --import tsx/esm --env-file-if-exists=.env --test src/test/passportPostcardStatusModeration.test.ts",
     "test:discovery-place-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/discoveryPlaceWriteBoundary.test.ts",
-    "test:hgv-trust-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/hiddenGemVisitTrustBoundary.test.ts"
+    "test:hgv-trust-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/hiddenGemVisitTrustBoundary.test.ts",
+    "test:buddy-service-approval": "node --import tsx/esm --env-file-if-exists=.env --test src/test/buddyServiceApprovalBoundary.test.ts",
+    "test:rb-addon-approval": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyAddonApprovalBoundary.test.ts",
+    "test:rb-package-review": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyPackageReviewBoundary.test.ts",
+    "test:post-media-moderation": "node --import tsx/esm --env-file-if-exists=.env --test src/test/postMediaModerationBoundary.test.ts",
+    "test:geo-zone-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/geoZoneWriteBoundary.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
