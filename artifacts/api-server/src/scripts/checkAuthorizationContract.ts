@@ -64,14 +64,21 @@ async function main(): Promise<void> {
       where table_schema='public' and table_name in (${tableList})
         and grantee in ('anon','authenticated') and privilege_type in ('INSERT','UPDATE')`,
   );
-  const polRows = await liveQuery<PolicyRow>(
+  // NOTE: the Management API returns array columns as Postgres array-literal
+  // strings ('{public}'), not JSON arrays. Return roles as a plain comma-joined
+  // string via string_agg and split it here, so we never iterate string chars.
+  const polRaw = await liveQuery<Omit<PolicyRow, "roles"> & { roles: string }>(
     `select c.relname as table_name, p.polname as name,
             case p.polcmd when 'r' then 'SELECT' when 'a' then 'INSERT' when 'w' then 'UPDATE' when 'd' then 'DELETE' when '*' then 'ALL' end as cmd,
             p.polpermissive as permissive,
-            coalesce((select array_agg(rolname order by rolname) from pg_roles where oid = any(p.polroles)), array['public']) as roles
+            coalesce((select string_agg(rolname, ',' order by rolname) from pg_roles where oid = any(p.polroles)), 'public') as roles
        from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace
       where n.nspname='public' and c.relname in (${tableList})`,
   );
+  const polRows: PolicyRow[] = polRaw.map((r) => ({
+    ...r,
+    roles: String(r.roles).split(",").map((s) => s.trim()).filter(Boolean),
+  }));
 
   const violations = evaluateContract(contract, grantRows, colRows, polRows);
   if (violations.length) {
