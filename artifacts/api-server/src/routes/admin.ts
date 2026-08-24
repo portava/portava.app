@@ -31,6 +31,8 @@ import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwner, type ModerationMetadata } from "../lib/contentOwner.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { recordAdjudicatedTrustEvent, TRUST_EVENT_TYPES } from "../services/trust/TrustEventService.js";
+import { revokeModerationTrustConsequences } from "../services/trust/TrustAdminService.js";
 
 const router = Router();
 
@@ -1018,8 +1020,11 @@ async function logModerationAction(
   actionType: string,
   reason: string | null,
   metadata?: ModerationMetadata,
-): Promise<{ ok: boolean; error?: string }> {
-  const { error } = await sc.from("moderation_actions").insert({
+): Promise<{ ok: boolean; error?: string; id?: string }> {
+  // The row id is returned so an adjudicated trust charge can be keyed on it.
+  // Without a stable key, a retried ban or a double-clicked Remove would charge
+  // the user twice for one finding.
+  const { data, error } = await sc.from("moderation_actions").insert({
     target_user_id: targetUserId,
     action_type: actionType,
     reason: reason ?? null,
@@ -1028,9 +1033,9 @@ async function logModerationAction(
     // metadata jsonb (0164) — the only place the content item and the
     // originating report can be recorded; there are no columns for either.
     ...(metadata ? { metadata } : {}),
-  });
+  }).select("id").maybeSingle();
   if (error) return { ok: false, error: error.message };
-  return { ok: true };
+  return { ok: true, id: (data as any)?.id ?? undefined };
 }
 
 /**
@@ -1399,6 +1404,25 @@ router.post("/admin/users/:userId/suspend", async (req, res) => {
   const auditR = await logModerationAction(sc, userId, adminUserId, "temporary_suspension", reason);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
+  // Charge the adjudicated finding to the trust engine. A confirmed suspension cost
+  // the user ZERO trust before this: every moderation route wrote its audit row
+  // and stopped. Keyed on the audit row id so one adjudication charges once.
+  // Fire-and-forget — moderation must not fail because trust bookkeeping did.
+  if (auditR.id) {
+    const t = TRUST_EVENT_TYPES.BEHAVIOR_REPORT_CONFIRMED;
+    void recordAdjudicatedTrustEvent(sc, adminUserId, {
+      userId,
+      eventType: "behavior_report_confirmed",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "moderation",
+      sourceId: auditR.id,
+      dedupWindowHours: 24 * 365,
+      metadata: { actionType: "temporary_suspension", reason: reason ?? null },
+    }).catch(() => {});
+  }
+
   const { error: profileErr } = await sc
     .from("profiles")
     .update({ account_status: "suspended" })
@@ -1426,6 +1450,25 @@ router.post("/admin/users/:userId/ban", async (req, res) => {
   const auditR = await logModerationAction(sc, userId, adminUserId, "permanent_ban", reason);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
+  // Charge the adjudicated finding to the trust engine. A confirmed ban cost
+  // the user ZERO trust before this: every moderation route wrote its audit row
+  // and stopped. Keyed on the audit row id so one adjudication charges once.
+  // Fire-and-forget — moderation must not fail because trust bookkeeping did.
+  if (auditR.id) {
+    const t = TRUST_EVENT_TYPES.BEHAVIOR_REPORT_CONFIRMED;
+    void recordAdjudicatedTrustEvent(sc, adminUserId, {
+      userId,
+      eventType: "behavior_report_confirmed",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "moderation",
+      sourceId: auditR.id,
+      dedupWindowHours: 24 * 365,
+      metadata: { actionType: "permanent_ban", reason: reason ?? null },
+    }).catch(() => {});
+  }
+
   const { error: profileErr } = await sc
     .from("profiles")
     .update({ account_status: "banned" })
@@ -1452,6 +1495,16 @@ router.post("/admin/users/:userId/restore", async (req, res) => {
   // Audit first (fail-closed)
   const auditR = await logModerationAction(sc, userId, adminUserId, "account_restored", reason);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
+
+  // Reverse the trust consequences of the sanction being lifted. This is the
+  // half that had to exist BEFORE the charges above: confirming a
+  // behavior_report_confirmed event writes a respect_safety ceiling of 40 with
+  // NO expiry, and nothing lifted a cap by source event — so a reversed ban
+  // would have left that ceiling standing permanently. Scoped to
+  // source_type='moderation', so an unrelated GPS or gaming finding still
+  // stands on its own evidence.
+  void revokeModerationTrustConsequences(sc, adminUserId, userId, reason ?? "Account restored")
+    .catch(() => {});
 
   const { error: profileErr } = await sc
     .from("profiles")

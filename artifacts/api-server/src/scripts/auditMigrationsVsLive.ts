@@ -172,6 +172,35 @@ const SKIP_FILES = new Set([
  * "view:name".
  */
 const ALLOWLIST = new Set([
+  // 2130_intel_storage.sql creates intel_append_only_stmt(), and
+  // 2137_intel_stmt_trigger_removal.sql DROPS it. The drop was deliberate: the
+  // statement-level trigger fired on zero-row cascades and broke the live-DB RLS
+  // suite's purgeFixtures, which had passed for weeks. The auditor reads each
+  // migration's claimed objects independently, so it cannot see that a later
+  // migration removed this one — hence an entry here rather than skipping all of
+  // 2130, whose other claimed objects must still be verified.
+  //
+  // The ROW-level intel_append_only() guard that actually enforces append-only is
+  // untouched and still audited; only the statement-level variant is gone.
+  "function:intel_append_only_stmt",
+  // 0035_plan_geofences.sql claims a single broad policy, FOR ALL, granting any
+  // trip member full control. Live CI instead carries the four granular policies
+  // from reconciliation-staging/2100_plan_geofences_policy_convergence.sql
+  // (select/insert/update restricted to ACCEPTED members, delete to the owner),
+  // which is strictly tighter. Allowlisted because live is deliberately not what
+  // 0035 says — the auditor's own contract for this list.
+  //
+  // RESOLVED 2026-08-23 by migration 2143_plan_geofences_policy_convergence.sql.
+  // Production and CI now carry the identical four-policy family — verified by
+  // md5 fingerprint over every polqual/polwithcheck on both (54638f2c…). Before
+  // that, three disjoint families existed and production was LOOSER on DELETE:
+  // its pgf_delete_accepted permitted `owner OR member with role='member'`,
+  // where CI permitted the trip owner alone.
+  //
+  // This entry stays regardless, because 0035 still CLAIMS the superseded broad
+  // policy and the auditor reads each migration's claims independently. It is
+  // removable only if 0035 itself is rewritten.
+  "policy:plan_geofences.trip_members_manage_geofences",
   "column:feature_flags.key", // live column is `flag`
   "column:highlights.user_id", // live column is `owner_id`
   "column:highlight_replies.user_id", // live column is `replier_id`

@@ -90,6 +90,43 @@ export async function expireOldCaps(db: SupabaseClient): Promise<number> {
   }
 }
 
+/**
+ * Lift every active cap that originated from one of `sourceEventIds`.
+ *
+ * This is the reversal half of applyEventCaps, and it did not exist. Caps are
+ * how a serious finding actually bites — the ceiling, not the delta, is what
+ * survives a long good history — and `behavior_report_confirmed` writes a
+ * respect_safety ceiling of 40 with NO expiry. So before this, un-banning a user
+ * left that ceiling standing permanently: the sanction was reversible and its
+ * trust consequence was not.
+ *
+ * Keyed on source_event_id rather than on the user, so lifting the consequence
+ * of ONE reversed finding cannot silently clear an unrelated one that still
+ * stands.
+ *
+ * Returns the number of caps lifted. Never throws — a reversal must not fail
+ * because its bookkeeping did.
+ */
+export async function liftCapsBySourceEvents(
+  db: SupabaseClient,
+  sourceEventIds: readonly string[],
+  liftedBy: string,
+): Promise<number> {
+  if (sourceEventIds.length === 0) return 0;
+  try {
+    const { data, error } = await db
+      .from("trust_caps")
+      .update({ lifted_at: new Date().toISOString(), lifted_by: liftedBy })
+      .in("source_event_id", sourceEventIds as string[])
+      .is("lifted_at", null)
+      .select("id");
+    if (error) return 0;
+    return (data as any[])?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** Get all active caps for a user */
 export async function getActiveCaps(
   db: SupabaseClient,

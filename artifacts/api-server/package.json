@@ -128,7 +128,8 @@
     "test:media-file-width-transform": "node --import tsx/esm --test src/test/mediaFileWidthTransform.test.ts",
     "test:media-file-quality-transform": "node --import tsx/esm --test src/test/mediaFileQualityTransform.test.ts",
     "test:media-sign-batch-transform": "node --import tsx/esm --test src/test/mediaSignBatchTransform.test.ts",
-    "test:fsq-photo-proxy": "node --import tsx/esm --test src/test/fsqPhotoProxy.test.ts"
+    "test:fsq-photo-proxy": "node --import tsx/esm --test src/test/fsqPhotoProxy.test.ts",
+    "test:local-guide-self-promotion": "node --import tsx/esm --env-file-if-exists=.env --test src/test/localGuideSelfPromotion.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

@@ -52,6 +52,7 @@
   "src/test/inviteSlotSweeper.test.ts",
   "src/test/isOfficialPrivileged.test.ts",
   "src/test/livePulse.test.ts",
+  "src/test/localGuideSelfPromotion.test.ts",
   "src/test/mapCommands.test.ts",
   "src/test/mapSearchLib.test.ts",
   "src/test/mapSearchRoutes.test.ts",

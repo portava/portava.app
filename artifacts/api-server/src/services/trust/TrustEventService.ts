@@ -287,6 +287,66 @@ export async function recordLocationTrustEvent(
   }).catch(() => {/* non-fatal */});
 }
 
+/**
+ * Record a trust event for a finding a human admin has ALREADY adjudicated, and
+ * confirm it in the same request, attributed to that admin.
+ *
+ * ── WHY THIS EXISTS, AND WHY IT IS NOT A CHANGE TO recordTrustEvent ─────────
+ * recordTrustEvent routes serious/severe to 'pending_review', which the scorer
+ * excludes — deliberately, because those events normally come from MACHINE
+ * findings (GPS confidence, the gaming detector) where the premise is that
+ * nobody has looked yet. On an admin moderation path someone has: the ban or the
+ * content removal IS the finding, already written to moderation_actions.
+ *
+ * Leaving those events queued would ask a second admin to re-adjudicate a
+ * decision rather than review evidence — and nothing would prompt them to, since
+ * recordTrustEvent writes no trust_reviews row. So the queue is collapsed HERE,
+ * at the call site, and recordTrustEvent's routing is left exactly as it is. An
+ * unattended severe event must still queue.
+ *
+ * ── WHY NOT JUST LOWER THE SEVERITY ────────────────────────────────────────
+ * Because severity is a ROUTE, not a magnitude. It decides pending_review vs
+ * applied AND whether applyEventCaps ever runs. Emitting a ban as 'moderate'
+ * would apply its -20 immediately and forfeit the respect_safety ceiling and the
+ * 30-day probation — and the repo's own test proves the delta alone barely moves
+ * a well-regarded account (ten +3 events against one -20 still lands above
+ * neutral). That would look wired while doing almost nothing, which is worse
+ * than being visibly unwired.
+ *
+ * ── SAFETY PROPERTIES ──────────────────────────────────────────────────────
+ * - Only ever called for ADJUDICATED actions. A dismissed report, an unverify,
+ *   or a host muting a guest in their own room must never reach this — that is
+ *   the same rule that keeps reportGem free of consequence.
+ * - `sourceId` should be the moderation_actions row id, so one adjudication
+ *   charges once no matter how many times the admin clicks.
+ * - Confirmation failure is NON-FATAL: the event stays recorded and queued, so a
+ *   transient error delays the penalty rather than losing the finding.
+ * - The reversal path (TrustAdminService.revokeModerationTrustConsequences)
+ *   exists BEFORE this does, because confirming applies caps and a
+ *   behavior_report_confirmed ceiling has no expiry.
+ */
+export async function recordAdjudicatedTrustEvent(
+  db: SupabaseClient,
+  adminId: string,
+  input: TrustEventInput,
+  reason = "Adjudicated by admin moderation action",
+): Promise<RecordEventResult & { confirmed?: boolean }> {
+  const result = await recordTrustEvent(db, { ...input, sourceType: input.sourceType ?? "moderation" });
+  if (!result.ok || !result.eventId) return result;
+
+  // Only serious/severe land in pending_review; minor/moderate are already applied.
+  if (!result.pendingReview) return { ...result, confirmed: true };
+
+  try {
+    const { confirmEvent } = await import("./TrustAdminService.js");
+    await confirmEvent(db, adminId, result.eventId, reason);
+    return { ...result, confirmed: true };
+  } catch {
+    // Degrades to the queue rather than losing the event.
+    return { ...result, confirmed: false };
+  }
+}
+
 /** All event types by source system */
 export const TRUST_EVENT_TYPES = {
   // Plans

@@ -31,7 +31,8 @@ import { notifyBookingParty } from "../lib/bookingNotify.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 import {
   AWAITING_BUDDY_STATUSES, ACCEPTED_STATUSES, UPCOMING_STATUSES,
-  CANCELLABLE_STATUSES, CHANGE_ALLOWED_STATUSES,
+  CANCELLABLE_STATUSES, CHANGE_ALLOWED_STATUSES, THREAD_ALLOWED_STATUSES,
+  isOneOf,
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
@@ -2182,22 +2183,31 @@ router.post("/rent-a-buddy/bookings/:bookingId/thread", async (req, res) => {
     return res.status(403).json({ error: "forbidden" });
   }
 
-  // Enforce lifecycle: thread may only be created once the booking is confirmed or later.
-  // Pending and cancelled bookings have no chat thread yet.
-  const threadAllowedStatuses = ["confirmed", "scheduled", "in_progress", "completed", "disputed"];
-  if (!threadAllowedStatuses.includes((booking as any).status)) {
-    return res.status(409).json({
-      error: "thread_not_available",
-      message: "The chat thread opens once the Buddy confirms the booking.",
-    });
-  }
-
-  // If a thread already exists, return it
+  // An existing thread is returned BEFORE the lifecycle guard.
+  //
+  // These two blocks used to be the other way round, so a booking whose thread
+  // already existed still had to satisfy the guard — and 409'd if its status had
+  // moved on. Accept auto-creates the thread, so that was the common path: the
+  // parties would be told "the chat thread opens once the Buddy confirms" about a
+  // thread they were already using. Fetching something that exists cannot depend
+  // on whether you would be allowed to create it now.
   if ((booking as any).telegraph_thread_id) {
     return res.json({
       threadId: (booking as any).telegraph_thread_id,
       bookingId,
       isNew: false,
+    });
+  }
+
+  // Lifecycle guard for CREATING a thread. Widened via the shared set: the inline
+  // list omitted completed_pending_traveler_confirmation and no_show_pending,
+  // both of which the code writes and both of which are moments the parties most
+  // need to talk. This path is now only reached when the auto-create at accept
+  // failed, so refusing it there left them with no recovery at all.
+  if (!isOneOf(THREAD_ALLOWED_STATUSES, (booking as any).status)) {
+    return res.status(409).json({
+      error: "thread_not_available",
+      message: "The chat thread opens once the Buddy accepts the booking.",
     });
   }
 
@@ -2963,9 +2973,29 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/checkin", async (req, res)
 
   const distressResponses = ["uncomfortable", "end_early", "contact_support", "start_safe_return"];
   if (distressResponses.includes(checkinResponse ?? "") || distressResponses.includes(checkinType)) {
+    // target_user_id is what the repeat-abuse scanner counts by
+    // (run-risk-scan skips every row whose target is falsy), so without it the
+    // `repeated_distress_checkins` threshold could never fire. The target is the
+    // COUNTER-PARTY: the person raising distress is not the subject of it.
+    //
+    // EXCEPT for an "end_early" signal, which stays untargeted for the same
+    // reason the end-early endpoint does — finishing early is ambiguous
+    // (illness, weather, a changed schedule) and naming the other party would
+    // manufacture an accusation out of a often-blameless event. Better an
+    // uncounted signal than a wrong one.
+    //
+    // buddyUserId is the EMPTY STRING when the buddy profile is missing, and the
+    // column is an FK to profiles.id, so it is coerced to null rather than "".
+    const ambiguousEndEarly =
+      checkinResponse === "end_early" || checkinType === "end_early";
+    const counterparty = party.isBuddy
+      ? ((booking as any).traveler_id as string | null)
+      : (party.buddyUserId || null);
+
     await serviceClient.from("rent_buddy_safety_events").insert({
       booking_id: bookingId,
       actor_user_id: auth.user.id,
+      target_user_id: ambiguousEndEarly ? null : (counterparty ?? null),
       event_type: "comfort_check_distress",
       event_status: "open",
       metadata: { checkin_type: checkinType, response: checkinResponse },
@@ -3130,9 +3160,11 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", async (
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
+  // buddy_id is selected so the safety event below can name a target. It is a
+  // rent_buddy_profiles id, NOT a user id, so it needs resolving.
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("traveler_id")
+    .select("traveler_id, buddy_id")
     .eq("id", bookingId)
     .maybeSingle();
   if (!booking) return res.status(404).json({ error: "not_found" });
@@ -3142,9 +3174,30 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", async (
     return res.status(403).json({ error: "forbidden" });
   }
 
+  // This is the highest-consequence threshold in the risk scan (2 events in 30
+  // days -> under_review), and it could never fire: the event was written with
+  // no target_user_id, and the scan counts strictly by that column.
+  //
+  // The endpoint is traveller-only, so the target is unambiguously the buddy —
+  // no judgement call, unlike the end-early case. Resolved through
+  // rent_buddy_profiles because buddy_id is a profile id; coerced to null rather
+  // than "" because target_user_id is an FK to profiles.id.
+  let emergencyTargetUserId: string | null = null;
+  try {
+    const { data: bp } = await serviceClient
+      .from("rent_buddy_profiles")
+      .select("user_id")
+      .eq("id", (booking as any).buddy_id)
+      .maybeSingle();
+    emergencyTargetUserId = ((bp as any)?.user_id as string | undefined) || null;
+  } catch {
+    /* non-fatal — an unattributed event still records that this happened */
+  }
+
   await serviceClient.from("rent_buddy_safety_events").insert({
     booking_id: bookingId,
     actor_user_id: auth.user.id,
+    target_user_id: emergencyTargetUserId,
     event_type: "emergency_phrase_triggered",
     event_status: "open",
     metadata: { phrase: "I need to check my passport" },

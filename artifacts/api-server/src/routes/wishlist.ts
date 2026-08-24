@@ -56,7 +56,15 @@ export async function trackOsmPlaceSave(
         place_type: placeType ?? "place",
         category,
         source:     "osm",
-        ...(await provenanceStamp(svc, "osm")),
+
+        // Written as an explicit key rather than `...(await provenanceStamp(…))`.
+        // The spread made this payload statically unresolvable, so
+        // check:write-path-columns could not verify ANY column here against the
+        // live schema — the site was a blind spot, and the check fails on new
+        // blind spots by design. provenanceStamp can only ever contribute
+        // source_id ({ source_id } or {}), and source_id is nullable with no
+        // default, so writing NULL is equivalent to omitting the key.
+        source_id:  (await provenanceStamp(svc, "osm")).source_id ?? null,
         status:     "active",
         saved_count: 0,
         lat,

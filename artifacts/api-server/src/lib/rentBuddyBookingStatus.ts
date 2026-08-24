@@ -70,6 +70,30 @@ export const CHANGE_ALLOWED_STATUSES = [...UPCOMING_STATUSES] as const;
  */
 export const ADDON_ALLOWED_STATUSES = [...UPCOMING_STATUSES] as const;
 
+/**
+ * States in which a booking may have its chat thread OPENED.
+ *
+ * Previously an inline ["confirmed","scheduled","in_progress","completed","disputed"],
+ * which omitted two statuses the code actually writes:
+ * completed_pending_traveler_confirmation (the buddy has marked the session
+ * complete) and no_show_pending (a no-show is reported and in its grace period).
+ * Those are precisely the moments the two parties most need to talk, and the
+ * guard refused them.
+ *
+ * "confirmed" is carried only for legacy rows — no route writes it. Cancelled,
+ * declined and expired are deliberately absent: an existing thread is still
+ * returned for those (the caller checks for one BEFORE this guard), but no new
+ * thread is minted for a booking that was never accepted.
+ */
+export const THREAD_ALLOWED_STATUSES = [
+  ...ACCEPTED_STATUSES,
+  "in_progress",
+  "completed_pending_traveler_confirmation",
+  "completed",
+  "no_show_pending",
+  "disputed",
+] as const;
+
 /** Convenience for `.includes()` against a value typed as plain string. */
 export function isOneOf(statuses: readonly string[], status: unknown): boolean {
   return typeof status === "string" && statuses.includes(status);
