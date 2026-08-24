@@ -132,7 +132,8 @@
     "test:local-guide-self-promotion": "node --import tsx/esm --env-file-if-exists=.env --test src/test/localGuideSelfPromotion.test.ts",
     "test:rbp-self-verification": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyProfileSelfVerification.test.ts",
     "test:rba-self-approval": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyApplicationSelfApproval.test.ts",
-    "test:gem-self-publish": "node --import tsx/esm --env-file-if-exists=.env --test src/test/hiddenGemSelfPublish.test.ts"
+    "test:gem-self-publish": "node --import tsx/esm --env-file-if-exists=.env --test src/test/hiddenGemSelfPublish.test.ts",
+    "test:post-verify-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/postLocationVerificationBoundary.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
