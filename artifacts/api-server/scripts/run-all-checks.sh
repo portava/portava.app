@@ -137,6 +137,11 @@ run_check "check:not-null-writes" pnpm run check:not-null-writes
 run_check "check:test-runner-flags" pnpm run check:test-runner-flags
 run_check "check:write-path-columns" pnpm run check:write-path-columns
 run_check "check:missing-live-columns" pnpm run check:missing-live-columns
+# check:authorization-contract — the client-write authorization regression guard:
+# fails when a migration restores broad anon/authenticated mutation privileges,
+# exposes a server-derived column to client writes, or adds an unapproved RLS
+# policy on a protected table (2144-2154). Reads the live CI DB via the Mgmt API.
+run_check "check:authorization-contract" pnpm run check:authorization-contract
 # check:media-objects — WIRED 2026-08-10, and the delay was the point.
 #
 # It reconciles post_media rows against actual Storage objects, which is the one

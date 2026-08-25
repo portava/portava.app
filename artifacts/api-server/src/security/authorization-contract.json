@@ -1,0 +1,206 @@
+{
+  "$doc": "APPROVED client-write authorization boundary for protected tables. Enforced in CI by check:authorization-contract (src/scripts/checkAuthorizationContract.ts) against the live CI database. A migration that broadens anon/authenticated mutation privileges, exposes a server-derived column to client writes, or adds/changes an RLS policy on one of these tables will FAIL CI until this contract is updated in the same PR (an intentional, reviewed change). See migrations 2144-2154.",
+  "$invariants": [
+    "1. client table-level grants (anon/authenticated) must EQUAL the approved set (SELECT-only or narrower) — no restored INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER.",
+    "2. client column INSERT/UPDATE grants must EQUAL the approved allowlist — a server-derived verification/provenance column must never become client-writable.",
+    "3. the RLS policy set (name+cmd+roles+permissive) must EQUAL the approved set — a new permissive policy fails until added here."
+  ],
+  "tables": {
+    "local_guide_profiles": {
+      "note": "2144 — guide self-promotion. bio/city_expertise client-editable; guide_level/accuracy_score/status/verified server-owned.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": {},
+      "updateCols": { "authenticated": ["bio", "city_expertise"] },
+      "policies": [
+        { "name": "lgp_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
+        { "name": "lgp_own_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "lgp_own_update", "cmd": "UPDATE", "permissive": true, "roles": ["authenticated"] },
+        { "name": "lgp_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "rent_buddy_profiles": {
+      "note": "2145 — buddy self-verification. profile/pricing/scheduling editable; verification/status/approval server-owned.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": {},
+      "updateCols": { "authenticated": ["arrival_rate_usd","availability_blocks","available_now","available_now_until","bio","buffer_minutes","cover_photo_url","display_name","energy_type","full_day_rate_usd","gallery_urls","half_day_rate_usd","hourly_rate_usd","intro_video_url","languages","max_bookings_per_day","max_group_size","meetup_base_lat","meetup_base_lng","min_notice_hours","nightlife_rate_usd","preferred_meetup_zones","tagline","vibe_tags"] },
+      "policies": [
+        { "name": "rb_profiles_own", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "rb_profiles_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "rb_profiles_svc", "cmd": "ALL", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "rent_buddy_applications": {
+      "note": "2146 — buddy application self-approval. SELECT-only for clients; all writes service-role.",
+      "tableGrants": { "authenticated": ["SELECT"] },
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "rb_apps_own", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "rb_apps_svc", "cmd": "ALL", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "hidden_gems": {
+      "note": "2147 — gem self-publish. 10 content fields editable; status/verification/moderation server-owned.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": {},
+      "updateCols": { "authenticated": ["best_time_to_go","description","layover_safe","local_etiquette","minimum_layover_minutes","name","price_range","safety_notes","sensitivity_level","vibe_tags"] },
+      "policies": [
+        { "name": "hidden_gems_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
+        { "name": "hidden_gems_owner_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "hidden_gems_owner_update", "cmd": "UPDATE", "permissive": true, "roles": ["public"] },
+        { "name": "hidden_gems_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "posts": {
+      "note": "2148 — location-verification forgery. SELECT-only for clients; all writes service-role.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "posts_delete", "cmd": "DELETE", "permissive": true, "roles": ["authenticated"] },
+        { "name": "posts_insert", "cmd": "INSERT", "permissive": true, "roles": ["authenticated"] },
+        { "name": "posts_select", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "posts_select_policy", "cmd": "SELECT", "permissive": true, "roles": ["authenticated"] },
+        { "name": "posts_update", "cmd": "UPDATE", "permissive": true, "roles": ["authenticated"] }
+      ]
+    },
+    "passport_stamps": {
+      "note": "2149 — stamp self-verification. content editable; verification_level/source_type/catalog_id/artwork_override server-owned. user_id INSERT-only.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": { "authenticated": ["city","country","neighborhood","place_id","plan_id","stamp_type","trip_id","user_id","visibility"] },
+      "updateCols": { "authenticated": ["city","country","neighborhood","place_id","plan_id","stamp_type","trip_id","visibility"] },
+      "policies": [
+        { "name": "passport_stamps_own", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "passport_stamps_owner_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "passport_stamps_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "passport_stamps_service", "cmd": "ALL", "permissive": true, "roles": ["service_role"] },
+        { "name": "passport_stamps_service_write", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "users_insert_own_stamp", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
+        { "name": "users_view_own_stamps", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "passport_memories": {
+      "note": "2150 — memory self-verification. content + status(accept/dismiss) + visibility editable; verification_level + provenance server-owned. user_id INSERT-only.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": { "authenticated": ["body","category","city","country","description","media_type","neighborhood","photo_url","status","title","user_id","visibility"] },
+      "updateCols": { "authenticated": ["body","category","city","country","description","media_type","neighborhood","photo_url","status","title","visibility"] },
+      "policies": [
+        { "name": "passport_memories_own", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "passport_memories_owner_all", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "passport_memories_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "passport_memories_service", "cmd": "ALL", "permissive": true, "roles": ["service_role"] },
+        { "name": "passport_memories_service_write", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "users_manage_own_memories", "cmd": "ALL", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "passport_postcards": {
+      "note": "2151+2152 — location-verification forgery + moderation-status bypass. content editable; location_verified/verification_method/verified_*/stamp_*/status server-owned. post_id+user_id INSERT-only.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": { "authenticated": ["caption","location_city","location_country","location_name","media_url","note","pinned_at","post_id","user_id","visibility"] },
+      "updateCols": { "authenticated": ["caption","location_city","location_country","location_name","media_url","note","pinned_at","visibility"] },
+      "policies": [
+        { "name": "postcards_delete", "cmd": "DELETE", "permissive": true, "roles": ["authenticated"] },
+        { "name": "postcards_insert", "cmd": "INSERT", "permissive": true, "roles": ["authenticated"] },
+        { "name": "postcards_select", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "postcards_update", "cmd": "UPDATE", "permissive": true, "roles": ["authenticated"] }
+      ]
+    },
+    "discovery_places": {
+      "note": "2153 — INSERT forge + submitter impersonation. SELECT-only for clients; all writes service-role.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "discovery_places_auth_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
+        { "name": "discovery_places_own_delete", "cmd": "DELETE", "permissive": true, "roles": ["public"] },
+        { "name": "discovery_places_own_update", "cmd": "UPDATE", "permissive": true, "roles": ["public"] },
+        { "name": "discovery_places_owner_delete", "cmd": "DELETE", "permissive": true, "roles": ["public"] },
+        { "name": "discovery_places_owner_update", "cmd": "UPDATE", "permissive": true, "roles": ["public"] },
+        { "name": "discovery_places_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "discovery_places_service", "cmd": "ALL", "permissive": true, "roles": ["service_role"] }
+      ]
+    },
+    "hidden_gem_visits": {
+      "note": "2154 — trust_level verification forge. manual self-visit content editable (INSERT); trust_level/is_suspicious/distance_m server-owned. No client UPDATE. anon has no grant.",
+      "tableGrants": { "authenticated": ["SELECT"] },
+      "insertCols": { "authenticated": ["gem_id","latitude","longitude","user_id","visited_at"] },
+      "updateCols": {},
+      "policies": [
+        { "name": "hgvis_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
+        { "name": "hgvis_own_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "buddy_services": {
+      "note": "2155 — buddy service self-approval. content/pricing editable; approved/approved_at server-owned.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": { "authenticated": ["buddy_id","category","description","full_day_usd","half_day_usd","hourly_rate_usd","is_active","max_group_size","max_hours","min_hours","title"] },
+      "updateCols": { "authenticated": ["category","description","full_day_usd","half_day_usd","hourly_rate_usd","is_active","max_group_size","max_hours","min_hours","title"] },
+      "policies": [
+        { "name": "bs_own_write", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "bs_svc", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "bs_own_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "bs_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "rent_buddy_addons": {
+      "note": "2156 — buddy add-on admin-override. content editable; admin_approved/requires_admin_approval server-owned.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": { "authenticated": ["buddy_id","category","description","is_active","price_usd","title"] },
+      "updateCols": { "authenticated": ["category","description","is_active","price_usd","title"] },
+      "policies": [
+        { "name": "rb_addon_own", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "rb_addon_svc", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "rb_addon_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "rent_buddy_packages": {
+      "note": "2157 — buddy package self-review. content editable; admin_review_status/admin_reviewed_by/admin_reviewed_at server-owned.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": { "authenticated": ["addon_ids","base_price","buddy_id","category","city","deposit_percent","deposit_required","description","duration_h","included_services","included_stops","is_active","max_group","meetup_rules","payment_modes_allowed","price_usd","stops","title"] },
+      "updateCols": { "authenticated": ["addon_ids","base_price","category","city","deposit_percent","deposit_required","description","duration_h","included_services","included_stops","is_active","max_group","meetup_rules","payment_modes_allowed","price_usd","stops","title"] },
+      "policies": [
+        { "name": "rb_pkg_own", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "rb_pkg_svc", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "rb_pkg_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "post_media": {
+      "note": "2158 — media self-moderation. descriptor cols (urls/dimensions/sort) editable; moderation_status/processing_status/phash/dedup_processed/canonical_place_id/feed_*/stamp_overlay server-owned. post_id+user_id INSERT-only.",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": { "authenticated": ["duration_seconds","file_size_bytes","height","media_type","mime_type","post_id","public_url","sort_order","storage_bucket","storage_path","thumbnail_storage_path","thumbnail_url","user_id","width"] },
+      "updateCols": { "authenticated": ["duration_seconds","file_size_bytes","height","media_type","mime_type","public_url","sort_order","storage_bucket","storage_path","thumbnail_storage_path","thumbnail_url","width"] },
+      "policies": [
+        { "name": "post_media_owner_write", "cmd": "ALL", "permissive": true, "roles": ["public"] },
+        { "name": "post_media_public_select", "cmd": "SELECT", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "geo_zones": {
+      "note": "2159 — verified/featured forge + created_by impersonation + system-zone edit. SELECT-only for clients; all writes service-role. (The auth_insert/owner_update RLS policies remain but are unreachable without a write grant.)",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "geo_zones_service_all", "cmd": "ALL", "permissive": true, "roles": ["service_role"] },
+        { "name": "geo_zones_auth_create", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
+        { "name": "geo_zones_auth_insert", "cmd": "INSERT", "permissive": true, "roles": ["public"] },
+        { "name": "geo_zones_public_read", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "gz_select_all", "cmd": "SELECT", "permissive": true, "roles": ["public"] },
+        { "name": "geo_zones_owner_update", "cmd": "UPDATE", "permissive": true, "roles": ["public"] }
+      ]
+    },
+    "portava_featured": {
+      "note": "2160 — RLS-off self-feature. SELECT-only for clients; all writes service-role. No client-write policy (RLS carries 0 policies).",
+      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "insertCols": {},
+      "updateCols": {},
+      "policies": []
+    },
+    "compass_memories": {
+      "note": "2161 — RLS-off cross-user read + write + prompt-injection. REVOKE ALL from anon+authenticated (no SELECT re-granted); all access service-role. No client grants, no policies.",
+      "tableGrants": {},
+      "insertCols": {},
+      "updateCols": {},
+      "policies": []
+    }
+  }
+}
