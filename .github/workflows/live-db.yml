@@ -840,6 +840,27 @@ jobs:
           set -uo pipefail
           bash .github/scripts/run-live-suite.sh portava-featured-boundary artifacts/api-server @workspace/api-server test:portava-featured-boundary
 
+      - name: 'test:compass-memory-boundary (compass_memories client access boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh compass-memory-boundary artifacts/api-server @workspace/api-server test:compass-memory-boundary
+
+      - name: 'test:ppv-view-boundary (public_profile_verification view boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh ppv-view-boundary artifacts/api-server @workspace/api-server test:ppv-view-boundary
+
+      - name: 'test:profile-verification-boundary (profiles verification self-write boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh profile-verification-boundary artifacts/api-server @workspace/api-server test:profile-verification-boundary
+
   # ───────────────────────────────────────────────────────────────────────────
   # THE VERDICT. A cancelled, skipped or failed job must not read as a pass.
   #
