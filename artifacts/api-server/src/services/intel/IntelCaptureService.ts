@@ -28,14 +28,58 @@ import {
   type Visibility,
 } from "../../lib/intelContracts.js";
 import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickSignal.js";
+import { validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
 
-const CAPTURE_FLAG = "intel_capture_quick_signal";
+/**
+ * Capture surfaces, each gated by its own flag (spec §26 flag registry):
+ *   quick_signal → intel_capture_quick_signal
+ *   trail        → intel_trail_followup
+ * The mapping is applied in surfaceFlagEnabled() with literal flag args so
+ * check-flag-polarity can resolve each stop statically.
+ */
+export type CaptureSurface = "quick_signal" | "trail";
+
+/**
+ * The claim types each surface may emit. The trail surface (IG-06) persists only
+ * the contracted, aggregate-gated going-next claim; exit_reason mapping exists in
+ * lib/trailFollowup for the mobile prompt but is not yet a contracted claim.
+ */
+const SURFACE_CLAIMS: Record<CaptureSurface, readonly string[]> = {
+  quick_signal: PHASE1_CAPTURE_CLAIM_TYPES,
+  trail: ["experience.next_move"],
+};
+
+function validateForSurface(surface: CaptureSurface, claimType: string, value: unknown): boolean {
+  return surface === "trail"
+    ? validateTrailClaimValue(claimType, value)
+    : validateClaimValue(claimType, value);
+}
+
+/**
+ * Whether the surface's gating flag is on. The flag args below are LITERALS on
+ * purpose — check-flag-polarity resolves each isFlagEnabled() call statically and
+ * cannot follow SURFACE_FLAG[surface]. Keep them literal so each stop is visible.
+ */
+async function surfaceFlagEnabled(sc: any, surface: CaptureSurface): Promise<boolean> {
+  return surface === "trail"
+    ? isFlagEnabled(sc, "intel_trail_followup")
+    : isFlagEnabled(sc, "intel_capture_quick_signal");
+}
+
+/** The capture lifecycle (propose/approve/confirm) is shared across surfaces; it
+ *  runs while ANY capture surface is enabled. Literal flag args (see above). */
+async function captureSystemEnabled(sc: any): Promise<boolean> {
+  return (
+    (await isFlagEnabled(sc, "intel_capture_quick_signal")) ||
+    (await isFlagEnabled(sc, "intel_trail_followup"))
+  );
+}
 
 export interface CaptureInput {
   subjectId: string;              // places(id)
   subjectKind?: string;           // default 'experience'
   zoneId?: string | null;
-  claimType: string;              // must be in PHASE1_CAPTURE_CLAIM_TYPES
+  claimType: string;              // must be in SURFACE_CLAIMS[captureSurface]
   value: Record<string, unknown>; // validated against the claim type
   observedAt: string | number | Date;
   capturedAt?: string | null;
@@ -43,6 +87,7 @@ export interface CaptureInput {
   idempotencyKey: string;
   presenceLevel?: string;         // from a presence attestation; default 'P0'
   presenceAttestation?: Record<string, unknown> | null;
+  captureSurface?: CaptureSurface; // default 'quick_signal'
 }
 
 export type CaptureResult =
@@ -59,15 +104,16 @@ function ttlFor(claimType: string): { ttlSeconds: number; hardExpirySeconds: num
  * replay of the same (actor_id, idempotency_key) returns the stored row.
  */
 export async function writeObservation(sc: any, actorId: string, input: CaptureInput): Promise<CaptureResult> {
-  if (!(await isFlagEnabled(sc, CAPTURE_FLAG))) return { ok: false, reason: "disabled" };
+  const surface: CaptureSurface = input.captureSurface ?? "quick_signal";
+  if (!(await surfaceFlagEnabled(sc, surface))) return { ok: false, reason: "disabled" };
 
   if (!isValidIdempotencyKey(input.idempotencyKey)) return { ok: false, reason: "invalid_idempotency_key" };
 
   const clamped = clampObservedAt(input.observedAt);
   if (!clamped) return { ok: false, reason: "invalid_observed_at" };
 
-  if (!PHASE1_CAPTURE_CLAIM_TYPES.includes(input.claimType)) return { ok: false, reason: "invalid_claim_type", detail: input.claimType };
-  if (!validateClaimValue(input.claimType, input.value)) return { ok: false, reason: "invalid_value", detail: input.claimType };
+  if (!SURFACE_CLAIMS[surface].includes(input.claimType)) return { ok: false, reason: "invalid_claim_type", detail: input.claimType };
+  if (!validateForSurface(surface, input.claimType, input.value)) return { ok: false, reason: "invalid_value", detail: input.claimType };
 
   const visibility: Visibility = input.visibility && VISIBILITIES.includes(input.visibility) ? input.visibility : "private";
   const presenceLevel = input.presenceLevel ?? "P0";
@@ -88,7 +134,7 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     claim_type: input.claimType,
     value: input.value,
     source_class: "firsthand_unverified",
-    capture_surface: "quick_signal",
+    capture_surface: surface,
     visibility,
     moderation_state: "pending",
     commercial_disclosure: "none",
@@ -116,7 +162,11 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
 
 /** Create a CANDIDATE claim from an approved observation (moment approval step 1). */
 export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boolean; claim?: any; reason?: string }> {
-  if (!(await isFlagEnabled(sc, CAPTURE_FLAG))) return { ok: false, reason: "disabled" };
+  const surface: CaptureSurface = (observation.capture_surface as CaptureSurface) ?? "quick_signal";
+  if (!(await surfaceFlagEnabled(sc, surface))) return { ok: false, reason: "disabled" };
+  // Privacy invariant (spec §4): a movement claim is aggregate-only — never a
+  // single-user published claim. Capture keeps the observation; propose refuses.
+  if (mustAggregate(observation.claim_type)) return { ok: false, reason: "must_aggregate" };
   const ttl = ttlFor(observation.claim_type);
   const base = new Date(observation.observed_at).getTime();
   const claim = {
@@ -138,7 +188,7 @@ export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boo
 
 /** Promote a candidate claim to active (moment approval step 2). */
 export async function approveClaim(sc: any, claimId: string): Promise<{ ok: boolean; reason?: string }> {
-  if (!(await isFlagEnabled(sc, CAPTURE_FLAG))) return { ok: false, reason: "disabled" };
+  if (!(await captureSystemEnabled(sc))) return { ok: false, reason: "disabled" };
   const { error } = await sc.from("intel_claims").update({ status: "active" }).eq("id", claimId).eq("status", "candidate");
   if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
   return { ok: true };
@@ -149,7 +199,7 @@ export async function confirmClaim(
   sc: any, claimId: string, actorId: string,
   stance: "agree" | "disagree" | "unsure", observedAt: string, presenceLevel = "P0",
 ): Promise<{ ok: boolean; reason?: string; deduped?: boolean }> {
-  if (!(await isFlagEnabled(sc, CAPTURE_FLAG))) return { ok: false, reason: "disabled" };
+  if (!(await captureSystemEnabled(sc))) return { ok: false, reason: "disabled" };
   const clamped = clampObservedAt(observedAt);
   if (!clamped) return { ok: false, reason: "invalid_observed_at" };
   const { error } = await sc.from("intel_confirmations").insert({

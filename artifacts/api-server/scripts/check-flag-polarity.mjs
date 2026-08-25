@@ -331,6 +331,16 @@ const CLASSIFIED = [
       'unreadable flag must never silently capture. Head of the intel flag dependency chain.',
   },
   {
+    flag: 'intel_trail_followup',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` runs the IG-06 going-next Trail follow-up capture surface (captureSurface:trail in ' +
+      'services/intel/IntelCaptureService.ts; lib/trailFollowup.ts). False-on-error is correct and is the ' +
+      'design: the trail write path returns `disabled` and stores nothing, and no follow-up prompt is ' +
+      'issued. experience.next_move stays aggregate-only regardless of this flag (proposeClaim refuses a ' +
+      'single-user movement claim), and the §13 privacy threshold + 0.65 confidence floor gate publication.',
+  },
+  {
     flag: 'intel_live_label_crowd',
     kind: 'CAPABILITY',
     reason:
