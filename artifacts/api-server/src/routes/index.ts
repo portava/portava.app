@@ -31,6 +31,7 @@ import mapTravelersRouter from "./mapTravelers";
 import geofenceRouter from "./geofence";
 import intelRouter from "./intel.js";
 import intelCoverageRouter from "./intelCoverage.js";
+import intelApiRouter from "./intelApi.js";
 import safeReturnRouter from "./safeReturn";
 import tripCrewLocationRouter from "./tripCrewLocation";
 import highlightsRouter from "./highlights";
@@ -259,5 +260,6 @@ router.use(sharedMomentsRouter);
 router.use(placeRecapsRouter);
 router.use(intelRouter);
 router.use(intelCoverageRouter);
+router.use(intelApiRouter);
 
 export default router;
