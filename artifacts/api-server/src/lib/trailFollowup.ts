@@ -184,28 +184,36 @@ export function aggregateNextMoves(
   bucketMinutes = MOVEMENT_PRIVACY_V1.minTimeBucketMinutes,
 ): OriginDestAggregate[] {
   const bucketMs = bucketMinutes * 60_000;
-  type Acc = { actors: Set<string>; groupCounts: Map<string, number>; dropped: number };
-  const groupsByKey = new Map<string, Acc>();
+  // The bucket tuple (origin, destination, window) is carried IN the accumulator,
+  // never encoded into the map key and parsed back — a destination area can
+  // contain any character, so there is no safe in-band delimiter.
+  type Acc = {
+    originId: string; destinationArea: string; bucketStart: string;
+    actors: Set<string>; groupCounts: Map<string, number>; dropped: number;
+  };
+  const byKey = new Map<string, Acc>();
 
   for (const r of rows) {
     const t = Date.parse(r.observedAt);
     if (!Number.isFinite(t)) continue;
     const bucketStart = new Date(Math.floor(t / bucketMs) * bucketMs).toISOString();
-    const key = `${r.originId} ${r.destinationArea} ${bucketStart}`;
-    let acc = groupsByKey.get(key);
-    if (!acc) { acc = { actors: new Set(), groupCounts: new Map(), dropped: 0 }; groupsByKey.set(key, acc); }
+    const key = JSON.stringify([r.originId, r.destinationArea, bucketStart]);
+    let acc = byKey.get(key);
+    if (!acc) {
+      acc = { originId: r.originId, destinationArea: r.destinationArea, bucketStart, actors: new Set(), groupCounts: new Map(), dropped: 0 };
+      byKey.set(key, acc);
+    }
     if (!r.groupId) { acc.dropped++; continue; } // fail-closed: uncertifiable independence
     acc.actors.add(r.actorId);
     acc.groupCounts.set(r.groupId, (acc.groupCounts.get(r.groupId) ?? 0) + 1);
   }
 
   const out: OriginDestAggregate[] = [];
-  for (const [key, acc] of groupsByKey) {
-    const [originId, destinationArea, bucketStart] = key.split(" ");
+  for (const acc of byKey.values()) {
     const total = [...acc.groupCounts.values()].reduce((a, b) => a + b, 0);
     const maxGroup = acc.groupCounts.size ? Math.max(...acc.groupCounts.values()) : 0;
     out.push({
-      originId, destinationArea, bucketStart,
+      originId: acc.originId, destinationArea: acc.destinationArea, bucketStart: acc.bucketStart,
       uniqueActors: acc.actors.size,
       groups: acc.groupCounts.size,
       maxSingleGroupShare: total > 0 ? maxGroup / total : 0,
