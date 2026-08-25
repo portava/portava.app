@@ -12,15 +12,30 @@ const NOW = new Date("2026-08-22T12:00:00.000Z");
 const FUTURE = new Date(NOW.getTime() + 30 * 60_000).toISOString();
 const PAST = new Date(NOW.getTime() - 30 * 60_000).toISOString();
 
-/** Records the filters applied so we can assert the query itself is safe. */
-function client(opts: { flag: boolean | null; rows?: any[]; error?: boolean }) {
+/**
+ * Records the filters applied so we can assert the query itself is safe.
+ * Flag-aware: `flag` drives intel_live_label_crowd; the IG-09 gates default to
+ * the live-allowed state (kill off, pilot on) so the downstream-logic cases keep
+ * exercising the snapshot/confidence/expiry path. `kill`/`pilot` override them.
+ */
+function client(opts: { flag: boolean | null; rows?: any[]; error?: boolean; kill?: boolean; pilot?: boolean }) {
   const filters: Record<string, unknown> = {};
   const api: any = {
     filters,
     from(table: string) {
       if (table === "feature_flags") {
-        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({
-          data: opts.flag === null ? null : { enabled: opts.flag }, error: null }) }) }) };
+        let flagName = "";
+        const fq: any = {
+          select: () => fq,
+          eq: (k: string, v: unknown) => { if (k === "flag") flagName = String(v); return fq; },
+          maybeSingle: async () => {
+            if (flagName === "disable_intel_live_labels") return { data: { enabled: opts.kill ?? false }, error: null };
+            if (flagName === "intel_limited_live") return { data: { enabled: opts.pilot ?? true }, error: null };
+            // intel_live_label_crowd (and anything else) tracks `flag`
+            return { data: opts.flag === null ? null : { enabled: opts.flag }, error: null };
+          },
+        };
+        return fq;
       }
       if (table === "intel_state_snapshots") {
         const q: any = {
@@ -57,6 +72,19 @@ describe("liveClaimRead — gate 1: the flag", () => {
   });
   it("returns nothing without a subject id", async () => {
     assert.deepEqual(await readLiveClaims(client({ flag: true, rows: [liveRow] }), null, { now: NOW }), []);
+  });
+});
+
+describe("liveClaimRead — IG-09 limited-live gates (kill switch + pilot)", () => {
+  it("suppresses every Live label when the emergency stop is engaged", async () => {
+    assert.deepEqual(await readLiveClaims(client({ flag: true, kill: true, rows: [liveRow] }), "p1", { now: NOW }), []);
+  });
+  it("shows nothing until a pilot scope is promoted (intel_limited_live off)", async () => {
+    assert.deepEqual(await readLiveClaims(client({ flag: true, pilot: false, rows: [liveRow] }), "p1", { now: NOW }), []);
+  });
+  it("flows through when the label flag is on, the stop is clear and the pilot is enabled", async () => {
+    const r = await readLiveClaims(client({ flag: true, kill: false, pilot: true, rows: [liveRow] }), "p1", { now: NOW });
+    assert.equal(r.length, 1);
   });
 });
 

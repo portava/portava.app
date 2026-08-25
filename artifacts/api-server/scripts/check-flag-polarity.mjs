@@ -358,6 +358,15 @@ const CLASSIFIED = [
       'or unreadable, and the surface renders null — the same null it rendered before the projection ' +
       'existed. An unreadable flag must never fall back to a stale value presented as current.',
   },
+  {
+    flag: 'intel_limited_live',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` promotes a pilot scope to public Live labels (IG-09). False-on-error is correct: lib/liveClaimRead.ts ' +
+      'returns [] when off or unreadable, so no scope shows Live until an operator flips it on after the §26 ' +
+      'density gate passes. Its companion emergency STOP is a separate flag, disable_intel_live_labels, which ' +
+      'suppresses all Live labels and is read through isKillSwitchEngaged.',
+  },
 
 
   {
