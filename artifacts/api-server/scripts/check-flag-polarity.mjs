@@ -322,6 +322,15 @@ const CLASSIFIED = [
   { flag: 'PORTAVA_FEATURED_BOOST_ENABLED',      kind: 'CAPABILITY', reason: 'SCREAMING_CASE ranking boost gate for featured content. `true` = boost applied.' },
 
   {
+    flag: 'intel_capture_quick_signal',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` runs the IG-03 observation-capture path (services/intel/IntelCaptureService.ts via ' +
+      'routes/intel.ts). False-on-error is correct and is the design: writeObservation/confirm/correct ' +
+      'return `disabled` and store nothing, so the composer entry is inert and no data is written. An ' +
+      'unreadable flag must never silently capture. Head of the intel flag dependency chain.',
+  },
+  {
     flag: 'intel_live_label_crowd',
     kind: 'CAPABILITY',
     reason:

@@ -1,0 +1,177 @@
+/**
+ * Intelligence Gathering — capture service (IG-03).
+ *
+ * The PRODUCER the built projection (lib/intelProjection.ts) and read path
+ * (lib/liveClaimRead.ts) have been waiting for: it turns a Quick Signal / Moment
+ * selection into an append-only intel_observations row, and drives the claim
+ * lifecycle (propose -> approve -> confirm -> correct) over intel_claims /
+ * intel_confirmations.
+ *
+ * SHADOW: every write is a fail-closed no-op unless `intel_capture_quick_signal`
+ * is enabled. Migration 2130 already created the tables, RLS, append-only
+ * triggers, the (actor_id, idempotency_key) unique index and the service_role
+ * grants — this module only writes through them.
+ *
+ * FAIL-CLOSED SUBJECT CHECK: intel_observations.subject_id FKs public.places(id).
+ * In production places holds 0 rows (the Replit backfill is pending), so a real
+ * capture would hit a foreign-key 500. This service verifies the subject resolves
+ * FIRST and returns a clean `unknown_subject` rejection instead — the 0-rows
+ * blocker surfaces as validation, never a stack trace.
+ */
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+import {
+  CLAIM_TYPES,
+  MODERATION_STATES,
+  VISIBILITIES,
+  clampObservedAt,
+  isValidIdempotencyKey,
+  type Visibility,
+} from "../../lib/intelContracts.js";
+import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickSignal.js";
+
+const CAPTURE_FLAG = "intel_capture_quick_signal";
+
+export interface CaptureInput {
+  subjectId: string;              // places(id)
+  subjectKind?: string;           // default 'experience'
+  zoneId?: string | null;
+  claimType: string;              // must be in PHASE1_CAPTURE_CLAIM_TYPES
+  value: Record<string, unknown>; // validated against the claim type
+  observedAt: string | number | Date;
+  capturedAt?: string | null;
+  visibility?: Visibility;        // default 'private'
+  idempotencyKey: string;
+  presenceLevel?: string;         // from a presence attestation; default 'P0'
+  presenceAttestation?: Record<string, unknown> | null;
+}
+
+export type CaptureResult =
+  | { ok: true; observation: any; deduped: boolean }
+  | { ok: false; reason: "disabled" | "invalid_idempotency_key" | "invalid_observed_at" | "unknown_subject" | "invalid_claim_type" | "invalid_value" | "db_error"; detail?: string };
+
+function ttlFor(claimType: string): { ttlSeconds: number; hardExpirySeconds: number } | null {
+  const spec = CLAIM_TYPES.find((c) => c.claimType === claimType);
+  return spec ? { ttlSeconds: spec.ttlSeconds, hardExpirySeconds: spec.hardExpirySeconds } : null;
+}
+
+/**
+ * Write one observation. Fail-closed no-op when the flag is off. Idempotent: a
+ * replay of the same (actor_id, idempotency_key) returns the stored row.
+ */
+export async function writeObservation(sc: any, actorId: string, input: CaptureInput): Promise<CaptureResult> {
+  if (!(await isFlagEnabled(sc, CAPTURE_FLAG))) return { ok: false, reason: "disabled" };
+
+  if (!isValidIdempotencyKey(input.idempotencyKey)) return { ok: false, reason: "invalid_idempotency_key" };
+
+  const clamped = clampObservedAt(input.observedAt);
+  if (!clamped) return { ok: false, reason: "invalid_observed_at" };
+
+  if (!PHASE1_CAPTURE_CLAIM_TYPES.includes(input.claimType)) return { ok: false, reason: "invalid_claim_type", detail: input.claimType };
+  if (!validateClaimValue(input.claimType, input.value)) return { ok: false, reason: "invalid_value", detail: input.claimType };
+
+  const visibility: Visibility = input.visibility && VISIBILITIES.includes(input.visibility) ? input.visibility : "private";
+  const presenceLevel = input.presenceLevel ?? "P0";
+
+  // Fail-closed subject resolution — never let the places FK throw a 500.
+  const { data: subj, error: subjErr } = await sc.from("places").select("id").eq("id", input.subjectId).maybeSingle();
+  if (subjErr) return { ok: false, reason: "db_error", detail: "subject lookup" };
+  if (!subj) return { ok: false, reason: "unknown_subject", detail: input.subjectId };
+
+  const ttl = ttlFor(input.claimType);
+  const expiresAt = ttl ? new Date(new Date(clamped.observedAt).getTime() + ttl.ttlSeconds * 1000).toISOString() : null;
+
+  const row = {
+    actor_id: actorId,
+    subject_kind: input.subjectKind ?? "experience",
+    subject_id: input.subjectId,
+    zone_id: input.zoneId ?? null,
+    claim_type: input.claimType,
+    value: input.value,
+    source_class: "firsthand_unverified",
+    capture_surface: "quick_signal",
+    visibility,
+    moderation_state: "pending",
+    commercial_disclosure: "none",
+    presence_level: presenceLevel,
+    presence_attestation: input.presenceAttestation ?? null,
+    observed_at: clamped.observedAt,
+    captured_at: input.capturedAt ?? null,
+    expires_at: expiresAt,
+    idempotency_key: input.idempotencyKey,
+  };
+
+  const { data, error } = await sc.from("intel_observations").insert(row).select().single();
+  if (error) {
+    // Unique (actor_id, idempotency_key) -> idempotent replay: return the stored row.
+    if (String((error as any).code) === "23505") {
+      const { data: existing } = await sc
+        .from("intel_observations").select("*")
+        .eq("actor_id", actorId).eq("idempotency_key", input.idempotencyKey).maybeSingle();
+      if (existing) return { ok: true, observation: existing, deduped: true };
+    }
+    return { ok: false, reason: "db_error", detail: String((error as any).message ?? "") };
+  }
+  return { ok: true, observation: data, deduped: false };
+}
+
+/** Create a CANDIDATE claim from an approved observation (moment approval step 1). */
+export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boolean; claim?: any; reason?: string }> {
+  if (!(await isFlagEnabled(sc, CAPTURE_FLAG))) return { ok: false, reason: "disabled" };
+  const ttl = ttlFor(observation.claim_type);
+  const base = new Date(observation.observed_at).getTime();
+  const claim = {
+    subject_kind: observation.subject_kind,
+    subject_id: observation.subject_id,
+    zone_id: observation.zone_id ?? null,
+    claim_type: observation.claim_type,
+    value: observation.value,
+    status: "candidate",
+    source_count: 1,
+    observed_at: observation.observed_at,
+    expires_at: ttl ? new Date(base + ttl.ttlSeconds * 1000).toISOString() : null,
+    hard_expires_at: ttl ? new Date(base + ttl.hardExpirySeconds * 1000).toISOString() : null,
+  };
+  const { data, error } = await sc.from("intel_claims").insert(claim).select().single();
+  if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
+  return { ok: true, claim: data };
+}
+
+/** Promote a candidate claim to active (moment approval step 2). */
+export async function approveClaim(sc: any, claimId: string): Promise<{ ok: boolean; reason?: string }> {
+  if (!(await isFlagEnabled(sc, CAPTURE_FLAG))) return { ok: false, reason: "disabled" };
+  const { error } = await sc.from("intel_claims").update({ status: "active" }).eq("id", claimId).eq("status", "candidate");
+  if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
+  return { ok: true };
+}
+
+/** Record one independent confirmation. One-per-actor is enforced by a unique index. */
+export async function confirmClaim(
+  sc: any, claimId: string, actorId: string,
+  stance: "agree" | "disagree" | "unsure", observedAt: string, presenceLevel = "P0",
+): Promise<{ ok: boolean; reason?: string; deduped?: boolean }> {
+  if (!(await isFlagEnabled(sc, CAPTURE_FLAG))) return { ok: false, reason: "disabled" };
+  const clamped = clampObservedAt(observedAt);
+  if (!clamped) return { ok: false, reason: "invalid_observed_at" };
+  const { error } = await sc.from("intel_confirmations").insert({
+    claim_id: claimId, actor_id: actorId, stance, presence_level: presenceLevel, observed_at: clamped.observedAt,
+  });
+  if (error) {
+    if (String((error as any).code) === "23505") return { ok: true, deduped: true };
+    return { ok: false, reason: String((error as any).message ?? "db_error") };
+  }
+  return { ok: true, deduped: false };
+}
+
+/**
+ * Correct a claim: append a NEW observation (never rewrite) and mark the prior
+ * claim superseded. Correction propagation is the spec's central invariant —
+ * a value is only ever superseded, never edited in place.
+ */
+export async function correctClaim(
+  sc: any, actorId: string, priorClaimId: string, input: CaptureInput,
+): Promise<CaptureResult & { supersededPrior?: boolean }> {
+  const written = await writeObservation(sc, actorId, input);
+  if (!written.ok) return written;
+  const { error } = await sc.from("intel_claims").update({ status: "superseded" }).eq("id", priorClaimId);
+  return { ...written, supersededPrior: !error };
+}
