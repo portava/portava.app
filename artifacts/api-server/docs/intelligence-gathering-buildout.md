@@ -75,7 +75,15 @@ side being wrong is survivable.
      the parent delete: `event_cohosts.added_by`, `moderation_reports.resolver_id`,
      `post_edits.user_id`, `trip_plan_items.creator_id`. None is cleared by the
      deletion service, so `auth.admin.deleteUser` fails and the retry fails
-     identically forever. Verified on CI. **Not yet fixed.**
+     identically forever. **FIX STAGED — `2164_deleteuser_unblock_fk_actions.sql`
+     (2026-08-25):** the three nullable actor references become `ON DELETE SET NULL`
+     (row retained, personal reference forgotten); `post_edits.user_id` (NOT NULL,
+     the user's own edit) becomes `ON DELETE CASCADE`. Applied to CI (which had
+     already drifted to SET NULL/CASCADE — so on CI it is a confirming no-op);
+     **on PROD it is the real fix** (prod verified still `NO ACTION` on all four,
+     2026-08-25 — deletion is hard-broken there). CI-only; owner presses prod. This
+     unblocks the hard failure only; the broader table-fate (retain-vs-erase of the
+     ~229 surviving tables) stays with D6.
 4. **IG-08/IG-10** need per-field rights and QIU semantics decided; the registry
    makes the first concrete.
 
