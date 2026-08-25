@@ -66,6 +66,10 @@ describe("load-fsq-city — extraction never uses /dev/stdout", () => {
     assert.deepEqual(parseNdjson('{"a":1}\n  \n{"b":2}\n'), [{ a: 1 }, { b: 2 }]);
     assert.deepEqual(parseNdjson(""), []);
   });
+
+  it("parseNdjson THROWS on a malformed line — never silently drops a partial extract", () => {
+    assert.throws(() => parseNdjson('{"a":1}\n{bad json}\n'));
+  });
 });
 
 describe("load-fsq-city — DuckDB failure writes nothing to Supabase", () => {
@@ -83,9 +87,33 @@ describe("load-fsq-city — DuckDB failure writes nothing to Supabase", () => {
     await extractCityRows({ selectCols: "a", parquet: "/x", bbox: BBOX, runDuckDb: (_s: string, out: string) => { okFile = out; writeFileSync(out, '{"fsq_place_id":"1"}\n'); } });
     assert.ok(okFile && !existsSync(okFile), "temp extract file removed after success");
 
+    // Write the file FIRST, then throw — so the assertion actually proves the
+    // finally-cleanup ran on the failure path (a file that never existed would
+    // pass !existsSync vacuously).
     let failFile: string | null = null;
-    await assert.rejects(extractCityRows({ selectCols: "a", parquet: "/x", bbox: BBOX, runDuckDb: (_s: string, out: string) => { failFile = out; throw new Error("boom"); } }));
-    assert.ok(failFile && !existsSync(failFile), "temp extract file removed after failure");
+    await assert.rejects(extractCityRows({ selectCols: "a", parquet: "/x", bbox: BBOX, runDuckDb: (_s: string, out: string) => { failFile = out; writeFileSync(out, '{"fsq_place_id":"1"}\n'); throw new Error("boom after writing"); } }));
+    assert.ok(failFile && !existsSync(failFile), "a written temp file is still cleaned up when DuckDB then fails");
+  });
+
+  it("exit-0 but NO output file → throws (the closest analog to the /dev/stdout bug) and writes nothing", async () => {
+    const sc = makeSc();
+    await assert.rejects(
+      runIngestFlow({ ...BASE, sc, runDuckDb: () => { /* returns without writing outFile — like exit-0-with-error */ }, transform: idTransform }),
+      /no readable output/,
+    );
+    assert.equal(sc.calls.length, 0, "an exit-0 extract that produced no file must never reach Supabase");
+  });
+
+  it("the extract SQL's COPY target is exactly the file the extractor reads back", async () => {
+    // Models the REAL runner contract: runDuckDbCli writes to the path embedded
+    // in the SQL, so extractCityRows must read that same path.
+    await extractCityRows({
+      selectCols: SELECT_COLS, parquet: "/x", bbox: BBOX,
+      runDuckDb: (sql: string, out: string) => {
+        assert.ok(sql.includes(`TO '${out}'`), "COPY target must equal the path extractCityRows reads");
+        writeFileSync(out, '{"fsq_place_id":"1"}\n');
+      },
+    });
   });
 });
 
@@ -104,6 +132,16 @@ describe("load-fsq-city — zero-row extraction fails closed", () => {
     const res = await runIngestFlow({ ...BASE, sc, runDuckDb: duckEmpty(), transform: idTransform, allowEmpty: true });
     assert.equal(res.placeCount, 0);
     assert.deepEqual(sc.calls.map((c) => c.table), ["fsq_city_ingests"], "no fsq_places batch, only the diagnostic ledger");
+  });
+
+  it("also fails closed when the extract returns rows but the transform drops them ALL", async () => {
+    const sc = makeSc();
+    await assert.rejects(
+      // 1 raw row lacking fsq_place_id → idTransform returns null → 0 usable, dropped=1
+      runIngestFlow({ ...BASE, sc, runDuckDb: duckWriting(['{"name":"no-id-so-dropped"}']), transform: idTransform }),
+      /0 usable rows/,
+    );
+    assert.equal(sc.calls.length, 0, "looks-like-data-but-nothing-usable must not write a success record");
   });
 });
 
@@ -144,6 +182,16 @@ describe("load-fsq-city — ingest ledger only after a successful upsert", () =>
     );
     assert.ok(sc.calls.some((c) => c.table === "fsq_places"), "the failing places upsert was attempted");
     assert.ok(!sc.calls.some((c) => c.table === "fsq_city_ingests"), "the ledger is NOT written after a batch failure");
+  });
+
+  it("surfaces a ledger-write failure as a thrown error (places upserted, but the run is not silently OK)", async () => {
+    const sc = makeSc({ failTable: "fsq_city_ingests" });
+    await assert.rejects(
+      runIngestFlow({ ...BASE, sc, transform: idTransform, runDuckDb: duckWriting(['{"fsq_place_id":"1","name":"A"}']) }),
+      /ledger write failed/,
+    );
+    assert.ok(sc.calls.some((c) => c.table === "fsq_places"), "the places batch upserted");
+    assert.ok(sc.calls.some((c) => c.table === "fsq_city_ingests"), "the ledger write was attempted and its error surfaced (non-zero exit)");
   });
 
   it("batches at 500 and only ledgers once all batches succeed", async () => {
