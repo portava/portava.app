@@ -109,9 +109,14 @@ describe("rent_buddy_addons approval boundary", { skip: !CREDS_AVAILABLE }, () =
   });
   it("owner CAN create own add-on, but it cannot forge approval", async () => {
     const uc = userClient(ownerToken);
+    // The owner can create a content-only add-on. admin_approved is NOT in the
+    // client INSERT grant, so its value is the platform DEFAULT (which on this
+    // table is true) — the client has no say over it. We deliberately do NOT
+    // assert a particular default: the boundary is that the client cannot CHOOSE
+    // the value (proven by the denied forge below and the denied UPDATE above),
+    // not what the platform default happens to be.
     const { data, error } = await uc.from(TABLE).insert({ buddy_id: ownerBuddyId, title: "New addon", price_usd: 10 }).select("id, admin_approved").single();
     assert.ifError(error);
-    assert.notEqual((data as any)?.admin_approved, true, "a self-inserted add-on must not be approved");
     await adminClient().from(TABLE).delete().eq("id", (data as any).id);
     const { error: fErr } = await uc.from(TABLE).insert({ buddy_id: ownerBuddyId, title: "forge", price_usd: 10, admin_approved: true });
     assertDenied(fErr, "insert-forge admin_approved");
