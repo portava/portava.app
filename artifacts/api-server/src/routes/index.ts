@@ -29,6 +29,7 @@ import locationRouter from "./location";
 import locationPreferencesRouter from "./locationPreferences";
 import mapTravelersRouter from "./mapTravelers";
 import geofenceRouter from "./geofence";
+import intelRouter from "./intel.js";
 import safeReturnRouter from "./safeReturn";
 import tripCrewLocationRouter from "./tripCrewLocation";
 import highlightsRouter from "./highlights";
@@ -255,5 +256,6 @@ router.use(placeDaysRouter);
 router.use(contentTranslationRouter);
 router.use(sharedMomentsRouter);
 router.use(placeRecapsRouter);
+router.use(intelRouter);
 
 export default router;
