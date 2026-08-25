@@ -350,6 +350,14 @@ const CLASSIFIED = [
       'already-dispatched commitment are intentionally ungated. Missions are non-cash (table CHECK cash_amount=0).',
   },
   {
+    flag: 'intel_rewards',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` runs internal reward recording (services/intel/RewardService.ts): books earned NON-CASH credits to ' +
+      'intel_reward_ledger for eligible, finalized outcomes. False-on-error is correct: recordEarnedReward returns ' +
+      '`disabled` and books nothing. Cash transfer is a separate, unbuilt switch; cash_amount=0 is enforced by the table.',
+  },
+  {
     flag: 'intel_live_label_crowd',
     kind: 'CAPABILITY',
     reason:

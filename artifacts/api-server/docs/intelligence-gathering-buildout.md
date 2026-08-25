@@ -16,6 +16,7 @@ any database.** Every flag is off; every unit is a runtime no-op until enabled.
 | **IG-09 Limited-Live** (shadow) | `lib/intelLiveScope.ts` + `lib/intelPilotMetrics.ts` + `lib/liveClaimRead.ts` (kill switch + pilot gate) | `2168_intel_limited_live_flags.sql` |
 | **IG-07 Compass k=1** (⚠ live-path) | `lib/compassRhythmGate.ts` + `compass/CompassGraphEngine.ts` (rhythm line k-anon gate) | `2169_intel_compass_rhythm_actor_gate_flag.sql` |
 | **IG-10 internal** (shadow) | `lib/qiuShadow.ts` + `lib/intelApiProjection.ts` + `routes/intelApi.ts` (internal, requireAdmin) | — (no external surface; reuses `lib/dataRights.ts`) |
+| **Rewards internal** (shadow) | `lib/rewardEligibility.ts` + `lib/rewardEarnings.ts` + `services/intel/RewardService.ts` | `2170_intel_reward_ledger.sql` (non-cash, DB CHECK cash_amount=0) |
 | IG-04 Privacy gate | `lib/privacyGate.ts` | — |
 | IG-04 Confidence | `lib/confidenceScore.ts` | — |
 | IG-04 Projection | `lib/intelProjection.ts` | `2132_intel_projection_flag.sql` |
