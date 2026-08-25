@@ -144,7 +144,12 @@ router.post("/v1/intel/observations/:id/claims:propose", asyncHandler(async (req
   const { data: obs } = await sc.from("intel_observations").select("*").eq("id", req.params.id).eq("actor_id", auth.user.id).maybeSingle();
   if (!obs) return sendError(res, "not_found", "observation not found");
   const out = await proposeClaim(sc, obs);
-  if (!out.ok) return sendError(res, out.reason === "disabled" ? "feature_disabled" : "db_error", out.reason ?? "propose failed");
+  if (!out.ok) {
+    if (out.reason === "disabled") return sendError(res, "feature_disabled", "propose disabled");
+    if (out.reason === "must_aggregate")
+      return sendError(res, "invalid_payload", "movement claims are aggregate-only; a single-user next_move is never published");
+    return sendError(res, "db_error", out.reason ?? "propose failed");
+  }
   res.status(201).json({ claim: out.claim });
 }));
 
