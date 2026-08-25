@@ -34,6 +34,8 @@ import tzLookup from "tz-lookup";
 import type { CompassItem } from "./types.js";
 import type { RankingFactor } from "./CompassRecommendationEngine.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import { mayPublishRhythm } from "../lib/compassRhythmGate.js";
 
 // ── Time slicing ──────────────────────────────────────────────────────────────
 
@@ -382,6 +384,12 @@ export interface TimeSliceProfile {
   count: number;
   /** category → observation count within this slice. */
   categories: Record<string, number>;
+  /**
+   * Distinct contributors behind this slice — the k-anonymity input for IG-07's
+   * rhythm gate. Absent until the graph build records a per-slice distinct-actor
+   * count; treated as 0 (suppress) so a k=1 slice can never publish a rhythm line.
+   */
+  distinctActors?: number;
 }
 
 export interface CityWorldModel {
@@ -969,13 +977,19 @@ export async function buildDestinationContextLines(
     if (model) {
       const sliceKey = timeSliceKey(at, city);
       const slice = model.timeSlices[sliceKey];
-      if (slice && slice.count >= MIN_SLICE_SAMPLE) {
+      // IG-07: a time-sliced rhythm line publishes only when the gate flag is on
+      // AND ≥ COMPASS_RHYTHM_K DISTINCT contributors are behind the slice —
+      // otherwise it is a k=1 leak. Flag off (the default) suppresses it and we
+      // fall through to the city-wide, non-time-sliced summary below.
+      // Literal flag name so check-flag-polarity can resolve this read statically.
+      const rhythmGateOn = await isFlagEnabled(db, "intel_compass_rhythm_actor_gate");
+      if (slice && slice.count >= MIN_SLICE_SAMPLE && mayPublishRhythm(slice.distinctActors ?? 0, rhythmGateOn)) {
         const top = Object.entries(slice.categories)
           .sort(([, a], [, b]) => b - a)
           .slice(0, 3)
           .map(([k]) => k);
         lines.push(
-          `Destination rhythm — ${city} (${sliceKey.replace(":", " ")}): typically active around ${top.join(", ")} at this time (community history, ${slice.count} observations).`,
+          `Destination rhythm — ${city} (${sliceKey.replace(":", " ")}): typically active around ${top.join(", ")} at this time (community history, ${slice.count} observations from ${slice.distinctActors ?? 0} contributors).`,
         );
       } else {
         lines.push(

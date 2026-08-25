@@ -370,6 +370,15 @@ const CLASSIFIED = [
 
 
   {
+    flag: 'intel_compass_rhythm_actor_gate',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` re-emits the Compass destination-rhythm line only for slices with >= COMPASS_RHYTHM_K distinct ' +
+      'contributors (lib/compassRhythmGate.ts). False-on-error is correct and is the whole point: mayPublishRhythm ' +
+      'returns false when the flag is off or unreadable, so the k=1-prone time-sliced line is suppressed and Compass ' +
+      'falls back to the city-wide summary. An unreadable flag must never publish a one-person rhythm as community history.',
+  },
+  {
     flag: 'intel_claim_projection_crowd',
     kind: 'CAPABILITY',
     reason:
