@@ -15,6 +15,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   PRESENCE_LEVELS, VISIBILITIES, SOURCE_CLASS_LABELS, isValidIdempotencyKey,
@@ -95,7 +96,7 @@ function sendCaptureResult(res: any, result: CaptureResult): void {
 }
 
 // ── Capture ─────────────────────────────────────────────────────────────────
-router.post("/v1/intel/observations", async (req, res) => {
+router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const key = requireIdempotencyKey(req, res);
@@ -133,10 +134,10 @@ router.post("/v1/intel/observations", async (req, res) => {
   };
   const result = await writeObservation(getServiceClient()!, auth.user.id, input);
   sendCaptureResult(res, result);
-});
+}));
 
 // ── Claim lifecycle ───────────────────────────────────────────────────────────
-router.post("/v1/intel/observations/:id/claims:propose", async (req, res) => {
+router.post("/v1/intel/observations/:id/claims:propose", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient()!;
@@ -145,9 +146,9 @@ router.post("/v1/intel/observations/:id/claims:propose", async (req, res) => {
   const out = await proposeClaim(sc, obs);
   if (!out.ok) return sendError(res, out.reason === "disabled" ? "feature_disabled" : "db_error", out.reason ?? "propose failed");
   res.status(201).json({ claim: out.claim });
-});
+}));
 
-router.post("/v1/intel/observations/:id/claims:approve", async (req, res) => {
+router.post("/v1/intel/observations/:id/claims:approve", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const claimId = z.string().uuid().safeParse((req.body ?? {}).claimId);
@@ -155,9 +156,9 @@ router.post("/v1/intel/observations/:id/claims:approve", async (req, res) => {
   const out = await approveClaim(getServiceClient()!, claimId.data);
   if (!out.ok) return sendError(res, out.reason === "disabled" ? "feature_disabled" : "db_error", out.reason ?? "approve failed");
   res.json({ ok: true });
-});
+}));
 
-router.post("/v1/intel/claims/:id/confirm", async (req, res) => {
+router.post("/v1/intel/claims/:id/confirm", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const parsed = confirmSchema.safeParse(req.body ?? {});
@@ -165,9 +166,9 @@ router.post("/v1/intel/claims/:id/confirm", async (req, res) => {
   const out = await confirmClaim(getServiceClient()!, req.params.id, auth.user.id, parsed.data.stance, parsed.data.observedAt, parsed.data.presenceLevel);
   if (!out.ok) return sendError(res, out.reason === "disabled" ? "feature_disabled" : "invalid_payload", out.reason ?? "confirm failed");
   res.json({ ok: true, deduped: out.deduped ?? false });
-});
+}));
 
-router.post("/v1/intel/claims/:id/correct", async (req, res) => {
+router.post("/v1/intel/claims/:id/correct", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const key = requireIdempotencyKey(req, res);
@@ -183,6 +184,6 @@ router.post("/v1/intel/claims/:id/correct", async (req, res) => {
   };
   const result = await correctClaim(getServiceClient()!, auth.user.id, req.params.id, input);
   sendCaptureResult(res, result);
-});
+}));
 
 export default router;
