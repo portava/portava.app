@@ -1,15 +1,16 @@
 /**
  * publicProfileVerificationViewBoundary.test.ts — the public_profile_verification view boundary.
  *
- * RED before migration 2162, GREEN after. Verified on portava-ci: pre-2162
- * public.public_profile_verification was a security_invoker=FALSE (SECURITY
- * DEFINER) view over profiles, owned by postgres, with anon+authenticated DML.
- * Because it executed as owner it BYPASSED profiles RLS: a stranger could UPDATE
- * verification_status='verified' onto ANY profile through the view (the direct
- * base UPDATE is RLS-blocked), and could read the verification of profiles that
- * profiles_select would hide (private / non-friend). Post-2162 the view is
- * security_invoker=true and SELECT-only: cross-user/anon forgery is denied, the
- * private-profile read leak is closed, and public badge reads still work.
+ * RED before migration 2162, GREEN after. On CI the view had drifted to
+ * security_invoker=FALSE (SECURITY DEFINER) over profiles, owned by postgres,
+ * with anon+authenticated DML — so executing as owner it BYPASSED profiles RLS:
+ * a stranger/anon could UPDATE verification_status='verified' onto ANY profile
+ * through the view, and could read verification for profiles profiles_select
+ * hides. 2162 converges CI onto production's already-correct state:
+ * security_invoker=true AND service_role-only (REVOKE ALL from anon+authenticated,
+ * no SELECT re-granted). Verified read-only on production 2026-08-24 — prod is
+ * exactly this, and the app reads verification via service-role routes, never a
+ * direct anon/authenticated view read.
  *
  * (Companion: 2163 adds the profiles trigger that closes self-verification of
  * one's OWN row — see profileVerificationSelfWriteBoundary.test.ts.)
@@ -38,8 +39,7 @@ function userClient(t: string): SupabaseClient {
 const PREFIX = "ppv_view_test_";
 const PASSWORD = "test-password-123";
 const VIEW = "public_profile_verification";
-// victim = private profile; publicUser = public profile; stranger = attacker (not a friend of either)
-let victimId = "", publicUserId = "", strangerId = "", strangerToken = "";
+let publicUserId = "", strangerId = "", strangerToken = "";
 
 async function makeUser(tag: string, isPrivate: boolean): Promise<string> {
   const sc = adminClient();
@@ -55,18 +55,20 @@ async function baseStatus(id: string): Promise<string | null> {
   const { data } = await adminClient().from("profiles").select("verification_status").eq("id", id).maybeSingle();
   return data ? (data as any).verification_status : null;
 }
+function assertNoData(error: any, data: any, what: string): void {
+  // Service-role-only view: anon/authenticated have no privilege → a permission
+  // error, or (defensively) an empty set. Never the row.
+  assert.ok(error || (data ?? []).length === 0, `${what}: anon/authenticated must not read the view (got ${(data ?? []).length} row(s), error=${error?.message ?? "none"})`);
+}
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}victim@example.com`, `${PREFIX}public@example.com`, `${PREFIX}stranger@example.com`]);
-  victimId = await makeUser("victim", true);
+  await purgeFixtureUsers(adminClient(), [`${PREFIX}public@example.com`, `${PREFIX}stranger@example.com`]);
   publicUserId = await makeUser("public", false);
   strangerId = await makeUser("stranger", false);
-  // stranger's token
   const { data: s, error } = await anonClient().auth.signInWithPassword({ email: `${PREFIX}stranger@example.com`, password: PASSWORD });
   if (error || !s?.session) throw new Error(`signIn(stranger): ${error?.message}`);
   strangerToken = s.session.access_token;
-  // service-role verifies the PUBLIC user (legit), so the view should surface it publicly
   const { error: vErr } = await adminClient().from("profiles")
     .update({ verification_status: "verified", verification_level: "trusted_traveler", verified_since: new Date().toISOString(), host_verified_at: new Date().toISOString() })
     .eq("id", publicUserId);
@@ -74,45 +76,34 @@ before(async () => {
 });
 after(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}victim@example.com`, `${PREFIX}public@example.com`, `${PREFIX}stranger@example.com`]);
+  await purgeFixtureUsers(adminClient(), [`${PREFIX}public@example.com`, `${PREFIX}stranger@example.com`]);
 });
 
 describe("public_profile_verification view boundary", { skip: !CREDS_AVAILABLE }, () => {
   it("a stranger CANNOT forge verification on another profile through the view", async () => {
-    const before = await baseStatus(victimId);
+    const before = await baseStatus(strangerId);
     const { error } = await userClient(strangerToken).from(VIEW)
-      .update({ verification_status: "verified", verification_level: "trusted_traveler" }).eq("profile_id", victimId);
-    assert.ok(error, "the view is SELECT-only; a write must be refused");
-    assert.equal(await baseStatus(victimId), before, "victim's base verification must be unchanged");
+      .update({ verification_status: "verified", verification_level: "trusted_traveler" }).eq("profile_id", publicUserId);
+    assert.ok(error, "a write through the service-role-only view must be refused");
+    assert.equal(await baseStatus(strangerId), before, "no base verification may change");
   });
-  it("anon CANNOT forge verification through the view", async () => {
+  it("anon CANNOT write through the view", async () => {
     const { error } = await anonClient().from(VIEW).update({ verification_status: "verified" }).eq("profile_id", publicUserId);
     assert.ok(error, "anon write through the view must be refused");
   });
-  it("the private-profile read leak is closed (stranger cannot see a private profile's verification)", async () => {
-    const { data, error } = await userClient(strangerToken).from(VIEW).select("profile_id, verification_status").eq("profile_id", victimId);
-    assert.ifError(error);
-    assert.equal((data ?? []).length, 0, "a private, non-friend profile must not be visible through the invoker view");
+  it("an authenticated user CANNOT read the view at all (service-role-only, matches prod)", async () => {
+    const { data, error } = await userClient(strangerToken).from(VIEW).select("profile_id, verification_status").eq("profile_id", publicUserId);
+    assertNoData(error, data, "authenticated view read");
   });
-  it("a public profile's verified badge IS visible through the view (authenticated)", async () => {
-    const { data, error } = await userClient(strangerToken).from(VIEW).select("profile_id, verification_status, host_verified").eq("profile_id", publicUserId).maybeSingle();
+  it("anon CANNOT read the view", async () => {
+    const { data, error } = await anonClient().from(VIEW).select("profile_id, verification_status").eq("profile_id", publicUserId);
+    assertNoData(error, data, "anon view read");
+  });
+  it("the service role CAN read the view and it reflects base verification", async () => {
+    const { data, error } = await adminClient().from(VIEW).select("profile_id, verification_status, host_verified").eq("profile_id", publicUserId).maybeSingle();
     assert.ifError(error);
-    assert.ok(data, "a public profile's verification must be visible");
+    assert.ok(data, "service role must read the view");
     assert.equal((data as any).verification_status, "verified");
     assert.equal((data as any).host_verified, true, "computed badge column must reflect host_verified_at");
-  });
-  it("anon can read a public profile's verified badge", async () => {
-    const { data, error } = await anonClient().from(VIEW).select("profile_id, verification_status").eq("profile_id", publicUserId).maybeSingle();
-    assert.ifError(error);
-    assert.equal((data as any)?.verification_status, "verified", "anon must still read public badges");
-  });
-  it("the service role can verify a profile and the view reflects it", async () => {
-    const sc = adminClient();
-    const { error } = await sc.from("profiles").update({ verification_status: "verified", verification_level: "basic_verified" }).eq("id", victimId);
-    assert.ifError(error);
-    // read the view as the owner (victim) — the owner always sees their own row (profiles_select id=auth.uid())
-    const { data } = await sc.from(VIEW).select("verification_status").eq("profile_id", victimId).maybeSingle();
-    assert.equal((data as any)?.verification_status, "verified", "service-role verification must be reflected in the view");
-    await sc.from("profiles").update({ verification_status: "unverified", verification_level: "none" }).eq("id", victimId);
   });
 });
