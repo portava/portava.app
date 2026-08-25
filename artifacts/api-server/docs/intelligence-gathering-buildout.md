@@ -13,6 +13,7 @@ any database.** Every flag is off; every unit is a runtime no-op until enabled.
 | **IG-03 Capture** (shadow) | `lib/quickSignal.ts` + `services/intel/IntelCaptureService.ts` + `lib/intelThrottle.ts` + `routes/intel.ts` | `2165_intel_capture_quick_signal_flag.sql` |
 | **IG-06 Trail follow-up** (shadow) | `lib/trailFollowup.ts` + `services/intel/IntelCaptureService.ts` (parameterised `trail` surface) + `routes/intel.ts` | `2166_intel_trail_followup_flag.sql` |
 | **IG-08 Coverage** (shadow) | `lib/coverageScore.ts` + `lib/missionGeneration.ts` + `services/intel/CoverageService.ts` + `routes/intelCoverage.ts` (internal, requireAdmin) | `2167_intel_mission_candidates.sql` |
+| **IG-09 Limited-Live** (shadow) | `lib/intelLiveScope.ts` + `lib/intelPilotMetrics.ts` + `lib/liveClaimRead.ts` (kill switch + pilot gate) | `2168_intel_limited_live_flags.sql` |
 | IG-04 Privacy gate | `lib/privacyGate.ts` | — |
 | IG-04 Confidence | `lib/confidenceScore.ts` | — |
 | IG-04 Projection | `lib/intelProjection.ts` | `2132_intel_projection_flag.sql` |

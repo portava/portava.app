@@ -29,7 +29,7 @@
  * substitutes a historical pattern for an observation — that distinction is what
  * SOURCE_CLASSES and mayRenderAsLive() exist to protect.
  */
-import { isFlagEnabled } from "./featureFlags.js";
+import { isFlagEnabled, isKillSwitchEngaged } from "./featureFlags.js";
 import { confidenceBand, MIN_BAND_FOR_LIVE_STATE, CONFIDENCE_BAND_FLOOR, type ConfidenceBand } from "./intelContracts.js";
 import { logger } from "./logger.js";
 
@@ -55,6 +55,15 @@ export async function readLiveClaims(
 ): Promise<LiveClaim[]> {
   if (!sc || !subjectId) return [];
   if (!(await isFlagEnabled(sc, "intel_live_label_crowd"))) return [];
+
+  // IG-09 Limited-Live gating, both fail-closed and ahead of any snapshot read:
+  //   • the global emergency stop suppresses every Live label without deleting
+  //     records — read as a kill switch, so a DB error ENGAGES it;
+  //   • Live is exposed only for a promoted pilot scope (intel_limited_live).
+  // Until a scope clears the §26 density gate (a human-review promotion), the
+  // pilot flag stays off and this returns [] — the correct pre-density default.
+  if (await isKillSwitchEngaged(sc, "disable_intel_live_labels")) return [];
+  if (!(await isFlagEnabled(sc, "intel_limited_live"))) return [];
 
   const now = opts.now ?? new Date();
   try {
