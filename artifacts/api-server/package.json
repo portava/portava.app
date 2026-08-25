@@ -145,7 +145,10 @@
     "test:rb-package-review": "node --import tsx/esm --env-file-if-exists=.env --test src/test/rentBuddyPackageReviewBoundary.test.ts",
     "test:post-media-moderation": "node --import tsx/esm --env-file-if-exists=.env --test src/test/postMediaModerationBoundary.test.ts",
     "test:geo-zone-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/geoZoneWriteBoundary.test.ts",
-    "test:portava-featured-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/portavaFeaturedWriteBoundary.test.ts"
+    "test:portava-featured-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/portavaFeaturedWriteBoundary.test.ts",
+    "test:compass-memory-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/compassMemoryClientBoundary.test.ts",
+    "test:ppv-view-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/publicProfileVerificationViewBoundary.test.ts",
+    "test:profile-verification-boundary": "node --import tsx/esm --env-file-if-exists=.env --test src/test/profileVerificationSelfWriteBoundary.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
