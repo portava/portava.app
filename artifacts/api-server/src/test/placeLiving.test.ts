@@ -305,6 +305,12 @@ describe("GET /places/:id/living", () => {
     assert.ok("bestOf"       in body);
     assert.ok("timeline"     in body);
     assert.ok("thinBuckets"  in body);
+    // Backward-compatible IG read path: crowdLevel is unchanged, and the new
+    // liveClaims field is present as an array (empty with the flag off), never
+    // undefined and never a fabricated claim.
+    assert.ok("crowdLevel" in body, "crowdLevel contract preserved");
+    assert.ok(Array.isArray(body.liveClaims), "liveClaims is always an array");
+    assert.equal(body.liveClaims.length, 0, "no live intel with the flag off");
 
     // Cache should have been written
     const cacheWrite = capturedUpserts.find((u) => u.table === "place_living_cache");

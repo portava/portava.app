@@ -19,7 +19,7 @@
  */
 
 import { Router } from "express";
-import { readLiveCrowdLevel } from "../lib/liveClaimRead.js";
+import { readLiveCrowdLevel, readLiveClaimEnvelopes } from "../lib/liveClaimRead.js";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { optionalUser, sendError } from "../lib/http.js";
@@ -245,6 +245,13 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
   // comes from the live-claim projection; with the flag off or no claim present
   // it returns exactly the null it always did.
   const crowdLevel = await readLiveCrowdLevel(sc, placeId);
+  // Forward-compatible richer read: the full set of live claims as decision-
+  // exposure envelopes (value + band + source class + observed/valid-until +
+  // live state + provenance id), deterministically ordered best/current first.
+  // Additive and backward-compatible — `crowdLevel` above is unchanged, and this
+  // is [] whenever the flag is off or nothing qualifies. The place card prefers
+  // this array and falls back to the bare `crowdLevel` when it is empty.
+  const liveClaims = await readLiveClaimEnvelopes(sc, placeId);
   // bestTime has no claim type in the IG-01 registry, so it stays honestly null
   // rather than reading a column that does not exist.
   const bestTime: string | null = null;
@@ -392,6 +399,7 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
     rating,
     bestTime,
     crowdLevel,
+    liveClaims,
     weather:      weather ? { forecasts: weather.forecasts, briefSummary: weather.briefSummary } : null,
     directionsUrl,
     officialInfo,
