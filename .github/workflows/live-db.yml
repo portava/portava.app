@@ -798,6 +798,48 @@ jobs:
           set -uo pipefail
           bash .github/scripts/run-live-suite.sh hgv-trust-boundary artifacts/api-server @workspace/api-server test:hgv-trust-boundary
 
+      - name: 'test:buddy-service-approval (buddy_services approval boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh buddy-service-approval artifacts/api-server @workspace/api-server test:buddy-service-approval
+
+      - name: 'test:rb-addon-approval (rent_buddy_addons approval boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh rb-addon-approval artifacts/api-server @workspace/api-server test:rb-addon-approval
+
+      - name: 'test:rb-package-review (rent_buddy_packages review boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh rb-package-review artifacts/api-server @workspace/api-server test:rb-package-review
+
+      - name: 'test:post-media-moderation (post_media moderation boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh post-media-moderation artifacts/api-server @workspace/api-server test:post-media-moderation
+
+      - name: 'test:geo-zone-boundary (geo_zones client-write boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh geo-zone-boundary artifacts/api-server @workspace/api-server test:geo-zone-boundary
+
+      - name: 'test:portava-featured-boundary (portava_featured client-write boundary)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh portava-featured-boundary artifacts/api-server @workspace/api-server test:portava-featured-boundary
+
   # ───────────────────────────────────────────────────────────────────────────
   # THE VERDICT. A cancelled, skipped or failed job must not read as a pass.
   #
