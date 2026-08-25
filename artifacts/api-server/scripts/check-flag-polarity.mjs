@@ -341,6 +341,15 @@ const CLASSIFIED = [
       'single-user movement claim), and the §13 privacy threshold + 0.65 confidence floor gate publication.',
   },
   {
+    flag: 'intel_missions',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` runs IG-08 coverage-mission generation and dispatch (services/intel/CoverageService.ts via ' +
+      'routes/intelCoverage.ts). False-on-error is correct and is the design: generateMissions/commitAndDispatch ' +
+      'return `disabled` and do nothing, so no mission is created or dispatched. Coverage read and accept of an ' +
+      'already-dispatched commitment are intentionally ungated. Missions are non-cash (table CHECK cash_amount=0).',
+  },
+  {
     flag: 'intel_live_label_crowd',
     kind: 'CAPABILITY',
     reason:
