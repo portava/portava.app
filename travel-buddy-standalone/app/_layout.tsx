@@ -229,6 +229,11 @@ export default function RootLayout() {
                         <Stack.Screen name="compass-preferences" options={{ presentation: 'card' }} />
                         <Stack.Screen name="compass-memories" options={{ presentation: 'card' }} />
                         <Stack.Screen name="safety-number" options={{ presentation: 'modal', headerShown: false }} />
+                        {/* Intelligence Gathering capture surfaces (flag-gated, off by default) */}
+                        <Stack.Screen name="intel/quick-signal" options={{ presentation: 'modal' }} />
+                        <Stack.Screen name="intel/trail" options={{ presentation: 'modal' }} />
+                        <Stack.Screen name="intel/moment" options={{ presentation: 'modal' }} />
+                        <Stack.Screen name="settings/intel-prompts" options={{ presentation: 'card' }} />
                       </Stack>
                       {/* Root-level call UI — overlays any screen, survives navigation */}
                       <CallSurface />

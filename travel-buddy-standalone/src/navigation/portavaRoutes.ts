@@ -1744,6 +1744,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
   {
+    key: 'settings-intel-prompts',
+    path: 'settings/intel-prompts',
+    title: 'Live intel prompts',
+    parent: 'settings-index',
+    icon: 'Radio',
+    requiresAuth: true,
+    ownerOnly: true,
+    featureFlag: 'intel_capture_quick_signal',
+  },
+  {
     key: 'profile-change-password',
     path: 'profile/change-password',
     title: 'Change Password',
@@ -1767,6 +1777,41 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: true,
     deepLink: '/plan/[id]',
+  },
+
+  // ── Intelligence Gathering capture (shadow, flag-gated, off by default) ────
+  //
+  // Modal capture surfaces. Every screen is an inert no-op unless
+  // `intel_capture_quick_signal` (and, for the Trail, `intel_trail_followup`)
+  // is enabled, and is fully suppressed during an active Safe Return session.
+
+  {
+    key: 'intel-quick-signal',
+    path: 'intel/quick-signal',
+    title: 'Quick Signal',
+    parent: null,
+    icon: 'Radio',
+    requiresAuth: true,
+    featureFlag: 'intel_capture_quick_signal',
+    deepLink: '/intel/quick-signal',
+  },
+  {
+    key: 'intel-trail',
+    path: 'intel/trail',
+    title: 'Where next?',
+    parent: null,
+    icon: 'Signpost',
+    requiresAuth: true,
+    featureFlag: 'intel_trail_followup',
+  },
+  {
+    key: 'intel-moment',
+    path: 'intel/moment',
+    title: 'Structured Moment',
+    parent: null,
+    icon: 'Sparkles',
+    requiresAuth: true,
+    featureFlag: 'intel_capture_quick_signal',
   },
 
   // ── Admin ─────────────────────────────────────────────────────────────────
