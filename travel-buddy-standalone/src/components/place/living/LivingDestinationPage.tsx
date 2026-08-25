@@ -53,11 +53,14 @@ import {
   Image as ImageIcon,
   Award,
   CalendarDays,
+  Radio,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { CachedImage } from '../../CachedImage.tsx';
 import { color, space, radius, type as t, shadow, typography, icon, aspect, dot} from '../../../theme/tokens.ts';
 import { getPlaceTimeline } from '../../../services/places.ts';
+import { useIntelPrompts } from '../../../hooks/useIntelPrompts.ts';
+import { DecisionExposureChips, buildLiveClaims } from '../../intel/DecisionExposureChips.tsx';
 import type {
   PlaceLivingResponse,
   LivingBucket,
@@ -277,9 +280,29 @@ const hero = StyleSheet.create({
 
 interface PlaceInfoStripProps {
   living: PlaceLivingResponse;
+  placeName?: string;
+  category?: string | null;
 }
 
-function PlaceInfoStrip({ living }: PlaceInfoStripProps) {
+/** Map a place category to an Intelligence Gathering venue prompt set, if any. */
+function categoryToVenue(category?: string | null): 'nightlife' | 'restaurant' | 'event' | 'transit' | 'hotel' | undefined {
+  const c = (category ?? '').toLowerCase();
+  if (/(night ?club|club|bar|pub|lounge|nightlife)/.test(c)) return 'nightlife';
+  if (/(restaurant|cafe|coffee|food|eatery|dining|bistro)/.test(c)) return 'restaurant';
+  if (/(event|festival|concert|venue|theatre|theater|stadium|arena)/.test(c)) return 'event';
+  if (/(transit|station|airport|bus|train|metro|ferry|terminal)/.test(c)) return 'transit';
+  if (/(hotel|hostel|lodging|resort|inn|motel)/.test(c)) return 'hotel';
+  return undefined;
+}
+
+function PlaceInfoStrip({ living, placeName, category }: PlaceInfoStripProps) {
+  const { captureEnabled, liveLabelEnabled, safeReturnActive } = useIntelPrompts();
+  // The rich decision-exposure chips own the crowd display when live labels are
+  // on and there is a live crowd claim — so we hide the plain crowd chip then to
+  // avoid showing crowd twice.
+  const richLiveClaims = liveLabelEnabled ? buildLiveClaims(living) : [];
+  const richHasCrowd = richLiveClaims.some((c) => c.claimType === 'crowd.level');
+
   const chips: React.ReactNode[] = [];
 
   // Rating chip
@@ -307,8 +330,8 @@ function PlaceInfoStrip({ living }: PlaceInfoStripProps) {
     );
   }
 
-  // Crowd chip
-  if (living.crowdLevel) {
+  // Crowd chip — suppressed when the rich Live-intel chips render crowd below.
+  if (living.crowdLevel && !(liveLabelEnabled && richHasCrowd)) {
     const crowdColor = CROWD_COLORS[living.crowdLevel.toLowerCase()] ?? color.mute;
     chips.push(
       <View key="crowd" style={[strip.chip, { borderColor: crowdColor + '44' }]}>
@@ -331,17 +354,53 @@ function PlaceInfoStrip({ living }: PlaceInfoStripProps) {
     );
   }
 
-  if (chips.length === 0) return null;
+  const showShare = captureEnabled && !safeReturnActive;
+  const venue = categoryToVenue(category);
+
+  if (chips.length === 0 && richLiveClaims.length === 0 && !showShare) return null;
 
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={strip.row}
-      style={strip.scroll}
-    >
-      {chips}
-    </ScrollView>
+    <>
+      {chips.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={strip.row}
+          style={strip.scroll}
+        >
+          {chips}
+        </ScrollView>
+      ) : null}
+
+      {/* Live intelligence decision-exposure chips (intel_live_label_crowd). */}
+      <DecisionExposureChips living={living} enabled={liveLabelEnabled} />
+
+      {/* Share a Quick Signal (intel_capture_quick_signal). */}
+      {showShare ? (
+        <View style={strip.shareWrap}>
+          <Pressable
+            testID="intel-share-signal"
+            accessibilityRole="button"
+            accessibilityLabel="Share a live signal about this place"
+            onPress={() =>
+              router.push({
+                pathname: '/intel/quick-signal' as any,
+                params: {
+                  subjectId: living.placeId,
+                  subjectName: placeName ?? '',
+                  ...(venue ? { venue } : {}),
+                },
+              })
+            }
+            style={({ pressed }) => [strip.shareBtn, pressed && { opacity: 0.85 }]}
+          >
+            <Radio size={14} color={color.signal} />
+            <Text style={strip.shareText}>Share a signal</Text>
+            <Text style={strip.shareHint}>· 5 seconds, private</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </>
   );
 }
 
@@ -381,6 +440,27 @@ const strip = StyleSheet.create({
     ...typography.caption,
     color: color.mute,
   },
+  shareWrap: {
+    backgroundColor: color.paperRaised,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+  },
+  shareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    backgroundColor: color.signal + '12',
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.signal + '40',
+    paddingHorizontal: space.md,
+    paddingVertical: 7,
+  },
+  shareText: { ...typography.button, color: color.signalDim },
+  shareHint: { ...typography.metadata, color: color.mute },
 });
 
 // ── PlaceDirectionsRow ────────────────────────────────────────────────────────
@@ -1611,7 +1691,7 @@ export function LivingDestinationPage({ place, living, placeDaysEnabled = false 
         <PlaceHeroCarousel living={living} place={place} />
 
         {/* ── Info strip ── */}
-        <PlaceInfoStrip living={living} />
+        <PlaceInfoStrip living={living} placeName={place.name} category={place.category} />
 
         {/* ── Directions ── */}
         {living.directionsUrl ? (

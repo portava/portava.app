@@ -11,6 +11,7 @@ import { fetchPreferences, patchPreferences, resetLearnedPreferences } from '../
 import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '../../src/services/profile';
 import { resolveAccountButton, applyReactivateResult } from '../../src/screens/settings/settings.machine';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { KILL_SWITCH_FLAGS } from '../../src/screens/admin/featureFlags.machine';
 
 export default function Settings() {
@@ -231,6 +232,8 @@ export default function Settings() {
     savePref({ avoidList: next });
   }
 
+  const { isEnabled } = useFeatureFlags();
+
   async function onItem(label: string) {
     if (label === 'Log out') {
       await signOut();
@@ -271,6 +274,8 @@ export default function Settings() {
       router.push('/appeals' as any);
     } else if (label === 'Reminders') {
       router.push('/reminders' as any);
+    } else if (label === 'Live intel prompts') {
+      router.push('/settings/intel-prompts' as any);
     }
   }
 
@@ -285,7 +290,9 @@ export default function Settings() {
   }
 
   const SAFETY_ITEMS = ['Blocked accounts', 'Muted accounts', 'Restricted accounts', 'Safety & Privacy', 'Safe Return history', 'Emergency Contacts'];
-  const ACCOUNT_ITEMS = ['Edit profile', 'Change password', 'Notifications', 'Location settings', 'Reminders', 'Compass Preferences', 'Compass Settings', 'My Appeals'];
+  const ACCOUNT_ITEMS = ['Edit profile', 'Change password', 'Notifications', 'Location settings', 'Reminders', 'Compass Preferences', 'Compass Settings', 'My Appeals',
+    // Intelligence Gathering prompt-pause controls — only surfaced when capture is enabled (flag off by default).
+    ...(isEnabled('intel_capture_quick_signal') ? ['Live intel prompts'] : [])];
 
   const INTERESTS_OPTIONS = ['beach', 'food', 'nightlife', 'adventure', 'culture', 'wellness', 'photography', 'shopping', 'luxury', 'backpacking'];
   const FOOD_OPTIONS = ['street food', 'seafood', 'vegetarian', 'vegan', 'local cuisine', 'fine dining', 'coffee'];
