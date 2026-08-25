@@ -1431,11 +1431,18 @@ router.post("/rent-a-buddy/me/addons", async (req, res) => {
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
   if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required.");
 
-  const { title, description, priceUsd, category, requiresAdminApproval } = req.body ?? {};
+  const { title, description, priceUsd, category } = req.body ?? {};
   if (!title || priceUsd == null) return sendError(res, 'invalid_payload', "title and priceUsd required.");
 
-  const needsApproval = requiresAdminApproval ?? false;
-
+  // Add-ons follow the auto-approve moderation model (product decision 2026-08-25):
+  // there is NO admin review workflow for add-ons — nothing ever flips
+  // admin_approved after creation and requires_admin_approval is read nowhere.
+  // Honouring a client requiresAdminApproval flag (the previous behaviour) would
+  // set admin_approved=false and hide the add-on from the marketplace
+  // (GET .../addons filters admin_approved=true) with no path to ever approve it —
+  // a self-inflicted permanent invisibility trap. So the flag is ignored and every
+  // add-on is auto-approved. admin_approved / requires_admin_approval are
+  // server-owned (migration 2156); the client cannot set them directly either.
   const { data, error } = await svc
     .from("rent_buddy_addons")
     .insert({
@@ -1445,8 +1452,8 @@ router.post("/rent-a-buddy/me/addons", async (req, res) => {
       price_usd: priceUsd,
       category: category ?? null,
       is_active: true,
-      requires_admin_approval: needsApproval,
-      admin_approved: !needsApproval,
+      requires_admin_approval: false,
+      admin_approved: true,
     })
     .select()
     .single();
