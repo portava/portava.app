@@ -42,8 +42,16 @@ function makeDb(flags: Record<string, boolean>) {
     from(table: string) {
       if (table === "freshness_policies") return { select: async () => ({ data: POLICIES, error: null }) };
       if (table === "feature_flags") {
-        return { select: () => ({ eq: (_c: string, flag: string) => ({ maybeSingle: async () => ({
-          data: flag in flags ? { enabled: flags[flag] } : null, error: null }) }) }) };
+        return { select: () => ({ eq: (_c: string, flag: string) => ({ maybeSingle: async () => {
+          // IG-09 read-path gates default to the live-allowed state (pilot on,
+          // emergency stop clear) so these pipeline cases keep exercising the
+          // read path; an explicit entry in `flags` still overrides the default.
+          if (!(flag in flags)) {
+            if (flag === "intel_limited_live") return { data: { enabled: true }, error: null };
+            if (flag === "disable_intel_live_labels") return { data: { enabled: false }, error: null };
+          }
+          return { data: flag in flags ? { enabled: flags[flag] } : null, error: null };
+        } }) }) };
       }
       if (table === "intel_state_snapshots") {
         const q: any = {
