@@ -54,7 +54,7 @@ ALTER TABLE public.post_edits        ADD  CONSTRAINT post_edits_user_id_fkey
 DO $$
 DECLARE bad text;
 BEGIN
-  SELECT string_agg(t.relname||'.'||a.attname||'='||c.confdeltype, ', ') INTO bad
+  SELECT string_agg(t.relname||'.'||a.attname||'='||c.confdeltype::text, ', ') INTO bad
   FROM pg_constraint c
   JOIN pg_class t ON t.oid=c.conrelid AND t.relnamespace='public'::regnamespace
   JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=c.conkey[1]
