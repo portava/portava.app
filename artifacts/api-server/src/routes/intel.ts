@@ -15,6 +15,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
@@ -161,9 +162,14 @@ router.post("/v1/intel/observations/:id/claims:propose", asyncHandler(async (req
   res.status(201).json({ claim: out.claim });
 }));
 
+// APPROVAL IS THE TRUST GATE OF THE LIFECYCLE (candidate → active → publishable).
+// It is restricted to an authorised admin/moderator capability — never an ordinary
+// authenticated user, and never the feature flag alone. (A system/service auto-
+// promotion path, if one is built later, would call approveClaim with the service
+// client directly, not through this user-facing route.)
 router.post("/v1/intel/observations/:id/claims:approve", asyncHandler(async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
+  const ctx = await requireAdmin(req, res);
+  if (!ctx) return;
   const claimId = z.string().uuid().safeParse((req.body ?? {}).claimId);
   if (!claimId.success) return sendError(res, "invalid_payload", "claimId (uuid) required");
   const out = await approveClaim(getServiceClient()!, claimId.data);
