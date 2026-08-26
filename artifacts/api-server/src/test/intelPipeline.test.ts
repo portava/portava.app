@@ -100,7 +100,7 @@ describe("IG pipeline — a well-evidenced claim reaches the surface", () => {
   beforeEach(() => invalidateFreshnessPolicyCache());
 
   it("projects, stores, and is readable end to end", async () => {
-    const db = makeDb({ intel_claim_projection_crowd: true, intel_live_label_crowd: true });
+    const db = makeDb({ intel_capture_quick_signal: true, intel_claim_projection_crowd: true, intel_live_label_crowd: true });
     const t = await projectAndStore(db, "place-1", [busyClaim], { now: NOW });
     assert.equal(t.written, 1);
 
@@ -115,7 +115,7 @@ describe("IG pipeline — the writer and the reader disagree safely", () => {
   beforeEach(() => invalidateFreshnessPolicyCache());
 
   it("a suppressed aggregate is STORED but never served", async () => {
-    const db = makeDb({ intel_claim_projection_crowd: true, intel_live_label_crowd: true });
+    const db = makeDb({ intel_capture_quick_signal: true, intel_claim_projection_crowd: true, intel_live_label_crowd: true });
     const t = await projectAndStore(db, "place-2", [{ ...busyClaim, distinctActors: 2 }], { now: NOW });
 
     assert.equal(t.suppressed, 1, "suppression should be counted");
@@ -128,7 +128,7 @@ describe("IG pipeline — the writer and the reader disagree safely", () => {
   });
 
   it("turning the read flag off hides even an eligible snapshot", async () => {
-    const db = makeDb({ intel_claim_projection_crowd: true, intel_live_label_crowd: false });
+    const db = makeDb({ intel_capture_quick_signal: true, intel_claim_projection_crowd: true, intel_live_label_crowd: false });
     await projectAndStore(db, "place-3", [busyClaim], { now: NOW });
     assert.equal(db.snapshots[0].privacy_eligible, true, "it was publishable…");
     assert.deepEqual(await readLiveClaims(db, "place-3", { now: NOW }), [], "…but the surface flag still governs");
@@ -139,7 +139,7 @@ describe("IG pipeline — time is enforced end to end", () => {
   beforeEach(() => invalidateFreshnessPolicyCache());
 
   it("a snapshot goes dark once its claim TTL elapses", async () => {
-    const db = makeDb({ intel_claim_projection_crowd: true, intel_live_label_crowd: true });
+    const db = makeDb({ intel_capture_quick_signal: true, intel_claim_projection_crowd: true, intel_live_label_crowd: true });
     await projectAndStore(db, "place-4", [busyClaim], { now: NOW });
     assert.equal((await readLiveClaims(db, "place-4", { now: NOW })).length, 1);
 
@@ -163,14 +163,14 @@ describe("IG pipeline — the contracts hold at the boundaries", () => {
   beforeEach(() => invalidateFreshnessPolicyCache());
 
   it("an unknown claim type is skipped rather than given an invented TTL", async () => {
-    const db = makeDb({ intel_claim_projection_crowd: true, intel_live_label_crowd: true });
+    const db = makeDb({ intel_capture_quick_signal: true, intel_claim_projection_crowd: true, intel_live_label_crowd: true });
     const t = await projectAndStore(db, "place-5", [{ ...busyClaim, claimType: "invented.type" }], { now: NOW });
     assert.equal(t.skipped, 1);
     assert.equal(db.snapshots.length, 0);
   });
 
   it("the fields a surface reads are the fields rights allow to leave", async () => {
-    const db = makeDb({ intel_claim_projection_crowd: true, intel_live_label_crowd: true });
+    const db = makeDb({ intel_capture_quick_signal: true, intel_claim_projection_crowd: true, intel_live_label_crowd: true });
     await projectAndStore(db, "place-6", [busyClaim], { now: NOW });
     const claim = (await readLiveClaims(db, "place-6", { now: NOW }))[0];
     // Everything the reader surfaces must be redistributable…

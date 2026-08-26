@@ -24,7 +24,7 @@ const PAST = new Date(NOW.getTime() - 30 * 60_000).toISOString();
  * the live-allowed state (kill off, pilot on) so the downstream-logic cases keep
  * exercising the snapshot/confidence/expiry path. `kill`/`pilot` override them.
  */
-function client(opts: { flag: boolean | null; rows?: any[]; error?: boolean; kill?: boolean; pilot?: boolean }) {
+function client(opts: { flag: boolean | null; rows?: any[]; error?: boolean; kill?: boolean; pilot?: boolean; off?: string[] }) {
   const filters: Record<string, unknown> = {};
   const api: any = {
     filters,
@@ -37,7 +37,8 @@ function client(opts: { flag: boolean | null; rows?: any[]; error?: boolean; kil
           maybeSingle: async () => {
             if (flagName === "disable_intel_live_labels") return { data: { enabled: opts.kill ?? false }, error: null };
             if (flagName === "intel_limited_live") return { data: { enabled: opts.pilot ?? true }, error: null };
-            // intel_live_label_crowd (and anything else) tracks `flag`
+            if (opts.off?.includes(flagName)) return { data: { enabled: false }, error: null };
+            // intel_live_label_crowd + upstream chain (projection, capture) track `flag`
             return { data: opts.flag === null ? null : { enabled: opts.flag }, error: null };
           },
         };
@@ -91,6 +92,16 @@ describe("liveClaimRead — IG-09 limited-live gates (kill switch + pilot)", () 
   it("flows through when the label flag is on, the stop is clear and the pilot is enabled", async () => {
     const r = await readLiveClaims(client({ flag: true, kill: false, pilot: true, rows: [liveRow] }), "p1", { now: NOW });
     assert.equal(r.length, 1);
+  });
+
+  it("enforces the flag dependency chain — projection OR capture OFF suppresses Live", async () => {
+    // Baseline: the whole chain on → serves.
+    assert.equal((await readLiveClaims(client({ flag: true, rows: [liveRow] }), "p1", { now: NOW })).length, 1);
+    // Upstream projection off while live_label is on — the unsafe combination the
+    // chain forbids (stale snapshots would keep serving until TTL). Nothing served.
+    assert.deepEqual(await readLiveClaims(client({ flag: true, rows: [liveRow], off: ["intel_claim_projection_crowd"] }), "p1", { now: NOW }), []);
+    // Upstream capture off → also suppressed.
+    assert.deepEqual(await readLiveClaims(client({ flag: true, rows: [liveRow], off: ["intel_capture_quick_signal"] }), "p1", { now: NOW }), []);
   });
 });
 
