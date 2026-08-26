@@ -133,6 +133,15 @@ export async function readLiveClaims(
   if (!sc || !subjectId) return [];
   if (!(await isFlagEnabled(sc, "intel_live_label_crowd"))) return [];
 
+  // Enforce the flag DEPENDENCY CHAIN (intelContracts.INTEL_FLAG_DEPENDENCIES):
+  // intel_live_label_crowd depends on intel_claim_projection_crowd, which depends on
+  // intel_capture_quick_signal. Serving a Live label while projection is OFF would
+  // keep re-serving already-written snapshots until their TTL — the exact unsafe
+  // combination the chain forbids. These are LITERAL flag args (so check-flag-polarity
+  // resolves each stop), and fail-closed: any missing upstream returns [].
+  if (!(await isFlagEnabled(sc, "intel_claim_projection_crowd"))) return [];
+  if (!(await isFlagEnabled(sc, "intel_capture_quick_signal"))) return [];
+
   // IG-09 Limited-Live gating, both fail-closed and ahead of any snapshot read:
   //   • the global emergency stop suppresses every Live label without deleting
   //     records — read as a kill switch, so a DB error ENGAGES it;
