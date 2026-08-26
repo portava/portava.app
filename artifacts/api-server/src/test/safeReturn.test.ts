@@ -23,6 +23,13 @@ import { stripGPS, toPublicSession } from "../services/safeReturn/SafeReturnPriv
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
+// TZ HYGIENE — pin this test process to UTC (CI's reference timezone). The
+// time-of-day boundary assertions below run against the server's LOCAL clock
+// (SafeReturnTriggerService.extractHour → new Date(ts).getHours()), so on a
+// developer machine in a non-UTC zone the "after 21:00" boundary flips and the
+// test flakes. Pinning makes it deterministic everywhere; prod code is unchanged.
+process.env.TZ = "UTC";
+
 let server: http.Server;
 let base: string;
 const FAKE_TOKEN = "safe-return-test-token";
