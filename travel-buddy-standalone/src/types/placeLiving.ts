@@ -85,12 +85,18 @@ export interface LiveClaimDTO {
   band: string;
   /** SourceClass, e.g. 'firsthand_unverified'. */
   sourceClass: string;
-  sourceCount: number;
+  /**
+   * Coarse cohort-size bucket (mirror of api-server `sourceCountBucket`). The exact
+   * distinct-actor count is a privacy parameter the server withholds.
+   */
+  sourceCountBucket: 'few' | 'several' | 'many';
+  /** @deprecated legacy exact count — no longer emitted; tolerated for old payloads. */
+  sourceCount?: number;
   observedAt: string;
   /** Freshness horizon — the client degrades to "unknown" past this. */
   validUntil: string;
-  /** Server-computed live-vs-typical state. */
-  state: 'live' | 'typical' | 'unknown';
+  /** Server-computed state. `emerging` = cleared the serve floor but not Live-qualified. */
+  state: 'live' | 'emerging' | 'typical' | 'unknown';
 }
 
 export interface LivingOfficialInfo {

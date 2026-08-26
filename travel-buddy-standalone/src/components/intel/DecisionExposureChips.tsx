@@ -35,6 +35,7 @@ import {
   observedVerb,
   relativeTime,
   confidenceBand,
+  sourceCountBucketFromCount,
   BAND_LABEL,
 } from '../../lib/intel/display.ts';
 import type { SourceClass, ConfidenceBand } from '../../lib/intel/contracts.ts';
@@ -58,7 +59,12 @@ function dtoToClaim(dto: LiveClaimDTO): ChipClaim {
     band,
     confidence: dto.confidence ?? null,
     sourceClass: (dto.sourceClass as SourceClass) ?? 'firsthand_unverified',
-    sourceCount: typeof dto.sourceCount === 'number' ? dto.sourceCount : 0,
+    // Prefer the served bucket; tolerate a legacy numeric count from an old payload.
+    sourceCountBucket:
+      dto.sourceCountBucket ??
+      (typeof dto.sourceCount === 'number' ? sourceCountBucketFromCount(dto.sourceCount) : null),
+    // The server's authoritative live/emerging state (never over-labelled as Live).
+    serverState: dto.state ?? null,
     observedAt: dto.observedAt ?? null,
     validUntil: dto.validUntil ?? null,
     synthesized: false,
@@ -82,7 +88,10 @@ export function buildLiveClaims(living: PlaceLivingResponse): ChipClaim[] {
         band: 'likely_current',
         confidence: null,
         sourceClass: 'firsthand_unverified',
-        sourceCount: 0,
+        // A bare crowd level carries no cohort and no server state: it degrades to
+        // the honest 'emerging' (band likely_current), never overstated as Live.
+        sourceCountBucket: null,
+        serverState: null,
         observedAt: living.generatedAt ?? null,
         validUntil: null,
         synthesized: true,
@@ -166,8 +175,10 @@ function WhySheet({ claim, onClose }: { claim: ChipClaim | null; onClose: () => 
           <Row label="Confidence" value={BAND_LABEL[claim.band]} />
         ) : null}
         <Row label="Source" value={sourceLabel(claim.sourceClass)} />
+        {/* Labelled "Freshness" (not "Observed") so it never collides with the
+            "Observed" live-state pill above; the value already says "Checked …". */}
         <Row
-          label="Observed"
+          label="Freshness"
           value={
             claim.observedAt
               ? `${observedVerb(claim.sourceClass)} ${relativeTime(claim.observedAt)}`

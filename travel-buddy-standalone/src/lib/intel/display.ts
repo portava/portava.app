@@ -25,6 +25,21 @@ import {
   type SourceClass,
 } from './contracts.ts';
 
+/**
+ * Coarse cohort-size bucket (mirror of api-server `SourceCountBucket`). The EXACT
+ * distinct-actor count is a privacy parameter the server withholds, so the client
+ * only ever receives a bucket. Every published aggregate is already ≥ the k=15
+ * floor, so even `few` means "more than a dozen".
+ */
+export type SourceCountBucket = 'few' | 'several' | 'many';
+
+/** Mirror of api-server `sourceCountBucket(n)` — for a legacy numeric fallback only. */
+export function sourceCountBucketFromCount(n: number): SourceCountBucket {
+  if (n < 25) return 'few';
+  if (n < 100) return 'several';
+  return 'many';
+}
+
 /** The normalised claim the chips render — assembled from the place DTO. */
 export interface LiveIntelClaim {
   /** Provenance reference (snapshot id) for the "why" surface / corroboration. */
@@ -35,14 +50,27 @@ export interface LiveIntelClaim {
   band: ConfidenceBand;
   confidence: number | null;
   sourceClass: SourceClass;
-  sourceCount: number;
+  /** Coarse cohort bucket; null when the source carries no cohort (synthesised). */
+  sourceCountBucket: SourceCountBucket | null;
+  /**
+   * The server's authoritative live/emerging state when the envelope carries it.
+   * Preferred over the band-derived state so the client never over-labels; null
+   * for a synthesised claim, which then falls back to band derivation.
+   */
+  serverState?: LiveState | null;
   /** ISO observation time (or generation time for a pattern/prediction). */
   observedAt: string | null;
   /** ISO expiry, when the claim stops being live. */
   validUntil: string | null;
 }
 
-export type LiveState = 'live' | 'typical' | 'unknown';
+/**
+ * `emerging` mirrors the api-server's narrower state (#156): a fresh first-hand
+ * observation that cleared the serve floor (likely_current) but is NOT yet
+ * Live-qualified (band live/strong). It renders distinctly from `live` so the
+ * client never overstates evidence as Live before it qualifies.
+ */
+export type LiveState = 'live' | 'emerging' | 'typical' | 'unknown';
 
 // ── Confidence band (mirror of api-server confidenceBand) ────────────────────
 export function confidenceBand(score: number | null | undefined): ConfidenceBand {
@@ -65,25 +93,50 @@ export const BAND_LABEL: Record<ConfidenceBand, string> = {
 /**
  * Honest state for a claim:
  *  - unknown  — nothing usable, or a non-observation source, or expired.
- *  - typical  — a real claim but below the live band (a pattern-level answer).
+ *  - typical  — a real claim but below the serve floor (a pattern-level answer).
+ *  - emerging — a fresh first-hand observation at/above the serve floor
+ *               (likely_current) but below the live band; real and current, not
+ *               yet Live-qualified.
  *  - live     — a first-hand observation at/above the live band and not expired.
+ *
+ * Mirrors the api-server's live/emerging split (#156): `live` is reserved for band
+ * live/strong. When the envelope carries the server's own state we trust it (it is
+ * authoritative and derived the same way); otherwise we derive from the band, so a
+ * synthesised claim degrades honestly too. Expiry and non-observation sources are
+ * enforced first — an expired or historical claim is never live, whatever the
+ * server said.
  */
 export function liveState(claim: LiveIntelClaim | null | undefined, now: Date = new Date()): LiveState {
   if (!claim) return 'unknown';
   if (!mayRenderAsLive(claim.sourceClass)) return 'typical';
   if (claim.validUntil && new Date(claim.validUntil).getTime() <= now.getTime()) return 'unknown';
+  if (claim.serverState === 'live' || claim.serverState === 'emerging') return claim.serverState;
   const floor = CONFIDENCE_BAND_FLOOR[claim.band];
-  if (floor >= CONFIDENCE_BAND_FLOOR[MIN_BAND_FOR_LIVE_STATE]) return 'live';
+  if (floor >= CONFIDENCE_BAND_FLOOR.live) return 'live';
+  if (floor >= CONFIDENCE_BAND_FLOOR[MIN_BAND_FOR_LIVE_STATE]) return 'emerging';
   return 'typical';
 }
 
 export function liveStateLabel(state: LiveState): string {
-  return state === 'live' ? 'Live' : state === 'typical' ? 'Typical' : 'Unknown';
+  return state === 'live'
+    ? 'Live'
+    : state === 'emerging'
+      ? 'Observed'
+      : state === 'typical'
+        ? 'Typical'
+        : 'Unknown';
 }
 
-/** Colour for a state — vermilion signal is reserved for genuinely live. */
+/** Colour for a state — vermilion signal is reserved for genuinely live; emerging
+ *  gets its own teal accent so it never borrows the Live vermilion. */
 export function liveStateColor(state: LiveState): string {
-  return state === 'live' ? color.signal : state === 'typical' ? color.warn : color.faint;
+  return state === 'live'
+    ? color.signal
+    : state === 'emerging'
+      ? color.deep
+      : state === 'typical'
+        ? color.warn
+        : color.faint;
 }
 
 // ── Claim value formatting ───────────────────────────────────────────────────
@@ -159,8 +212,17 @@ export function sourceLabel(cls: SourceClass): string {
  * the source class + how many independent reports back it + the band.
  */
 export function whyExplanation(claim: LiveIntelClaim): string {
-  const n = claim.sourceCount;
-  const reports = n <= 0 ? 'a traveler report' : n === 1 ? '1 traveler on the ground' : `${n} independent travelers on the ground`;
+  // The exact contributor count is withheld (privacy); render the coarse bucket
+  // honestly. Every published bucket is ≥ the k=15 floor, so none understates.
+  const bucket = claim.sourceCountBucket;
+  const reports =
+    bucket === 'many'
+      ? 'over a hundred travelers on the ground'
+      : bucket === 'several'
+        ? 'dozens of travelers on the ground'
+        : bucket === 'few'
+          ? 'more than a dozen travelers on the ground'
+          : 'travelers on the ground';
   switch (claim.sourceClass) {
     case 'verified_firsthand':
       return `Confirmed by ${reports} whose presence was verified. Fades as it ages.`;
