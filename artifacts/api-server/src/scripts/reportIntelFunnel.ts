@@ -90,16 +90,22 @@ function printEnumTally(t: EnumTally, indent = "  "): void {
 }
 
 async function fetchAll<T>(query: any, label: string): Promise<T[]> {
-  const { data, error } = await query.limit(FETCH_CAP);
+  // The queries request count:'exact', which returns the TOTAL matching rows
+  // regardless of the row limit — so `count > rows.length` detects a SERVER-side
+  // cap (PostgREST db-max-rows below FETCH_CAP) that the client-side length check
+  // alone would miss. Silent truncation understates the funnel — the exact
+  // absence-of-evidence trap this instrument must avoid.
+  const { data, error, count } = await query.limit(FETCH_CAP);
   if (error) {
     console.error(`Query failed (${label}):`, error.message);
     process.exit(2);
   }
   const rows = (data as T[]) ?? [];
-  if (rows.length >= FETCH_CAP) {
+  if (rows.length >= FETCH_CAP || (typeof count === "number" && count > rows.length)) {
     console.error(
-      `⚠ ${label}: fetch hit the ${FETCH_CAP} row cap — counts below are TRUNCATED and must not be quoted. ` +
-        `Narrow the window and re-run.`,
+      `⚠ ${label}: fetched ${rows.length} row(s)` +
+        (typeof count === "number" ? ` of ${count} matching` : ` (hit the ${FETCH_CAP} cap)`) +
+        ` — the result is TRUNCATED (client or server row cap) and must not be quoted. Narrow the window and re-run.`,
     );
     process.exit(2);
   }
@@ -138,25 +144,26 @@ async function main(): Promise<void> {
   console.log("");
 
   // ── Fetch (read-only). Each set windowed by its own natural timestamp. ───────
+  const EXACT = { count: "exact" as const };
   const obsQ = withUntil(
     sc.from("intel_observations")
-      .select("actor_id, subject_id, claim_type, moderation_state, observed_at, expires_at, group_key, party_size_bucket")
+      .select("actor_id, subject_id, claim_type, moderation_state, observed_at, expires_at, group_key, party_size_bucket", EXACT)
       .gte("observed_at", window.since),
     "observed_at",
     window.until,
   );
   const claimQ = withUntil(
-    sc.from("intel_claims").select("subject_id, claim_type, status, observed_at").gte("observed_at", window.since),
+    sc.from("intel_claims").select("subject_id, claim_type, status, observed_at", EXACT).gte("observed_at", window.since),
     "observed_at",
     window.until,
   );
   const snapQ = withUntil(
-    sc.from("intel_state_snapshots").select("privacy_eligible, confidence_band, expires_at").gte("computed_at", window.since),
+    sc.from("intel_state_snapshots").select("privacy_eligible, confidence_band, expires_at", EXACT).gte("computed_at", window.since),
     "computed_at",
     window.until,
   );
   const confQ = withUntil(
-    sc.from("intel_confirmations").select("stance").gte("created_at", window.since),
+    sc.from("intel_confirmations").select("stance", EXACT).gte("created_at", window.since),
     "created_at",
     window.until,
   );
@@ -166,7 +173,7 @@ async function main(): Promise<void> {
   // the window would be re-scored over a truncated cohort and the verdict would lie.
   const freshObsQ = sc
     .from("intel_observations")
-    .select("actor_id, subject_id, claim_type, expires_at, group_key")
+    .select("actor_id, subject_id, claim_type, expires_at, group_key", EXACT)
     .or(`expires_at.is.null,expires_at.gt.${now.toISOString()}`);
 
   const [observations, freshObservations, claims, snapshots, confirmations] = await Promise.all([
@@ -181,14 +188,26 @@ async function main(): Promise<void> {
   const funnel = tallyIntelFunnel(rows, now);
 
   // ── Empty-data honesty, BEFORE any gate verdict ──────────────────────────────
-  const anyData =
+  // The fresh cohort counts too: a long-TTL claim's contributors can be older than
+  // the window yet still fresh and currently live-eligible. Declaring "no evidence"
+  // while holding those would be the exact absence-of-evidence trap this guards.
+  const anyWindowData =
     observations.length > 0 || claims.length > 0 || snapshots.length > 0 || confirmations.length > 0;
-  if (!anyData) {
+  if (!anyWindowData && freshObservations.length === 0) {
     console.log("── VERDICT: NOT ESTABLISHED ──");
-    console.log("  No intel rows of any kind in this window. This script CANNOT distinguish");
-    console.log("  'capture never ran here' from 'the flags are off' from 'the data was erased'.");
-    console.log("  No funnel and no density-gate verdict may be drawn from this output.");
+    console.log("  No intel rows of any kind in this window, and no fresh observations at all.");
+    console.log("  This script CANNOT distinguish 'capture never ran here' from 'the flags are");
+    console.log("  off' from 'the data was erased'. No funnel and no density-gate verdict may be");
+    console.log("  drawn from this output.");
     process.exit(0);
+  }
+  if (!anyWindowData) {
+    console.log("── VERDICT: NO IN-WINDOW ACTIVITY (but fresh intel exists) ──");
+    console.log(`  The window holds no observations/claims/snapshots/confirmations, but ${freshObservations.length}`);
+    console.log("  observation(s) captured earlier are STILL FRESH (within TTL) and feed §5's");
+    console.log("  gate re-derivation below. Do not read this as 'nothing captured' — widen the");
+    console.log("  window (--since) to see the flow that produced them. §1–§4 will read as 0.");
+    console.log("");
   }
 
   // ── 1. Observations ──────────────────────────────────────────────────────────
@@ -196,8 +215,10 @@ async function main(): Promise<void> {
   printEnumTally(funnel.observations.tally);
   console.log(`  eligible to back a claim ('allowed') ... ${funnel.observations.eligibleForClaim}`);
   if (funnel.observations.tally.total > 0 && funnel.observations.eligibleForClaim === 0) {
-    console.log("  ⚠ No observation is 'allowed'. moderation_state defaults to 'pending' and no");
-    console.log("    worker promotes it, so no claim can be backed. This starves every stage below.");
+    console.log("  ⚠ No observation is moderation-'allowed' (default is 'pending', and nothing");
+    console.log("    promotes it). NOTE: the claim/projection path does NOT currently enforce");
+    console.log("    moderation, so these 'pending' rows STILL back claims and can reach a live");
+    console.log("    label — the moderation gate is defined (isModerationEligible) but unwired.");
   }
   console.log("");
 
@@ -290,7 +311,7 @@ async function main(): Promise<void> {
   const assessment = assessDensityGate(funnel, { qualifyingWeeklyObservations: weeklyObs });
   console.log("── 6. §26 density gate (promotion criterion) ──");
   console.log(`  citywide contributors ... ${assessment.metrics.activeReliableContributorsCitywide} / ${DENSITY_GATE_V1.activeReliableContributorsCitywide}  (UPPER BOUND — reliability not modelled)`);
-  console.log(`  qualifying weekly obs ... ${assessment.metrics.qualifyingWeeklyObservations} / ${DENSITY_GATE_V1.qualifyingWeeklyObservations}  (MEASURED, this window)`);
+  console.log(`  qualifying obs .......... ${assessment.metrics.qualifyingWeeklyObservations} / ${DENSITY_GATE_V1.qualifyingWeeklyObservations}  (in-window 'allowed' count vs a WEEKLY threshold — compare only on a ~7-day window; ${windowDesc})`);
   console.log(`  per-cluster / per-venue / outcomes / calibration / expiry ... UNINSTRUMENTED (forced fail-closed)`);
   console.log(`  gate arithmetic .......... ${assessment.gate.met ? "met" : "NOT met"}  ${assessment.gate.failures.length ? `[${assessment.gate.failures.join(", ")}]` : ""}`);
   console.log("");
