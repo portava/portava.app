@@ -9,21 +9,31 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { columnsFromMigration, computeProblems } from "../scripts/checkDataRights.js";
+import { columnsFromMigration, allIntelColumns, computeProblems } from "../scripts/checkDataRights.js";
 import {
   FIELD_RIGHTS, OWNERSHIP_CLASSES, REDISTRIBUTABLE, mayRedistribute,
   redistributableFields, COVERED_TABLES,
 } from "../lib/dataRights.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SQL = readFileSync(join(HERE, "../migrations/2130_intel_storage.sql"), "utf8");
-const TABLES = columnsFromMigration(SQL);
+const MIGRATIONS = join(HERE, "../migrations");
+const SQL = readFileSync(join(MIGRATIONS, "2130_intel_storage.sql"), "utf8");
+const CREATE_ONLY = columnsFromMigration(SQL);
+// The completeness scan reads the CREATE bodies PLUS every later ALTER ADD COLUMN,
+// so columns added after 2130 (group_key, party_size_bucket via 2171) are covered.
+const TABLES = allIntelColumns(MIGRATIONS);
 
 describe("dataRights — the registry matches the schema", () => {
   it("parses every covered table out of 2130", () => {
     for (const t of COVERED_TABLES) {
-      assert.ok((TABLES.get(t) ?? []).length > 0, `${t} produced no columns`);
+      assert.ok((CREATE_ONLY.get(t) ?? []).length > 0, `${t} produced no columns`);
     }
+  });
+
+  it("sees columns added by a later ALTER, not just CREATE (2171 group_key/party_size_bucket)", () => {
+    const obs = TABLES.get("intel_observations") ?? [];
+    assert.ok(obs.includes("group_key"), "group_key (added by 2171 ALTER) must be in the scanned set");
+    assert.ok(obs.includes("party_size_bucket"), "party_size_bucket must be in the scanned set");
   });
 
   it("is currently clean", () => {
@@ -54,6 +64,11 @@ describe("dataRights — fail-closed", () => {
 
   it("the exact cohort size is withheld — it is the privacy parameter itself", () => {
     assert.equal(mayRedistribute("intel_state_snapshots", "distinct_actors"), false);
+  });
+
+  it("the independent-group signal (group_key, party_size_bucket) never leaves", () => {
+    assert.equal(mayRedistribute("intel_observations", "group_key"), false);
+    assert.equal(mayRedistribute("intel_observations", "party_size_bucket"), false);
   });
 
   it("an evidence storage key never leaves", () => {
