@@ -1,64 +1,64 @@
 /**
- * tripMembership.isAcceptedTripMember — the role-based membership check the intel
- * group signal uses to validate a client-supplied Trip Crew (partyId). Proves it
- * accepts the owner and accepted members, rejects pending invites / non-members,
- * and fails closed on a missing client or a DB error.
+ * tripMembership — the role-based checks the intel group signal uses: is the actor
+ * an accepted member, how many distinct members does a trip have, and is it a
+ * SHARED crew (≥2). The shared-crew gate is what stops a solo trip from minting a
+ * per-person crew key (which would split a crew — the leak the signal prevents).
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isAcceptedTripMember } from "../lib/tripMembership.js";
+import { isAcceptedTripMember, acceptedCrewSize, isSharedCrewMember } from "../lib/tripMembership.js";
 
-/** Minimal Supabase-shaped fake: trips(owner_id) + trip_members(role) with an optional forced error. */
-function makeDb(cfg: { ownerId?: string; members?: { user_id: string; role: string }[]; error?: boolean }) {
+/** trips(id, owner_id) + trip_members(trip_id, user_id, role); eq / in / maybeSingle / list. */
+function makeDb(cfg: { trips?: { id: string; owner_id: string }[]; members?: { trip_id: string; user_id: string; role: string }[]; error?: boolean }) {
   function from(table: string) {
     const eqs: [string, any][] = [];
-    let roleIn: string[] | null = null;
+    const ins: [string, any[]][] = [];
+    const rows = (): any[] => {
+      const src = table === "trips" ? cfg.trips ?? [] : table === "trip_members" ? cfg.members ?? [] : [];
+      return src.filter((r: any) => eqs.every(([c, v]) => r[c] === v) && ins.every(([c, v]) => v.includes(r[c])));
+    };
     const b: any = {
       select() { return b; },
       eq(c: string, v: any) { eqs.push([c, v]); return b; },
-      in(_c: string, v: string[]) { roleIn = v; return b; },
-      maybeSingle() {
-        if (cfg.error) return Promise.resolve({ data: null, error: { message: "boom" } });
-        if (table === "trips") {
-          return Promise.resolve({ data: cfg.ownerId ? { owner_id: cfg.ownerId } : null, error: null });
-        }
-        // trip_members
-        const uid = eqs.find(([c]) => c === "user_id")?.[1];
-        const hit = (cfg.members ?? []).find(
-          (m) => m.user_id === uid && (!roleIn || roleIn.includes(m.role)),
-        );
-        return Promise.resolve({ data: hit ? { role: hit.role } : null, error: null });
-      },
+      in(c: string, v: any[]) { ins.push([c, v]); return b; },
+      maybeSingle() { return Promise.resolve(cfg.error ? { data: null, error: { message: "boom" } } : { data: rows()[0] ?? null, error: null }); },
+      then(res: (r: any) => any) { return Promise.resolve(cfg.error ? { data: null, error: { message: "boom" } } : { data: rows(), error: null }).then(res); },
     };
     return b;
   }
   return { from };
 }
 
+const trip = (id: string, owner: string) => ({ id, owner_id: owner });
+const mem = (trip_id: string, user_id: string, role = "member") => ({ trip_id, user_id, role });
+
 describe("tripMembership.isAcceptedTripMember", () => {
-  it("accepts the trip owner", async () => {
-    const db = makeDb({ ownerId: "u1" });
-    assert.equal(await isAcceptedTripMember(db, "trip-1", "u1"), true);
+  it("accepts owner and accepted member; rejects invitee, non-member, error, missing", async () => {
+    assert.equal(await isAcceptedTripMember(makeDb({ trips: [trip("t", "u1")] }), "t", "u1"), true);
+    assert.equal(await isAcceptedTripMember(makeDb({ trips: [trip("t", "o")], members: [mem("t", "u2")] }), "t", "u2"), true);
+    assert.equal(await isAcceptedTripMember(makeDb({ trips: [trip("t", "o")], members: [mem("t", "u3", "invited")] }), "t", "u3"), false);
+    assert.equal(await isAcceptedTripMember(makeDb({ trips: [trip("t", "o")], members: [] }), "t", "stranger"), false);
+    assert.equal(await isAcceptedTripMember(makeDb({ error: true }), "t", "u1"), false);
+    assert.equal(await isAcceptedTripMember(null, "t", "u1"), false);
   });
+});
 
-  it("accepts an accepted member (role member)", async () => {
-    const db = makeDb({ ownerId: "owner", members: [{ user_id: "u2", role: "member" }] });
-    assert.equal(await isAcceptedTripMember(db, "trip-1", "u2"), true);
+describe("tripMembership.acceptedCrewSize", () => {
+  it("counts DISTINCT accepted members (owner + role owner/member), ignoring invitees", async () => {
+    assert.equal(await acceptedCrewSize(makeDb({ trips: [trip("t", "o")], members: [mem("t", "u2")] }), "t"), 2);
+    assert.equal(await acceptedCrewSize(makeDb({ trips: [trip("t", "o")], members: [] }), "t"), 1, "owner alone");
+    assert.equal(await acceptedCrewSize(makeDb({ trips: [trip("t", "o")], members: [mem("t", "u3", "invited")] }), "t"), 1, "invitee not counted");
+    assert.equal(await acceptedCrewSize(makeDb({ trips: [trip("t", "o")], members: [mem("t", "o", "owner")] }), "t"), 1, "owner not double-counted");
+    assert.equal(await acceptedCrewSize(makeDb({ error: true }), "t"), 0);
   });
+});
 
-  it("rejects a pending invite (role invited)", async () => {
-    const db = makeDb({ ownerId: "owner", members: [{ user_id: "u3", role: "invited" }] });
-    assert.equal(await isAcceptedTripMember(db, "trip-1", "u3"), false);
-  });
-
-  it("rejects a non-member", async () => {
-    const db = makeDb({ ownerId: "owner", members: [] });
-    assert.equal(await isAcceptedTripMember(db, "trip-1", "stranger"), false);
-  });
-
-  it("fails closed on a DB error and on a missing client", async () => {
-    assert.equal(await isAcceptedTripMember(makeDb({ error: true }), "trip-1", "u1"), false);
-    assert.equal(await isAcceptedTripMember(null, "trip-1", "u1"), false);
-    assert.equal(await isAcceptedTripMember(makeDb({}), "", "u1"), false);
+describe("tripMembership.isSharedCrewMember", () => {
+  it("true only for a member of a SHARED (≥2-member) crew", async () => {
+    const shared = makeDb({ trips: [trip("t", "o")], members: [mem("t", "u2")] });
+    assert.equal(await isSharedCrewMember(shared, "t", "o"), true, "owner of a 2-member crew");
+    assert.equal(await isSharedCrewMember(makeDb({ trips: [trip("t", "o")], members: [mem("t", "u2")] }), "t", "u2"), true, "the member");
+    assert.equal(await isSharedCrewMember(makeDb({ trips: [trip("solo", "u1")], members: [] }), "solo", "u1"), false, "solo trip is not a crew");
+    assert.equal(await isSharedCrewMember(makeDb({ trips: [trip("t", "o")], members: [mem("t", "u2")] }), "t", "stranger"), false, "non-member");
   });
 });

@@ -31,7 +31,7 @@ import {
 import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickSignal.js";
 import { validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
 import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
-import { isAcceptedTripMember } from "../../lib/tripMembership.js";
+import { isSharedCrewMember } from "../../lib/tripMembership.js";
 import { resolveActiveCrewId } from "../../lib/activeCrew.js";
 
 /**
@@ -137,17 +137,19 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
 
   // V1 independent-group signal. Only label-eligible (quick_signal) captures feed a
   // public live label, so only they carry a group signal. Hierarchy, fail-closed:
-  //   1. a client-supplied, membership-validated Trip Crew id -> a SHARED crew token;
-  //   2. else a SERVER-RESOLVED active Trip Crew -> a shared crew token. This is
+  //   1. a client-supplied partyId that is a SHARED crew (≥2 members) the actor is on;
+  //   2. else a SERVER-RESOLVED active shared crew -> a shared crew token. This is
   //      AUTHORITATIVE over the answer below, so a crew member cannot split the crew
   //      by omitting partyId and self-reporting "just me";
   //   3. else "just me" -> a per-actor solo token (a lone visitor is its own group);
   //   4. else / unknown -> null (counts as a person, never as a group).
+  // Both crew paths require a SHARED crew so a solo trip cannot mint a per-person
+  // crew key (which would SPLIT a crew — the leak the signal exists to prevent).
   let groupIdentity: GroupIdentity | null = null;
   let partySizeBucket: PartySizeBucket | null = null;
   if (surface === "quick_signal") {
     partySizeBucket = input.partySize ?? null;
-    if (input.partyId && (await isAcceptedTripMember(sc, input.partyId, actorId))) {
+    if (input.partyId && (await isSharedCrewMember(sc, input.partyId, actorId))) {
       groupIdentity = { kind: "crew", crewId: input.partyId };
     } else {
       const activeCrewId = await resolveActiveCrewId(sc, actorId, new Date());

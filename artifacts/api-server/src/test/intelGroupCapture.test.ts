@@ -34,7 +34,7 @@ function makeDb(cfg: { trips?: any[]; members?: any[] }) {
     let op: "select" | "insert" = "select";
     let payload: any = null;
     const eqs: [string, any][] = [];
-    let inF: [string, any[]] | null = null;
+    const ins: [string, any[]][] = [];
     let lteF: [string, string] | null = null;
     let gteF: [string, string] | null = null;
     let lim = Infinity, orderCol: string | null = null, orderAsc = true;
@@ -43,7 +43,7 @@ function makeDb(cfg: { trips?: any[]; members?: any[] }) {
       let r = src().filter(
         (row: any) =>
           eqs.every(([c, v]) => row[c] === v) &&
-          (!inF || inF[1].includes(row[inF[0]])) &&
+          ins.every(([c, v]) => v.includes(row[c])) &&
           (!lteF || (row[lteF[0]] != null && row[lteF[0]] <= lteF[1])) &&
           (!gteF || (row[gteF[0]] != null && row[gteF[0]] >= gteF[1])),
       );
@@ -60,7 +60,7 @@ function makeDb(cfg: { trips?: any[]; members?: any[] }) {
       select() { return b; },
       insert(row: any) { op = "insert"; payload = row; return b; },
       eq(c: string, v: any) { eqs.push([c, v]); return b; },
-      in(c: string, v: any[]) { inF = [c, v]; return b; },
+      in(c: string, v: any[]) { ins.push([c, v]); return b; },
       lte(c: string, v: string) { lteF = [c, v]; return b; },
       gte(c: string, v: string) { gteF = [c, v]; return b; },
       order(c: string, o: { ascending: boolean }) { orderCol = c; orderAsc = o.ascending; return b; },
@@ -85,8 +85,9 @@ describe("capture → group_key integration (server-crew override closes the lea
   before(() => { process.env.SESSION_SECRET = "test-session-secret-please-ignore-0123456789"; });
   after(() => { if (prev === undefined) delete process.env.SESSION_SECRET; else process.env.SESSION_SECRET = prev; });
 
-  it("'just me' + a server-resolved active OWNED crew → crew key (overrides solo)", async () => {
-    const db = makeDb({ trips: [{ id: "trip-A", owner_id: ACTOR, ...ACTIVE }] });
+  it("'just me' + a server-resolved active SHARED crew → crew key (overrides solo)", async () => {
+    // trip-A is a shared crew: owner ACTOR + one other accepted member.
+    const db = makeDb({ trips: [{ id: "trip-A", owner_id: ACTOR, ...ACTIVE }], members: [{ trip_id: "trip-A", user_id: "crewmate", role: "member" }] });
     const r = await writeObservation(db as any, ACTOR, input({ partySize: "just_me" }) as any);
     assert.equal(r.ok, true);
     const stored = db._inserted[0];
