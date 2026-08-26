@@ -18,7 +18,7 @@ import {
   COMMERCIAL_DISCLOSURES, CROWD_LEVELS, TRAJECTORIES,
   PRESENCE_LEVELS, PRESENCE_LEVEL_MEANING,
   CONFIDENCE_BANDS, CONFIDENCE_BAND_FLOOR, confidenceBand,
-  CLAIM_TYPES, isModerationEligible,
+  CLAIM_TYPES, isModerationEligible, isPilotClaimable,
   clampObservedAt, MAX_OBSERVED_AT_SKEW_MS,
   isValidIdempotencyKey, IDEMPOTENCY_KEY_MAX_LENGTH,
   INTEL_FLAGS, INTEL_FLAG_DEPENDENCIES,
@@ -220,6 +220,16 @@ describe("T-07 truth boundary", () => {
     for (const s of MODERATION_STATES) {
       assert.equal(isModerationEligible(s), s === "allowed");
     }
+  });
+
+  it("the PILOT rule claims pending + allowed, excludes every invalidated state (fail-closed)", () => {
+    for (const s of MODERATION_STATES) {
+      assert.equal(isPilotClaimable(s), s === "pending" || s === "allowed", `${s}`);
+    }
+    // Fail-closed on unknown / missing states.
+    assert.equal(isPilotClaimable("quarantined"), false);
+    assert.equal(isPilotClaimable(null), false);
+    assert.equal(isPilotClaimable(undefined), false);
   });
 });
 

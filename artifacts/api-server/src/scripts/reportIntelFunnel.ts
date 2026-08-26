@@ -173,7 +173,7 @@ async function main(): Promise<void> {
   // the window would be re-scored over a truncated cohort and the verdict would lie.
   const freshObsQ = sc
     .from("intel_observations")
-    .select("actor_id, subject_id, claim_type, expires_at, group_key", EXACT)
+    .select("actor_id, subject_id, claim_type, expires_at, group_key, moderation_state", EXACT)
     .or(`expires_at.is.null,expires_at.gt.${now.toISOString()}`);
 
   const [observations, freshObservations, claims, snapshots, confirmations] = await Promise.all([
@@ -213,12 +213,13 @@ async function main(): Promise<void> {
   // ── 1. Observations ──────────────────────────────────────────────────────────
   console.log("── 1. observations submitted (by moderation state) ──");
   printEnumTally(funnel.observations.tally);
-  console.log(`  eligible to back a claim ('allowed') ... ${funnel.observations.eligibleForClaim}`);
-  if (funnel.observations.tally.total > 0 && funnel.observations.eligibleForClaim === 0) {
-    console.log("  ⚠ No observation is moderation-'allowed' (default is 'pending', and nothing");
-    console.log("    promotes it). NOTE: the claim/projection path does NOT currently enforce");
-    console.log("    moderation, so these 'pending' rows STILL back claims and can reach a live");
-    console.log("    label — the moderation gate is defined (isModerationEligible) but unwired.");
+  console.log(`  claimable in the PILOT (pending + allowed) ... ${funnel.observations.pilotClaimable}   ['allowed' alone: ${funnel.observations.eligibleForClaim}]`);
+  console.log(`  EXCLUDED as invalidated (restricted/blocked/removed) ... ${funnel.observations.tally.total - funnel.observations.pilotClaimable - funnel.observations.tally.unknown}`);
+  if (funnel.observations.tally.total > 0 && funnel.observations.pilotClaimable === 0) {
+    console.log("  ⚠ NO observation is claimable — all are moderation-invalidated");
+    console.log("    (restricted/blocked/removed). Nothing can back a claim or a label; this");
+    console.log("    starves every stage below. (Pilot rule: pending + allowed are claimable;");
+    console.log("    promotion is deferred but invalidated content is excluded everywhere.)");
   }
   console.log("");
 
@@ -307,11 +308,11 @@ async function main(): Promise<void> {
   console.log("");
 
   // ── 6. Density gate (never certifiable from this instrument — by design) ──────
-  const weeklyObs = funnel.observations.eligibleForClaim; // 'allowed' observations in-window
+  const weeklyObs = funnel.observations.pilotClaimable; // pilot-claimable (pending+allowed) in-window
   const assessment = assessDensityGate(funnel, { qualifyingWeeklyObservations: weeklyObs });
   console.log("── 6. §26 density gate (promotion criterion) ──");
   console.log(`  citywide contributors ... ${assessment.metrics.activeReliableContributorsCitywide} / ${DENSITY_GATE_V1.activeReliableContributorsCitywide}  (UPPER BOUND — reliability not modelled)`);
-  console.log(`  qualifying obs .......... ${assessment.metrics.qualifyingWeeklyObservations} / ${DENSITY_GATE_V1.qualifyingWeeklyObservations}  (in-window 'allowed' count vs a WEEKLY threshold — compare only on a ~7-day window; ${windowDesc})`);
+  console.log(`  qualifying obs .......... ${assessment.metrics.qualifyingWeeklyObservations} / ${DENSITY_GATE_V1.qualifyingWeeklyObservations}  (in-window pilot-claimable count vs a WEEKLY threshold — compare only on a ~7-day window; ${windowDesc})`);
   console.log(`  per-cluster / per-venue / outcomes / calibration / expiry ... UNINSTRUMENTED (forced fail-closed)`);
   console.log(`  gate arithmetic .......... ${assessment.gate.met ? "met" : "NOT met"}  ${assessment.gate.failures.length ? `[${assessment.gate.failures.join(", ")}]` : ""}`);
   console.log("");

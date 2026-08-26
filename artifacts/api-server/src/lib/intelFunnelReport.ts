@@ -61,6 +61,7 @@ import {
   PARTY_SIZE_BUCKETS,
   PRIVACY_THRESHOLD_V1,
   isModerationEligible,
+  isPilotClaimable,
   type ClaimStatus,
   type ConfidenceBand,
   type ModerationState,
@@ -145,8 +146,12 @@ export interface SuppressionTally {
 export interface IntelFunnel {
   observations: {
     tally: EnumTally;                 // by moderation_state
-    /** Rows whose moderation_state is 'allowed' — the only ones that may back a claim. */
+    /** Rows whose moderation_state is 'allowed' — the eventual spec rule. */
     eligibleForClaim: number;
+    /** Rows the PILOT rule allows to back a claim (pending + allowed); invalidated
+     *  content (restricted/blocked/removed) is excluded. This is what the aggregator
+     *  actually counts today. */
+    pilotClaimable: number;
   };
   claims: {
     tally: EnumTally;                 // by status
@@ -249,7 +254,8 @@ export function tallyIntelFunnel(rows: FunnelRows, now: Date): IntelFunnel {
   // 1. Observations by moderation_state.
   const obsTally = newEnumTally(MODERATION_STATES);
   const knownModeration = new Set<string>(MODERATION_STATES);
-  let eligibleForClaim = 0;
+  let eligibleForClaim = 0;   // 'allowed' only — the eventual spec rule
+  let pilotClaimable = 0;     // pending + allowed — the pilot rule (excludes invalidated)
   // Distinct-actor counting, both citywide and per (subject, claim_type) for the
   // suppression re-derivation. Only FRESH observations feed the gate's actor
   // count, matching the projection aggregator.
@@ -265,6 +271,7 @@ export function tallyIntelFunnel(rows: FunnelRows, now: Date): IntelFunnel {
     if (typeof o.moderation_state === "string" && isModerationEligible(o.moderation_state as ModerationState)) {
       eligibleForClaim += 1;
     }
+    if (isPilotClaimable(o.moderation_state)) pilotClaimable += 1;
     if (o.actor_id) actorObsCount.set(o.actor_id, (actorObsCount.get(o.actor_id) ?? 0) + 1);
     countInto(partyTally, o.party_size_bucket ?? "(null)", knownParty);
     if (o.group_key != null && o.group_key !== "") groupEligibleObservations += 1; else nullGroupObservations += 1;
@@ -280,6 +287,11 @@ export function tallyIntelFunnel(rows: FunnelRows, now: Date): IntelFunnel {
   const freshGroupActorsByClaimKey = new Map<string, Map<string, Set<string>>>();
   for (const o of freshSet) {
     if (!o.subject_id || !o.claim_type || !o.actor_id || !isFresh(o.expires_at, nowMs)) continue;
+    // Match the aggregator: explicitly-invalidated content is excluded from the
+    // cohort, so the re-derived verdict tracks what the gate actually sees. A row
+    // whose moderation_state is absent (older fetch) is treated as claimable — but
+    // reportIntelFunnel now selects moderation_state, so production rows carry it.
+    if (o.moderation_state != null && !isPilotClaimable(o.moderation_state)) continue;
     const key = JSON.stringify([o.subject_id, o.claim_type]);
     let set = freshActorsByClaimKey.get(key);
     if (!set) { set = new Set(); freshActorsByClaimKey.set(key, set); }
@@ -378,7 +390,7 @@ export function tallyIntelFunnel(rows: FunnelRows, now: Date): IntelFunnel {
   }
 
   return {
-    observations: { tally: obsTally, eligibleForClaim },
+    observations: { tally: obsTally, eligibleForClaim, pilotClaimable },
     claims: { tally: claimTally, liveEligible },
     snapshots: {
       total: rows.snapshots.length,

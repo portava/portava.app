@@ -99,6 +99,18 @@ describe("intelFunnelReport — contributor concentration", () => {
 describe("intelFunnelReport — suppression reason re-derivation (gate order preserved)", () => {
   const liveClaim = { subject_id: S, claim_type: CT, status: "active", observed_at: HOUR_AGO };
 
+  it("re-derivation EXCLUDES moderation-invalidated observations (matches the aggregator)", () => {
+    const allowed = observers(14); // actor-0..13, allowed
+    const blocked = observers(5, { moderation_state: "blocked" }).map((o, i) => ({ ...o, actor_id: `blk-${i}` }));
+    const rows: FunnelRows = { ...empty, observations: [...allowed, ...blocked], claims: [liveClaim] };
+    const f = tallyIntelFunnel(rows, NOW);
+    // Only the 14 allowed count → below the k=15 floor. If blocked were counted (19),
+    // it would clear the floor and fail on groups instead.
+    assert.equal(f.suppression.byReason["below_actor_threshold"], 1, "blocked excluded → 14 actors < 15");
+    assert.equal(f.suppression.byReason["below_group_threshold"], 0);
+    assert.equal(f.observations.pilotClaimable, 14);
+  });
+
   it("below the k=15 floor → below_actor_threshold, not invalid_input", () => {
     const rows: FunnelRows = { ...empty, observations: observers(3), claims: [liveClaim] };
     const f = tallyIntelFunnel(rows, NOW);
