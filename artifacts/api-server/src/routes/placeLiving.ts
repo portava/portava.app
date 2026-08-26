@@ -244,14 +244,18 @@ async function assembleLivingPayload(sc: any, placeId: string): Promise<any> {
   // each always evaluated to null while looking like a real read. crowdLevel now
   // comes from the live-claim projection; with the flag off or no claim present
   // it returns exactly the null it always did.
-  const crowdLevel = await readLiveCrowdLevel(sc, placeId);
+  // Read live state under the RESOLVED survivor id, like every other read in this
+  // function (and the /timeline endpoint) — the projection writes snapshots for the
+  // canonical subject, so a request against a merged place id must resolve first or
+  // it silently shows no live label while /timeline shows one.
+  const crowdLevel = await readLiveCrowdLevel(sc, survivorId);
   // Forward-compatible richer read: the full set of live claims as decision-
   // exposure envelopes (value + band + source class + observed/valid-until +
   // live state + provenance id), deterministically ordered best/current first.
   // Additive and backward-compatible — `crowdLevel` above is unchanged, and this
   // is [] whenever the flag is off or nothing qualifies. The place card prefers
   // this array and falls back to the bare `crowdLevel` when it is empty.
-  const liveClaims = await readLiveClaimEnvelopes(sc, placeId);
+  const liveClaims = await readLiveClaimEnvelopes(sc, survivorId);
   // bestTime has no claim type in the IG-01 registry, so it stays honestly null
   // rather than reading a column that does not exist.
   const bestTime: string | null = null;
