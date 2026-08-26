@@ -1,10 +1,13 @@
 /**
  * check:data-rights — every intel column has a stated ownership class.
  *
- * Reads migration 2130 (committed, static — no database) and asserts that every
- * column of the intel tables is either classified in lib/dataRights.ts or on the
- * INTERNAL_COLUMNS list. A new column therefore cannot be added without someone
- * saying whether it may ever leave Portava.
+ * Reads the intel migrations (committed, static — no database): the CREATE TABLE
+ * bodies from 2130 PLUS every `ALTER TABLE ... ADD COLUMN` across all migrations,
+ * and asserts that every column of the intel tables is either classified in
+ * lib/dataRights.ts or on the INTERNAL_COLUMNS list. A new column — whether it
+ * arrives in a CREATE or a later ALTER — therefore cannot be added without someone
+ * saying whether it may ever leave Portava. (Reading only 2130 once let 2171's
+ * group_key / party_size_bucket slip in unclassified while this check stayed green.)
  *
  * WHAT IT DOES NOT ENFORCE, stated rather than implied:
  *   * that a classification is CORRECT. It enforces that somebody chose one.
@@ -15,7 +18,7 @@
  *
  * Exit 0 only if every intel column is classified or explicitly internal.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
@@ -23,7 +26,8 @@ import {
 } from "../lib/dataRights.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIGRATION = join(HERE, "../migrations/2130_intel_storage.sql");
+const MIGRATIONS_DIR = join(HERE, "../migrations");
+const CREATE_MIGRATION = "2130_intel_storage.sql";
 
 /** Column names per intel table, parsed from the CREATE TABLE bodies. */
 export function columnsFromMigration(sql: string): Map<string, string[]> {
@@ -38,6 +42,39 @@ export function columnsFromMigration(sql: string): Map<string, string[]> {
     out.set(table, cols);
   }
   return out;
+}
+
+/** Columns added by `ALTER TABLE public.<t> ... ADD COLUMN [IF NOT EXISTS] <c>` in a sql string. */
+export function alterAddColumns(sql: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const m of sql.matchAll(/ALTER TABLE\s+(?:ONLY\s+)?public\.([a-z_]+)([\s\S]*?);/gi)) {
+    const [, table, body] = m;
+    for (const cm of body.matchAll(/ADD COLUMN\s+(?:IF NOT EXISTS\s+)?([a-z_][a-z0-9_]*)/gi)) {
+      const arr = out.get(table) ?? [];
+      if (!arr.includes(cm[1])) arr.push(cm[1]);
+      out.set(table, arr);
+    }
+  }
+  return out;
+}
+
+/**
+ * The full live column set per intel table: the CREATE TABLE bodies (2130) plus
+ * every ADD COLUMN across ALL migrations, so a column added by a later ALTER is
+ * seen and must be classified — not silently skipped the way 2171's were.
+ */
+export function allIntelColumns(dir: string): Map<string, string[]> {
+  const merged = columnsFromMigration(readFileSync(join(dir, CREATE_MIGRATION), "utf8"));
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith(".sql")) continue;
+    for (const [table, cols] of alterAddColumns(readFileSync(join(dir, file), "utf8"))) {
+      if (!COVERED_TABLES.includes(table)) continue;
+      const arr = merged.get(table) ?? [];
+      for (const c of cols) if (!arr.includes(c)) arr.push(c);
+      merged.set(table, arr);
+    }
+  }
+  return merged;
 }
 
 export interface RightsProblem { kind: string; detail: string }
@@ -82,7 +119,7 @@ export function computeProblems(tables: Map<string, string[]>): RightsProblem[] 
 }
 
 function main(): void {
-  const tables = columnsFromMigration(readFileSync(MIGRATION, "utf8"));
+  const tables = allIntelColumns(MIGRATIONS_DIR);
   const problems = computeProblems(tables);
   const redistributable = FIELD_RIGHTS.filter((f) => REDISTRIBUTABLE[f.ownership]).length;
   const personal = FIELD_RIGHTS.filter((f) => f.personal).length;

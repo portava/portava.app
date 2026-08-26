@@ -95,6 +95,10 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
     reason: "Server receipt time. Operational, not about the person." },
   { table: "intel_observations", column: "expires_at", ownership: "portava_owned", personal: false,
     reason: "Portava's TTL policy applied to the row." },
+  { table: "intel_observations", column: "group_key", ownership: "restricted_no_redistribution", personal: true,
+    reason: "A non-reversible HMAC derived from the contributor's identity (solo) or their Trip Crew. It is the privacy-gate's independent-group parameter; exposing it would let an attacker correlate a person's captures at a venue. Never leaves." },
+  { table: "intel_observations", column: "party_size_bucket", ownership: "restricted_no_redistribution", personal: true,
+    reason: "The contributor's 'who are you here with?' attestation — a personal fact about their party. Measurement only; never an API field." },
 
   // ── intel_claims ──────────────────────────────────────────────────────────
   { table: "intel_claims", column: "subject_id", ownership: "portava_owned", personal: false, reason: "Canonical place identifier." },
