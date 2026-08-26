@@ -263,4 +263,4 @@ See [intelligence-gathering-buildout.md](./intelligence-gathering-buildout.md). 
 - 2131 intel_live_label_crowd flag
 - 2132 intel_claim_projection_crowd flag
 - 2133 intel retention sweep + flag
-- 2171 intel_observations += group_key, party_size_bucket (V1 independent-group signal; additive nullable). **Applied to CI 2026-08-26.** PROD: STAGED — must precede the write-path deploy (an insert of group_key fails until the column exists); verify 2130 is on prod first, then owner-pressed apply.
+- 2171 intel_observations += group_key, party_size_bucket (V1 independent-group signal; additive nullable). **Applied to CI + PROD 2026-08-26** (owner-authorized), ahead of the write-path deploy as required (an insert of group_key fails until the column exists). Both columns text/nullable + the party_size_bucket CHECK verified on prod (ajrurzioarfkagpuxfnb).
