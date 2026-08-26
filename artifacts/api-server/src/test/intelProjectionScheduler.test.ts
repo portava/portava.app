@@ -171,6 +171,44 @@ describe("intelProjection scheduler — runIntelProjectionPass (flag-gated, fail
     assert.equal(r.suppressed, 1);
   });
 
+  // The money path, end to end through the real aggregator + gate + projection: a
+  // venue with a genuine group signal PUBLISHES; one where the same people are one
+  // crew, or carry no group signal, is SUPPRESSED. This is the composition the four
+  // merged PRs (scheduler, aggregator, group signal, gate) must produce together.
+  const crowdObs = (n: number, groupOf: (i: number) => string | null) =>
+    Array.from({ length: n }, (_, i) => ({
+      actor_id: `a${i}`, subject_id: "place-dn-1", claim_type: "crowd.level",
+      presence_level: "P4", source_class: "firsthand_unverified", expires_at: null, group_key: groupOf(i),
+    }));
+
+  it("flag on → PUBLISHES a snapshot when 15 actors form 5 independent groups", async () => {
+    const db = makeDb({ ...cfgBase, observations: crowdObs(15, (i) => `g${i % 5}`), flags: { intel_claim_projection_crowd: true } });
+    const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+    assert.equal(r.reason, null);
+    assert.equal(r.written, 1, "15 actors × 5 independent groups clears every gate");
+    assert.equal(r.suppressed, 0);
+    const snap = db._snaps[0];
+    assert.equal(snap.privacy_eligible, true);
+    assert.equal(snap.distinct_actors, 15);
+    assert.ok(snap.confidence >= 0.55, "band ≥ likely_current → servable as a LIVE label");
+  });
+
+  it("flag on → SUPPRESSES when those 15 actors are ONE crew (single_group_dominates)", async () => {
+    const db = makeDb({ ...cfgBase, observations: crowdObs(15, () => "one-crew"), flags: { intel_claim_projection_crowd: true } });
+    const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+    assert.equal(r.written, 0, "one organized crew of 15 cannot publish as a crowd");
+    assert.equal(r.suppressed, 1);
+    assert.equal(db._snaps[0].privacy_eligible, false);
+  });
+
+  it("flag on → SUPPRESSES when the 15 actors carry no group signal (below_group_threshold)", async () => {
+    const db = makeDb({ ...cfgBase, observations: crowdObs(15, () => null), flags: { intel_claim_projection_crowd: true } });
+    const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+    assert.equal(r.written, 0);
+    assert.equal(r.suppressed, 1);
+    assert.equal(db._snaps[0].privacy_eligible, false);
+  });
+
   it("groups claims by (subject, zone) and fails closed on a claim-read error", async () => {
     const err = await runIntelProjectionPass({ client: makeDb({ ...cfgBase, flags: { intel_claim_projection_crowd: true }, errorTable: "intel_claims" }) as any, now: NOW });
     assert.equal(err.reason, "error");
