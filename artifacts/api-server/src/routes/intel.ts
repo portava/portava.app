@@ -155,6 +155,8 @@ router.post("/v1/intel/observations/:id/claims:propose", asyncHandler(async (req
   const out = await proposeClaim(sc, obs);
   if (!out.ok) {
     if (out.reason === "disabled") return sendError(res, "feature_disabled", "propose disabled");
+    if (out.reason === "not_moderated")
+      return sendError(res, "invalid_payload", "this observation is not eligible to back a claim (moderation-invalidated content)");
     if (out.reason === "must_aggregate")
       return sendError(res, "invalid_payload", "movement claims are aggregate-only; a single-user next_move is never published");
     return sendError(res, "db_error", out.reason ?? "propose failed");

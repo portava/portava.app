@@ -22,7 +22,7 @@
  */
 import type { ProjectionInput } from "./intelProjection.js";
 import type { ConfidenceComponents, ConfidencePenalties } from "./confidenceScore.js";
-import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
+import { PRIVACY_THRESHOLD_V1, PILOT_CLAIMABLE_MODERATION_STATES } from "./intelContracts.js";
 import { getPolicy } from "./freshnessPolicy.js";
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -112,12 +112,17 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
   const nowIso = now.toISOString();
 
   // Distinct fresh observers of (subject, claim_type) — the cohort the privacy
-  // gate counts. Fresh = expires_at null or in the future.
+  // gate counts. Fresh = expires_at null or in the future. Content that has been
+  // explicitly invalidated (restricted/blocked/removed) is EXCLUDED here so it can
+  // never contribute to a claim, snapshot, or live label (owner pilot ruling): the
+  // whitelist .in() is fail-closed, and it re-runs every projection pass, so a row
+  // invalidated after a snapshot was written drops out at the next pass.
   const { data: obs } = await sc
     .from("intel_observations")
     .select("actor_id, presence_level, source_class, expires_at, group_key")
     .eq("subject_id", claim.subject_id)
-    .eq("claim_type", claim.claim_type);
+    .eq("claim_type", claim.claim_type)
+    .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[]);
   const freshObs = ((obs as any[]) ?? []).filter((o) => !o.expires_at || o.expires_at > nowIso);
   const distinctActors = new Set(freshObs.map((o) => o.actor_id)).size;
 

@@ -170,6 +170,18 @@ describe("IG-03 — claim lifecycle", () => {
     assert.equal(db._tables.intel_claims.find((c) => c.id === claimId).status, "superseded");
     assert.equal(db._tables.intel_observations.length, 2, "correction appended a new observation, did not rewrite");
   });
+
+  it("propose REFUSES an observation whose content was moderation-invalidated", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
+    const written = await writeObservation(db as any, ACTOR, baseInput() as any);
+    for (const state of ["blocked", "removed", "restricted"]) {
+      const out = await proposeClaim(db as any, { ...(written as any).observation, moderation_state: state });
+      assert.equal(out.ok, false, `${state} must not back a claim`);
+      assert.equal(out.reason, "not_moderated");
+    }
+    // 'pending' (unpromoted) still flows in the pilot.
+    assert.equal((await proposeClaim(db as any, { ...(written as any).observation, moderation_state: "pending" })).ok, true);
+  });
 });
 
 describe("IG-03 — prompt throttle (§6)", () => {

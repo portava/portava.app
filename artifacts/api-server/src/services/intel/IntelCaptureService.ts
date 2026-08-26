@@ -25,6 +25,7 @@ import {
   VISIBILITIES,
   clampObservedAt,
   isValidIdempotencyKey,
+  isPilotClaimable,
   type Visibility,
   type PartySizeBucket,
 } from "../../lib/intelContracts.js";
@@ -202,6 +203,10 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
 export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boolean; claim?: any; reason?: string }> {
   const surface: CaptureSurface = (observation.capture_surface as CaptureSurface) ?? "quick_signal";
   if (!(await surfaceFlagEnabled(sc, surface))) return { ok: false, reason: "disabled" };
+  // Moderation (owner pilot ruling): explicitly-invalidated content
+  // (restricted/blocked/removed) may never back a claim. 'pending' still flows
+  // (promotion is deferred for the pilot). Fail-closed whitelist.
+  if (!isPilotClaimable(observation.moderation_state)) return { ok: false, reason: "not_moderated" };
   // Privacy invariant (spec §4): a movement claim is aggregate-only — never a
   // single-user published claim. Capture keeps the observation; propose refuses.
   if (mustAggregate(observation.claim_type)) return { ok: false, reason: "must_aggregate" };

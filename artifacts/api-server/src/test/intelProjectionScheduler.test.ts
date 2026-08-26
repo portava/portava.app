@@ -26,7 +26,10 @@ function makeDb(cfg: { flags: Record<string, boolean>; claims?: any[]; observati
   function from(table: string) {
     let op: "select" | "upsert" = "select"; let payload: any = null;
     const eqs: [string, any][] = []; let inF: [string, any[]] | null = null; let lim = Infinity;
-    const src = (): any[] => (({ intel_claims: cfg.claims, intel_observations: cfg.observations, intel_confirmations: cfg.confirmations, freshness_policies: cfg.policies, intel_state_snapshots: snaps } as any)[table] ?? []);
+    // Observations default to moderation_state 'allowed' (explicit values override),
+    // so fixtures that don't care about moderation still pass the aggregator's
+    // pilot-claimable .in() filter; a fixture can set 'blocked'/'removed' to test exclusion.
+    const src = (): any[] => (({ intel_claims: cfg.claims, intel_observations: (cfg.observations ?? []).map((o: any) => ({ moderation_state: "allowed", ...o })), intel_confirmations: cfg.confirmations, freshness_policies: cfg.policies, intel_state_snapshots: snaps } as any)[table] ?? []);
     const match = (r: any) => eqs.every(([c, v]) => r[c] === v) && (!inF || inF[1].includes(r[inF[0]]));
     const rows = () => src().filter(match).slice(0, lim);
     const run = () => {
@@ -77,6 +80,23 @@ describe("intelProjection aggregator — deriveComponents (conservative)", () =>
 describe("intelProjection aggregator — assembleClaimInput (real evidence)", () => {
   beforeEach(() => invalidateFreshnessPolicyCache());
   const claim: ClaimRow = { id: "c1", subject_id: "place-dn-1", zone_id: null, claim_type: "crowd.level", value: { level: "busy" }, status: "active", observed_at: OBSERVED };
+
+  it("EXCLUDES moderation-invalidated content (blocked/removed/restricted) from the cohort", async () => {
+    const db = makeDb({
+      flags: {},
+      observations: [
+        { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, moderation_state: "allowed" },
+        { actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, moderation_state: "pending" },
+        { actor_id: "a3", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, moderation_state: "blocked" },
+        { actor_id: "a4", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, moderation_state: "removed" },
+        { actor_id: "a5", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, moderation_state: "restricted" },
+      ],
+      confirmations: [],
+      policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }],
+    });
+    const input = await assembleClaimInput(db as any, claim, NOW);
+    assert.equal(input.distinctActors, 2, "only 'allowed' + 'pending' count; blocked/removed/restricted excluded");
+  });
 
   it("counts DISTINCT fresh observers and confirmation stances", async () => {
     const db = makeDb({

@@ -162,9 +162,25 @@ export const MODERATION_STATES = [
 ] as const;
 export type ModerationState = (typeof MODERATION_STATES)[number];
 
-/** Fail-closed: only 'allowed' content may back a claim. */
+/** Fail-closed: only 'allowed' content may back a claim (the eventual spec rule,
+ *  once a promotion path exists). */
 export function isModerationEligible(state: ModerationState): boolean {
   return state === "allowed";
+}
+
+/**
+ * PILOT moderation rule (owner ruling 2026-08-26). A full moderation/promotion
+ * workflow is NOT required before Da Nang can operate — so 'pending' (unpromoted)
+ * content still flows — but content that has been explicitly invalidated
+ * (restricted / blocked / removed) must NEVER back a claim, snapshot, or live
+ * label. This is a WHITELIST, so it is fail-closed: only these two states are
+ * claimable, and any future moderation state is excluded until deliberately added.
+ */
+export const PILOT_CLAIMABLE_MODERATION_STATES = ["pending", "allowed"] as const;
+
+/** True iff content in this moderation state may back a claim in the pilot. */
+export function isPilotClaimable(state: string | null | undefined): boolean {
+  return typeof state === "string" && (PILOT_CLAIMABLE_MODERATION_STATES as readonly string[]).includes(state);
 }
 
 // ── Capture surface ──────────────────────────────────────────────────────────
