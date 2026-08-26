@@ -203,6 +203,20 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'prints a verdict for a human to act on; the D5 revisit clause is the action it feeds.',
   },
   {
+    file: 'src/scripts/reportIntelFunnel.ts',
+    reason:
+      'FOUR SELECTs, all reads, each windowed by its own timestamp and tallied in memory: ' +
+      'intel_observations (actor_id, subject_id, claim_type, moderation_state, observed_at, expires_at) by ' +
+      'observed_at; intel_claims (subject_id, claim_type, status, observed_at) by observed_at; ' +
+      'intel_state_snapshots (privacy_eligible, confidence_band, expires_at) by computed_at; and ' +
+      'intel_confirmations (stance) by created_at. It answers the IG-09 question — how much of what capture ' +
+      'produces survives to a servable Live label, and why the rest is suppressed — which is a question about ' +
+      'production, since the Da Nang pilot runs there. The privacy-gate suppression reason is RE-DERIVED in ' +
+      'memory (no extra query): evaluatePrivacy is re-run over the live-eligible claims already fetched. It ' +
+      'writes nothing and issues no INSERT/UPDATE/DELETE/DDL or auth-admin call; it prints a funnel and a ' +
+      'fail-closed (never-certifiable-from-here) density-gate readout for a human to act on.',
+  },
+  {
     file: 'src/scripts/auditShadowAppendOnly.ts',
     reason:
       'Three SELECTs through the Management API — pg_class for relrowsecurity, ' +
