@@ -180,6 +180,15 @@ export const CAPTURE_SURFACES = [
 ] as const;
 export type CaptureSurface = (typeof CAPTURE_SURFACES)[number];
 
+// ── Party-size attestation (V1 independent-group signal, §privacy) ───────────
+// The four answers to "Who are you here with?", captured only on label-eligible
+// quick_signal observations. This is the RAW attestation, stored for measurement;
+// the independent-group identity the privacy gate counts is the derived
+// group_key (lib/intelGroupKey), not this bucket. Exact-party-size is never used
+// in the public intelligence calculation beyond deriving the group.
+export const PARTY_SIZE_BUCKETS = ["just_me", "one_other", "two_to_four", "five_plus"] as const;
+export type PartySizeBucket = (typeof PARTY_SIZE_BUCKETS)[number];
+
 // ── Commercial disclosure ────────────────────────────────────────────────────
 export const COMMERCIAL_DISCLOSURES = [
   "none",

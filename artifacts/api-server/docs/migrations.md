@@ -256,10 +256,11 @@ badge-dependent test now restores state via `ensureBadge()` first.
 
 ## Intelligence Gathering (2128-2133)
 
-See [intelligence-gathering-buildout.md](./intelligence-gathering-buildout.md). All unapplied; every flag seeded false.
+See [intelligence-gathering-buildout.md](./intelligence-gathering-buildout.md). NOTE (2026-08-26): the "all unapplied" note below is stale for CI — the 2130 tables (intel_observations/claims/evidence/confirmations/state_snapshots) and later intel migrations are applied on the CI project (hwokxgbmezheskbzskfr). Production apply-state is tracked per-migration below; verify before staging a prod apply.
 
 - 2128 intel contracts seed (13 claim types, hard_expiry_seconds)
 - 2130 intel storage (5 tables, append-only + erasure function)
 - 2131 intel_live_label_crowd flag
 - 2132 intel_claim_projection_crowd flag
 - 2133 intel retention sweep + flag
+- 2171 intel_observations += group_key, party_size_bucket (V1 independent-group signal; additive nullable). **Applied to CI + PROD 2026-08-26** (owner-authorized), ahead of the write-path deploy as required (an insert of group_key fails until the column exists). Both columns text/nullable + the party_size_bucket CHECK verified on prod (ajrurzioarfkagpuxfnb).
