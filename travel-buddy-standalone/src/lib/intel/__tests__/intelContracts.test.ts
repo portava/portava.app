@@ -26,10 +26,13 @@ import {
 import {
   confidenceBand,
   liveState,
+  liveStateLabel,
+  liveStateColor,
   formatClaimValue,
   whyExplanation,
   relativeTime,
   type LiveIntelClaim,
+  type SourceCountBucket,
 } from '../display.ts';
 import {
   isPromptPaused,
@@ -73,14 +76,14 @@ describe('option → canonical value (corrections)', () => {
   });
 });
 
-describe('confidence band + Live/Typical/Unknown degradation', () => {
+describe('confidence band + Live/Emerging/Typical/Unknown degradation', () => {
   const base: LiveIntelClaim = {
     claimType: 'crowd.level',
     value: { level: 'busy' },
     band: 'live',
     confidence: 0.8,
     sourceClass: 'firsthand_unverified',
-    sourceCount: 3,
+    sourceCountBucket: 'several',
     observedAt: new Date().toISOString(),
     validUntil: new Date(Date.now() + 60_000).toISOString(),
   };
@@ -102,12 +105,35 @@ describe('confidence band + Live/Typical/Unknown degradation', () => {
   it('degrades a below-floor claim to Typical', () => {
     assert.equal(liveState({ ...base, band: 'provisional' }), 'typical');
   });
+  it('shows a serve-floor-but-not-live-band claim as Emerging, not Live (#156)', () => {
+    // likely_current cleared the serve floor but is below the live band — the
+    // server calls this 'emerging' and the client must not overstate it as Live.
+    assert.equal(liveState({ ...base, band: 'likely_current' }), 'emerging');
+  });
+  it('trusts the server-authoritative emerging state over the band', () => {
+    assert.equal(liveState({ ...base, serverState: 'emerging' }), 'emerging');
+    // …but expiry and non-observation sources still win over any server state.
+    assert.equal(liveState({ ...base, serverState: 'live', sourceClass: 'historical_pattern' }), 'typical');
+    assert.equal(
+      liveState({ ...base, serverState: 'live', validUntil: new Date(Date.now() - 1000).toISOString() }),
+      'unknown',
+    );
+  });
   it('never renders a historical pattern or prediction as Live', () => {
     assert.equal(liveState({ ...base, sourceClass: 'historical_pattern' }), 'typical');
     assert.equal(liveState({ ...base, sourceClass: 'portava_prediction' }), 'typical');
   });
   it('is Unknown when there is no claim', () => {
     assert.equal(liveState(null), 'unknown');
+  });
+  it('labels and colours emerging distinctly from live/typical/unknown', () => {
+    assert.equal(liveStateLabel('emerging'), 'Observed');
+    assert.equal(liveStateLabel('live'), 'Live');
+    // Vermilion is reserved for Live — emerging must borrow neither Live's nor
+    // Typical's colour, and must not read as Unknown.
+    assert.notEqual(liveStateColor('emerging'), liveStateColor('live'));
+    assert.notEqual(liveStateColor('emerging'), liveStateColor('typical'));
+    assert.notEqual(liveStateColor('emerging'), liveStateColor('unknown'));
   });
 });
 
@@ -131,14 +157,19 @@ describe('value formatting', () => {
 });
 
 describe('why explanation', () => {
-  it('is presence-aware and pluralised', () => {
-    const c = (n: number, sc: LiveIntelClaim['sourceClass']): LiveIntelClaim => ({
+  it('renders the cohort bucket honestly, without fabricating a count', () => {
+    const c = (bucket: SourceCountBucket | null, sc: LiveIntelClaim['sourceClass']): LiveIntelClaim => ({
       claimType: 'crowd.level', value: { level: 'busy' }, band: 'live', confidence: 0.8,
-      sourceClass: sc, sourceCount: n, observedAt: null, validUntil: null,
+      sourceClass: sc, sourceCountBucket: bucket, observedAt: null, validUntil: null,
     });
-    assert.match(whyExplanation(c(1, 'firsthand_unverified')), /1 traveler/);
-    assert.match(whyExplanation(c(4, 'verified_firsthand')), /4 independent travelers/);
-    assert.match(whyExplanation(c(0, 'historical_pattern')), /typical pattern/i);
+    // Every bucket is ≥ the k=15 floor, so none understates; and no exact number leaks.
+    assert.match(whyExplanation(c('few', 'firsthand_unverified')), /more than a dozen travelers/);
+    assert.match(whyExplanation(c('several', 'verified_firsthand')), /dozens of travelers/);
+    assert.match(whyExplanation(c('many', 'firsthand_unverified')), /over a hundred travelers/);
+    for (const bucket of ['few', 'several', 'many', null] as const) {
+      assert.doesNotMatch(whyExplanation(c(bucket, 'firsthand_unverified')), /\d/, 'no exact count leaks');
+    }
+    assert.match(whyExplanation(c(null, 'historical_pattern')), /typical pattern/i);
   });
   it('formats relative time without inventing precision', () => {
     assert.equal(relativeTime(new Date().toISOString()), 'just now');

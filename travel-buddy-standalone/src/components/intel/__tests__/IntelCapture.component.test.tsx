@@ -183,7 +183,8 @@ describe('DecisionExposureChips', () => {
   });
 
   it('renders the rich server liveClaims shape (band + value) end-to-end', async () => {
-    // Exactly the api-server LiveClaimEnvelope wire shape.
+    // Exactly the api-server LiveClaimEnvelope wire shape (#156): a bucketed cohort
+    // size, no exact count, and a live/emerging state.
     const richLiving = {
       crowdLevel: null,
       generatedAt: new Date().toISOString(),
@@ -195,7 +196,7 @@ describe('DecisionExposureChips', () => {
           confidence: 0.82,
           band: 'live',
           sourceClass: 'firsthand_unverified',
-          sourceCount: 4,
+          sourceCountBucket: 'several',
           observedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
           validUntil: new Date(Date.now() + 15 * 60_000).toISOString(),
           state: 'live',
@@ -212,5 +213,39 @@ describe('DecisionExposureChips', () => {
     // the live-state pill and the band label), and the source class is real.
     expect((await findAllByText('Live')).length).toBeGreaterThan(0);
     expect(getByText(/Traveler report/i)).toBeTruthy();
+    // The cohort is rendered as a bucket phrase, never a fabricated exact number.
+    expect(getByText(/dozens of travelers/i)).toBeTruthy();
+  });
+
+  it('renders an emerging claim as "Observed", never "Live" (#156)', async () => {
+    // Cleared the serve floor (likely_current) but below the live band: the server
+    // labels this state 'emerging' and the client must not overstate it as Live.
+    const emergingLiving = {
+      crowdLevel: null,
+      generatedAt: new Date().toISOString(),
+      liveClaims: [
+        {
+          id: 'snap-2',
+          claimType: 'crowd.level',
+          value: { level: 'busy' },
+          confidence: 0.6,
+          band: 'likely_current',
+          sourceClass: 'firsthand_unverified',
+          sourceCountBucket: 'few',
+          observedAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+          validUntil: new Date(Date.now() + 15 * 60_000).toISOString(),
+          state: 'emerging',
+        },
+      ],
+    } as any;
+    const { getByTestId, getByText, queryByText, findByText } = await render(
+      <SafeArea><DecisionExposureChips living={emergingLiving} enabled /></SafeArea>,
+    );
+    expect(getByTestId('intel-chip-crowd.level')).toBeTruthy();
+    expect(getByText('Busy')).toBeTruthy();
+    fireEvent.press(getByTestId('intel-chip-crowd.level'));
+    expect(await findByText('Observed')).toBeTruthy(); // the emerging pill…
+    expect(queryByText('Live')).toBeNull(); // …and never "Live"
+    expect(getByText(/more than a dozen travelers/i)).toBeTruthy(); // bucket, not a number
   });
 });
