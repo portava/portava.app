@@ -158,10 +158,27 @@ describe("readLiveClaimEnvelopes — rich decision-exposure response", () => {
     assert.equal(env.confidence, 0.8);
     assert.equal(env.band, "live");
     assert.equal(env.sourceClass, "firsthand_unverified"); // Phase-1 derived, never fabricated
-    assert.equal(env.sourceCount, 20);
+    assert.equal(env.sourceCountBucket, "few"); // exact count (20) withheld; only a bucket leaves
+    assert.equal((env as any).sourceCount, undefined, "the exact cohort size never appears in the envelope");
     assert.equal(env.observedAt, PAST);
     assert.equal(env.validUntil, FUTURE); // expires_at surfaced as freshness horizon
-    assert.equal(env.state, "live");
+    assert.equal(env.state, "live"); // confidence 0.8 → band 'live' → qualifies
+  });
+
+  it("a claim above the serve floor but below the live band is 'emerging', not 'live'", async () => {
+    // confidence 0.6 → band likely_current: cleared the serve floor, not the live band.
+    const [env] = await readLiveClaimEnvelopes(client({ flag: true, rows: [{ ...idRow, confidence: 0.6 }] }), "p1", { now: NOW });
+    assert.equal(env.band, "likely_current");
+    assert.equal(env.state, "emerging", "'live' is reserved for the live-qualified band");
+  });
+
+  it("coarsens the cohort size into buckets (few / several / many)", () => {
+    const env = (n: number) => toLiveClaimEnvelope({ id: "x", claimType: "crowd.level", value: {}, confidence: 0.8, band: "live", sourceClass: "firsthand_unverified", sourceCount: n, observedAt: PAST, expiresAt: FUTURE });
+    assert.equal(env(15).sourceCountBucket, "few");
+    assert.equal(env(24).sourceCountBucket, "few");
+    assert.equal(env(25).sourceCountBucket, "several");
+    assert.equal(env(99).sourceCountBucket, "several");
+    assert.equal(env(100).sourceCountBucket, "many");
   });
 
   it("returns [] when there is no qualifying live intelligence", async () => {
@@ -196,7 +213,7 @@ describe("readLiveClaimEnvelopes — rich decision-exposure response", () => {
     const [env] = await readLiveClaimEnvelopes(client({ flag: true, rows: [leaky] }), "p1", { now: NOW });
     assert.deepEqual(
       Object.keys(env).sort(),
-      ["band", "claimType", "confidence", "id", "observedAt", "sourceClass", "sourceCount", "state", "validUntil", "value"],
+      ["band", "claimType", "confidence", "id", "observedAt", "sourceClass", "sourceCountBucket", "state", "validUntil", "value"],
     );
   });
 });
@@ -226,7 +243,7 @@ describe("toLiveClaimEnvelope — pure mapping", () => {
     assert.deepEqual(toLiveClaimEnvelope(claim), {
       id: "s1", claimType: "queue.wait", value: { minMinutes: 0, maxMinutes: 10 },
       confidence: 0.9, band: "strong", sourceClass: "firsthand_unverified",
-      sourceCount: 7, observedAt: PAST, validUntil: FUTURE, state: "live",
+      sourceCountBucket: "few", observedAt: PAST, validUntil: FUTURE, state: "live",
     });
   });
 });

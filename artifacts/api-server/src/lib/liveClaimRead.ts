@@ -54,12 +54,26 @@ export interface LiveClaim {
 }
 
 /**
- * The display state the read path may assign. This module only ever returns
- * LIVE claims (>= the live floor, not expired), so an envelope it produces is
- * always 'live'; 'typical'/'unknown' are reserved for a future fallback layer
- * and for the client to render when the array is empty.
+ * The display state the read path may assign. `live` is RESERVED for a claim whose
+ * evidence actually qualifies as live (confidence band 'live'/'strong', i.e. the
+ * public-label-qualified state). A claim that clears the serve floor
+ * (MIN_BAND_FOR_LIVE_STATE = likely_current) but not the live band is 'emerging' —
+ * real, current, but not yet live-qualified. So a Phase-1 P0 claim (which caps at
+ * the likely_current band) is honestly 'emerging', never overstated as 'live'.
+ * 'typical'/'unknown' are reserved for a future fallback layer and for the client
+ * to render when the array is empty.
  */
-export type LiveState = "live" | "typical" | "unknown";
+export type LiveState = "live" | "emerging" | "typical" | "unknown";
+
+/** Coarse cohort-size bucket for the client. The EXACT count is the privacy
+ *  parameter itself (dataRights: distinct_actors is restricted), so the envelope
+ *  serves only a bucket. Every published aggregate is already ≥ the k=15 floor. */
+export type SourceCountBucket = "few" | "several" | "many";
+export function sourceCountBucket(n: number): SourceCountBucket {
+  if (n < 25) return "few";
+  if (n < 100) return "several";
+  return "many";
+}
 
 /**
  * The client-facing, decision-exposure shape for one live claim (what
@@ -74,7 +88,8 @@ export interface LiveClaimEnvelope {
   confidence: number | null;
   band: ConfidenceBand;
   sourceClass: SourceClass;
-  sourceCount: number;
+  /** Coarse cohort-size bucket (few/several/many) — the exact count is withheld. */
+  sourceCountBucket: SourceCountBucket;
   observedAt: string;
   /** expires_at — the freshness horizon the client uses to degrade to unknown. */
   validUntil: string;
@@ -112,11 +127,13 @@ export function toLiveClaimEnvelope(c: LiveClaim): LiveClaimEnvelope {
     confidence: c.confidence,
     band: c.band,
     sourceClass: c.sourceClass,
-    sourceCount: c.sourceCount,
+    sourceCountBucket: sourceCountBucket(c.sourceCount),
     observedAt: c.observedAt,
     validUntil: c.expiresAt,
-    // readLiveClaims only returns claims at/above the live floor and unexpired.
-    state: "live",
+    // 'live' ONLY when the evidence qualifies (band live/strong); a claim that
+    // cleared the serve floor but not the live band is 'emerging'. readLiveClaims
+    // already dropped anything below the serve floor and anything expired.
+    state: c.band === "live" || c.band === "strong" ? "live" : "emerging",
   };
 }
 
