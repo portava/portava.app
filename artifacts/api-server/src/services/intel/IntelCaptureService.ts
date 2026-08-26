@@ -32,6 +32,7 @@ import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickS
 import { validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
 import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
 import { isAcceptedTripMember } from "../../lib/tripMembership.js";
+import { resolveActiveCrewId } from "../../lib/activeCrew.js";
 
 /**
  * Capture surfaces, each gated by its own flag (spec §26 flag registry):
@@ -136,18 +137,25 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
 
   // V1 independent-group signal. Only label-eligible (quick_signal) captures feed a
   // public live label, so only they carry a group signal. Hierarchy, fail-closed:
-  //   1. a validated Trip Crew id -> a SHARED crew token, which also OVERRIDES a
-  //      "just me" answer so a real crew can never split into N solo groups;
-  //   2. "just me" -> a per-actor solo token (a lone visitor is its own group);
-  //   3. anything else / unknown -> null (counts as a person, never as a group).
+  //   1. a client-supplied, membership-validated Trip Crew id -> a SHARED crew token;
+  //   2. else a SERVER-RESOLVED active Trip Crew -> a shared crew token. This is
+  //      AUTHORITATIVE over the answer below, so a crew member cannot split the crew
+  //      by omitting partyId and self-reporting "just me";
+  //   3. else "just me" -> a per-actor solo token (a lone visitor is its own group);
+  //   4. else / unknown -> null (counts as a person, never as a group).
   let groupIdentity: GroupIdentity | null = null;
   let partySizeBucket: PartySizeBucket | null = null;
   if (surface === "quick_signal") {
     partySizeBucket = input.partySize ?? null;
     if (input.partyId && (await isAcceptedTripMember(sc, input.partyId, actorId))) {
       groupIdentity = { kind: "crew", crewId: input.partyId };
-    } else if (input.partySize === "just_me") {
-      groupIdentity = { kind: "solo", actorId };
+    } else {
+      const activeCrewId = await resolveActiveCrewId(sc, actorId, new Date());
+      if (activeCrewId) {
+        groupIdentity = { kind: "crew", crewId: activeCrewId };
+      } else if (input.partySize === "just_me") {
+        groupIdentity = { kind: "solo", actorId };
+      }
     }
   }
   const groupKey = deriveGroupKey(input.subjectId, groupIdentity);
