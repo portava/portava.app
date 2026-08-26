@@ -24,17 +24,23 @@ import {
   type CaptureResult,
   type ObservationEnvelope,
 } from '../../services/intelCapture.ts';
-import type { PromptQuestion, Visibility } from '../../lib/intel/contracts.ts';
+import type { PromptQuestion, Visibility, PartySizeBucket } from '../../lib/intel/contracts.ts';
 
 export interface PromptBlockProps {
   subjectId: string;
   question: PromptQuestion;
   visibility: Visibility;
   zoneId?: string | null;
+  /**
+   * The observer's "who are you here with?" answer (§independent-group signal),
+   * collected once at the screen level and attached to each label-eligible write.
+   * Undefined when the traveler skipped it — the server then fail-closes.
+   */
+  partySize?: PartySizeBucket;
   onSent?: (question: PromptQuestion, option: string, observation?: ObservationEnvelope) => void;
 }
 
-export function PromptBlock({ subjectId, question, visibility, zoneId, onSent }: PromptBlockProps) {
+export function PromptBlock({ subjectId, question, visibility, zoneId, partySize, onSent }: PromptBlockProps) {
   const [busyOption, setBusyOption] = useState<string | null>(null);
   const [sentOption, setSentOption] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +59,7 @@ export function PromptBlock({ subjectId, question, visibility, zoneId, onSent }:
 
       let res: CaptureResult;
       if (question.kind === 'walkIn') {
-        res = await submitWalkIn({ subjectId, accepted: option === 'accepted', visibility, idempotencyKey });
+        res = await submitWalkIn({ subjectId, accepted: option === 'accepted', visibility, partySize, idempotencyKey });
       } else {
         res = await submitQuickSignal({
           subjectId,
@@ -61,6 +67,7 @@ export function PromptBlock({ subjectId, question, visibility, zoneId, onSent }:
           option,
           visibility,
           zoneId,
+          partySize,
           idempotencyKey,
         });
       }
@@ -82,7 +89,7 @@ export function PromptBlock({ subjectId, question, visibility, zoneId, onSent }:
         );
       }
     },
-    [question, subjectId, visibility, zoneId, onSent],
+    [question, subjectId, visibility, zoneId, partySize, onSent],
   );
 
   return (

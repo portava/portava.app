@@ -20,6 +20,7 @@ import { Signpost, Sparkles } from 'lucide-react-native';
 import { color, space, radius, typography } from '../../src/theme/tokens';
 import { IntelModalScaffold } from '../../src/components/intel/IntelModalScaffold';
 import { PromptBlock } from '../../src/components/intel/PromptBlock';
+import { OptionPills } from '../../src/components/intel/OptionPills';
 import { SuppressedNotice, PrivateLocationBadge, SentToast } from '../../src/components/intel/IntelBits';
 import { TravelButton } from '../../src/components/primitives';
 import { useIntelPrompts } from '../../src/hooks/useIntelPrompts';
@@ -32,9 +33,13 @@ import {
   VENUE_PROMPTS,
   VENUE_QUESTION_SETS,
   DEFAULT_VISIBILITY,
+  PARTY_SIZE_BUCKETS,
+  PARTY_SIZE_LABELS,
+  PARTY_SIZE_PROMPT,
   type QuickSignalContext,
   type VenueCategory,
   type PromptQuestion,
+  type PartySizeBucket,
 } from '../../src/lib/intel/contracts';
 
 function asContext(v: string | undefined): QuickSignalContext {
@@ -77,6 +82,10 @@ export default function QuickSignalScreen() {
 
   const [verified, setVerified] = useState(false);
   const [sent, setSent] = useState(false);
+  // §independent-group signal: the "who are you here with?" answer, collected once
+  // and attached to every label-eligible write on this screen. Null = skipped
+  // (the server fail-closes: no group_key, no credit toward the group floor).
+  const [partySize, setPartySize] = useState<PartySizeBucket | null>(null);
   const [lastObservation, setLastObservation] = useState<{ id: string; claimType: string; value: unknown } | null>(null);
   const timeLabel = useMemo(
     () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -111,6 +120,11 @@ export default function QuickSignalScreen() {
   }, [venue, venueQuestions]);
 
   const singleQuick = !venue; // one prompt → success state after the send
+
+  // The party question is asked only when at least one prompt on this screen is
+  // label-eligible (a crowd/queue/access signal that can feed a public live
+  // label). Exit/movement-only screens never show it.
+  const labelEligible = useMemo(() => venueQuestions.some((q) => q.phase1), [venueQuestions]);
 
   function handleSent(_q: PromptQuestion, _option: string, observation?: { id: string; claimType: string; value: unknown }) {
     if (observation?.id) setLastObservation({ id: observation.id, claimType: observation.claimType, value: observation.value });
@@ -178,6 +192,22 @@ export default function QuickSignalScreen() {
       <>
         <PrivateLocationBadge placeName={subjectName} verified={verified} timeLabel={timeLabel} />
 
+        {labelEligible ? (
+          <View style={styles.partyBlock} testID="intel-party-size">
+            <Text style={styles.partyPrompt}>{PARTY_SIZE_PROMPT}</Text>
+            <OptionPills
+              options={PARTY_SIZE_BUCKETS}
+              onSelect={(v) => setPartySize((prev) => (prev === v ? null : (v as PartySizeBucket)))}
+              selectedOption={partySize}
+              labelFor={(v) => PARTY_SIZE_LABELS[v as PartySizeBucket]}
+              testIDPrefix="intel-party"
+            />
+            <Text style={styles.partyHint}>
+              Optional — it lets your report count toward how busy a place really is, never who you are with.
+            </Text>
+          </View>
+        ) : null}
+
         <View style={{ gap: space.xl }}>
           {venueQuestions.map((q) => (
             <PromptBlock
@@ -186,6 +216,7 @@ export default function QuickSignalScreen() {
               question={q}
               visibility={DEFAULT_VISIBILITY}
               zoneId={zoneId}
+              partySize={partySize ?? undefined}
               onSent={handleSent}
             />
           ))}
@@ -245,6 +276,16 @@ const styles = StyleSheet.create({
   emptyTitle: { ...typography.cardTitle, color: color.ink },
   emptyBody: { ...typography.caption, color: color.mute, lineHeight: 19 },
   thanksNote: { ...typography.caption, color: color.mute },
+  partyBlock: {
+    gap: space.sm,
+    padding: space.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.haze,
+    backgroundColor: color.paperRaised,
+  },
+  partyPrompt: { ...typography.cardTitle, color: color.ink },
+  partyHint: { ...typography.caption, color: color.faint, lineHeight: 18 },
   plannedWrap: { gap: space.sm },
   plannedLabel: { ...typography.metadata, color: color.faint, textTransform: 'uppercase' },
   plannedChips: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
