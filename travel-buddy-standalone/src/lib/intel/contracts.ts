@@ -59,6 +59,44 @@ export const QUICK_SIGNAL_PROMPTS: Record<QuickSignalContext, QuickSignalPrompt>
 /** The exit reasons, surfaced by the Trail exit sheet. Alias of the exit options. */
 export const EXIT_REASONS = QUICK_SIGNAL_PROMPTS.exit.options;
 
+// ── Independent-group signal (§privacy V1) ───────────────────────────────────
+/**
+ * The "who are you here with?" answer — a byte-for-byte mirror of the api-server
+ * `PARTY_SIZE_BUCKETS`. Asked ONCE per capture, and only when the observation is
+ * label-eligible (the crowd/queue/access signals). From it the server derives a
+ * privacy-safe, ephemeral `group_key`: "just me" makes the actor its own
+ * independent group; a shared Trip Crew is one group; "with others" but no shared
+ * crew contributes confidence only, never a new group. The client never derives
+ * or sends `group_key` — it sends only this raw bucket, and an OMITTED answer is
+ * fail-closed server-side (null group_key, zero credit toward the ≥5-group floor).
+ * The observer's active Trip Crew is resolved server-side, so the client sends no
+ * `partyId` in V1.
+ */
+export const PARTY_SIZE_BUCKETS = ['just_me', 'one_other', 'two_to_four', 'five_plus'] as const;
+export type PartySizeBucket = (typeof PARTY_SIZE_BUCKETS)[number];
+
+/** The prompt copy shown above the party-size pills. */
+export const PARTY_SIZE_PROMPT = 'Who are you here with?';
+
+/** The traveler-facing label for each bucket (the §group-signal ruling copy). */
+export const PARTY_SIZE_LABELS: Record<PartySizeBucket, string> = {
+  just_me: 'Just me',
+  one_other: '1 other person',
+  two_to_four: '2–4 others',
+  five_plus: '5+ others',
+};
+
+export interface PartySizeOption {
+  value: PartySizeBucket;
+  label: string;
+}
+
+/** Ordered value→label options for the picker (smallest party first). */
+export const PARTY_SIZE_OPTIONS: readonly PartySizeOption[] = PARTY_SIZE_BUCKETS.map((value) => ({
+  value,
+  label: PARTY_SIZE_LABELS[value],
+}));
+
 // ── Venue-specific prompt sets (§6) ──────────────────────────────────────────
 export const VENUE_CATEGORIES = ['nightlife', 'restaurant', 'event', 'transit', 'hotel'] as const;
 export type VenueCategory = (typeof VENUE_CATEGORIES)[number];

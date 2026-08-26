@@ -19,6 +19,9 @@ import {
   DEFAULT_VISIBILITY,
   TRAIL_VISIBILITY_ORDER,
   VISIBILITIES,
+  PARTY_SIZE_BUCKETS,
+  PARTY_SIZE_OPTIONS,
+  PARTY_SIZE_LABELS,
 } from '../contracts.ts';
 import {
   confidenceBand,
@@ -152,6 +155,27 @@ describe('visibility defaults', () => {
   });
   it('covers exactly the seven canonical visibilities', () => {
     assert.deepEqual([...TRAIL_VISIBILITY_ORDER].sort(), [...VISIBILITIES].sort());
+  });
+});
+
+describe('independent-group party-size signal', () => {
+  it('mirrors the api-server PARTY_SIZE_BUCKETS exactly, in order', () => {
+    // Byte-for-byte the server enum (src/lib/intelContracts.ts). If the server
+    // list changes, this must change with it — the server rejects anything else.
+    assert.deepEqual([...PARTY_SIZE_BUCKETS], ['just_me', 'one_other', 'two_to_four', 'five_plus']);
+  });
+  it('offers exactly one labelled option per bucket, in bucket order', () => {
+    assert.deepEqual(PARTY_SIZE_OPTIONS.map((o) => o.value), [...PARTY_SIZE_BUCKETS]);
+    for (const o of PARTY_SIZE_OPTIONS) {
+      assert.equal(o.label, PARTY_SIZE_LABELS[o.value]);
+      assert.ok(o.label.length > 0);
+    }
+  });
+  it('carries the ruling copy (solo reads as "Just me")', () => {
+    assert.equal(PARTY_SIZE_LABELS.just_me, 'Just me');
+    assert.equal(PARTY_SIZE_LABELS.one_other, '1 other person');
+    assert.equal(PARTY_SIZE_LABELS.two_to_four, '2–4 others');
+    assert.equal(PARTY_SIZE_LABELS.five_plus, '5+ others');
   });
 });
 

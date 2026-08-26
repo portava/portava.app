@@ -20,7 +20,7 @@
  */
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
-import type { QuickSignalContext, Visibility, ConfirmStance } from '../lib/intel/contracts.ts';
+import type { QuickSignalContext, Visibility, ConfirmStance, PartySizeBucket } from '../lib/intel/contracts.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 const INTEL_BASE = '/api/v1/intel';
@@ -100,6 +100,19 @@ export interface ObservationInput {
   /** Direct form: an already-canonical Phase-1 claim. */
   claimType?: string;
   value?: Record<string, unknown>;
+  /**
+   * V1 independent-group signal: the "who are you here with?" answer. The server
+   * derives a privacy-safe group_key from it; omitting it is fail-closed (null
+   * group_key, no credit toward the independent-group floor). Only sent for
+   * label-eligible captures.
+   */
+  partySize?: PartySizeBucket;
+  /**
+   * The observer's active Trip Crew id, if the client already knows it. Optional
+   * and normally omitted — the server resolves the active crew itself and
+   * VALIDATES membership before honouring any value here.
+   */
+  partyId?: string | null;
   /** Reused across retries of the same logical write. Minted if omitted. */
   idempotencyKey?: string;
 }
@@ -121,6 +134,9 @@ function buildBody(input: ObservationInput): Record<string, unknown> {
     body.claimType = input.claimType;
     body.value = input.value;
   }
+  // Independent-group signal — omitted entirely when unset (server fail-closes).
+  if (input.partySize) body.partySize = input.partySize;
+  if (input.partyId) body.partyId = input.partyId;
   return body;
 }
 
@@ -150,6 +166,9 @@ export function submitQuickSignal(args: {
   visibility?: Visibility;
   zoneId?: string | null;
   subjectKind?: string;
+  /** V1 independent-group signal for label-eligible captures. */
+  partySize?: PartySizeBucket;
+  partyId?: string | null;
   idempotencyKey?: string;
 }): Promise<CaptureResult> {
   return submitObservation(args);
@@ -160,6 +179,9 @@ export function submitWalkIn(args: {
   subjectId: string;
   accepted: boolean;
   visibility?: Visibility;
+  /** V1 independent-group signal — walk-in is a label-eligible access signal. */
+  partySize?: PartySizeBucket;
+  partyId?: string | null;
   idempotencyKey?: string;
 }): Promise<CaptureResult> {
   return submitObservation({
@@ -167,6 +189,8 @@ export function submitWalkIn(args: {
     claimType: 'access.walk_in',
     value: { accepted: args.accepted },
     visibility: args.visibility,
+    partySize: args.partySize,
+    partyId: args.partyId,
     idempotencyKey: args.idempotencyKey,
   });
 }

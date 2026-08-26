@@ -9,7 +9,7 @@
  * render(), no global `screen` (the repo's pinned renderer doesn't bind it).
  */
 import React from 'react';
-import { render, fireEvent } from '@testing-library/react-native';
+import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 // PortavaSheet (opened by a chip tap) calls useSafeAreaInsets; supply metrics so
@@ -30,11 +30,24 @@ jest.mock('expo-haptics', () => ({
   NotificationFeedbackType: { Success: 'success', Error: 'error', Warning: 'warning' },
 }));
 
+// NOTE: exhaustive stand-in is intentional. The real intelCapture service does
+// an authed network fetch + token acquisition (apiToken pulls native modules
+// under jest-expo); these tests assert only the REQUEST SHAPE the UI builds, and
+// this covers every export PromptBlock imports (submitQuickSignal/submitWalkIn/key).
+jest.mock('../../../services/intelCapture.ts', () => ({
+  submitQuickSignal: jest.fn().mockResolvedValue({ ok: true }),
+  submitWalkIn: jest.fn().mockResolvedValue({ ok: true }),
+  makeIdempotencyKey: () => 'test-idem-key',
+}));
+
 import { OptionPills } from '../OptionPills.tsx';
 import { VisibilityPicker } from '../VisibilityPicker.tsx';
 import { ClaimConfirmBar } from '../ClaimConfirmBar.tsx';
 import { SuppressedNotice } from '../IntelBits.tsx';
 import { DecisionExposureChips } from '../DecisionExposureChips.tsx';
+import { PromptBlock } from '../PromptBlock.tsx';
+import { submitQuickSignal, submitWalkIn } from '../../../services/intelCapture.ts';
+import { PARTY_SIZE_BUCKETS, PARTY_SIZE_LABELS, type PartySizeBucket, type PromptQuestion } from '../../../lib/intel/contracts.ts';
 
 describe('OptionPills', () => {
   it('renders every option and reports the tapped one (no free text)', async () => {
@@ -46,6 +59,69 @@ describe('OptionPills', () => {
     expect(getByTestId('intel-option-packed')).toBeTruthy();
     fireEvent.press(getByTestId('intel-option-busy'));
     expect(onSelect).toHaveBeenCalledWith('busy');
+  });
+});
+
+describe('Party-size pills (independent-group signal)', () => {
+  it('renders every bucket by its label and reports the raw bucket value', async () => {
+    const onSelect = jest.fn();
+    const { getByTestId, getByText } = await render(
+      <OptionPills
+        options={PARTY_SIZE_BUCKETS}
+        onSelect={onSelect}
+        labelFor={(v) => PARTY_SIZE_LABELS[v as PartySizeBucket]}
+        testIDPrefix="intel-party"
+      />,
+    );
+    expect(getByText('Just me')).toBeTruthy();
+    expect(getByTestId('intel-party-just_me')).toBeTruthy();
+    fireEvent.press(getByTestId('intel-party-two_to_four'));
+    expect(onSelect).toHaveBeenCalledWith('two_to_four');
+  });
+});
+
+describe('PromptBlock threads the party-size signal into the write', () => {
+  const arrivalQ: PromptQuestion = {
+    id: 'arrival', topic: 'energy', prompt: 'How is it right now?',
+    kind: 'context', context: 'arrival', options: ['dead', 'busy'], phase1: true,
+  };
+
+  it('sends the chosen party size alongside the quick signal', async () => {
+    (submitQuickSignal as jest.Mock).mockClear();
+    const { getByTestId } = await render(
+      <PromptBlock subjectId="place-1" question={arrivalQ} visibility="private" partySize="two_to_four" />,
+    );
+    fireEvent.press(getByTestId('intel-q-arrival-busy'));
+    await waitFor(() => expect(submitQuickSignal).toHaveBeenCalled());
+    expect(submitQuickSignal).toHaveBeenCalledWith(
+      expect.objectContaining({ context: 'arrival', option: 'busy', partySize: 'two_to_four' }),
+    );
+  });
+
+  it('omits party size entirely when the traveler skipped the question', async () => {
+    (submitQuickSignal as jest.Mock).mockClear();
+    const { getByTestId } = await render(
+      <PromptBlock subjectId="place-1" question={arrivalQ} visibility="private" />,
+    );
+    fireEvent.press(getByTestId('intel-q-arrival-dead'));
+    await waitFor(() => expect(submitQuickSignal).toHaveBeenCalled());
+    expect((submitQuickSignal as jest.Mock).mock.calls[0][0].partySize).toBeUndefined();
+  });
+
+  it('carries party size on the walk-in access signal too', async () => {
+    (submitWalkIn as jest.Mock).mockClear();
+    const walkInQ: PromptQuestion = {
+      id: 'walkin', topic: 'walk-in', prompt: 'Walking in without a booking?',
+      kind: 'walkIn', options: ['accepted', 'turned away'], phase1: true,
+    };
+    const { getByTestId } = await render(
+      <PromptBlock subjectId="place-1" question={walkInQ} visibility="private" partySize="five_plus" />,
+    );
+    fireEvent.press(getByTestId('intel-q-walkin-accepted'));
+    await waitFor(() => expect(submitWalkIn).toHaveBeenCalled());
+    expect(submitWalkIn).toHaveBeenCalledWith(
+      expect.objectContaining({ accepted: true, partySize: 'five_plus' }),
+    );
   });
 });
 
