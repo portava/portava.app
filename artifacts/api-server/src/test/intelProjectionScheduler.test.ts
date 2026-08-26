@@ -96,7 +96,47 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     assert.equal(input.components.agreement, 2 / 3);
     assert.equal(input.components.presence, 0.25, "strongest presence = P1");
     assert.ok(input.components.freshness > 0.6 && input.components.freshness < 0.8, "fresh (15/45)");
-    assert.ok(input.distinctGroups === undefined, "no group data fabricated");
+    // No group_key on these observations → distinctGroups is 0 (finite), not fabricated.
+    // The gate then returns below_group_threshold rather than invalid_input.
+    assert.equal(input.distinctGroups, 0, "no group_key → zero groups, never invented");
+    assert.equal(input.maxGroupShare, 0, "finite share even with no grouped observations");
+  });
+
+  it("derives distinctGroups + actor-based maxGroupShare from group_key (leak-safe)", async () => {
+    // 15 distinct actors: 5 in one crew (share group_key 'g-crew'), 10 solo (own keys).
+    const obs = [
+      ...Array.from({ length: 5 }, (_, i) => ({ actor_id: `crew-${i}`, subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, group_key: "g-crew" })),
+      ...Array.from({ length: 10 }, (_, i) => ({ actor_id: `solo-${i}`, subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, group_key: `g-solo-${i}` })),
+    ];
+    const db = makeDb({ flags: {}, observations: obs, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] });
+    const input = await assembleClaimInput(db as any, claim, NOW);
+    assert.equal(input.distinctActors, 15);
+    assert.equal(input.distinctGroups, 11, "1 crew + 10 solo = 11 groups");
+    // Max group = the crew (5 actors) out of 15 grouped actors → 1/3.
+    assert.ok(Math.abs((input.maxGroupShare ?? 0) - 5 / 15) < 1e-9, "actor-based share, crew is 5/15");
+  });
+
+  it("counts one organized crew as a SINGLE dominating group (the leak it must catch)", async () => {
+    const obs = Array.from({ length: 15 }, (_, i) => ({ actor_id: `crew-${i}`, subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, group_key: "one-crew" }));
+    const db = makeDb({ flags: {}, observations: obs, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] });
+    const input = await assembleClaimInput(db as any, claim, NOW);
+    assert.equal(input.distinctActors, 15, "15 people");
+    assert.equal(input.distinctGroups, 1, "but ONE group — cannot read as 15 independent parties");
+    assert.equal(input.maxGroupShare, 1, "the single group is 100% → single_group_dominates at the gate");
+  });
+
+  it("maxGroupShare uses the DISTINCT-actor union, so overlapping crews cannot dilute the share", async () => {
+    // 15 actors each in 6 shared crews → 6 group_keys, each holding all 15 actors.
+    // Summing per-group sizes (90) would give 15/90=0.167 and PUBLISH (the leak);
+    // the union denominator (15) gives 15/15=1.0 → single_group_dominates.
+    const obs: any[] = [];
+    for (let a = 0; a < 15; a++) for (let g = 0; g < 6; g++)
+      obs.push({ actor_id: `a${a}`, subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, group_key: `g${g}` });
+    const db = makeDb({ flags: {}, observations: obs, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] });
+    const input = await assembleClaimInput(db as any, claim, NOW);
+    assert.equal(input.distinctActors, 15);
+    assert.equal(input.distinctGroups, 6, "6 overlapping crews");
+    assert.equal(input.maxGroupShare, 1, "union share 1.0, NOT the diluted 15/90");
   });
 });
 

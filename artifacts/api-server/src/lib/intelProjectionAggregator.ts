@@ -115,11 +115,36 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
   // gate counts. Fresh = expires_at null or in the future.
   const { data: obs } = await sc
     .from("intel_observations")
-    .select("actor_id, presence_level, source_class, expires_at")
+    .select("actor_id, presence_level, source_class, expires_at, group_key")
     .eq("subject_id", claim.subject_id)
     .eq("claim_type", claim.claim_type);
   const freshObs = ((obs as any[]) ?? []).filter((o) => !o.expires_at || o.expires_at > nowIso);
   const distinctActors = new Set(freshObs.map((o) => o.actor_id)).size;
+
+  // Independent-group signal (V1). group_key is a shared token per Trip Crew/party
+  // and per-actor for a solo observer; NULL means "no verifiable independent group"
+  // (a non-crew "with others" answer, or a pre-signal row) and earns ZERO group
+  // credit — it counts as a person above but never as a group. We never infer a
+  // group from a bare actor. distinctGroups is the count of DISTINCT non-null keys;
+  // maxGroupShare is ACTOR-based (distinct actors per group / total grouped actors)
+  // so one prolific reporter cannot make a single group look larger than it is.
+  const groupActors = new Map<string, Set<string>>();
+  const groupedActorUnion = new Set<string>();
+  for (const o of freshObs) {
+    if (o.group_key == null || o.group_key === "") continue;
+    let set = groupActors.get(o.group_key);
+    if (!set) { set = new Set(); groupActors.set(o.group_key, set); }
+    if (o.actor_id) { set.add(o.actor_id); groupedActorUnion.add(o.actor_id); }
+  }
+  const distinctGroups = groupActors.size;
+  let maxGroupActors = 0;
+  for (const set of groupActors.values()) if (set.size > maxGroupActors) maxGroupActors = set.size;
+  // Denominator is the DISTINCT grouped actors (the union), NOT the sum of per-group
+  // sizes: one actor who belongs to several crews must not dilute the dominant
+  // group's share. So a group that holds every grouped actor reads as share 1.0 →
+  // single_group_dominates. Always finite (0 when no grouped observations) so the
+  // gate returns an accurate below_group_threshold, never invalid_input.
+  const maxGroupShare = groupedActorUnion.size > 0 ? maxGroupActors / groupedActorUnion.size : 0;
   const maxPresenceLevel = freshObs.reduce(
     (m, o) => ((PRESENCE_STRENGTH[o.presence_level] ?? 0) > (PRESENCE_STRENGTH[m] ?? 0) ? o.presence_level : m),
     "P0",
@@ -165,6 +190,8 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
     value: claim.value,
     observedAt: claim.observed_at,
     distinctActors,
+    distinctGroups,
+    maxGroupShare,
     sensitiveSubject: false,
     components: deriveComponents(evidence),
     penalties: derivePenalties(evidence),

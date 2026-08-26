@@ -26,9 +26,12 @@ import {
   clampObservedAt,
   isValidIdempotencyKey,
   type Visibility,
+  type PartySizeBucket,
 } from "../../lib/intelContracts.js";
 import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickSignal.js";
 import { validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
+import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
+import { isAcceptedTripMember } from "../../lib/tripMembership.js";
 
 /**
  * Capture surfaces, each gated by its own flag (spec §26 flag registry):
@@ -88,6 +91,11 @@ export interface CaptureInput {
   presenceLevel?: string;         // from a presence attestation; default 'P0'
   presenceAttestation?: Record<string, unknown> | null;
   captureSurface?: CaptureSurface; // default 'quick_signal'
+  // V1 independent-group signal (§privacy). partySize is the raw "who are you here
+  // with?" answer; partyId is the observer's active Trip Crew id (validated here).
+  // Both optional → group_key resolves to null (fail-closed) for older clients.
+  partySize?: PartySizeBucket;
+  partyId?: string | null;
 }
 
 export type CaptureResult =
@@ -126,6 +134,24 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   const ttl = ttlFor(input.claimType);
   const expiresAt = ttl ? new Date(new Date(clamped.observedAt).getTime() + ttl.ttlSeconds * 1000).toISOString() : null;
 
+  // V1 independent-group signal. Only label-eligible (quick_signal) captures feed a
+  // public live label, so only they carry a group signal. Hierarchy, fail-closed:
+  //   1. a validated Trip Crew id -> a SHARED crew token, which also OVERRIDES a
+  //      "just me" answer so a real crew can never split into N solo groups;
+  //   2. "just me" -> a per-actor solo token (a lone visitor is its own group);
+  //   3. anything else / unknown -> null (counts as a person, never as a group).
+  let groupIdentity: GroupIdentity | null = null;
+  let partySizeBucket: PartySizeBucket | null = null;
+  if (surface === "quick_signal") {
+    partySizeBucket = input.partySize ?? null;
+    if (input.partyId && (await isAcceptedTripMember(sc, input.partyId, actorId))) {
+      groupIdentity = { kind: "crew", crewId: input.partyId };
+    } else if (input.partySize === "just_me") {
+      groupIdentity = { kind: "solo", actorId };
+    }
+  }
+  const groupKey = deriveGroupKey(input.subjectId, groupIdentity);
+
   const row = {
     actor_id: actorId,
     subject_kind: input.subjectKind ?? "experience",
@@ -144,6 +170,8 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     captured_at: input.capturedAt ?? null,
     expires_at: expiresAt,
     idempotency_key: input.idempotencyKey,
+    group_key: groupKey,
+    party_size_bucket: partySizeBucket,
   };
 
   const { data, error } = await sc.from("intel_observations").insert(row).select().single();

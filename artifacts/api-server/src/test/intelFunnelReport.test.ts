@@ -5,7 +5,8 @@
  * are surfaced as a reader defect, never folded into a real bucket; the
  * suppression reason is RE-DERIVED faithfully from the real privacy gate so its
  * check order is preserved (below the k=15 actor floor → below_actor_threshold;
- * at the floor but no group signal → invalid_input); and the density gate is
+ * past the floor with too few groups → below_group_threshold, split into
+ * insufficient-groups vs group-identity-unavailable); and the density gate is
  * fail-closed — never certifiable while inputs are uninstrumented.
  */
 import { describe, it } from "node:test";
@@ -107,13 +108,15 @@ describe("intelFunnelReport — suppression reason re-derivation (gate order pre
     assert.equal(f.suppression.byReason["invalid_input"], 0);
   });
 
-  it("at the k=15 floor but no group signal → invalid_input (the pilot's blocking decision)", () => {
+  it("at the k=15 floor with NO group_key → below_group_threshold, classed 'group identity unavailable'", () => {
     const rows: FunnelRows = { ...empty, observations: observers(15), claims: [liveClaim] };
     const f = tallyIntelFunnel(rows, NOW);
     assert.equal(f.suppression.evaluatedClaims, 1);
     assert.equal(f.suppression.publishable, 0, "never publishable without a group signal");
-    assert.equal(f.suppression.byReason["invalid_input"], 1);
-    assert.equal(f.suppression.byReason["below_actor_threshold"], 0);
+    assert.equal(f.suppression.byReason["below_group_threshold"], 1, "finite distinctGroups=0, not invalid_input");
+    assert.equal(f.suppression.byReason["invalid_input"], 0);
+    assert.equal(f.groupSignal.groupIdentityUnavailable, 1, "(B) no group_key at all");
+    assert.equal(f.groupSignal.insufficientGroups, 0);
   });
 
   it("expired observations do not count toward the actor floor (freshness)", () => {
@@ -142,6 +145,81 @@ describe("intelFunnelReport — suppression reason re-derivation (gate order pre
     const f = tallyIntelFunnel(rows, NOW);
     assert.equal(f.suppression.evaluatedClaims, 1, "only the active claim");
     assert.equal(f.claims.liveEligible, 1);
+  });
+});
+
+describe("intelFunnelReport — independent-group signal (owner refinement)", () => {
+  const liveClaim = { subject_id: S, claim_type: CT, status: "active", observed_at: HOUR_AGO };
+  const grouped = (n: number, keyOf: (i: number) => string | null, bucket?: string) =>
+    Array.from({ length: n }, (_, i) => ({
+      actor_id: `a${i}`, subject_id: S, claim_type: CT, moderation_state: "allowed",
+      observed_at: HOUR_AGO, expires_at: FUTURE, group_key: keyOf(i), party_size_bucket: bucket ?? null,
+    }));
+
+  it("15 distinct solo groups → publishes (solo counts as an independent group)", () => {
+    const rows: FunnelRows = { ...empty, observations: grouped(15, (i) => `solo-${i}`, "just_me"), claims: [liveClaim] };
+    const f = tallyIntelFunnel(rows, NOW);
+    assert.equal(f.suppression.publishable, 1, "15 actors, 15 groups, share 1/15 ≤ 0.2, delay elapsed");
+    assert.equal(f.groupSignal.groupEligibleObservations, 15);
+    assert.equal(f.groupSignal.nullGroupObservations, 0);
+    assert.equal(f.groupSignal.partyTally.byKey["just_me"], 15);
+  });
+
+  it("(A) 15 actors in 3 crews → below_group_threshold, classed 'insufficient independent groups'", () => {
+    const rows: FunnelRows = { ...empty, observations: grouped(15, (i) => `crew-${Math.floor(i / 5)}`, "five_plus"), claims: [liveClaim] };
+    const f = tallyIntelFunnel(rows, NOW);
+    assert.equal(f.suppression.byReason["below_group_threshold"], 1, "3 groups < 5");
+    assert.equal(f.groupSignal.insufficientGroups, 1, "(A) has identity (3 groups), just not enough");
+    assert.equal(f.groupSignal.groupIdentityUnavailable, 0);
+  });
+
+  it("counts group-eligible vs null-group observations and the party distribution", () => {
+    const mix: FunnelRows = {
+      ...empty,
+      observations: [
+        ...grouped(5, (i) => `solo-${i}`, "just_me"),          // eligible
+        ...grouped(4, () => null, "five_plus").map((o, i) => ({ ...o, actor_id: `w${i}` })), // null-group, "with others"
+      ],
+      claims: [],
+    };
+    const f = tallyIntelFunnel(mix, NOW);
+    assert.equal(f.groupSignal.groupEligibleObservations, 5);
+    assert.equal(f.groupSignal.nullGroupObservations, 4);
+    assert.equal(f.groupSignal.partyTally.byKey["just_me"], 5);
+    assert.equal(f.groupSignal.partyTally.byKey["five_plus"], 4);
+    assert.equal(f.groupSignal.partyTally.byKey["one_other"], 0, "known bucket shown at 0");
+  });
+
+  it("unattested captures land in the '(null)' party bucket (not silently dropped)", () => {
+    const rows: FunnelRows = {
+      ...empty,
+      observations: [
+        ...grouped(2, () => null),                 // party_size_bucket null
+        ...grouped(1, () => `solo-x`, "just_me").map((o) => ({ ...o, actor_id: "z" })),
+      ],
+      claims: [],
+    };
+    const f = tallyIntelFunnel(rows, NOW);
+    assert.equal(f.groupSignal.partyTally.byKey["(null)"], 2, "unattested visible");
+    assert.equal(f.groupSignal.partyTally.byKey["just_me"], 1);
+  });
+
+  it("union-based maxGroupShare in the funnel catches overlapping crews (matches the aggregator)", () => {
+    const obs: any[] = [];
+    for (let a = 0; a < 15; a++) for (let g = 0; g < 6; g++)
+      obs.push({ actor_id: `a${a}`, subject_id: S, claim_type: CT, moderation_state: "allowed", observed_at: HOUR_AGO, expires_at: FUTURE, group_key: `g${g}`, party_size_bucket: null });
+    const f = tallyIntelFunnel({ ...empty, observations: obs, claims: [liveClaim] }, NOW);
+    assert.equal(f.suppression.byReason["single_group_dominates"], 1, "union share 1.0, not diluted 15/90");
+    assert.equal(f.suppression.publishable, 0);
+  });
+
+  it("re-derives over the FULL fresh cohort (freshObservations), not the windowed set", () => {
+    // The windowed observation set is EMPTY (contributors older than the report
+    // window) but still fresh — the aggregator counts them, so the funnel must too.
+    const rows: FunnelRows = { ...empty, observations: [], freshObservations: grouped(15, (i) => `solo-${i}`, "just_me"), claims: [liveClaim] };
+    const f = tallyIntelFunnel(rows, NOW);
+    assert.equal(f.suppression.evaluatedClaims, 1);
+    assert.equal(f.suppression.publishable, 1, "15 fresh solo groups → publishes, not a false below_actor_threshold");
   });
 });
 

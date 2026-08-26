@@ -18,7 +18,7 @@ import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
-  PRESENCE_LEVELS, VISIBILITIES, SOURCE_CLASS_LABELS, isValidIdempotencyKey,
+  PRESENCE_LEVELS, VISIBILITIES, SOURCE_CLASS_LABELS, isValidIdempotencyKey, PARTY_SIZE_BUCKETS,
 } from "../lib/intelContracts.js";
 import { QUICK_SIGNAL_CONTEXTS, mapQuickSignal, type QuickSignalContext } from "../lib/quickSignal.js";
 import {
@@ -53,6 +53,12 @@ const observationSchema = z.object({
   // Direct form: an already-canonical claim.
   claimType: z.string().max(60).optional(),
   value: z.record(z.string(), z.unknown()).optional(),
+  // V1 independent-group signal (§privacy). "Who are you here with?" — asked only
+  // for label-eligible captures. partyId is the observer's active Trip Crew id, if
+  // any; the server VALIDATES membership before honouring it. Both optional, so
+  // older clients keep working (group_key resolves to null → fail-closed).
+  partySize: z.enum(PARTY_SIZE_BUCKETS).optional(),
+  partyId: z.string().uuid().optional(),
 });
 
 const confirmSchema = z.object({
@@ -131,6 +137,8 @@ router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
     visibility: b.visibility,
     idempotencyKey: key,
     presenceLevel: b.presenceLevel,
+    partySize: b.partySize,
+    partyId: b.partyId ?? null,
   };
   const result = await writeObservation(getServiceClient()!, auth.user.id, input);
   sendCaptureResult(res, result);

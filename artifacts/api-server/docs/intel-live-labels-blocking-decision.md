@@ -1,10 +1,21 @@
 # IG live labels — the one decision that unblocks the pilot
 
-**Status:** the Da Nang Phase-1 intelligence pipeline is now **fully wired and
-instrumented end-to-end**, and it will emit **zero public live labels** until one
-owner design decision is made. This document frames that decision. It does not
-implement it — the only implementations available without a ruling would weaken a
-privacy gate, which is out of bounds.
+> **RESOLVED 2026-08-26.** The owner ruled: keep the `distinctActors≥15 AND
+> distinctGroups≥5` gate intact (no crowd-specific weakening), and instrument an
+> independent group at capture. V1 group model: **solo = one group; a shared Trip
+> Crew = one group; "with others" without a shared crew id = actor/confidence
+> contribution only, ZERO group credit; unknown = same, fail-closed.** Session/
+> device clustering is a later fraud/dedup enhancement, NOT part of the privacy
+> primitive. Implemented in the group-signal PR (migration 2171 + `lib/intelGroupKey`
+> + capture wiring + aggregator `distinctGroups`/`maxGroupShare` + the funnel's
+> insufficient-vs-unavailable split). The section below is kept as the decision
+> record.
+
+**Status (at time of writing):** the Da Nang Phase-1 intelligence pipeline is now
+**fully wired and instrumented end-to-end**, and it will emit **zero public live
+labels** until one owner design decision is made. This document frames that
+decision. It does not implement it — the only implementations available without a
+ruling would weaken a privacy gate, which is out of bounds.
 
 _Written 2026-08-26. Grounded in the code cited; no data was fabricated._
 

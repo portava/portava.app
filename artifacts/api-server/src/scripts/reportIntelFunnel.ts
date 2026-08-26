@@ -140,7 +140,7 @@ async function main(): Promise<void> {
   // ── Fetch (read-only). Each set windowed by its own natural timestamp. ───────
   const obsQ = withUntil(
     sc.from("intel_observations")
-      .select("actor_id, subject_id, claim_type, moderation_state, observed_at, expires_at")
+      .select("actor_id, subject_id, claim_type, moderation_state, observed_at, expires_at, group_key, party_size_bucket")
       .gte("observed_at", window.since),
     "observed_at",
     window.until,
@@ -160,15 +160,24 @@ async function main(): Promise<void> {
     "created_at",
     window.until,
   );
+  // The FULL fresh cohort for the §5/§5b gate re-derivation — freshness-filtered
+  // with NO observed_at lower bound, matching the aggregator (which counts every
+  // fresh observation regardless of age). Without this, a claim whose TTL exceeds
+  // the window would be re-scored over a truncated cohort and the verdict would lie.
+  const freshObsQ = sc
+    .from("intel_observations")
+    .select("actor_id, subject_id, claim_type, expires_at, group_key")
+    .or(`expires_at.is.null,expires_at.gt.${now.toISOString()}`);
 
-  const [observations, claims, snapshots, confirmations] = await Promise.all([
+  const [observations, freshObservations, claims, snapshots, confirmations] = await Promise.all([
     fetchAll<ObservationRow>(obsQ, "intel_observations"),
+    fetchAll<ObservationRow>(freshObsQ, "intel_observations (fresh cohort)"),
     fetchAll<ClaimRow>(claimQ, "intel_claims"),
     fetchAll<SnapshotRow>(snapQ, "intel_state_snapshots"),
     fetchAll<ConfirmationRow>(confQ, "intel_confirmations"),
   ]);
 
-  const rows: FunnelRows = { observations, claims, snapshots, confirmations };
+  const rows: FunnelRows = { observations, freshObservations, claims, snapshots, confirmations };
   const funnel = tallyIntelFunnel(rows, now);
 
   // ── Empty-data honesty, BEFORE any gate verdict ──────────────────────────────
@@ -234,18 +243,45 @@ async function main(): Promise<void> {
       if (n > 0) console.log(`  ${reason.padEnd(30)} ${String(n).padStart(6)}  ${pct(n, sup.evaluatedClaims)}`);
     }
     const belowActor = sup.byReason["below_actor_threshold"] ?? 0;
+    const belowGroup = sup.byReason["below_group_threshold"] ?? 0;
     const invalid = sup.byReason["invalid_input"] ?? 0;
+    if (belowActor > 0) {
+      console.log("");
+      console.log("  ▶ Some claims are DENSITY-limited: not yet k=15 distinct contributors. The");
+      console.log("    group requirement does not bite until they clear the actor floor.");
+    }
+    if (belowGroup > 0) {
+      console.log("");
+      console.log("  ▶ below_group_threshold: past the k=15 floor but < 5 independent groups. See §5b");
+      console.log("    for whether that is 'not enough independent parties yet' vs 'group identity");
+      console.log("    unavailable' (people arriving as non-crew parties that earn no group credit).");
+    }
     if (invalid > 0) {
       console.log("");
-      console.log("  ▶ invalid_input here means the claim CLEARED the k=15 actor floor but the gate");
-      console.log("    then refused for a MISSING GROUP SIGNAL (distinctGroups/maxGroupShare). Capture");
-      console.log("    collects no independent-group signal, so these cannot publish until the owner");
-      console.log("    decides what an 'independent group' is. This is the pilot's blocking decision.");
-    } else if (belowActor > 0) {
-      console.log("");
-      console.log("  ▶ The blocker is still DENSITY: these claims have not yet reached k=15 distinct");
-      console.log("    contributors. The group-signal decision does not bite until they do.");
+      console.log("  ⚠ invalid_input should not occur now that the aggregator always supplies finite");
+      console.log("    group inputs. If it does, a claim reached the gate without them — investigate.");
     }
+  }
+  console.log("");
+
+  // ── 5b. Independent-group signal (the owner's insufficient-vs-unavailable split) ─
+  const gs = funnel.groupSignal;
+  console.log("── 5b. independent-group signal ──");
+  console.log(`  observations with a group identity . ${gs.groupEligibleObservations}  (solo or crew)`);
+  console.log(`  observations without one ........... ${gs.nullGroupObservations}  (non-crew 'with others', trail, or pre-signal)`);
+  console.log("  party attestation (\"who are you here with?\"):");
+  if (gs.partyTally.total === 0) {
+    console.log("    (no observation carried a party attestation)");
+  } else {
+    printEnumTally(gs.partyTally, "    ");
+  }
+  console.log("  among claims past k=15 but short of 5 groups:");
+  console.log(`    insufficient independent groups ... ${gs.insufficientGroups}  (HAS group identity, 1–4 distinct)`);
+  console.log(`    group identity UNAVAILABLE ........ ${gs.groupIdentityUnavailable}  (0 group_key — the V1 party model, not adoption)`);
+  if (gs.groupIdentityUnavailable > 0 && gs.groupIdentityUnavailable >= gs.insufficientGroups) {
+    console.log("  ▶ The limiter is GROUP IDENTITY, not headcount: these venues have contributors");
+    console.log("    but they arrive as non-crew parties (or pre-signal). More users alone will not");
+    console.log("    unblock them — a shared party/crew signal or the level-4 clustering will.");
   }
   console.log("");
 

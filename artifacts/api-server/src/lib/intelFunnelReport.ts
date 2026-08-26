@@ -34,14 +34,21 @@
  * REASON for suppressing — the projection computes a PrivacyDecision and keeps
  * only its verdict. Rather than change the write path to persist the reason
  * (a serving-adjacent migration), this instrument RE-DERIVES the decision
- * read-only: for each live-eligible claim it reconstructs the exact shape the
- * projection's aggregator builds (distinct fresh observers of the (subject,
- * claim_type), no group signal) and calls the very same evaluatePrivacy. The
- * check ORDER is load-bearing and is preserved by calling the real gate: below
- * the k-anonymity floor a claim suppresses as `below_actor_threshold`, and only
- * once it clears k does the missing group signal surface as `invalid_input`.
- * That distinction is the whole diagnostic — it tells the operator whether the
- * blocker is still density or has become the (owner-decision) group signal.
+ * read-only: for each live-eligible claim it reconstructs the exact inputs the
+ * projection's aggregator builds — distinct fresh observers AND the
+ * independent-group signal (distinct group_key values and the actor-based
+ * max-group share) — and calls the very same evaluatePrivacy. The check ORDER is
+ * load-bearing and is preserved by calling the real gate: below the k=15 actor
+ * floor a claim suppresses as `below_actor_threshold`; once it clears k, too few
+ * distinct groups surface as `below_group_threshold`.
+ *
+ * That `below_group_threshold` splits further into the owner's operational
+ * distinction (groupSignal): claims that HAVE some group identity but < 5 distinct
+ * groups (insufficientGroups) vs claims with NO group_key at all
+ * (groupIdentityUnavailable). Together with the party-size distribution, that tells
+ * an operator whether the limiter is adoption (below_actor_threshold), the V1 party
+ * model (groupIdentityUnavailable — people arrive as non-crew parties that earn no
+ * group credit), or simply not-enough-independent-parties-yet (insufficientGroups).
  *
  * RUNTIME EFFECT: NONE. Pure functions over rows. No writes, no flag reads.
  */
@@ -51,6 +58,8 @@ import {
   LIVE_ELIGIBLE_CLAIM_STATUSES,
   MIN_BAND_FOR_LIVE_STATE,
   MODERATION_STATES,
+  PARTY_SIZE_BUCKETS,
+  PRIVACY_THRESHOLD_V1,
   isModerationEligible,
   type ClaimStatus,
   type ConfidenceBand,
@@ -70,6 +79,8 @@ export interface ObservationRow {
   moderation_state?: string | null;
   observed_at?: string | null;
   expires_at?: string | null;
+  group_key?: string | null;
+  party_size_bucket?: string | null;
 }
 
 /** A row from intel_claims. */
@@ -93,7 +104,15 @@ export interface ConfirmationRow {
 }
 
 export interface FunnelRows {
+  /** Observations for the flow tallies (§1-§4) — legitimately windowed by observed_at. */
   observations: readonly ObservationRow[];
+  /**
+   * The FULL fresh cohort (expires_at null or future, NO observed_at lower bound)
+   * used for the §5/§5b gate re-derivation, so it matches the aggregator, which
+   * counts every fresh observation regardless of age. Omit to reuse `observations`
+   * (correct only when the window covers every claim's TTL — e.g. in unit tests).
+   */
+  freshObservations?: readonly ObservationRow[];
   claims: readonly ClaimRow[];
   snapshots: readonly SnapshotRow[];
   confirmations: readonly ConfirmationRow[];
@@ -157,6 +176,24 @@ export interface IntelFunnel {
   };
   /** Re-derived, read-only — see the header note on why this is not read from snapshots. */
   suppression: SuppressionTally;
+  /**
+   * The independent-group signal (V1). Distinguishes the two operationally
+   * different reasons a claim can fail the ≥5-group requirement — the owner's
+   * refinement — so an operator can tell whether the V1 party model, not adoption,
+   * is the limiter.
+   */
+  groupSignal: {
+    /** by party_size_bucket ('(null)' = not attested). "Most arrive as non-crew parties" lives here. */
+    partyTally: EnumTally;
+    /** Observations carrying a non-null group_key (a solo or crew identity). */
+    groupEligibleObservations: number;
+    /** Observations with no group_key (non-crew "with others", trail, or pre-signal). */
+    nullGroupObservations: number;
+    /** (A) live-eligible claims past the k=15 floor with 1..4 distinct groups — HAS identity, not enough of it. */
+    insufficientGroups: number;
+    /** (B) live-eligible claims past the k=15 floor with 0 distinct groups — group identity UNAVAILABLE. */
+    groupIdentityUnavailable: number;
+  };
 }
 
 // ── Enum-keyed counting (recognises the enum, surfaces the rest) ──────────────
@@ -217,18 +254,42 @@ export function tallyIntelFunnel(rows: FunnelRows, now: Date): IntelFunnel {
   // suppression re-derivation. Only FRESH observations feed the gate's actor
   // count, matching the projection aggregator.
   const actorObsCount = new Map<string, number>();
-  const freshActorsByClaimKey = new Map<string, Set<string>>();
+  // partyTally includes a '(null)' bucket so unattested captures are visible (not
+  // silently dropped) — the operator needs the unattested count as a denominator.
+  const partyKeys = [...(PARTY_SIZE_BUCKETS as unknown as string[]), "(null)"];
+  const partyTally = newEnumTally(partyKeys);
+  const knownParty = new Set<string>(partyKeys);
+  let groupEligibleObservations = 0, nullGroupObservations = 0;
   for (const o of rows.observations) {
     countInto(obsTally, o.moderation_state, knownModeration);
     if (typeof o.moderation_state === "string" && isModerationEligible(o.moderation_state as ModerationState)) {
       eligibleForClaim += 1;
     }
     if (o.actor_id) actorObsCount.set(o.actor_id, (actorObsCount.get(o.actor_id) ?? 0) + 1);
-    if (o.subject_id && o.claim_type && o.actor_id && isFresh(o.expires_at, nowMs)) {
-      const key = JSON.stringify([o.subject_id, o.claim_type]);
-      let set = freshActorsByClaimKey.get(key);
-      if (!set) { set = new Set(); freshActorsByClaimKey.set(key, set); }
-      set.add(o.actor_id);
+    countInto(partyTally, o.party_size_bucket ?? "(null)", knownParty);
+    if (o.group_key != null && o.group_key !== "") groupEligibleObservations += 1; else nullGroupObservations += 1;
+  }
+
+  // Independent-group re-derivation inputs: per (subject, claim_type), the distinct
+  // actors behind each non-null group_key among FRESH observations. Built from the
+  // full fresh cohort (freshObservations), NOT the observed_at-windowed set, so it
+  // matches the aggregator exactly — a long-TTL claim's older-but-fresh contributors
+  // are counted, and the §5/§5b verdict cannot contradict what actually published.
+  const freshSet = rows.freshObservations ?? rows.observations;
+  const freshActorsByClaimKey = new Map<string, Set<string>>();
+  const freshGroupActorsByClaimKey = new Map<string, Map<string, Set<string>>>();
+  for (const o of freshSet) {
+    if (!o.subject_id || !o.claim_type || !o.actor_id || !isFresh(o.expires_at, nowMs)) continue;
+    const key = JSON.stringify([o.subject_id, o.claim_type]);
+    let set = freshActorsByClaimKey.get(key);
+    if (!set) { set = new Set(); freshActorsByClaimKey.set(key, set); }
+    set.add(o.actor_id);
+    if (o.group_key != null && o.group_key !== "") {
+      let groups = freshGroupActorsByClaimKey.get(key);
+      if (!groups) { groups = new Map(); freshGroupActorsByClaimKey.set(key, groups); }
+      let gset = groups.get(o.group_key);
+      if (!gset) { gset = new Set(); groups.set(o.group_key, gset); }
+      gset.add(o.actor_id);
     }
   }
 
@@ -276,25 +337,44 @@ export function tallyIntelFunnel(rows: FunnelRows, now: Date): IntelFunnel {
   //    distinguishes "still below k" from "at k but missing the group signal".
   const byReason = Object.fromEntries(ALL_SUPPRESSION_REASONS.map((r) => [r, 0])) as Record<SuppressionReason, number>;
   let evaluatedClaims = 0, publishable = 0;
+  let insufficientGroups = 0, groupIdentityUnavailable = 0;
+  const minGroups = PRIVACY_THRESHOLD_V1.minIndependentGroups;
   for (const c of rows.claims) {
     if (typeof c.status !== "string" || !liveEligibleStatuses.has(c.status)) continue;
     if (!c.subject_id || !c.claim_type || !c.observed_at) continue;
     evaluatedClaims += 1;
     const key = JSON.stringify([c.subject_id, c.claim_type]);
     const distinctActors = freshActorsByClaimKey.get(key)?.size ?? 0;
+    // Re-derive the SAME group inputs the aggregator now supplies: distinct groups
+    // and actor-based max-group share over the fresh grouped observations. Always
+    // finite, so the gate returns below_group_threshold (accurate) not invalid_input.
+    const groups = freshGroupActorsByClaimKey.get(key);
+    const distinctGroups = groups?.size ?? 0;
+    let maxGroupActors = 0;
+    const unionActors = new Set<string>();
+    if (groups) for (const set of groups.values()) {
+      for (const a of set) unionActors.add(a);
+      if (set.size > maxGroupActors) maxGroupActors = set.size;
+    }
+    // Union denominator (distinct grouped actors), matching intelProjectionAggregator.
+    const maxGroupShare = unionActors.size > 0 ? maxGroupActors / unionActors.size : 0;
     const decision = evaluatePrivacy({
       distinctActors,
-      // The aggregator supplies no group signal today; the gate refuses on it
-      // only AFTER the actor floor is cleared. Passing undefined reproduces the
-      // production decision exactly (see header).
-      distinctGroups: undefined,
-      maxGroupShare: undefined,
+      distinctGroups,
+      maxGroupShare,
       observedAt: c.observed_at,
       now,
       sensitiveSubject: false,
     });
-    if (decision.publishable) publishable += 1;
-    else if (decision.reason) byReason[decision.reason] += 1;
+    if (decision.publishable) { publishable += 1; continue; }
+    if (decision.reason) byReason[decision.reason] += 1;
+    // The owner's refinement: split "not enough groups" into HAS-identity-but-thin
+    // vs NO-identity. Only meaningful once the actor floor is cleared (that is when
+    // below_group_threshold can fire); distinctGroups===0 means no group_key at all.
+    if (decision.reason === "below_group_threshold") {
+      if (distinctGroups === 0) groupIdentityUnavailable += 1;
+      else if (distinctGroups < minGroups) insufficientGroups += 1;
+    }
   }
 
   return {
@@ -316,6 +396,13 @@ export function tallyIntelFunnel(rows: FunnelRows, now: Date): IntelFunnel {
     },
     contributor,
     suppression: { evaluatedClaims, publishable, byReason },
+    groupSignal: {
+      partyTally,
+      groupEligibleObservations,
+      nullGroupObservations,
+      insufficientGroups,
+      groupIdentityUnavailable,
+    },
   };
 }
 
