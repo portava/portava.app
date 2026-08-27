@@ -22,9 +22,12 @@ const NOW = new Date();                                    // throttle math uses
 const OBSERVED = new Date(Date.now() - 5 * 60_000).toISOString(); // clampObservedAt uses the real clock
 
 /** A fake supabase client sufficient for the capture service's exact chains. */
-function makeDb(flags: Record<string, boolean>, opts: { places?: string[] } = {}) {
+function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; consent?: boolean | "withdrawn" } = {}) {
   const tables: Record<string, any[]> = { intel_observations: [], intel_claims: [], intel_confirmations: [] };
   const places = new Set(opts.places ?? []);
+  // Consent defaults to granted so the D4 gate is satisfied for the capture-focused
+  // cases; the consent gate itself is exercised explicitly below and in intelConsent.test.
+  const consent = opts.consent ?? true;
   let seq = 0;
 
   function from(table: string) {
@@ -41,6 +44,11 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[] } = {}
       if (table === "places") {
         const id = filters.find(([c]) => c === "id")?.[1];
         return { data: places.has(id) ? { id } : null, error: null };
+      }
+      if (table === "intel_contribution_consent") {
+        if (consent === false) return { data: null, error: null };            // no consent row
+        if (consent === "withdrawn") return { data: { enabled: false, withdrawn_at: NOW.toISOString() }, error: null };
+        return { data: { enabled: true, withdrawn_at: null }, error: null };  // granted
       }
       const store = tables[table] ?? (tables[table] = []);
       if (op === "insert" || op === "insert_select") {
@@ -133,6 +141,32 @@ describe("IG-03 capture — flag gate + validation fail closed", () => {
   });
 });
 
+describe("IG-03 capture — D4 consent gate (server-authoritative, fail-closed)", () => {
+  it("refuses capture when the actor has NO consent row", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE], consent: false });
+    const r = await writeObservation(db as any, ACTOR, baseInput() as any);
+    assert.equal(r.ok, false);
+    assert.equal((r as any).reason, "consent_required");
+    assert.equal(db._tables.intel_observations.length, 0, "no observation written without consent");
+  });
+  it("refuses capture when consent was withdrawn", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE], consent: "withdrawn" });
+    const r = await writeObservation(db as any, ACTOR, baseInput() as any);
+    assert.equal((r as any).reason, "consent_required");
+    assert.equal(db._tables.intel_observations.length, 0);
+  });
+  it("enforces consent BEFORE payload validation — no consent beats a malformed payload", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE], consent: false });
+    const r = await writeObservation(db as any, ACTOR, baseInput({ claimType: "made.up" }) as any);
+    assert.equal((r as any).reason, "consent_required"); // not invalid_claim_type
+  });
+  it("allows capture once consent is granted", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE], consent: true });
+    const r = await writeObservation(db as any, ACTOR, baseInput() as any);
+    assert.equal(r.ok, true);
+  });
+});
+
 describe("IG-03 — Quick Signal mapping + specialist safety", () => {
   it("maps §6 options to canonical claims (good energy -> moderate)", () => {
     assert.deepEqual(mapQuickSignal("arrival", "good energy"), { claimType: "crowd.level", value: { level: "moderate" } });
@@ -158,6 +192,8 @@ describe("IG-03 — claim lifecycle", () => {
 
     assert.equal((await approveClaim(db as any, claimId)).ok, true);
     assert.equal(db._tables.intel_claims.find((c) => c.id === claimId).status, "active");
+    assert.equal(db._tables.intel_claims.find((c) => c.id === claimId).promotion_source, "admin",
+      "admin approval records provenance='admin', distinct from system promotion");
 
     assert.equal((await confirmClaim(db as any, claimId, "33333333-3333-4333-8333-333333333333", "agree", OBSERVED)).ok, true);
     const dup = await confirmClaim(db as any, claimId, "33333333-3333-4333-8333-333333333333", "agree", OBSERVED);

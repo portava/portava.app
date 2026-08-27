@@ -26,12 +26,15 @@ import {
   writeObservation, proposeClaim, approveClaim, confirmClaim, correctClaim,
   type CaptureResult, type CaptureInput,
 } from "../services/intel/IntelCaptureService.js";
+import { getIntelConsentState, setIntelConsent } from "../lib/intelConsent.js";
 
 const router = Router();
 
 /** Map a service rejection reason onto a stable API error code. */
 const REASON_CODE: Record<string, ApiErrorCode> = {
   disabled: "feature_disabled",
+  // No valid Intelligence Contributions consent → 403, the D4 lawful-basis refusal.
+  consent_required: "forbidden",
   invalid_idempotency_key: "invalid_payload",
   invalid_observed_at: "invalid_payload",
   invalid_claim_type: "invalid_payload",
@@ -101,6 +104,29 @@ function sendCaptureResult(res: any, result: CaptureResult): void {
   }
   sendError(res, REASON_CODE[result.reason] ?? "invalid_payload", result.detail ?? result.reason);
 }
+
+// ── Intelligence Contributions consent (D4) ──────────────────────────────────
+// The client may READ its own state and ASK to enable/disable. The consent
+// version and timestamps are stamped server-side (lib/intelConsent), so a client
+// cannot forge them, and the authoritative row is service-role only.
+router.get("/v1/intel/consent", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const state = await getIntelConsentState(getServiceClient()!, auth.user.id);
+  res.json(state);
+}));
+
+router.put("/v1/intel/consent", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  // The ONLY client-supplied field is the boolean intent. Everything evidentiary
+  // (version, consented_at, withdrawn_at) is set by the server.
+  const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body ?? {});
+  if (!parsed.success) return sendError(res, "invalid_payload", "enabled (boolean) is required");
+  const out = await setIntelConsent(getServiceClient()!, auth.user.id, parsed.data.enabled);
+  if (!out.ok) return sendError(res, "db_error", "consent update failed");
+  res.json(out.state);
+}));
 
 // ── Capture ─────────────────────────────────────────────────────────────────
 router.post("/v1/intel/observations", asyncHandler(async (req, res) => {

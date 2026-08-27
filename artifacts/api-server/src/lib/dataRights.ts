@@ -155,6 +155,9 @@ export const INTERNAL_COLUMNS: readonly string[] = [
   "id", "created_at", "computed_at", "schema_version", "event_version",
   "idempotency_key", "superseded_by", "observation_id", "claim_id",
   "hard_expires_at", "subject_kind",
+  // Internal promotion provenance ('admin' | 'system'): never surfaced publicly,
+  // never redistributed — pure lineage, like superseded_by.
+  "promotion_source",
 ];
 
 /** The intel tables this registry covers. */

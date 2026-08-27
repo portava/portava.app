@@ -53,6 +53,8 @@ function makeDb(cfg: { trips?: any[]; members?: any[] }) {
     function run() {
       if (table === "feature_flags") return { data: { enabled: true }, error: null };
       if (table === "places") return { data: { id: PLACE }, error: null };
+      // The actor has granted Intelligence Contributions consent (D4 gate).
+      if (table === "intel_contribution_consent") return { data: { enabled: true, withdrawn_at: null }, error: null };
       if (op === "insert") { const row = { id: "obs-1", schema_version: 1, ...payload }; inserted.push(row); return { data: row, error: null }; }
       return { data: rows()[0] ?? null, error: null };
     }

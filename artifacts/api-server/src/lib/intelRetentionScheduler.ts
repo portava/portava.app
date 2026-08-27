@@ -18,6 +18,7 @@
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
+import { INTEL_IDENTIFIABLE_RETENTION_SECONDS } from "./locationPurposes.js";
 
 const STARTUP_DELAY_MS = 7 * 60 * 1000;
 const INTERVAL_MS = 60 * 60 * 1000;
@@ -74,15 +75,70 @@ export async function runIntelRetentionSweep(opts: { client?: any } = {}): Promi
   }
 }
 
+export interface ContributionSweepResult {
+  evidence: number;
+  confirmations: number;
+  observations: number;
+  skipped: boolean;
+  reason: "disabled" | "no_client" | "error" | null;
+}
+
+/**
+ * Enforces the ruled 180-day identifiable retention for the intel_claim purpose by
+ * DELETING actor-linked contributions older than the cutoff (now - 180 days) via
+ * purge_intel_contributions_older_than(). Separate flag from the snapshot sweep
+ * (intel_contribution_retention_enabled) because this is IRREVERSIBLE deletion of
+ * contributor data, not recomputable hygiene. Fail-closed; idempotent (re-running
+ * over the same cutoff deletes nothing new).
+ */
+export async function runIntelContributionRetentionSweep(
+  opts: { client?: any; now?: Date } = {},
+): Promise<ContributionSweepResult> {
+  const empty = { evidence: 0, confirmations: 0, observations: 0 };
+  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  if (!db) return { ...empty, skipped: true, reason: "no_client" };
+  if (!(await isFlagEnabled(db, "intel_contribution_retention_enabled"))) {
+    return { ...empty, skipped: true, reason: "disabled" };
+  }
+  const now = opts.now ?? new Date();
+  const cutoff = new Date(now.getTime() - INTEL_IDENTIFIABLE_RETENTION_SECONDS * 1000).toISOString();
+  try {
+    const { data, error } = await db.rpc("purge_intel_contributions_older_than", { p_cutoff: cutoff });
+    if (error) {
+      logger.warn({ err: error }, "intel contribution retention sweep failed");
+      return { ...empty, skipped: true, reason: "error" };
+    }
+    const rows: any[] = Array.isArray(data) ? data : [];
+    const byTable = (t: string) => Number(rows.find((r) => r?.table_name === t)?.deleted_count) || 0;
+    const result = {
+      evidence: byTable("intel_evidence"),
+      confirmations: byTable("intel_confirmations"),
+      observations: byTable("intel_observations"),
+    };
+    if (result.evidence + result.confirmations + result.observations > 0) {
+      logger.info({ ...result }, "intel contribution retention removed aged contributions");
+    }
+    return { ...result, skipped: false, reason: null };
+  } catch (err) {
+    logger.warn({ err }, "intel contribution retention sweep threw");
+    return { ...empty, skipped: true, reason: "error" };
+  }
+}
+
 export function startIntelRetentionScheduler(): void {
   if (_timer !== null) return;
   logger.info(
-    { startupDelayMs: STARTUP_DELAY_MS, intervalMs: INTERVAL_MS, flag: "intel_retention_sweep_enabled" },
-    "IntelRetentionScheduler scheduled (no-op until the flag is enabled)",
+    {
+      startupDelayMs: STARTUP_DELAY_MS,
+      intervalMs: INTERVAL_MS,
+      flags: ["intel_retention_sweep_enabled", "intel_contribution_retention_enabled"],
+    },
+    "IntelRetentionScheduler scheduled (no-op until the flags are enabled)",
   );
   _timer = setTimeout(function tick() {
-    void runIntelRetentionSweep()
-      .catch((err) => logger.warn({ err }, "intel retention sweep failed"))
+    // Snapshot hygiene and contribution retention run each pass, each behind its
+    // own flag. allSettled so one failing never blocks the other or the reschedule.
+    void Promise.allSettled([runIntelRetentionSweep(), runIntelContributionRetentionSweep()])
       .finally(() => { _timer = setTimeout(tick, INTERVAL_MS); });
   }, STARTUP_DELAY_MS);
 }

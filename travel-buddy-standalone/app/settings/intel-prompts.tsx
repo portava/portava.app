@@ -22,6 +22,7 @@ import { PP } from '../../src/theme/passportTokens';
 import { useIntelPrompts } from '../../src/hooks/useIntelPrompts';
 import { VENUE_CATEGORIES, VENUE_LABELS } from '../../src/lib/intel/contracts';
 import { isCategoryPaused } from '../../src/lib/intel/promptPauseStorage';
+import { getIntelConsent, setIntelConsent, hasValidConsent, type IntelConsentState } from '../../src/services/intelConsent';
 
 export default function IntelPromptsSettingsScreen() {
   const {
@@ -35,8 +36,39 @@ export default function IntelPromptsSettingsScreen() {
     resumeEverything,
   } = useIntelPrompts();
 
+  // D4 Intelligence Contributions consent — a persistent, separate control. The
+  // server is authoritative; this row reflects and updates that state.
+  const [consent, setConsent] = React.useState<IntelConsentState | null | undefined>(undefined);
+  React.useEffect(() => {
+    let alive = true;
+    getIntelConsent().then((s) => { if (alive) setConsent(s); }).catch(() => { if (alive) setConsent(null); });
+    return () => { alive = false; };
+  }, []);
+  const consentOn = hasValidConsent(consent);
+  const toggleConsent = React.useCallback(async (v: boolean) => {
+    const next = await setIntelConsent(v);
+    if (next) setConsent(next);
+  }, []);
+
   return (
     <SettingsScreen title="Live intel prompts" subtitle="When we may ask you to share a signal">
+      <SettingsSection
+        title="Intelligence Contributions"
+        subtitle="Let your Quick Signals help build aggregated live place intelligence."
+      >
+        <ToggleRow
+          title="Contribute to live place intelligence"
+          subtitle={
+            consentOn
+              ? 'On — your signals count toward aggregated intelligence. Your identity and exact location are never shown publicly with them.'
+              : "Off — your signals won't contribute, and capture stays disabled until you turn this on."
+          }
+          value={consentOn}
+          onValueChange={toggleConsent}
+          disabled={consent === undefined}
+        />
+      </SettingsSection>
+
       {!captureEnabled ? (
         <View style={styles.offNote}>
           <Text style={styles.offNoteText}>
