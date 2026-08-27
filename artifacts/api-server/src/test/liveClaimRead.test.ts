@@ -11,6 +11,7 @@ import {
   readLiveCrowdLevel,
   readLiveClaimEnvelopes,
   toLiveClaimEnvelope,
+  _clearPromotedScopeCache,
   type LiveClaim,
 } from "../lib/liveClaimRead.js";
 
@@ -24,11 +25,29 @@ const PAST = new Date(NOW.getTime() - 30 * 60_000).toISOString();
  * the live-allowed state (kill off, pilot on) so the downstream-logic cases keep
  * exercising the snapshot/confidence/expiry path. `kill`/`pilot` override them.
  */
-function client(opts: { flag: boolean | null; rows?: any[]; error?: boolean; kill?: boolean; pilot?: boolean; off?: string[] }) {
+function client(opts: {
+  flag: boolean | null; rows?: any[]; error?: boolean; kill?: boolean; pilot?: boolean; off?: string[];
+  // Per-scope Live allowlist. Default promotes the zoneless crowd.level scope so
+  // the existing serve-tests (liveRow has no zone_id, claim_type crowd.level)
+  // keep flowing. `promotedError` exercises the fail-closed read path.
+  promoted?: string[]; promotedError?: boolean;
+}) {
+  // The allowlist is cached module-side; every test builds a fresh client, so
+  // reset it here to keep the fixed test clock from serving a stale set.
+  _clearPromotedScopeCache();
+  const promoted = opts.promoted ?? ["|crowd.level"];
   const filters: Record<string, unknown> = {};
   const api: any = {
     filters,
     from(table: string) {
+      if (table === "intel_live_promoted_scopes") {
+        const pq: any = { select: () => pq };
+        return Object.assign(pq, {
+          then: (res: any) => res(opts.promotedError
+            ? { data: null, error: { message: "boom" } }
+            : { data: promoted.map((k) => ({ scope_key: k })), error: null }),
+        });
+      }
       if (table === "feature_flags") {
         let flagName = "";
         const fq: any = {
@@ -102,6 +121,47 @@ describe("liveClaimRead — IG-09 limited-live gates (kill switch + pilot)", () 
     assert.deepEqual(await readLiveClaims(client({ flag: true, rows: [liveRow], off: ["intel_claim_projection_crowd"] }), "p1", { now: NOW }), []);
     // Upstream capture off → also suppressed.
     assert.deepEqual(await readLiveClaims(client({ flag: true, rows: [liveRow], off: ["intel_capture_quick_signal"] }), "p1", { now: NOW }), []);
+  });
+});
+
+describe("liveClaimRead — IG-09 per-scope promotion allowlist", () => {
+  it("serves nothing when NO scope is promoted, even with the global flag on", async () => {
+    // The bug this fixes: the single global intel_limited_live flag exposed every
+    // scope. An empty allowlist must expose nothing.
+    assert.deepEqual(
+      await readLiveClaims(client({ flag: true, pilot: true, promoted: [], rows: [liveRow] }), "p1", { now: NOW }),
+      [],
+    );
+  });
+
+  it("serves a snapshot only when ITS scope is promoted", async () => {
+    const zoned = { ...liveRow, zone_id: "z-danang" }; // scope_key = "z-danang|crowd.level"
+    // Promote a DIFFERENT scope → the zoned row is withheld.
+    assert.deepEqual(
+      await readLiveClaims(client({ flag: true, promoted: ["z-other|crowd.level"], rows: [zoned] }), "p1", { now: NOW }),
+      [],
+    );
+    // Promote the row's own scope → it flows.
+    const served = await readLiveClaims(
+      client({ flag: true, promoted: ["z-danang|crowd.level"], rows: [zoned] }), "p1", { now: NOW },
+    );
+    assert.equal(served.length, 1);
+  });
+
+  it("promoting one scope does not expose a sibling claim in the same zone", async () => {
+    const crowd = { ...liveRow, zone_id: "z1", claim_type: "crowd.level" };
+    const wait = { ...liveRow, zone_id: "z1", claim_type: "wait.minutes", value: { minutes: 10 } };
+    const served = await readLiveClaims(
+      client({ flag: true, promoted: ["z1|crowd.level"], rows: [crowd, wait] }), "p1", { now: NOW },
+    );
+    assert.deepEqual(served.map((c) => c.claimType), ["crowd.level"]);
+  });
+
+  it("fails closed when the allowlist read errors", async () => {
+    assert.deepEqual(
+      await readLiveClaims(client({ flag: true, promotedError: true, rows: [liveRow] }), "p1", { now: NOW }),
+      [],
+    );
   });
 });
 
@@ -238,7 +298,10 @@ describe("readLiveClaimEnvelopes — deterministic ordering (best/current first)
       { id: "b", claim_type: "queue.wait", value: { minMinutes: 10, maxMinutes: 20 }, confidence: 0.92, source_count: 9, observed_at: older, expires_at: FUTURE, privacy_eligible: true },
       { id: "c", claim_type: "crowd.trajectory", value: { trajectory: "peaking" }, confidence: 0.78, source_count: 4, observed_at: newer, expires_at: FUTURE, privacy_eligible: true },
     ];
-    const envs = await readLiveClaimEnvelopes(client({ flag: true, rows }), "p1", { now: NOW });
+    const envs = await readLiveClaimEnvelopes(
+      client({ flag: true, promoted: ["|crowd.level", "|queue.wait", "|crowd.trajectory"], rows }),
+      "p1", { now: NOW },
+    );
     // b (0.92) first; then the two 0.78s, newer (c) before older (a).
     assert.deepEqual(envs.map((e) => e.id), ["b", "c", "a"]);
   });

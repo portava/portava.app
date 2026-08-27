@@ -142,6 +142,32 @@ export function toLiveClaimEnvelope(c: LiveClaim): LiveClaimEnvelope {
  * anything is off, missing, expired or not privacy-eligible — never a partial
  * or stale answer dressed as current.
  */
+// ── Per-scope Live promotion allowlist (short TTL cache) ──────────────────────
+// Which (zone × claim) scopes are promoted for Live. Cached briefly so the
+// per-place read path does not query the table on every call. Fail-closed: an
+// error yields an empty set (nothing serves) and is NOT cached.
+let _promotedScopeCache: { at: number; keys: Set<string> } | null = null;
+const PROMOTED_SCOPE_TTL_MS = 30_000;
+
+async function loadPromotedScopes(sc: any, now: Date): Promise<Set<string>> {
+  const t = now.getTime();
+  if (_promotedScopeCache && t - _promotedScopeCache.at < PROMOTED_SCOPE_TTL_MS) {
+    return _promotedScopeCache.keys;
+  }
+  try {
+    const { data, error } = await sc.from("intel_live_promoted_scopes").select("scope_key");
+    if (error || !data) return new Set(); // fail-closed; do not cache an error
+    const keys = new Set(((data as any[]) ?? []).map((r) => String(r.scope_key)));
+    _promotedScopeCache = { at: t, keys };
+    return keys;
+  } catch {
+    return new Set();
+  }
+}
+
+/** Test hook — clears the promoted-scope allowlist cache. */
+export function _clearPromotedScopeCache(): void { _promotedScopeCache = null; }
+
 export async function readLiveClaims(
   sc: any,
   subjectId: string | null | undefined,
@@ -169,10 +195,19 @@ export async function readLiveClaims(
   if (!(await isFlagEnabled(sc, "intel_limited_live"))) return [];
 
   const now = opts.now ?? new Date();
+
+  // Per-scope gate: the global intel_limited_live flag is only the master switch.
+  // A scope (zone × claim) serves Live ONLY when it is also PROMOTED in
+  // intel_live_promoted_scopes. Without this the single global flag exposed every
+  // scope at once (IG-09 requires per-scope promotion). Empty allowlist (or an
+  // unreadable one) ⇒ nothing serves — fail-closed.
+  const promotedScopes = await loadPromotedScopes(sc, now);
+  if (promotedScopes.size === 0) return [];
+
   try {
     let q = sc
       .from("intel_state_snapshots")
-      .select("id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible")
+      .select("id, zone_id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible")
       .eq("subject_id", subjectId)
       .eq("privacy_eligible", true)
       .gt("expires_at", now.toISOString());
@@ -188,6 +223,9 @@ export async function readLiveClaims(
 
     const out: LiveClaim[] = [];
     for (const row of data as any[]) {
+      // Per-scope gate: only serve snapshots whose (zone, claim) scope is promoted.
+      const scopeKey = `${(row.zone_id ?? "")}|${row.claim_type}`;
+      if (!promotedScopes.has(scopeKey)) continue;
       const confidence = typeof row.confidence === "number" ? row.confidence : null;
       const band = confidenceBand(confidence);
       // Below the live floor a claim is not shown as live at all.
