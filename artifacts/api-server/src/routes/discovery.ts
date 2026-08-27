@@ -736,7 +736,7 @@ async function queryDbPlaces(
   if (!sc) return [];
 
   // Normalise: "Miami, FL" → "Miami"; strip trailing country/state qualifiers
-  const cityBase = destination.split(",")[0]?.trim() ?? destination;
+  const cityBase = sanitizeCityFilter(destination.split(",")[0]?.trim() ?? destination);
 
   try {
     const { data, error } = await sc
@@ -847,6 +847,28 @@ async function queryDbPlaces(
  * self-contained, so no client change is required), and dedup by normalised name
  * happens in the caller so richer discovery_places/OSM rows win on collision.
  */
+/**
+ * The coarse primary_category vocabulary public.places actually uses. The
+ * discovery tabs are finer, so we map a requested tab to the SET of place-vocab
+ * values that toCanonicalCategory sends to it — computed, not hardcoded, so it
+ * can never drift from the mapper. Empty set => no canonical rows for that tab.
+ */
+const PLACE_PRIMARY_VOCAB = ["food", "nightlife", "accommodation", "shopping", "culture", "other"] as const;
+function primaryCategoriesFor(discoveryCategory: string): string[] {
+  return PLACE_PRIMARY_VOCAB.filter((pc) => toCanonicalCategory(pc, null) === discoveryCategory);
+}
+
+/**
+ * Strip the PostgREST .or() structural metacharacters from a user-supplied city
+ * before interpolation. Parens/commas/asterisks could otherwise terminate the
+ * or() group and inject filter conditions. Normal city names never contain them
+ * (commas are already stripped by the split on ','). Fixes a filter-injection
+ * surface shared with queryDbPlaces.
+ */
+function sanitizeCityFilter(city: string): string {
+  return city.replace(/[(),*]/g, "").trim();
+}
+
 async function queryCanonicalPlaces(
   destination: string,
   category: string,
@@ -856,20 +878,25 @@ async function queryCanonicalPlaces(
   const sc = getServiceClient();
   if (!sc) return [];
 
-  const cityBase = destination.split(",")[0]?.trim() ?? destination;
+  const cityBase = sanitizeCityFilter(destination.split(",")[0]?.trim() ?? destination);
+  if (!cityBase) return [];
+
+  // Push the category filter into SQL so the LIMIT applies to the RIGHT category.
+  // A 400-row UNORDERED pre-filter still starved rare categories in large cities
+  // (e.g. ~150 culture rows among 12k could be absent from an arbitrary 400).
+  const wantPrimary = category === "for_you" ? null : primaryCategoriesFor(category);
+  if (wantPrimary && wantPrimary.length === 0) return []; // no place-vocab maps to this tab
 
   try {
-    const { data, error } = await sc
+    let q = sc
       .from("places")
       .select("id, name, city, primary_category, latitude, longitude, neighborhood, address, image_source_type, image_accuracy_status")
       .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
       .eq("status", "active")
-      .is("merged_into_place_id", null)
-      // Fetch WIDE then filter then cap: the category filter runs in TS (it needs
-      // toCanonicalCategory), so a pre-filter limit of 60 starved category tabs —
-      // 60 arbitrary rows of which only the matching handful survived ("only 26
-      // places" for a 2.6k-place city). 400 covers every category's share.
-      .limit(400);
+      .is("merged_into_place_id", null);
+    if (wantPrimary) q = q.in("primary_category", wantPrimary);
+    // Deterministic order so pagination/results are stable across requests.
+    const { data, error } = await q.order("normalized_name", { ascending: true }).limit(400);
 
     if (error || !data) return [];
 
@@ -915,6 +942,31 @@ async function queryCanonicalPlaces(
   } catch {
     return [];
   }
+}
+
+/**
+ * The DB place set for the discovery feed: curated discovery_places PLUS
+ * canonical public.places, deduped by normalised name (curated wins — it carries
+ * images/ratings/save counts the canonical table lacks). Used by BOTH the
+ * cache-miss path and the warm-cache serve path — previously only the miss path
+ * merged canonical rows, so every cache HIT silently dropped them and a warm
+ * Da Nang feed fell back to OSM-only.
+ */
+async function loadCuratedAndCanonicalPlaces(
+  destination: string,
+  category: string,
+  centerLat: number | null,
+  centerLng: number | null,
+): Promise<DiscoveryPlace[]> {
+  const [curated, canonical] = await Promise.all([
+    queryDbPlaces(destination, category, centerLat, centerLng),
+    queryCanonicalPlaces(destination, category, centerLat, centerLng),
+  ]);
+  const curatedNames = new Set(curated.map((p) => p.name.toLowerCase().trim()));
+  return [
+    ...curated,
+    ...canonical.filter((p) => !curatedNames.has(p.name.toLowerCase().trim())),
+  ];
 }
 
 // ── OSM saved-count enrichment ────────────────────────────────────────────────
@@ -1366,7 +1418,7 @@ router.get("/discovery", async (req, res) => {
   async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string): Promise<void> {
     const distRef = userCoords ?? clientCoords;
     // destination! — narrowed by the guard above; TypeScript can't see it through the closure.
-    const dbPlaces = await queryDbPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null);
+    const dbPlaces = await loadCuratedAndCanonicalPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null);
     const osmWithDist = sortBy === "nearest" && distRef
       ? osmPlaces.map((p) =>
           p.lat != null && p.lng != null
@@ -1525,21 +1577,11 @@ router.get("/discovery", async (req, res) => {
     // the destination centre — this is what gets cached and must not use user coords.
     const distRef = userCoords ?? coords;
     const osmT0 = Date.now();
-    const [osmPlaces, curatedDbPlaces, canonicalPlaces] = await Promise.all([
+    const [osmPlaces, dbPlaces] = await Promise.all([
       queryOverpass(coords.lat, coords.lng, radiusM, category),
-      queryDbPlaces(destination, category, distRef.lat, distRef.lng),
-      queryCanonicalPlaces(destination, category, distRef.lat, distRef.lng),
+      loadCuratedAndCanonicalPlaces(destination, category, distRef.lat, distRef.lng),
     ]);
     const osmMs = Date.now() - osmT0;
-
-    // Canonical public.places rows join the curated set, deduped by normalised
-    // name with the curated discovery_places rows winning (they carry images,
-    // ratings and save counts the canonical table does not).
-    const curatedNames = new Set(curatedDbPlaces.map((p) => p.name.toLowerCase().trim()));
-    const dbPlaces = [
-      ...curatedDbPlaces,
-      ...canonicalPlaces.filter((p) => !curatedNames.has(p.name.toLowerCase().trim())),
-    ];
 
     // Enrich OSM places with real save counts from discovery_places before
     // merging and caching.  A single batch SELECT by osm_id attaches savedCount
