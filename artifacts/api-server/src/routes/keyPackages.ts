@@ -19,8 +19,13 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
+import { checkRateLimit } from "../lib/rateLimit.js";
 
 const router = Router();
+
+/** Max KeyPackage consumes per requester per window (destructive one-shot op). */
+const KEY_PACKAGE_CONSUME_LIMIT = parseInt(process.env["KEY_PACKAGE_CONSUME_LIMIT"] ?? "60", 10);
+const KEY_PACKAGE_CONSUME_WINDOW_MS = 60 * 1_000; // 1 minute
 
 // ── POST /me/devices/:deviceId/key-packages ───────────────────────────────────
 // Upload a batch of KeyPackages (base64url-encoded TLS bytes, public material only).
@@ -125,6 +130,21 @@ router.get("/users/:userId/key-packages/consume", async (req, res) => {
   const targetUserId = req.params.userId;
   if (!isUuid(targetUserId)) {
     sendError(res, "invalid_payload", "Invalid user id");
+    return;
+  }
+
+  // Rate limit per REQUESTER: consuming is a destructive one-shot operation (the
+  // KeyPackage is deleted), so an authenticated caller could otherwise drain any
+  // user's pool with a burst of requests, denying new E2EE threads until the
+  // victim's client refills. A legitimate thread setup consumes one KP per
+  // recipient device, so this cap is far above normal use.
+  const rl = checkRateLimit(
+    "key_package_consume", auth.user.id,
+    KEY_PACKAGE_CONSUME_LIMIT, KEY_PACKAGE_CONSUME_WINDOW_MS,
+  );
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(Math.ceil(rl.retryAfterMs / 1000)));
+    sendError(res, "rate_limited", "Too many key-package requests. Please slow down.");
     return;
   }
 
