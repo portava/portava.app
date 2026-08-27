@@ -101,7 +101,11 @@ export async function projectClaim(
   return {
     snapshot: {
       subject_id: subjectId,
-      zone_id: opts.zoneId ?? null,
+      // '' (not null) for a zone-less snapshot: the unique index + PostgREST
+      // onConflict target are plain columns (2176), so the key must be a
+      // concrete value. Writing null made ON CONFLICT (subject_id,zone_id,
+      // claim_type) fail to match the old coalesce() index (SQLSTATE 42P10).
+      zone_id: opts.zoneId ?? "",
       claim_type: input.claimType,
       value: input.value,
       confidence: scored.confidence,
