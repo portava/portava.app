@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, safeSecretEquals } from "../lib/http";
+import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { getServiceClient } from "../lib/supabase";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
@@ -349,9 +350,13 @@ router.get("/me/profile/viewers", async (req, res) => {
 
   const viewerIds = unique.map((r) => r.viewer_id as string);
 
-  const [profilesRes, privacyRes] = await Promise.all([
+  const [profilesRes, privacyRes, allowedNames] = await Promise.all([
     sc.from("profiles").select("id, username, full_name, avatar_url, is_official").in("id", viewerIds),
     sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery").in("user_id", viewerIds),
+    // Which viewers permit their REAL name to be shown (show_real_name=true).
+    // Previously full_name was returned unconditionally, leaking the real names
+    // of viewers who never opted in. Fail-closed (an error yields an empty set).
+    nameVisibilitySet(sc, viewerIds),
   ]);
 
   const profileMap = new Map(((profilesRes.data ?? []) as any[]).map((p) => [p.id as string, p]));
@@ -365,7 +370,7 @@ router.get("/me/profile/viewers", async (req, res) => {
       return {
         userId: r.viewer_id,
         handle: (p as any)?.username ?? null,
-        name: (p as any)?.full_name ?? null,
+        name: allowedNames.has(r.viewer_id as string) ? ((p as any)?.full_name ?? null) : null,
         avatarUrl: (p as any)?.avatar_url ?? null,
         isOfficial: (p as any)?.is_official ?? false,
         viewedAt: r.viewed_at,

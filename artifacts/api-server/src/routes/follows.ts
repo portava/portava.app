@@ -430,8 +430,15 @@ router.get("/users/:userId/followers", async (req, res) => {
 
   if (!isMe) {
     try {
-      const { visibility } = await resolveProfileVisibility(sc, viewerId, target, profile);
+      const { visibility, privacySettings } = await resolveProfileVisibility(sc, viewerId, target, profile);
       if (visibility === "unavailable" || visibility === "blocked" || visibility === "limited_preview") {
+        res.status(200).json({ users: [] });
+        return;
+      }
+      // Honor the target's "show followers" control. It was previously fetched
+      // by resolveProfileVisibility and then discarded, so a user who set
+      // show_followers=false still had their entire follower list served.
+      if (privacySettings?.show_followers === false) {
         res.status(200).json({ users: [] });
         return;
       }
@@ -483,8 +490,14 @@ router.get("/users/:userId/following", async (req, res) => {
 
   if (!isMe) {
     try {
-      const { visibility } = await resolveProfileVisibility(sc, viewerId, target, profile);
+      const { visibility, privacySettings } = await resolveProfileVisibility(sc, viewerId, target, profile);
       if (visibility === "unavailable" || visibility === "blocked" || visibility === "limited_preview") {
+        res.status(200).json({ users: [] });
+        return;
+      }
+      // Honor the target's "show friends/following" control (previously fetched
+      // then discarded, so show_friends=false still served the full list).
+      if (privacySettings?.show_friends === false) {
         res.status(200).json({ users: [] });
         return;
       }
