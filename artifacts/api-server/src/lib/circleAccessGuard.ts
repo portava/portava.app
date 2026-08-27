@@ -139,6 +139,14 @@ export async function canViewCirclePresence(
   if (!settings.consented_at) {
     return { allowed: false, reason: "target_not_consented" };
   }
+  // Enforce the CURRENT consent version. The write path (routes/circle.ts) only
+  // ever stores consent_version = CURRENT_CONSENT_VERSION when enabling, so an
+  // enabled row with a stale/null version consented under a superseded policy
+  // (or an incomplete flow) — presence must not be shared under it. This guard
+  // previously ignored the version entirely.
+  if (settings.consent_version !== CURRENT_CONSENT_VERSION) {
+    return { allowed: false, reason: "consent_version_stale" };
+  }
 
   // 4a. Global pause check — immediate, overrides everything
   if (settings.is_paused) {
