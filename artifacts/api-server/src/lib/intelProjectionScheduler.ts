@@ -89,6 +89,44 @@ export async function runIntelProjectionPass(opts: { client?: any; now?: Date } 
       }
     }
 
+    // Reconcile stale snapshots. The loop above only (re)writes snapshots for
+    // LIVE_ELIGIBLE claims, so a claim that LEFT that set (retracted, rejected,
+    // superseded, expired) is never touched and its snapshot would keep serving
+    // as LIVE until its TTL. Expire any servable snapshot with no live-eligible
+    // claim behind it. The live-key set is read UNLIMITED (keys only) so the
+    // capped claim read above can never cause a false expiry.
+    try {
+      const [liveKeyRes, servableRes] = await Promise.all([
+        db.from("intel_claims")
+          .select("subject_id, zone_id, claim_type")
+          .in("status", LIVE_ELIGIBLE_CLAIM_STATUSES as unknown as string[]),
+        db.from("intel_state_snapshots")
+          .select("id, subject_id, zone_id, claim_type")
+          .eq("privacy_eligible", true)
+          .gt("expires_at", now.toISOString()),
+      ]);
+      // Only reconcile when BOTH reads succeeded — otherwise we cannot safely tell
+      // an orphan from an unread row, so leave snapshots alone (fail-closed on the
+      // side of not wrongly expiring live data; the TTL still bounds staleness).
+      if (!liveKeyRes.error && !servableRes.error) {
+        const liveKeys = new Set(
+          ((liveKeyRes.data as any[]) ?? []).map((c) =>
+            JSON.stringify([c.subject_id, c.zone_id ?? "", c.claim_type])),
+        );
+        const orphanIds = ((servableRes.data as any[]) ?? [])
+          .filter((s) => !liveKeys.has(JSON.stringify([s.subject_id, s.zone_id ?? "", s.claim_type])))
+          .map((s) => s.id);
+        if (orphanIds.length > 0) {
+          await db.from("intel_state_snapshots")
+            .update({ privacy_eligible: false, expires_at: now.toISOString() })
+            .in("id", orphanIds);
+          logger.info({ expired: orphanIds.length }, "intelProjection pass: expired snapshots whose claim is no longer live-eligible");
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, "intelProjection pass: snapshot reconciliation failed (non-fatal)");
+    }
+
     if (tally.written > 0 || tally.suppressed > 0) {
       logger.info({ subjects: groups.size, ...tally }, "intelProjection pass complete");
     }

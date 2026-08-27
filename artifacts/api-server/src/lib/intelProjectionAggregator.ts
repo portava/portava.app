@@ -119,7 +119,7 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
   // invalidated after a snapshot was written drops out at the next pass.
   const { data: obs } = await sc
     .from("intel_observations")
-    .select("actor_id, presence_level, source_class, expires_at, group_key")
+    .select("actor_id, presence_level, source_class, expires_at, group_key, observed_at")
     .eq("subject_id", claim.subject_id)
     .eq("claim_type", claim.claim_type)
     .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[]);
@@ -193,10 +193,26 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
   // observation→evidence linkage is wired into this assembly.
   const hasEvidence = false;
 
-  // Freshness: age of the claim's observation relative to its TTL.
+  // Freshness clock: the LATEST fresh, consented observation of this
+  // (subject, claim_type) — NOT the promoted anchor claim's frozen observed_at.
+  // The system promotion copies the first observation's observed_at into the
+  // claim and never re-anchors, so deriving freshness from claim.observed_at made
+  // every key go permanently dark one TTL after its first report even as fresh
+  // observations kept arriving. Using the newest observation lets fresh reports
+  // keep a key live. Fall back to the claim's observed_at when no observation
+  // carries a timestamp (should not happen for a promoted claim).
+  const latestObservedAtMs = freshObs.reduce(
+    (max, o) => (o.observed_at ? Math.max(max, new Date(o.observed_at).getTime()) : max),
+    0,
+  );
+  const effectiveObservedAt = latestObservedAtMs > 0
+    ? new Date(latestObservedAtMs).toISOString()
+    : claim.observed_at;
+
+  // Freshness: age of the freshest observation relative to the claim TTL.
   const policy = await getPolicy(sc, claim.claim_type);
   const ttl = policy?.ttlSeconds ?? 0;
-  const ageSeconds = Math.max(0, (now.getTime() - new Date(claim.observed_at).getTime()) / 1000);
+  const ageSeconds = Math.max(0, (now.getTime() - new Date(effectiveObservedAt).getTime()) / 1000);
   const ageRatio = ttl > 0 ? ageSeconds / ttl : 1;
 
   const evidence: ClaimEvidence = {
@@ -213,7 +229,9 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
   return {
     claimType: claim.claim_type,
     value: claim.value,
-    observedAt: claim.observed_at,
+    // Snapshot observed_at + expires_at derive from the freshest observation so a
+    // key stays live while fresh reports arrive (see effectiveObservedAt above).
+    observedAt: effectiveObservedAt,
     distinctActors,
     distinctGroups,
     maxGroupShare,
