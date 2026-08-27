@@ -119,11 +119,17 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   }) : null;
 
   useEffect(() => {
-    if (place) {
-      checkSaved('place', place.id)
-        .then(({ saved }) => setSaved(saved))
-        .catch(() => {});
-    }
+    // Reset FIRST so the previous place's bookmark state never shows on the new
+    // place while the async check is in flight — leaving it stale showed the wrong
+    // icon and made the next save/unsave tap toggle against the wrong base value.
+    // The cancelled guard drops a slow response for a place the user already left.
+    setSaved(false);
+    if (!place) return;
+    let cancelled = false;
+    checkSaved('place', place.id)
+      .then(({ saved }) => { if (!cancelled) setSaved(saved); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [place?.id]);
 
   // Live open-now lookup (Phase 8) — honest degradation: any failure leaves

@@ -228,17 +228,32 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   // SWR: immediately hydrate with the cache for the active destination so that
   // city switches never show content from the previous city while loading.
   useEffect(() => {
-    const cachedResult = destination
-      ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1)
-      : null;
-    if (cachedResult) {
-      setItems(cachedResult.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })));
-      setLoading(false);
+    // Preserve an active Compass-personalized feed across a sort/filter change.
+    // The Compass upgrade effect keys on compass.data, which a sort switch does
+    // NOT change, so it will not re-personalize — wiping to OSM here would
+    // silently drop personalization until the next Compass fetch. When Compass is
+    // active we keep the current items and just refresh the OSM baseline in the
+    // background (load() won't overwrite Compass items — see the guard in load()).
+    const compassActive = Boolean(
+      compass?.compassEnabled && compass?.data &&
+      (((compass.data.sections ?? []).some((s: any) => (s.items ?? []).length > 0)) ||
+        (compass.data.safeItems ?? []).length > 0),
+    );
+    if (!compassActive) {
+      const cachedResult = destination
+        ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1)
+        : null;
+      if (cachedResult) {
+        setItems(cachedResult.places.slice(0, 15).map((p) => ({ kind: 'osm' as const, place: p })));
+        setLoading(false);
+      } else {
+        setItems([]);
+      }
+      setSource('none');
+      load(cachedResult !== null); // isRefresh=true when cache hit → no skeleton
     } else {
-      setItems([]);
+      load(true); // keep personalized items; refresh OSM baseline without a skeleton
     }
-    setSource('none');
-    load(cachedResult !== null); // isRefresh=true when cache hit → no skeleton
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => {
