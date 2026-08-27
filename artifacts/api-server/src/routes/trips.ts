@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { isBlockedBetween } from "../lib/blockGuard.js";
+import { computeTripStatus } from "../lib/tripStatus.js";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
@@ -28,42 +29,6 @@ const TRIP_COLUMNS =
   "allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, " +
   "precise_location_visible, plan_edit_permission, progress, created_at, updated_at";
 
-/** "Today" as a YYYY-MM-DD string in the given IANA timezone (UTC fallback). */
-function todayInTimezone(timezone: string | null | undefined): string {
-  const opts = { year: "numeric", month: "2-digit", day: "2-digit" } as const;
-  try {
-    // en-CA formats as YYYY-MM-DD, directly comparable to date-column strings.
-    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone ?? "UTC", ...opts }).format(new Date());
-  } catch {
-    // Invalid/unknown timezone string — fall back to UTC.
-    return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", ...opts }).format(new Date());
-  }
-}
-
-/** Canonical trip status — never let clients override this server-side logic. */
-function computeTripStatus(
-  title: string | null,
-  destinationCity: string | null,
-  startDate: string | null,
-  endDate: string | null,
-  currentStatus: string,
-  timezone?: string | null,
-): string {
-  if (currentStatus === "cancelled" || currentStatus === "archived") return currentStatus;
-  if (!title || !destinationCity) return "draft";
-  // Day boundaries are evaluated in the trip's timezone (not UTC midnight).
-  // start_date/end_date are stored as YYYY-MM-DD date strings, so plain string
-  // comparison against a YYYY-MM-DD "today" is exact.
-  const today = todayInTimezone(timezone);
-  if (startDate) {
-    const start = startDate.slice(0, 10);
-    const end   = endDate ? endDate.slice(0, 10) : null;
-    if (today < start)          return "upcoming";
-    if (!end || today <= end)   return "active";
-    return "completed";
-  }
-  return "planning";
-}
 
 // ── Trip-completion stamp awards ──────────────────────────────────────────────
 // Called fire-and-forget (non-fatal) when a trip transitions → "completed".

@@ -11,6 +11,7 @@ import { getServiceClient } from "../lib/supabase";
 import { LOCATION_MODE_DESCRIPTIONS } from "../services/location/LocationPermissionService";
 import { asyncHandler } from "../lib/asyncHandler";
 import { invalidateCompassHomeCache } from "./compassHome";
+import { _clearMapTravelersCache } from "../lib/mapTravelers.js";
 
 const router = Router();
 
@@ -118,6 +119,10 @@ router.patch("/me/location-preferences", asyncHandler(async (req, res) => {
   }
 
   invalidateCompassHomeCache(user.id);
+  // Drop the shared discovery-map candidate cache so an opt-out (e.g. reducing
+  // discovery visibility or trusted-circle sharing) takes effect immediately,
+  // instead of leaving the user visible on the map for up to the 20s cache TTL.
+  _clearMapTravelersCache();
 
   res.status(200).json({ ok: true });
 }));

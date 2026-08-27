@@ -180,14 +180,16 @@ describe("GET /api/me/circle-locations", () => {
     assert.deepEqual(r.body.locations, []);
   });
 
-  it("returns location for a circle member with no prefs row (default = consented)", async () => {
-    const RAW_LAT = 48.8566;
-    const RAW_LNG = 2.3522;
+  it("EXCLUDES a circle member with no prefs row (absence is not consent)", async () => {
+    // Circle location sharing is opt-IN: a member with no location_preferences
+    // row has not affirmatively consented, and the settings UI shows them as NOT
+    // sharing. Serving their location on "no row = consented" leaked the location
+    // of members who believe they are private.
     const client = makeClient({
       circleMemberships: [{ user_id: USER_ID, other_id: MEMBER_A }],
       locationPreferences: [],
       locationState: [
-        { user_id: MEMBER_A, lat: RAW_LAT, lng: RAW_LNG, city: "Paris", country: "FR", updated_at: "2026-07-01T10:00:00Z" },
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: "2026-07-01T10:00:00Z" },
       ],
       profiles: [{ id: MEMBER_A, name: "Alice", avatar_url: null }],
     });
@@ -195,21 +197,7 @@ describe("GET /api/me/circle-locations", () => {
 
     const r = await req("/me/circle-locations");
     assert.equal(r.status, 200);
-    assert.equal(r.body.locations.length, 1);
-    const loc = r.body.locations[0];
-    assert.equal(loc.userId, MEMBER_A);
-    // Universal display-name rule: real name is redacted (null) unless the
-    // member opted in via profile_privacy_settings.show_real_name.
-    assert.equal(loc.name, null);
-    // No prefs row → effectiveDiscoveryVisibility(null) → "city_only" grid.
-    // Raw coordinates must be coarsened; exact values must not appear.
-    const expected = coarsenPosition(MEMBER_A, RAW_LAT, RAW_LNG, effectiveDiscoveryVisibility(null) ?? "city_only");
-    assert.equal(loc.lat, expected.lat);
-    assert.equal(loc.lng, expected.lng);
-    assert.notEqual(loc.lat, RAW_LAT, "raw lat must not be returned for a non-self member");
-    assert.notEqual(loc.lng, RAW_LNG, "raw lng must not be returned for a non-self member");
-    assert.equal(loc.city, "Paris");
-    assert.equal(loc.country, "FR");
+    assert.deepEqual(r.body.locations, [], "a member with no explicit consent must not be shared");
   });
 
   it("returns location for a circle member with trusted_circle_share = true", async () => {
@@ -256,6 +244,7 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: USER_ID, other_id: MEMBER_C },
       ],
       locationPreferences: [
+        { user_id: MEMBER_A, trusted_circle_share: true },
         { user_id: MEMBER_B, trusted_circle_share: true },
         { user_id: MEMBER_C, trusted_circle_share: false },
       ],
@@ -284,7 +273,10 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: USER_ID, other_id: MEMBER_A },
         { user_id: USER_ID, other_id: MEMBER_B },
       ],
-      locationPreferences: [],
+      locationPreferences: [
+        { user_id: MEMBER_A, trusted_circle_share: true },
+        { user_id: MEMBER_B, trusted_circle_share: true },
+      ],
       locationState: [
         { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: null },
       ],
@@ -395,7 +387,10 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: USER_ID, other_id: MEMBER_A },
         { user_id: USER_ID, other_id: MEMBER_B },
       ],
-      locationPreferences: [],
+      locationPreferences: [
+        { user_id: MEMBER_A, trusted_circle_share: true },
+        { user_id: MEMBER_B, trusted_circle_share: true },
+      ],
       locationState: [
         { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris", country: "FR", updated_at: "2026-07-01T10:00:00Z" },
         { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: "2026-07-01T08:00:00Z" },
@@ -458,7 +453,10 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: USER_ID, other_id: MEMBER_A },
         { user_id: USER_ID, other_id: MEMBER_B },
       ],
-      locationPreferences: [],
+      locationPreferences: [
+        { user_id: MEMBER_A, trusted_circle_share: true },
+        { user_id: MEMBER_B, trusted_circle_share: true },
+      ],
       locationState: [
         { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris", country: "FR", updated_at: null },
         { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: null },
@@ -484,7 +482,10 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: USER_ID, other_id: MEMBER_A },
         { user_id: USER_ID, other_id: MEMBER_C },
       ],
-      locationPreferences: [],
+      locationPreferences: [
+        { user_id: MEMBER_A, trusted_circle_share: true },
+        { user_id: MEMBER_C, trusted_circle_share: true },
+      ],
       locationState: [
         { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,  city: "Paris",  country: "FR", updated_at: null },
         { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278, city: "London", country: "GB", updated_at: null },

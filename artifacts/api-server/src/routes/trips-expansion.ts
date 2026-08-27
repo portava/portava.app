@@ -25,6 +25,7 @@ import {
   toPrivateTripPreview,
   toAuthorizedTripView,
 } from "../lib/privacy/tripSerializers.js";
+import { computeTripStatus } from "../lib/tripStatus.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -33,35 +34,6 @@ const UUID_RE = /^[0-9a-f-]{36}$/i;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Compute canonical status from trip fields (server-authoritative). */
-function computeStatus(
-  title: string | null,
-  destinationCity: string | null,
-  startDate: string | null,
-  endDate: string | null,
-  currentStatus: string,
-): string {
-  // Honour terminal states — never overwrite.
-  if (currentStatus === "cancelled" || currentStatus === "archived") return currentStatus;
-
-  // Draft: missing required fields.
-  if (!title || !destinationCity) return "draft";
-
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-
-  if (startDate) {
-    const start = new Date(startDate + "T00:00:00Z");
-    const end   = endDate ? new Date(endDate   + "T00:00:00Z") : null;
-
-    if (today < start)                          return "upcoming";
-    if (!end || today <= end)                   return "active";
-    return "completed";
-  }
-
-  // No dates yet — planning.
-  return "planning";
-}
 
 // toPublicTrip and toMemberTrip have been replaced by the explicit DTO
 // serializers imported above. Legacy references are gone; all call sites
@@ -438,7 +410,8 @@ router.patch("/trips/:tripId/settings", async (req, res) => {
   const effectiveTitle = (b.title ?? t.title) as string | null;
   const effectiveCity  = (b.destinationCity ?? t.destination_city) as string | null;
   const effectiveStatus = b.status ?? t.status;
-  patch.status = computeStatus(effectiveTitle, effectiveCity, newStart as string | null, newEnd as string | null, effectiveStatus);
+  const effectiveTimezone = (b.timezone ?? (t as any).timezone) as string | null;
+  patch.status = computeTripStatus(effectiveTitle, effectiveCity, newStart as string | null, newEnd as string | null, effectiveStatus, effectiveTimezone);
 
   const { data: updated, error } = await sc
     .from("trips")
