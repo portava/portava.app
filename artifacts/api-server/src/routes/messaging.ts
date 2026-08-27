@@ -23,6 +23,7 @@
  */
 
 import { Router } from 'express';
+import { isBlockedBetween } from '../lib/blockGuard.js';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
@@ -1735,6 +1736,26 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  // Block guard for 1:1 threads. Blocking (blocks.ts) tears down follow/friend
+  // edges and pending message-requests but never closes an EXISTING thread, so
+  // without this a blocked user could keep DMing through a pre-existing thread.
+  // Applies to a thread with exactly one other active member; group threads are
+  // governed by group membership, not pairwise blocks. Fail-closed via
+  // isBlockedBetween (a blocks-table error is treated as blocked).
+  {
+    const blockSc = getServiceClient() ?? client;
+    const { data: otherMembers } = await client
+      .from('message_thread_members')
+      .select('user_id')
+      .eq('thread_id', threadId)
+      .is('left_at', null)
+      .neq('user_id', user.id);
+    const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
+    if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
+      sendError(res, 'forbidden', 'You cannot message this user'); return;
+    }
+  }
 
   // E-2: check thread E2EE flag.
   const { data: threadMeta } = await client

@@ -146,37 +146,21 @@ router.get("/users/:userId/key-packages/consume", async (req, res) => {
     return;
   }
 
-  // Consume one KeyPackage from the pool (FIFO — oldest first)
-  const { data: kp } = await sc
-    .from("key_packages")
-    .select("id, key_package_b64")
-    .eq("device_id", (device as any).id)
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (!kp) {
+  // Consume one KeyPackage ATOMICALLY (oldest first) + decrement the pool count.
+  // A prior SELECT-then-DELETE let two concurrent consumers receive the SAME
+  // one-shot key (MLS key reuse); consume_key_package (migration 2177) claims a
+  // single row with FOR UPDATE SKIP LOCKED so concurrent callers never collide.
+  const { data: consumed, error: consumeErr } = await sc.rpc("consume_key_package", {
+    p_device_id: (device as any).id,
+  });
+  const row = Array.isArray(consumed) ? consumed[0] : consumed;
+  if (consumeErr || !row) {
     sendError(res, "no_key_package", "No KeyPackages available");
     return;
   }
 
-  // Delete it — KeyPackages are one-shot
-  await sc.from("key_packages").delete().eq("id", (kp as any).id);
-
-  // Decrement the device pool count
-  const { data: deviceFull } = await sc
-    .from("devices")
-    .select("key_package_count")
-    .eq("id", (device as any).id)
-    .single();
-
-  if (deviceFull) {
-    const newCount = Math.max(0, ((deviceFull as any).key_package_count ?? 1) - 1);
-    await sc.from("devices").update({ key_package_count: newCount }).eq("id", (device as any).id);
-  }
-
   res.json({
-    keyPackageB64: (kp as any).key_package_b64,
+    keyPackageB64: (row as any).key_package_b64,
     deviceId: (device as any).id,
   });
 });

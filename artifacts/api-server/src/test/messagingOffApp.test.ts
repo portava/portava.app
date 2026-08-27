@@ -58,8 +58,10 @@ function makeClient() {
       insert(data: any) { this._insertData = data; return this; },
       update(data: any) { this._updateData = data; return this; },
       eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
+      neq(col: string, val: any) { this._filters.push(["neq", col, val]); return this; },
       in(col: string, vals: any[]) { this._filters.push(["in", col, vals]); return this; },
       is(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
+      or() { return this; }, // block-guard's fail-closed blocks lookup — no blocks in these fixtures
       maybeSingle() { this._maybeSingle = true; return this; },
       single() { this._maybeSingle = true; return this; },
       order() { return this; },
@@ -109,9 +111,16 @@ function makeClient() {
           let rows = [...state.threadMembers];
           for (const [op, col, val] of this._filters) {
             if (op === "eq") rows = rows.filter((r: any) => r[col] === val);
+            if (op === "neq") rows = rows.filter((r: any) => r[col] !== val);
           }
           if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
           return { data: rows, error: null };
+        }
+
+        if (t === "blocks") {
+          // The block guard's .or() is a no-op in this fake, so it returns every
+          // seeded block; that is enough for a 1:1 thread with a single block row.
+          return { data: (state.blocks ?? []), error: null };
         }
 
         if (t === "rent_buddy_bookings") {
@@ -185,6 +194,7 @@ function setupState() {
     ],
     bookingEvents: [],
     messages:      [],
+    blocks:        [],
   };
   const client = makeClient();
   _setTestClient(client as any, true);
@@ -245,6 +255,14 @@ after(() => {
 beforeEach(() => setupState());
 
 describe("Off-app solicitation detection — messaging route", () => {
+  it("BLOCKS a send through a pre-existing 1:1 thread when the members have a block", async () => {
+    // Blocking never closed existing threads, so a blocked user could keep DMing.
+    (state as any).blocks.push({ blocker_id: TRAVELER_ID, blocked_id: BUDDY_USER });
+    const r = await sendMessageWith(BUDDY_TOKEN, "hello there");
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(state.messages.length, 0, "no message written when blocked");
+  });
+
   it("buddy sends clean travel message — no warning event created", async () => {
     const r = await sendBuddyMessage("What time should we meet at the train station?");
     assert.equal(r.status, 201, JSON.stringify(r.body));
