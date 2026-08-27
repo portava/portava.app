@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Platform } from 'react-native';
 import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles, Info, Radio } from 'lucide-react-native';
-import { router } from 'expo-router';
+import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useSession } from '../../context/SessionContext.tsx';
 import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
@@ -480,10 +480,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             accessibilityRole="button"
             accessibilityLabel="Open the full place page with live signals"
             style={styles.openPlaceBtn}
-            onPress={() => {
-              onClose();
-              router.push(`/place/${place.canonicalPlaceId}` as any);
-            }}
+            onPress={() => closeThenNavigate(onClose, `/place/${place.canonicalPlaceId}`)}
           >
             <Radio size={18} color={color.onInk} />
             <Text style={styles.openPlaceText}>Open place page · live signals</Text>
