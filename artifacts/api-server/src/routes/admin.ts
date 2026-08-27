@@ -970,7 +970,12 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
       },
       { onConflict: "user_id,state" },
     );
-    sideEffects.accountState = error ? "error" : "suspended";
+    // Enforce it: the access gates read profiles.account_status, NOT
+    // user_account_states. Writing only the latter recorded the suspension but
+    // never actually restricted the user (the individual /suspend route sets
+    // both — this generic path omitted the profiles write).
+    const { error: profErr } = await sc.from("profiles").update({ account_status: "suspended" }).eq("id", userId);
+    sideEffects.accountState = (error || profErr) ? "error" : "suspended";
   }
 
   if (action_type === "permanent_ban") {
@@ -985,7 +990,9 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
       },
       { onConflict: "user_id,state" },
     );
-    sideEffects.accountState = error ? "error" : "banned";
+    // Enforce it on profiles.account_status (see temporary_suspension above).
+    const { error: profErr } = await sc.from("profiles").update({ account_status: "banned" }).eq("id", userId);
+    sideEffects.accountState = (error || profErr) ? "error" : "banned";
   }
 
   if (action_type === "report_resolved" && target_ref_id) {
@@ -1513,8 +1520,14 @@ router.post("/admin/users/:userId/restore", async (req, res) => {
 
   if (profileErr) { sendError(res, "db_error", profileErr.message); return; }
 
+  // Actually lift the sanction: isUserBannedOrSuspended reads user_account_states
+  // for a banned/suspended row, so the restore must REMOVE those rows. The prior
+  // upsert used onConflict:"user_id", but the unique index is (user_id, state),
+  // so it raised 42P10 (swallowed) and left the banned/suspended row standing —
+  // the user stayed restricted despite profiles.account_status='active'.
+  await sc.from("user_account_states").delete().eq("user_id", userId).in("state", ["banned", "suspended"]);
   await sc.from("user_account_states")
-    .upsert({ user_id: userId, state: "active", reason, set_by: adminUserId, updated_at: now }, { onConflict: "user_id" })
+    .upsert({ user_id: userId, state: "active", reason, set_by: adminUserId, updated_at: now }, { onConflict: "user_id,state" })
     .then(undefined, () => {});
 
   res.json({ ok: true, restored: true });
