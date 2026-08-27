@@ -74,7 +74,7 @@ export function PostActionGroup({
   disabled,
   testID,
   tint = color.mute,
-}: PostActionItemConfig) {
+}: Omit<PostActionItemConfig, 'key'>) {
   const showCount = !!count && count > 0;
   return (
     <Pressable
@@ -103,9 +103,14 @@ export interface PostActionSlot {
 
 /** Convenience: wraps a PostActionItemConfig into a ready-to-use PostActionSlot for PostActionRow. */
 export function actionSlot(config: PostActionItemConfig): PostActionSlot {
+  // `key` is destructured OUT of the spread: React treats a spread `key` as the
+  // element key and warns in dev ("A props object containing a 'key' prop is
+  // being spread into JSX"). PostActionGroup never reads it; the slot key feeds
+  // the <React.Fragment key> in PostActionRow instead.
+  const { key, ...groupProps } = config;
   return {
-    key: config.key,
-    node: <PostActionGroup {...config} />,
+    key,
+    node: <PostActionGroup {...groupProps} />,
     gapText: config.count ? formatCompactCount(config.count) : undefined,
   };
 }

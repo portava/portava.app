@@ -239,7 +239,7 @@ export function GlobalPlacePicker({
 
   // Custom entry — still normalized: it flows through the same canonical
   // resolution as every other selection (no raw-text-only saves).
-  function useCustom() {
+  function commitFreeText() {
     const q = query.trim();
     if (!q) return;
     const place: Place = {
@@ -249,6 +249,18 @@ export function GlobalPlacePicker({
       lat: null, lng: null, timezone: null, source: 'manual',
     };
     void select(place);
+  }
+
+  // Return/Search key: select the TOP real suggestion when one exists — never
+  // commit the raw text over a live suggestion list. While providers are still
+  // loading, do nothing (a premature submit was how "it just takes whatever word
+  // I type" happened). Raw-text fallback only when the query has settled with
+  // zero suggestions.
+  function submitSearch() {
+    if (searching || googleLoading) return;
+    const top = selectSearchRows({ googlePlaces, searchResults, cityMode }).rows[0];
+    if (top) { void select(top); return; }
+    commitFreeText();
   }
 
   const showSearch = query.trim().length > 0;
@@ -335,7 +347,7 @@ export function GlobalPlacePicker({
               placeholderTextColor={color.faint}
               autoCapitalize="words"
               returnKeyType="search"
-              onSubmitEditing={useCustom}
+              onSubmitEditing={submitSearch}
             />
             {(searching || googleLoading) && <ActivityIndicator size="small" color={color.signal} />}
             {query.length > 0 && !searching && (
@@ -419,7 +431,7 @@ export function GlobalPlacePicker({
               }
               if (item.kind === 'custom') {
                 return (
-                  <Pressable style={s.row} onPress={useCustom} disabled={resolvingId != null}>
+                  <Pressable style={s.row} onPress={commitFreeText} disabled={resolvingId != null}>
                     <View style={[s.iconCircle, { backgroundColor: `${color.signal}15` }]}>
                       {resolvingId != null
                         ? <ActivityIndicator size="small" color={color.signal} />

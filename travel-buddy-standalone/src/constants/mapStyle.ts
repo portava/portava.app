@@ -20,18 +20,28 @@
  */
 
 /**
- * Primary and fallback style — OpenFreeMap Liberty.
- * Free, no API key, Cloudflare-backed CDN.
+ * Primary style — OpenFreeMap Liberty. Free, no API key, Cloudflare-backed CDN.
  */
-export const FALLBACK_MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+const PRIMARY_MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+
+/**
+ * Fallback style — MapLibre's own demo style, keyless, on separate infrastructure.
+ *
+ * This MUST be a different provider than the primary: every map's
+ * onDidFailLoadingMap handler does `if (mapStyle !== FALLBACK_MAP_STYLE_URL)
+ * setMapStyle(FALLBACK_MAP_STYLE_URL)`, and when fallback === primary that
+ * condition was always false — the documented "safety net" was dead code, so an
+ * OpenFreeMap outage/rate-limit (e.g. an HTTP 403) had nothing to recover to.
+ */
+export const FALLBACK_MAP_STYLE_URL = 'https://demotiles.maplibre.org/style.json';
 
 /**
  * Returns the MapLibre style URL for all maps in the app.
  * Currently always returns OpenFreeMap Liberty (see module comment above).
  */
 export function getMapStyleUrl(): string {
-  return FALLBACK_MAP_STYLE_URL;
+  return PRIMARY_MAP_STYLE_URL;
 }
 
 /** Pre-computed constant for components that evaluate at module load time. */
-export const MAP_STYLE_URL = FALLBACK_MAP_STYLE_URL;
+export const MAP_STYLE_URL = PRIMARY_MAP_STYLE_URL;

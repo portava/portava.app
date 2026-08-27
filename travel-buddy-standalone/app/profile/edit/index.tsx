@@ -6,7 +6,7 @@ import React from 'react';
 import { router } from 'expo-router';
 import {
   User, Camera, LayoutGrid, Heart, Compass, Eye, Shield,
-  Bell, MapPin, Link2, KeyRound, Phone, BookMarked, Map, Globe,
+  Bell, MapPin, Link2, KeyRound, Phone, BookMarked, Map, Globe, Radio,
 } from 'lucide-react-native';
 import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider,
@@ -84,6 +84,16 @@ export default function EditSettingsHub() {
           title="Location & Availability"
           subtitle="Location sharing, Find Your Circle"
           onPress={go('/profile/edit/location')}
+        />
+        <SettingsDivider />
+        {/* D4: the persistent, separate Intelligence Contributions control must be
+            reachable — this is its home in the real settings hub. (The legacy
+            /settings hub screen is orphaned; nothing navigates to it.) */}
+        <SettingsRow
+          icon={<Radio size={ICON} color={PP.ink} />}
+          title="Live Intel & Contributions"
+          subtitle="Intelligence Contributions consent, capture prompts"
+          onPress={go('/settings/intel-prompts')}
         />
       </SettingsSection>
 
