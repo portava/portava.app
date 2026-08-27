@@ -184,19 +184,27 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
       continue;
     }
 
-    const retryCount: number = (trip.reminder_retry_count as number) ?? 0;
+    const rawCount = trip.reminder_retry_count;
+    const retryCount: number = (rawCount as number) ?? 0;
     const newCount = retryCount + 1;
 
-    // Increment the retry counter before attempting the send.  This ensures
-    // every recovery attempt is recorded even if sendReminderForTrip throws
-    // before we reach the catch block.  On success, markDelivered() below
-    // removes the row from future recovery queries via the delivered_at filter;
-    // on failure, the incremented count is the only guard against indefinite
-    // retries.
-    await (sc as any)
+    // Compare-and-set claim on the retry counter BEFORE sending. Two concurrent
+    // recovery runs both read the same stale trip; without this both would
+    // increment and both would send the 24h reminder (double push). The CAS
+    // (increment only if the count is still what we read) lets exactly one run
+    // win; the loser matches 0 rows and skips. Handles a NULL prior count too.
+    let claimQuery = (sc as any)
       .from("trips")
       .update({ reminder_retry_count: newCount })
       .eq("id", tripId);
+    claimQuery = rawCount == null
+      ? claimQuery.is("reminder_retry_count", null)
+      : claimQuery.eq("reminder_retry_count", rawCount);
+    const { data: claimed } = await claimQuery.select("id");
+    if (!claimed || (claimed as any[]).length === 0) {
+      logger.info({ tripId }, "TripReminderScheduler: reminder already claimed by a concurrent recovery run — skipping to avoid a double send");
+      continue;
+    }
 
     logger.info({ tripId, retryCount: newCount, maxRetries: MAX_RECOVERY_RETRIES },
       "TripReminderScheduler: recovering stale claimed reminder");

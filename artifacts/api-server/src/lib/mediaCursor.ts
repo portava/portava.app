@@ -22,6 +22,8 @@ export function encodeCursor(payload: CursorPayload): string {
   return Buffer.from(JSON.stringify(payload)).toString("base64url");
 }
 
+const CURSOR_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Decode a cursor token. Returns null if the token is invalid. */
 export function decodeCursor(token: string): CursorPayload | null {
   try {
@@ -29,7 +31,13 @@ export function decodeCursor(token: string): CursorPayload | null {
     const obj = JSON.parse(raw);
     if (typeof obj.created_at !== "string" || typeof obj.id !== "string") return null;
     if (!obj.created_at || !obj.id) return null;
-    // Validate that created_at is a parseable date
+    // Both fields are interpolated RAW into a PostgREST .or() filter
+    // (applyCursorFilter), so they must be format-validated here or a crafted
+    // token could inject filter conditions. id must be a plain UUID; created_at
+    // must be a parseable timestamp AND carry none of the .or() structural
+    // metacharacters ( ) , that could terminate the group.
+    if (!CURSOR_UUID_RE.test(obj.id)) return null;
+    if (/[(),]/.test(obj.created_at)) return null;
     if (isNaN(new Date(obj.created_at).getTime())) return null;
     return { created_at: obj.created_at, id: obj.id };
   } catch {
