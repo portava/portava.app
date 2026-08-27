@@ -24,6 +24,13 @@ import { specAliasRewrite } from "../lib/specAliasRewrite.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
+// TZ HYGIENE — pin this test process to UTC (CI's reference timezone). The age-
+// enforcement booking cases below build DOBs at the ±1-day 18/21 boundary, which
+// the server's calculateUserAge reads with LOCAL date components; on a developer
+// machine in a non-UTC zone those boundaries flip and the tests flake. Pinning
+// makes them deterministic everywhere; prod code is unchanged.
+process.env.TZ = "UTC";
+
 let server: http.Server;
 let base: string;
 

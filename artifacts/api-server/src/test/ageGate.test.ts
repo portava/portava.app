@@ -19,6 +19,13 @@ import profileRouter from "../routes/profile.js";
 
 // ── Stable IDs ────────────────────────────────────────────────────────────────
 
+// TZ HYGIENE — pin this test process to UTC (CI's reference timezone). The DOB
+// helpers below mix local Date arithmetic with UTC `toISOString()` slicing, and
+// the server's calculateUserAge reads LOCAL date components, so the exact ±1-day
+// age boundaries flip on a developer machine in a non-UTC zone and the tests
+// flake. Pinning makes them deterministic everywhere; prod code is unchanged.
+process.env.TZ = "UTC";
+
 const ME     = "aa000000-0000-4000-a000-000000000099";
 const ME_TOK = "tok-agegate-me";
 
