@@ -495,14 +495,23 @@ function parseRating(tags: Record<string, string>): number | null {
 }
 
 /** Best-effort open-now check from an OSM opening_hours string. */
-function determineOpenNow(hours: string | null): boolean | null {
+function determineOpenNow(hours: string | null, lng: number | null): boolean | null {
   if (!hours) return null;
-  const now = new Date();
-  const dayAbbr = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"][now.getDay()];
+  // Evaluate open/closed in the VENUE's local time, not the server's. OSM has no
+  // timezone tag, so approximate the venue's UTC offset from its longitude (15°
+  // per hour). This is coarse — it ignores DST and political tz boundaries — but
+  // far better than the previous server-local computation, which was wrong by the
+  // whole server→venue offset (e.g. a Da Nang venue read against a UTC server was
+  // off by 7 hours). With no longitude we cannot place the venue in time, so
+  // return null (unknown) rather than assert a wrong open/closed.
+  if (lng == null) return null;
+  const offsetMs = Math.round(lng / 15) * 3_600_000;
+  const venueNow = new Date(Date.now() + offsetMs); // read via getUTC* for venue-local
+  const dayAbbr = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"][venueNow.getUTCDay()];
   if (dayAbbr && !hours.includes(dayAbbr)) return false;
   const match = hours.match(/(\d{2}):(\d{2})-(\d{2}):(\d{2})/);
   if (!match) return null; // present but unparseable — unknown
-  const hh    = now.getHours() * 100 + now.getMinutes();
+  const hh    = venueNow.getUTCHours() * 100 + venueNow.getUTCMinutes();
   const open  = parseInt(match[1]!) * 100 + parseInt(match[2]!);
   const close = parseInt(match[3]!) * 100 + parseInt(match[4]!);
   return hh >= open && hh <= close;
@@ -611,7 +620,7 @@ export function mapOsmElementToPlace(
     phone:        tags.phone ?? tags["contact:phone"] ?? null,
     openingHours: tags.opening_hours ?? null,
     rating:       parseRating(tags),
-    isOpenNow:    determineOpenNow(tags.opening_hours ?? null),
+    isOpenNow:    determineOpenNow(tags.opening_hours ?? null, elLng),
   };
 }
 
@@ -756,7 +765,11 @@ async function queryDbPlaces(
       // SQL NOT IN silently drops NULLs, so we must name the NULL case explicitly.
       .or("source.is.null,source.not.in.(seed_script,demo,qa_fixture)")
       .order("saved_count", { ascending: false })
-      .limit(60);
+      // Fetch WIDER than the final cap: the category filter runs in TS below
+      // (it needs primary_category + secondary_categories + mapDbCategory), so a
+      // pre-filter limit of 60 could drop a tab's matches for cities near that
+      // size. Cap to 60 AFTER filtering (discovery_places is small, so 200 is cheap).
+      .limit(200);
 
     if (error || !data) return [];
 
@@ -781,6 +794,7 @@ async function queryDbPlaces(
           : [];
         return secondary.includes(category);
       })
+      .slice(0, 60) // cap AFTER the category filter (see the widened .limit above)
       .map((row: any): DiscoveryPlace => {
         const lat = row.lat != null ? parseFloat(String(row.lat)) : null;
         const lng = row.lng != null ? parseFloat(String(row.lng)) : null;
@@ -1085,9 +1099,22 @@ async function batchFetchVoteAndRatingAggregates(
 // OSM places take precedence. DB places whose normalised name already appears
 // in the OSM result are dropped to avoid showing the same venue twice.
 
+/**
+ * Dedup key: normalised name PLUS a coarse (~1km) location bucket. Keying on
+ * name alone collapsed distinct BRANCHES of a chain (e.g. two "Highlands Coffee"
+ * a few km apart) into one. Including a rounded lat/lng keeps branches while a
+ * same-name place at the SAME spot (an OSM/DB duplicate of one venue) still
+ * dedups. Places with no coordinates fall back to name-only.
+ */
+function dedupKey(p: DiscoveryPlace): string {
+  const name = p.name.toLowerCase().trim();
+  if (p.lat == null || p.lng == null) return name;
+  return `${name}@${p.lat.toFixed(2)},${p.lng.toFixed(2)}`;
+}
+
 function mergeAndDedup(osmPlaces: DiscoveryPlace[], dbPlaces: DiscoveryPlace[]): DiscoveryPlace[] {
-  const seen = new Set(osmPlaces.map((p) => p.name.toLowerCase().trim()));
-  const uniqueDb = dbPlaces.filter((p) => !seen.has(p.name.toLowerCase().trim()));
+  const seen = new Set(osmPlaces.map(dedupKey));
+  const uniqueDb = dbPlaces.filter((p) => !seen.has(dedupKey(p)));
   // DB places are interleaved near the top — they are curated so should rank well
   const merged: DiscoveryPlace[] = [];
   let dbIdx = 0;
