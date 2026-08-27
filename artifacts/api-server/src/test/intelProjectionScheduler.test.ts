@@ -128,6 +128,32 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     assert.equal(input.maxGroupShare, 0, "finite share even with no grouped observations");
   });
 
+  it("freshness tracks the LATEST observation, not the frozen anchor claim's observed_at", async () => {
+    // Anchor claim is STALE (observed 3h ago, TTL 45m → ageRatio > 1), but fresh
+    // consented observations arrived 5 min ago. Freshness must reflect the fresh
+    // reports, not the frozen anchor (regression: the key went dark forever).
+    const staleClaim: ClaimRow = {
+      id: "c-old", subject_id: "place-dn-1", zone_id: null, claim_type: "crowd.level",
+      value: { level: "busy" }, status: "active",
+      observed_at: new Date(NOW.getTime() - 180 * 60_000).toISOString(), // 3h ago
+    };
+    const recent = new Date(NOW.getTime() - 5 * 60_000).toISOString(); // 5 min ago
+    const db = makeDb({
+      flags: {},
+      observations: [
+        { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: recent },
+        { actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: recent },
+      ],
+      confirmations: [],
+      policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], // 45m TTL
+    });
+    const input = await assembleClaimInput(db as any, staleClaim, NOW);
+    // 5 min into a 45 min TTL → freshness ≈ 1 − 5/45 ≈ 0.89, NOT 0 (which the
+    // frozen 3h-old anchor would have produced).
+    assert.ok(input.components.freshness! > 0.8, `expected fresh, got ${input.components.freshness}`);
+    assert.equal(input.observedAt, recent, "snapshot observed_at follows the latest observation");
+  });
+
   it("EXCLUDES actors who withdrew consent from the cohort (D4 parity with promotion)", async () => {
     const db = makeDb({
       flags: {},
