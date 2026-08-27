@@ -6,6 +6,10 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",
+        "EXPO_PUBLIC_WEB_ORIGIN": "https://portava.replit.app"
+      },
       "ios": {
         "resourceClass": "m-medium"
       }

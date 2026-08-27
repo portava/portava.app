@@ -49,6 +49,8 @@ interface ForYouTabProps {
   fallbackZoom?: number;
   viewMode?: 'list' | 'map';
   sortBy?: string | null;
+  /** Height of the Discover screen's floating chrome (tab bar + filters + banner) so the list starts below it. */
+  listTopInset?: number;
   bottomInset?: number;
   /** Called when the user pulls to refresh, after the re-fetch is initiated. */
   onRefresh?: () => void;
@@ -78,7 +80,7 @@ function compassItemToPlace(item: import('../../services/compass.ts').CompassFee
   };
 }
 
-export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, bottomInset, onRefresh }: ForYouTabProps) {
+export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode, lat, lng, userLat, userLng, fallbackZoom, viewMode = 'list', sortBy, listTopInset, bottomInset, onRefresh }: ForYouTabProps) {
   const { isAuthed }            = useSession();
   // SWR: seed from in-memory client cache so second opens paint instantly.
   const [items, setItems]       = useState<ForYouItem[]>(() => {
@@ -288,7 +290,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       <ScrollView
         testID="main-scroll"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, listTopInset ? { paddingTop: listTopInset + space.md } : null]}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={color.signal} />
         }

@@ -826,6 +826,85 @@ async function queryDbPlaces(
   }
 }
 
+/**
+ * Canonical-places query — the fix for "No places found" in every non-demo city.
+ *
+ * The Discover feed's two sources were discovery_places (184 rows across 8 demo
+ * cities) and live Overpass. public.places — the canonical table the FSQ backfill
+ * populates (Da Nang alone: ~2.6k active rows) — was never read, so any city
+ * outside the demo eight depended 100% on Overpass, and when the deployment's
+ * egress IP is rate-limited by overpass-api.de the feed silently served
+ * `{places: [], total: 0}`. This surfaces the canonical rows as a third source.
+ *
+ * Rows map through toCanonicalCategory (total — unknown values land in 'places'),
+ * carry the same `db/<id>` prefix as discovery_places rows (the detail sheet is
+ * self-contained, so no client change is required), and dedup by normalised name
+ * happens in the caller so richer discovery_places/OSM rows win on collision.
+ */
+async function queryCanonicalPlaces(
+  destination: string,
+  category: string,
+  centerLat: number | null,
+  centerLng: number | null,
+): Promise<DiscoveryPlace[]> {
+  const sc = getServiceClient();
+  if (!sc) return [];
+
+  const cityBase = destination.split(",")[0]?.trim() ?? destination;
+
+  try {
+    const { data, error } = await sc
+      .from("places")
+      .select("id, name, city, primary_category, latitude, longitude, neighborhood, address, image_source_type, image_accuracy_status")
+      .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
+      .eq("status", "active")
+      .is("merged_into_place_id", null)
+      .limit(60);
+
+    if (error || !data) return [];
+
+    return (data as any[])
+      .filter((row: any) => {
+        if (category === "for_you") return true;
+        return toCanonicalCategory(row.primary_category as string, null) === category;
+      })
+      .map((row: any): DiscoveryPlace => {
+        const lat = row.latitude != null ? parseFloat(String(row.latitude)) : null;
+        const lng = row.longitude != null ? parseFloat(String(row.longitude)) : null;
+        return {
+          id: `db/${row.id as string}`,
+          name: row.name as string,
+          category: toCanonicalCategory(row.primary_category as string, null),
+          type: (row.primary_category ?? null) as string | null,
+          description: null,
+          distanceKm:
+            centerLat != null && centerLng != null && lat != null && lng != null
+              ? Math.round(haversineKm(centerLat, centerLng, lat, lng) * 10) / 10
+              : null,
+          lat,
+          lng,
+          tags: [row.primary_category].filter(Boolean) as string[],
+          address: (row.neighborhood ?? row.address ?? null) as string | null,
+          website: null,
+          phone: null,
+          openingHours: null,
+          rating: null,
+          isOpenNow: null,
+          savedCount: 0,
+          headerImageUrl: null,
+          headerImageSource: null,
+          imageSourceType: (row.image_source_type ?? null) as string | null,
+          accuracyStatus: (row.image_accuracy_status ?? null) as string | null,
+          disclaimerRequired: placeMustShowDisclaimer(row.image_accuracy_status as string | null),
+          disclaimerText: placeDisclaimerText(row.image_accuracy_status as string | null),
+          attribution: null,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
 // ── OSM saved-count enrichment ────────────────────────────────────────────────
 //
 // OSM places returned by Overpass have no saved_count because they live only
@@ -1434,11 +1513,21 @@ router.get("/discovery", async (req, res) => {
     // the destination centre — this is what gets cached and must not use user coords.
     const distRef = userCoords ?? coords;
     const osmT0 = Date.now();
-    const [osmPlaces, dbPlaces] = await Promise.all([
+    const [osmPlaces, curatedDbPlaces, canonicalPlaces] = await Promise.all([
       queryOverpass(coords.lat, coords.lng, radiusM, category),
       queryDbPlaces(destination, category, distRef.lat, distRef.lng),
+      queryCanonicalPlaces(destination, category, distRef.lat, distRef.lng),
     ]);
     const osmMs = Date.now() - osmT0;
+
+    // Canonical public.places rows join the curated set, deduped by normalised
+    // name with the curated discovery_places rows winning (they carry images,
+    // ratings and save counts the canonical table does not).
+    const curatedNames = new Set(curatedDbPlaces.map((p) => p.name.toLowerCase().trim()));
+    const dbPlaces = [
+      ...curatedDbPlaces,
+      ...canonicalPlaces.filter((p) => !curatedNames.has(p.name.toLowerCase().trim())),
+    ];
 
     // Enrich OSM places with real save counts from discovery_places before
     // merging and caching.  A single batch SELECT by osm_id attaches savedCount

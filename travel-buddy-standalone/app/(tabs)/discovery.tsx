@@ -771,6 +771,7 @@ function DiscoveryHubScreen() {
               viewMode={viewMode}
               fallbackZoom={destinationZoom}
               sortBy={activeFilters.sortBy ?? null}
+              listTopInset={tabRowHeight}
               bottomInset={bottomInset}
             />
           </SectionErrorBoundary>
@@ -801,13 +802,19 @@ function DiscoveryHubScreen() {
           </SectionErrorBoundary>
         )}
 
-        {/* Floating chrome: tab bar + filter panel + highlights/trending overlay */}
-        <View style={styles.floatingChrome} pointerEvents="box-none">
+        {/* Floating chrome: tab bar + filter panel + highlights/trending overlay.
+            The height of the WHOLE stack is measured here (not just the tab row)
+            so listTopInset reserves space for the expanded filter panel and the
+            Featured banner too — otherwise they float over and block the list. */}
+        <View
+          style={styles.floatingChrome}
+          pointerEvents="box-none"
+          onLayout={(e) => setTabRowHeight(e.nativeEvent.layout.height)}
+        >
 
           {/* Tab bar row — semi-transparent over map, solid over list */}
           <View
             style={[styles.tabRow, filtersExpanded ? styles.tabRowSolid : styles.tabRowSemi]}
-            onLayout={(e) => setTabRowHeight(e.nativeEvent.layout.height)}
             pointerEvents="auto"
           >
             <Pressable

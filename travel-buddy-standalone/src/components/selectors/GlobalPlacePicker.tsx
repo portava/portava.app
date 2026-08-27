@@ -251,6 +251,18 @@ export function GlobalPlacePicker({
     void select(place);
   }
 
+  // Return/Search key: select the TOP real suggestion when one exists — never
+  // commit the raw text over a live suggestion list. While providers are still
+  // loading, do nothing (a premature submit was how "it just takes whatever word
+  // I type" happened). Raw-text fallback only when the query has settled with
+  // zero suggestions.
+  function submitSearch() {
+    if (searching || googleLoading) return;
+    const top = selectSearchRows({ googlePlaces, searchResults, cityMode }).rows[0];
+    if (top) { void select(top); return; }
+    useCustom();
+  }
+
   const showSearch = query.trim().length > 0;
   // The custom free-text row stays available when search errors, so the
   // picker degrades to manual entry instead of appearing broken.
@@ -335,7 +347,7 @@ export function GlobalPlacePicker({
               placeholderTextColor={color.faint}
               autoCapitalize="words"
               returnKeyType="search"
-              onSubmitEditing={useCustom}
+              onSubmitEditing={submitSearch}
             />
             {(searching || googleLoading) && <ActivityIndicator size="small" color={color.signal} />}
             {query.length > 0 && !searching && (
