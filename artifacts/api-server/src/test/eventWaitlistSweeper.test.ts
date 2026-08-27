@@ -74,6 +74,14 @@ function makeClient(cfg: FakeClientConfig = {}): any {
       let capturedUserIds: string[] = [];
       let capturedUserId: string | null = null;
       let capturedPatch: Record<string, unknown> = {};
+      let usedIs = false; // find-next select filters on offer_expires_at IS NULL
+
+      // Next-eligible users for an event, normalised to an array (a fixture may
+      // supply a single {user_id} or an array to promote several in one sweep).
+      const nextRowsFor = (eventId: string | null): Array<{ user_id: string }> => {
+        const nx = eventId !== null ? nextByEvent[eventId] : null;
+        return Array.isArray(nx) ? nx : nx ? [nx] : [];
+      };
 
       const builder: any = {
         select() { op = "select"; return builder; },
@@ -85,7 +93,7 @@ function makeClient(cfg: FakeClientConfig = {}): any {
         },
         not() { return builder; },
         lt()  { return builder; },
-        is()  { return builder; },
+        is()  { usedIs = true; return builder; },
         order() { return builder; },
         limit() { return builder; },
         eq(col: string, val: string) {
@@ -98,10 +106,10 @@ function makeClient(cfg: FakeClientConfig = {}): any {
           return builder;
         },
 
-        // find-next query ends here — resolved immediately, not via thenable
+        // Legacy single-promote shape (kept for back-compat; unused by the
+        // multi-promote sweeper, which awaits .limit(N) directly).
         maybeSingle(): Promise<{ data: { user_id: string } | null; error: null }> {
-          const next = capturedEventId !== null ? (nextByEvent[capturedEventId] ?? null) : null;
-          return Promise.resolve({ data: next, error: null });
+          return Promise.resolve({ data: nextRowsFor(capturedEventId)[0] ?? null, error: null });
         },
 
         // All other operations resolved as a thenable (awaited as a Promise)
@@ -109,6 +117,10 @@ function makeClient(cfg: FakeClientConfig = {}): any {
           if (op === "select") {
             if (throwOnInitialSelect) {
               return Promise.reject(new Error("DB error")).then(onFulfilled, onRejected);
+            }
+            // The find-next select uses IS NULL; the initial expired select does not.
+            if (usedIs) {
+              return Promise.resolve({ data: nextRowsFor(capturedEventId), error: null }).then(onFulfilled, onRejected);
             }
             return Promise.resolve({ data: expiredRows, error: initialError }).then(onFulfilled, onRejected);
           }
@@ -118,9 +130,11 @@ function makeClient(cfg: FakeClientConfig = {}): any {
             }
             return Promise.resolve({ data: null, error: deleteError }).then(onFulfilled, onRejected);
           }
-          // update
-          if (capturedEventId !== null && capturedUserId !== null) {
-            updates.push({ event_id: capturedEventId, user_id: capturedUserId, patch: capturedPatch });
+          // update — records one entry per promoted user (promotion now uses
+          // .in(user_id, [...]); a single .eq() still works via the fallback).
+          const uids = capturedUserIds.length ? capturedUserIds : capturedUserId ? [capturedUserId] : [];
+          if (capturedEventId !== null) {
+            for (const uid of uids) updates.push({ event_id: capturedEventId, user_id: uid, patch: capturedPatch });
           }
           return Promise.resolve({ data: null, error: updateError }).then(onFulfilled, onRejected);
         },
@@ -214,6 +228,27 @@ describe("S3: deletes expired offer holder and promotes next user", () => {
     const s = getSweepStatus();
     assert.equal(s.lastExpiredCount, 1);
     assert.equal(s.consecutiveFailures, 0);
+  });
+
+  it("promotes ALL freed slots when several offers expire for one event in a sweep", async () => {
+    const EVENT = "evt-multi";
+    const client = makeClient({
+      // two offers expired for the same event → two seats freed
+      expiredRows: [
+        { event_id: EVENT, user_id: "exp-1" },
+        { event_id: EVENT, user_id: "exp-2" },
+      ],
+      // two next-in-queue users must BOTH be promoted (regression: only one was)
+      nextByEvent: { [EVENT]: [{ user_id: "next-1" }, { user_id: "next-2" }] },
+    });
+
+    await runSweep({ client });
+
+    assert.equal(client._deletes.length, 1);
+    assert.deepEqual(client._deletes[0]!.user_ids, ["exp-1", "exp-2"]);
+    assert.equal(client._updates.length, 2, "both freed slots promoted, not just one");
+    assert.deepEqual(client._updates.map((u) => u.user_id).sort(), ["next-1", "next-2"]);
+    assert.equal(getSweepStatus().lastExpiredCount, 2);
   });
 });
 

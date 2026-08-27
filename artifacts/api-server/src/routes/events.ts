@@ -2583,18 +2583,22 @@ router.delete("/events/:id/rsvp", async (req, res) => {
 
   await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", user.id);
 
-  // Sync state, attendees, and maybe promote waitlisted user
-  await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
   await sc.from("events").update({ going_count: going }).eq("id", id);
   await syncAttendee(sc, id, user.id, null);
 
+  // Promote the next waitlisted user BEFORE syncing state: promotion sets an
+  // active offer_expires_at, which reserves the freed seat. If we synced state
+  // first, hasActiveWaitlistOffer would still be false (no offer yet) and the
+  // event would flip to 'open' — letting a walk-in RSVP steal the promoted
+  // user's seat before they can accept. Sync AFTER, so the reservation holds.
   if ((existing as any).status === "going") {
     const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
     if (waitlistEnabled) {
       await promoteNextWaitlisted(sc, id);
     }
   }
+  await syncEventState(sc, id);
 
   res.json({ ok: true });
 });
@@ -2726,12 +2730,14 @@ router.post("/events/:id/leave", async (req, res) => {
 
   const going = await getGoingCount(sc, id);
   await sc.from("events").update({ going_count: going }).eq("id", id);
-  await syncEventState(sc, id);
 
+  // Promote BEFORE syncing state so the freed seat is reserved by an active
+  // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
   if ((existing as any).status === "going") {
     const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
     if (waitlistEnabled) await promoteNextWaitlisted(sc, id);
   }
+  await syncEventState(sc, id);
 
   await logEventActivity(sc, id, user.id, "left", {});
 
@@ -2872,7 +2878,14 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   }
 
   // Verify capacity hasn't been filled since the offer was issued (overbooking guard)
-  const { data: evCapCheck } = await sc.from("events").select("max_attendees").eq("id", id).maybeSingle();
+  const { data: evCapCheck } = await sc.from("events").select("max_attendees, state").eq("id", id).maybeSingle();
+  if (!evCapCheck) { sendError(res, "not_found", "Event not found"); return; }
+  // State guard: never seat a 'going' RSVP on an event that is no longer live.
+  // Without this, accepting an offer on a cancelled/archived/draft event would
+  // add the user as attending (and the sweeper would keep promoting onto it).
+  if (!["open", "full", "waitlist"].includes((evCapCheck as any).state)) {
+    sendError(res, "forbidden", "This event is no longer accepting attendees"); return;
+  }
   const maxAtt = (evCapCheck as any)?.max_attendees ?? null;
   if (maxAtt != null) {
     const currentGoing = await getGoingCount(sc, id);
@@ -3812,7 +3825,13 @@ async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> 
     .maybeSingle();
   if (staffRole && ["co_host", "moderator"].includes((staffRole as any).role)) return true;
 
-  if (ev.visibility === "public") return !["draft", "cancelled", "archived"].includes(ev.state);
+  // A non-live event (draft/cancelled/archived) is visible only to its host and
+  // staff (both already returned true above) — regardless of visibility. Without
+  // this gate the visibility branches below leaked unpublished/withdrawn events
+  // to members, friends, circle/trip members and invitees.
+  if (["draft", "cancelled", "archived"].includes(ev.state)) return false;
+
+  if (ev.visibility === "public") return true;
   if (ev.visibility === "friends_only") {
     const { data: friendship } = await sc
       .from("user_friendships")
@@ -4562,13 +4581,15 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
 
   await sc.from("event_rsvps").delete().eq("event_id", id).eq("user_id", userId);
 
-  await syncEventState(sc, id);
   const going = await getGoingCount(sc, id);
   await sc.from("events").update({ going_count: going }).eq("id", id);
   await syncAttendee(sc, id, userId, null);
 
+  // Promote BEFORE syncing state so the freed seat is reserved by an active
+  // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
   const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
   if (waitlistEnabled) await promoteNextWaitlisted(sc, id);
+  await syncEventState(sc, id);
 
   const { data: ev } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle();
   if ((ev as any)?.chat_thread_id) {
