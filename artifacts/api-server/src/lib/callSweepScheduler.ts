@@ -27,8 +27,18 @@ export async function runCallSweep(opts: {
   if (!client) return null;
   let admin = opts.admin;
   if (!admin) {
-    if (!livekitEnvStatus().ok) return null; // no room control → skip, don't corrupt
-    admin = makeRoomAdmin(readLivekitEnv());
+    if (!livekitEnvStatus().ok) {
+      // No LiveKit room control available — but the DB-side transitions the sweep
+      // exists to apply (RING_TIMEOUT -> missed, MAX_DURATION -> capped) do NOT
+      // need it; only the best-effort endRoom and the OPTIONAL ghost-healing
+      // probes do. Bailing out entirely was fail-OPEN: overdue rings never flipped
+      // to 'missed' and calls never hit the 4h cap. Use a no-op admin so the DB
+      // transitions still run; the absent roomExists/listRoomNames just make the
+      // sweep skip ghost healing (its documented fail-closed default).
+      admin = { endRoom: async () => {} };
+    } else {
+      admin = makeRoomAdmin(readLivekitEnv());
+    }
   }
   const store = makeCallStore(client);
   const nowMs = opts.nowMs ?? Date.now();

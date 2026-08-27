@@ -18,6 +18,7 @@
  * RUNTIME EFFECT: NONE on its own — pure functions.
  */
 import { redistributableFields, mayRedistribute } from "./dataRights.js";
+import { sourceCountBucket } from "./liveClaimRead.js";
 
 /** Project a row to only its redistributable columns (fail-closed on unknowns). */
 export function projectRedistributable(table: string, row: Record<string, unknown>): Record<string, unknown> {
@@ -50,6 +51,15 @@ export function projectSnapshotForApi(
   if (mayRedistribute("intel_state_snapshots", "distinct_actors")) {
     // Registry drift guard — distinct_actors must remain non-redistributable.
     delete proj["distinct_actors"];
+  }
+  // source_count is stored as the EXACT distinct-actor count, so redistributing
+  // it verbatim leaks the precise k-anon cohort size that distinct_actors is
+  // restricted for. The registry permits it "above threshold only", so emit the
+  // coarse bucket (few/several/many) — the same value the client read path
+  // exposes — and drop the exact number.
+  if (typeof proj["source_count"] === "number") {
+    proj["source_count_bucket"] = sourceCountBucket(proj["source_count"] as number);
+    delete proj["source_count"];
   }
   return proj;
 }
