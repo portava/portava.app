@@ -1080,6 +1080,22 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
     return sendError(res, 'invalid_payload', "Offer has expired.");
   }
 
+  // Atomically CLAIM the offer (pending -> accepted) BEFORE creating the booking.
+  // The status read-check above is only a fast path; without this compare-and-set
+  // two concurrent accepts both passed the read-check and both INSERTed a booking
+  // from the one offer. A second accept now finds status already changed (0 rows
+  // updated) and is rejected.
+  const { data: claimed, error: claimErr } = await svc
+    .from("rent_buddy_offers")
+    .update({ status: "accepted", updated_at: now })
+    .eq("id", offerId)
+    .eq("status", "pending")
+    .select("id");
+  if (claimErr) return sendError(res, 'db_error', claimErr.message);
+  if (!claimed || (claimed as any[]).length === 0) {
+    return res.status(409).json({ error: "offer_already_processed", message: "This offer was already accepted or is no longer pending." });
+  }
+
   // Create booking from offer
   const { data: booking, error: bkErr } = await svc
     .from("rent_buddy_bookings")
@@ -1106,12 +1122,18 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
     .select()
     .single();
 
-  if (bkErr) return sendError(res, 'db_error', bkErr.message);
+  if (bkErr) {
+    // The offer was already claimed (accepted) above; the booking insert failed,
+    // so release the claim back to pending rather than strand an accepted offer
+    // with no booking.
+    await svc.from("rent_buddy_offers").update({ status: "pending", updated_at: new Date().toISOString() }).eq("id", offerId).eq("status", "accepted");
+    return sendError(res, 'db_error', bkErr.message);
+  }
 
   const bk = booking as any;
 
-  // Mark offer accepted, decline others
-  const { error: acceptErr } = await svc.from("rent_buddy_offers").update({ status: "accepted", accepted_booking_id: bk.id, updated_at: now }).eq("id", offerId);
+  // Offer is already status=accepted (claimed above); record the booking link + decline others.
+  const { error: acceptErr } = await svc.from("rent_buddy_offers").update({ accepted_booking_id: bk.id, updated_at: now }).eq("id", offerId);
   if (acceptErr) return sendError(res, 'db_error', acceptErr.message);
   // Best-effort cascades: the acceptance itself is committed — log, don't fail the response.
   const { error: declineOthersErr } = await svc.from("rent_buddy_offers")
@@ -1523,8 +1545,24 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
     .in("id", addonIds)
     .eq("is_active", true);
 
-  const addonRows = (addons ?? []) as any[];
+  let addonRows = (addons ?? []) as any[];
   if (addonRows.length === 0) return sendError(res, 'invalid_payload', "No valid add-ons found.");
+
+  // Idempotency: skip add-ons already attached to this booking so a retry (or a
+  // double-tap) does not double-INSERT the join rows AND double-CHARGE the
+  // deposit/total. Only newly-attached add-ons are inserted and priced in.
+  const { data: existingAddons } = await svc
+    .from("rent_buddy_booking_addons")
+    .select("addon_id")
+    .eq("booking_id", bookingId);
+  const alreadyAttached = new Set(((existingAddons ?? []) as any[]).map((r) => r.addon_id));
+  addonRows = addonRows.filter((a) => !alreadyAttached.has(a.id));
+  if (addonRows.length === 0) {
+    return res.json({
+      ok: true, alreadyAttached: true,
+      totalUsd: Number(bk.total_usd), depositUsd: Number(bk.deposit_usd), cashBalanceUsd: Number(bk.cash_balance_usd),
+    });
+  }
 
   const addonsTotal = addonRows.reduce((sum: number, a: any) => sum + Number(a.price_usd ?? 0), 0);
 
@@ -1543,11 +1581,21 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
   const { data: limits } = await svc.from("rent_buddy_user_limits").select("*").eq("user_id", user.id).maybeSingle();
   const { data: buddyRow } = await svc.from("rent_buddy_profiles").select("*").eq("id", bk.buddy_id).maybeSingle();
 
+  // Real completed-bookings count for the traveler — hardcoding 0 treated every
+  // traveler as brand-new and inflated the recomputed deposit for repeat
+  // travelers (calculateDeposit lowers the deposit as this count rises).
+  const { data: travellerHistory } = await svc
+    .from("rent_buddy_bookings")
+    .select("id")
+    .eq("traveler_id", user.id)
+    .eq("status", "completed");
+  const travelerCompletedCount = (travellerHistory ?? []).length;
+
   const depositResult = calculateDeposit({
     category: bk.category,
     pricingType: bk.pricing_type ?? "hourly",
     buddyLevel: (buddyRow as any)?.buddy_level ?? "new",
-    travelerCompletedBookings: 0,
+    travelerCompletedBookings: travelerCompletedCount,
     travelerId: user.id,
     isGroupBooking: bk.is_group_booking ?? false,
     cashBalanceDisabled: (limits as any)?.cash_balance_disabled ?? false,
