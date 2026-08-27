@@ -28,25 +28,37 @@ function makeDb(flags: Record<string, boolean>) {
     from(table: string) {
       let op: "select" | "insert" | "insert_select" = "select";
       let payload: any = null;
+      let single = false;
       const filters: [string, any][] = [];
+      function matches(r: any) { return filters.every(([c, v]) => r[c] === v); }
       function run() {
         if (table === "feature_flags") {
           const flag = filters.find(([c]) => c === "flag")?.[1];
           return { data: { enabled: Boolean(flags[flag]) }, error: null };
         }
         if (op === "insert" || op === "insert_select") {
+          // Model the partial unique index on (actor_id, idempotency_key): a
+          // second keyed insert for the same (actor, key) raises 23505; NULL /
+          // absent keys are exempt and always append.
+          const key = payload?.idempotency_key ?? null;
+          if (key !== null && rows.some((r) => r.actor_id === payload.actor_id && r.idempotency_key === key)) {
+            return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint" } };
+          }
           const row = { id: `r-${++seq}`, created_at: "t", ...payload };
           rows.push(row);
           return { data: op === "insert_select" ? row : null, error: null };
         }
-        return { data: rows, error: null };
+        // filtered read-back (the idempotent replay lookup)
+        const found = rows.filter(matches);
+        if (single) return { data: found[0] ?? null, error: null };
+        return { data: found.length ? found : rows, error: null };
       }
       const b: any = {
         select() { if (op === "insert") op = "insert_select"; return b; },
         insert(row: any) { op = "insert"; payload = row; return b; },
         eq(c: string, v: any) { filters.push([c, v]); return b; },
-        maybeSingle() { return Promise.resolve(run()); },
-        single() { return Promise.resolve(run()); },
+        maybeSingle() { single = true; return Promise.resolve(run()); },
+        single() { single = true; return Promise.resolve(run()); },
         then(resolve: (r: any) => any) { return Promise.resolve(run()).then(resolve); },
       };
       return b;
@@ -101,5 +113,36 @@ describe("rewards — recordEarnedReward (flag-gated, non-cash)", () => {
     assert.equal(db._rows.length, 1);
     assert.equal(db._rows[0].cash_amount, 0, "the ledger entry is never cash");
     assert.equal(db._rows[0].actor_id, ACTOR);
+  });
+
+  it("credits once for a repeated idempotency key (at-least-once caller cannot double-credit)", async () => {
+    const db = makeDb({ intel_rewards: true });
+    const input = { qiu: 2, eligibility: ELIGIBLE, source: "outcome", ledgerVersion: "v1", idempotencyKey: "outcome:abc" };
+    const first = await recordEarnedReward(db as any, ACTOR, input);
+    const replay = await recordEarnedReward(db as any, ACTOR, input); // retry / redelivery
+
+    assert.equal(first.ok, true);
+    assert.equal(replay.ok, true);
+    assert.equal((replay as any).replayed, true, "the second call is a replay, not a new booking");
+    assert.equal((replay as any).ledgerEntry.id, (first as any).ledgerEntry.id, "returns the ORIGINAL entry");
+    assert.equal((replay as any).earnedUnits, 2 * QIU_TO_CREDITS);
+    assert.equal(db._rows.length, 1, "exactly one ledger row exists after two calls");
+  });
+
+  it("a different key for the same actor books a distinct entry", async () => {
+    const db = makeDb({ intel_rewards: true });
+    const base = { qiu: 2, eligibility: ELIGIBLE, source: "outcome", ledgerVersion: "v1" };
+    await recordEarnedReward(db as any, ACTOR, { ...base, idempotencyKey: "outcome:a" });
+    await recordEarnedReward(db as any, ACTOR, { ...base, idempotencyKey: "outcome:b" });
+    assert.equal(db._rows.length, 2, "distinct earning events each book once");
+  });
+
+  it("keyless callers keep appending (idempotency is opt-in)", async () => {
+    const db = makeDb({ intel_rewards: true });
+    const input = { qiu: 2, eligibility: ELIGIBLE, source: "outcome", ledgerVersion: "v1" };
+    await recordEarnedReward(db as any, ACTOR, input);
+    await recordEarnedReward(db as any, ACTOR, input);
+    assert.equal(db._rows.length, 2, "no key ⇒ prior append-always behaviour is untouched");
+    assert.equal(db._rows[0].idempotency_key, undefined, "keyless rows never write the column");
   });
 });

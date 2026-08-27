@@ -18,7 +18,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { projectAndStore } from "../lib/intelProjection.js";
-import { readLiveClaims, readLiveCrowdLevel } from "../lib/liveClaimRead.js";
+import { readLiveClaims, readLiveCrowdLevel, _clearPromotedScopeCache } from "../lib/liveClaimRead.js";
 import { SEED_FRESHNESS_POLICIES, invalidateFreshnessPolicyCache } from "../lib/freshnessPolicy.js";
 import { PRIVACY_THRESHOLD_V1, CLAIM_TYPES, clampObservedAt, isValidIdempotencyKey } from "../lib/intelContracts.js";
 import { mayRedistribute } from "../lib/dataRights.js";
@@ -36,11 +36,26 @@ const POLICIES = [
  * filters the real reader applies — so the read side is genuinely exercised.
  */
 function makeDb(flags: Record<string, boolean>) {
+  // The per-scope allowlist is cached module-side keyed by the read clock; reset
+  // it per db so a fixed test clock never serves a prior test's promoted set.
+  _clearPromotedScopeCache();
   const snapshots: any[] = [];
   return {
     snapshots,
     from(table: string) {
       if (table === "freshness_policies") return { select: async () => ({ data: POLICIES, error: null }) };
+      if (table === "intel_live_promoted_scopes") {
+        // Promote exactly the scopes that were actually stored, so these cases
+        // keep testing the privacy/flag/expiry gates rather than promotion. The
+        // per-scope promotion gate itself is covered in liveClaimRead.test.ts.
+        const pq: any = { select: () => pq };
+        return Object.assign(pq, {
+          then: (res: any) => res({
+            data: snapshots.map((s) => ({ scope_key: `${s.zone_id ?? ""}|${s.claim_type}` })),
+            error: null,
+          }),
+        });
+      }
       if (table === "feature_flags") {
         return { select: () => ({ eq: (_c: string, flag: string) => ({ maybeSingle: async () => {
           // IG-09 read-path gates default to the live-allowed state (pilot on,
