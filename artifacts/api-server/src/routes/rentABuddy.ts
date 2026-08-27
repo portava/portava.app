@@ -2282,6 +2282,21 @@ router.post("/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) =
   const bConf = isBuddy    ? confirmed : b.cash_balance_confirmed_by_buddy;
 
   if (tConf === false || bConf === false) {
+    // Only open a cash dispute when the booking is actually DISPUTABLE — the same
+    // guard the dedicated dispute endpoint enforces. Previously this forced
+    // status='disputed' from ANY status (a completed/cancelled/refunded booking,
+    // or one past its dispute window), corrupting terminal bookings and
+    // bypassing the dispute state machine + TTL. If not disputable, the cash
+    // confirmation is still recorded (above) but the status is left untouched.
+    const disputableStatuses = ["in_progress", "completed_pending_traveler_confirmation"];
+    const windowExpiry = b.dispute_window_expires_at;
+    const withinWindow =
+      b.status !== "completed_pending_traveler_confirmation" ||
+      !windowExpiry || new Date(windowExpiry) >= new Date();
+    if (!disputableStatuses.includes(b.status) || !withinWindow) {
+      return res.json({ ok: true, disputed: false, notDisputable: true, currentStatus: b.status });
+    }
+
     await serviceClient.from("rent_buddy_bookings")
       .update({ status: "disputed", updated_at: new Date().toISOString() })
       .eq("id", bookingId);
