@@ -130,6 +130,7 @@ function makeClient(opts: {
           return obj;
         },
         or() { return obj; },
+        limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
         delete() { _delete = true; return obj; },
         maybeSingle() {
           if (tableName === "trip_invite_links") {

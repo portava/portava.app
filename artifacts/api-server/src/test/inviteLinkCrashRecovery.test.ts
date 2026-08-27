@@ -127,6 +127,7 @@ function makeClient(opts: {
         },
 
         or() { return obj; },
+        limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
 
         delete() {
           _isDelete = true;
