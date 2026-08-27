@@ -131,6 +131,7 @@ function makeFakeClient(state: State) {
         circle_memberships:    (state as any).circle_memberships ?? [],
         circle_invites:        (state as any).circle_invites ?? [],
         profiles:              (state as any).profiles ?? [],
+        blocks:                (state as any).blocks ?? [],
       };
       return (tableData[table] ?? []).filter((r) => filters.every((f) => f(r)));
     }
@@ -140,6 +141,15 @@ function makeFakeClient(state: State) {
 
       eq(col: string, val: any) {
         filters.push((r) => r[col] === val);
+        return b;
+      },
+      neq(col: string, val: any) {
+        filters.push((r) => r[col] !== val);
+        return b;
+      },
+      or(_expr: string) {
+        // Block-guard's fail-closed blocks lookup. These fixtures seed no blocks,
+        // so returning the (empty) blocks table unfiltered is correct.
         return b;
       },
       in(col: string, vals: any[]) {
