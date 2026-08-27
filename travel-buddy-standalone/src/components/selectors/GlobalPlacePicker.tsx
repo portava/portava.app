@@ -239,7 +239,7 @@ export function GlobalPlacePicker({
 
   // Custom entry — still normalized: it flows through the same canonical
   // resolution as every other selection (no raw-text-only saves).
-  function useCustom() {
+  function commitFreeText() {
     const q = query.trim();
     if (!q) return;
     const place: Place = {
@@ -260,7 +260,7 @@ export function GlobalPlacePicker({
     if (searching || googleLoading) return;
     const top = selectSearchRows({ googlePlaces, searchResults, cityMode }).rows[0];
     if (top) { void select(top); return; }
-    useCustom();
+    commitFreeText();
   }
 
   const showSearch = query.trim().length > 0;
@@ -431,7 +431,7 @@ export function GlobalPlacePicker({
               }
               if (item.kind === 'custom') {
                 return (
-                  <Pressable style={s.row} onPress={useCustom} disabled={resolvingId != null}>
+                  <Pressable style={s.row} onPress={commitFreeText} disabled={resolvingId != null}>
                     <View style={[s.iconCircle, { backgroundColor: `${color.signal}15` }]}>
                       {resolvingId != null
                         ? <ActivityIndicator size="small" color={color.signal} />
