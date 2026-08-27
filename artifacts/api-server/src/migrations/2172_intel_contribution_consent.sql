@@ -54,9 +54,15 @@ ALTER TABLE public.intel_contribution_consent ENABLE ROW LEVEL SECURITY;
 -- Owner may read their own consent state (for the settings surface). No owner
 -- INSERT/UPDATE/DELETE policy exists, so authenticated users cannot write this
 -- table directly — the authoritative write is service_role only.
+--
+-- DROP-then-CREATE so the migration is IDEMPOTENT: it was applied to CI and
+-- prod as raw SQL (2026-08-27) without a supabase_migrations ledger row, so any
+-- future runner replaying it must not fail on "policy already exists".
+DROP POLICY IF EXISTS intel_consent_select_own ON public.intel_contribution_consent;
 CREATE POLICY intel_consent_select_own ON public.intel_contribution_consent
   FOR SELECT TO authenticated USING (user_id = auth.uid());
 
+DROP POLICY IF EXISTS intel_consent_service_all ON public.intel_contribution_consent;
 CREATE POLICY intel_consent_service_all ON public.intel_contribution_consent
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
