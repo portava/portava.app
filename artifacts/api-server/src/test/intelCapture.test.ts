@@ -31,10 +31,11 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
   let seq = 0;
 
   function from(table: string) {
-    let op: "select" | "insert" | "insert_select" | "update" = "select";
+    let op: "select" | "insert" | "insert_select" | "update" | "update_select" = "select";
     let payload: any = null;
-    const filters: [string, any][] = [];
-    const match = (row: any) => filters.every(([c, v]) => row[c] === v);
+    const filters: [string, any, string?][] = [];
+    const match = (row: any) =>
+      filters.every(([c, v, kind]) => (kind === "in" ? (v as any[]).includes(row[c]) : row[c] === v));
 
     function run() {
       if (table === "feature_flags") {
@@ -60,18 +61,20 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
         store.push(row);
         return { data: op === "insert_select" ? row : null, error: null };
       }
-      if (op === "update") {
-        for (const r of store) if (match(r)) Object.assign(r, payload);
-        return { data: null, error: null };
+      if (op === "update" || op === "update_select") {
+        const updated: any[] = [];
+        for (const r of store) if (match(r)) { Object.assign(r, payload); updated.push(r); }
+        return { data: op === "update_select" ? updated : null, error: null };
       }
       return { data: store.filter(match)[0] ?? null, error: null };
     }
 
     const b: any = {
-      select() { op = op === "insert" ? "insert_select" : "select"; return b; },
+      select() { op = op === "insert" ? "insert_select" : op === "update" ? "update_select" : "select"; return b; },
       insert(row: any) { op = "insert"; payload = row; return b; },
       update(patch: any) { op = "update"; payload = patch; return b; },
       eq(c: string, v: any) { filters.push([c, v]); return b; },
+      in(c: string, v: any[]) { filters.push([c, v, "in"]); return b; },
       maybeSingle() { return Promise.resolve(run()); },
       single() { return Promise.resolve(run()); },
       then(resolve: (r: any) => any) { return Promise.resolve(run()).then(resolve); },
@@ -205,6 +208,27 @@ describe("IG-03 — claim lifecycle", () => {
     assert.equal((corr as any).supersededPrior, true);
     assert.equal(db._tables.intel_claims.find((c) => c.id === claimId).status, "superseded");
     assert.equal(db._tables.intel_observations.length, 2, "correction appended a new observation, did not rewrite");
+  });
+
+  it("correctClaim REFUSES to supersede a claim for a different subject (ownership guard)", async () => {
+    const PLACE2 = "99999999-9999-4999-8999-999999999999";
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE, PLACE2] });
+    // An active claim owned by PLACE2 — the victim whose live label an attacker
+    // would try to blank by pointing priorClaimId at it.
+    db._tables.intel_claims = [{ id: "victim-claim", subject_id: PLACE2, claim_type: "crowd.level", status: "active" }];
+    const corr = await correctClaim(db as any, ACTOR, "victim-claim", baseInput({ idempotencyKey: "obs-key-x" }) as any);
+    assert.equal(corr.ok, true, "the correction observation for PLACE still writes");
+    assert.equal((corr as any).supersededPrior, false, "must NOT supersede a claim for another subject");
+    assert.equal(db._tables.intel_claims.find((c: any) => c.id === "victim-claim").status, "active",
+      "the victim claim for PLACE2 is untouched");
+  });
+
+  it("confirmClaim REFUSES when the actor withdrew consent (D4 parity with capture)", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE], consent: "withdrawn" });
+    const r = await confirmClaim(db as any, "some-claim", ACTOR, "agree", OBSERVED);
+    assert.equal(r.ok, false);
+    assert.equal((r as any).reason, "consent_required");
+    assert.equal(db._tables.intel_confirmations?.length ?? 0, 0, "no confirmation written without consent");
   });
 
   it("propose REFUSES an observation whose content was moderation-invalidated", async () => {

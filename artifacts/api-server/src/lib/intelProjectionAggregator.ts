@@ -123,7 +123,27 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
     .eq("subject_id", claim.subject_id)
     .eq("claim_type", claim.claim_type)
     .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[]);
-  const freshObs = ((obs as any[]) ?? []).filter((o) => !o.expires_at || o.expires_at > nowIso);
+  const freshObsAll = ((obs as any[]) ?? []).filter((o) => !o.expires_at || o.expires_at > nowIso);
+
+  // D4 consent parity with system promotion (2174, which JOINs
+  // intel_contribution_consent): an actor who WITHDREW consent must not keep
+  // inflating the privacy-gate cohort for an existing claim. Keep only
+  // observations from actors with a currently-valid consent (enabled AND not
+  // withdrawn). Fail-soft/conservative in keeping with this module's design — a
+  // consent-query error leaves the consented set EMPTY (the count drops), it can
+  // never inflate a cohort.
+  const actorIds = [...new Set(freshObsAll.map((o) => o.actor_id).filter(Boolean))];
+  let consentedActors = new Set<string>();
+  if (actorIds.length > 0) {
+    const { data: consentRows } = await sc
+      .from("intel_contribution_consent")
+      .select("user_id")
+      .in("user_id", actorIds)
+      .eq("enabled", true)
+      .is("withdrawn_at", null);
+    consentedActors = new Set(((consentRows as any[]) ?? []).map((r) => r.user_id as string));
+  }
+  const freshObs = freshObsAll.filter((o) => o.actor_id && consentedActors.has(o.actor_id));
   const distinctActors = new Set(freshObs.map((o) => o.actor_id)).size;
 
   // Independent-group signal (V1). group_key is a shared token per Trip Crew/party
