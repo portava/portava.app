@@ -964,6 +964,7 @@ describe("trips-expansion routes", () => {
             insert(_data: any) { return obj; },
             eq() { return obj; },
             or() { return obj; },
+            limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
             maybeSingle() {
               if (tableName === "trip_invite_links") {
                 // Return use_count=0 so the early limit guard passes

@@ -56,11 +56,15 @@ async function resolveTarget(sc: any, username: string) {
   const col = isUuid(username) ? "id" : "handle";
   const { data, error } = await sc
     .from("profiles")
-    .select("id, username, is_private, passport_visibility")
+    // account_status is required: without it resolveProfileVisibility's
+    // fail-CLOSED fast path (a banned/suspended profile is hidden) is skipped and
+    // account-state resolution falls through to the fail-OPEN user_account_states
+    // query, leaking a status-flagged account's content.
+    .select("id, username, is_private, passport_visibility, account_status")
     .eq(col, username)
     .maybeSingle();
   if (error || !data) return null;
-  return data as { id: string; username: string; is_private: boolean; passport_visibility: string };
+  return data as { id: string; username: string; is_private: boolean; passport_visibility: string; account_status: string | null };
 }
 
 /**

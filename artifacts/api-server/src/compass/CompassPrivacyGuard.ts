@@ -151,8 +151,15 @@ export function sanitizeItem(
     logScrub(db, profile.userId, item, scrubbedFields);
     return sanitized;
   } catch {
-    // Never propagate — return original item if sanitization fails
-    return { ...item };
+    // Fail-CLOSED: never propagate the exception, but never return the RAW item
+    // either — returning `{ ...item }` skipped the ALWAYS_STRIP pass and would
+    // leak exact coordinates / addresses / emergency + ID fields if any later
+    // step threw. Hard-strip the always-sensitive fields before returning.
+    const safe: CompassItem = { ...item };
+    for (const field of ALWAYS_STRIP) {
+      if (field in safe) delete (safe as Record<string, unknown>)[field];
+    }
+    return safe;
   }
 }
 

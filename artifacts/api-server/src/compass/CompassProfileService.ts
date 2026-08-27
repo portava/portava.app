@@ -179,6 +179,20 @@ async function buildProfile(
   const compassPrefs  = compassPrefsRes?.status === "fulfilled" ? (compassPrefsRes.value.data as any)           : null;
   const mutedRows     = mutesRes?.status       === "fulfilled" ? ((mutesRes.value.data  as any[]) ?? [])        : [];
 
+  // Fail-CLOSED on the safety-critical lists. blocksSent/blocksRecv/mutedRows
+  // feed the feed's block/mute exclusion. supabase-js RESOLVES with
+  // { data:null, error } on a query error, so the `?? []` above silently turns a
+  // failed load into an EMPTY exclusion list — disabling block/mute filtering
+  // and surfacing a blocked user's content. If any safety-list load errored,
+  // refuse to build the profile rather than serve one that can leak.
+  const safetyListErrored =
+    blockSentRes.status === "rejected" || (blockSentRes.status === "fulfilled" && (blockSentRes.value as any).error) ||
+    blockRecvRes.status === "rejected" || (blockRecvRes.status === "fulfilled" && (blockRecvRes.value as any).error) ||
+    (mutesRes ? (mutesRes.status === "rejected" || (mutesRes.status === "fulfilled" && (mutesRes.value as any).error)) : false);
+  if (safetyListErrored) {
+    throw new Error("CompassProfileService: block/mute safety-list load failed — failing closed");
+  }
+
   // ── Languages ──────────────────────────────────────────────────────────────
   const languages: string[] = [];
   if (profile?.spoken_languages) languages.push(...profile.spoken_languages);
