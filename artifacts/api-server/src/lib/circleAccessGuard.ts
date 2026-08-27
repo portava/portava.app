@@ -20,6 +20,7 @@
  */
 
 import { isKillSwitchEngaged } from "./featureFlags.js";
+import { isBlockedBetween } from "./blockGuard.js";
 
 export const CURRENT_CONSENT_VERSION = "v1";
 
@@ -71,16 +72,20 @@ async function isAcceptedContextMember(
 
 async function isUserBannedOrSuspended(sc: any, userId: string): Promise<boolean> {
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("user_account_states")
       .select("state, expires_at")
       .eq("user_id", userId)
       .in("state", ["banned", "suspended", "deleted"]);
+    // Fail-CLOSED: an unreadable account-state table treats the target as
+    // restricted, consistent with the rest of this guard (a DB error denies
+    // presence rather than leaking a possibly-banned user's location).
+    if (error) return true;
     const rows = (data ?? []) as Array<{ state: string; expires_at: string | null }>;
     const now = new Date();
     return rows.some((r) => r.expires_at == null || new Date(r.expires_at) > now);
   } catch {
-    return false;
+    return true;
   }
 }
 
@@ -154,13 +159,21 @@ export async function canViewCirclePresence(
   let effectiveVisibilityMode = perTypeDefault ?? settings.visibility_mode ?? "status_only";
 
   // 5. Context-level override / pause check
-  const { data: ctxSettings } = await sc
+  const { data: ctxSettings, error: ctxErr } = await sc
     .from("circle_context_settings")
     .select("enabled, visibility_mode_override, paused, paused_until")
     .eq("user_id", targetUserId)
     .eq("context_type", contextType)
     .eq("context_id", contextId)
     .maybeSingle();
+
+  // Fail-CLOSED: if the per-context override row is unreadable we cannot know
+  // whether the target disabled/paused sharing for THIS trip/event, so deny.
+  // Reading only `data` previously skipped the whole override block on error and
+  // fell through to the (more permissive) global mode.
+  if (ctxErr) {
+    return { allowed: false, reason: "context_settings_unreadable" };
+  }
 
   if (ctxSettings) {
     const ctx = ctxSettings as {
@@ -183,20 +196,10 @@ export async function canViewCirclePresence(
     }
   }
 
-  // 6. Mutual block check
-  const { data: blockRows } = await sc
-    .from("blocks")
-    .select("blocker_id, blocked_id")
-    .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`)
-    .or(`blocker_id.eq.${targetUserId},blocked_id.eq.${targetUserId}`);
-
-  const blocks = (blockRows ?? []) as Array<{ blocker_id: string; blocked_id: string }>;
-  const mutualBlock = blocks.some(
-    (b) =>
-      (b.blocker_id === viewerId && b.blocked_id === targetUserId) ||
-      (b.blocker_id === targetUserId && b.blocked_id === viewerId),
-  );
-  if (mutualBlock) {
+  // 6. Block check (either direction) — fail-CLOSED shared helper. The previous
+  // inline read ignored the query error, so a blocks-table blip yielded an empty
+  // list and presence leaked to a blocked user.
+  if (await isBlockedBetween(sc, viewerId, targetUserId)) {
     return { allowed: false, reason: "blocked" };
   }
 

@@ -284,6 +284,7 @@ function makeAcceptClient(opts: {
         select()            { return obj; },
         eq()                { return obj; },
         or()                { return obj; },
+        limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
         neq()               { return obj; },
         maybeSingle() {
           if (tableName === "trip_invite_links") {
@@ -449,6 +450,7 @@ function makeRaceClient() {
         select() { return obj; },
         eq()     { return obj; },
         or()     { return obj; },
+        limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
         neq()    { return obj; },
         delete() { return obj; },
 

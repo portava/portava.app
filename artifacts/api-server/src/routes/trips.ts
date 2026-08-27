@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
@@ -909,13 +910,13 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
   if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can invite members" }); return; }
 
-  // Blocked-user guard: cannot invite a user with an active block in either direction
-  const { data: blockRow } = await client
-    .from("blocks")
-    .select("id")
-    .or(`and(blocker_id.eq.${user.id},blocked_id.eq.${userId}),and(blocker_id.eq.${userId},blocked_id.eq.${user.id})`)
-    .maybeSingle();
-  if (blockRow) { res.status(403).json({ error: "forbidden", message: "Cannot invite a blocked user" }); return; }
+  // Blocked-user guard: cannot invite a user with an active block in either
+  // direction. Fail-closed shared helper — the previous .maybeSingle() raised on
+  // the two-row mutual-block state and, with the error ignored, let the invite
+  // through exactly when a mutual block existed. See lib/blockGuard.ts.
+  if (await isBlockedBetween(client, user.id, userId)) {
+    res.status(403).json({ error: "forbidden", message: "Cannot invite a blocked user" }); return;
+  }
 
   // Idempotent: check existing membership
   const { data: existing } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();

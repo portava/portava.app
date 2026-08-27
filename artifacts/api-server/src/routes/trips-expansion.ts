@@ -7,6 +7,7 @@
  * Mounted alongside the existing trips router via routes/index.ts.
  */
 import { Router } from "express";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getServiceClient } from "../lib/supabase.js";
@@ -66,14 +67,11 @@ function computeStatus(
 // serializers imported above. Legacy references are gone; all call sites
 // now use toPrivateTripPreview / toAuthorizedTripView directly.
 
+// Fail-closed shared guard. The previous local impl used .maybeSingle(), which
+// raised on the two-row mutual-block state and, with the error ignored, read as
+// "not blocked" — fail-OPEN precisely on a mutual block. See lib/blockGuard.ts.
 async function isBlocked(client: any, userA: string, userB: string): Promise<boolean> {
-  const { data } = await client
-    .from("blocks")
-    .select("blocker_id")
-    .or(`blocker_id.eq.${userA},blocker_id.eq.${userB}`)
-    .or(`blocked_id.eq.${userA},blocked_id.eq.${userB}`)
-    .maybeSingle();
-  return Boolean(data);
+  return isBlockedBetween(client, userA, userB);
 }
 
 async function logActivity(

@@ -87,6 +87,7 @@ function makeClient(opts: {
         },
         eq() { return obj; },
         or() { return obj; },
+        limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
         delete() { return obj; },
 
         maybeSingle() {
