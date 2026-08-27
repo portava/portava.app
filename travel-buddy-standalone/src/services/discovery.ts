@@ -27,6 +27,8 @@ export type DiscoveryCategory =
 
 export interface DiscoveryPlace {
   id: string;
+  /** Bare public.places uuid for canonical rows — opens /place/<uuid> (living page + Quick Signal). */
+  canonicalPlaceId?: string | null;
   name: string;
   category: string;
   type: string | null;
