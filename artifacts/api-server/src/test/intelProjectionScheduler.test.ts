@@ -21,15 +21,20 @@ const baseEvidence = (over: Partial<ClaimEvidence> = {}): ClaimEvidence => ({
   hasEvidence: false, sourceClass: "firsthand_unverified", ageRatio: 0.33, ...over,
 });
 
-function makeDb(cfg: { flags: Record<string, boolean>; claims?: any[]; observations?: any[]; confirmations?: any[]; policies?: any[]; errorTable?: string }) {
+function makeDb(cfg: { flags: Record<string, boolean>; claims?: any[]; observations?: any[]; confirmations?: any[]; policies?: any[]; errorTable?: string; withdrawnActors?: string[] }) {
   const snaps: any[] = [];
+  // D4: every observation actor is consented by default; withdrawnActors lets a
+  // test mark some as withdrawn so the aggregator's consent filter can exclude them.
+  const withdrawn = new Set(cfg.withdrawnActors ?? []);
+  const consentRows = [...new Set((cfg.observations ?? []).map((o: any) => o.actor_id).filter(Boolean))]
+    .map((id: string) => ({ user_id: id, enabled: !withdrawn.has(id), withdrawn_at: withdrawn.has(id) ? NOW.toISOString() : null }));
   function from(table: string) {
     let op: "select" | "upsert" = "select"; let payload: any = null;
     const eqs: [string, any][] = []; let inF: [string, any[]] | null = null; let lim = Infinity;
     // Observations default to moderation_state 'allowed' (explicit values override),
     // so fixtures that don't care about moderation still pass the aggregator's
     // pilot-claimable .in() filter; a fixture can set 'blocked'/'removed' to test exclusion.
-    const src = (): any[] => (({ intel_claims: cfg.claims, intel_observations: (cfg.observations ?? []).map((o: any) => ({ moderation_state: "allowed", ...o })), intel_confirmations: cfg.confirmations, freshness_policies: cfg.policies, intel_state_snapshots: snaps } as any)[table] ?? []);
+    const src = (): any[] => (({ intel_claims: cfg.claims, intel_observations: (cfg.observations ?? []).map((o: any) => ({ moderation_state: "allowed", ...o })), intel_confirmations: cfg.confirmations, freshness_policies: cfg.policies, intel_state_snapshots: snaps, intel_contribution_consent: consentRows } as any)[table] ?? []);
     const match = (r: any) => eqs.every(([c, v]) => r[c] === v) && (!inF || inF[1].includes(r[inF[0]]));
     const rows = () => src().filter(match).slice(0, lim);
     const run = () => {
@@ -42,6 +47,7 @@ function makeDb(cfg: { flags: Record<string, boolean>; claims?: any[]; observati
       select() { return b; },
       upsert(row: any) { op = "upsert"; payload = row; return Promise.resolve(run()); },
       eq(c: string, v: any) { eqs.push([c, v]); return b; },
+      is(c: string, v: any) { eqs.push([c, v]); return b; },
       in(c: string, v: any[]) { inF = [c, v]; return b; },
       limit(n: number) { lim = n; return Promise.resolve(run()); },
       maybeSingle() { return Promise.resolve(run()); },
@@ -120,6 +126,22 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     // The gate then returns below_group_threshold rather than invalid_input.
     assert.equal(input.distinctGroups, 0, "no group_key → zero groups, never invented");
     assert.equal(input.maxGroupShare, 0, "finite share even with no grouped observations");
+  });
+
+  it("EXCLUDES actors who withdrew consent from the cohort (D4 parity with promotion)", async () => {
+    const db = makeDb({
+      flags: {},
+      observations: [
+        { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null },
+        { actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null },
+        { actor_id: "a3", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null },
+      ],
+      confirmations: [],
+      policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }],
+      withdrawnActors: ["a2", "a3"], // withdrew after contributing
+    });
+    const input = await assembleClaimInput(db as any, claim, NOW);
+    assert.equal(input.distinctActors, 1, "only the consenting actor a1 counts; a2/a3 withdrew");
   });
 
   it("derives distinctGroups + actor-based maxGroupShare from group_key (leak-safe)", async () => {

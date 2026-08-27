@@ -260,6 +260,11 @@ export async function confirmClaim(
   stance: "agree" | "disagree" | "unsure", observedAt: string, presenceLevel = "P0",
 ): Promise<{ ok: boolean; reason?: string; deduped?: boolean }> {
   if (!(await captureSystemEnabled(sc))) return { ok: false, reason: "disabled" };
+  // D4 consent gate — a confirmation IS an intel contribution (it writes an
+  // actor-linked intel_confirmations row), so it must clear the same consent
+  // check writeObservation enforces. Without this a user who WITHDREW consent
+  // could still contribute confirmations.
+  if (!(await hasValidIntelConsent(sc, actorId))) return { ok: false, reason: "consent_required" };
   const clamped = clampObservedAt(observedAt);
   if (!clamped) return { ok: false, reason: "invalid_observed_at" };
   const { error } = await sc.from("intel_confirmations").insert({
@@ -282,6 +287,19 @@ export async function correctClaim(
 ): Promise<CaptureResult & { supersededPrior?: boolean }> {
   const written = await writeObservation(sc, actorId, input);
   if (!written.ok) return written;
-  const { error } = await sc.from("intel_claims").update({ status: "superseded" }).eq("id", priorClaimId);
-  return { ...written, supersededPrior: !error };
+  // Scope the supersede to the SAME subject + claim_type the correction observes,
+  // and only from a supersedable status. Previously this filtered on id alone, so
+  // any claim id (obtained from another place's live label) could be flipped to
+  // 'superseded' — silently blanking an unrelated place's live intelligence. The
+  // spec's correction-propagation invariant is that a supersede derives from a new
+  // observation OF THAT SAME subject/claim.
+  const { data: superseded, error } = await sc
+    .from("intel_claims")
+    .update({ status: "superseded" })
+    .eq("id", priorClaimId)
+    .eq("subject_id", input.subjectId)
+    .eq("claim_type", input.claimType)
+    .in("status", ["active", "conflicting", "candidate"])
+    .select("id");
+  return { ...written, supersededPrior: !error && Array.isArray(superseded) && superseded.length > 0 };
 }
