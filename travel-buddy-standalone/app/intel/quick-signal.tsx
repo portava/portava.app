@@ -22,9 +22,11 @@ import { IntelModalScaffold } from '../../src/components/intel/IntelModalScaffol
 import { PromptBlock } from '../../src/components/intel/PromptBlock';
 import { OptionPills } from '../../src/components/intel/OptionPills';
 import { SuppressedNotice, PrivateLocationBadge, SentToast } from '../../src/components/intel/IntelBits';
+import { IntelConsentGate } from '../../src/components/intel/IntelConsentGate';
 import { TravelButton } from '../../src/components/primitives';
 import { useIntelPrompts } from '../../src/hooks/useIntelPrompts';
 import { getCurrentGps } from '../../src/services/location';
+import { getIntelConsent, hasValidConsent, type IntelConsentState } from '../../src/services/intelConsent';
 import {
   QUICK_SIGNAL_PROMPTS,
   QUICK_SIGNAL_CONTEXTS,
@@ -86,6 +88,10 @@ export default function QuickSignalScreen() {
   // and attached to every label-eligible write on this screen. Null = skipped
   // (the server fail-closes: no group_key, no credit toward the group floor).
   const [partySize, setPartySize] = useState<PartySizeBucket | null>(null);
+  // D4 Intelligence Contributions consent. `undefined` = still loading; the server
+  // is authoritative and enforces regardless, so this only gates the UI so we show
+  // the disclosure/consent surface before the first capture.
+  const [consent, setConsent] = useState<IntelConsentState | null | undefined>(undefined);
   const [lastObservation, setLastObservation] = useState<{ id: string; claimType: string; value: unknown } | null>(null);
   const timeLabel = useMemo(
     () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -106,6 +112,16 @@ export default function QuickSignalScreen() {
       if (closeTimer.current) clearTimeout(closeTimer.current);
     };
   }, []);
+
+  // Load the authoritative consent state once, when capture is otherwise available.
+  useEffect(() => {
+    if (!captureEnabled || !subjectId) return;
+    let alive = true;
+    getIntelConsent()
+      .then((state) => { if (alive) setConsent(state); })
+      .catch(() => { if (alive) setConsent(null); });
+    return () => { alive = false; };
+  }, [captureEnabled, subjectId]);
 
   const venueQuestions: PromptQuestion[] = useMemo(
     () => (venue ? VENUE_QUESTION_SETS[venue].arrival : [contextQuestion(context)]),
@@ -186,6 +202,17 @@ export default function QuickSignalScreen() {
           onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)' as any))}
         />
       </View>
+    );
+  } else if (consent === undefined) {
+    // Consent state still loading — show the private-location context, no prompts yet.
+    body = <PrivateLocationBadge placeName={subjectName} verified={verified} timeLabel={timeLabel} />;
+  } else if (!hasValidConsent(consent)) {
+    // First use (or after withdrawal): require explicit consent before any capture.
+    body = (
+      <IntelConsentGate
+        onAllow={(state) => setConsent(state)}
+        onNotNow={() => { if (router.canGoBack()) router.back(); }}
+      />
     );
   } else {
     body = (

@@ -44,6 +44,9 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[] } = {}
         const id = filters.find(([c]) => c === "id")?.[1];
         return { data: places.has(id) ? { id } : null, error: null };
       }
+      if (table === "intel_contribution_consent") {
+        return { data: { enabled: true, withdrawn_at: null }, error: null }; // consent granted (D4 gate)
+      }
       const store = tables[table] ?? (tables[table] = []);
       if (op === "insert" || op === "insert_select") {
         const row = { id: `row-${++seq}`, schema_version: 1, created_at: NOW.toISOString(), ...payload };

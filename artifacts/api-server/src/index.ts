@@ -43,6 +43,7 @@ import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
+import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -123,6 +124,7 @@ app.listen(port, (err) => {
   // it sweeps so they never repeat the location_snapshots defect (expires_at with
   // no cleanup job). Flag-gated and fail-closed; safe to start before enabling.
   startIntelRetentionScheduler();
+  startIntelPromotionScheduler();
   startIntelProjectionScheduler();
   // Executes due user_deletion_requests. Irreversible, so it is gated behind
   // the `account_deletion_worker_enabled` feature flag and fails closed —

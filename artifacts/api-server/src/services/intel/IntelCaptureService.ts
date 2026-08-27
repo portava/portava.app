@@ -34,6 +34,7 @@ import { validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.
 import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
 import { isSharedCrewMember } from "../../lib/tripMembership.js";
 import { resolveActiveCrewId } from "../../lib/activeCrew.js";
+import { hasValidIntelConsent } from "../../lib/intelConsent.js";
 
 /**
  * Capture surfaces, each gated by its own flag (spec §26 flag registry):
@@ -102,7 +103,7 @@ export interface CaptureInput {
 
 export type CaptureResult =
   | { ok: true; observation: any; deduped: boolean }
-  | { ok: false; reason: "disabled" | "invalid_idempotency_key" | "invalid_observed_at" | "unknown_subject" | "invalid_claim_type" | "invalid_value" | "db_error"; detail?: string };
+  | { ok: false; reason: "disabled" | "consent_required" | "invalid_idempotency_key" | "invalid_observed_at" | "unknown_subject" | "invalid_claim_type" | "invalid_value" | "db_error"; detail?: string };
 
 function ttlFor(claimType: string): { ttlSeconds: number; hardExpirySeconds: number } | null {
   const spec = CLAIM_TYPES.find((c) => c.claimType === claimType);
@@ -116,6 +117,13 @@ function ttlFor(claimType: string): { ttlSeconds: number; hardExpirySeconds: num
 export async function writeObservation(sc: any, actorId: string, input: CaptureInput): Promise<CaptureResult> {
   const surface: CaptureSurface = input.captureSurface ?? "quick_signal";
   if (!(await surfaceFlagEnabled(sc, surface))) return { ok: false, reason: "disabled" };
+
+  // D4 lawful-basis gate (server-authoritative, fail-closed). An intel observation
+  // is a contribution under the consent-based `intel_claim` purpose, so no capture
+  // — on ANY surface, via ANY caller, direct API included — is written without
+  // valid, un-withdrawn consent. Client state cannot satisfy this; only the
+  // service-role-owned intel_contribution_consent row can.
+  if (!(await hasValidIntelConsent(sc, actorId))) return { ok: false, reason: "consent_required" };
 
   if (!isValidIdempotencyKey(input.idempotencyKey)) return { ok: false, reason: "invalid_idempotency_key" };
 
@@ -229,10 +237,19 @@ export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boo
   return { ok: true, claim: data };
 }
 
-/** Promote a candidate claim to active (moment approval step 2). */
+/**
+ * Promote a candidate claim to active (moment approval step 2). This is the ADMIN/
+ * exceptional path (the route gates it behind requireAdmin); the autonomous path is
+ * system_promote_admissible_intel_claims. Records promotion_source='admin' for
+ * provenance parity with system promotion.
+ */
 export async function approveClaim(sc: any, claimId: string): Promise<{ ok: boolean; reason?: string }> {
   if (!(await captureSystemEnabled(sc))) return { ok: false, reason: "disabled" };
-  const { error } = await sc.from("intel_claims").update({ status: "active" }).eq("id", claimId).eq("status", "candidate");
+  const { error } = await sc
+    .from("intel_claims")
+    .update({ status: "active", promotion_source: "admin" })
+    .eq("id", claimId)
+    .eq("status", "candidate");
   if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
   return { ok: true };
 }
