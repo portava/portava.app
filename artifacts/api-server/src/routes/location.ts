@@ -454,6 +454,15 @@ router.get("/me/circle-locations", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
+  // Emergency stop: disable_location_sharing must also halt the SERVE path, not
+  // just writes — otherwise engaging the kill switch stops new location writes
+  // but this endpoint keeps serving everyone's last-known location. Fail-CLOSED
+  // (an unreadable flag engages the stop), consistent with the write path.
+  if (await isKillSwitchEngaged(sc, 'disable_location_sharing')) {
+    res.status(200).json({ ok: true, locations: [] });
+    return;
+  }
+
   // 1. Resolve caller's circle members
   const { data: memberRows, error: memberErr } = await sc
     .from("circle_memberships")
@@ -484,9 +493,13 @@ router.get("/me/circle-locations", async (req, res) => {
     return;
   }
 
-  // 2. Identify members who explicitly opted out; also capture visibility prefs
-  //    for coarsening. Schema default for trusted_circle_share is true, so a
-  //    missing prefs row = consented.
+  // 2. Identify members who consented to circle location sharing; also capture
+  //    visibility prefs for coarsening. A member is shared to the circle ONLY
+  //    with an EXPLICIT trusted_circle_share = true. A missing prefs row is NOT
+  //    consent — the settings read path (routes/locationPreferences.ts) and the
+  //    app UI both default a member with no row to trustedCircleShare=false, so
+  //    treating "no row" as consented here leaked the location of members who
+  //    believe they are not sharing. Fail-closed on absence.
   //
   //    The circle share flag (trusted_circle_share) is NOT the whole story: the
   //    master location-sharing switch lives in user_privacy_settings
@@ -523,14 +536,22 @@ router.get("/me/circle-locations", async (req, res) => {
       .map((r: any) => r.user_id as string),
   );
 
-  const optedOut = new Set<string>();
+  // Consent is affirmative: only members with an explicit trusted_circle_share
+  // === true are shared. Members with no prefs row (not in prefsRes.data) or a
+  // false value are omitted.
+  const consentedToCircleShare = new Set<string>();
   const prefsByMemberId = new Map<string, { location_mode?: string | null; sharing_paused?: boolean | null; discovery_visibility?: string | null }>();
   for (const r of prefsRes.data ?? []) {
     const row = r as any;
-    if (row.trusted_circle_share === false) optedOut.add(row.user_id as string);
+    if (row.trusted_circle_share === true) consentedToCircleShare.add(row.user_id as string);
     prefsByMemberId.set(row.user_id as string, row);
   }
-  const visibleIds = memberIds.filter(id => !optedOut.has(id) && !locationSharingDisabled.has(id));
+  // The caller always sees their OWN entry (it is their own data, not a share to
+  // anyone else), so self bypasses the consent/master-switch gates; every OTHER
+  // member needs an explicit opt-in and the master switch on.
+  const visibleIds = memberIds.filter(
+    (id) => id === user.id || (consentedToCircleShare.has(id) && !locationSharingDisabled.has(id)),
+  );
 
   if (visibleIds.length === 0) {
     res.status(200).json({ ok: true, locations: [] });

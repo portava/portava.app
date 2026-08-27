@@ -121,13 +121,12 @@ export function buildCrewCard(raw: RawMemberLocation): CrewMemberCard {
     return { ...base, ghostMode: true, statusLabel: "location_hidden", areaLabel: null, exactCoords: null };
   }
 
-  // Prefs default — if no prefs row, treat as not_shared
-  const visibility = raw.prefs?.defaultVisibility ?? "hidden";
-  if (visibility === "hidden") {
-    return { ...base, statusLabel: "not_shared", areaLabel: null, exactCoords: null };
-  }
-
-  // Live share overrides default visibility
+  // Live share overrides the default visibility — INCLUDING a 'hidden' default.
+  // A live share is an affirmative, time-boxed act of sharing; it must be honored
+  // even when the member's passive default is 'hidden'. This check MUST precede
+  // the hidden-default short-circuit below, which previously returned 'not_shared'
+  // first and silently discarded the member's explicit live share. (Ghost mode
+  // above still wins — that is an absolute "invisible" choice.)
   if (raw.liveShare) {
     const areaLabel = resolveAreaLabel(raw.locationState, raw.liveShare.visibilityLevel);
 
@@ -144,6 +143,12 @@ export function buildCrewCard(raw: RawMemberLocation): CrewMemberCard {
       safeReturnActive: raw.hasSafeReturnActive && (raw.prefs?.shareSafeReturnStatus ?? false),
       planCheckInStatus: raw.prefs?.shareArrivalStatus ? (raw.checkInStatus ?? null) : null,
     };
+  }
+
+  // Prefs default — if no prefs row, treat as not_shared
+  const visibility = raw.prefs?.defaultVisibility ?? "hidden";
+  if (visibility === "hidden") {
+    return { ...base, statusLabel: "not_shared", areaLabel: null, exactCoords: null };
   }
 
   // Safe Return takes visual priority (but only if the member opts in)

@@ -65,7 +65,7 @@ async function getMemberRole(
       .select("role")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
-      .in("role", ["owner", "member"])
+      .in("role", ["owner", "co_host", "member"])
       .maybeSingle();
     return member ? "member" : null;
   } catch {
@@ -97,7 +97,7 @@ async function getMemberRoleAny(
       .select("role")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
-      .in("role", ["owner", "member", "invited"])
+      .in("role", ["owner", "co_host", "member", "invited"])
       .maybeSingle();
     return member ? ((member as any).role as string) : null;
   } catch {
@@ -117,7 +117,7 @@ async function getAcceptedMemberIds(
   try {
     const [ownerRes, membersRes] = await Promise.all([
       db.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
-      db.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "member"]),
+      db.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "co_host", "member"]),
     ]);
     const ids: string[] = [];
     const ownerId = (ownerRes.data as any)?.owner_id;
