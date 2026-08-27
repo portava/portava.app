@@ -109,25 +109,28 @@ export async function runSweep(opts?: { client?: any }): Promise<void> {
         expired_count += userIds.length;
         logger.info({ eventId, expiredCount: userIds.length }, "cleared expired waitlist offers");
 
-        // Promote the next eligible user in queue
-        const { data: next } = await sc
+        // Promote up to the number of reservations we just freed — one per
+        // expired offer — in queue order. Previously only ONE user was promoted
+        // per event even when several offers expired in the same sweep, so every
+        // freed slot beyond the first was stranded until the next sweep.
+        const { data: nextRows } = await sc
           .from("event_waitlist")
           .select("user_id")
           .eq("event_id", eventId)
           .is("offer_expires_at", null)
           .order("position", { ascending: true })
-          .limit(1)
-          .maybeSingle();
+          .limit(userIds.length);
 
-        if (next) {
+        const promoteIds = ((nextRows as any[]) ?? []).map((r) => r.user_id as string);
+        if (promoteIds.length > 0) {
           const offerExpiresAt = new Date(nowMs + 24 * 60 * 60 * 1_000).toISOString();
           await sc
             .from("event_waitlist")
             .update({ offer_expires_at: offerExpiresAt })
             .eq("event_id", eventId)
-            .eq("user_id", (next as any).user_id);
+            .in("user_id", promoteIds);
 
-          logger.info({ eventId, userId: (next as any).user_id }, "promoted next waitlisted user");
+          logger.info({ eventId, promotedCount: promoteIds.length }, "promoted next waitlisted users");
         }
       } catch (evErr) {
         logger.error({ err: evErr, eventId }, "failed to process expired offers for event");
