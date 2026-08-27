@@ -72,6 +72,12 @@ const PAGE_SIZE        = 20;
 /** Shape used internally and returned in all API responses. */
 export interface DiscoveryPlace {
   id: string;
+  /**
+   * Bare public.places uuid when this row came from the canonical table — the id
+   * the client needs to open the full place page (/place/<uuid>) with the living
+   * surface and Quick Signal capture. Absent for discovery_places/OSM rows.
+   */
+  canonicalPlaceId?: string | null;
   name: string;
   category: string;
   type: string | null;
@@ -859,7 +865,11 @@ async function queryCanonicalPlaces(
       .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
       .eq("status", "active")
       .is("merged_into_place_id", null)
-      .limit(60);
+      // Fetch WIDE then filter then cap: the category filter runs in TS (it needs
+      // toCanonicalCategory), so a pre-filter limit of 60 starved category tabs —
+      // 60 arbitrary rows of which only the matching handful survived ("only 26
+      // places" for a 2.6k-place city). 400 covers every category's share.
+      .limit(400);
 
     if (error || !data) return [];
 
@@ -868,11 +878,13 @@ async function queryCanonicalPlaces(
         if (category === "for_you") return true;
         return toCanonicalCategory(row.primary_category as string, null) === category;
       })
+      .slice(0, 60)
       .map((row: any): DiscoveryPlace => {
         const lat = row.latitude != null ? parseFloat(String(row.latitude)) : null;
         const lng = row.longitude != null ? parseFloat(String(row.longitude)) : null;
         return {
           id: `db/${row.id as string}`,
+          canonicalPlaceId: row.id as string,
           name: row.name as string,
           category: toCanonicalCategory(row.primary_category as string, null),
           type: (row.primary_category ?? null) as string | null,

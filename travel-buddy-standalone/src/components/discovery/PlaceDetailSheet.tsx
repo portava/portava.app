@@ -10,7 +10,8 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
 import { Platform } from 'react-native';
-import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles, Info } from 'lucide-react-native';
+import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles, Info, Radio } from 'lucide-react-native';
+import { router } from 'expo-router';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useSession } from '../../context/SessionContext.tsx';
 import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
@@ -471,6 +472,24 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
           </Pressable>
         )}
 
+        {/* Canonical rows have a full place page (living surface + Quick Signal
+            capture) — the sheet was a dead end without this. */}
+        {place.canonicalPlaceId ? (
+          <Pressable
+            testID="place-sheet-open-full"
+            accessibilityRole="button"
+            accessibilityLabel="Open the full place page with live signals"
+            style={styles.openPlaceBtn}
+            onPress={() => {
+              onClose();
+              router.push(`/place/${place.canonicalPlaceId}` as any);
+            }}
+          >
+            <Radio size={18} color={color.onInk} />
+            <Text style={styles.openPlaceText}>Open place page · live signals</Text>
+          </Pressable>
+        ) : null}
+
         {/* Footer actions */}
         <View style={styles.footer}>
           {hasRealCoords ? (
@@ -778,6 +797,22 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
     borderTopWidth: 1,
     borderTopColor: color.haze,
+  },
+  openPlaceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.sm,
+    borderRadius: radius.md,
+    paddingVertical: space.md + 2,
+    marginHorizontal: space.lg,
+    marginBottom: space.sm,
+    backgroundColor: color.deep,
+  },
+  openPlaceText: {
+    ...t.bodyStrong,
+    color: color.onInk,
+    fontWeight: '700',
   },
   dirBtn: {
     flexDirection: 'row',

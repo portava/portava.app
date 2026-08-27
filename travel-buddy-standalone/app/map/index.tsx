@@ -594,7 +594,9 @@ function FullScreenMapScreenInner() {
           payload: p,
           // detailRoute drives navigation in MapCarousel and MapEntityPreviewCard;
           // without it the card falls back to the Discover tab stub.
-          detailRoute: `/place/${encodeURIComponent(p.id)}?placeJson=${encodeURIComponent(JSON.stringify(p))}`,
+          // Canonical rows route by their bare uuid so the full place page (living
+          // surface + Quick Signal) loads; discovery/OSM rows keep the payload route.
+          detailRoute: `/place/${encodeURIComponent(p.canonicalPlaceId ?? p.id)}?placeJson=${encodeURIComponent(JSON.stringify(p))}`,
           actionCapabilities: ['save', 'directions', 'add_to_trip', 'share'] as import('../../src/types/mapTypes.ts').MapActionCapability[],
         })),
     [places],
