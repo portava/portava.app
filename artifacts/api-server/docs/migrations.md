@@ -364,3 +364,16 @@ An audit of 2183-2189 found four blocking defects and two important ones sharing
 **Why deferred:** its intended consumer is the Discovery serve path (§13), which emits candidates in a **different id space** from the one place memory is keyed in — place memory keys on `discovery_places.id` (uuid, via `saved_places`), while Discovery serves prefixed ids (`db/…`, plus OSM ids). Calling the function with a Discovery candidate id would match nothing and report **every** place as "new to me": a silent, confident wrong answer on a user-facing surface, which is worse than the feature being absent.
 
 **What wiring it actually requires** (the next slice, not a patch): (1) an id bridge between the Discovery serve id space and `discovery_places.id` — the same demand-side bridge IG-08 needed (`saved_places → discovery_places → places`); and (2) a product decision on where novelty applies (Discovery serve, Compass "show me something new", or both). Until (1) exists, it stays unwired on purpose.
+
+### §12 Passport and §13 Discovery memory consumers — why both are absent (recorded 2026-08-28)
+
+The memory system exposes `memory_retrieve(user, surface, limit)` with `surface` values `compass | discovery | passport`, but **only `compass` has a consumer**. That was flagged as a gap; on inspection **both absences are correct**, and neither is a small wiring job.
+
+**§12 Passport — absent BY DESIGN, and wiring it into the existing routes would be a privacy defect.**
+The main passport surface, `GET /users/:username/passport` (`routes/passport.ts:143`), resolves its viewer with `getOptionalViewerId` — i.e. it is viewable by **other users and by unauthenticated visitors**. Derived memory is the *subject's own* inferred data: remembered places, followed travellers, inferred preferences. §12 is explicit that "private memory and inferred preferences remain private unless the user explicitly chooses to expose them", so injecting `memory_retrieve(..., 'passport', ...)` into that route would publish inferences to arbitrary viewers — precisely the "surveillance-style" outcome §24 forbids.
+
+What a correct §12 consumer needs: (1) a **self-only** surface, following the existing `GET /me/passport/postcards` / `GET /me/stamps` pattern rather than the `/users/:username/...` one; and (2) a product decision about *which* memory classes are appropriate to show a user about themselves — noting `sensitivity='sensitive'` social memory and inferred semantic preferences are the most delicate. That is a design slice, not a wiring slice.
+
+**§13 Discovery — blocked on an id-space mismatch** (see the New-to-Me deferral above): Discovery serves prefixed ids (`db/…`, OSM), while place memory keys on `discovery_places.id`. Any naive wiring reports every place as new.
+
+**Next implementation slice, when these are picked up:** the shared prerequisite is the `saved_places → discovery_places → places` id bridge (the same one IG-08 required). Build that first; it unblocks §13 and §7 together. §12 is independent of it and gated on the self-only-surface design decision instead.
