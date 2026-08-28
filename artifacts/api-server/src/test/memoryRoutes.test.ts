@@ -32,6 +32,8 @@ function makeClient(cfg: {
   rediscover?: any[];
   rpcError?: string;
   insertError?: { code?: string; message?: string } | null;
+  /** Row returned by the ownership lookup on memory_projections; null = not the caller's. */
+  projection?: Record<string, unknown> | null;
 } = {}) {
   return {
     auth: {
@@ -50,12 +52,30 @@ function makeClient(cfg: {
       if (name === "memory_rediscover") return { data: cfg.rediscover ?? [], error: null };
       return { data: null, error: null };
     },
-    from: (table: string) => ({
-      insert: async (row: any) => {
-        inserts.push({ table, row });
-        return { data: null, error: cfg.insertError ?? null };
-      },
-    }),
+    // `from` must satisfy TWO callers, not just the route under test:
+    //   1. requireUser (lib/http.ts) does
+    //      from("profiles").select("account_status").eq("id", …).maybeSingle()
+    //      on EVERY authenticated request to enforce the ban/suspend check. A
+    //      mock without `select` makes every route 500 in requireUser, which
+    //      looks like a route bug and is not one.
+    //   2. the feedback route resolves a projection scoped to the caller, which
+    //      is how ownership is enforced — .select().eq().eq().maybeSingle().
+    from: (table: string) => {
+      const chain: any = {
+        select: () => chain,
+        eq: () => chain,
+        maybeSingle: async () => {
+          if (table === "profiles") return { data: { account_status: "active" }, error: null };
+          if (table === "memory_projections") return { data: cfg.projection ?? null, error: null };
+          return { data: null, error: null };
+        },
+        insert: async (row: any) => {
+          inserts.push({ table, row });
+          return { data: null, error: cfg.insertError ?? null };
+        },
+      };
+      return chain;
+    },
   } as any;
 }
 
@@ -209,16 +229,8 @@ describe("POST /api/compass/me/memory/feedback", () => {
   it("rejects a projection id the caller does not own (no cross-user suppression)", async () => {
     // The ownership lookup is scoped to the caller, so another user's projection
     // resolves to nothing. Guessing an id must not hide someone else's memory.
-    const client = makeClient();
-    (client as any).from = (table: string) => ({
-      select: () => ({
-        eq: () => ({
-          eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
-        }),
-      }),
-      insert: async (row: any) => { inserts.push({ table, row }); return { data: null, error: null }; },
-    });
-    _setTestClient(client, true as any);
+    // projection: null => the ownership lookup finds nothing for this caller.
+    _setTestClient(makeClient({ projection: null }), true as any);
     const res = await api("POST", "/compass/me/memory/feedback", {
       kind: "hide", projectionId: "11111111-2222-3333-4444-555555555555",
     });

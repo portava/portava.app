@@ -30,8 +30,23 @@ import { LOCATION_PURPOSES } from "../lib/locationPurposes.js";
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Words that assert an AUTOMATIC, running retention mechanism. */
+/**
+ * Words that assert an AUTOMATIC, running retention mechanism.
+ *
+ * Detecting a CLAIM is not the same as detecting a MENTION, and the first
+ * version of this guard got that wrong: it flagged the corrected note, which
+ * says "…but NO sweeper runs". A registry entry that explicitly DENIES a
+ * mechanism is the honest case this guard exists to encourage, so denials are
+ * stripped before the claim test runs.
+ */
+const NEGATED_MECHANISM =
+  /\b(?:no|not|never|without|lacks?|absent)\b[^.;]{0,40}?\b(sweeper|cron|scheduled job|scheduler)\b/gi;
 const AUTOMATIC_MECHANISM = /\b(sweeper|swept automatically|cron|scheduled job|scheduler runs)\b/i;
+
+/** True when the note ASSERTS a mechanism, rather than mentioning or denying one. */
+function claimsAutomaticMechanism(note: string): boolean {
+  return AUTOMATIC_MECHANISM.test(note.replace(NEGATED_MECHANISM, ""));
+}
 
 /** Recursively collect every .ts file under src/, excluding tests. */
 function sourceFiles(dir: string, out: string[] = []): string[] {
@@ -51,7 +66,7 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
 describe("location purposes — the registry must not claim protection that does not run", () => {
   it("no purpose claims an automatic sweeper/cron mechanism", () => {
     const offenders = LOCATION_PURPOSES
-      .filter((p) => typeof p.retentionNote === "string" && AUTOMATIC_MECHANISM.test(p.retentionNote))
+      .filter((p) => typeof p.retentionNote === "string" && claimsAutomaticMechanism(p.retentionNote))
       .map((p) => `${p.id}: "${p.retentionNote}"`);
 
     assert.deepEqual(
@@ -61,6 +76,17 @@ describe("location purposes — the registry must not claim protection that does
         "narrow this guard to name it explicitly; otherwise correct the note. Privacy documentation \n" +
         "must never be stronger than the code:\n  " + offenders.join("\n  "),
     );
+  });
+
+  it("distinguishes a CLAIM from a DENIAL — the guard's own logic", () => {
+    // The first version of this guard failed on the corrected note because it
+    // matched the word rather than the claim. Pin both directions.
+    assert.equal(claimsAutomaticMechanism("is a TTL'd projection with a sweeper"), true);
+    assert.equal(claimsAutomaticMechanism("swept automatically every hour"), true);
+    assert.equal(claimsAutomaticMechanism("a cron job removes expired rows"), true);
+    assert.equal(claimsAutomaticMechanism("carries TTL columns but NO sweeper runs"), false);
+    assert.equal(claimsAutomaticMechanism("there is no cron for this table"), false);
+    assert.equal(claimsAutomaticMechanism("rows are deleted with the account"), false);
   });
 
   it("the circle_presence cleanup route still has no scheduler — the note stays accurate", () => {
