@@ -92,6 +92,7 @@ import {
   type MemoryScope,
 } from "../compass/CompassMemoryService.js";
 import { buildProjectedMemoryBlock } from "../compass/ProjectedMemoryPrompt.js";
+import { recordIntentFromQuery } from "../lib/intentMemory.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
 import { buildTripContextLines }                 from "../compass/CompassTripContext.js";
 import { getOpenAI }                             from "../lib/openai.js";
@@ -1476,6 +1477,17 @@ router.post("/compass/ask", async (req, res) => {
     });
     ctxLines.push(...memoryLines);
   } catch { /* non-fatal — proceed without memory */ }
+
+  // ── Intent capture (spec §5.5/§9) ────────────────────────────────────────
+  // The question itself is the strongest signal of what the traveller wants NOW.
+  // Captured as EPHEMERAL memory with a clamped TTL (record_intent_memory hard-
+  // codes both), so it informs this and the next few turns and then lapses — it
+  // can never silently become a durable preference (§24). Awaited so a fresh
+  // intent is visible to the memory block below, but it can never throw and is a
+  // no-op while the flag is off.
+  await recordIntentFromQuery(sc, user.id, prompt, {
+    city: effectiveCity || locationCtx?.currentCity || null,
+  });
 
   // ── Memory + Experience Intelligence: projected memory (spec §11) ─────────
   // Derived memory (memory_projections, migrations 2183-2188) — what the
