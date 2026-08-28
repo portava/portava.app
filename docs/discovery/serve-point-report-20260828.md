@@ -105,8 +105,18 @@ will be reported as unranked.
 
 ### Recommended order when this resumes
 
-1. Apply **2091** (seeds both switches inert — it changes no behaviour by construction).
-2. Give `metadata.mode` a **write path with audit**, or the ladder cannot be climbed at all.
+1. ~~Apply **2091**~~ — **done 2026-08-28.** Both switches now exist, seeded inert, in CI *and*
+   production: `DISCOVERY_ENGINE_MODE` (enabled=false, `mode=legacy`) and
+   `disable_discovery_pde` (enabled=false). Serving behaviour is unchanged by construction —
+   before, the mode resolved to `legacy` via `flag_absent`; now via `flag_disabled`.
+2. ~~Give `metadata.mode` a write path with audit~~ — **done 2026-08-28**, migration **2198** and
+   `PATCH /admin/feature-flags/:flag/metadata`. The switch now has a handle. Note the endpoint
+   **replaces** the metadata document rather than merging, and **refuses** an unrecognised mode
+   rather than storing it: the resolver is fail-closed, so a stored typo would return 200 and
+   then silently serve `legacy`, which is the worst possible feedback during a rollout.
 3. Get **traffic**. Everything from Stage 0 onward is blocked on it.
 4. Only then re-run this report; if points 1–6 are still starved, D5=B is justified on evidence
    rather than on the packet's estimate.
+
+Steps 1 and 2 were the parts that could be finished without users. Step 3 is not an engineering
+task, and step 4 cannot begin until it is done.

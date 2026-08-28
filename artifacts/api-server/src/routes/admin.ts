@@ -31,6 +31,11 @@ import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwner, type ModerationMetadata } from "../lib/contentOwner.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import {
+  invalidateDiscoveryEngineModeCache,
+  DISCOVERY_ENGINE_MODE_FLAG,
+  DISCOVERY_PDE_KILL_SWITCH,
+} from "../lib/discoveryEngineMode.js";
 import { recordAdjudicatedTrustEvent, TRUST_EVENT_TYPES } from "../services/trust/TrustEventService.js";
 import { revokeModerationTrustConsequences } from "../services/trust/TrustAdminService.js";
 
@@ -716,6 +721,137 @@ router.patch("/admin/feature-flags/:flag", async (req, res) => {
         changed_at:      row.changed_at,
         old_enabled:     row.old_enabled,
         new_enabled:     row.enabled,
+        changed_by_name: displayName,
+      },
+    },
+  });
+});
+
+/**
+ * PATCH /admin/feature-flags/:flag/metadata
+ *
+ * Replace a flag's `metadata` document, atomically audited via
+ * set_feature_flag_metadata_with_audit (migration 2198).
+ *
+ * WHY THIS ENDPOINT EXISTS
+ * ------------------------
+ * Ruling D2=A puts a THREE-valued switch (legacy | shadow | pde) in
+ * `metadata.mode`, because feature_flags.enabled is a boolean and metadata is
+ * the only column that can carry a third value. Until this endpoint, nothing
+ * could write it: the toggle above accepts `{ enabled }` only, so
+ * DISCOVERY_ENGINE_MODE could not be moved off `legacy` through any supported
+ * surface, and the whole Stage 2/3/4 ladder sat behind a switch with no handle.
+ *
+ * REPLACE, NOT MERGE. The body's `metadata` becomes the entire document. A
+ * partial merge would make "remove a key" unexpressible and would let two
+ * concurrent edits silently interleave into a document neither operator wrote.
+ *
+ * Body: { metadata: object }
+ */
+const setFlagMetadataSchema = z.object({
+  metadata: z.record(z.unknown()),
+});
+
+/**
+ * Flags whose metadata carries a value the server acts on, and the values it
+ * will accept.
+ *
+ * Validated here rather than left to the resolver's fallback because those two
+ * behaviours are different in the way that matters to an operator: the resolver
+ * is deliberately fail-closed, so `mode: "pdee"` would be accepted, stored, and
+ * then silently resolve to `legacy` — an operator would see a 200, believe the
+ * rollout had advanced, and watch nothing change. Rejecting the typo at the
+ * edge turns a silent no-op into an error message.
+ */
+const CONSTRAINED_FLAG_METADATA: Record<string, { key: string; allowed: readonly string[] }> = {
+  DISCOVERY_ENGINE_MODE: { key: "mode", allowed: ["legacy", "shadow", "pde"] as const },
+};
+
+router.patch("/admin/feature-flags/:flag/metadata", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { userId, displayName, sc } = admin;
+  const flag = req.params.flag;
+
+  // Same guard as the boolean toggle: a flag with no code reader must not offer
+  // an operator a lever that does nothing.
+  if (HIDDEN_INERT_FLAGS.has(flag)) {
+    res.status(400).json({
+      error: "not_operational",
+      message: `Flag '${flag}' has no implementation and is not exposed on the admin toggle surface. Its metadata cannot be set.`,
+    });
+    return;
+  }
+
+  const parsed = setFlagMetadataSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", "Body must have { metadata: object }");
+    return;
+  }
+
+  const constraint = CONSTRAINED_FLAG_METADATA[flag];
+  if (constraint) {
+    const value = (parsed.data.metadata as Record<string, unknown>)[constraint.key];
+    if (typeof value !== "string" || !constraint.allowed.includes(value)) {
+      sendError(
+        res,
+        "invalid_payload",
+        `Flag '${flag}' requires metadata.${constraint.key} to be one of: ${constraint.allowed.join(" | ")}. ` +
+          `Received ${JSON.stringify(value)}. An unrecognised value would be stored and then silently resolve to the safe default, so it is refused here instead.`,
+      );
+      return;
+    }
+  }
+
+  const { data: rows, error: rpcErr } = await sc.rpc("set_feature_flag_metadata_with_audit", {
+    p_flag:          flag,
+    p_metadata:      parsed.data.metadata,
+    p_changed_by_id: userId,
+  });
+
+  if (rpcErr) {
+    if (rpcErr.code === "42883") {
+      req.log.error(
+        { flag, pgCode: rpcErr.code },
+        "set_feature_flag_metadata_with_audit SQL function is missing — apply migration 2198 to the database",
+      );
+      res.status(503).json({
+        error: "server_not_configured",
+        message: "set_feature_flag_metadata_with_audit function is missing — apply migration 2198 to the database",
+      });
+      return;
+    }
+    if (rpcErr.message?.includes("Flag not found") || rpcErr.code === "P0002") {
+      sendError(res, "not_found", `Flag '${flag}' not found`);
+    } else {
+      sendError(res, "db_error", rpcErr.message);
+    }
+    return;
+  }
+
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  if (!row) { sendError(res, "not_found", `Flag '${flag}' not found`); return; }
+
+  // The resolved mode is cached for 30s per process (discoveryEngineMode.ts).
+  // Dropping THIS process's copy makes the operator's own next request honest;
+  // other instances still carry up to MODE_TTL_MS of staleness, which is a
+  // property of a per-process cache and is not claimed to be fixed here.
+  if (flag === DISCOVERY_ENGINE_MODE_FLAG || flag === DISCOVERY_PDE_KILL_SWITCH) {
+    invalidateDiscoveryEngineModeCache();
+  }
+
+  req.log.info({ flag: row.flag, metadata: row.metadata }, "feature-flag metadata set");
+  res.json({
+    flag: {
+      flag:        row.flag,
+      enabled:     row.enabled,
+      description: row.description,
+      metadata:    row.metadata,
+      updated_at:  row.updated_at,
+      last_change: {
+        changed_at:      row.changed_at,
+        old_metadata:    row.old_metadata,
+        new_metadata:    row.metadata,
         changed_by_name: displayName,
       },
     },
