@@ -239,6 +239,17 @@ describe("authorizeMediaAccess — bare-key column values (post-2081)", () => {
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
   });
 
+  it("3e a public highlight pointing at ANOTHER user's object is DENIED (owner mismatch)", async () => {
+    // Attacker makes a public highlight whose media_url is OWNER's private key.
+    // The object owner (from the key) is OWNER, but the highlight is owned by the
+    // attacker, so it must not republish OWNER's bytes on its own authority.
+    const ATTACKER = "99999999-9999-4999-8999-999999999999";
+    const sc = makeClient({
+      highlights: [{ owner_id: ATTACKER, visibility: "public", expires_at: null, media_url: bare }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+  });
+
   it("3f trips.cover_url — bare key authorizes a trip member", async () => {
     const sc = makeClient({
       trips: [{ id: TRIP, owner_id: OWNER, cover_url: bare }],
