@@ -530,6 +530,26 @@ describe("Destination World Model — time-sliced per-city profiles", () => {
     assert.equal(monMorning!.categories["nightlife"] ?? 0, 0);
   });
 
+  it("records per-slice DISTINCT-actor counts from active_in edges (IG-07 k-anon)", async () => {
+    // One activity signal (30 observations) but three DISTINCT people. The gate
+    // must see 3 contributors, not 30 observations — otherwise a slice that is
+    // really one person repeated would publish as 'community history'.
+    // City stored verbatim from src_key by the rollup; use the normalized form
+    // getCityWorldModel resolves to, so the lookup matches.
+    fake.store.compass_graph_edges = [
+      { id: "ad-1", src_type: "city",   src_key: "cebu", dst_type: "time_slice", dst_key: "cebu|fri:evening", edge_type: "active_during:nightlife", observed_count: 30 },
+      { id: "ai-1", src_type: "person", src_key: "u1",   dst_type: "time_slice", dst_key: "cebu|fri:evening", edge_type: "active_in" },
+      { id: "ai-2", src_type: "person", src_key: "u2",   dst_type: "time_slice", dst_key: "cebu|fri:evening", edge_type: "active_in" },
+      { id: "ai-3", src_type: "person", src_key: "u3",   dst_type: "time_slice", dst_key: "cebu|fri:evening", edge_type: "active_in" },
+    ];
+    await buildCityWorldModels(fake.fakeClient);
+    const cebu = await getCityWorldModel(fake.fakeClient, "cebu");
+    const slice = cebu!.timeSlices["fri:evening"];
+    assert.ok(slice, "slice exists");
+    assert.equal(slice!.count, 30, "activity count comes from active_during observed_count");
+    assert.equal(slice!.distinctActors, 3, "distinct-actor count comes from the deduped active_in edges");
+  });
+
   it("world-model boost is time-varying: same item, different time, different boost", () => {
     const model: CityWorldModel = {
       city: "Cebu",
