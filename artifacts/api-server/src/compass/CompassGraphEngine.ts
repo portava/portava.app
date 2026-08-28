@@ -502,6 +502,11 @@ export async function buildGraphFromSources(
         const slice = timeSliceKey(new Date(at), city, { lat: r.lat, lng: r.lng });
         batch.node("time_slice", `${city}|${slice}`, city, { slice });
         batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_during:exploring", at });
+        // IG-07: a person→time_slice `active_in` edge, deduped by the edge
+        // identity index per (person, slice), so counting these rows per slice
+        // yields the DISTINCT-actor count the rhythm k-anon gate needs — the
+        // `active_during` edge above collapses every user into one row and loses it.
+        batch.edge({ src_type: "person", src_key: String(r.user_id), dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_in", at });
       }
     }
   } catch { /* fail-soft */ }
@@ -654,6 +659,25 @@ export async function buildCityWorldModels(db: SupabaseClient): Promise<number> 
     .like("edge_type", "active_during:%")
     .limit(20000);
 
+  // IG-07: distinct actors per (city, slice) = the count of deduped
+  // person→time_slice `active_in` edges (one row per person per slice). The
+  // `active_during` edges above collapse all users into one row, so the
+  // distinct-actor count the rhythm k-anon gate needs comes from here. Fail-soft:
+  // on error the map stays empty ⇒ distinctActors absent ⇒ the gate suppresses.
+  const distinctByKey = new Map<string, number>();
+  try {
+    const { data: actorEdges } = await db
+      .from("compass_graph_edges")
+      .select("dst_key")
+      .eq("edge_type", "active_in")
+      .eq("dst_type", "time_slice")
+      .limit(50000);
+    for (const a of (actorEdges as any[]) ?? []) {
+      const k = String(a.dst_key ?? "");
+      if (k) distinctByKey.set(k, (distinctByKey.get(k) ?? 0) + 1);
+    }
+  } catch { /* fail-soft */ }
+
   const perCity = new Map<string, { slices: Record<string, TimeSliceProfile>; monthly: Record<string, number>; catTotals: Record<string, number>; sample: number }>();
 
   for (const r of (data as any[]) ?? []) {
@@ -667,6 +691,8 @@ export async function buildCityWorldModels(db: SupabaseClient): Promise<number> 
     const entry = perCity.get(city) ?? { slices: {}, monthly: {}, catTotals: {}, sample: 0 };
     const sp = entry.slices[slice] ?? { count: 0, categories: {} };
     sp.count += count;
+    // Distinct contributors behind this slice (k-anon denominator for the gate).
+    sp.distinctActors = distinctByKey.get(dstKey) ?? sp.distinctActors ?? 0;
     sp.categories[category] = (sp.categories[category] ?? 0) + count;
     entry.slices[slice] = sp;
     entry.catTotals[category] = (entry.catTotals[category] ?? 0) + count;
