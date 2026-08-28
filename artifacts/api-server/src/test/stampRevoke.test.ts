@@ -476,4 +476,36 @@ describe("G. recalculateForUser", () => {
       assert.equal(db.user_stamps.length, 1, "Should still have exactly 1 stamp after idempotent re-run");
     });
   });
+
+  // G4. Security: a REVOKED stamp must not be resurrected by recalc.
+  describe("G4. revoked stamp is NOT resurrected (admin revocation sticks)", () => {
+    let db: FakeDB;
+    let result: Awaited<ReturnType<typeof recalculateForUser>>;
+
+    before(async () => {
+      db = makeDB({
+        stamp_award_events: [awardedEvent()], // the 'awarded' event survives revocation
+        user_stamps: [
+          {
+            id:                  STAMP_ID,
+            user_id:             USER_ID,
+            stamp_definition_id: DEF_ID,
+            source_type:         "trips",
+            source_id:           TRIP_ID,
+            is_revoked:          true, // admin-revoked
+          },
+        ],
+      });
+      const sc = makeFakeClient(db) as any;
+      result = await recalculateForUser(sc, USER_ID);
+    });
+
+    it("skips the revoked stamp rather than re-awarding it", () => {
+      assert.deepEqual(result, { checked: 1, awarded: 0, skipped: 1 });
+    });
+    it("inserts no new row and leaves the stamp revoked", () => {
+      assert.equal(db.user_stamps.length, 1, "no resurrected row");
+      assert.equal(db.user_stamps[0].is_revoked, true, "revocation stays in effect");
+    });
+  });
 });

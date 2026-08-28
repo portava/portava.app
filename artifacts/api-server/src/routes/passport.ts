@@ -1002,7 +1002,10 @@ async function fetchCompositedArtworkUrl(sc: any, catalogId: string | null): Pro
   try {
     const { data, error } = await sc
       .from("universal_stamp_catalog")
-      .select("stamp_artwork_versions!active_version_id(public_url)")
+      // FK constraint name, not the column: PostgREST cannot resolve the
+      // `!active_version_id` column hint (it returns null), so composited artwork
+      // was always null here. Use `!fk_catalog_active_version` like routes/stamps.ts.
+      .select("stamp_artwork_versions!fk_catalog_active_version(public_url)")
       .eq("id", catalogId)
       .maybeSingle();
     if (error || !data) return null;

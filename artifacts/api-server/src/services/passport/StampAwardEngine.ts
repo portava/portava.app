@@ -231,13 +231,16 @@ async function _awardStampCore(
   let skipToStampInsert = false;
   if (existingEvent && (existingEvent as any).status === "awarded") {
     const resolvedSourceId = sourceId !== "none" ? sourceId : null;
+    // Match ANY stamp row for this event, revoked or not. The heal exists to
+    // recover a PARTIAL failure (event committed, stamp insert crashed) — a
+    // revoked row is not that: it means the stamp was fully awarded and then an
+    // admin revoked it, so "healing" it would silently resurrect a revoked stamp.
     let stampQuery = sc
       .from("user_stamps")
       .select("id")
       .eq("user_id", userId)
       .eq("stamp_definition_id", definition.id)
-      .eq("source_type", sourceType)
-      .eq("is_revoked", false);
+      .eq("source_type", sourceType);
 
     // Use .is() for null comparisons; .eq() translates to = null which is always false in SQL.
     stampQuery = resolvedSourceId === null
@@ -823,15 +826,18 @@ export async function recalculateForUser(
 
   if (!events || events.length === 0) return { checked: 0, awarded: 0, skipped: 0 };
 
-  // Load existing non-revoked user_stamps.
-  // For repeatable stamps we must reconcile by event, not just definition_id.
-  // We track both the set of (source_type, source_id) pairs per definition AND
-  // a count per definition to detect missing repeatable rows.
+  // Load existing user_stamps — INCLUDING revoked ones. Revoked rows must count
+  // as "already exists" so a stamp an admin revoked is not treated as "missing"
+  // and silently re-inserted by recalc: the awarded event survives revocation, so
+  // filtering to is_revoked=false here let any user resurrect their own revoked
+  // stamps via POST /stamps/recalculate/me (the partial live-unique index does not
+  // collide with the revoked row, so the insert would succeed).
+  // For repeatable stamps we reconcile by event (source_type, source_id) pair;
+  // for non-repeatable, by definition_id.
   const { data: existingStamps } = await sc
     .from("user_stamps")
-    .select("id, stamp_definition_id, source_type, source_id")
-    .eq("user_id", userId)
-    .eq("is_revoked", false);
+    .select("id, stamp_definition_id, source_type, source_id, is_revoked")
+    .eq("user_id", userId);
 
   // Build a key set: "defId:sourceType:sourceId" → allows idempotent check per event
   const existingKeys = new Set(
