@@ -572,3 +572,106 @@ describe("RLS hardening — wrong-user (signed-in non-member) reads", { skip: !C
     );
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// auth.uid() RESOLUTION — THE POSITIVE CONTROL
+//
+// WHY THIS BLOCK EXISTS
+//
+// Every assertion above this point is NEGATIVE: anon cannot read X, a
+// signed-in non-member cannot read Y. That is the right shape for a hardening
+// suite, but it has a blind spot that matters more than it looks.
+//
+// If PostgREST failed to verify the session JWT and auth.uid() returned NULL
+// for an AUTHENTICATED request, every one of those tests would still pass —
+// the signed-in user would see nothing, which is exactly what "cannot read"
+// asserts. The suite would go green while RLS was, in effect, denying
+// everyone. A green run therefore does not distinguish "RLS is correctly
+// scoping the caller" from "auth.uid() is broken and nobody can see anything".
+//
+// That distinction became load-bearing on 2026-08-28: replit.md records that
+// after Supabase rotated this project's JWT signing key to ES256/EC P-256,
+// "PostgREST hasn't fully picked up the new key so auth.uid() returns NULL and
+// RLS fails", which is why trip creation was routed through the API server on
+// the service-role key. Roughly 100 migrations' worth of policies depend on
+// auth.uid(). Whether that note is stale or still true cannot be read off the
+// negative tests, so this block asserts the positive directly.
+//
+// THE DISCRIMINATOR
+//
+// The private fixture profile is already proven unreadable by anon ("anon read
+// of a private profile row returns empty") and by a different signed-in user
+// ("private profile is hidden from non-friend signed-in user"). So if its OWNER
+// can read it, the only thing that can have made the difference is auth.uid()
+// resolving to that owner. One row back = auth.uid() is non-NULL AND matches
+// the authenticated identity. Zero rows back = auth.uid() did not resolve, and
+// this suite's other 15 passes were vacuous.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("auth.uid() resolution — positive control", { skip: !CREDS_AVAILABLE }, () => {
+  let privateUserClientPromise: Promise<SupabaseClient> | null = null;
+  function privateUserClient(): Promise<SupabaseClient> {
+    if (!privateUserClientPromise) {
+      privateUserClientPromise = (async () => {
+        const client = createClient(SUPABASE_URL, ANON_KEY, {
+          auth: { persistSession: false },
+        });
+        const { error } = await client.auth.signInWithPassword({
+          email: `${RLS_TEST_PREFIX}private@example.com`,
+          password: "test-password-123",
+        });
+        if (error) throw new Error(`Test sign-in failed: ${error.message}`);
+        return client;
+      })();
+    }
+    return privateUserClientPromise;
+  }
+
+  it("owner CAN read their own private profile — auth.uid() resolves and matches the session", async () => {
+    const client = await privateUserClient();
+
+    const { data: userData, error: userErr } = await client.auth.getUser();
+    assert.ifError(userErr);
+    const sessionUserId = userData?.user?.id;
+    assert.ok(sessionUserId, "Signed-in session carried no user id");
+
+    const { data, error } = await client
+      .from("profiles")
+      .select("id")
+      .eq("id", testProfileIdPrivate);
+
+    assert.ifError(error);
+    assert.equal(
+      data?.length,
+      1,
+      "auth.uid() did NOT resolve: the owner could not read their own private " +
+        "profile row. Every negative assertion in this suite is vacuous when " +
+        "this fails — RLS is denying everyone, not scoping the caller."
+    );
+    assert.equal(
+      data?.[0]?.id,
+      sessionUserId,
+      "auth.uid() resolved to an identity other than the authenticated user"
+    );
+    assert.equal(
+      data?.[0]?.id,
+      testProfileIdPrivate,
+      "Returned row is not the fixture's private profile"
+    );
+  });
+
+  it("anon control — the same row is invisible without a session", async () => {
+    const { data, error } = await anonClient()
+      .from("profiles")
+      .select("id")
+      .eq("id", testProfileIdPrivate);
+
+    assert.ifError(error);
+    assert.deepEqual(
+      data,
+      [],
+      "Anon must not read the private profile row. If this returns a row, the " +
+        "positive test above proves nothing about auth.uid()."
+    );
+  });
+});
