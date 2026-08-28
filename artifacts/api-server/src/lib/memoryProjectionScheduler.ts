@@ -43,6 +43,11 @@ export async function runMemoryProjectionPass(
   if (!(await isFlagEnabled(db, MEMORY_FLAG))) return { ...empty, reason: "disabled" };
 
   try {
+    // project_all_memory fans out to project_user_memory_with_retraction, so each
+    // pass both re-affirms supported memory and RETRACTS what lost its support
+    // (a block landing after projection, an unfollow, an unsave, a removed
+    // interest). Without the retraction half, derived memory would outlive the
+    // relationship it was derived from.
     const { data: projData, error: projErr } = await db.rpc("project_all_memory", { p_enforce_flag: true });
     if (projErr) {
       logger.warn({ err: projErr }, "memory projection: project_all_memory failed");

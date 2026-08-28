@@ -91,6 +91,8 @@ import {
   MEMORY_SCOPES,
   type MemoryScope,
 } from "../compass/CompassMemoryService.js";
+import { buildProjectedMemoryBlock } from "../compass/ProjectedMemoryPrompt.js";
+import { recordIntentFromQuery } from "../lib/intentMemory.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
 import { buildTripContextLines }                 from "../compass/CompassTripContext.js";
 import { getOpenAI }                             from "../lib/openai.js";
@@ -1476,6 +1478,32 @@ router.post("/compass/ask", async (req, res) => {
     ctxLines.push(...memoryLines);
   } catch { /* non-fatal — proceed without memory */ }
 
+  // ── Intent capture (spec §5.5/§9) ────────────────────────────────────────
+  // The question itself is the strongest signal of what the traveller wants NOW.
+  // Captured as EPHEMERAL memory with a clamped TTL (record_intent_memory hard-
+  // codes both), so it informs this and the next few turns and then lapses — it
+  // can never silently become a durable preference (§24). Awaited so a fresh
+  // intent is visible to the memory block below, but it can never throw and is a
+  // no-op while the flag is off.
+  await recordIntentFromQuery(sc, user.id, prompt, {
+    city: effectiveCity || locationCtx?.currentCity || null,
+  });
+
+  // ── Memory + Experience Intelligence: projected memory (spec §11) ─────────
+  // Derived memory (memory_projections, migrations 2183-2188) — what the
+  // traveller actually did, projected from canonical facts and the Experience
+  // Graph, plus Rediscovery for the current city. Separate from the
+  // conversational block above: different provenance, so labelled and budgeted
+  // separately rather than silently merged. Flag-gated on memory_projection —
+  // returns [] while off, so chat is unchanged until memory is enabled. Never
+  // fatal.
+  try {
+    const projectedLines = await buildProjectedMemoryBlock(sc, user.id, {
+      city: effectiveCity || locationCtx?.currentCity || null,
+    });
+    ctxLines.push(...projectedLines);
+  } catch { /* non-fatal — proceed without projected memory */ }
+
   // ── Phase 12: live-session grounding ──────────────────────────────────────
   // While a live session is active, chat answers are grounded in the rolling
   // session context (current stop, next plan item, timing). Fetched above so
@@ -2170,12 +2198,34 @@ router.post("/compass/me/memory/feedback", async (req, res) => {
   }
   const { kind, projectionId, subjectType, subjectId } = parsed.data;
   try {
+    // Denormalise the projection's durable subject key onto the feedback row, and
+    // in doing so ENFORCE OWNERSHIP: the lookup is scoped to the caller, so a
+    // guessed or borrowed projection id belonging to another user resolves to
+    // nothing and is rejected rather than silently suppressing their memory.
+    let memoryType: string | null = null;
+    let resolvedSubjectType = subjectType ?? null;
+    let resolvedSubjectId = subjectId ?? null;
+    if (projectionId) {
+      const { data: owned, error: lookupErr } = await sc
+        .from("memory_projections")
+        .select("id, memory_type, subject_type, subject_id")
+        .eq("id", projectionId)
+        .eq("user_id", auth.user.id)
+        .maybeSingle();
+      if (lookupErr) throw lookupErr;
+      if (!owned) { sendError(res, "not_found", "Memory not found"); return; }
+      memoryType = (owned as { memory_type?: string }).memory_type ?? null;
+      resolvedSubjectType = (owned as { subject_type?: string | null }).subject_type ?? resolvedSubjectType;
+      resolvedSubjectId = (owned as { subject_id?: string | null }).subject_id ?? resolvedSubjectId;
+    }
+
     const { error } = await sc.from("memory_feedback").insert({
       user_id: auth.user.id,
       kind,
       projection_id: projectionId ?? null,
-      subject_type: subjectType ?? null,
-      subject_id: subjectId ?? null,
+      memory_type: memoryType,
+      subject_type: resolvedSubjectType,
+      subject_id: resolvedSubjectId,
     });
     // The dedupe unique index makes a repeat signal idempotent — treat as success.
     if (error && (error as { code?: string }).code !== "23505") throw error;

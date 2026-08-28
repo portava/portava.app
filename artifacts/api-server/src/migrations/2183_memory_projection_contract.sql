@@ -173,10 +173,19 @@ CREATE TRIGGER trg_memory_projections_updated
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- ── Authorization — least privilege (§19) ────────────────────────────────────
--- Derived internal projections. No anon/authenticated grant: they are read by
--- the API's service-role client, exactly like the intel_* tables. RLS is enabled
--- with NO policies, so any PostgREST reach by anon/authenticated is deny-default;
--- service_role bypasses RLS and holds the explicit grants below.
+-- Derived internal projections, read by the API's service-role client exactly
+-- like the intel_* tables.
+--
+-- ACCURACY NOTE (corrected 2026-08-28 after an audit): Supabase's ALTER DEFAULT
+-- PRIVILEGES grants table-level privileges on NEW public tables to anon and
+-- authenticated automatically, so these tables DO carry those default grants.
+-- An earlier version of this comment claimed "no anon/authenticated grant",
+-- which was false. What actually protects the data is RLS: it is enabled below
+-- with ZERO policies, so every anon/authenticated read through PostgREST is
+-- deny-default regardless of the grant. service_role bypasses RLS and holds the
+-- explicit grants below. The grants are therefore inert, not absent — and the
+-- distinction matters, because a future policy added to these tables would
+-- immediately become reachable by those roles.
 ALTER TABLE public.memory_events      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.memory_projections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.memory_feedback    ENABLE ROW LEVEL SECURITY;

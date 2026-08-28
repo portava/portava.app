@@ -159,7 +159,21 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
     precision: "coarse",
     lawfulBasis: "consent",
     retentionSeconds: null,
-    retentionNote: "circle_presence is a TTL'd projection (stale_after_secs, expires_at) with a sweeper; circle_checkins is the append-only log behind it and stores venue/approximate labels, never coordinates.",
+    // ACCURACY CORRECTION (2026-08-28). This note previously read "...with a
+    // sweeper". There is no sweeper. circle_presence carries the TTL COLUMNS
+    // (stale_after_secs, expires_at, is_stale) and routes/circle.ts defines
+    // POST /circle/internal/cleanup-presence, but that route has NO CALLER —
+    // no scheduler, no cron, no job invokes it — so TRIP_PRESENCE_TTL_HOURS and
+    // EVENT_PRESENCE_TTL_HOURS (circle.ts) are enforced by nothing today.
+    // Readers of this registry must not treat expiry as an active control.
+    // This registry documents what the system DOES, so the claim is corrected
+    // rather than the reality being assumed. Fixing it is a scheduler-wiring
+    // decision for the circle/presence owner, not a documentation change.
+    // Materiality today is low but not zero: the table currently holds 0 rows,
+    // so nothing is being retained past its TTL yet — but the moment presence
+    // is written, stale rows would persist and readers would still see
+    // is_stale=false unless the caller computes staleness itself.
+    retentionNote: "circle_presence carries TTL columns (stale_after_secs, expires_at, is_stale) but NO sweeper runs: POST /circle/internal/cleanup-presence exists with no caller, so the TTLs are not enforced automatically. circle_checkins is the append-only log behind it and stores venue/approximate labels, never coordinates.",
     visibility: "The trip or event context only, per circle_visibility_settings.",
     deletionBehavior: "Deleted with the account.",
     tables: ["circle_checkins", "circle_presence"],

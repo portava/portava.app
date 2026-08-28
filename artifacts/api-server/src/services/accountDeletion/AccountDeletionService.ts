@@ -381,6 +381,27 @@ export async function executeAccountDeletion(
     if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
   }
 
+  // ── Derived memory (FATAL on failure) ─────────────────────────────────────
+  // memory_projections / memory_events / memory_feedback hold derived facts about
+  // the user (places visited, people followed, inferred preferences). They are
+  // purged EXPLICITLY here and deliberately NOT left to a foreign-key cascade:
+  //   * production's public.profiles has NO foreign key to auth.users at all, and
+  //   * this service keeps an ANONYMISED TOMBSTONE profile rather than deleting
+  //     the row, so a profiles-keyed cascade could never fire even if the FK
+  //     existed. Migration 2187 assumed otherwise; 2190 corrects it.
+  // Routed through the SECURITY DEFINER erase_memory_for_user so the purge is one
+  // atomic, idempotent statement — the same shape as erase_intel_for_actor above.
+  // FATAL: leaving derived personal memory behind after a deletion request is a
+  // privacy failure, so it aborts the run rather than recording a warning. The
+  // request stays retryable and the function is idempotent, so a retry is safe.
+  const memoryOk = await step(steps, "erase_derived_memory", async () => {
+    must(await sc.rpc("erase_memory_for_user", { p_user_id: userId }), "erase_memory_for_user");
+  });
+  if (!memoryOk) {
+    warnings.push("derived memory may remain — deletion aborted before profile anonymisation; retry is safe");
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
   if (opts.contentOnly) {
     return { ok: steps.every((s) => s.ok), userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }

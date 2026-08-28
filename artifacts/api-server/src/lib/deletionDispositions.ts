@@ -83,6 +83,16 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "story_views",
   "user_follows",
   "wishlist_places",
+  // Derived memory (migrations 2183-2191). Erased explicitly by
+  // AccountDeletionService's `erase_derived_memory` step, which calls the
+  // SECURITY DEFINER erase_memory_for_user in one atomic, idempotent statement.
+  // Deliberately NOT left to a foreign-key cascade: production's public.profiles
+  // has no FK to auth.users, and the service keeps an anonymised tombstone
+  // profile rather than deleting the row, so a profiles-keyed cascade can never
+  // fire. Migration 2187 assumed it would; 2190 corrected it.
+  "memory_projections",
+  "memory_events",
+  "memory_feedback",
 ];
 
 /**
@@ -350,6 +360,10 @@ export const UNCLASSIFIED_BACKLOG: readonly string[] = [
  * Journey workstream's call, not this one's.
  */
 export const POST_BASELINE_TABLES: readonly string[] = [
+  // Derived memory, added by migrations 2183-2191 (post-baseline).
+  "memory_projections",
+  "memory_events",
+  "memory_feedback",
   "intel_observations",
   "intel_claims",
   "intel_evidence",

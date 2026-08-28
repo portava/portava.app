@@ -155,6 +155,15 @@ function makeFakeClient(opts: {
       return builder(table, []);
     },
     storage,
+    // The cascade's SECURITY DEFINER erasures run as RPCs, not as PostgREST
+    // deletes: erase_intel_for_actor (IG-02 append-only contributions) and
+    // erase_memory_for_user (derived memory, 2190). erase_derived_memory is a
+    // FATAL step for the same reason the auth-user deletion below is — leaving
+    // derived personal memory behind after a deletion request is a privacy
+    // failure — so without this stub the execute endpoint would (correctly)
+    // refuse to mark the request completed.
+    rpc: (_fn: string, _args: Record<string, unknown>) =>
+      Promise.resolve({ data: null, error: null }),
     auth: {
       getUser: () => Promise.resolve({ data: { user: { id: ADMIN_USER_ID } }, error: null }),
       // The deletion cascade removes the Supabase Auth user as a FATAL step —
