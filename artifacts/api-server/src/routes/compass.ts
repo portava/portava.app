@@ -32,6 +32,7 @@ import { buildCompassContext, defaultSignals } from "../compass/CompassContextEn
 import { resolveLocalHour, parseTzOffsetParam } from "../lib/localTime.js";
 import { timeOfDayForHour } from "./compassHome.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
+import { wrapUgc } from "../compass/CompassStructuredContext.js";
 import {
   buildStructuredCompassContext,
   formatStructuredContextLines,
@@ -1393,7 +1394,11 @@ router.post("/compass/ask", async (req, res) => {
     const { section: feedSection } = await buildSection("for_you", rawItems, effProfile, ctx, sc);
     topItemsContext = feedSection.items.slice(0, 5).map((itm: any) => {
       const d    = (itm.item ?? {}) as Record<string, unknown>;
-      const name = String(d.title ?? d.name ?? d.type ?? "place");
+      // `title` here can be raw UGC (a post body, a host-entered event title), so
+      // wrap it in <portava:ugc> like every other UGC path and cap its length \u2014
+      // otherwise an attacker's public post ranked into for_you is injected into
+      // the /ask prompt as trusted, "Verified" instructions.
+      const name = wrapUgc(String(d.title ?? d.name ?? d.type ?? "place").slice(0, 200));
       const cat  = String(d.category ?? d.type ?? "");
       const ic   = String(d.city ?? "");
       return `\u2022 ${name}${cat ? ` (${cat})` : ""}${ic ? ` \u2014 ${ic}` : ""}`;
