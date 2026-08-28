@@ -159,10 +159,17 @@ export async function buildProjectedMemoryBlock(
     };
 
     const body = Math.max(0, budget - header.length);
-    // Standing memory goes FIRST and holds its own reserve, so a long tail of
-    // rediscovery candidates can never displace it.
-    let spare = emitLane(standingRows, Math.floor(body * MEMORY_LANE_SHARE.standing));
-    spare += emitLane(rediscoveryRows, Math.floor(body * MEMORY_LANE_SHARE.rediscovery) + spare);
+    // Rediscovery emits FIRST so that, for a subject present in BOTH lanes, its
+    // contextual label wins — "been here before" is more useful on a return visit
+    // than a bare "visited", and the de-dupe keeps whichever lane emitted first.
+    //
+    // Emitting first is safe here precisely because each lane is CAPPED at its own
+    // share: however many candidates rediscovery returns, it cannot consume more
+    // than its slice, so it can never starve standing memory. (Order alone was the
+    // original bug — unbounded rediscovery-first concatenation. The cap is what
+    // fixes it, not the ordering, so the better label costs nothing.)
+    let spare = emitLane(rediscoveryRows, Math.floor(body * MEMORY_LANE_SHARE.rediscovery));
+    spare += emitLane(standingRows, Math.floor(body * MEMORY_LANE_SHARE.standing) + spare);
     // Whatever neither lane used is left for intent, which the retrieval lane
     // already includes; the remainder simply goes unused when there is none.
     void spare;
