@@ -839,7 +839,34 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
     return;
   }
 
-  const allRows = (rawRows ?? []) as any[];
+  const allRowsRaw = (rawRows ?? []) as any[];
+
+  // Bidirectional block filter (fail-closed). Every other media surface hides a
+  // blocked user's content in BOTH directions via filterEligibleMediaCandidates;
+  // the gems feed did not, so a blocked user's gems and identity/photo stayed
+  // visible to (and from) the party who blocked them. Load the block relation for
+  // the submitters on this page; if it cannot be read, serve nothing rather than
+  // risk exposing blocked content.
+  const submitterIdsForBlocks = [
+    ...new Set(allRowsRaw.map((g: any) => g.submitted_by as string).filter(Boolean)),
+  ];
+  let allRows = allRowsRaw;
+  if (submitterIdsForBlocks.length > 0) {
+    try {
+      const [blockedRes, blockerRes] = await Promise.all([
+        sc.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", submitterIdsForBlocks),
+        sc.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", submitterIdsForBlocks),
+      ]);
+      if (blockedRes.error || blockerRes.error) throw (blockedRes.error ?? blockerRes.error);
+      const blocked = new Set<string>();
+      for (const r of (blockedRes.data as any[]) ?? []) blocked.add(r.blocked_id as string);
+      for (const r of (blockerRes.data as any[]) ?? []) blocked.add(r.blocker_id as string);
+      allRows = allRowsRaw.filter((g: any) => !g.submitted_by || !blocked.has(g.submitted_by as string));
+    } catch {
+      req.log.warn({ userId: user.id }, "gems feed: block-state unknown — returning empty feed");
+      allRows = [];
+    }
+  }
   const hasMore = allRows.length > limit;
   const page: any[] = hasMore ? allRows.slice(0, limit) : allRows;
   const lastGem = page[page.length - 1];

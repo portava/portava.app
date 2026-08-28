@@ -68,25 +68,41 @@ export async function isTrustEnabled(db: SupabaseClient): Promise<boolean> {
   }
 }
 
-/** Count events for a user/type within a time window */
+/** Count events for a user across a set of event types within a time window.
+ *  Fail-CLOSED: a read error returns Infinity (treated as "at cap"), so a
+ *  transient trust_events failure can never open an uncapped earning window. */
 async function countInWindow(
   db: SupabaseClient,
   userId: string,
-  eventType: string,
+  eventTypes: readonly string[],
   windowMs: number,
 ): Promise<number> {
   try {
     const since = new Date(Date.now() - windowMs).toISOString();
-    const { data } = await db
+    const { data, error } = await db
       .from("trust_events")
       .select("id")
       .eq("user_id", userId)
-      .eq("event_type", eventType)
+      .in("event_type", eventTypes as string[])
       .gt("created_at", since);
+    if (error) return Number.POSITIVE_INFINITY;
     return (data as any[])?.length ?? 0;
   } catch {
-    return 0;
+    return Number.POSITIVE_INFINITY;
   }
+}
+
+/** All event types sharing an event's cap BUCKET, so the cap is enforced per
+ *  bucket (its intent) rather than per exact type — otherwise two types in the
+ *  same bucket each get an independent counter and double the cap. */
+function eventTypesForCap(eventType: string): string[] {
+  const bucket = EVENT_TYPE_CAP_BUCKET[eventType.toLowerCase()];
+  if (!bucket) return [eventType];
+  const siblings = Object.entries(EVENT_TYPE_CAP_BUCKET)
+    .filter(([, b]) => b === bucket)
+    .map(([t]) => t);
+  // Include the raw event type too, in case a stored value is not lower-cased.
+  return Array.from(new Set([eventType, eventType.toLowerCase(), ...siblings]));
 }
 
 interface EarningCaps { daily: number; weekly: number }
@@ -214,9 +230,10 @@ export async function recordTrustEvent(
   // Daily and weekly cap checks (only for positive events)
   if (delta > 0) {
     const caps = await getEarningCaps(db, eventType);
+    const capTypes = eventTypesForCap(eventType); // count the whole bucket, not one type
     const [dayCount, weekCount] = await Promise.all([
-      countInWindow(db, userId, eventType, 24 * 60 * 60 * 1000),
-      countInWindow(db, userId, eventType, 7 * 24 * 60 * 60 * 1000),
+      countInWindow(db, userId, capTypes, 24 * 60 * 60 * 1000),
+      countInWindow(db, userId, capTypes, 7 * 24 * 60 * 60 * 1000),
     ]);
     if (dayCount >= caps.daily || weekCount >= caps.weekly) {
       return { ok: false, skipped: true, skipReason: "daily_cap" };

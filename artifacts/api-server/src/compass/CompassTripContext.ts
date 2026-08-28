@@ -131,7 +131,10 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
     });
     const trip = all[0] as any;
 
-    const title    = String(trip.title ?? "Untitled trip");
+    // Trip title is UGC (user-entered, and a trip is shared with members), so wrap
+    // it in <portava:ugc> — matching the plan-item titles below — before it lands
+    // in the /ask prompt. A co-member could otherwise inject via the trip title.
+    const title    = wrapUgc(String(trip.title ?? "Untitled trip"));
     const city     = String(trip.destination_city ?? "unknown city");
     const country  = String(trip.destination_country ?? "unknown country");
     const tz       = trip.timezone;

@@ -275,7 +275,9 @@ describe("A. Active trip grounding in /ask context", () => {
     const ctx = joinedContent(capture.mainMessages);
     assert.ok(ctx.includes("[Trip context]"), "model request should carry the [Trip context] marker");
     assert.ok(ctx.includes("Active trip:"), "model request should carry the Active trip line");
-    assert.ok(ctx.includes('"Barcelona Summer" in Barcelona, Spain'), "headline should name the trip and destination");
+    // The trip title is UGC (a co-member can set it), so it must reach the prompt
+    // wrapped in <portava:ugc> — not as bare, trustable text.
+    assert.ok(ctx.includes('"<portava:ugc>Barcelona Summer</portava:ugc>" in Barcelona, Spain'), "trip title should be UGC-wrapped in the headline");
     assert.ok(ctx.includes("day 2 of 4"), "headline should carry day N of M");
     assert.ok(ctx.includes("Sagrada Familia tour"),  "today's first item title should be in context");
     assert.ok(ctx.includes("Tapas crawl in El Born"), "today's second item title should be in context");

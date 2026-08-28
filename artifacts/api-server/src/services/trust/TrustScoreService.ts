@@ -73,22 +73,31 @@ async function loadSettings(db: SupabaseClient): Promise<Settings> {
       return DEFAULT_SETTINGS;
     }
     if (!data) return DEFAULT_SETTINGS;
+    const d = data as any;
+    // Fall back to the default ONLY when the stored value is null/absent/NaN —
+    // NOT when it is a legitimate 0. `Number(x) || dflt` silently replaced an
+    // admin-set 0 (e.g. a disabled weight) with the built-in default.
+    const num = (v: unknown, dflt: number): number => {
+      if (v === null || v === undefined) return dflt;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : dflt;
+    };
     return {
-      weight_plan_attendance:  Number((data as any).weight_plan_attendance)  || 0.180,
-      weight_host_quality:     Number((data as any).weight_host_quality)     || 0.120,
-      weight_communication:    Number((data as any).weight_communication)     || 0.100,
-      weight_respect_safety:   Number((data as any).weight_respect_safety)   || 0.150,
-      weight_location_honesty: Number((data as any).weight_location_honesty) || 0.130,
-      weight_content_quality:  Number((data as any).weight_content_quality)  || 0.080,
-      weight_community_value:  Number((data as any).weight_community_value)  || 0.080,
-      weight_guide_accuracy:   Number((data as any).weight_guide_accuracy)   || 0.080,
-      weight_passport_auth:    Number((data as any).weight_passport_auth)    || 0.080,
-      decay_half_life_days:    Number((data as any).decay_half_life_days)    || 90,
-      level_building_trust:    Number((data as any).level_building_trust)    || 35,
-      level_reliable:          Number((data as any).level_reliable)          || 50,
-      level_trusted:           Number((data as any).level_trusted)           || 65,
-      level_highly_trusted:    Number((data as any).level_highly_trusted)    || 78,
-      level_city_trusted:      Number((data as any).level_city_trusted)      || 90,
+      weight_plan_attendance:  num(d.weight_plan_attendance,  0.180),
+      weight_host_quality:     num(d.weight_host_quality,     0.120),
+      weight_communication:    num(d.weight_communication,    0.100),
+      weight_respect_safety:   num(d.weight_respect_safety,   0.150),
+      weight_location_honesty: num(d.weight_location_honesty, 0.130),
+      weight_content_quality:  num(d.weight_content_quality,  0.080),
+      weight_community_value:  num(d.weight_community_value,  0.080),
+      weight_guide_accuracy:   num(d.weight_guide_accuracy,   0.080),
+      weight_passport_auth:    num(d.weight_passport_auth,    0.080),
+      decay_half_life_days:    num(d.decay_half_life_days,    90),
+      level_building_trust:    num(d.level_building_trust,    35),
+      level_reliable:          num(d.level_reliable,          50),
+      level_trusted:           num(d.level_trusted,           65),
+      level_highly_trusted:    num(d.level_highly_trusted,    78),
+      level_city_trusted:      num(d.level_city_trusted,      90),
     };
   }
 }

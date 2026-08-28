@@ -99,6 +99,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
       },
       or() { return obj; },
       gte(col: string, val: any) { filters.push((r) => r[col] >= val); return obj; },
+      gt(col: string, val: any)  { filters.push((r) => r[col] > val);  return obj; },
       lt(col: string, val: any)  { filters.push((r) => r[col] < val);  return obj; },
       limit(n: number)           { _limitN = n; return obj; },
       range(from: number, to: number) {

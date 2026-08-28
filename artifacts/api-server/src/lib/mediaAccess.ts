@@ -357,6 +357,12 @@ async function decide(
       .limit(1);
     const h = (hs as any[])?.[0];
     if (h) {
+      // Same trap as the story branch (3d): the highlight is found BY media_url,
+      // so the row claiming the media is also the row publishing it. Require the
+      // OBJECT's owner to be the HIGHLIGHT's owner, or a public highlight pointing
+      // at another user's key republishes their private bytes on its own
+      // authority. Null owner → cannot attribute → deny.
+      if (!owner || owner !== h.owner_id) return false;
       if (h.expires_at && new Date(h.expires_at).getTime() <= Date.now())
         return false;
       return h.visibility === "public";

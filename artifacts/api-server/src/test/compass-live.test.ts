@@ -481,6 +481,12 @@ describe("Compass Live", () => {
     assert.ok(lines[0].includes("Live session: ACTIVE"));
     assert.ok(lines.some((l) => l.includes("Cebu City")));
     assert.ok(lines.some((l) => l.includes("Lechon lunch")));
+    // The plan-item title (UGC — a co-member can set it) must reach the /ask
+    // prompt wrapped in <portava:ugc>, never as bare, trustable text.
+    assert.ok(
+      lines.some((l) => l.includes("<portava:ugc>Lechon lunch</portava:ugc>")),
+      "live stop / next-item titles are UGC-wrapped",
+    );
 
     await api("POST", "/compass/live/stop");
     const afterStop = await buildLiveChatContextLines(fakeClient, USER_ID, BASE_MS + 61 * 60_000);

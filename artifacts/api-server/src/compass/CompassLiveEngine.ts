@@ -30,6 +30,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { makeConfidence } from "../lib/liveIntelligence.js";
+import { wrapUgc } from "./CompassStructuredContext.js";
 import {
   evaluateSenseSignals,
   getSenseSettings,
@@ -574,14 +575,16 @@ export async function buildLiveChatContextLines(
   const ctx = session.context;
   const lines: string[] = ["Live session: ACTIVE — the user is out right now; keep answers timely and practical."];
   if (ctx.city) lines.push(`Live session city: ${ctx.city}`);
-  if (ctx.currentStop) lines.push(`Current stop: ${ctx.currentStop.title}`);
+  // Stop/next-item titles and event details are UGC (a trip co-member can set
+  // them), so wrap them in <portava:ugc> before they enter the /ask prompt.
+  if (ctx.currentStop) lines.push(`Current stop: ${wrapUgc(String(ctx.currentStop.title ?? ""))}`);
   if (ctx.nextItem) {
     const when = ctx.nextItem.startsAt
       ? ` at ${String(ctx.nextItem.startsAt).slice(11, 16)} UTC${ctx.minutesToNext != null ? ` (~${ctx.minutesToNext} min from now)` : ""}`
       : "";
-    lines.push(`Next planned stop: ${ctx.nextItem.title}${when}`);
+    lines.push(`Next planned stop: ${wrapUgc(String(ctx.nextItem.title ?? ""))}${when}`);
   }
-  const recent = ctx.recentEvents.slice(-3).map((e) => `${e.kind}: ${e.detail}`);
+  const recent = ctx.recentEvents.slice(-3).map((e) => `${e.kind}: ${wrapUgc(String(e.detail ?? ""))}`);
   if (recent.length > 0) lines.push(`Recent session events: ${recent.join("; ")}`);
   void nowMs;
   return lines;
