@@ -91,6 +91,7 @@ import {
   MEMORY_SCOPES,
   type MemoryScope,
 } from "../compass/CompassMemoryService.js";
+import { buildProjectedMemoryBlock } from "../compass/ProjectedMemoryPrompt.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
 import { buildTripContextLines }                 from "../compass/CompassTripContext.js";
 import { getOpenAI }                             from "../lib/openai.js";
@@ -1475,6 +1476,21 @@ router.post("/compass/ask", async (req, res) => {
     });
     ctxLines.push(...memoryLines);
   } catch { /* non-fatal — proceed without memory */ }
+
+  // ── Memory + Experience Intelligence: projected memory (spec §11) ─────────
+  // Derived memory (memory_projections, migrations 2183-2188) — what the
+  // traveller actually did, projected from canonical facts and the Experience
+  // Graph, plus Rediscovery for the current city. Separate from the
+  // conversational block above: different provenance, so labelled and budgeted
+  // separately rather than silently merged. Flag-gated on memory_projection —
+  // returns [] while off, so chat is unchanged until memory is enabled. Never
+  // fatal.
+  try {
+    const projectedLines = await buildProjectedMemoryBlock(sc, user.id, {
+      city: effectiveCity || locationCtx?.currentCity || null,
+    });
+    ctxLines.push(...projectedLines);
+  } catch { /* non-fatal — proceed without projected memory */ }
 
   // ── Phase 12: live-session grounding ──────────────────────────────────────
   // While a live session is active, chat answers are grounded in the rolling
