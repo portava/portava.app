@@ -52,10 +52,61 @@ Stage 4 cannot measure engagement, until real traffic exists. No further Discove
 instrumentation work changes that. The engine work itself can continue — it simply cannot be
 *validated* against user behaviour before launch.
 
-## Also uncovered while producing this
+## Also uncovered while producing this — and fixed
 
-`GET /discovery/community` (`discovery.ts:2115`, returns items at `:2329-2345`) is a genuine
-serve point that is **entirely uninstrumented** — no `logDiscoveryServe`, no `logImpression`,
-no serve-point marker, and no enum member. Ruling D4=C requires the baseline to cover
-everything users receive. It does not. When traffic exists, this route's serves would be
-invisible to the very measurement the baseline was widened to make representative.
+`GET /discovery/community` (`discovery.ts:2115`, returns items at `:2329-2345`) was a genuine
+serve point that recorded **nothing** — no `logDiscoveryServe`, no `logImpression`, no
+serve-point marker, no enum member. Ruling D4=C requires the baseline to cover everything users
+receive, and it did not: once traffic exists, this route's serves would have been invisible to
+the very measurement the baseline was widened to make representative.
+
+**Now instrumented as serve point 10 (`COMMUNITY`)**, in the same change as this report. It
+reuses the identity the saved-places block already resolves, so it costs no extra
+`auth.getUser`; the call sits after `res.json`, un-awaited and flag-gated. It is deliberately
+**excluded** from `DISCOVERY_ENDPOINT_POINTS`, `RANKED_POINTS` and `CACHE_A_POINTS`: community
+runs no ranker, so counting it in the D5 denominator would repeat the error described above.
+
+## What I deliberately did NOT build on the back of this
+
+**The PDE serve path (D5=B) — held, on the packet's own terms.**
+
+D5=B says: cache candidates user-independently, rank on every request. The engine side is
+close to ready — `rankForViewer` exists, and the Stage 2 shadow block at `discovery.ts:1508`
+already computes exactly the ranked page a pde serve would need, just after the response and
+with writes suppressed. Wiring it to serve is a small, well-understood change.
+
+It is held anyway, because the packet made the sequencing an explicit commitment:
+
+> *"If Cache A's real hit rate is far lower than its TTL implies … D5 becomes materially
+> cheaper, and option C stops being indefensible. **Stage 0 measures this directly, which is why
+> it is sequenced before the flag rather than after it. No ruling here is irreversible on the
+> strength of an unmeasured assumption.**"*
+
+Stage 0 has now run and measured **nothing** (above). Building the pde serve path today would
+be shipping a user-facing ranking change on precisely the unmeasured assumption the programme
+said it would not rely on — and doing it at the one moment the measurement is known to be
+absent rather than merely pending.
+
+Two further reasons it would be inert anyway:
+
+1. **The mode cannot be turned on.** Migration 2091, which seeds `DISCOVERY_ENGINE_MODE`, is
+   unapplied in CI *and* production, and `metadata.mode` — the field D2=A makes load-bearing —
+   has **no write path**: `PATCH /admin/feature-flags/:flag` accepts only `{ enabled }`
+   (`admin.ts:654`) and the RPC behind it takes no metadata parameter. The three-valued switch
+   cannot be moved off `legacy` through any supported surface.
+2. **It could not be validated.** Divergence and engagement both need traffic.
+
+**A modelling trap to record before anyone does build it.** `RANKED_POINTS`
+(`discoveryServePointReport.ts:101-104`) is the static set `{5, 6}` and is documented as "serve
+points on which a ranker ran during the request itself". Under pde, serve points 1–3 *would*
+rank, and that set silently becomes wrong. Whoever wires the pde branch must derive
+"was this ranked" from `engineMode`, not from the serve point, or the first ranked cache hit
+will be reported as unranked.
+
+### Recommended order when this resumes
+
+1. Apply **2091** (seeds both switches inert — it changes no behaviour by construction).
+2. Give `metadata.mode` a **write path with audit**, or the ladder cannot be climbed at all.
+3. Get **traffic**. Everything from Stage 0 onward is blocked on it.
+4. Only then re-run this report; if points 1–6 are still starved, D5=B is justified on evidence
+   rather than on the packet's estimate.
