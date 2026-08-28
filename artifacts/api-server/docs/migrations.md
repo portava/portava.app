@@ -377,3 +377,18 @@ What a correct §12 consumer needs: (1) a **self-only** surface, following the e
 **§13 Discovery — blocked on an id-space mismatch** (see the New-to-Me deferral above): Discovery serves prefixed ids (`db/…`, OSM), while place memory keys on `discovery_places.id`. Any naive wiring reports every place as new.
 
 **Next implementation slice, when these are picked up:** the shared prerequisite is the `saved_places → discovery_places → places` id bridge (the same one IG-08 required). Build that first; it unblocks §13 and §7 together. §12 is independent of it and gated on the self-only-surface design decision instead.
+
+## 2026-08-28 — Memory provenance, visibility, event retention, policy (2192 + 2193)
+
+Closes the remaining **important** findings from the completeness audit (the four P0s landed in 2190/2191 via PR #190). **Applied to CI 2026-08-28; must be applied together and in order. Prod press pending owner.**
+
+- `2192_memory_provenance_policy.sql`
+  - **Provenance (§16)** — `memory_projections.source_event_ids uuid[]`. The projection recorded a `derivation` string but not *which* events supported it, so §16's first required question ("what source event(s) produced this memory?") had no answer.
+  - **Visibility (§19)** — `memory_projections.visibility`. The invariant *"projections inherit or narrow the visibility of their source; they never broaden it"* was not merely unenforced, it was **unrepresentable**. Defaults to `private`, the narrowest, so a projector that forgets cannot leak.
+  - **Event retention (§18/§53)** — `memory_events.expires_at` + the sweep now removes expired events. Without it the append ledger grew unbounded and held identifiable history indefinitely — the "indefinite location history by accident" §53 warns against.
+  - **`memory_policy` (§15)** — the six retention classes as inspectable data: TTL, `on_expiry`, `allowed_surfaces`, `user_visible`, `deletion_behavior`, and a rationale per class. Seeded to **describe** what 2189/2191 already do; a disagreement between the table and the code is a defect in the code.
+  - **Sensitivity is now read (§19)** — `sensitivity='sensitive'` was written by the social projector and consulted by nothing. Retrieval now excludes sensitive memory from the `discovery` surface (the one feeding other people's recommendations) while keeping it for the user's own Compass answers.
+  - Also revokes the 2183 trigger function `memory_events_no_update`, which carried Supabase's default grants. A trigger-returning function is unreachable via PostgREST so there was no practical exposure — but the postcondition deliberately checks **every** `memory_*` function, and weakening it to allow an exception is how the next real mis-grant would slip through.
+- `2193_memory_projector_provenance.sql` — the projector **populates** those columns. Columns without a writer are worse than no columns: they look like a control while answering nothing. Every class is written `private` explicitly rather than relying on the DDL default, because derived memory is an *inference* — a public follow does not make "Portava thinks you know Ana" public.
+
+**Verified on CI (rolled back):** `compass=2 / discovery=1` (sensitive social excluded from discovery); `historical_contribution` served on **zero** surfaces (its `allowed_surfaces` is empty by design); default visibility `private`; expired events swept (`events_left=0`). Provenance: episodic and social each carry a source event id and **every referenced id resolves to a real `memory_events` row**. Local: typecheck clean, 81/81 memory+presence tests pass.
