@@ -20,6 +20,7 @@ import { startEventWaitlistSweeper } from "./lib/eventWaitlistSweeper";
 import { startCallSweepScheduler } from "./lib/callSweepScheduler";
 import { startTripReminderScheduler } from "./lib/tripReminderScheduler";
 import { startIntelligenceGraphScheduler } from "./lib/intelligenceGraphScheduler";
+import { startIntelCoverageScheduler } from "./lib/intelCoverageScheduler";
 import { startInviteSlotReconciler } from "./lib/inviteSlotReconciler";
 import { startInviteSlotSweeper } from "./lib/inviteSlotSweeper";
 import { getServiceClient } from "./lib/supabase";
@@ -126,6 +127,10 @@ app.listen(port, (err) => {
   startIntelRetentionScheduler();
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
+  // IG-08 coverage producer: assembles (zone, claim-family) gap snapshots and
+  // (when intel_missions is also on) generates mission candidates. Flag-gated on
+  // intel_coverage, fail-closed; a no-op until enabled.
+  startIntelCoverageScheduler();
   // Executes due user_deletion_requests. Irreversible, so it is gated behind
   // the `account_deletion_worker_enabled` feature flag and fails closed —
   // starting it here is safe even before the flag is turned on.

@@ -350,6 +350,16 @@ const CLASSIFIED = [
       'already-dispatched commitment are intentionally ungated. Missions are non-cash (table CHECK cash_amount=0).',
   },
   {
+    flag: 'intel_coverage',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` runs the IG-08 coverage PRODUCER (lib/intelCoverageScheduler.ts): assembles (zone, claim-family) gap ' +
+      'snapshots from intel claims/observations + saved_places demand and, only when intel_missions is ALSO on, ' +
+      'generates mission candidates. False-on-error is correct and is the design: runIntelCoveragePass returns ' +
+      '{skipped:true, reason:"disabled"} and writes nothing, so the scheduler is an inert no-op. The snapshot read ' +
+      'is admin-only (routes/intelCoverage.ts); nothing client-facing; no cash.',
+  },
+  {
     flag: 'intel_rewards',
     kind: 'CAPABILITY',
     reason:
