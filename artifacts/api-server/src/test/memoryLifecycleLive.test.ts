@@ -245,6 +245,89 @@ describe("memory lifecycle (live DB)", () => {
     assert.equal((afterUnfollow ?? []).length, 0, "unfollow must retract the derived social memory");
   });
 
+  it("PERSISTENCE: migration objects survive their own transaction (the 2195 failure class)", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    // 2195 was applied together with a proof block that RAISEd to report results.
+    // Every assertion passed; the transaction then aborted and rolled the
+    // CREATE FUNCTIONs back. The migration reported success and persisted
+    // nothing. An assertion inside a transaction that later aborts proves
+    // nothing — so this observes from its OWN connection, after the fact.
+    const expectedFns = [
+      "memory_retrieve", "memory_rediscover", "memory_is_new_to_user", "memory_sweep_expired",
+      "erase_memory_for_user", "memory_reset_for_user", "memory_export_for_user",
+      "project_user_memory", "project_inferred_preferences", "project_user_memory_with_retraction",
+    ];
+    for (const fn of expectedFns) {
+      // service_role can execute; a missing function errors with 42883 (undefined
+      // function) rather than 42501, so the two failure modes stay distinguishable.
+      const { error } = await sc.rpc(fn, fn === "memory_sweep_expired" ? { p_enforce_flag: false }
+        : fn === "memory_export_for_user" || fn === "erase_memory_for_user" || fn === "memory_reset_for_user"
+          ? { p_user_id: userA }
+        : fn === "memory_rediscover" ? { p_user_id: userA, p_city: "Nowhere", p_limit: 1 }
+        : fn === "memory_is_new_to_user" ? { p_user_id: userA, p_subject_type: "city", p_subject_id: "Nowhere" }
+        : fn === "memory_retrieve" ? { p_user_id: userA, p_surface: "compass", p_limit: 1 }
+        : { p_user_id: userA, p_enforce_flag: false });
+      assert.notEqual((error as { code?: string } | null)?.code, "42883",
+        `${fn} does not exist on the live database — a migration reported success but did not persist`);
+    }
+  });
+
+  it("policy governs surfaces, and sensitive memory is kept off discovery", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    await seed(userA, { subject_id: "Policytown", memory_type: "episodic", subject_type: "city",
+      content: "Visited Policytown", retention_class: "durable_fact" });
+    await seed(userA, { subject_id: "sens-1", memory_type: "social", subject_type: "user",
+      content: "Follows someone", retention_class: "durable_fact", sensitivity: "sensitive" });
+    await seed(userA, { subject_id: "hist-1", memory_type: "place", subject_type: "place",
+      content: "Contributed intel", retention_class: "historical_contribution" });
+
+    const { data: comp } = await sc.rpc("memory_retrieve", { p_user_id: userA, p_surface: "compass", p_limit: 50 });
+    const { data: disc } = await sc.rpc("memory_retrieve", { p_user_id: userA, p_surface: "discovery", p_limit: 50 });
+    const ids = (rows: any[]) => (rows ?? []).map((r: any) => r.subject_id);
+
+    assert.ok(ids(comp).includes("sens-1"), "the user's own Compass may use sensitive memory");
+    assert.ok(!ids(disc).includes("sens-1"), "sensitive memory must not reach the discovery surface");
+    assert.ok(!ids(comp).includes("hist-1") && !ids(disc).includes("hist-1"),
+      "historical_contribution has an empty allowed_surfaces — it is evidence, never served");
+  });
+
+  it("reset clears projections but a forget SURVIVES it", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    await seed(userA, { subject_id: "Resettown", content: "Visited Resettown" });
+    const { data: before } = await sc.rpc("memory_retrieve", { p_user_id: userA, p_surface: "compass", p_limit: 50 });
+    const row = (before ?? []).find((r: any) => r.subject_id === "Resettown");
+    assert.ok(row, "seeded memory should be retrievable");
+
+    await sc.from("memory_feedback").insert({
+      user_id: userA, projection_id: row.id, memory_type: row.memory_type,
+      subject_type: row.subject_type, subject_id: row.subject_id, kind: "forget",
+    });
+    const { error: resetErr } = await sc.rpc("memory_reset_for_user", { p_user_id: userA, p_memory_types: null });
+    assert.equal(resetErr, null);
+
+    const { data: fb } = await sc.from("memory_feedback").select("id").eq("user_id", userA);
+    assert.ok((fb ?? []).length > 0, "a reset must NOT withdraw a previous forget");
+
+    // re-seed the same subject, as a re-projection would
+    await seed(userA, { subject_id: "Resettown", content: "Visited Resettown" });
+    const { data: after } = await sc.rpc("memory_retrieve", { p_user_id: userA, p_surface: "compass", p_limit: 50 });
+    assert.ok(!(after ?? []).some((r: any) => r.subject_id === "Resettown"),
+      "the forget must still suppress after a reset + re-projection");
+  });
+
+  it("export includes the why, and non-serving rows", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    await seed(userA, { subject_id: "Exporttown", content: "Visited Exporttown",
+      provenance: { derivation: "compass_graph_edges:visited" } });
+    const { data, error } = await sc.rpc("memory_export_for_user", { p_user_id: userA });
+    assert.equal(error, null);
+    const row = (data ?? []).find((r: any) => r.subject_id === "Exporttown");
+    assert.ok(row, "export must include the memory");
+    assert.equal(row.derivation, "compass_graph_edges:visited", "export must say WHY the memory exists");
+    assert.ok("suppressed_by" in row, "export must report what suppresses a memory");
+    assert.ok("visibility" in row && "sensitivity" in row, "export must expose the privacy attributes");
+  });
+
   it("erasure purges everything for the user, is idempotent, and spares other users", async (t) => {
     if (!CREDS) return t.skip("credentials absent");
     await seed(userA, { subject_id: "Granada", content: "A visited Granada" });

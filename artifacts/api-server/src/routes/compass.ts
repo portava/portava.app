@@ -2236,6 +2236,61 @@ router.post("/compass/me/memory/feedback", async (req, res) => {
   }
 });
 
+// GET /api/compass/me/memory/export — everything derived, including the why (§17)
+router.get("/compass/me/memory/export", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  try {
+    const { data, error } = await sc.rpc("memory_export_for_user", { p_user_id: auth.user.id });
+    if (error) throw error;
+    // Deliberately includes decayed/hidden/retracted rows and what suppresses
+    // them: an export that showed only what we currently serve would understate
+    // what is stored, which is the opposite of what an export is for.
+    res.json({ memories: data ?? [] });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/memory/export failed");
+    sendError(res, "db_error", "Could not export memory", { exposeDetail: true });
+  }
+});
+
+// POST /api/compass/me/memory/reset — reset personalization, or one category (§17)
+const memoryResetSchema = z.object({
+  memoryTypes: z.array(z.enum(["episodic", "semantic", "social", "place", "intent"])).min(1).optional(),
+});
+router.post("/compass/me/memory/reset", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  const parsed = memoryResetSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+  try {
+    const { data, error } = await sc.rpc("memory_reset_for_user", {
+      p_user_id: auth.user.id,
+      p_memory_types: parsed.data.memoryTypes ?? null,
+    });
+    if (error) throw error;
+    const row = Array.isArray(data) ? data[0] : data;
+    // A reset rebuilds the derived picture; it does NOT withdraw a previous
+    // "forget". Suppressions survive, so the projector cannot resurrect memory
+    // the user explicitly suppressed — hence feedbackKept is reported back.
+    res.json({
+      reset: true,
+      projectionsCleared: row?.projections_cleared ?? 0,
+      eventsCleared: row?.events_cleared ?? 0,
+      feedbackKept: row?.feedback_kept ?? 0,
+    });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/memory/reset failed");
+    sendError(res, "db_error", "Could not reset memory", { exposeDetail: true });
+  }
+});
+
 // ── GET /api/compass/me/active-reward ─────────────────────────────────────────
 // Returns the authenticated user's active-user tier, earned badges, and a
 // plain-English visibility status message. Raw score is never exposed.

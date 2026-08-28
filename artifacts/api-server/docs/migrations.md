@@ -377,3 +377,55 @@ What a correct §12 consumer needs: (1) a **self-only** surface, following the e
 **§13 Discovery — blocked on an id-space mismatch** (see the New-to-Me deferral above): Discovery serves prefixed ids (`db/…`, OSM), while place memory keys on `discovery_places.id`. Any naive wiring reports every place as new.
 
 **Next implementation slice, when these are picked up:** the shared prerequisite is the `saved_places → discovery_places → places` id bridge (the same one IG-08 required). Build that first; it unblocks §13 and §7 together. §12 is independent of it and gated on the self-only-surface design decision instead.
+
+## 2026-08-28 — Memory provenance, visibility, event retention, policy (2192 + 2193)
+
+Closes the remaining **important** findings from the completeness audit (the four P0s landed in 2190/2191 via PR #190). **Applied to CI 2026-08-28; must be applied together and in order. Prod press pending owner.**
+
+- `2192_memory_provenance_policy.sql`
+  - **Provenance (§16)** — `memory_projections.source_event_ids uuid[]`. The projection recorded a `derivation` string but not *which* events supported it, so §16's first required question ("what source event(s) produced this memory?") had no answer.
+  - **Visibility (§19)** — `memory_projections.visibility`. The invariant *"projections inherit or narrow the visibility of their source; they never broaden it"* was not merely unenforced, it was **unrepresentable**. Defaults to `private`, the narrowest, so a projector that forgets cannot leak.
+  - **Event retention (§18/§53)** — `memory_events.expires_at` + the sweep now removes expired events. Without it the append ledger grew unbounded and held identifiable history indefinitely — the "indefinite location history by accident" §53 warns against.
+  - **`memory_policy` (§15)** — the six retention classes as inspectable data: TTL, `on_expiry`, `allowed_surfaces`, `user_visible`, `deletion_behavior`, and a rationale per class. Seeded to **describe** what 2189/2191 already do; a disagreement between the table and the code is a defect in the code.
+  - **Sensitivity is now read (§19)** — `sensitivity='sensitive'` was written by the social projector and consulted by nothing. Retrieval now excludes sensitive memory from the `discovery` surface (the one feeding other people's recommendations) while keeping it for the user's own Compass answers.
+  - Also revokes the 2183 trigger function `memory_events_no_update`, which carried Supabase's default grants. A trigger-returning function is unreachable via PostgREST so there was no practical exposure — but the postcondition deliberately checks **every** `memory_*` function, and weakening it to allow an exception is how the next real mis-grant would slip through.
+- `2193_memory_projector_provenance.sql` — the projector **populates** those columns. Columns without a writer are worse than no columns: they look like a control while answering nothing. Every class is written `private` explicitly rather than relying on the DDL default, because derived memory is an *inference* — a public follow does not make "Portava thinks you know Ana" public.
+
+**Verified on CI (rolled back):** `compass=2 / discovery=1` (sensitive social excluded from discovery); `historical_contribution` served on **zero** surfaces (its `allowed_surfaces` is empty by design); default visibility `private`; expired events swept (`events_left=0`). Provenance: episodic and social each carry a source event id and **every referenced id resolves to a real `memory_events` row**. Local: typecheck clean, 81/81 memory+presence tests pass.
+
+## 2026-08-28 — Memory reset + export (2194)
+
+- `2194_memory_reset_export.sql` — the last two §17 user controls. The system had view (retrieve), hide/forget (feedback) and full erasure (account deletion), but no way to say *"start my personalization over"* short of deleting the account, and no way to see everything Portava had derived. **Applied to CI 2026-08-28. Prod press pending owner.**
+  - `memory_reset_for_user(user, memory_types)` — §17 "reset personalization **or selected categories**". Passing `NULL` resets everything; passing e.g. `['semantic']` resets one class.
+  - `memory_export_for_user(user)` — everything derived, **including the why**: derivation, supporting-event count, and what suppresses it. Deliberately includes decayed/hidden/retracted rows, because an export showing only what we currently serve would understate what is stored.
+  - Routes: `POST /api/compass/me/memory/reset`, `GET /api/compass/me/memory/export`.
+
+  **The design decision that matters: reset does NOT delete feedback.** A user who asked us to forget something and then resets personalization has not withdrawn that instruction — they have asked us to rebuild the derived picture. Deleting their suppressions during a reset would silently resurrect memory they explicitly forgot on the very next projector pass — the same resurrection bug 2190 fixed at the re-projection level. So reset clears projections and events; suppressions survive, and the route reports `feedbackKept` so the caller can say so. Erasure (`erase_memory_for_user`) is different and still clears everything, because there is no user left to hold a preference for.
+
+  **Verified on CI (rolled back):** export returns 3 rows, all carrying a derivation; a partial reset of `['semantic']` cleared 1 and left episodic intact; a full reset cleared 2 projections and **kept 1 suppression**; and after re-projection the forgotten social memory was **still not visible** — the forget survived the reset. Locally: typecheck clean, 17/17 route tests.
+
+## 2026-08-28 — Semantic memory inferred from behaviour (2195)
+
+- `2195_memory_inferred_preferences.sql` — closes §5.2 properly. **Applied to CI 2026-08-28. Prod press pending owner.**
+  §5.2 defines semantic memory as "longer-lived patterns **inferred from repeated behavior, with confidence and evidence**". The projector read only *explicit* preferences (`interests`/`travel_styles`) at a flat hard-coded 0.90 — a stated preference with no evidence behind it — so the defining clause was unmet even though the `semantic` type existed. Portava already accumulates the signal (`compass_user_preferences.category_weights`, e.g. `{"food": 4, "places": 10}`); nothing new is collected.
+  Three rules it follows: **(1) inferred is marked as inferred** — `subject_type='inferred_interest'` vs `'interest'`, never merged into one indistinguishable set, because §2.2's separation of observation from inference applies to preferences too; **(2) confidence is earned** — scales with observation count and is capped at 0.85, *below* explicit's 0.90, so an inference never outranks a statement however much behaviour supports it; **(3) the evidence is recorded** — provenance carries the observation count, so §16 is answerable exactly where it matters most. A 3-observation floor keeps a single tap from manufacturing a trait. Retention stays `derived_preference`, so an inference decays and is recomputed rather than hardening into a permanent trait (§18/§24). Folded into `project_user_memory_with_retraction`, so an inference whose behaviour stops loses support and is retracted like any other derived memory.
+  **Verified on CI (rolled back):** `places` (10 obs) → 0.85, explicit `nightlife` → 0.90, **inferred < explicit**; a 1-observation category produced **zero** rows; evidence recorded as `{"observations": 10, "min_required": 3}`.
+
+### Migration deployability — the 2195 near-miss, and the guard added for it (2026-08-28)
+
+`2195` was **executed** (not written) alongside an ad-hoc verification block that reported its results by raising:
+
+```sql
+DO $proof$ BEGIN ... RAISE EXCEPTION 'PROOF_2195 | inferred=0.85 explicit=0.9 ...'; END $proof$;
+```
+
+Every assertion in it passed and it printed a perfect result. Because PostgreSQL aborts the whole transaction on any exception, the `CREATE FUNCTION` statements in the same batch were **rolled back** — the migration reported success and persisted nothing. `schema drift · migrations vs live` caught it (`missing function project_inferred_preferences`); the "proof" had actively concealed it.
+
+**The general failure class: an assertion that succeeds inside a transaction that then aborts proves nothing about what persisted.** Verification must be observed from a *separate* transaction.
+
+Three things were done, not one:
+1. **Re-applied 2195 cleanly** and confirmed persistence from a **new connection** — all 18 expected objects across 2192–2195 exist, and function definitions were fingerprinted against the migration source with `pg_get_functiondef` (an initial `prosrc` probe gave two false negatives because `RETURNS TABLE` column names live in the signature, not the body — the probe was wrong, not the functions).
+2. **Committed the verification** into `memoryLifecycleLive.test.ts`, which runs against the live CI database from its own connection — including an explicit *persistence* test that calls every expected function and fails on `42883` (undefined function), so this exact failure cannot recur silently.
+3. **Added `migrationDeployability.test.ts`** — no top-level `DO` block in any of the 354 migrations may contain an unconditional aborting `RAISE`. It deliberately does **not** flag `RAISE NOTICE` (2083 uses one for backfill progress; a notice does not abort) or trigger-function bodies (2183's append-only guard raises unconditionally *because it only runs on the forbidden operation*). Both exclusions are pinned by their own test cases, so the guard cannot drift into pushing people to weaken correct code.
+
+The migration **files** were always deployable — every `RAISE` in 2192–2195 is a guarded pre/postcondition, per house convention. The defect existed only in how I executed 2195.
