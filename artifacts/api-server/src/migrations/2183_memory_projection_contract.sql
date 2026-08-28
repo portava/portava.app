@@ -50,9 +50,6 @@ BEGIN;
 -- ── Preconditions — reuse existing canonical machinery, do not duplicate it ──
 DO $$
 BEGIN
-  IF to_regprocedure('public.intel_append_only()') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED: public.intel_append_only() missing — apply 2130 first (the append-only guard is shared, not re-declared here).';
-  END IF;
   IF to_regprocedure('public.set_updated_at()') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED: public.set_updated_at() missing — expected from 0001_spine.sql.';
   END IF;
@@ -151,11 +148,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS memory_feedback_dedupe_idx
   ON public.memory_feedback (user_id, kind, coalesce(projection_id::text,''), coalesce(subject_type,''), coalesce(subject_id,''));
 
 -- ── Triggers ─────────────────────────────────────────────────────────────────
--- memory_events is append-only, using the SHARED guard (2130), not a new one (§24).
-DROP TRIGGER IF EXISTS trg_memory_events_append_only ON public.memory_events;
-CREATE TRIGGER trg_memory_events_append_only
-  BEFORE UPDATE OR DELETE ON public.memory_events
-  FOR EACH ROW EXECUTE FUNCTION public.intel_append_only();
+-- memory_events is append-oriented: corrections are new rows, so UPDATE is
+-- forbidden. But it must stay DELETABLE — account deletion cascades to it (2187)
+-- and the retention sweep deletes expired rows. So it uses a memory-specific
+-- guard that blocks ONLY update, NOT the shared intel_append_only() (which also
+-- blocks delete unless an intel erasure flag is set — that would break the
+-- deletion cascade auth.admin.deleteUser triggers).
+CREATE OR REPLACE FUNCTION public.memory_events_no_update()
+RETURNS trigger LANGUAGE plpgsql SET search_path TO 'public', 'pg_catalog'
+AS $fn$
+BEGIN
+  RAISE EXCEPTION 'memory_events is append-only: UPDATE is not permitted. Corrections are new rows.';
+END
+$fn$;
+DROP TRIGGER IF EXISTS trg_memory_events_no_update ON public.memory_events;
+CREATE TRIGGER trg_memory_events_no_update
+  BEFORE UPDATE ON public.memory_events
+  FOR EACH ROW EXECUTE FUNCTION public.memory_events_no_update();
 
 -- memory_projections is mutable; keep updated_at honest via the shared trigger (0001).
 DROP TRIGGER IF EXISTS trg_memory_projections_updated ON public.memory_projections;
@@ -211,8 +220,8 @@ BEGIN
   IF to_regclass('public.memory_feedback') IS NULL THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: memory_feedback not created';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_memory_events_append_only' AND NOT tgisinternal) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: append-only trigger missing on memory_events';
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_memory_events_no_update' AND NOT tgisinternal) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: append-only(UPDATE) trigger missing on memory_events';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname='public' AND tablename='memory_projections' AND rowsecurity) THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: RLS not enabled on memory_projections';
