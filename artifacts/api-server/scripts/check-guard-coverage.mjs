@@ -416,6 +416,19 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
 // and if the pin ever goes away the exemption evaporates and they fail here.
 // ─────────────────────────────────────────────────────────────────────────────
 const EXEMPT = [
+  // ── Operator-run scripts that DELIBERATELY target production. ─────────────
+  {
+    file: 'src/scripts/backfillPlacePhotos.ts',
+    reason:
+      'OPERATOR-RUN bulk place-photo warm, authorised by the owner ruling in ' +
+      'docs/discovery/place-photo-backfill-ruling.md. It deliberately targets PRODUCTION (the pilot city whose ' +
+      'cards need photos), so the CI non-prod guard front door would defeat its purpose — the "process is ' +
+      'SUPPOSED to talk to production" case. CI never invokes it: it refuses to run without ' +
+      '--confirm-bulk-prepopulation, a --city, GOOGLE_MAPS_API_KEY, and a service client, and is wired to no ' +
+      'workflow, scheduler, or import path. It WRITES (warms discovery_place_photos through the store, ' +
+      'insert-if-absent), so it is not a read-only-audit door. EXEMPTION MEANS UNGUARDED, NOT SAFE — the safety ' +
+      'is the four hard gates in the script, not this list.',
+  },
   // ── Application code. The server is SUPPOSED to talk to production. ───────
   {
     file: 'src/lib/supabase.ts',
