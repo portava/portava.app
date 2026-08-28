@@ -328,6 +328,61 @@ describe("memory lifecycle (live DB)", () => {
     assert.ok("visibility" in row && "sensitivity" in row, "export must expose the privacy attributes");
   });
 
+  it("EVERY feedback kind does something — 'incorrect' is not a silent no-op", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    // 'incorrect' was accepted, stored, returned 201 — and suppressed nothing.
+    // Same shape as the original hide/forget blocker: the API says yes, the read
+    // path never asks. Serving a memory the user says is WRONG is worse than not
+    // serving it.
+    await seed(userA, { subject_id: "Wrongtown", content: "Visited Wrongtown" });
+    const { data: before } = await sc.rpc("memory_retrieve", { p_user_id: userA, p_surface: "compass", p_limit: 50 });
+    const row = (before ?? []).find((r: any) => r.subject_id === "Wrongtown");
+    assert.ok(row, "seeded memory should be retrievable");
+
+    await sc.from("memory_feedback").insert({
+      user_id: userA, projection_id: row.id, memory_type: row.memory_type,
+      subject_type: row.subject_type, subject_id: row.subject_id, kind: "incorrect",
+    });
+
+    const { data: after } = await sc.rpc("memory_retrieve", { p_user_id: userA, p_surface: "compass", p_limit: 50 });
+    assert.ok(!(after ?? []).some((r: any) => r.subject_id === "Wrongtown"),
+      "a memory reported INCORRECT must stop being served");
+
+    const { data: red } = await sc.rpc("memory_rediscover", { p_user_id: userA, p_city: "Wrongtown", p_limit: 50 });
+    assert.ok(!(red ?? []).some((r: any) => r.subject_id === "Wrongtown"),
+      "and must not come back through rediscovery either");
+
+    // the state vocabulary is live: the decision is recorded ON the row
+    const { data: proj } = await sc.from("memory_projections").select("state").eq("id", row.id).maybeSingle();
+    assert.equal((proj as any)?.state, "disputed",
+      "'incorrect' is recorded as disputed — distinct from forgotten, because it also says the derivation is faulty");
+  });
+
+  it("already_known stays DISCOVERY-scoped — it must not silently hide a user's own memory", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    await seed(userA, { subject_id: "p-known", memory_type: "place", subject_type: "place",
+      content: "Saved Known Place", retention_class: "durable_fact" });
+    const { data: before } = await sc.rpc("memory_retrieve", { p_user_id: userA, p_surface: "compass", p_limit: 50 });
+    const row = (before ?? []).find((r: any) => r.subject_id === "p-known");
+    assert.ok(row);
+
+    await sc.from("memory_feedback").insert({
+      user_id: userA, projection_id: row.id, memory_type: row.memory_type,
+      subject_type: row.subject_type, subject_id: row.subject_id, kind: "already_known",
+    });
+
+    const { data: comp } = await sc.rpc("memory_retrieve", { p_user_id: userA, p_surface: "compass", p_limit: 50 });
+    const { data: disc } = await sc.rpc("memory_retrieve", { p_user_id: userA, p_surface: "discovery", p_limit: 50 });
+    assert.ok((comp ?? []).some((r: any) => r.subject_id === "p-known"),
+      "already_known is a novelty signal, not a request to forget — Compass keeps it");
+    assert.ok(!(disc ?? []).some((r: any) => r.subject_id === "p-known"),
+      "but discovery must not offer it as new");
+
+    const { data: proj } = await sc.from("memory_projections").select("state").eq("id", row.id).maybeSingle();
+    assert.equal((proj as any)?.state, "active",
+      "a discovery-scoped opinion must NOT change the row's state");
+  });
+
   it("erasure purges everything for the user, is idempotent, and spares other users", async (t) => {
     if (!CREDS) return t.skip("credentials absent");
     await seed(userA, { subject_id: "Granada", content: "A visited Granada" });
