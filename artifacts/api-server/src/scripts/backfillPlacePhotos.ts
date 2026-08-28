@@ -26,15 +26,17 @@
  *
  * Idempotent + resumable: re-running skips places already warmed. Rate-limited.
  *
- * Usage:
+ * Usage (set --limit to cover the whole city — Da Nang has ~2,900 active places,
+ * and the default of 200 only warms the alphabetical head):
  *   GOOGLE_MAPS_API_KEY=… SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… \
  *     node --import tsx/esm src/scripts/backfillPlacePhotos.ts \
- *       --city "Da Nang" --limit 500 --confirm-bulk-prepopulation [--dry-run] [--delay-ms 250]
+ *       --city "Da Nang" --limit 3000 --confirm-bulk-prepopulation [--dry-run] [--delay-ms 250]
  */
+import { pathToFileURL } from "node:url";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import {
-  normalisePlaceKey, readStoredPlacePhoto, writeStoredPlacePhoto,
+  normalisePlaceKey, readStoredPlacePhoto, writeStoredPlacePhotoIfAbsent,
   type StoredPlacePhoto,
 } from "../lib/discoveryPlacePhotoStore.js";
 
@@ -195,7 +197,9 @@ async function main(): Promise<void> {
     sc,
     resolvePhotoName: (name, lat, lng) => resolveGooglePhotoName(name, lat, lng, key),
     readStored: readStoredPlacePhoto,
-    writeStored: writeStoredPlacePhoto,
+    // Insert-if-absent: warming a cold place must never clobber a row a live
+    // viewer resolved FSQ-first between our read and our write.
+    writeStored: writeStoredPlacePhotoIfAbsent,
     sleep,
     log: (msg) => logger.info(msg),
   });
@@ -203,6 +207,8 @@ async function main(): Promise<void> {
 }
 
 // Only auto-run as a script, never on import (keeps it unit-testable).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL canonicalises + percent-encodes argv[1] so a path with spaces or
+// a symlink still matches import.meta.url (a raw `file://`+argv1 would not).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   void main();
 }

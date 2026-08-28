@@ -233,6 +233,45 @@ export async function writeStoredPlacePhoto(
   }
 }
 
+/**
+ * Insert-if-absent variant for the operator BACKFILL (scripts/backfillPlacePhotos).
+ *
+ * Unlike writeStoredPlacePhoto — an upsert that UPDATES on conflict — this uses
+ * ON CONFLICT DO NOTHING, so warming a cold place can never overwrite a row a live
+ * viewer already resolved FSQ-first, even if the backfill's read happened a moment
+ * before that write landed. Trade-off, stated so it is chosen not discovered: it
+ * does NOT refresh an EXPIRED row (the live path does that on the next serve); the
+ * backfill exists for cold coverage, not refresh.
+ */
+export async function writeStoredPlacePhotoIfAbsent(
+  placeKey: string,
+  photo: StoredPlacePhoto,
+): Promise<void> {
+  if (!photo.photoUrl && !photo.photoRef) return;
+
+  try {
+    const sc = getServiceClient();
+    if (!sc) return;
+
+    const now = Date.now();
+    const { error } = await sc.from("discovery_place_photos").upsert(
+      {
+        place_key:   placeKey,
+        source:      photo.source,
+        photo_url:   photo.photoUrl,
+        photo_ref:   photo.photoRef,
+        resolved_at: new Date(now).toISOString(),
+        expires_at:  new Date(now + PHOTO_TTL_MS).toISOString(),
+        invalid_at:  null,
+      },
+      { onConflict: "place_key", ignoreDuplicates: true }, // ON CONFLICT DO NOTHING
+    );
+    if (error) logger.debug({ err: error, placeKey }, "discovery place photo insert-if-absent failed");
+  } catch (err) {
+    logger.debug({ err, placeKey }, "discovery place photo insert-if-absent threw");
+  }
+}
+
 /** Stamp a row unusable. Kept rather than deleted so it stays observable. */
 export async function markStoredPlacePhotoInvalid(placeKey: string): Promise<void> {
   try {
