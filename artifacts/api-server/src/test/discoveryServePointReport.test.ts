@@ -93,11 +93,11 @@ describe("discoveryServePointReport — the production window that broke the old
     assert.equal(t.unknownMarker, 0);
   });
 
-  it("reports ONE serve point observed and the other eight unexercised", () => {
+  it("reports ONE serve point observed and the other nine unexercised", () => {
     const t = tallyServePoints(PRODUCTION_ROWS_20260815);
 
     assert.deepEqual(observedPoints(t), [DiscoveryServePoint.SUGGEST]);
-    assert.deepEqual(unexercisedPoints(t), [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual(unexercisedPoints(t), [1, 2, 3, 4, 5, 6, 7, 8, 10]);
   });
 
   it("attributes zero of them to GET /discovery, so the D5 population is empty", () => {
@@ -138,7 +138,10 @@ describe("discoveryServePointReport — no-marker and unknown-marker are differe
     // has grown past this build. Folding these into noMarker is what reported
     // Stage 0b rows as pre-Stage-0 ones.
     const t = tallyServePoints([
-      { features: { servePoint: 10 } },
+      // 11 and 99: genuinely unrecognised. NOT 10 — that became COMMUNITY when
+      // GET /discovery/community was instrumented, and reusing a real point here
+      // would make this test assert the opposite of what it is named for.
+      { features: { servePoint: 11 } },
       { features: { servePoint: 99 } },
       { features: { servePoint: "banana" } },
       { features: { servePoint: 9 } },
@@ -146,7 +149,7 @@ describe("discoveryServePointReport — no-marker and unknown-marker are differe
 
     assert.equal(t.unknownMarker, 3);
     assert.equal(t.noMarker, 0, "an unrecognised marker is NOT a missing marker");
-    assert.deepEqual([...t.unknownValues].sort(), ["10", "99", "banana"]);
+    assert.deepEqual([...t.unknownValues].sort(), ["11", "99", "banana"]);
     assert.equal(t.marked, 1);
   });
 
@@ -168,8 +171,8 @@ describe("discoveryServePointReport — the reader cannot drift past the writer 
     }
   });
 
-  it("recognises every serve point the writer can emit, 1 through 9", () => {
-    assert.deepEqual([...ALL_SERVE_POINTS], [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  it("recognises every serve point the writer can emit, 1 through 10", () => {
+    assert.deepEqual([...ALL_SERVE_POINTS], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
     const rows: ServeRow[] = ALL_SERVE_POINTS.map((sp) => ({ features: { servePoint: sp } }));
     const t = tallyServePoints(rows);
@@ -196,6 +199,21 @@ describe("discoveryServePointReport — the two populations stay separate", () =
       assert.equal(DISCOVERY_ENDPOINT_POINTS.has(sp), false, `serve point ${sp} is not GET /discovery`);
       assert.equal(RANKED_POINTS.has(sp), false, `serve point ${sp} runs no ranker`);
     }
+  });
+
+  it("COMMUNITY is instrumented but stays OUT of the D5 denominator", () => {
+    // Serve point 10 exists so the D4=C baseline covers every route that returns
+    // items. It must NOT join the GET /discovery population: /discovery/community
+    // runs no ranker, so a row from it is not "a serve that could have been
+    // ranked and lost". Counting it would push the ranked share down with rows
+    // that were never candidates — the same measurement error, reintroduced.
+    assert.ok(SERVE_POINT_LABEL[DiscoveryServePoint.COMMUNITY], "must be labelled");
+    assert.ok(!DISCOVERY_ENDPOINT_POINTS.has(DiscoveryServePoint.COMMUNITY),
+      "community is not part of GET /discovery");
+    assert.ok(!RANKED_POINTS.has(DiscoveryServePoint.COMMUNITY),
+      "community runs no ranker");
+    assert.ok(!CACHE_A_POINTS.has(DiscoveryServePoint.COMMUNITY),
+      "community does not serve from cache A");
   });
 
   it("ranked and cache-A sets are subsets of GET /discovery", () => {
@@ -237,7 +255,7 @@ describe("discoveryServePointReport — an empty window says nothing rather than
     assert.deepEqual(observedPoints(t), []);
     // Everything unexercised — which is a statement about this window, not
     // about the surface.
-    assert.deepEqual(unexercisedPoints(t), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert.deepEqual(unexercisedPoints(t), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 });
 

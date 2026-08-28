@@ -2297,6 +2297,10 @@ router.get("/discovery/community", async (req, res) => {
     // Batch-fetch saved state and vote/review aggregates in parallel (both non-fatal)
     const placeIds = items.map((i) => i.id);
     const savedPlaceIds = new Set<string>();
+    // Hoisted out of the saved-places block below so the serve log can reuse the
+    // identity that block ALREADY resolves. Instrumenting this route must not
+    // cost a second auth.getUser round trip on a path that previously made one.
+    let communityViewerId: string | null = null;
     const [, voteAgg] = await Promise.all([
       (async () => {
         try {
@@ -2305,6 +2309,7 @@ router.get("/discovery/community", async (req, res) => {
           if (authHeaderComm?.startsWith("Bearer ") && commSc && placeIds.length > 0) {
             const { data: authDataComm } = await commSc.auth.getUser(authHeaderComm.slice(7).trim());
             if (authDataComm?.user) {
+              communityViewerId = authDataComm.user.id as string;
               const { data: userCols } = await commSc
                 .from("collections")
                 .select("id")
@@ -2342,6 +2347,23 @@ router.get("/discovery/community", async (req, res) => {
         callerDobMissing:  ageFilterComm === "open_to_me" ? commCallerDobMissing : false,
         bounds:            communityAgeBounds(),
       },
+    });
+
+    // Serve point 10 — ruling D4=C: the baseline must describe everything users
+    // receive, not only what the flag will govern. This route returned items and
+    // recorded nothing, so it was a hole in exactly that baseline.
+    //
+    // AFTER res.json and deliberately un-awaited: logDiscoveryServe is
+    // fire-and-forget, never throws, and is itself gated on
+    // discovery_serve_log_enabled, so this adds no latency and cannot fail the
+    // request. It no-ops for anonymous callers, because rank_events.user_id is
+    // NOT NULL — a limit of the table, not of this call site.
+    void logDiscoveryServe(getServiceClient(), {
+      userId:     communityViewerId ?? "",
+      servePoint: DiscoveryServePoint.COMMUNITY,
+      items:      items.map((i) => ({ id: i.id })),
+      route:      "/discovery/community",
+      context:    { city, ageFilter: ageFilterComm },
     });
   } catch (err) {
     req.log.error({ err }, "discovery/community route failed");

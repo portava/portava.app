@@ -67,6 +67,13 @@ export const DiscoveryServePoint = {
   FEED:                   7,
   SEARCH:                 8,
   SUGGEST:                9,
+  // GET /discovery/community — curated community places for a city. It returns
+  // items to a caller and was the last uninstrumented serve point on the
+  // surface, which made the D4=C baseline incomplete by exactly one route: the
+  // comparison would have been computed on traffic that is not everything users
+  // receive, which is the specific error D4=C exists to prevent.
+  // Like 7-9 it runs no ranker, so it is NOT part of the D5 denominator.
+  COMMUNITY:              10,
 } as const;
 
 export type DiscoveryServePointId =
