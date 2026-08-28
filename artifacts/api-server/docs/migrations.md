@@ -392,3 +392,14 @@ Closes the remaining **important** findings from the completeness audit (the fou
 - `2193_memory_projector_provenance.sql` — the projector **populates** those columns. Columns without a writer are worse than no columns: they look like a control while answering nothing. Every class is written `private` explicitly rather than relying on the DDL default, because derived memory is an *inference* — a public follow does not make "Portava thinks you know Ana" public.
 
 **Verified on CI (rolled back):** `compass=2 / discovery=1` (sensitive social excluded from discovery); `historical_contribution` served on **zero** surfaces (its `allowed_surfaces` is empty by design); default visibility `private`; expired events swept (`events_left=0`). Provenance: episodic and social each carry a source event id and **every referenced id resolves to a real `memory_events` row**. Local: typecheck clean, 81/81 memory+presence tests pass.
+
+## 2026-08-28 — Memory reset + export (2194)
+
+- `2194_memory_reset_export.sql` — the last two §17 user controls. The system had view (retrieve), hide/forget (feedback) and full erasure (account deletion), but no way to say *"start my personalization over"* short of deleting the account, and no way to see everything Portava had derived. **Applied to CI 2026-08-28. Prod press pending owner.**
+  - `memory_reset_for_user(user, memory_types)` — §17 "reset personalization **or selected categories**". Passing `NULL` resets everything; passing e.g. `['semantic']` resets one class.
+  - `memory_export_for_user(user)` — everything derived, **including the why**: derivation, supporting-event count, and what suppresses it. Deliberately includes decayed/hidden/retracted rows, because an export showing only what we currently serve would understate what is stored.
+  - Routes: `POST /api/compass/me/memory/reset`, `GET /api/compass/me/memory/export`.
+
+  **The design decision that matters: reset does NOT delete feedback.** A user who asked us to forget something and then resets personalization has not withdrawn that instruction — they have asked us to rebuild the derived picture. Deleting their suppressions during a reset would silently resurrect memory they explicitly forgot on the very next projector pass — the same resurrection bug 2190 fixed at the re-projection level. So reset clears projections and events; suppressions survive, and the route reports `feedbackKept` so the caller can say so. Erasure (`erase_memory_for_user`) is different and still clears everything, because there is no user left to hold a preference for.
+
+  **Verified on CI (rolled back):** export returns 3 rows, all carrying a derivation; a partial reset of `['semantic']` cleared 1 and left episodic intact; a full reset cleared 2 projections and **kept 1 suppression**; and after re-projection the forgotten social memory was **still not visible** — the forget survived the reset. Locally: typecheck clean, 17/17 route tests.

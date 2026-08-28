@@ -34,6 +34,8 @@ function makeClient(cfg: {
   insertError?: { code?: string; message?: string } | null;
   /** Row returned by the ownership lookup on memory_projections; null = not the caller's. */
   projection?: Record<string, unknown> | null;
+  exportRows?: any[];
+  resetRow?: Record<string, unknown>;
 } = {}) {
   return {
     auth: {
@@ -50,6 +52,8 @@ function makeClient(cfg: {
       if (cfg.rpcError === name) return { data: null, error: { message: "boom" } };
       if (name === "memory_retrieve") return { data: cfg.retrieve ?? [], error: null };
       if (name === "memory_rediscover") return { data: cfg.rediscover ?? [], error: null };
+      if (name === "memory_export_for_user") return { data: cfg.exportRows ?? [], error: null };
+      if (name === "memory_reset_for_user") return { data: [cfg.resetRow ?? { projections_cleared: 0, events_cleared: 0, feedback_kept: 0 }], error: null };
       return { data: null, error: null };
     },
     // `from` must satisfy TWO callers, not just the route under test:
@@ -195,6 +199,48 @@ describe("GET /api/compass/me/memory/rediscover", () => {
     const call = rpcCalls.find((c) => c.name === "memory_rediscover")!;
     assert.equal(call.params.p_city, "Lisbon");
     assert.equal(call.params.p_user_id, ALICE);
+  });
+});
+
+describe("§17 export and reset", () => {
+  it("export returns everything derived, including the why", async () => {
+    _setTestClient(makeClient({ exportRows: [
+      { memory_type: "episodic", subject_id: "Lisbon", derivation: "compass_graph_edges:visited",
+        supporting_events: 2, state: "active", suppressed_by: null },
+      { memory_type: "social", subject_id: "u-1", derivation: "user_follows",
+        supporting_events: 1, state: "retracted", suppressed_by: "forget" },
+    ] }), true as any);
+    const res = await api("GET", "/compass/me/memory/export");
+    assert.equal(res.status, 200);
+    assert.equal(res.body.memories.length, 2);
+    assert.ok(res.body.memories.every((m: any) => m.derivation),
+      "every exported memory must say what produced it");
+    assert.ok(res.body.memories.some((m: any) => m.state === "retracted"),
+      "export must include non-serving rows — otherwise it understates what is stored");
+    const call = rpcCalls.find((c) => c.name === "memory_export_for_user")!;
+    assert.equal(call.params.p_user_id, ALICE, "export is scoped to the session identity");
+  });
+
+  it("reset clears projections but reports the suppressions it KEPT", async () => {
+    _setTestClient(makeClient({ resetRow: { projections_cleared: 4, events_cleared: 6, feedback_kept: 2 } }), true as any);
+    const res = await api("POST", "/compass/me/memory/reset", {});
+    assert.equal(res.status, 200);
+    assert.equal(res.body.projectionsCleared, 4);
+    assert.equal(res.body.feedbackKept, 2,
+      "a reset must not withdraw a previous forget — the caller is told they survived");
+    const call = rpcCalls.find((c) => c.name === "memory_reset_for_user")!;
+    assert.equal(call.params.p_user_id, ALICE);
+    assert.equal(call.params.p_memory_types, null, "no categories given => reset everything");
+  });
+
+  it("reset accepts selected categories and rejects unknown ones", async () => {
+    _setTestClient(makeClient({ resetRow: { projections_cleared: 1, events_cleared: 0, feedback_kept: 0 } }), true as any);
+    const ok = await api("POST", "/compass/me/memory/reset", { memoryTypes: ["semantic"] });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(rpcCalls.at(-1)!.params.p_memory_types, ["semantic"]);
+
+    const bad = await api("POST", "/compass/me/memory/reset", { memoryTypes: ["everything"] });
+    assert.equal(bad.status, 400, "an unknown category must not reach the RPC");
   });
 });
 
