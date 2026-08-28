@@ -121,13 +121,32 @@ describe("memory lifecycle (live DB)", () => {
     }
   });
 
-  it("anon cannot execute the memory functions", async (t) => {
+  it("anon cannot execute ANY memory function (42501, not merely an empty result)", async (t) => {
     if (!CREDS) return t.skip("credentials absent");
+    // This assertion is deliberately about the GRANT, not about the rows.
+    //
+    // It caught a real regression on 2026-08-28: migration 2190 DROP/CREATEd
+    // memory_retrieve and memory_rediscover (their return type changed), and a
+    // CREATEd function is a NEW object that picks up Supabase's default
+    // EXECUTE grant to anon and authenticated. Both were briefly anon-callable.
+    // Nothing leaked — they are SECURITY INVOKER so RLS still returned [] — and
+    // that is exactly the trap: an empty result looks identical to a denial.
+    // So assert the permission error explicitly.
     const client = anon();
-    const { error } = await client.rpc("memory_retrieve", {
-      p_user_id: userA, p_surface: "compass", p_limit: 5,
-    });
-    assert.ok(error, "anon must not be able to execute memory_retrieve");
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["memory_retrieve", { p_user_id: userA, p_surface: "compass", p_limit: 5 }],
+      ["memory_rediscover", { p_user_id: userA, p_city: "Lisbon", p_limit: 5 }],
+      ["memory_sweep_expired", { p_enforce_flag: false }],
+      ["erase_memory_for_user", { p_user_id: userA }],
+    ];
+    for (const [fn, args] of calls) {
+      const { error } = await client.rpc(fn, args);
+      assert.ok(error, `anon must not execute ${fn} — got no error`);
+      assert.equal(
+        (error as { code?: string }).code, "42501",
+        `anon call to ${fn} must fail with permission-denied (42501), got ${JSON.stringify(error)}`,
+      );
+    }
   });
 
   it("retrieval is user-scoped — B's memory never appears for A", async (t) => {

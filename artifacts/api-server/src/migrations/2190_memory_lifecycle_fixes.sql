@@ -205,6 +205,24 @@ BEGIN
 END
 $fn$;
 
+-- ── 3b. RE-REVOKE THE RECREATED FUNCTIONS (do not delete this block) ─────────
+-- memory_retrieve and memory_rediscover are DROPped and CREATEd above (their
+-- return type changed, so CREATE OR REPLACE is not possible). A CREATEd function
+-- is a NEW object: it does NOT inherit the previous object's ACL, and Supabase's
+-- ALTER DEFAULT PRIVILEGES immediately grants EXECUTE on it to anon AND
+-- authenticated. Omitting this block silently re-opens both to anon — verified
+-- live on CI 2026-08-28, where an anon PostgREST call to /rpc/memory_retrieve
+-- returned HTTP 200 until these REVOKEs were applied (it returned [] because the
+-- functions are SECURITY INVOKER and RLS still denied the rows, so nothing
+-- leaked — but the grant was wrong, contradicted this migration's own comments,
+-- and would have become a live reader the moment any RLS policy was added).
+--
+-- ANY future migration that DROP/CREATEs one of these MUST repeat this block.
+REVOKE ALL ON FUNCTION public.memory_retrieve(uuid, text, integer)   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.memory_rediscover(uuid, text, integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.memory_retrieve(uuid, text, integer)   TO service_role;
+GRANT EXECUTE ON FUNCTION public.memory_rediscover(uuid, text, integer) TO service_role;
+
 -- ── 4. ERASURE (P0-1) ────────────────────────────────────────────────────────
 -- One idempotent, atomic purge of every memory artefact a user owns. Called by
 -- AccountDeletionService as a FATAL step, mirroring erase_intel_for_actor.
@@ -319,6 +337,17 @@ BEGIN
   IF has_function_privilege('anon','public.erase_memory_for_user(uuid)','EXECUTE')
      OR has_function_privilege('authenticated','public.erase_memory_for_user(uuid)','EXECUTE') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: erasure reachable by anon/authenticated';
+  END IF;
+  -- Catch the DROP/CREATE default-grant trap for EVERY memory function, not just
+  -- the ones this migration happens to create.
+  IF EXISTS (
+    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND (p.proname LIKE 'memory\\_%' OR p.proname LIKE 'project\\_%memory%')
+      AND (has_function_privilege('anon', p.oid, 'EXECUTE')
+           OR has_function_privilege('authenticated', p.oid, 'EXECUTE'))
+  ) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: a memory function is executable by anon/authenticated (Supabase default grants after DROP/CREATE — re-REVOKE it)';
   END IF;
 END $$;
 
