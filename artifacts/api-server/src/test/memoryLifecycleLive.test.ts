@@ -383,6 +383,41 @@ describe("memory lifecycle (live DB)", () => {
       "a discovery-scoped opinion must NOT change the row's state");
   });
 
+  it("a CATEGORY reset clears only that category's ledger events, not the whole ledger", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    // The committed 2194 filtered events with
+    //   (p_memory_types IS NULL OR subject_type = ANY (p_memory_types) OR true)
+    // `OR true` makes that unconditionally true, so resetting ONE category deleted
+    // every event the user had. The filter could never have worked anyway:
+    // memory_type is episodic/semantic/social/place/intent while subject_type is
+    // city/user/place — different vocabularies. 2197 translates between them.
+    await sc.from("memory_events").insert([
+      { user_id: userA, event_type: "visited",     occurred_at: new Date().toISOString(), subject_type: "city",  subject_id: "Lisbon", source: "inferred" },
+      { user_id: userA, event_type: "saved_place", occurred_at: new Date().toISOString(), subject_type: "place", subject_id: "p-keep", source: "explicit" },
+      { user_id: userA, event_type: "followed",    occurred_at: new Date().toISOString(), subject_type: "user",  subject_id: "u-gone", source: "explicit" },
+    ]);
+
+    const { data: reset } = await sc.rpc("memory_reset_for_user", { p_user_id: userA, p_memory_types: ["social"] });
+    const row: any = Array.isArray(reset) ? reset[0] : reset;
+    assert.equal(row?.events_cleared, 1,
+      "resetting 'social' must clear exactly the one social (subject_type=user) event");
+
+    const { data: left } = await sc.from("memory_events").select("subject_type").eq("user_id", userA);
+    const kinds = (left ?? []).map((r: any) => r.subject_type).sort();
+    assert.deepEqual(kinds, ["city", "place"],
+      "the city and place ledger events must SURVIVE a social-only reset");
+  });
+
+  it("a full reset still clears the entire ledger", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    await sc.from("memory_events").insert([
+      { user_id: userA, event_type: "visited", occurred_at: new Date().toISOString(), subject_type: "city", subject_id: "Porto", source: "inferred" },
+    ]);
+    await sc.rpc("memory_reset_for_user", { p_user_id: userA, p_memory_types: null });
+    const { data: left } = await sc.from("memory_events").select("id").eq("user_id", userA);
+    assert.equal((left ?? []).length, 0, "a full reset means everything");
+  });
+
   it("erasure purges everything for the user, is idempotent, and spares other users", async (t) => {
     if (!CREDS) return t.skip("credentials absent");
     await seed(userA, { subject_id: "Granada", content: "A visited Granada" });
