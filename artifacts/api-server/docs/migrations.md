@@ -306,3 +306,12 @@ See [intelligence-gathering-buildout.md](./intelligence-gathering-buildout.md). 
   - Least-privilege (2182/2184 rule): `EXECUTE` revoked from `PUBLIC`/`anon`/`authenticated`, granted to `service_role` only; `search_path` pinned.
   - **Verified on CI (functional, rolled back):** seeded active Da Nang + Rome (with `already_known`), an expired ephemeral intent, an expired durable place, and an `already_known` on Tokyo (no projection) → `memory_retrieve(compass)`=**2**, `memory_retrieve(discovery)`=**1** (Rome hidden); `is_new_to_user` Da Nang=**false**, Paris=**true**, Tokyo=**false**; `memory_sweep_expired`=**2** (ephemeral deleted, durable→`decayed`). `anon`/`authenticated` EXECUTE=false.
   - **REVERSAL** at file tail. Next: the scheduler that calls `project_all_memory()` + `memory_sweep_expired()` on a cadence, and route wiring for retrieval.
+
+## 2026-08-28 — Memory projector: full §5 taxonomy (2186)
+
+- `2186_memory_projector_taxonomy.sql` — Replaces `project_user_memory` (2184, episodic-only) with the full spec §5 taxonomy, all from canonical sources; widens `project_all_memory` to every user with any signal. **Applied to CI 2026-08-28. Prod press pending owner.**
+  - **EPISODIC** ← `compass_graph_edges` person→city (as 2184). **SEMANTIC** ← `compass_user_preferences.interests`/`travel_styles` (explicit, one projection per value). **SOCIAL** ← `user_follows`, **excluding blocked pairs** (§19), marked `sensitivity='sensitive'`. **PLACE** ← `saved_places`.
+  - **§19 enforced structurally:** social memory omits any followee the user has blocked or been blocked by (`NOT EXISTS` over `blocks`), so a blocked relationship can never leak into a memory-derived recommendation.
+  - Idempotent, flag-gated, `service_role`-only — unchanged from 2184. `project_all_memory` now unions persons from the graph + follows + saved_places + preferences.
+  - **Verified on CI (functional, rolled back), full FK chain seeded (auth.users→profiles→discovery_places):** a user with a city visit, interests `{nightlife,food}` + style `{budget}`, follows of A **and a blocked B**, and one saved place → `total=6` (episodic 1, semantic 3, social 1, place 1); **B excluded from social** (`blocked_in_social=0`); social `sensitivity=sensitive`; 3 events; **idempotent** (re-run stays 6 rows). 
+  - **REVERSAL** re-applies 2184's bodies.
