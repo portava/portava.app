@@ -140,5 +140,6 @@
   "src/test/tripCrewMap.test.ts",
   "src/test/tripNotFound.test.ts",
   "src/test/tripPrivacy.test.ts",
-  "src/test/trustAdminAuditInsertSchemaDrift.test.ts"
+  "src/test/trustAdminAuditInsertSchemaDrift.test.ts",
+  "src/test/memoryLifecycleLive.test.ts"
 ]
