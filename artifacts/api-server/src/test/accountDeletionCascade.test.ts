@@ -33,6 +33,8 @@ function makeClient(opts: {
   fail?: Record<string, string>;
   authDeleteError?: string;
   storageError?: string;
+  /** RPC function name to fail, e.g. "erase_memory_for_user" (fatal step). */
+  rpcError?: string;
 } = {}) {
   // A post by default. Since owner ruling 4 (2026-08-23) the worker SELECTS the
   // user's posts and decides per post — tombstone if others have contributed,
@@ -88,6 +90,25 @@ function makeClient(opts: {
     _storageRemoved: storageRemoved,
     _authDeleted: authDeleted,
     from: (t: string) => builder(t),
+    /**
+     * RPC steps of the cascade (SECURITY DEFINER erasures that cannot be
+     * expressed as a PostgREST .delete()):
+     *   erase_intel_for_actor   — IG-02 append-only contributions
+     *   erase_memory_for_user   — derived memory (2190)
+     *
+     * This mock previously had no `rpc`, so BOTH steps failed with
+     * "sc.rpc is not a function". That went unnoticed because
+     * erase_intel_contributions is non-fatal — it recorded a warning and the run
+     * continued, so the suite stayed green while the step never actually ran.
+     * erase_derived_memory is FATAL by design (leaving derived personal memory
+     * behind after a deletion request is a privacy failure), which surfaced the
+     * gap. Recorded in `ops` so tests can assert these steps were reached.
+     */
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      ops.push({ table: `rpc:${fn}`, op: "rpc", args } as never);
+      const failing = opts.rpcError && opts.rpcError === fn;
+      return failing ? { data: null, error: { message: opts.rpcError } } : { data: null, error: null };
+    },
     storage: {
       from: (bucket: string) => ({
         remove: async (paths: string[]) => {
@@ -243,6 +264,41 @@ describe("executeAccountDeletion — full cascade", () => {
     assert.ok(out.warnings.some((w) => w.includes("storage objects")));
     assert.ok(opFor(c, "posts", "delete"), "content deletion proceeds regardless");
     assert.deepEqual(c._authDeleted, [USER_ID]);
+  });
+
+  it("purges derived memory explicitly — not via a foreign-key cascade", async () => {
+    // Production's public.profiles has NO foreign key to auth.users, and this
+    // service keeps an ANONYMISED TOMBSTONE profile rather than deleting the row,
+    // so a profiles-keyed cascade can never fire there. Migration 2187 assumed it
+    // would; 2190 replaced that with this explicit step. Assert the step runs.
+    const c = makeClient();
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+
+    assert.equal(out.ok, true);
+    const step = out.steps.find((s) => s.step === "erase_derived_memory");
+    assert.ok(step, "the cascade must include an explicit derived-memory purge");
+    assert.equal(step!.ok, true);
+    assert.ok(
+      (c._ops as any[]).some((o) => o.table === "rpc:erase_memory_for_user"),
+      "erase_memory_for_user must actually be invoked",
+    );
+  });
+
+  it("ABORTS the deletion when the memory purge fails — never silently leaves memory behind", async () => {
+    // The privacy guarantee: a deletion request that cannot purge derived memory
+    // must fail loudly and stay retryable, rather than reporting success with the
+    // user's remembered places, people and inferred preferences still stored.
+    const c = makeClient({ rpcError: "erase_memory_for_user" });
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+
+    assert.equal(out.ok, false, "a failed memory purge must fail the run");
+    const step = out.steps.find((s) => s.step === "erase_derived_memory");
+    assert.ok(step && step.ok === false, "the failing step must be recorded");
+    assert.deepEqual(c._authDeleted, [], "the auth user must NOT be deleted after a failed purge");
+    assert.ok(
+      out.warnings.some((w) => w.toLowerCase().includes("memory")),
+      "the caller must be told memory may remain",
+    );
   });
 
   it("contentOnly leaves the tombstone and the auth user alone", async () => {
