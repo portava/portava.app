@@ -320,6 +320,38 @@ const ALLOWLIST = new Set([
   // If a direct-from-client read of post-media is ever required, restore the
   // policy from 2089's DOWN block and delete this entry in the same change.
   "policy:objects.post_media_storage_public_read",
+  //
+  // ── RELOCATED TO `authz` (2026-08-28, migration 2182) ───────────────────────
+  //
+  // is_blocked(uuid,uuid) is declared by 0015_blocks.sql in `public` and MOVED
+  // to the `authz` schema by 2182_close_authz_rpc_oracle.sql
+  // (ALTER FUNCTION … SET SCHEMA). This auditor asks "does every object a
+  // migration claims exist live", keyed by function NAME in the `public`
+  // schema — so after 2182 it reports `public.is_blocked` missing. It is not
+  // missing; it is `authz.is_blocked`, with the same OID/ACL/body, and all four
+  // RLS policies (loc_select, messages_hide_blocked_sender, highlights_select,
+  // highlights_select_active) still bind to it by OID. Without this entry 2182
+  // makes schema-drift permanently red — against production too once pressed —
+  // and a permanently red check is one discarded exit code away from being no
+  // check at all.
+  //
+  // AN ALLOWLIST ENTRY MEANS THE `public` OBJECT DOES NOT EXIST, and here that
+  // absence IS the fix: the anonymous PostgREST RPC oracle (POST /rpc/is_blocked
+  // with a caller-supplied identity) is closed precisely BY the function no
+  // longer living in an exposed schema. The purpose the relocation serves is the
+  // reason `public.is_blocked` is gone.
+  //
+  // Scope note: 2182 also relocated in_accepted_circle and can_see_location, but
+  // 0015 is the only file in THIS auditor's chain (api-server src/migrations,
+  // + the archived legacy chain) that declares any of the three, and it declares
+  // only is_blocked — so this is the sole entry the move requires here. The other
+  // two are declared in migration roots this auditor does not scan
+  // (migrations/, travel-buddy-standalone/migrations/, supabase/migrations/).
+  //
+  // If is_blocked is ever collapsed into viewer_is_blocked (the deduplication
+  // 2182's header flags as future cleanup) and 0015's declaration is retired,
+  // delete this entry in the same change.
+  "function:is_blocked",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

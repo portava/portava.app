@@ -35,6 +35,15 @@
  * Probed here (real red/green differential):
  *   is_blocked, in_accepted_circle, can_see_post, can_see_trip
  *
+ * SCHEMA RESOLUTION (2182). Migration 2182 moved is_blocked, in_accepted_circle
+ * and can_see_location out of `public` into `authz` to close the anonymous
+ * PostgREST RPC oracle. The Management API connects as postgres, so this probe
+ * can still call them there — but a hard-coded `public.` prefix would ERROR on
+ * a migrated database and a hard-coded `authz.` prefix would ERROR on one not
+ * yet migrated. The probe therefore resolves each function's schema from
+ * pg_proc at runtime (public or authz only) and fails loudly if a function is
+ * found in neither or in both. Do not hard-code the prefix back.
+ *
  * NOT probed (auth.uid()-gated, no reachable public branch):
  *   is_accepted_trip_member, can_post_to_trip, shares_trip_with,
  *   viewer_is_blocked, can_see_postcard, can_see_location,
@@ -76,7 +85,7 @@ const PROBES = [
     shadow: `
       CREATE TABLE ${PROBE_SCHEMA}.blocks (blocker_id uuid, blocked_id uuid);
       INSERT INTO ${PROBE_SCHEMA}.blocks VALUES ('${ID_A}', '${ID_B}');`,
-    call: `public.is_blocked('${ID_A}'::uuid, '${ID_B}'::uuid)`,
+    call: `__FN_SCHEMA__.is_blocked('${ID_A}'::uuid, '${ID_B}'::uuid)`,
   },
   {
     fn: "in_accepted_circle",
@@ -89,7 +98,7 @@ const PROBES = [
       INSERT INTO ${PROBE_SCHEMA}.circle_memberships VALUES
         ('${ID_A}', '${ID_B}', 'accepted'),
         ('${ID_B}', '${ID_A}', 'accepted');`,
-    call: `public.in_accepted_circle('${ID_A}'::uuid, '${ID_B}'::uuid)`,
+    call: `__FN_SCHEMA__.in_accepted_circle('${ID_A}'::uuid, '${ID_B}'::uuid)`,
   },
   {
     fn: "can_see_post",
@@ -103,7 +112,7 @@ const PROBES = [
       INSERT INTO ${PROBE_SCHEMA}.posts VALUES
         ('${ID_A}', '${ID_B}', 'active'::public.post_status,
          NULL, 'public'::public.post_visibility, NULL);`,
-    call: `public.can_see_post('${ID_A}'::uuid)`,
+    call: `__FN_SCHEMA__.can_see_post('${ID_A}'::uuid)`,
   },
   {
     fn: "can_see_trip",
@@ -116,7 +125,7 @@ const PROBES = [
         id uuid, owner_id uuid, visibility public.trip_visibility);
       INSERT INTO ${PROBE_SCHEMA}.trips VALUES
         ('${ID_A}', '${ID_B}', 'public'::public.trip_visibility);`,
-    call: `public.can_see_trip('${ID_A}'::uuid)`,
+    call: `__FN_SCHEMA__.can_see_trip('${ID_A}'::uuid)`,
   },
 ];
 
@@ -153,6 +162,27 @@ async function readQuery(q) {
   return JSON.parse(r.text);
 }
 
+/**
+ * Resolve which schema (public or authz) a probed function lives in. 2182 moved
+ * is_blocked / in_accepted_circle to authz; can_see_post / can_see_trip stay in
+ * public. Resolving live keeps this probe correct on both sides of that
+ * migration — and refuses to guess if the function is missing or duplicated.
+ */
+async function resolveFnSchema(fn) {
+  const rows = await readQuery(
+    `SELECT n.nspname AS s FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE p.proname = '${fn}' AND n.nspname IN ('public','authz')`,
+  );
+  if (rows.length !== 1) {
+    die(
+      EXIT_HAZARD,
+      `${fn}: found in ${rows.length} of (public, authz) — expected exactly one. ` +
+        "Refusing to guess which copy is the live RLS predicate.",
+    );
+  }
+  return rows[0].s;
+}
+
 /** The probe ids must not collide with real data, or the differential is meaningless. */
 async function assertAbsent(p) {
   const rows = await readQuery(
@@ -168,7 +198,8 @@ async function assertAbsent(p) {
   }
 }
 
-async function runProbe(p) {
+async function runProbe(p, fnSchema) {
+  const call = p.call.replace("__FN_SCHEMA__", fnSchema);
   const sql = `
 DO $probe$
 DECLARE
@@ -179,7 +210,7 @@ BEGIN
   -- prefer the attacker-controlled schema
   PERFORM set_config('search_path', '${PROBE_SCHEMA}, public', true);
 
-  SELECT ${p.call} INTO v_res;
+  SELECT ${call} INTO v_res;
 
   -- UNCONDITIONAL ABORT. Reached on every path, so the schema, the shadow
   -- tables and the search_path change can never persist.
@@ -217,11 +248,12 @@ async function main() {
 
   for (const p of PROBES) {
     await assertAbsent(p);
-    const { verdict, detail } = await runProbe(p);
+    const fnSchema = await resolveFnSchema(p.fn);
+    const { verdict, detail } = await runProbe(p, fnSchema);
     if (verdict === "CLOSED") {
-      console.log(`  ✔  ${p.fn}: HAZARD CLOSED — ${detail} (shadowed ${p.reads})`);
+      console.log(`  ✔  ${fnSchema}.${p.fn}: HAZARD CLOSED — ${detail} (shadowed ${p.reads})`);
     } else if (verdict === "HAZARD_OPEN") {
-      console.error(`  ✘  ${p.fn}: HAZARD OPEN — ${detail} (shadowed ${p.reads})`);
+      console.error(`  ✘  ${fnSchema}.${p.fn}: HAZARD OPEN — ${detail} (shadowed ${p.reads})`);
       open++;
     } else {
       console.error(`  ✘  ${p.fn}: UNEVALUATED — ${detail}`);
