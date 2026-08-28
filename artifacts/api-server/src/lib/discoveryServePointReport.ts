@@ -62,6 +62,7 @@ export const SERVE_POINT_LABEL: Readonly<Record<number, string>> = {
   [DiscoveryServePoint.FEED]:                   "Feed (GET /discovery/feed)",
   [DiscoveryServePoint.SEARCH]:                 "Search (GET /discovery/search)",
   [DiscoveryServePoint.SUGGEST]:                "Suggest (GET /discovery/suggest)",
+  [DiscoveryServePoint.COMMUNITY]:              "Community (GET /discovery/community)",
 };
 
 /** Every serve point the writer can emit, ascending. */

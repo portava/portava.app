@@ -133,6 +133,77 @@ export interface PdeViewer {
   city: string | null;
   followedIds: Set<string>;
   interestTags: Set<string>;
+  /**
+   * Category → affinity in [0,1], NORMALISED (see normaliseCategoryAffinities).
+   * Undefined when the viewer has too little signal to have a preference yet;
+   * portavaRank then contributes 0 for this feature rather than guessing.
+   */
+  categoryAffinities?: Record<string, number>;
+}
+
+/**
+ * Minimum total observations before ANY category affinity is applied.
+ *
+ * A single tap is not a preference. Below this floor the whole map is dropped
+ * rather than scaled, because normalising one observation would hand it 1.0 —
+ * the maximum possible affinity — on the strength of one action. This mirrors
+ * the memory system's inferred-preference floor (migration 2195), which exists
+ * for the same reason: acting on a single tap manufactures a trait the user
+ * never expressed.
+ */
+const MIN_TOTAL_CATEGORY_OBSERVATIONS = 3;
+
+/**
+ * Turn `compass_user_preferences.category_weights` into the 0–1 affinities
+ * portavaRank expects.
+ *
+ * WHY NORMALISATION IS THE WHOLE POINT
+ * ------------------------------------
+ * The stored value is a RAW OBSERVATION COUNT — production holds
+ * `{"food": 4, "post": 1, "places": 10}`. portavaRank clamps with
+ * `Math.min(1, Math.max(0, affinity))` (portavaRank.ts:277), so feeding raw
+ * counts in would send every category with a count ≥ 1 to exactly 1.0. Every
+ * candidate would then receive the identical `categoryAffinity` term, which
+ * adds a constant to every score and therefore changes NO ordering at all —
+ * reproducing the exact defect this change exists to fix, while looking like
+ * the feature had been switched on.
+ *
+ * Dividing by the viewer's own maximum preserves the ordering that the counts
+ * actually express (places 10 → 1.0, food 4 → 0.4, post 1 → 0.1) and lands in
+ * the documented range. It is relative to the viewer, not global, so a heavy
+ * user and a light user are treated alike.
+ *
+ * Keys are stored under BOTH their original and lowercased spelling: the
+ * lookup at portavaRank.ts:276 uses `c.category` verbatim, and the candidate
+ * category comes from place data whose casing this module does not control.
+ */
+export function normaliseCategoryAffinities(
+  raw: unknown,
+): Record<string, number> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+
+  const counts: Array<[string, number]> = [];
+  let total = 0;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const n = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(n) || n <= 0) continue;   // absent/'0'/junk contribute nothing
+    if (!key.trim()) continue;
+    counts.push([key, n]);
+    total += n;
+  }
+
+  if (counts.length === 0 || total < MIN_TOTAL_CATEGORY_OBSERVATIONS) return undefined;
+
+  const max = Math.max(...counts.map(([, n]) => n));
+  if (!(max > 0)) return undefined;
+
+  const out: Record<string, number> = {};
+  for (const [key, n] of counts) {
+    const affinity = n / max;
+    out[key] = affinity;
+    out[key.toLowerCase()] = affinity;
+  }
+  return out;
 }
 
 export interface PdeRankOptions {
@@ -258,19 +329,24 @@ export async function loadPdeViewer(
   }
 
   let interestTags = new Set<string>();
+  let categoryAffinities: Record<string, number> | undefined;
   if (sc) {
     try {
+      // category_weights rides the SAME select as interests — the learned
+      // preference signal costs no extra round trip on a path that, under
+      // D5=B, runs on every request rather than on the rare cache miss.
       const { data: prefRow } = await sc
         .from("compass_user_preferences")
-        .select("interests")
+        .select("interests, category_weights")
         .eq("user_id", userId)
         .maybeSingle();
       const interests: string[] = (prefRow as any)?.interests ?? [];
       interestTags = new Set(interests.map((t: string) => t.toLowerCase()));
+      categoryAffinities = normaliseCategoryAffinities((prefRow as any)?.category_weights);
     } catch { /* non-fatal */ }
   }
 
-  return { userId, city, followedIds, interestTags };
+  return { userId, city, followedIds, interestTags, categoryAffinities };
 }
 
 type PlaceCandidate<T extends PdePlace> = RankCandidate & { __place: T };
@@ -303,6 +379,10 @@ export async function rankForViewer<T extends PdePlace>(
     city:         viewer.city ?? undefined,
     followedIds:  viewer.followedIds,
     interestTags: viewer.interestTags,
+    // Was omitted, so f.categoryAffinity (weight 0.4) was a constant 0 for every
+    // candidate on every request — the learned-preference input the ranker
+    // documents but was never handed.
+    categoryAffinities: viewer.categoryAffinities,
   };
 
   // Map place → RankCandidate.
