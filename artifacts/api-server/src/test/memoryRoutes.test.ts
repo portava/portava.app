@@ -206,6 +206,26 @@ describe("POST /api/compass/me/memory/feedback", () => {
     assert.equal(inserts[0].row.subject_id, "Lisbon");
   });
 
+  it("rejects a projection id the caller does not own (no cross-user suppression)", async () => {
+    // The ownership lookup is scoped to the caller, so another user's projection
+    // resolves to nothing. Guessing an id must not hide someone else's memory.
+    const client = makeClient();
+    (client as any).from = (table: string) => ({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+        }),
+      }),
+      insert: async (row: any) => { inserts.push({ table, row }); return { data: null, error: null }; },
+    });
+    _setTestClient(client, true as any);
+    const res = await api("POST", "/compass/me/memory/feedback", {
+      kind: "hide", projectionId: "11111111-2222-3333-4444-555555555555",
+    });
+    assert.equal(res.status, 404, "a foreign projection id must not be actionable");
+    assert.deepEqual(inserts, [], "no feedback row may be written for a foreign projection");
+  });
+
   it("is idempotent — a duplicate signal (23505) still reports success", async () => {
     _setTestClient(makeClient({ insertError: { code: "23505", message: "duplicate key" } }), true as any);
     const res = await api("POST", "/compass/me/memory/feedback", {

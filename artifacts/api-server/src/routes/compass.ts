@@ -2198,12 +2198,34 @@ router.post("/compass/me/memory/feedback", async (req, res) => {
   }
   const { kind, projectionId, subjectType, subjectId } = parsed.data;
   try {
+    // Denormalise the projection's durable subject key onto the feedback row, and
+    // in doing so ENFORCE OWNERSHIP: the lookup is scoped to the caller, so a
+    // guessed or borrowed projection id belonging to another user resolves to
+    // nothing and is rejected rather than silently suppressing their memory.
+    let memoryType: string | null = null;
+    let resolvedSubjectType = subjectType ?? null;
+    let resolvedSubjectId = subjectId ?? null;
+    if (projectionId) {
+      const { data: owned, error: lookupErr } = await sc
+        .from("memory_projections")
+        .select("id, memory_type, subject_type, subject_id")
+        .eq("id", projectionId)
+        .eq("user_id", auth.user.id)
+        .maybeSingle();
+      if (lookupErr) throw lookupErr;
+      if (!owned) { sendError(res, "not_found", "Memory not found"); return; }
+      memoryType = (owned as { memory_type?: string }).memory_type ?? null;
+      resolvedSubjectType = (owned as { subject_type?: string | null }).subject_type ?? resolvedSubjectType;
+      resolvedSubjectId = (owned as { subject_id?: string | null }).subject_id ?? resolvedSubjectId;
+    }
+
     const { error } = await sc.from("memory_feedback").insert({
       user_id: auth.user.id,
       kind,
       projection_id: projectionId ?? null,
-      subject_type: subjectType ?? null,
-      subject_id: subjectId ?? null,
+      memory_type: memoryType,
+      subject_type: resolvedSubjectType,
+      subject_id: resolvedSubjectId,
     });
     // The dedupe unique index makes a repeat signal idempotent — treat as success.
     if (error && (error as { code?: string }).code !== "23505") throw error;
