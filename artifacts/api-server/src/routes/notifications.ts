@@ -282,8 +282,30 @@ router.post('/me/devices', async (req, res) => {
     (req as any).log?.warn({ err: cleanupErr, userId: user.id }, 'devices: stale-token cleanup failed — old tokens may accumulate');
   }
 
+  // Claim this push token EXCLUSIVELY. An Expo/APNs token is tied to the device
+  // + app install, not the account, so on a shared or re-logged-in device a
+  // prior user's row for the SAME token survives — and a push aimed at that user
+  // is then delivered to whoever holds the device now. Remove every OTHER user's
+  // row for this token so a token maps to at most one user (the latest to claim).
+  const { error: claimErr } = await sc
+    .from('notification_devices')
+    .delete()
+    .eq('push_token', parsed.data.pushToken)
+    .neq('user_id', user.id);
+  if (claimErr) {
+    (req as any).log?.warn({ err: claimErr, userId: user.id }, 'devices: exclusive-token claim failed — token may deliver to the wrong user');
+  }
+
   // Backfill legacy expo_push_token on profiles (keep for SafeReturn compat)
   if (parsed.data.platform === 'expo') {
+    // Detach this token from any OTHER account that still carries it on the
+    // legacy profile / buddy fields — the same cross-user delivery hazard as
+    // notification_devices, on the SafeReturn / rent-a-buddy push paths.
+    await sc.from('profiles').update({ expo_push_token: null })
+      .eq('expo_push_token', parsed.data.pushToken).neq('id', user.id);
+    await sc.from('rent_buddy_profiles').update({ expo_push_token: null })
+      .eq('expo_push_token', parsed.data.pushToken).neq('user_id', user.id);
+
     await sc.from('profiles').update({ expo_push_token: parsed.data.pushToken }).eq('id', user.id);
     // Also store on the buddy profile (if the user is a Buddy) so
     // rent-a-buddy request alerts can be delivered to their device.
