@@ -77,6 +77,27 @@ END
 $fn$;
 
 -- ── memory_is_new_to_user(user, subject) → boolean (§7 New-to-Me) ─────────────
+--
+-- *** STATUS: BUILT, DELIBERATELY NOT WIRED (deferred 2026-08-28). ***
+-- This function has ZERO callers, and that is a recorded decision, not an
+-- oversight. Do not treat §7 New-to-Me as a delivered feature.
+--
+-- WHY IT IS NOT WIRED: its intended consumer is the Discovery serve path (§13),
+-- but Discovery serves candidates in a DIFFERENT ID SPACE from the one place
+-- memory is keyed in. Place memory keys on discovery_places.id (a uuid, via
+-- saved_places); the Discovery serve path emits prefixed ids ("db/..." for
+-- database places, plus OSM-sourced ids). Calling this function with a Discovery
+-- candidate id would therefore match nothing and report EVERY place as "new to
+-- me" — a silent, confident wrong answer on a user-facing surface, which is
+-- worse than the feature being absent.
+--
+-- WHAT WIRING IT REQUIRES (the actual next slice, not a code change here):
+--   1. an id bridge between the Discovery serve id space and discovery_places.id
+--      (the same demand-side bridge IG-08 needed: saved_places -> discovery_places
+--      -> places), and
+--   2. a decision about where novelty applies — Discovery serve, Compass "show me
+--      something new", or both.
+-- Until (1) exists, this stays unwired on purpose.
 -- Personalized novelty: a subject is "new to me" when the user has no ACTIVE
 -- memory of it AND has not marked it already_known / not_interested. A briefly
 -- seen impression does not count — only a projected memory or explicit feedback

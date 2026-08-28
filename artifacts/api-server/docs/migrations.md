@@ -356,3 +356,11 @@ An audit of 2183-2189 found four blocking defects and two important ones sharing
 **Verified on CI (functional, all rolled back).** Proof A: `projected=5 retracted=0` on first pass (watermark correct), episodic deduped to **1** row across `Lisbon`+`lisbon`, real content, semantic `valid_to` set, retrieval returns an id. Proof B: hide via the returned id removes the row (`2 → 1`); a forget **survived** deleting the projection and a full re-projection (`social = 0`); another user's identical memory untouched. Proof C/D: block after projection → social `1 → 0` (`retracted=1`); unsave → place `1 → 0`; semantic forced past `valid_to` → `swept=1`, retrieval `1 → 0`; `erase_memory_for_user` → `left=0`, rerun deletes `0` (idempotent), bystander rows untouched.
 
 **Also corrected:** 2183's grant comment claimed "no anon/authenticated grant", which was **false** — Supabase default privileges do grant those roles table-level access. RLS deny-default (enabled, zero policies) is what actually protects the data; the comment now says so, and flags that adding any policy would make those grants live.
+
+### §7 New-to-Me — BUILT BUT DEFERRED (recorded 2026-08-28)
+
+`memory_is_new_to_user(user, subject_type, subject_id)` (migration 2185) is **built, tested at the SQL level, and deliberately NOT wired to any consumer**. It has zero callers. **Do not describe §7 New-to-Me as delivered.**
+
+**Why deferred:** its intended consumer is the Discovery serve path (§13), which emits candidates in a **different id space** from the one place memory is keyed in — place memory keys on `discovery_places.id` (uuid, via `saved_places`), while Discovery serves prefixed ids (`db/…`, plus OSM ids). Calling the function with a Discovery candidate id would match nothing and report **every** place as "new to me": a silent, confident wrong answer on a user-facing surface, which is worse than the feature being absent.
+
+**What wiring it actually requires** (the next slice, not a patch): (1) an id bridge between the Discovery serve id space and `discovery_places.id` — the same demand-side bridge IG-08 needed (`saved_places → discovery_places → places`); and (2) a product decision on where novelty applies (Discovery serve, Compass "show me something new", or both). Until (1) exists, it stays unwired on purpose.
