@@ -45,6 +45,7 @@ import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurge
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
+import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -127,6 +128,10 @@ app.listen(port, (err) => {
   startIntelRetentionScheduler();
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
+  // Memory + Experience Intelligence projector (spec §22): projects canonical
+  // facts + the Experience Graph into memory_projections and sweeps expired
+  // memory. Flag-gated on memory_projection, fail-closed; a no-op until enabled.
+  startMemoryProjectionScheduler();
   // IG-08 coverage producer: assembles (zone, claim-family) gap snapshots and
   // (when intel_missions is also on) generates mission candidates. Flag-gated on
   // intel_coverage, fail-closed; a no-op until enabled.
