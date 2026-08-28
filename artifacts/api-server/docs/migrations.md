@@ -324,3 +324,10 @@ See [intelligence-gathering-buildout.md](./intelligence-gathering-buildout.md). 
   - **Design note:** this exposed that 2183's original append-only guard (the shared `intel_append_only()`) blocked the cascade DELETE. 2183 was corrected in the same PR to a memory-specific `trg_memory_events_no_update` (blocks UPDATE only); `memory_events` stays deletable for deletion + retention.
   - **Verified on CI (§23 certification, rolled back):** seed auth.users→profiles→memory (event+projection+feedback) → `DELETE FROM auth.users` → **profile=0, events=0, projections=0, feedback=0** (two-hop cascade purged everything); UPDATE on memory_events still blocked (`update_blocked=true`).
   - **REVERSAL** at file tail.
+
+## 2026-08-28 — Memory Rediscovery (2188)
+
+- `2188_memory_rediscovery.sql` — Adds `memory_rediscover(user, city, limit)`, the Rediscovery surface (spec §8) the audit flagged as the one genuinely-thin piece. **Applied to CI 2026-08-28. Prod press pending owner.**
+  - On returning to a city, surfaces the user's standing memory that matters now: FIRST the "you were here before" episodic memory of that city (**case-insensitive** — the graph stores both `Lisbon` and `lisbon`), then durable place/social memory, each tagged with a `reason` (`been_here_before` / `you_saved` / `you_know`) so the surface can explain itself (§8). Hidden/forgotten/decayed memory and `already_known`/`not_interested` subjects are excluded. `service_role` only.
+  - **Verified on CI (functional, rolled back):** a user with episodic Lisbon (returned) + episodic Berlin + a saved place (hidden) + a follow → `memory_rediscover(uid,'lisbon')` returns **2** rows, Lisbon-episodic first with `reason=been_here_before` (matched lowercase), the hidden place excluded, the social memory present. Berlin (different city) excluded. `anon` cannot execute.
+  - **REVERSAL** at file tail.
