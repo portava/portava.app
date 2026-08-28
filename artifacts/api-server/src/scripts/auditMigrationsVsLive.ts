@@ -352,6 +352,28 @@ const ALLOWLIST = new Set([
   // 2182's header flags as future cleanup) and 0015's declaration is retired,
   // delete this entry in the same change.
   "function:is_blocked",
+  //
+  // ── DELIBERATELY NOT IN `public` (2026-08-28, migration 2198) ──────────────
+  //
+  // 2198 declares authz.is_thread_member(uuid,uuid) — the SECURITY DEFINER
+  // membership predicate that breaks the 42P17 recursion in mtm_select. This
+  // auditor drops the schema qualifier when parsing (see `qualIdent`) and asks
+  // only about `public` (the live side reads pg_proc joined to nspname='public'),
+  // so it reports this one missing. It is not missing; it is authz.
+  //
+  // The schema is the point, for exactly the reason the is_blocked entry above
+  // exists. A SECURITY DEFINER authorization predicate in `public` is a
+  // PostgREST oracle: POST /rpc/is_thread_member with a caller-supplied thread
+  // and user id answers "who is in which conversation" to anyone holding the
+  // publishable key. 2182 closed that class by moving three such functions OUT
+  // of public; creating a fourth in public would have reopened it under a new
+  // name. `authz` is not one of PostgREST's exposed schemas, so the EXECUTE
+  // grant `authenticated` needs (a policy expression is evaluated as the caller,
+  // so revoking it would break RLS rather than tighten it) is not an endpoint.
+  //
+  // If is_thread_member is ever moved into public, delete this entry in the same
+  // change — and expect the RPC oracle back with it.
+  "function:is_thread_member",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

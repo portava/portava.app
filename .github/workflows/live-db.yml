@@ -868,6 +868,13 @@ jobs:
           set -uo pipefail
           bash .github/scripts/run-live-suite.sh profile-verification-boundary artifacts/api-server @workspace/api-server test:profile-verification-boundary
 
+      - name: 'test:messaging-thread-isolation (messaging RLS thread isolation)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh messaging-thread-isolation artifacts/api-server @workspace/api-server test:messaging-thread-isolation
+
   # ───────────────────────────────────────────────────────────────────────────
   # THE VERDICT. A cancelled, skipped or failed job must not read as a pass.
   #
