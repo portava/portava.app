@@ -410,3 +410,22 @@ Closes the remaining **important** findings from the completeness audit (the fou
   §5.2 defines semantic memory as "longer-lived patterns **inferred from repeated behavior, with confidence and evidence**". The projector read only *explicit* preferences (`interests`/`travel_styles`) at a flat hard-coded 0.90 — a stated preference with no evidence behind it — so the defining clause was unmet even though the `semantic` type existed. Portava already accumulates the signal (`compass_user_preferences.category_weights`, e.g. `{"food": 4, "places": 10}`); nothing new is collected.
   Three rules it follows: **(1) inferred is marked as inferred** — `subject_type='inferred_interest'` vs `'interest'`, never merged into one indistinguishable set, because §2.2's separation of observation from inference applies to preferences too; **(2) confidence is earned** — scales with observation count and is capped at 0.85, *below* explicit's 0.90, so an inference never outranks a statement however much behaviour supports it; **(3) the evidence is recorded** — provenance carries the observation count, so §16 is answerable exactly where it matters most. A 3-observation floor keeps a single tap from manufacturing a trait. Retention stays `derived_preference`, so an inference decays and is recomputed rather than hardening into a permanent trait (§18/§24). Folded into `project_user_memory_with_retraction`, so an inference whose behaviour stops loses support and is retracted like any other derived memory.
   **Verified on CI (rolled back):** `places` (10 obs) → 0.85, explicit `nightlife` → 0.90, **inferred < explicit**; a 1-observation category produced **zero** rows; evidence recorded as `{"observations": 10, "min_required": 3}`.
+
+### Migration deployability — the 2195 near-miss, and the guard added for it (2026-08-28)
+
+`2195` was **executed** (not written) alongside an ad-hoc verification block that reported its results by raising:
+
+```sql
+DO $proof$ BEGIN ... RAISE EXCEPTION 'PROOF_2195 | inferred=0.85 explicit=0.9 ...'; END $proof$;
+```
+
+Every assertion in it passed and it printed a perfect result. Because PostgreSQL aborts the whole transaction on any exception, the `CREATE FUNCTION` statements in the same batch were **rolled back** — the migration reported success and persisted nothing. `schema drift · migrations vs live` caught it (`missing function project_inferred_preferences`); the "proof" had actively concealed it.
+
+**The general failure class: an assertion that succeeds inside a transaction that then aborts proves nothing about what persisted.** Verification must be observed from a *separate* transaction.
+
+Three things were done, not one:
+1. **Re-applied 2195 cleanly** and confirmed persistence from a **new connection** — all 18 expected objects across 2192–2195 exist, and function definitions were fingerprinted against the migration source with `pg_get_functiondef` (an initial `prosrc` probe gave two false negatives because `RETURNS TABLE` column names live in the signature, not the body — the probe was wrong, not the functions).
+2. **Committed the verification** into `memoryLifecycleLive.test.ts`, which runs against the live CI database from its own connection — including an explicit *persistence* test that calls every expected function and fails on `42883` (undefined function), so this exact failure cannot recur silently.
+3. **Added `migrationDeployability.test.ts`** — no top-level `DO` block in any of the 354 migrations may contain an unconditional aborting `RAISE`. It deliberately does **not** flag `RAISE NOTICE` (2083 uses one for backfill progress; a notice does not abort) or trigger-function bodies (2183's append-only guard raises unconditionally *because it only runs on the forbidden operation*). Both exclusions are pinned by their own test cases, so the guard cannot drift into pushing people to weaken correct code.
+
+The migration **files** were always deployable — every `RAISE` in 2192–2195 is a guarded pre/postcondition, per house convention. The defect existed only in how I executed 2195.
