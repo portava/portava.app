@@ -360,6 +360,17 @@ const CLASSIFIED = [
       'is admin-only (routes/intelCoverage.ts); nothing client-facing; no cash.',
   },
   {
+    flag: 'memory_projection',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` runs the Memory + Experience Intelligence projection pipeline (lib/memoryProjectionScheduler.ts): ' +
+      'project_all_memory() projects canonical facts + the Experience Graph into memory_projections, and ' +
+      'memory_sweep_expired() applies retention. False-on-error is correct and is the design: runMemoryProjectionPass ' +
+      'returns {skipped:true, reason:"disabled"} and the SQL functions themselves self-check the flag and return 0, so ' +
+      'the scheduler is an inert no-op that writes nothing. The contract tables (2183) exist regardless; this gates ' +
+      'only the writers/readers. Nothing client-facing yet; no cash.',
+  },
+  {
     flag: 'intel_rewards',
     kind: 'CAPABILITY',
     reason:

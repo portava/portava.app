@@ -2099,6 +2099,93 @@ router.delete("/compass/me/memories/:memoryId", async (req, res) => {
   }
 });
 
+// ── Memory + Experience Intelligence — retrieval, Rediscovery, feedback ───────
+// Read side over the projected memory contract (migrations 2183-2188). All three
+// derive the caller from auth.uid() — the service_role SQL functions take the id
+// as a parameter, so the route MUST pass the authenticated user's own id and
+// never a client-supplied one. Empty until the memory_projection flag + projector
+// populate the tables.
+const MEMORY_SURFACES = ["compass", "discovery", "passport"] as const;
+
+// GET /api/compass/me/memory?surface=compass&limit=20 — ranked memories (§10)
+router.get("/compass/me/memory", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  const surfaceRaw = typeof req.query.surface === "string" ? req.query.surface : "compass";
+  const surface = (MEMORY_SURFACES as readonly string[]).includes(surfaceRaw) ? surfaceRaw : "compass";
+  const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query.limit ?? "20"), 10) || 20));
+  try {
+    const { data, error } = await sc.rpc("memory_retrieve", {
+      p_user_id: auth.user.id, p_surface: surface, p_limit: limit,
+    });
+    if (error) throw error;
+    res.json({ memories: data ?? [] });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/memory: retrieve failed");
+    sendError(res, "db_error", "Could not load memory", { exposeDetail: true });
+  }
+});
+
+// GET /api/compass/me/memory/rediscover?city=Lisbon&limit=20 — Rediscovery (§8)
+router.get("/compass/me/memory/rediscover", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  const city = typeof req.query.city === "string" ? req.query.city.trim() : "";
+  if (!city) { sendError(res, "invalid_payload", "city is required"); return; }
+  const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query.limit ?? "20"), 10) || 20));
+  try {
+    const { data, error } = await sc.rpc("memory_rediscover", {
+      p_user_id: auth.user.id, p_city: city, p_limit: limit,
+    });
+    if (error) throw error;
+    res.json({ rediscover: data ?? [] });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/memory/rediscover failed");
+    sendError(res, "db_error", "Could not load rediscovery", { exposeDetail: true });
+  }
+});
+
+// POST /api/compass/me/memory/feedback — hide/forget/already_known/... (§17)
+const memoryFeedbackSchema = z.object({
+  kind:         z.enum(["hide", "forget", "incorrect", "not_interested", "already_known"]),
+  projectionId: z.string().uuid().optional(),
+  subjectType:  z.string().min(1).max(40).optional(),
+  subjectId:    z.string().min(1).max(200).optional(),
+}).refine((b) => b.projectionId !== undefined || (b.subjectType !== undefined && b.subjectId !== undefined), {
+  message: "Provide projectionId, or both subjectType and subjectId",
+});
+router.post("/compass/me/memory/feedback", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  const parsed = memoryFeedbackSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+  const { kind, projectionId, subjectType, subjectId } = parsed.data;
+  try {
+    const { error } = await sc.from("memory_feedback").insert({
+      user_id: auth.user.id,
+      kind,
+      projection_id: projectionId ?? null,
+      subject_type: subjectType ?? null,
+      subject_id: subjectId ?? null,
+    });
+    // The dedupe unique index makes a repeat signal idempotent — treat as success.
+    if (error && (error as { code?: string }).code !== "23505") throw error;
+    res.status(201).json({ recorded: true });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/memory/feedback failed");
+    sendError(res, "db_error", "Could not record feedback", { exposeDetail: true });
+  }
+});
+
 // ── GET /api/compass/me/active-reward ─────────────────────────────────────────
 // Returns the authenticated user's active-user tier, earned badges, and a
 // plain-English visibility status message. Raw score is never exposed.
