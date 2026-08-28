@@ -330,7 +330,10 @@ BEGIN
     RAISE EXCEPTION 'POSTCONDITION FAILED: lifecycle functions missing';
   END IF;
   -- retrieval must now expose an id, or hide/forget stays unaddressable
-  IF pg_get_function_result((SELECT oid FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+  -- p.oid, NOT bare oid: pg_proc and pg_namespace BOTH have an oid column, so an
+  -- unqualified reference here raises 42702 "column reference oid is ambiguous"
+  -- and the whole migration aborts. Caught 2026-08-28 applying this file to prod.
+  IF pg_get_function_result((SELECT p.oid FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
       WHERE n.nspname='public' AND p.proname='memory_retrieve')) NOT LIKE 'TABLE(id uuid%' THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: memory_retrieve does not return an id';
   END IF;
@@ -343,7 +346,12 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
     WHERE n.nspname = 'public'
-      AND (p.proname LIKE 'memory\\_%' OR p.proname LIKE 'project\\_%memory%')
+      -- SINGLE backslash. With standard_conforming_strings on, 'memory\\_%' is the
+      -- literal text memory\\_% , and LIKE reads \\ as an escaped backslash — so the
+      -- pattern only matches names containing a literal backslash, i.e. NOTHING.
+      -- This guard was silently vacuous until 2026-08-28; it passed by matching
+      -- nothing, not by finding nothing wrong.
+      AND (p.proname LIKE 'memory\_%' OR p.proname LIKE 'project\_%memory%')
       AND (has_function_privilege('anon', p.oid, 'EXECUTE')
            OR has_function_privilege('authenticated', p.oid, 'EXECUTE'))
   ) THEN

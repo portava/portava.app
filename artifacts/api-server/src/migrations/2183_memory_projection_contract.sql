@@ -161,6 +161,19 @@ BEGIN
   RAISE EXCEPTION 'memory_events is append-only: UPDATE is not permitted. Corrections are new rows.';
 END
 $fn$;
+-- Supabase's ALTER DEFAULT PRIVILEGES grants EXECUTE on every NEW public function
+-- to anon AND authenticated. That applies to trigger functions too, which is easy
+-- to forget because they are never called by name. Impact here is small (the body
+-- only RAISEs, so a direct anon call just errors) but the grant contradicts this
+-- migration's own least-privilege stance, and a trigger function is still a
+-- PostgREST-reachable RPC. Revoke it like any other.
+--
+-- Found 2026-08-28 while replaying these migrations onto production: CI had this
+-- revoked by an ad-hoc fix that NO migration performed, so a clean replay produced
+-- a different — and wrong — state. The revoke belongs here, at the point of
+-- creation, or it does not really exist.
+REVOKE ALL ON FUNCTION public.memory_events_no_update() FROM PUBLIC, anon, authenticated;
+
 DROP TRIGGER IF EXISTS trg_memory_events_no_update ON public.memory_events;
 CREATE TRIGGER trg_memory_events_no_update
   BEFORE UPDATE ON public.memory_events
@@ -237,6 +250,10 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'memory_projection') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: memory_projection flag not seeded';
+  END IF;
+  IF has_function_privilege('anon', 'public.memory_events_no_update()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.memory_events_no_update()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: memory_events_no_update() is executable by anon/authenticated — Supabase default grants apply to trigger functions too; re-REVOKE it';
   END IF;
 END $$;
 
