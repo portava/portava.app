@@ -103,7 +103,6 @@ function makeItem(id: string, overrides: Partial<RankingInput> = {}): RankingInp
     lat:                 48.86,
     lng:                 2.36,
     distanceKm:          1.5,
-    isFollowedByViewer:  false,
     isDeleted:           false,
     isExpired:           false,
     isSuspended:         false,
@@ -414,7 +413,6 @@ describe("Following-feed — less-active followed account not buried", () => {
 
     const followedItem = makeItem("item-followed", {
       creatorId:          followedCreatorId,
-      isFollowedByViewer: true,
       tags:               ["adventure", "food"],
       city:               null,
       distanceKm:         null,
@@ -431,7 +429,6 @@ describe("Following-feed — less-active followed account not buried", () => {
 
     const unfollowedItem = makeItem("item-unfollowed", {
       creatorId:          "creator-high-activity",
-      isFollowedByViewer: false,
       tags:               ["luxury"],
       city:               null,
       distanceKm:         null,

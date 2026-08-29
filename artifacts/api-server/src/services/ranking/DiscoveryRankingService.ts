@@ -82,8 +82,14 @@ export interface RankingInput {
   lng: number | null;
   /** Pre-computed haversine distance from viewer in km. */
   distanceKm: number | null;
-  /** True when the viewer follows this creator. */
-  isFollowedByViewer: boolean;
+
+  // There is deliberately NO per-item `isFollowedByViewer` here. The follow
+  // relationship is read from `RankingViewerContext.followedCreatorIds`
+  // (calcRelationshipRelevance) — that is the live path, and the only one.
+  // A per-item copy of the same fact used to sit here: assigned by all three
+  // callers, read by nothing. It was removed rather than wired, because a
+  // second source for one fact is a divergence waiting to happen, and because
+  // its presence in test fixtures read as coverage of a signal no test touched.
 
   // ── Eligibility signals ──────────────────────────────────────────────────
   isDeleted: boolean;
@@ -647,6 +653,33 @@ function buildExplanationKey(
 // ── Main service ──────────────────────────────────────────────────────────────
 
 /**
+ * Per-call behaviour switches. Unlike RankingServiceTestOverrides these are
+ * production settings, chosen by the calling surface.
+ */
+export interface RankItemsOptions {
+  /**
+   * Emit the two UNCONDITIONAL per-candidate analytics rows — ITEM_ELIGIBLE and
+   * ITEM_SCORED. Default true; Compass and Pulse leave it alone.
+   *
+   * Set false only where the eligibility gate is a structural no-op — every
+   * eligibility input on that surface is a hardcoded constant, so ITEM_ELIGIBLE
+   * records a decision that could not have gone the other way, and ITEM_SCORED
+   * marks a score every candidate was always going to get.
+   *
+   * These rows are not free. They are two single-row PostgREST inserts per
+   * candidate — un-batched, un-awaited — over the FULL candidate set, not the
+   * served page. On Discovery that set reaches ~180 (60 OSM + 60 curated + 60
+   * canonical), i.e. ~360 fire-and-forget requests per ranked request.
+   *
+   * CONDITIONAL events are unaffected: ACTIVITY_BOOST_APPLIED,
+   * ACTIVITY_BOOST_CAPPED, FATIGUE_PENALTY_APPLIED and the debug samples fire
+   * only when something actually happened, so they carry information on every
+   * surface and stay on regardless of this switch.
+   */
+  emitPerCandidateAnalytics?: boolean;
+}
+
+/**
  * Injectable overrides for unit tests (never use in production).
  */
 export interface RankingServiceTestOverrides {
@@ -677,6 +710,7 @@ export interface RankingServiceTestOverrides {
  * @param viewer       Viewer context (preferences, location, social graph).
  * @param db           Optional Supabase client for DB lookups and debug logging.
  * @param _overrides   Test-only overrides.
+ * @param options      Per-call behaviour switches (see RankItemsOptions).
  */
 export async function rankItems(
   inputs:     RankingInput[],
@@ -684,8 +718,13 @@ export async function rankItems(
   viewer:     RankingViewerContext,
   db:         SupabaseClient | null = null,
   _overrides: RankingServiceTestOverrides = {},
+  options:    RankItemsOptions = {},
 ): Promise<RankingOutput[]> {
   if (inputs.length === 0) return [];
+
+  // Defaults to ON, so every existing caller keeps writing exactly what it
+  // wrote before and only a surface that opts out changes behaviour.
+  const emitPerCandidateAnalytics = options.emitPerCandidateAnalytics ?? true;
 
   // ── Step 1: load flags + config in parallel ───────────────────────────────
   const [flags, weights, penalties, activityParams] = await Promise.all([
@@ -765,11 +804,13 @@ export async function rankItems(
     }
 
     // Analytics: item passed eligibility gate (fire-and-forget)
-    writeRankAnalyticAsync(
-      db, RankingEvent.ITEM_ELIGIBLE,
-      input.itemId, input.itemType, surface,
-      viewer.viewerId, viewer.sessionId ?? null,
-    );
+    if (emitPerCandidateAnalytics) {
+      writeRankAnalyticAsync(
+        db, RankingEvent.ITEM_ELIGIBLE,
+        input.itemId, input.itemType, surface,
+        viewer.viewerId, viewer.sessionId ?? null,
+      );
+    }
 
     // Activity data for this item's creator
     const activityData = input.creatorId
@@ -864,11 +905,13 @@ export async function rankItems(
     outputs.push(output);
 
     // Analytics: item received a final score (fire-and-forget)
-    writeRankAnalyticAsync(
-      db, RankingEvent.ITEM_SCORED,
-      input.itemId, input.itemType, surface,
-      viewer.viewerId, viewer.sessionId ?? null,
-    );
+    if (emitPerCandidateAnalytics) {
+      writeRankAnalyticAsync(
+        db, RankingEvent.ITEM_SCORED,
+        input.itemId, input.itemType, surface,
+        viewer.viewerId, viewer.sessionId ?? null,
+      );
+    }
 
     // Analytics: activity boost events (fire-and-forget)
     if (!shadowMode && activityBoost > 0) {

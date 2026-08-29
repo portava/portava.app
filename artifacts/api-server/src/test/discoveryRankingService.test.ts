@@ -75,7 +75,6 @@ function makeItem(
     lat:                 48.86,
     lng:                 2.36,
     distanceKm:          1.5,
-    isFollowedByViewer:  false,
     isDeleted:           false,
     isExpired:           false,
     isSuspended:         false,
@@ -328,6 +327,84 @@ describe("eligibility gate", () => {
 
 // ── 3. High-relevance low-activity outranks low-relevance high-activity ────────
 
+describe("per-candidate analytics switch", () => {
+  /**
+   * ITEM_ELIGIBLE and ITEM_SCORED are two single-row, un-batched, un-awaited
+   * inserts for EVERY candidate — not every served item. A surface whose
+   * eligibility inputs are all constants (discovery) pays that for a decision
+   * with one possible outcome, so it opts out via RankItemsOptions.
+   *
+   * Two properties keep that safe, and both are easy to lose silently:
+   *   1. the default is ON, so no surface loses analytics by not knowing
+   *      the option exists (compass and pulse both rely on this), and
+   *   2. the switch governs ANALYTICS ONLY — it must never quietly become a
+   *      way to skip the eligibility gate itself.
+   */
+
+  /** Records rank_events inserts; reads resolve empty. */
+  function recordingDb() {
+    const events: string[] = [];
+    const client: any = {
+      from(table: string) {
+        const q: any = {
+          select: () => q, eq: () => q, in: () => q, gte: () => q,
+          order: () => q, limit: () => q,
+          maybeSingle: async () => ({ data: null, error: null }),
+          insert: (row: any) => {
+            if (table === "rank_events" && row?.event_type) events.push(row.event_type);
+            return { then: (ok: any) => Promise.resolve({ data: null, error: null }).then(ok) };
+          },
+          then: (ok: any) => Promise.resolve({ data: [], error: null }).then(ok),
+        };
+        return q;
+      },
+    };
+    return { client, events };
+  }
+
+  it("emits ITEM_ELIGIBLE and ITEM_SCORED by default — surfaces keep analytics without opting in", async () => {
+    const { client, events } = recordingDb();
+    await rankItems([makeItem("i-1"), makeItem("i-2")], "compass", makeViewer(), client, {
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: {},
+    });
+
+    assert.equal(events.filter((e) => e === "ranking_item_eligible").length, 2);
+    assert.equal(events.filter((e) => e === "ranking_item_scored").length, 2);
+  });
+
+  it("emits neither when the caller opts out", async () => {
+    const { client, events } = recordingDb();
+    await rankItems([makeItem("i-1"), makeItem("i-2")], "discovery", makeViewer(), client, {
+      activityScores: new Map(), fatiguedCreators: new Set(), flags: {},
+    }, { emitPerCandidateAnalytics: false });
+
+    assert.deepEqual(
+      events.filter((e) => e === "ranking_item_eligible" || e === "ranking_item_scored"),
+      [],
+    );
+  });
+
+  it("opting out does NOT disable the gate — it still rejects on a real input", async () => {
+    // The whole risk of the opt-out is that "we stopped writing about the gate"
+    // slides into "we stopped running the gate". A surface that later starts
+    // handing real eligibility values must still have them enforced, whether or
+    // not it has re-enabled the analytics rows.
+    const { client } = recordingDb();
+    const results = await rankItems(
+      [makeItem("blocked", { authorIsBlockedByViewer: true }), makeItem("fine")],
+      "discovery", makeViewer(), client,
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: {} },
+      { emitPerCandidateAnalytics: false },
+    );
+
+    const blocked = results.find((r) => r.itemId === "blocked")!;
+    assert.equal(blocked.eligibilityPassed, false);
+    assert.equal(blocked.eligibilityReason, "author_blocked_by_viewer");
+    assert.equal(blocked.finalScore, 0);
+    assert.equal(results.find((r) => r.itemId === "fine")!.eligibilityPassed, true);
+  });
+});
+
 describe("relevance vs activity tradeoff", () => {
   it("less-active creator with high relevance outranks active creator with low relevance", async () => {
     // High relevance: tags match viewer interests
@@ -483,7 +560,6 @@ describe("pulse surface — following mode", () => {
     // Followed item: low activity but has matching tags + relationship weight
     const followedItem = makeLowBaseItem("item-followed", {
       creatorId:          followedId,
-      isFollowedByViewer: true,
       tags:               ["adventure"],   // matches viewer travelStyles
       category:           "adventure",
     });
@@ -491,7 +567,6 @@ describe("pulse surface — following mode", () => {
     // High-activity item: NOT followed, no tag match → only gets activityBoost
     const highActivityItem = makeLowBaseItem("item-high-act", {
       creatorId:          "creator-not-followed",
-      isFollowedByViewer: false,
       tags:               [],              // no relevance match
       category:           null,
     });

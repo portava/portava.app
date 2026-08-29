@@ -65,7 +65,7 @@ const VIEWER = {
  * resolve empty; the point is the write ledger, not the data.
  */
 function recordingClient() {
-  const writes: { table: string; op: string }[] = [];
+  const writes: { table: string; op: string; row?: any }[] = [];
   const client: any = {
     from(table: string) {
       const q: any = {
@@ -78,7 +78,7 @@ function recordingClient() {
         limit:  () => q,
         maybeSingle: async () => ({ data: null, error: null }),
         single:      async () => ({ data: null, error: null }),
-        insert: (..._a: unknown[]) => { writes.push({ table, op: "insert" }); return q; },
+        insert: (...a: unknown[]) => { writes.push({ table, op: "insert", row: a[0] }); return q; },
         upsert: (..._a: unknown[]) => { writes.push({ table, op: "upsert" }); return q; },
         update: (..._a: unknown[]) => { writes.push({ table, op: "update" }); return q; },
         delete: (..._a: unknown[]) => { writes.push({ table, op: "delete" }); return q; },
@@ -169,21 +169,24 @@ describe("PDE ranking (D5=B)", () => {
     );
     assert.equal(shadow.writes.length, 0);
 
-    // The shadow run stops writes by two different mechanisms, and the counts
-    // show both are doing work:
-    //   - our own analytics emitters are SKIPPED outright (never called), and
-    //   - everything downstream — DRS's per-item rank_events rows — is
-    //     INTERCEPTED at the client, because we cannot ask it not to write.
-    // So suppressedWrites is the downstream half: positive, and strictly less
-    // than the serve path's total. If it were ever zero, the interceptor would
-    // have stopped being reached and only the skips would be protecting us.
-    assert.ok(
-      shadowRun.stages.suppressedWrites > 0,
-      "downstream writes must be intercepted, not merely absent",
-    );
-    assert.ok(
-      shadowRun.stages.suppressedWrites < serve.writes.length,
-      "the remainder is our own emitters, which are skipped rather than intercepted",
+    // This test used to also assert `suppressedWrites > 0` — that DRS's
+    // per-candidate rank_events rows were being INTERCEPTED at the client on a
+    // shadow run, rather than merely not happening. That count is now legitimately
+    // zero: discovery passes `emitPerCandidateAnalytics: false`, so those rows are
+    // never attempted on either path and there is nothing left downstream to
+    // intercept (see test S). Keeping the old assertion would have meant either a
+    // red suite or re-enabling the writes to satisfy a proxy measurement.
+    //
+    // Nothing is unguarded as a result. The interceptor's own behaviour — every
+    // write verb, rpc included — is proven directly by tests O/P/Q/R, and the
+    // property this test exists for is the line above: shadow writes nothing while
+    // the serve path does. `suppressedWrites` stays a truthful counter of what the
+    // interceptor caught, which today is nothing.
+    assert.equal(
+      shadowRun.stages.suppressedWrites, 0,
+      "with per-candidate analytics off there is no downstream write left to intercept — " +
+      "if this is non-zero, DRS grew an unconditional write and the shadow-path " +
+      "guarantee now depends on interception again",
     );
   });
 
@@ -229,6 +232,113 @@ describe("PDE ranking (D5=B)", () => {
     assert.equal(typeof out.stages.drs, "boolean");
     assert.equal(typeof out.stages.analytics, "boolean");
     assert.ok(out.timings.totalMs >= 0);
+  });
+});
+
+describe("the eligibility gate on discovery is a KNOWN no-op, and stays declared as one", () => {
+  /**
+   * WHY THIS SUITE EXISTS
+   * =====================
+   * checkItemEligibility short-circuits on thirteen inputs. discoveryPde hands
+   * it constants for all thirteen, so it cannot return anything but ELIGIBLE on
+   * this surface. That is a deliberate ruling, not an oversight — a discovery
+   * candidate is a place, not authored content: the author-side checks have no
+   * subject (creatorId is null, OSM rows have no author), and the content-state
+   * checks are already enforced by `.eq("status","active")` in both candidate
+   * queries, so re-deriving them here would encode a filter that already ran.
+   *
+   * The reason it went unnoticed for so long is that "returns ELIGIBLE" and
+   * "cannot return anything else" are indistinguishable from outside. So these
+   * tests do not assert the gate passes — that would pass either way. They pin
+   * the COUPLING that makes the ruling safe:
+   *
+   *     inputs are all constants  <=>  no per-candidate analytics are written
+   *
+   * Break either half and a test fails, forcing the other half to be revisited
+   * in the same change rather than a year later.
+   */
+
+  /** Every eligibility-relevant field of the RankingInput discovery builds. */
+  const ELIGIBILITY_FIELDS = [
+    "isDeleted", "isExpired", "isSuspended", "isModerated", "isPrivate",
+    "isAgeRestricted", "minAgeRequired",
+    "isGeoRestricted", "geoRestrictionCountries",
+    "authorIsBlockedByViewer", "authorBlocksViewer", "authorIsMutedByViewer",
+    "viewerHasReportedItem", "viewerHasHiddenItem", "viewerHasHiddenCreator",
+  ];
+
+  it("S. a served discovery run writes NO per-candidate rank_events rows", async () => {
+    const { client, writes } = recordingClient();
+    await rankForViewer(places(25), VIEWER, { sc: client, served: true });
+
+    const perCandidate = writes.filter(
+      (w) => w.table === "rank_events" &&
+             (w.row?.event_type === "ranking_item_eligible" ||
+              w.row?.event_type === "ranking_item_scored"),
+    );
+
+    assert.deepEqual(
+      perCandidate, [],
+      "DiscoveryRankingService must not emit ITEM_ELIGIBLE / ITEM_SCORED on the " +
+      "discovery surface: with every eligibility input a constant, ITEM_ELIGIBLE " +
+      "records a decision that could not have gone the other way, and both are " +
+      "two un-batched inserts per CANDIDATE — over the whole candidate set, not " +
+      "the served page. If this is failing, either the opt-out was dropped or the " +
+      "gate inputs became real; test T says which.",
+    );
+  });
+
+  it("S2. and the absence is the switch, not a dead client", async () => {
+    // Control for S. Without this, S would still pass if rankForViewer had
+    // simply stopped talking to the database at all, and the guard would be
+    // measuring nothing. The serve path must still be writing SOMETHING.
+    const { client, writes } = recordingClient();
+    await rankForViewer(places(25), VIEWER, { sc: client, served: true });
+
+    assert.ok(
+      writes.length > 0,
+      "the serve path must still perform writes — S is only meaningful while the " +
+      "client is actually reachable",
+    );
+  });
+
+  it("T. and discovery still declares those inputs constant, in source", async () => {
+    // A source-level assertion, deliberately. The values are baked into an
+    // object literal, so no runtime observation can distinguish "false because
+    // it was computed as false" from "false because it was typed" — and that
+    // distinction is the entire subject of this suite. The repo already guards
+    // other invariants this way (flagPolaritySeedScan, migrationPrefixRules).
+    const src = await import("node:fs/promises")
+      .then((fs) => fs.readFile(new URL("../lib/discoveryPde.ts", import.meta.url), "utf8"));
+
+    const start = src.indexOf("const drsInputs: RankingInput[]");
+    assert.ok(start > -1, "could not find the discovery RankingInput literal — this test needs re-anchoring");
+    const literal = src.slice(start, src.indexOf("}));", start));
+
+    const wired: string[] = [];
+    for (const field of ELIGIBILITY_FIELDS) {
+      const m = literal.match(new RegExp(`\\b${field}\\s*:\\s*([^,\n]+)`));
+      assert.ok(m, `${field} is no longer assigned in the discovery RankingInput literal`);
+      const value = m![1]!.trim();
+      if (value !== "false" && value !== "null") wired.push(`${field}: ${value}`);
+    }
+
+    assert.deepEqual(
+      wired, [],
+      "A discovery eligibility input is now a real value rather than a constant, " +
+      "which means the gate CAN now reject — so the per-candidate rank_events rows " +
+      "it emits would finally record a real decision. Re-enable them: drop " +
+      "`emitPerCandidateAnalytics: false` from the drsRankItems call in " +
+      "lib/discoveryPde.ts, and update test S. Do not just delete this assertion.",
+    );
+
+    assert.ok(
+      /emitPerCandidateAnalytics:\s*false/.test(src),
+      "discovery no longer opts out of per-candidate analytics, but its eligibility " +
+      "inputs are still all constants — so it is paying two inserts per candidate " +
+      "to record a decision with one possible outcome. Either restore the opt-out " +
+      "or wire the inputs.",
+    );
   });
 });
 
