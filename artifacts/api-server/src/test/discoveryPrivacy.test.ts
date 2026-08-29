@@ -138,7 +138,7 @@ describe("Discovery search — privacy exclusions", () => {
     const app = express();
     app.use(express.json());
     app.use("/api", discoveryRouter);
-    server = app.listen(0);
+    server = app.listen(0, "127.0.0.1");
     await new Promise<void>((r) => server.once("listening", r));
     const addr = server.address() as any;
     base = `http://127.0.0.1:${addr.port}`;

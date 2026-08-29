@@ -448,12 +448,13 @@ describe("B. Privacy resolver", () => {
 
 let server: http.Server;
 
-before(() => {
+before(async () => {
   const app = express();
   app.use(express.json());
   app.use("/api", telegraphChatRouter);
   server = createServer(app);
-  server.listen(0);
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>((r) => server.once("listening", r));
 });
 
 after(() => {

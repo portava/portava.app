@@ -300,7 +300,7 @@ describe("profile data-leak prevention", () => {
     app.use("/api", rentABuddyRouter);
 
     server = http.createServer(app);
-    await new Promise<void>((resolve) => server.listen(0, resolve));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     base = `http://127.0.0.1:${(server.address() as any).port}`;
   });
 
@@ -1306,7 +1306,7 @@ describe("completedBookings counter source-of-truth", () => {
     app.use("/api", rentABuddyMarketplaceRouter);
 
     srv = http.createServer(app);
-    await new Promise<void>((resolve) => srv.listen(0, resolve));
+    await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
     base = `http://127.0.0.1:${(srv.address() as any).port}`;
   });
 
@@ -1510,7 +1510,7 @@ describe("PATCH /api/me/profile — old storage file cleanup on clear", () => {
     app.use("/api", profileRouter);
 
     srv = http.createServer(app);
-    await new Promise<void>((resolve) => srv.listen(0, resolve));
+    await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", resolve));
     base = `http://127.0.0.1:${(srv.address() as any).port}`;
   });
 

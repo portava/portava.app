@@ -272,13 +272,13 @@ describe("Stamp award integration: POST /api/trips + PATCH + idempotency", async
   before(async () => {
     const app = await makeApp();
     server = createServer(app);
-    await new Promise<void>((resolve) => server.listen(0, resolve));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     port = (server.address() as any).port;
   });
 
   after(() => { server.close(); });
 
-  function base()         { return `http://localhost:${port}/api`; }
+  function base()         { return `http://127.0.0.1:${port}/api`; }
   function authHeaders()  {
     return { "Content-Type": "application/json", Authorization: `Bearer token-${OWNER_ID}` };
   }

@@ -655,7 +655,8 @@ describe('POST /api/tags — source authorization', () => {
     const sc = makeClient(store, { userId: caller });
     _setTestClient(sc as any, true);
     _setTestServiceClient(sc as any);
-    const server = createServer(makeAppWithLog()).listen(0);
+    const server = createServer(makeAppWithLog()).listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server.once('listening', r));
     try {
       const res = await request(server, 'POST', '/api/tags', {
         token: 'good',
@@ -699,7 +700,8 @@ describe('GET /api/tags/suggestions — filter injection', () => {
     const sc = makeClient(store, { userId: caller });
     _setTestClient(sc as any, true);
     _setTestServiceClient(sc as any);
-    const server = createServer(makeApp()).listen(0);
+    const server = createServer(makeApp()).listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server.once('listening', r));
     try {
       // `handle.ilike.` + the '%' the route appends === match-everything, so a
       // prefix search for "aa" returns the entire profiles table.
@@ -830,7 +832,8 @@ describe('POST /api/tags — disable_tagging is an emergency stop', () => {
     };
     _setTestClient(sc, true);
     _setTestServiceClient(sc);
-    const server = createServer(makeAppWithLog()).listen(0);
+    const server = createServer(makeAppWithLog()).listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server.once('listening', r));
     try {
       const res = await request(server, 'POST', '/api/tags', {
         token: 'good',

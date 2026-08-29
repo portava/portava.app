@@ -270,7 +270,7 @@ function stubOverpass(
 async function startServer(): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
     const server = createServer(app);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       server.unref();
       resolve({ server, port: (server.address() as any).port });
     });

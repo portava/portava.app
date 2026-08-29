@@ -244,9 +244,9 @@ before(async () => {
   });
   app.use("/api", messagingRouter);
   httpServer = createServer(app);
-  await new Promise<void>((resolve) => httpServer.listen(0, resolve));
+  await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
   const addr = httpServer.address() as { port: number };
-  baseUrl = `http://localhost:${addr.port}`;
+  baseUrl = `http://127.0.0.1:${addr.port}`;
 });
 
 after(async () => {

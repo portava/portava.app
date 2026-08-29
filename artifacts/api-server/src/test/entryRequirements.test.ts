@@ -178,7 +178,8 @@ function inject(tables: Record<string, FakeTable>) {
 }
 
 async function call(method: string, path: string, token: string | null, body?: any) {
-  const server = app.listen(0);
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((r) => server.once("listening", r));
   const port = (server.address() as any).port;
   try {
     const resp = await fetch(`http://127.0.0.1:${port}/api${path}`, {

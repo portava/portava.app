@@ -180,7 +180,7 @@ async function main() {
   // app.ts only, not index.ts: index.ts additionally starts the stamp worker
   // and FX refresh loops, which must not run against production from here.
   const port: number = await new Promise((resolve, reject) => {
-    server = app.listen(0, () => {
+    server = app.listen(0, "127.0.0.1", () => {
       const a = server!.address();
       typeof a === "object" && a ? resolve(a.port) : reject(new Error("no port"));
     });

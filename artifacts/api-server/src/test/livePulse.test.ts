@@ -156,10 +156,10 @@ async function req(
   token = "valid-token",
 ): Promise<{ status: number; body: any }> {
   const server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as any).port as number;
   try {
-    const res = await fetch(`http://localhost:${port}${path}`, {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     const body = await res.json().catch(() => ({}));

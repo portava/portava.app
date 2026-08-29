@@ -142,7 +142,7 @@ describe("GET /api/media/file — ?quality transform guard", () => {
     });
     app.use("/api", mediaFileRouter);
     return new Promise<void>((resolve) => {
-      server = app.listen(0, () => {
+      server = app.listen(0, "127.0.0.1", () => {
         base = `http://127.0.0.1:${(server.address() as any).port}`;
         resolve();
       });

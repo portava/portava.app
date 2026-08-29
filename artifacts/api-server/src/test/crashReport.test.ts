@@ -36,7 +36,7 @@ function buildApp() {
 
 async function startServer(): Promise<{ server: Server; port: number }> {
   const server = createServer(buildApp());
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as { port: number }).port;
   return { server, port };
 }
@@ -62,7 +62,7 @@ describe("POST /crash-report — rate limiter", () => {
   });
 
   async function post(body: unknown): Promise<Response> {
-    return fetch(`http://localhost:${port}/crash-report`, {
+    return fetch(`http://127.0.0.1:${port}/crash-report`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify(body),

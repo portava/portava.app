@@ -267,7 +267,7 @@ describe("POST /posts/:id/wrong-place", () => {
     // Mount the full posts router (wrong-place handler is at the bottom)
     app.use(postsRouter);
     server = await new Promise<http.Server>((resolve) => {
-      const s = app.listen(0, () => resolve(s));
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
     });
     base = `http://127.0.0.1:${(server.address() as any).port}`;
   });
@@ -317,7 +317,7 @@ describe("GET /admin/place-mismatch-reports + POST resolve", () => {
     app.use(express.json());
     app.use(adminMismatchRouter);
     server = await new Promise<http.Server>((resolve) => {
-      const s = app.listen(0, () => resolve(s));
+      const s = app.listen(0, "127.0.0.1", () => resolve(s));
     });
     base = `http://127.0.0.1:${(server.address() as any).port}`;
   });

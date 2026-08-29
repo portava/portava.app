@@ -156,14 +156,15 @@ describe("POST /api/posts/:postId/save — save a post", () => {
   let server: Server;
   let fakeDb: Record<string, FakeTable>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     fakeDb = {
       posts:      { rows: [{ id: POST_ID, visibility: "public", trip_id: null, status: "active", save_count: 0 }] },
       post_saves: { rows: [] },
       profiles:   { rows: [{ id: CALLER_ID, handle: "caller", name: "Caller", role: "user" }] },
     };
     _setTestClient(makeFakeClient(fakeDb) as any, true);
-    server = createServer(app).listen(0);
+    server = createServer(app).listen(0, "127.0.0.1");
+    await new Promise<void>((r) => server.once("listening", r));
   });
 
   afterEach(async () => {
@@ -215,14 +216,15 @@ describe("DELETE /api/posts/:postId/save — unsave a post", () => {
   let server: Server;
   let fakeDb: Record<string, FakeTable>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     fakeDb = {
       posts:      { rows: [{ id: POST_ID, visibility: "public", trip_id: null, status: "active", save_count: 1 }] },
       post_saves: { rows: [{ post_id: POST_ID, user_id: CALLER_ID }] },
       profiles:   { rows: [{ id: CALLER_ID, handle: "caller", name: "Caller", role: "user" }] },
     };
     _setTestClient(makeFakeClient(fakeDb) as any, true);
-    server = createServer(app).listen(0);
+    server = createServer(app).listen(0, "127.0.0.1");
+    await new Promise<void>((r) => server.once("listening", r));
   });
 
   afterEach(async () => {

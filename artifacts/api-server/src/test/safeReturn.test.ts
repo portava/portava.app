@@ -198,7 +198,7 @@ function setClients(c: ReturnType<typeof makeFakeClient>) {
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
-before(() => {
+before(async () => {
   const app = express();
   app.use(express.json());
   app.use((req: any, _res: any, next: any) => {
@@ -209,7 +209,8 @@ before(() => {
   app.use("/api", adminRouter);
 
   server = http.createServer(app);
-  server.listen(0);
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>((r) => server.once("listening", r));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
 });
 

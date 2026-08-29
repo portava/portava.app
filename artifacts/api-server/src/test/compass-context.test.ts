@@ -183,14 +183,14 @@ async function startApp(
 ): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
     const server = createServer(makeTestApp(client));
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       resolve({ server, port: (server.address() as any).port });
     });
   });
 }
 
 async function get(port: number, path: string, token = "alice-tok") {
-  return fetch(`http://localhost:${port}/api${path}`, {
+  return fetch(`http://127.0.0.1:${port}/api${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 }
@@ -467,7 +467,7 @@ describe("GET /api/compass/me/context", () => {
   it("returns 401 when no auth token", async () => {
     const { server, port } = await startApp(makeFakeClient(makeState()));
     try {
-      const res = await fetch(`http://localhost:${port}/api/compass/me/context`);
+      const res = await fetch(`http://127.0.0.1:${port}/api/compass/me/context`);
       assert.equal(res.status, 401);
     } finally { server.close(); }
   });

@@ -290,9 +290,9 @@ async function req(
   body?: any,
 ): Promise<{ status: number; body: any }> {
   const server = createServer(app);
-  await new Promise<void>((res) => server.listen(0, res));
+  await new Promise<void>((res) => server.listen(0, '127.0.0.1', res));
   const { port } = server.address() as any;
-  const url = `http://localhost:${port}${path}`;
+  const url = `http://127.0.0.1:${port}${path}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (tok) headers['Authorization'] = `Bearer ${tok}`;
   const res2 = await fetch(url, {

@@ -125,7 +125,7 @@ async function startApp(store: Record<string, Row[]>): Promise<number> {
   app.use("/api", compassRouter);
   return new Promise((resolve) => {
     server = createServer(app);
-    server.listen(0, () => resolve((server!.address() as any).port));
+    server.listen(0, "127.0.0.1", () => resolve((server!.address() as any).port));
   });
 }
 

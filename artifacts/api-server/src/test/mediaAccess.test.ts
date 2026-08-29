@@ -560,7 +560,7 @@ describe("GET /api/media/file — public vs signed mode", () => {
     app.use(express.json());
     app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
     app.use("/api", mediaFileRouter);
-    return new Promise<void>((resolve) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); }); });
+    return new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); }); });
   });
   after(() => new Promise<void>((r) => server.close(() => r())));
 

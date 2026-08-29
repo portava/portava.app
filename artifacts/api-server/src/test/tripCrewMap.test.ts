@@ -191,7 +191,7 @@ before(() => {
   app.use("/api", tripCrewLocationRouter);
 
   return new Promise<void>((resolve) => {
-    server = app.listen(0, () => {
+    server = app.listen(0, "127.0.0.1", () => {
       const addr = server.address() as any;
       base = `http://127.0.0.1:${addr.port}`;
       resolve();

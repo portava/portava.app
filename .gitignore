@@ -1,6 +1,14 @@
 # Dependencies
+# The trailing slash matches DIRECTORIES ONLY. A worktree that symlinks
+# node_modules to another checkout's copy — the documented way to skip a second
+# pnpm install — produces a SYMLINK, which these two patterns do not match, so
+# `git add -A` happily commits it and CI's `pnpm install` then dies on
+# "ENOENT ... mkdir '<repo>/artifacts/api-server/node_modules'". The slashless
+# pattern below covers that case.
 node_modules/
 **/node_modules/
+node_modules
+**/node_modules
 .pnpm-store/
 
 # Build outputs
