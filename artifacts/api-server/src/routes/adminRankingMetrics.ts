@@ -185,6 +185,21 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
   const { data: rows, error: rankErr } = await sc
     .from("rank_events")
     .select("outcome, item_kind, position, surface, user_id, served_at")
+    // EXCLUDE ranking analytics rows. DiscoveryRankingService and the feed-slot
+    // and creator-cap emitters write one row per CANDIDATE with
+    // outcome='analytics'; in production 73% of this table is such rows. They
+    // are not serves and belong in none of the metrics below.
+    //
+    // Their counters were already zero — every aggregate matches on a specific
+    // outcome and 'analytics' matches none — but they were NOT harmless:
+    //   * kindMap and surfaceMap create the bucket BEFORE testing outcome, so
+    //     analytics rows fabricated an `unknown` item-kind bucket (DRS never
+    //     writes item_kind) and could list a surface with 0 impressions and 0
+    //     taps, which reads as "traffic that converted nothing" rather than
+    //     "no traffic".
+    //   * this query has no LIMIT, so it was fetching roughly four times the
+    //     rows it uses.
+    .neq("outcome", "analytics")
     .gte("served_at", cutoff);
 
   if (rankErr) {
@@ -332,6 +347,13 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
     sc
       .from("rank_events")
       .select("user_id")
+      // Same exclusion, and here it changes a REPORTED NUMBER rather than only
+      // a bucket. returning_user_recovery_rate counts viewers who were ABSENT
+      // from rank_events in the pre-window. An analytics row is written for a
+      // candidate that was merely scored, so a viewer who was never served
+      // anything still looked "active" and was wrongly excluded from the
+      // returning cohort — understating the rate.
+      .neq("outcome", "analytics")
       .gte("served_at", cutoffPreWindow)
       .lt("served_at", cutoff),
   ]);

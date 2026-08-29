@@ -345,6 +345,11 @@ function makeFakeClient(isAdmin = true) {
     const b: any = {
       select: (_cols: string) => b,
       eq:   (col: string, val: any) => { filtered = filtered.filter((r) => r[col] === val); return b; },
+      // The route excludes ranking-analytics rows with .neq("outcome","analytics").
+      // The stub must model the query the route actually makes: without this it
+      // threw "neq is not a function" and the route 500'd — a fixture gap that
+      // reads exactly like a production failure.
+      neq:  (col: string, val: any) => { filtered = filtered.filter((r) => r[col] !== val); return b; },
       in:   (col: string, vals: any[]) => { filtered = filtered.filter((r) => vals.includes(r[col])); return b; },
       like: (col: string, pattern: string) => {
         const prefix = pattern.replace(/%$/, "");

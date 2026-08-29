@@ -84,7 +84,6 @@ export interface RankingInput {
   /** Pre-computed haversine distance from viewer in km. */
   distanceKm: number | null;
   /** True when the viewer follows this creator. */
-  isFollowedByViewer: boolean;
 
   // ── Eligibility signals ──────────────────────────────────────────────────
   isDeleted: boolean;

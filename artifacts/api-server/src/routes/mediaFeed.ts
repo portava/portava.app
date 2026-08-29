@@ -1511,7 +1511,17 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
           session_id: sessionId,
         };
       });
-      await sc.from("rank_events").insert(impressionRows);
+      // Inspect the returned error. A PostgREST rejection RESOLVES with
+      // { error } rather than throwing, so the surrounding catch never sees it
+      // and a rejected batch of watch-feed impressions would vanish silently —
+      // the same defect fixed in rankLog and rankingAnalytics.
+      const { error: impressionErr } = await sc.from("rank_events").insert(impressionRows);
+      if (impressionErr) {
+        req.log.warn(
+          { err: impressionErr, surface: "watch_feed", count: impressionRows.length },
+          "media/feed: rank_events impression insert rejected",
+        );
+      }
 
       // Store ranking snapshots for "Why This?" (fire-and-forget with warning on failure)
       if (mediaFlags.rankingEnabled) {
@@ -1521,7 +1531,11 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
         storeRankingSnapshots(sc, user.id, sessionId, "watch_feed", pageRanked)
           .catch((e) => req.log.warn({ err: e }, "media/feed: ranking snapshot write failed"));
       }
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      // Never breaks the feed. This covers THROWN failures only; a PostgREST
+      // rejection resolves with { error } and is handled at the insert above.
+      req.log.warn({ err }, "media/feed: impression logging threw");
+    }
   })();
 
   // ── Analytics (fire-and-forget) ────────────────────────────────────────────

@@ -397,7 +397,6 @@ async function runFeedPipeline(
         uniqueViewerCount:  1,
         lat: null, lng: null,
         distanceKm:         null,
-        isFollowedByViewer: false,
         isDeleted:          false,
         isExpired:          false,
         isSuspended:        !!(r.item.isSuspended),

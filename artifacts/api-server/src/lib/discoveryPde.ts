@@ -510,7 +510,6 @@ export async function rankForViewer<T extends PdePlace>(
       uniqueViewerCount:  p.savedCount ?? 0,
       lat:                p.lat ?? null, lng: p.lng ?? null,
       distanceKm:         p.distanceKm ?? null,
-      isFollowedByViewer: false,
       isDeleted: false, isExpired: false, isSuspended: false,
       isModerated: false, isPrivate: false,
       isAgeRestricted: false, minAgeRequired: null,

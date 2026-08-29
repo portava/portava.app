@@ -682,7 +682,6 @@ router.get("/pulse", async (req, res) => {
             uniqueViewerCount: 1,
             lat: null, lng: null,
             distanceKm:      (c.distanceKm ?? null) as number | null,
-            isFollowedByViewer: followedIds.has((c.authorId ?? "") as string),
             isDeleted: false, isExpired: false, isSuspended: false,
             isModerated: false, isPrivate: false,
             isAgeRestricted: false, minAgeRequired: null,
