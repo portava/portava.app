@@ -100,6 +100,21 @@ function makeFakeClient(opts: {
     // atomically toggles the flag and returns the updated row + audit fields.
     rpc: (fn: string, args: any) => {
       rpcCalls.push({ fn, args });
+      // Emulates set_feature_flag_metadata_with_audit (migration 2198): replaces
+      // the WHOLE metadata document and reports the previous one.
+      if (fn === "set_feature_flag_metadata_with_audit") {
+        const mrow: any = featureFlags.find((f: any) => f.flag === args.p_flag);
+        if (!mrow) {
+          return Promise.resolve({ data: null, error: { code: "P0002", message: `Flag not found: ${args.p_flag}` } });
+        }
+        const previous = mrow.metadata ?? null;
+        mrow.metadata = args.p_metadata;          // REPLACE, never merge
+        mrow.updated_at = new Date().toISOString();
+        return Promise.resolve({
+          data: [{ ...mrow, old_metadata: previous, changed_at: mrow.updated_at }],
+          error: null,
+        });
+      }
       if (fn !== "toggle_feature_flag_with_audit") {
         return Promise.resolve({ data: null, error: { code: "42883", message: `function ${fn} does not exist` } });
       }
@@ -308,5 +323,109 @@ describe("PATCH /admin/feature-flags/:flag", () => {
     const { status, body } = await req("PATCH", "/admin/feature-flags/some_flag", { enabled: true });
     assert.equal(status, 503);
     assert.equal(body.error, "server_not_configured");
+  });
+});
+
+
+// ── PATCH /admin/feature-flags/:flag/metadata ─────────────────────────────────
+//
+// Ruling D2=A puts a THREE-valued switch in metadata.mode because
+// feature_flags.enabled is a boolean. Before migration 2198 nothing could write
+// it: the toggle route accepts { enabled } only, so DISCOVERY_ENGINE_MODE could
+// not be moved off `legacy` through any supported surface and the Stage 2/3/4
+// ladder sat behind a switch with no handle.
+
+describe("PATCH /admin/feature-flags/:flag/metadata", () => {
+  const modeFlag = () => ([{
+    flag: "DISCOVERY_ENGINE_MODE",
+    enabled: true,
+    description: "d",
+    metadata: { mode: "legacy", rollout: "p1-discovery" },
+    updated_at: "2026-08-28T00:00:00Z",
+  }] as any[]);
+
+  it("sets a valid mode and returns the stored document", async () => {
+    setClients({ featureFlags: modeFlag() });
+    const { status, body } = await req(
+      "PATCH", "/admin/feature-flags/DISCOVERY_ENGINE_MODE/metadata",
+      { metadata: { mode: "shadow", cohort: { pct: 10 } } },
+    );
+    assert.equal(status, 200);
+    assert.deepEqual(body.flag.metadata, { mode: "shadow", cohort: { pct: 10 } });
+    assert.deepEqual(body.flag.last_change.old_metadata, { mode: "legacy", rollout: "p1-discovery" });
+  });
+
+  it("REPLACES the document rather than merging into it", async () => {
+    // A merge would make "remove a key" unexpressible and would let two
+    // concurrent edits interleave into a document neither operator wrote.
+    setClients({ featureFlags: modeFlag() });
+    const { body } = await req(
+      "PATCH", "/admin/feature-flags/DISCOVERY_ENGINE_MODE/metadata",
+      { metadata: { mode: "pde" } },
+    );
+    assert.deepEqual(body.flag.metadata, { mode: "pde" });
+    assert.ok(!("rollout" in body.flag.metadata), "the prior key must be gone, not merged through");
+  });
+
+  it("REFUSES a mode typo instead of storing it and silently serving legacy", async () => {
+    // This is the whole reason the endpoint validates. resolveDiscoveryEngineMode
+    // is deliberately fail-closed, so "pdee" would be accepted, stored, and then
+    // resolve to legacy — the operator sees 200, believes the rollout advanced,
+    // and nothing changes. A rejection turns a silent no-op into a message.
+    setClients({ featureFlags: modeFlag() });
+    const { status, body } = await req(
+      "PATCH", "/admin/feature-flags/DISCOVERY_ENGINE_MODE/metadata",
+      { metadata: { mode: "pdee" } },
+    );
+    assert.equal(status, 400);
+    assert.match(JSON.stringify(body), /legacy \| shadow \| pde/);
+  });
+
+  it("refuses a missing mode key on a constrained flag", async () => {
+    setClients({ featureFlags: modeFlag() });
+    const { status } = await req(
+      "PATCH", "/admin/feature-flags/DISCOVERY_ENGINE_MODE/metadata",
+      { metadata: { rollout: "p1" } },
+    );
+    assert.equal(status, 400);
+  });
+
+  it("accepts arbitrary metadata on an UNCONSTRAINED flag", async () => {
+    setClients({ featureFlags: [{ flag: "some_other_flag", enabled: false, description: "d", metadata: null }] });
+    const { status, body } = await req(
+      "PATCH", "/admin/feature-flags/some_other_flag/metadata",
+      { metadata: { anything: 1 } },
+    );
+    assert.equal(status, 200);
+    assert.deepEqual(body.flag.metadata, { anything: 1 });
+  });
+
+  it("rejects a body that is not { metadata: object }", async () => {
+    setClients({ featureFlags: modeFlag() });
+    for (const bad of [{}, { metadata: "nope" }, { metadata: 5 }]) {
+      const { status } = await req("PATCH", "/admin/feature-flags/DISCOVERY_ENGINE_MODE/metadata", bad);
+      assert.equal(status, 400, `body ${JSON.stringify(bad)} must be rejected`);
+    }
+  });
+
+  it("404s an unknown flag rather than creating one", async () => {
+    setClients({ featureFlags: modeFlag() });
+    const { status } = await req("PATCH", "/admin/feature-flags/no_such_flag/metadata",
+      { metadata: { anything: true } });
+    assert.equal(status, 404);
+  });
+
+  it("does not touch `enabled`", async () => {
+    setClients({ featureFlags: modeFlag() });
+    const { body } = await req("PATCH", "/admin/feature-flags/DISCOVERY_ENGINE_MODE/metadata",
+      { metadata: { mode: "pde" } });
+    assert.equal(body.flag.enabled, true, "a metadata write must not flip the master switch");
+  });
+
+  it("requires admin", async () => {
+    setClients({ role: "user", featureFlags: modeFlag() });
+    const { status } = await req("PATCH", "/admin/feature-flags/DISCOVERY_ENGINE_MODE/metadata",
+      { metadata: { mode: "pde" } });
+    assert.ok(status === 401 || status === 403, `non-admin must not write metadata (got ${status})`);
   });
 });

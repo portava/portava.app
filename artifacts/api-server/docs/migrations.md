@@ -475,3 +475,39 @@ Applied 2182 and 2183–2197 to **production** (`ajrurzioarfkagpuxfnb`). Each mi
 **Convergence evidence.** After the press, a 123-object fingerprint over both databases — every memory function body (comment- and whitespace-normalised), every column, constraint, index, trigger, RLS flag, function ACL, and all six `memory_policy` rows — is **identical**: `999732117ac21ba751b9883ccaec8836`. Two pre-existing CI/file divergences were closed in the process (CI held a hand-simplified `memory_reset_for_user` and an alias-free `memory_export_for_user`).
 
 The `memory_projection` flag remains **false** in production. Deployment of the application code is separate and still goes through the Replit workspace.
+
+## 2026-08-28 — feature_flags.metadata gets a write path (2198), and the P1 switches are seeded (2091)
+
+- `2198_feature_flag_metadata_audit.sql` — **applied to CI and production 2026-08-28.**
+  Ruling D2=A made `metadata.mode` load-bearing (a three-valued switch on a boolean column), but
+  **nothing could write it**: `PATCH /admin/feature-flags/:flag` validates `{ enabled: boolean }`
+  only and `toggle_feature_flag_with_audit` (0119) takes no metadata parameter. The entire Stage
+  2/3/4 ladder was gated behind a switch with no handle.
+  - Adds `old_metadata` / `new_metadata` (nullable) to `feature_flag_audit_log` and a new
+    `set_feature_flag_metadata_with_audit(text, jsonb, uuid)` mirroring 0119's atomic
+    update-plus-audit contract. A separate function rather than a widened signature: a metadata
+    write can change what users are **served** without changing whether the flag is on, which is
+    exactly what makes it need its own audit trail.
+  - The audit columns are nullable on purpose. NULL means "metadata was not part of this change"
+    (every pre-2198 row, every ordinary toggle) — distinct from a JSON `null` meaning it was
+    explicitly set to null. `old_enabled`/`new_enabled` are NOT NULL, so a metadata write records
+    the **unchanged** value in both; writing "false → false" is the honest way to say `enabled`
+    was untouched.
+  - **Verified on CI from a separate transaction:** metadata replaced `legacy` → `pde`, the audit
+    row captured both old and new documents, `enabled` untouched, an unknown flag raised `P0002`
+    rather than creating one, and **`anon` was denied with 42501**. Same posture confirmed on
+    prod: anon/authenticated denied, service_role granted.
+  - Route: `PATCH /admin/feature-flags/:flag/metadata`. It **replaces** the document (a merge
+    would make key removal unexpressible and let concurrent edits interleave) and **refuses** an
+    unrecognised `mode` for `DISCOVERY_ENGINE_MODE`. That refusal matters: the resolver is
+    deliberately fail-closed, so a stored `"pdee"` would return 200 and then silently resolve to
+    `legacy` — the operator sees success and nothing changes. It also drops this process's
+    30-second mode cache; other instances stay stale for up to the TTL, which is a property of a
+    per-process cache and is not claimed to be fixed.
+
+- `2091_discovery_engine_mode_flags.sql` — **applied to CI and production 2026-08-28**, having
+  previously been unapplied in both. Seeds `DISCOVERY_ENGINE_MODE` (enabled=false,
+  `metadata.mode='legacy'`) and `disable_discovery_pde` (enabled=false). **Changes no serving
+  behaviour by construction:** before, the mode resolved to `legacy` via reason `flag_absent`;
+  now via `flag_disabled`. The `ON CONFLICT` clause updates description and metadata only and
+  never touches `enabled`, so it cannot switch a live flag.
