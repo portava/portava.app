@@ -22,6 +22,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkItemEligibility } from "./EligibilityChecker.js";
 import { getActivityParams, getWeights, getPenalties } from "./rankingConfig.js";
 import { RankingEvent } from "./rankingAnalytics.js";
+import { logger } from "../../lib/logger.js";
 
 // ── Surface names ─────────────────────────────────────────────────────────────
 
@@ -591,10 +592,25 @@ function writeRankAnalyticAsync(
         // query (.eq("outcome","impression")) never accidentally matches them.
         outcome:      "analytics",
       })
-      .then(() => {}, (err: unknown) => {
-        // Non-fatal: analytics must never affect feed latency or correctness
-        void err;
-      });
+      .then(
+        // A PostgREST rejection RESOLVES with { error } — it does not throw — so
+        // the success path has to inspect it. Discarding it here is how a
+        // rejected analytics insert became invisible: the failure never reached
+        // the error handler, and the error handler said nothing anyway. Same
+        // defect class as the one fixed in rankLog.
+        (res: { error?: unknown } | null) => {
+          if (res?.error) {
+            logger.warn(
+              { err: res.error, eventType, surface },
+              "rankingAnalytics: rank_events insert rejected",
+            );
+          }
+        },
+        (err: unknown) => {
+          // Non-fatal: analytics must never affect feed latency or correctness.
+          logger.warn({ err, eventType, surface }, "rankingAnalytics: rank_events insert threw");
+        },
+      );
   } catch { /* non-fatal */ }
 }
 
@@ -761,15 +777,40 @@ export async function rankItems(
         eligibilityReason: eligibility.reason,
         explanationKey:    `${surface}:${input.itemType}:ineligible`,
       });
+
+      // Analytics: the gate REJECTED this item (fire-and-forget).
+      //
+      // Until 2026-08-29 a rejection wrote nothing at all, so the gate's only
+      // interesting outcome was its only invisible one: "the gate rejected five
+      // items" was indistinguishable from "five items were never candidates".
+      // Cost is proportional to rejections, which is currently zero on every
+      // surface — this is free until the gate does something, and it is the
+      // evidence required to show that it did.
+      writeRankAnalyticAsync(
+        db, RankingEvent.ITEM_INELIGIBLE,
+        input.itemId, input.itemType, surface,
+        viewer.viewerId, viewer.sessionId ?? null,
+      );
       continue;
     }
 
-    // Analytics: item passed eligibility gate (fire-and-forget)
-    writeRankAnalyticAsync(
-      db, RankingEvent.ITEM_ELIGIBLE,
-      input.itemId, input.itemType, surface,
-      viewer.viewerId, viewer.sessionId ?? null,
-    );
+    // ITEM_ELIGIBLE is deliberately NOT written here any more.
+    //
+    // It was one row per candidate that carried no information ITEM_SCORED did
+    // not already carry. No control flow separates this point from the
+    // ITEM_SCORED write below — no return, break, second continue or guard — so
+    // every item that emitted ITEM_ELIGIBLE also emitted ITEM_SCORED, with an
+    // identical field set (event_type aside). Production confirmed the pairing
+    // exactly: 46,677 = 46,677 on pulse, 11,367 = 11,367 on compass.
+    //
+    // And the inference runs the other way too: an ineligible item is never
+    // scored, so the PRESENCE of an ITEM_SCORED row already proves the item
+    // passed the gate. Nothing read ITEM_ELIGIBLE — a whole-tree inventory of
+    // every rank_events read found no consumer filtering on it — so dropping it
+    // halves the per-candidate analytics cost at zero information loss.
+    //
+    // The constant itself is retained in rankingAnalytics.ts because ~116,000
+    // historical rows carry it.
 
     // Activity data for this item's creator
     const activityData = input.creatorId
