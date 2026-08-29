@@ -13,6 +13,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { rankItems } from "../services/ranking/DiscoveryRankingService.js";
 
 import {
   resolveExplanation,
@@ -245,6 +246,13 @@ describe("F. Analytics write payloads contain only safe fields", () => {
     "user_id",
     "session_id",
     "served_at",
+    // The writer emits EIGHT keys, not seven. `outcome` was missing from this
+    // allowlist while writeRankAnalyticAsync has always set it to 'analytics'
+    // (it is what keeps these rows out of the impression queries). The omission
+    // went unnoticed because the assertions below used to walk a hand-built
+    // literal instead of the real payload — a test that could only ever agree
+    // with itself. They now capture the actual insert.
+    "outcome",
   ]);
 
   /**
@@ -284,24 +292,80 @@ describe("F. Analytics write payloads contain only safe fields", () => {
     }
   });
 
-  it("a simulated analytics payload contains only allowed fields", () => {
-    // Simulate the payload that writeRankAnalyticAsync would build
-    const payload: Record<string, unknown> = {
-      event_type:   RankingEvent.ITEM_SCORED,
-      item_id:      "item-123",
-      content_type: "post",
-      surface:      "compass",
-      user_id:      "viewer-456",
-      session_id:   null,
-      served_at:    new Date().toISOString(),
-    };
+  /**
+   * Capture the payload writeRankAnalyticAsync ACTUALLY inserts, by driving
+   * rankItems with a recording stub. Asserting a hand-written literal proves
+   * only that the literal matches the allowlist — it cannot notice the writer
+   * growing a field, which is the entire risk this test exists to cover.
+   */
+  async function captureRealAnalyticsPayloads(): Promise<Array<Record<string, unknown>>> {
+    const rows: Array<Record<string, unknown>> = [];
+    const db = {
+      from(table: string) {
+        return {
+          insert(row: any) { if (table === "rank_events") rows.push(row); return Promise.resolve({ error: null, data: null }); },
+          select() { return this; },
+          eq() { return this; },
+          in() { return Promise.resolve({ data: [], error: null }); },
+          gte() { return Promise.resolve({ data: [], error: null }); },
+        };
+      },
+    } as any;
 
-    for (const field of Object.keys(payload)) {
-      assert.ok(
-        SAFE_ANALYTICS_FIELDS.has(field),
-        `Analytics payload contains unexpected field: '${field}'`,
-      );
+    await rankItems(
+      [{
+        itemId: "item-123", itemType: "post", creatorId: null,
+        createdAt: new Date().toISOString(), city: "paris", country: "FR",
+        tags: ["adventure"], category: "adventure", languageCode: "en",
+        hasMedia: true, distanceKm: 2,
+      } as any],
+      "compass",
+      {
+        viewerId: "viewer-456", travelStyles: ["adventure"], preferredLanguages: ["en"],
+        preferredCities: ["paris"], currentCity: "paris", currentCountry: "FR",
+        lat: 48.85, lng: 2.35, viewerAge: null,
+        followedCreatorIds: new Set(), mutedCreatorIds: new Set(), sessionId: null,
+      } as any,
+      db,
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: {
+        rankingEnabled: true, explorationEnabled: false, activityBoostEnabled: false,
+        experimentEnabled: false, shadowMode: false,
+      } } as any,
+    );
+    await new Promise((r) => setTimeout(r, 10)); // fire-and-forget writes
+    return rows;
+  }
+
+  it("the REAL analytics payload contains only allowed fields", async () => {
+    const payloads = await captureRealAnalyticsPayloads();
+    assert.ok(payloads.length > 0, "expected the writer to have inserted at least one row");
+
+    for (const payload of payloads) {
+      for (const field of Object.keys(payload)) {
+        assert.ok(
+          SAFE_ANALYTICS_FIELDS.has(field),
+          `Analytics payload contains unexpected field: '${field}'`,
+        );
+      }
     }
+  });
+
+  it("the REAL analytics payload carries no forbidden field", async () => {
+    const payloads = await captureRealAnalyticsPayloads();
+    for (const payload of payloads) {
+      for (const forbidden of FORBIDDEN_FIELDS) {
+        assert.ok(!(forbidden in payload), `Analytics payload leaked '${forbidden}'`);
+      }
+    }
+  });
+
+  it("the allowlist matches the writer EXACTLY — no unused entries", async () => {
+    // The other direction. An allowlist that drifts ahead of the writer stops
+    // being a bound on what may be written and becomes decoration.
+    const payloads = await captureRealAnalyticsPayloads();
+    const emitted = new Set(payloads.flatMap((p) => Object.keys(p)));
+    const unused = [...SAFE_ANALYTICS_FIELDS].filter((f) => !emitted.has(f));
+    assert.deepEqual(unused, [], `allowlist entries the writer never emits: ${unused.join(", ")}`);
   });
 
   it("simulated payload has no forbidden fields", () => {

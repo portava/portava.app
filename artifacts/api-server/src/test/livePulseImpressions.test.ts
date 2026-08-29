@@ -1514,6 +1514,12 @@ function makeAdminClient(rankEvents: any[] = ADMIN_RANK_EVENTS) {
     const b: any = {
       select: (_c?: string, _o?: any) => b,
       eq:  (col: string, val: any) => { filtered = filtered.filter((r) => r[col] === val); return b; },
+      // The metrics route excludes ranking-analytics rows with
+      // .neq("outcome","analytics"). Without this the builder threw
+      // "neq is not a function", the route 500'd, and all ten tests in this
+      // suite failed at once — a fixture gap that is indistinguishable from a
+      // real regression until you read the stack.
+      neq: (col: string, val: any) => { filtered = filtered.filter((r) => r[col] !== val); return b; },
       in:  (col: string, vals: any[]) => { filtered = filtered.filter((r) => vals.includes(r[col])); return b; },
       gte: (col: string, val: any) => { filtered = filtered.filter((r) => r[col] != null && r[col] >= val); return b; },
       lt:  (col: string, val: any) => { filtered = filtered.filter((r) => r[col] != null && r[col] <  val); return b; },

@@ -65,7 +65,14 @@ export async function purgeOldWeatherCache(opts?: {
   client?: any;
   retentionHours?: number;
 }): Promise<{ deleted: number | null; error: unknown }> {
-  const client = opts?.client ?? (isServiceClientReady ? getServiceClient() : null);
+  // `"client" in opts`, NOT `opts?.client ?? fallback`. With ?? , an explicit
+  // `client: null` falls THROUGH to the global service client, so a caller
+  // asking for "no client" silently gets the real one. Presence of the key is
+  // the caller's intent; its value is the answer. (Matches
+  // discoveryCacheCleanup, where a test caught this.)
+  const client = opts && "client" in opts
+    ? opts.client
+    : (isServiceClientReady ? getServiceClient() : null);
   const retentionHours = opts?.retentionHours ?? RETENTION_HOURS;
 
   if (!client) {
