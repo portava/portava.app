@@ -741,6 +741,20 @@ jobs:
       # correlation the subquery needed is absent). Both were found by hand; this
       # keeps them found automatically. The allowlist inside the test may only
       # shrink.
+      # The 6-hourly scheduler's safety argument is "cadence only affects
+      # freshness, never correctness" — which holds only if repeated passes
+      # converge. Also pins that ineligible input (a blocked relationship) never
+      # becomes memory in the FIRST place rather than being filtered at read
+      # time, that everything projected is private by default, and that two app
+      # instances projecting one user concurrently cannot falsely retract
+      # supported memory.
+      - name: 'test:memory-projection-lifecycle (idempotency, concurrency, negative cases)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh memory-projection-lifecycle artifacts/api-server @workspace/api-server test:memory-projection-lifecycle
+
       - name: 'test:rls-policy-shape (no self-referential or tautological policies)'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
