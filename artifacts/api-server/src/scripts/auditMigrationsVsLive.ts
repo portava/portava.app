@@ -352,6 +352,23 @@ const ALLOWLIST = new Set([
   // 2182's header flags as future cleanup) and 0015's declaration is retired,
   // delete this entry in the same change.
   "function:is_blocked",
+
+  // viewer_in_call(uuid) is created by 2199 in the `authz` schema, for the same
+  // reason is_blocked lives there: `authz` is not in PostgREST's db-schemas, so
+  // a membership predicate placed there is reachable by RLS but not exposed as
+  // an RPC endpoint. This auditor resolves claimed functions in `public` only,
+  // so it reports it missing. It is not missing — it is authz.viewer_in_call,
+  // with a pinned search_path, and both call policies bind to it.
+  //
+  // Its ABSENCE from public is part of the design, not an omission: the whole
+  // point of 2199 is that the membership read happens inside a SECURITY DEFINER
+  // function that RLS can call without re-entering the policy, and that the
+  // function takes only a call id so it can never answer "is user X in call Y"
+  // for an arbitrary X.
+  //
+  // Delete this entry if 2199 is ever reversed or the function is moved back
+  // into public — in the same change, not later.
+  "function:viewer_in_call",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────
