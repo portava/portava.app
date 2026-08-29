@@ -103,11 +103,27 @@ Pod::Spec.new do |s|
   # Resolved from this podspec's own location rather than spelled as a relative
   # walk out of $(PODS_ROOT): the podspec is evaluated from wherever the package
   # actually lives, so this stays correct regardless of install layout.
+  #
+  # The Rust staticlib has to reach the consumer for the same structural reason.
+  # A pod builds to libExpoOpenmls.a, which merely *references* the FFI symbols;
+  # nothing is linked until the app target links. With the -l flag only on
+  # pod_target_xcconfig the app got as far as Ld and then died:
+  #
+  #   Undefined symbols for architecture arm64:
+  #     "_ffi_expo_openmls_rustbuffer_free", referenced from:
+  #         ... in libExpoOpenmls.a[4](openmls.o)
+  #     "_uniffi_expo_openmls_fn_func_process_welcome", ...
+  #
+  # $(PLATFORM_NAME) stays unexpanded here on purpose — Xcode resolves it per
+  # destination, so one setting serves both device and simulator.
   uniffi_dir = File.join(__dir__, 'Rust', 'uniffi', 'openmls')
+  rust_dir   = File.join(__dir__, 'Rust')
   s.user_target_xcconfig = {
-    'HEADER_SEARCH_PATHS' => "\"#{uniffi_dir}\"",
-    'SWIFT_INCLUDE_PATHS' => "\"#{uniffi_dir}\"",
-    'OTHER_SWIFT_FLAGS'   => "-Xcc -fmodule-map-file=\"#{File.join(uniffi_dir, 'openmlsFFI.modulemap')}\"",
+    'HEADER_SEARCH_PATHS'  => "\"#{uniffi_dir}\"",
+    'SWIFT_INCLUDE_PATHS'  => "\"#{uniffi_dir}\"",
+    'OTHER_SWIFT_FLAGS'    => "-Xcc -fmodule-map-file=\"#{File.join(uniffi_dir, 'openmlsFFI.modulemap')}\"",
+    'LIBRARY_SEARCH_PATHS' => "\"#{rust_dir}/$(PLATFORM_NAME)\"",
+    'OTHER_LDFLAGS'        => '-lexpo_openmls',
   }
 
   s.preserve_paths = ['Rust/**/*']
