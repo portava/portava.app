@@ -714,6 +714,19 @@ jobs:
           set -uo pipefail
           bash .github/scripts/run-live-suite.sh memory-lifecycle artifacts/api-server @workspace/api-server test:memory-lifecycle
 
+      # Two RLS policy shapes that took down whole tables in production on
+      # 2026-08-28: a policy selecting FROM its own table (42P17 recursion, every
+      # read fails) and a column compared to itself (always true, so the
+      # correlation the subquery needed is absent). Both were found by hand; this
+      # keeps them found automatically. The allowlist inside the test may only
+      # shrink.
+      - name: 'test:rls-policy-shape (no self-referential or tautological policies)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh rls-policy-shape artifacts/api-server @workspace/api-server test:rls-policy-shape
+
       - name: 'test:profile-role-not-self-writable (profiles.role write boundary)'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
