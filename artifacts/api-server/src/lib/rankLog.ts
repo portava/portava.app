@@ -14,6 +14,7 @@
 
 import { randomUUID } from "node:crypto";
 import { getServiceClient } from "./supabase";
+import { logger } from "./logger.js";
 import { LIVE_PULSE_SERVE_EVENT } from "../services/ranking/rankingAnalytics.js";
 import type { ScoredCandidate, RankCandidate } from "./portavaRank";
 
@@ -127,7 +128,23 @@ export async function logImpression(
       };
     });
 
-    await sc.from("rank_events").insert(rows);
+    // The returned `error` MUST be inspected. A PostgREST-level rejection — a
+    // CHECK or FK violation, say — does NOT throw, so relying on the catch below
+    // alone loses it twice over: once because it never reaches the catch, and
+    // once because the catch is silent. That blindness has a concrete cost:
+    // "surface=discovery has only 13 rows" cannot distinguish "the ranked path
+    // never ran" from "it ran and every insert was rejected", which is exactly
+    // the question the Stage 0 baseline exists to answer.
+    //
+    // Still fire-and-forget: this warns and returns, it never throws into the
+    // feed. logDiscoveryServe already does precisely this.
+    const { error: insertError } = await sc.from("rank_events").insert(rows);
+    if (insertError) {
+      logger.warn(
+        { err: insertError, surface, count: rows.length },
+        "rankLog: impression insert rejected",
+      );
+    }
 
     // Fatigue tracking — fire-and-forget, gated by feature flag
     const fatigueEnabled = await isFatigueEnabled(sc).catch(() => false);
@@ -137,8 +154,11 @@ export async function logImpression(
         .filter((id): id is string => typeof id === "string" && id.length > 0);
       upsertCreatorFatigueAsync(sc, userId, creatorIds);
     }
-  } catch {
-    // Silent swallow — logging must never break the feed
+  } catch (err) {
+    // Never throws into the feed. Note this catches only THROWN errors; a
+    // PostgREST rejection returns an `error` object instead and is handled at
+    // the insert above.
+    logger.warn({ err }, "rankLog: impression logging threw");
   }
 }
 
@@ -207,9 +227,18 @@ export async function logCompassImpression(
       }];
     });
 
-    await sc.from("rank_events").insert(rows);
-  } catch {
-    // Silent swallow — logging must never break the feed
+    const { error: insertError } = await sc.from("rank_events").insert(rows);
+    if (insertError) {
+      logger.warn(
+        { err: insertError, surface: "compass", count: rows.length },
+        "rankLog: compass impression insert rejected",
+      );
+    }
+  } catch (err) {
+    // Never throws into the feed. Note this catches only THROWN errors; a
+    // PostgREST rejection returns an `error` object instead and is handled at
+    // the insert above.
+    logger.warn({ err }, "rankLog: impression logging threw");
   }
 }
 
