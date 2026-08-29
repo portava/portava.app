@@ -21,6 +21,24 @@ export interface DeviceKeyPairBytes {
   x25519PrivB64: string;
 }
 
+/**
+ * Returned from generateKeyPackage (openmls.udl:109).
+ *
+ * This interface was missing entirely, which is why generateKeyPackage was typed
+ * as returning a bare string: the KeyPackage half was visible and the private
+ * half had nowhere to go in the type system.
+ */
+export interface KeyPackageResult {
+  /** The KeyPackage itself, base64-encoded. Upload to the server's pool. */
+  keyPackageB64: string;
+  /**
+   * Private material belonging to this KeyPackage. NEVER LOG, never upload —
+   * processWelcome needs it later to open the Welcome encrypted to this package,
+   * so it belongs in SecureStore under MLS_PENDING_KEY_PACKAGE.
+   */
+  pendingStateB64: string;
+}
+
 export interface GroupCreateResult {
   /** Serialised MLS group state, base64-encoded. Store in SecureStore. */
   groupStateB64: string;
