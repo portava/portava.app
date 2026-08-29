@@ -20,10 +20,36 @@
  */
 export const RankingEvent = {
   // ── Scoring pipeline events ──────────────────────────────────────────────────
-  /** Item passed the eligibility gate and entered scoring. */
+  /**
+   * Item passed the eligibility gate and entered scoring.
+   *
+   * NO LONGER WRITTEN as of 2026-08-29. Retained because ~116,000 historical
+   * rows carry this event_type and anything reading that corpus still needs the
+   * constant. It was removed from the write path because it is derivable with
+   * certainty from ITEM_SCORED: no control flow separates the two writes, so
+   * every item that emitted one emitted the other, with an identical field set.
+   * Production bore that out exactly — 46,677 = 46,677 on pulse, 11,367 =
+   * 11,367 on compass.
+   */
   ITEM_ELIGIBLE: "ranking_item_eligible",
-  /** Item received a final composite score. */
+  /**
+   * Item received a final composite score. One row per scored candidate — and,
+   * since ITEM_ELIGIBLE stopped being written, also the record that the item
+   * PASSED the eligibility gate (an ineligible item is never scored).
+   */
   ITEM_SCORED: "ranking_item_scored",
+  /**
+   * Item was REJECTED by the eligibility gate, with the reason.
+   *
+   * Written only on rejection, which today means never: the gate is
+   * structurally unreachable on all three surfaces that use it. That is exactly
+   * why it exists. Before this, a rejection produced NO row at all — the gate's
+   * only interesting outcome was its only unobservable one, and "the gate
+   * rejected five items" was indistinguishable from "five items were never
+   * candidates". Its cost is proportional to rejections, so it is free until the
+   * gate does something, and it is the signal required to prove it ever did.
+   */
+  ITEM_INELIGIBLE: "ranking_item_ineligible",
 
   // ── Assembly / selection events ──────────────────────────────────────────────
   /** Item was placed in the assembled feed (standard slot). */

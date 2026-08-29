@@ -391,6 +391,21 @@ export async function loadPdeViewer(
         .select("item_id")
         .eq("user_id", userId)
         .eq("surface", "discovery")
+        // EXCLUDE analytics rows. Without this the set is not "places the viewer
+        // was SHOWN" but "places that were SCORED" — DiscoveryRankingService
+        // writes one analytics row per CANDIDATE, and a request ranks up to 180
+        // candidates while serving 20. Every scored candidate would be penalised
+        // as already-seen for 24 h, and 500 is the cap, so a single prior
+        // request could fill it with analytics rows and evict the real
+        // impressions. DRS states this invariant itself: analytics rows carry
+        // outcome='analytics' "so the impression-finding query never
+        // accidentally matches them".
+        //
+        // `<> 'analytics'` rather than `= 'impression'` on purpose: POST
+        // /api/rank-events/outcome UPDATES an impression row's outcome in place
+        // to tap/save/join, so an impression that converted is still an
+        // impression and must stay in the seen set.
+        .neq("outcome", "analytics")
         .gte("served_at", since)
         .order("served_at", { ascending: false })
         .limit(SEEN_MAX_IDS);
