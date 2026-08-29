@@ -192,27 +192,18 @@ async function awardTripCompletionStamps(
 }
 
 router.post("/trips", async (req, res) => {
-  if (!isServiceClientReady) {
-    res.status(503).json({ error: "Server not configured: SUPABASE_SERVICE_ROLE_KEY is missing" });
-    return;
-  }
-
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Missing Authorization header" });
-    return;
-  }
-  const token = authHeader.slice(7);
-
-  const client = getServiceClient()!;
-
-  // Verify user JWT via Supabase Auth directly — this works regardless of
-  // whether PostgREST supports ECC P-256 JWT verification.
-  const { data: { user }, error: authError } = await client.auth.getUser(token);
-  if (authError || !user) {
-    res.status(401).json({ error: authError?.message ?? "Invalid or expired token" });
-    return;
-  }
+  // requireUser does the readiness check, the header check and the JWT
+  // verification — and, critically, the ban/suspend gate, which is enforced
+  // NOWHERE else. Banning writes profiles.account_status and does not revoke
+  // sessions, so a route that verifies the token itself lets a banned user keep
+  // creating trips with the token they already hold.
+  //
+  // It verifies via Supabase Auth directly, which is what the old inline code
+  // was for: it works regardless of whether PostgREST supports ECC P-256 JWT
+  // verification.
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
 
   // Trust Engine: check if user is restricted from hosting.
   // canHost=false means one of two different things, and they must never be
@@ -856,12 +847,13 @@ router.post("/trips/:tripId/invite", async (req, res) => {
     res.status(503).json({ error: "server_not_configured" });
     return;
   }
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) { res.status(401).json({ error: "Missing Authorization header" }); return; }
-
-  const client = getServiceClient()!;
-  const { data: { user }, error: authErr } = await client.auth.getUser(authHeader.slice(7));
-  if (authErr || !user) { res.status(401).json({ error: "Invalid or expired token" }); return; }
+  // requireUser (lib/http.ts) is the ONLY place the ban/suspend gate is applied,
+  // and there is no session revocation on ban — profiles.account_status is the
+  // whole mechanism. Hand-rolling auth.getUser() here skipped it, so a banned
+  // user kept full write access to this route.
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
 
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
@@ -938,13 +930,13 @@ router.post("/trips/:tripId/invite", async (req, res) => {
  * ===========================================================================
  */
 router.post("/trips/:tripId/accept-invite", async (req, res) => {
-  if (!isServiceClientReady) { res.status(503).json({ error: "server_not_configured" }); return; }
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) { res.status(401).json({ error: "Missing Authorization header" }); return; }
-
-  const client = getServiceClient()!;
-  const { data: { user }, error: authErr } = await client.auth.getUser(authHeader.slice(7));
-  if (authErr || !user) { res.status(401).json({ error: "Invalid or expired token" }); return; }
+  // requireUser (lib/http.ts) is the ONLY place the ban/suspend gate is applied,
+  // and there is no session revocation on ban — profiles.account_status is the
+  // whole mechanism. Hand-rolling auth.getUser() here skipped it, so a banned
+  // user kept full write access to this route.
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
 
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
@@ -992,13 +984,13 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
  * ===========================================================================
  */
 router.post("/trips/:tripId/decline-invite", async (req, res) => {
-  if (!isServiceClientReady) { res.status(503).json({ error: "server_not_configured" }); return; }
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) { res.status(401).json({ error: "Missing Authorization header" }); return; }
-
-  const client = getServiceClient()!;
-  const { data: { user }, error: authErr } = await client.auth.getUser(authHeader.slice(7));
-  if (authErr || !user) { res.status(401).json({ error: "Invalid or expired token" }); return; }
+  // requireUser (lib/http.ts) is the ONLY place the ban/suspend gate is applied,
+  // and there is no session revocation on ban — profiles.account_status is the
+  // whole mechanism. Hand-rolling auth.getUser() here skipped it, so a banned
+  // user kept full write access to this route.
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
 
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
@@ -1521,13 +1513,13 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
  * requested role.
  */
 router.post("/trips/:tripId/members", async (req, res) => {
-  if (!isServiceClientReady) { res.status(503).json({ error: "server_not_configured" }); return; }
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) { res.status(401).json({ error: "Missing Authorization header" }); return; }
-
-  const client = getServiceClient()!;
-  const { data: { user }, error: authErr } = await client.auth.getUser(authHeader.slice(7));
-  if (authErr || !user) { res.status(401).json({ error: "Invalid or expired token" }); return; }
+  // requireUser (lib/http.ts) is the ONLY place the ban/suspend gate is applied,
+  // and there is no session revocation on ban — profiles.account_status is the
+  // whole mechanism. Hand-rolling auth.getUser() here skipped it, so a banned
+  // user kept full write access to this route.
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
 
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
@@ -1566,13 +1558,13 @@ router.post("/trips/:tripId/members", async (req, res) => {
  * Only the trip owner may call this. The owner cannot remove themselves.
  */
 router.delete("/trips/:tripId/members/:userId", async (req, res) => {
-  if (!isServiceClientReady) { res.status(503).json({ error: "server_not_configured" }); return; }
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) { res.status(401).json({ error: "Missing Authorization header" }); return; }
-
-  const client = getServiceClient()!;
-  const { data: { user }, error: authErr } = await client.auth.getUser(authHeader.slice(7));
-  if (authErr || !user) { res.status(401).json({ error: "Invalid or expired token" }); return; }
+  // requireUser (lib/http.ts) is the ONLY place the ban/suspend gate is applied,
+  // and there is no session revocation on ban — profiles.account_status is the
+  // whole mechanism. Hand-rolling auth.getUser() here skipped it, so a banned
+  // user kept full write access to this route.
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
 
   const { tripId, userId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
