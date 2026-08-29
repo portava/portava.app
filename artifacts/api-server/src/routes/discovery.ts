@@ -47,6 +47,7 @@ import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
 import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
 import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
 import { pruneAndBound } from "../lib/boundedMapCache.js";
+import { createInflightDedup } from "../lib/inflightDedup.js";
 import {
   readPlacesFromDb,
   writePlacesToDb,
@@ -610,6 +611,49 @@ async function queryOverpass(
     .map((el) => mapOsmElementToPlace(el, category, lat, lng))
     .sort((a, b) => (a.distanceKm ?? 999) - (b.distanceKm ?? 999))
     .slice(0, MAX_FETCH);
+}
+
+/**
+ * In-flight deduplication for Overpass, mirroring `geocodeCached`'s treatment of
+ * Nominatim.
+ *
+ * WHY (2026-08-28)
+ * ----------------
+ * `queryOverpass` had FOUR call sites and no dedup, so N concurrent requests for
+ * the same (centre, radius, category) each made their own HTTP call to
+ * overpass-api.de. `GET /discovery/counts` alone fans out over COUNTABLE_CATS,
+ * so two simultaneous counts requests for one city issued fourteen Overpass
+ * calls where seven would do.
+ *
+ * That matters here specifically because the dependency is rate-limited AND this
+ * deployment has already been throttled by it: the comment on
+ * loadCuratedAndCanonicalPlaces records that "when the deployment's egress IP is
+ * rate-limited by overpass-api.de the feed silently served {places: [], total: 0}".
+ * queryOverpass returns [] on a non-ok response, so being throttled does not
+ * raise — it empties the feed. Concurrency is exactly what turns a cold cache
+ * into that state, and concurrency is what launch adds.
+ *
+ * This is NOT a result cache. The entry is removed as soon as the promise
+ * settles, so it never serves a stale list; Cache A remains the only thing that
+ * decides how long a result may be reused. Deleting on rejection too means the
+ * next caller retries rather than inheriting a failure forever.
+ *
+ * Concurrent callers share one array by reference, which is the same contract
+ * Cache A already documents for its stored entries.
+ */
+const _overpassInflight = createInflightDedup<DiscoveryPlace[]>();
+
+function queryOverpassDeduped(
+  lat: number,
+  lng: number,
+  radiusM: number,
+  category: string,
+): Promise<DiscoveryPlace[]> {
+  // Exact coordinates, not rounded: they come from the shared geocode cache, so
+  // the same destination yields byte-identical values. Rounding would merge
+  // queries the caller asked to keep separate.
+  const key = `${lat}:${lng}:${radiusM}:${category}`;
+  return _overpassInflight.run(key, () => queryOverpass(lat, lng, radiusM, category));
 }
 
 /** Category chips first, then attribute chips, capped so the card's tag row
@@ -1615,7 +1659,7 @@ router.get("/discovery", async (req, res) => {
         // refresh stores a stable city coordinate with a display name in L2.
         const freshCoords = await geocodeCached(destination!);
         if (!freshCoords) return;
-        const freshOsm = await queryOverpass(freshCoords.lat, freshCoords.lng, radiusM, category);
+        const freshOsm = await queryOverpassDeduped(freshCoords.lat, freshCoords.lng, radiusM, category);
         const enriched  = freshOsm.length > 0 ? await enrichOsmSavedCounts(freshOsm) : freshOsm;
         if (enriched.length > 0) {
           setCacheA(key, { places: enriched, cachedAt: Date.now() });
@@ -1646,7 +1690,7 @@ router.get("/discovery", async (req, res) => {
     const distRef = userCoords ?? coords;
     const osmT0 = Date.now();
     const [osmPlaces, dbPlaces] = await Promise.all([
-      queryOverpass(coords.lat, coords.lng, radiusM, category),
+      queryOverpassDeduped(coords.lat, coords.lng, radiusM, category),
       loadCuratedAndCanonicalPlaces(destination, category, distRef.lat, distRef.lng),
     ]);
     const osmMs = Date.now() - osmT0;
@@ -1933,7 +1977,7 @@ router.get("/discovery/counts", async (req, res) => {
         }
         // Cache cold — fetch Overpass + DB, then populate cache for subsequent requests.
         const [osmPlaces, dbPlaces] = await Promise.all([
-          queryOverpass(coords.lat, coords.lng, radiusM, cat),
+          queryOverpassDeduped(coords.lat, coords.lng, radiusM, cat),
           queryDbPlaces(destination, cat, coords.lat, coords.lng),
         ]);
         const enriched = osmPlaces.length > 0 ? await enrichOsmSavedCounts(osmPlaces) : osmPlaces;
@@ -2035,7 +2079,7 @@ router.get("/discovery/feed", async (req, res) => {
         effectiveCats.map(async (cat) => {
           const [rawOsmPlaces, dbPlaces] = includePlaces
             ? await Promise.all([
-                queryOverpass(coords!.lat, coords!.lng, radiusM, cat),
+                queryOverpassDeduped(coords!.lat, coords!.lng, radiusM, cat),
                 queryDbPlaces(destination ?? "", cat, coords!.lat, coords!.lng),
               ])
             : [[], [] as DiscoveryPlace[]];
