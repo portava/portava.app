@@ -139,7 +139,29 @@ export interface PdeViewer {
    * portavaRank then contributes 0 for this feature rather than guessing.
    */
   categoryAffinities?: Record<string, number>;
+  /**
+   * Place ids this viewer was recently shown on the DISCOVERY surface.
+   * Empty when there is no impression history — portavaRank then applies no
+   * penalty, which is the current behaviour.
+   */
+  seenIds?: Set<string>;
 }
+
+/**
+ * How far back a discovery impression still counts as "seen".
+ *
+ * 24 hours: long enough that browsing a city and coming back an hour later does
+ * not replay the same page, short enough that yesterday's session does not
+ * permanently bury a place. Cache A's own TTL is 2 h, so this comfortably spans
+ * the window in which the identical cached candidate set would be re-served.
+ */
+const SEEN_WINDOW_MS = 24 * 60 * 60 * 1_000;
+
+/**
+ * Cap on the seen set. Ordered most-recent-first, so a heavy browser keeps the
+ * impressions that matter and the query can never return an unbounded list.
+ */
+const SEEN_MAX_IDS = 500;
 
 /**
  * Minimum total observations before ANY category affinity is applied.
@@ -346,7 +368,39 @@ export async function loadPdeViewer(
     } catch { /* non-fatal */ }
   }
 
-  return { userId, city, followedIds, interestTags, categoryAffinities };
+  // Recent discovery impressions → portavaRank's seenPenalty (weight -0.6, the
+  // largest-magnitude negative term in the model, and inert until now because
+  // ViewerContext never carried seenIds).
+  //
+  // A PENALTY, not a filter: a viewer who has seen everything in a small city
+  // still gets a full page, reordered. That is why an over-broad seen set
+  // degrades ranking rather than emptying the feed.
+  //
+  // `item_id` here is the place id the serve log wrote (discoveryServeLog:209
+  // `item_id: item.id`), which is the same id the candidate map uses, so this
+  // matches rather than silently never firing. Indexed by
+  // rank_events_user_served_at (user_id, served_at DESC); the surface filter is
+  // applied on top. Non-fatal like the two reads above: a viewer whose history
+  // fails to load is ranked with no penalty, which is exactly today's behaviour.
+  let seenIds = new Set<string>();
+  if (sc) {
+    try {
+      const since = new Date(Date.now() - SEEN_WINDOW_MS).toISOString();
+      const { data: seenRows } = await sc
+        .from("rank_events")
+        .select("item_id")
+        .eq("user_id", userId)
+        .eq("surface", "discovery")
+        .gte("served_at", since)
+        .order("served_at", { ascending: false })
+        .limit(SEEN_MAX_IDS);
+      for (const row of (seenRows as any[]) ?? []) {
+        if (row?.item_id) seenIds.add(row.item_id as string);
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  return { userId, city, followedIds, interestTags, categoryAffinities, seenIds };
 }
 
 type PlaceCandidate<T extends PdePlace> = RankCandidate & { __place: T };
@@ -383,6 +437,9 @@ export async function rankForViewer<T extends PdePlace>(
     // candidate on every request — the learned-preference input the ranker
     // documents but was never handed.
     categoryAffinities: viewer.categoryAffinities,
+    // Was omitted, so f.seenPenalty was a constant 0 and nothing suppressed
+    // repeats at the portavaRank layer.
+    seenIds: viewer.seenIds,
   };
 
   // Map place → RankCandidate.
