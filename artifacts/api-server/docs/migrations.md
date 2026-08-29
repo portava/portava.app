@@ -511,3 +511,35 @@ The `memory_projection` flag remains **false** in production. Deployment of the 
   behaviour by construction:** before, the mode resolved to `legacy` via reason `flag_absent`;
   now via `flag_disabled`. The `ON CONFLICT` clause updates description and metadata only and
   never touches `enabled`, so it cannot switch a live flag.
+
+## 2026-08-28 — RLS recursion in the call policies (2199)
+
+- `2199_call_participants_rls_recursion.sql` — **applied to CI and production.** Calls were
+  unreadable in production: `SELECT count(*) FROM public.call_participants` as `authenticated`
+  raised **`42P17 infinite recursion detected in policy`**, and so did `anon`. The policy on
+  `call_participants` selected FROM `call_participants`, so evaluating it re-entered itself.
+  `call_sessions_select` subqueries the same table, so **both** tables were dead.
+  - Production held **real rows** — 4 sessions, 7 participant rows, 5 distinct users, Jul 21 to
+    Aug 5. An earlier reading of `pg_stat_user_tables.n_live_tup` showed `0` and was **wrong**:
+    that column is a stale estimate, not a count. The migration's own precondition caught the
+    mistake before anything was applied.
+  - Fixed with `authz.viewer_in_call(uuid)` — `SECURITY DEFINER`, pinned `search_path`, in the
+    `authz` schema (created by 2182) so PostgREST does not expose it. It takes **only the call
+    id**; the viewer comes from `auth.uid()` *inside* the function. That is load-bearing: an RLS
+    predicate must stay EXECUTE-able by the querying role, so it cannot be revoked — and a
+    `(call_id, user_id)` signature would therefore be exactly the caller-supplied-identity oracle
+    2182 closed. **Do not "harden" this by revoking EXECUTE; that breaks every call read.**
+  - **Rehearsed against production inside a rolled-back transaction before applying.** Ground
+    truth without RLS: a given participant should see 2 rows. Under the new policy that
+    participant saw exactly 2, a non-participant 0, anon 0, no 42P17. Re-verified identically
+    after the real apply.
+  - Found by mechanising the shape of the `message_thread_members` recursion discovered the same
+    day: a sweep of all 742 policies over 332 public tables for "policy selecting FROM its own
+    table" returned exactly two hits. `src/test/rlsPolicyShapeLive.test.ts` (new, wired into
+    live-db as `test:rls-policy-shape`) makes that sweep permanent, backed by a service-role-only
+    `public.pg_policies_snapshot()` because `pg_policies` is not reachable through PostgREST.
+  - **CI and production diverge on `messages::msg_select`**: CI correlates correctly
+    (`mtm.thread_id = messages.thread_id`) while production carries the tautology
+    (`mtm.thread_id = mtm.thread_id`). The correct policy already exists; production never
+    received it. That divergence is why the guard running green on CI is not evidence about
+    production, and why the sweep was also run directly against prod by hand.

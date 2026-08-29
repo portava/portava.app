@@ -69,6 +69,7 @@
   "src/test/mediaLib.test.ts",
   "src/test/mediaNoveltyRanking.test.ts",
   "src/test/mediaUploadHardening.test.ts",
+  "src/test/memoryLifecycleLive.test.ts",
   "src/test/messaging.test.ts",
   "src/test/messagingOffApp.test.ts",
   "src/test/moderationReportImageUrl.test.ts",
@@ -84,10 +85,10 @@
   "src/test/placeLiving.test.ts",
   "src/test/placeResolve.test.ts",
   "src/test/placeReviews.test.ts",
+  "src/test/portavaFeaturedWriteBoundary.test.ts",
   "src/test/portavaFeed.test.ts",
   "src/test/portavaRank.test.ts",
   "src/test/postHide.test.ts",
-  "src/test/portavaFeaturedWriteBoundary.test.ts",
   "src/test/postLocationVerificationBoundary.test.ts",
   "src/test/postMediaModerationBoundary.test.ts",
   "src/test/postSave.test.ts",
@@ -126,6 +127,7 @@
   "src/test/rentaBuddyScanner.test.ts",
   "src/test/reportsHistory.test.ts",
   "src/test/rlsHardening.test.ts",
+  "src/test/rlsPolicyShapeLive.test.ts",
   "src/test/rlsPrivacy.test.ts",
   "src/test/rlsPrivacyBaseline.test.ts",
   "src/test/routePlanHook.test.ts",
@@ -140,6 +142,5 @@
   "src/test/tripCrewMap.test.ts",
   "src/test/tripNotFound.test.ts",
   "src/test/tripPrivacy.test.ts",
-  "src/test/trustAdminAuditInsertSchemaDrift.test.ts",
-  "src/test/memoryLifecycleLive.test.ts"
+  "src/test/trustAdminAuditInsertSchemaDrift.test.ts"
 ]
