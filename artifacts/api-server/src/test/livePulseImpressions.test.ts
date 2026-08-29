@@ -417,6 +417,31 @@ function makeClient(
 
 // ── HTTP harness ──────────────────────────────────────────────────────────────
 
+/**
+ * Bind AND connect on the same explicit address.  Both halves matter.
+ *
+ * `server.listen(0)` with no host binds the IPv6 wildcard `[::]`, and node sets
+ * SO_REUSEADDR, so the kernel will hand out an ephemeral port that a FOREIGN
+ * process already holds on `127.0.0.1` — a dev server, an LSP, a local proxy,
+ * anything in 49152-65535.  The bind succeeds; the two sockets are on different
+ * address families and never collide.  `fetch("http://localhost:<port>")` then
+ * resolves the NAME to both families and, on this platform, reaches the IPv4
+ * one — the foreign process.  Our server sees zero requests and the assertion
+ * fails on whatever that stranger answered: a bare `TypeError: fetch failed`
+ * with an empty cause when it replies 407, an unrelated body otherwise.
+ *
+ * That lands on a uniformly random test in this file, roughly once per few
+ * hundred runs, and never reproduces in isolation — the exact signature of the
+ * "3b" intermittent.  Binding 127.0.0.1 makes the port genuinely exclusive
+ * (the kernel will not assign one already bound on the same address), and
+ * dialling 127.0.0.1 by literal removes the name resolution that crossed the
+ * families in the first place.
+ *
+ * This is what the rest of the api-server suite already does; this file was the
+ * outlier.  Do not revert either half to `listen(0, r)` / `localhost`.
+ */
+const LOOPBACK = "127.0.0.1";
+
 async function makeApp(): Promise<Express> {
   const { default: pulseRouter } = await import("../routes/pulse.js");
   const app = express();
@@ -427,10 +452,10 @@ async function makeApp(): Promise<Express> {
 
 async function get(app: Express, path: string): Promise<{ status: number; body: any }> {
   const server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, LOOPBACK, r));
   const port = (server.address() as any).port as number;
   try {
-    const res = await fetch(`http://localhost:${port}${path}`, {
+    const res = await fetch(`http://${LOOPBACK}:${port}${path}`, {
       headers: { Authorization: "Bearer valid-token" },
     });
     const body = await res.json().catch(() => ({}));
@@ -1547,10 +1572,10 @@ async function getMetrics(): Promise<{ status: number; body: any }> {
   app.use(express.json());
   app.use("/api", adminRankingMetricsRouter);
   const server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, LOOPBACK, r));
   const port = (server.address() as any).port as number;
   try {
-    const res = await fetch(`http://localhost:${port}/api/admin/ranking/metrics`, {
+    const res = await fetch(`http://${LOOPBACK}:${port}/api/admin/ranking/metrics`, {
       headers: { Authorization: "Bearer valid-token" },
     });
     return { status: res.status, body: await res.json().catch(() => ({})) };
@@ -1865,10 +1890,10 @@ async function postOutcome(
   app.use(express.json());
   app.use("/api", rankEventsRouter);
   const server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, LOOPBACK, r));
   const port = (server.address() as any).port as number;
   try {
-    const res = await fetch(`http://localhost:${port}/api/rank-events/outcome`, {
+    const res = await fetch(`http://${LOOPBACK}:${port}/api/rank-events/outcome`, {
       method:  "POST",
       headers: {
         Authorization:  "Bearer valid-token",
