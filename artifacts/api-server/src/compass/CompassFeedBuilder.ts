@@ -397,7 +397,6 @@ async function runFeedPipeline(
         uniqueViewerCount:  1,
         lat: null, lng: null,
         distanceKm:         null,
-        isFollowedByViewer: false,
         isDeleted:          false,
         isExpired:          false,
         isSuspended:        !!(r.item.isSuspended),
@@ -422,6 +421,28 @@ async function runFeedPipeline(
         isFirstImpression:  false,
       }));
 
+      // The viewer's follow graph. Without it `followedCreatorIds` below was a
+      // hardcoded empty Set, and since calcRelationshipRelevance reads ONLY
+      // that set, `relationshipRelevance` — a weighted component of the compass
+      // score — was permanently 0 for every item and every viewer. The weight
+      // existed, the profile carried blocks and mutes, and this one signal was
+      // never loaded.
+      //
+      // Loaded here rather than in CompassProfileService because the profile is
+      // shared by a dozen engines that do not need it, and non-fatally for the
+      // same reason loadPdeViewer treats it so: a viewer whose follows fail to
+      // load ranks as following nobody — degraded, not broken.
+      const followedCreatorIds = new Set<string>();
+      try {
+        const { data: followRows } = await db
+          .from("user_follows")
+          .select("following_id")
+          .eq("follower_id", profile.userId);
+        for (const row of (followRows as any[]) ?? []) {
+          if (row?.following_id) followedCreatorIds.add(row.following_id as string);
+        }
+      } catch { /* non-fatal */ }
+
       const drsViewer: RankingViewerContext = {
         viewerId:           profile.userId,
         travelStyles:       profile.travelStyles ?? [],
@@ -431,7 +452,7 @@ async function runFeedPipeline(
         currentCountry:     profile.currentCountry ?? null,
         lat: null, lng: null,
         viewerAge:          profile.viewerAge ?? null,
-        followedCreatorIds: new Set<string>(),
+        followedCreatorIds,
         mutedCreatorIds:    new Set(profile.mutedUserIds ?? []),
         blockedCreatorIds:  new Set(profile.blockedUserIds ?? []),
         seenItemIds:        new Set(profile.ignoredItemIds ?? []),
