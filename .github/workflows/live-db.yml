@@ -436,6 +436,27 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:media-objects
 
+      # audit:schema above is a PRESENCE check on grants: it asks "is each grant
+      # a migration claimed actually present?" and therefore cannot see EXCESS
+      # privilege, and does not model REVOKE at all. This one asserts the EXACT
+      # grant set on discovery_shadow_serves, which is the only form of the
+      # question that answers "can this table be mutated" — D7=A's whole ground.
+      #
+      # That gap was not theoretical: 2092's header claims service_role gets
+      # INSERT and SELECT "and nothing else", but Supabase's default privileges
+      # had already granted it ALL at CREATE TABLE time, and the migration's
+      # REVOKEs did not name service_role. The live table carried DELETE,
+      # TRUNCATE and UPDATE while every gate in CI stayed green.
+      #
+      # The script has existed since then and was invoked by NOTHING — a check
+      # that cannot run is worth exactly as much as the check that missed the
+      # defect. Exit contract matches audit:schema: 1 = real finding,
+      # 2 = cannot run, and 2 is a failure rather than a skip.
+      - name: 'audit:shadow-append-only (exact grants, not merely claimed ones)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server audit:shadow-append-only
+
   # ───────────────────────────────────────────────────────────────────────────
   # Migration 2089 rehearsal — before-proof, apply, after-proof.
   #
