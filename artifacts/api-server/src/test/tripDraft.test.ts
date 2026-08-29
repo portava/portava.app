@@ -178,7 +178,7 @@ async function startServer() {
   });
   app.use("/api", tripDraftRouter);
   server = createServer(app);
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   port = (server.address() as any).port;
 }
 

@@ -119,7 +119,7 @@ describe("Profile media cleanup endpoints", () => {
     const app = express();
     app.use(express.json());
     app.use("/api", profileRouter);
-    server = app.listen(0);
+    server = app.listen(0, "127.0.0.1");
     await new Promise<void>((r) => server.once("listening", r));
     const addr = server.address() as any;
     base = `http://127.0.0.1:${addr.port}`;
@@ -296,7 +296,7 @@ describe("Profile media cleanup — replacing an avatar deletes the old object",
     const app = express();
     app.use(express.json());
     app.use("/api", profileRouter);
-    server2 = app.listen(0);
+    server2 = app.listen(0, "127.0.0.1");
     await new Promise<void>((r) => server2.once("listening", r));
     base2 = `http://127.0.0.1:${(server2.address() as any).port}`;
   });

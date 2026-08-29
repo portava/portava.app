@@ -88,7 +88,7 @@ before(() => {
   app.use(express.json());
   app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
   app.use("/api", mapSearchRouter);
-  return new Promise<void>((resolve) => { server = app.listen(0, () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); }); });
+  return new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); }); });
 });
 
 after(() => { _setForwardGeocoder(null); _clearGeocodeCache(); return new Promise<void>((r) => server.close(() => r())); });

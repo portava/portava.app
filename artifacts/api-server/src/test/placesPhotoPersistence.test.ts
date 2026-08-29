@@ -81,7 +81,7 @@ before(async () => {
   });
   app.use(placesRouter);
   server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, () => r()));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   port = (server.address() as any).port as number;
 });
 

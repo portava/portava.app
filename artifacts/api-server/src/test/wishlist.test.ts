@@ -120,7 +120,7 @@ async function req(
   const port = (server.address() as any).port as number;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
-  const res = await fetch(`http://localhost:${port}${path}`, {
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
     method,
     headers,
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
@@ -131,15 +131,20 @@ async function req(
 
 describe("GET /api/wishlist", () => {
   let server: Server;
-  beforeEach((done) => {
+  beforeEach(async () => {
     _setTestClient(makeFakeClient([
       { id: "r1", user_id: USER_ID,  place_id: "p1", place_data: { id: "p1", name: "Cafe" },  list_id: "global", saved_at: "2026-06-01T00:00:00Z" },
       { id: "r2", user_id: USER_ID,  place_id: "p2", place_data: { id: "p2", name: "Beach" }, list_id: "global", saved_at: "2026-06-02T00:00:00Z" },
       { id: "r3", user_id: OTHER_ID, place_id: "p3", place_data: { id: "p3", name: "Park" },  list_id: "global", saved_at: "2026-06-01T00:00:00Z" },
     ]), true);
-    server = createServer(app).listen(0, done);
+    await new Promise<void>((r) => {
+      server = createServer(app).listen(0, "127.0.0.1", r);
+    });
   });
-  afterEach((done) => { _clearTestClient(); server.close(done); });
+  afterEach(async () => {
+    _clearTestClient();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
 
   it("returns only the authenticated user's places", async () => {
     const { status, body } = await req(server, "GET", "/api/wishlist", { token: "valid-token" });
@@ -162,14 +167,19 @@ describe("GET /api/wishlist", () => {
 
 describe("GET /api/wishlist?list=<id>", () => {
   let server: Server;
-  beforeEach((done) => {
+  beforeEach(async () => {
     _setTestClient(makeFakeClient([
       { id: "r1", user_id: USER_ID, place_id: "p1", place_data: { id: "p1" }, list_id: "global",   saved_at: "2026-06-01T00:00:00Z" },
       { id: "r2", user_id: USER_ID, place_id: "p2", place_data: { id: "p2" }, list_id: "trip-abc", saved_at: "2026-06-01T00:00:00Z" },
     ]), true);
-    server = createServer(app).listen(0, done);
+    await new Promise<void>((r) => {
+      server = createServer(app).listen(0, "127.0.0.1", r);
+    });
   });
-  afterEach((done) => { _clearTestClient(); server.close(done); });
+  afterEach(async () => {
+    _clearTestClient();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
 
   it("filters by list_id", async () => {
     const { status, body } = await req(server, "GET", "/api/wishlist?list=trip-abc", { token: "valid-token" });
@@ -183,12 +193,17 @@ describe("POST /api/wishlist", () => {
   let server: Server;
   let fakeClient: ReturnType<typeof makeFakeClient>;
 
-  beforeEach((done) => {
+  beforeEach(async () => {
     fakeClient = makeFakeClient();
     _setTestClient(fakeClient, true);
-    server = createServer(app).listen(0, done);
+    await new Promise<void>((r) => {
+      server = createServer(app).listen(0, "127.0.0.1", r);
+    });
   });
-  afterEach((done) => { _clearTestClient(); server.close(done); });
+  afterEach(async () => {
+    _clearTestClient();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
 
   it("saves a new place and returns 201", async () => {
     const { status, body } = await req(server, "POST", "/api/wishlist", {
@@ -243,15 +258,20 @@ describe("DELETE /api/wishlist/:placeId", () => {
   let server: Server;
   let fakeClient: ReturnType<typeof makeFakeClient>;
 
-  beforeEach((done) => {
+  beforeEach(async () => {
     fakeClient = makeFakeClient([
       { id: "r1", user_id: USER_ID, place_id: "p1", place_data: { id: "p1" }, list_id: "global",   saved_at: "2026-06-01T00:00:00Z" },
       { id: "r2", user_id: USER_ID, place_id: "p1", place_data: { id: "p1" }, list_id: "trip-abc", saved_at: "2026-06-01T00:00:00Z" },
     ]);
     _setTestClient(fakeClient, true);
-    server = createServer(app).listen(0, done);
+    await new Promise<void>((r) => {
+      server = createServer(app).listen(0, "127.0.0.1", r);
+    });
   });
-  afterEach((done) => { _clearTestClient(); server.close(done); });
+  afterEach(async () => {
+    _clearTestClient();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
 
   it("removes all list entries for the place when no ?list param", async () => {
     const { status, body } = await req(server, "DELETE", "/api/wishlist/p1", { token: "valid-token" });
@@ -277,16 +297,21 @@ describe("DELETE /api/wishlist (clear all)", () => {
   let server: Server;
   let fakeClient: ReturnType<typeof makeFakeClient>;
 
-  beforeEach((done) => {
+  beforeEach(async () => {
     fakeClient = makeFakeClient([
       { id: "r1", user_id: USER_ID,  place_id: "p1", place_data: {}, list_id: "global", saved_at: "2026-06-01T00:00:00Z" },
       { id: "r2", user_id: USER_ID,  place_id: "p2", place_data: {}, list_id: "global", saved_at: "2026-06-02T00:00:00Z" },
       { id: "r3", user_id: OTHER_ID, place_id: "p3", place_data: {}, list_id: "global", saved_at: "2026-06-01T00:00:00Z" },
     ]);
     _setTestClient(fakeClient, true);
-    server = createServer(app).listen(0, done);
+    await new Promise<void>((r) => {
+      server = createServer(app).listen(0, "127.0.0.1", r);
+    });
   });
-  afterEach((done) => { _clearTestClient(); server.close(done); });
+  afterEach(async () => {
+    _clearTestClient();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
 
   it("clears all places for the authenticated user only", async () => {
     const { status, body } = await req(server, "DELETE", "/api/wishlist", { token: "valid-token" });
@@ -305,11 +330,16 @@ describe("DELETE /api/wishlist (clear all)", () => {
 describe("DB error propagation", () => {
   let server: Server;
 
-  beforeEach((done) => {
+  beforeEach(async () => {
     _setTestClient(makeFakeClient([], { dbError: "simulated DB failure" }), true);
-    server = createServer(app).listen(0, done);
+    await new Promise<void>((r) => {
+      server = createServer(app).listen(0, "127.0.0.1", r);
+    });
   });
-  afterEach((done) => { _clearTestClient(); server.close(done); });
+  afterEach(async () => {
+    _clearTestClient();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
 
   it("GET returns 500 on DB error", async () => {
     const { status } = await req(server, "GET", "/api/wishlist", { token: "valid-token" });

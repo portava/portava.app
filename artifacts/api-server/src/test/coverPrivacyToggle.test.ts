@@ -326,7 +326,7 @@ describe("Cover-privacy and profile-photo toggle round-trips", () => {
 
   before(async () => {
     server = createServer(app);
-    server.listen(0);
+    server.listen(0, "127.0.0.1");
     await new Promise<void>((r) => server.once("listening", r));
   });
 

@@ -140,12 +140,12 @@ async function startApp(state: FakeState): Promise<number> {
   return new Promise((resolve) => {
     const server = createServer(app);
     servers.push(server);
-    server.listen(0, () => resolve((server.address() as any).port));
+    server.listen(0, "127.0.0.1", () => resolve((server.address() as any).port));
   });
 }
 
 async function getReward(port: number) {
-  const res = await fetch(`http://localhost:${port}/api/compass/me/active-reward`, {
+  const res = await fetch(`http://127.0.0.1:${port}/api/compass/me/active-reward`, {
     headers: { Authorization: "Bearer alice-tok" },
   });
   return { status: res.status, body: await res.json() };

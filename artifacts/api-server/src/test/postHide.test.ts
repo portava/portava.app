@@ -119,14 +119,15 @@ describe("POST /api/posts/:postId/hide", () => {
   let server: Server;
   let fakeDb: Record<string, FakeTable>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     fakeDb = {
       post_hides: { rows: [] },
       profiles:   { rows: [{ id: CALLER_ID, handle: "caller", name: "Caller", role: "user" }] },
     };
     const client = makeFakeClient(fakeDb);
     _setTestClient(client as any, true);
-    server = createServer(app).listen(0);
+    server = createServer(app).listen(0, "127.0.0.1");
+    await new Promise<void>((r) => server.once("listening", r));
   });
 
   afterEach(async () => {

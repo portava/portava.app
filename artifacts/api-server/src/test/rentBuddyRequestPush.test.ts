@@ -495,7 +495,7 @@ describe("POST /api/me/devices — rent_buddy_profiles token backfill", () => {
     const app = express();
     app.use(express.json());
     app.use("/api", notificationsRouter);
-    server = app.listen(0);
+    server = app.listen(0, "127.0.0.1");
     await new Promise((r) => server.once("listening", r));
     base = `http://127.0.0.1:${(server.address() as any).port}`;
   });

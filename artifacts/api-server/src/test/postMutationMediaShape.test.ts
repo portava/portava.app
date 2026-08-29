@@ -130,7 +130,7 @@ let baseUrl: string;
 
 before(async () => {
   server = http.createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const addr = server.address() as import("node:net").AddressInfo;
   baseUrl = `http://127.0.0.1:${addr.port}`;
 });

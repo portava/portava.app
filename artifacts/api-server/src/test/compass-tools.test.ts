@@ -354,7 +354,7 @@ before(async () => {
   });
   app.use("/api", compassRouter);
   server = createServer(app);
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   port = (server.address() as any).port;
 });
 
@@ -368,7 +368,7 @@ beforeEach(() => invalidateFlagsCache());
 afterEach(() => _setTestOpenAI(null));
 
 async function post(path: string, body: Record<string, unknown>) {
-  const r = await fetch(`http://localhost:${port}${path}`, {
+  const r = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
     body: JSON.stringify(body),
@@ -600,7 +600,7 @@ describe("G2. /compass/ask SSE streaming with tool rounds", () => {
       } } },
     } as any);
 
-    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+    const r = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
       body: JSON.stringify({ prompt: "coffee in Cebu?", stream: true }),
@@ -663,7 +663,7 @@ describe("G2. /compass/ask SSE streaming with tool rounds", () => {
       } } },
     } as any);
 
-    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+    const r = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
       body: JSON.stringify({ prompt: "add lantaw to my trip", stream: true }),
@@ -717,7 +717,7 @@ describe("G2. /compass/ask SSE streaming with tool rounds", () => {
       } } },
     } as any);
 
-    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+    const r = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
       body: JSON.stringify({ prompt: "coffee in Cebu?", stream: true }),

@@ -169,12 +169,13 @@ function makeFakeClient(opts: {
 let streamServer: http.Server;
 
 describe("A. Typing endpoint — auth, membership gate, event fan-out", () => {
-  before(() => {
+  before(async () => {
     const app = express();
     app.use(express.json());
     app.use("/api", telegraphStreamRouter);
     streamServer = createServer(app);
-    streamServer.listen(0);
+    streamServer.listen(0, "127.0.0.1");
+    await new Promise<void>((r) => streamServer.once("listening", r));
   });
 
   after(() => { streamServer?.close(); });
@@ -278,12 +279,13 @@ describe("A. Typing endpoint — auth, membership gate, event fan-out", () => {
 let msgServer: http.Server;
 
 describe("B. Decline message-request — request.declined realtime regression", () => {
-  before(() => {
+  before(async () => {
     const app = express();
     app.use(express.json());
     app.use("/api", messagingRouter);
     msgServer = createServer(app);
-    msgServer.listen(0);
+    msgServer.listen(0, "127.0.0.1");
+    await new Promise<void>((r) => msgServer.once("listening", r));
   });
 
   after(() => {

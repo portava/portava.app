@@ -437,10 +437,13 @@ function makeClient(
  * dialling 127.0.0.1 by literal removes the name resolution that crossed the
  * families in the first place.
  *
- * This is what the rest of the api-server suite already does; this file was the
- * outlier.  Do not revert either half to `listen(0, r)` / `localhost`.
+ * The address is spelled inline at every site rather than hoisted into a
+ * constant, because `loopbackBindGuard.test.ts` verifies the literal that is
+ * actually passed — an identifier tells it nothing about the value.
+ *
+ * This is now what the whole api-server suite does; this file was the first one
+ * fixed.  Do not revert either half to `listen(0, r)` / `localhost`.
  */
-const LOOPBACK = "127.0.0.1";
 
 async function makeApp(): Promise<Express> {
   const { default: pulseRouter } = await import("../routes/pulse.js");
@@ -452,10 +455,10 @@ async function makeApp(): Promise<Express> {
 
 async function get(app: Express, path: string): Promise<{ status: number; body: any }> {
   const server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, LOOPBACK, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as any).port as number;
   try {
-    const res = await fetch(`http://${LOOPBACK}:${port}${path}`, {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, {
       headers: { Authorization: "Bearer valid-token" },
     });
     const body = await res.json().catch(() => ({}));
@@ -1572,10 +1575,10 @@ async function getMetrics(): Promise<{ status: number; body: any }> {
   app.use(express.json());
   app.use("/api", adminRankingMetricsRouter);
   const server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, LOOPBACK, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as any).port as number;
   try {
-    const res = await fetch(`http://${LOOPBACK}:${port}/api/admin/ranking/metrics`, {
+    const res = await fetch(`http://127.0.0.1:${port}/api/admin/ranking/metrics`, {
       headers: { Authorization: "Bearer valid-token" },
     });
     return { status: res.status, body: await res.json().catch(() => ({})) };
@@ -1890,10 +1893,10 @@ async function postOutcome(
   app.use(express.json());
   app.use("/api", rankEventsRouter);
   const server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, LOOPBACK, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as any).port as number;
   try {
-    const res = await fetch(`http://${LOOPBACK}:${port}/api/rank-events/outcome`, {
+    const res = await fetch(`http://127.0.0.1:${port}/api/rank-events/outcome`, {
       method:  "POST",
       headers: {
         Authorization:  "Bearer valid-token",

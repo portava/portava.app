@@ -176,7 +176,7 @@ before(async () => {
   });
   app.use("/api", compassRouter);
   server = createServer(app);
-  await new Promise<void>((resolve) => server.listen(0, resolve));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   port = (server.address() as any).port;
 });
 
@@ -198,7 +198,7 @@ async function api(
   body?: Record<string, unknown>,
   token = "test-token",
 ): Promise<{ status: number; body: any }> {
-  const r = await fetch(`http://localhost:${port}/api${path}`, {
+  const r = await fetch(`http://127.0.0.1:${port}/api${path}`, {
     method,
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     ...(body ? { body: JSON.stringify(body) } : {}),

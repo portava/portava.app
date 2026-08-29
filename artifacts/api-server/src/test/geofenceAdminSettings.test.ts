@@ -123,7 +123,7 @@ before(async () => {
   });
   app.use(adminRouter);
   server = http.createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const addr = server.address() as any;
   base = `http://127.0.0.1:${addr.port}`;
 });

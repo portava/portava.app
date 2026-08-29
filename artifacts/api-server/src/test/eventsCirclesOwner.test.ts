@@ -74,7 +74,7 @@ let server: Server | null = null;
 function listen(): Promise<string> {
   return new Promise((resolve) => {
     server = createServer(app);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       const addr = server!.address() as { port: number };
       resolve(`http://127.0.0.1:${addr.port}`);
     });

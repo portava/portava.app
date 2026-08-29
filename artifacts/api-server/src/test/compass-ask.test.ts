@@ -179,7 +179,7 @@ before(async () => {
   });
   app.use("/api", compassRouter);
   server = createServer(app);
-  await new Promise<void>(resolve => server.listen(0, resolve));
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   port = (server.address() as any).port;
 });
 
@@ -201,7 +201,7 @@ async function ask(
   body: Record<string, unknown>,
   token = "test-token",
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+  const r = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
@@ -613,7 +613,7 @@ describe("H. SSE client disconnect mid-answer", () => {
     _setTestOpenAI(makeStreamingOpenAIMock(state) as any);
 
     const ac = new AbortController();
-    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+    const r = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
       body: JSON.stringify({ prompt: "Tell me everything about Lisbon", stream: true }),
@@ -650,7 +650,7 @@ describe("H. SSE client disconnect mid-answer", () => {
     const state: StreamMockState = { chunksYielded: 0, totalChunks: 3, finished: false };
     _setTestOpenAI(makeStreamingOpenAIMock(state) as any);
 
-    const r = await fetch(`http://localhost:${port}/api/compass/ask`, {
+    const r = await fetch(`http://127.0.0.1:${port}/api/compass/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
       body: JSON.stringify({ prompt: "Quick tip for Lisbon?", stream: true }),

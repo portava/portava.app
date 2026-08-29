@@ -190,7 +190,7 @@ function bearer(token: string) {
 function req(app: express.Application, method: string, path: string, opts: { token?: string; body?: any } = {}): Promise<{ status: number; body: any }> {
   return new Promise((resolve) => {
     const server = http.createServer(app);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       const port = (server.address() as any).port;
       const data = opts.body ? JSON.stringify(opts.body) : undefined;
       const options = {
