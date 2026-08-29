@@ -271,6 +271,9 @@ describe("the eligibility gate on discovery is a KNOWN no-op, and stays declared
     const { client, writes } = recordingClient();
     await rankForViewer(places(25), VIEWER, { sc: client, served: true });
 
+    // ITEM_ELIGIBLE is included even though #202 stopped writing it anywhere:
+    // this asserts the discovery surface emits no per-candidate row at all, and
+    // should keep holding if that constant is ever revived.
     const perCandidate = writes.filter(
       (w) => w.table === "rank_events" &&
              (w.row?.event_type === "ranking_item_eligible" ||
@@ -279,12 +282,12 @@ describe("the eligibility gate on discovery is a KNOWN no-op, and stays declared
 
     assert.deepEqual(
       perCandidate, [],
-      "DiscoveryRankingService must not emit ITEM_ELIGIBLE / ITEM_SCORED on the " +
-      "discovery surface: with every eligibility input a constant, ITEM_ELIGIBLE " +
-      "records a decision that could not have gone the other way, and both are " +
-      "two un-batched inserts per CANDIDATE — over the whole candidate set, not " +
-      "the served page. If this is failing, either the opt-out was dropped or the " +
-      "gate inputs became real; test T says which.",
+      "DiscoveryRankingService must not emit ITEM_SCORED on the discovery " +
+      "surface: with every eligibility input a constant, its 'this item passed " +
+      "the gate' meaning records an outcome that could not have been otherwise, " +
+      "and it is one un-batched insert per CANDIDATE — over the whole candidate " +
+      "set, not the served page. If this is failing, either the opt-out was " +
+      "dropped or the gate inputs became real; test T says which.",
     );
   });
 

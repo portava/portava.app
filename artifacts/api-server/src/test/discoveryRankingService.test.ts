@@ -329,15 +329,19 @@ describe("eligibility gate", () => {
 
 describe("per-candidate analytics switch", () => {
   /**
-   * ITEM_ELIGIBLE and ITEM_SCORED are two single-row, un-batched, un-awaited
-   * inserts for EVERY candidate — not every served item. A surface whose
-   * eligibility inputs are all constants (discovery) pays that for a decision
-   * with one possible outcome, so it opts out via RankItemsOptions.
+   * ITEM_SCORED is a single-row, un-batched, un-awaited insert for EVERY
+   * candidate — not every served item. It is what survives of the pair after
+   * #202 removed ITEM_ELIGIBLE. A surface whose eligibility inputs are all
+   * constants (discovery) pays it for an outcome that could not have differed,
+   * so it opts out via RankItemsOptions.
    *
-   * Two properties keep that safe, and both are easy to lose silently:
-   *   1. the default is ON, so no surface loses analytics by not knowing
-   *      the option exists (compass and pulse both rely on this), and
-   *   2. the switch governs ANALYTICS ONLY — it must never quietly become a
+   * Three properties keep that safe, and all three are easy to lose silently:
+   *   1. the default is ON, so no surface loses analytics by not knowing the
+   *      option exists (compass and pulse both rely on this),
+   *   2. ITEM_INELIGIBLE is NOT governed by the switch — the gate's only
+   *      informative outcome must stay observable even where it is opted out
+   *      of the per-candidate row, and
+   *   3. the switch governs ANALYTICS ONLY — it must never quietly become a
    *      way to skip the eligibility gate itself.
    */
 
@@ -362,14 +366,17 @@ describe("per-candidate analytics switch", () => {
     return { client, events };
   }
 
-  it("emits ITEM_ELIGIBLE and ITEM_SCORED by default — surfaces keep analytics without opting in", async () => {
+  it("emits ITEM_SCORED by default — surfaces keep analytics without opting in", async () => {
     const { client, events } = recordingDb();
     await rankItems([makeItem("i-1"), makeItem("i-2")], "compass", makeViewer(), client, {
       activityScores: new Map(), fatiguedCreators: new Set(), flags: {},
     });
 
-    assert.equal(events.filter((e) => e === "ranking_item_eligible").length, 2);
     assert.equal(events.filter((e) => e === "ranking_item_scored").length, 2);
+    assert.equal(
+      events.filter((e) => e === "ranking_item_eligible").length, 0,
+      "ITEM_ELIGIBLE was removed in #202 and the switch must not resurrect it",
+    );
   });
 
   it("emits neither when the caller opts out", async () => {
@@ -382,6 +389,22 @@ describe("per-candidate analytics switch", () => {
       events.filter((e) => e === "ranking_item_eligible" || e === "ranking_item_scored"),
       [],
     );
+  });
+
+  it("opting out leaves ITEM_INELIGIBLE alone — a rejection stays observable", async () => {
+    // The switch is about a row that records a foregone conclusion. The row that
+    // records the gate actually DOING something must survive it, or a surface
+    // that opts out becomes one where a rejection is invisible — the exact
+    // blind spot #202 existed to close.
+    const { client, events } = recordingDb();
+    await rankItems(
+      [makeItem("blocked", { authorIsBlockedByViewer: true })],
+      "discovery", makeViewer(), client,
+      { activityScores: new Map(), fatiguedCreators: new Set(), flags: {} },
+      { emitPerCandidateAnalytics: false },
+    );
+
+    assert.deepEqual(events, ["ranking_item_ineligible"]);
   });
 
   it("opting out does NOT disable the gate — it still rejects on a real input", async () => {
