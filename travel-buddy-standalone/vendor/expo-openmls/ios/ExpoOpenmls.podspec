@@ -89,5 +89,26 @@ Pod::Spec.new do |s|
     'OTHER_LDFLAGS'        => '-lc++ -lexpo_openmls',
   }
 
+  # The generated bindings put `openmlsFFI` in ExpoOpenmls's PUBLIC Swift
+  # interface, so every consumer that does `import ExpoOpenmls` must also be able
+  # to resolve that Clang module — not just this pod. Expo's generated
+  # ExpoModulesProvider.swift imports it from the APP target, so with the flags
+  # on pod_target_xcconfig alone the app failed to build:
+  #
+  #   Pods-Portava/ExpoModulesProvider.swift:31:8:
+  #     error: missing required module 'openmlsFFI'
+  #
+  # while ExpoOpenmls itself compiled cleanly. user_target_xcconfig propagates
+  # the same modulemap to the consuming target.
+  # Resolved from this podspec's own location rather than spelled as a relative
+  # walk out of $(PODS_ROOT): the podspec is evaluated from wherever the package
+  # actually lives, so this stays correct regardless of install layout.
+  uniffi_dir = File.join(__dir__, 'Rust', 'uniffi', 'openmls')
+  s.user_target_xcconfig = {
+    'HEADER_SEARCH_PATHS' => "\"#{uniffi_dir}\"",
+    'SWIFT_INCLUDE_PATHS' => "\"#{uniffi_dir}\"",
+    'OTHER_SWIFT_FLAGS'   => "-Xcc -fmodule-map-file=\"#{File.join(uniffi_dir, 'openmlsFFI.modulemap')}\"",
+  }
+
   s.preserve_paths = ['Rust/**/*']
 end
