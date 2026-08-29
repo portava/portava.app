@@ -119,3 +119,49 @@ describe("categoryAffinity actually changes Discovery ordering", () => {
     }
   });
 });
+
+describe("seenPenalty demotes repeats without removing them", () => {
+  const candidate = (id: string, category: string) => ({
+    id, kind: "place" as const, category, city: "lisbon",
+  });
+
+  it("a seen place ranks BELOW an unseen one, all else equal", () => {
+    const scored = rankCandidates(
+      [candidate("seen-1", "food"), candidate("new-1", "food")] as any,
+      { userId: "u1", city: "lisbon", seenIds: new Set(["seen-1"]) } as any,
+    );
+    const byId = new Map(scored.map((s: any) => [s.candidate.id, s]));
+    assert.equal(byId.get("seen-1")!.features.seenPenalty, DEFAULT_WEIGHTS.seenPenalty);
+    assert.equal(byId.get("new-1")!.features.seenPenalty, 0);
+    assert.equal(scored[0].candidate.id, "new-1", "the unseen place must come first");
+  });
+
+  it("DEMOTES rather than filters — a viewer who has seen everything still gets a full page", () => {
+    // seenPenalty is a weight, not an exclusion. This is what makes an
+    // over-broad seen set degrade ordering instead of emptying the feed, and it
+    // is the reason the seen window can be generous.
+    const ids = ["a", "b", "c"];
+    const scored = rankCandidates(
+      ids.map((i) => candidate(i, "food")) as any,
+      { userId: "u1", city: "lisbon", seenIds: new Set(ids) } as any,
+    );
+    assert.equal(scored.length, 3, "every candidate must still be returned");
+    for (const s of scored as any[]) {
+      assert.equal(s.features.seenPenalty, DEFAULT_WEIGHTS.seenPenalty);
+    }
+  });
+
+  it("contributes nothing when the viewer has no impression history", () => {
+    const scored = rankCandidates(
+      [candidate("x", "food")] as any,
+      { userId: "u1", city: "lisbon" } as any,
+    );
+    assert.equal((scored[0] as any).features.seenPenalty, 0,
+      "no history must mean no penalty, not a guess");
+  });
+
+  it("the penalty is negative — a demotion, never a boost", () => {
+    assert.ok(DEFAULT_WEIGHTS.seenPenalty < 0,
+      "a positive seenPenalty would promote exactly what it is meant to bury");
+  });
+});
