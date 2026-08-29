@@ -510,6 +510,30 @@ export async function rankForViewer<T extends PdePlace>(
       uniqueViewerCount:  p.savedCount ?? 0,
       lat:                p.lat ?? null, lng: p.lng ?? null,
       distanceKm:         p.distanceKm ?? null,
+      // EVERY eligibility input below is a constant, and that is deliberate.
+      //
+      // A discovery candidate is a PLACE, not authored content. The six
+      // author-side checks (blocks, mute, hidden-creator, reported) have no
+      // subject: `creatorId` is null above because the ranked projection does
+      // not select `discovery_places.submitted_by`, and OSM rows have no author
+      // at all. The four content-state checks and `isPrivate` are already
+      // enforced upstream — both candidate queries filter `.eq("status",
+      // "active")` (routes/discovery.ts:840 and :994) — so deriving them from
+      // `status` here would re-encode a filter that already ran. Age and geo
+      // restriction have no columns on either place table.
+      //
+      // So the gate cannot return ineligible on this surface. #202 already
+      // dropped ITEM_ELIGIBLE everywhere on that reasoning; what remains is
+      // ITEM_SCORED, one insert per CANDIDATE — and the candidate set here is
+      // the full merged one (~180), not the 20 that get served.
+      // `emitPerCandidateAnalytics: false` below stops us paying for it. The
+      // gate CALL stays: it costs a few boolean tests and is the safety net if
+      // these ever stop being constants. ITEM_INELIGIBLE is untouched and will
+      // fire the moment the gate ever rejects anything here.
+      //
+      // If you wire a real value into any field below, turn the analytics back
+      // on in the same change — the guard test in test/discoveryPde.test.ts
+      // fails until you do, on purpose.
       isDeleted: false, isExpired: false, isSuspended: false,
       isModerated: false, isPrivate: false,
       isAgeRestricted: false, minAgeRequired: null,
@@ -536,7 +560,10 @@ export async function rankForViewer<T extends PdePlace>(
       sessionId:          null,
       lastActiveAt:       null,
     };
-    const drsResults = await drsRankItems(drsInputs, "discovery", drsViewer, sc);
+    const drsResults = await drsRankItems(
+      drsInputs, "discovery", drsViewer, sc, {},
+      { emitPerCandidateAnalytics: false },
+    );
     if (drsResults.length > 0) {
       const drsOrder = new Map(drsResults.map((r, idx) => [r.itemId, idx]));
       ranked.sort((a, b) => {

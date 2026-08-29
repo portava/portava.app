@@ -71,7 +71,6 @@ function makeInput(itemId: string): RankingInput {
     saveCount: 0, shareCount: 0, commentCount: 0,
     impressionCount: 0, uniqueViewerCount: 0,
     lat: null, lng: null, distanceKm: null,
-    isFollowedByViewer: false,
     isDeleted: false, isExpired: false, isSuspended: false,
     isModerated: false, isPrivate: false, isAgeRestricted: false,
     minAgeRequired: null, isGeoRestricted: false,
