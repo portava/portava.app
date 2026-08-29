@@ -27,22 +27,6 @@
       "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
     },
     {
-      "file": "src/lib/__tests__/cryptoIdentity.e1.test.ts",
-      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
-    },
-    {
-      "file": "src/lib/__tests__/e0Migration.test.ts",
-      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
-    },
-    {
-      "file": "src/lib/__tests__/localMessageDb.e0.test.ts",
-      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
-    },
-    {
-      "file": "src/lib/__tests__/mlsSession.e2.test.ts",
-      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
-    },
-    {
       "file": "src/lib/__tests__/stampRarity.test.ts",
       "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
     },

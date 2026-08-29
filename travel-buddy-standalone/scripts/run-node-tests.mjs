@@ -114,10 +114,6 @@ const KNOWN_BROKEN = [
   // Jest-syntax (describe/it/expect) test — not converted to node:test yet
   'src/lib/__tests__/stampRarity.test.ts',
   // expo-modules-core@3.0.30 requires native sweet/setUpJsLogger.fx — not in Node
-  'src/lib/__tests__/cryptoIdentity.e1.test.ts',
-  'src/lib/__tests__/e0Migration.test.ts',
-  'src/lib/__tests__/localMessageDb.e0.test.ts',
-  'src/lib/__tests__/mlsSession.e2.test.ts',
   // secureStore.e0 was here. Removed 2026-08-29: it is now
   // src/lib/__tests__/secureStore.e0.component.test.ts and runs under jest via
   // `pnpm test:component`. Being in this list AND not matching the component
