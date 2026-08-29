@@ -7,6 +7,7 @@ import { logger } from "./lib/logger";
 import { startDailyBriefCleanup, queryCleanupHealth } from "./lib/dailyBriefCleanup";
 import { startSuggestionSeenCleanup } from "./lib/suggestionSeenCleanup";
 import { startWeatherCacheCleanup } from "./lib/weatherCacheCleanup";
+import { startDiscoveryCacheCleanup } from "./lib/discoveryCacheCleanup";
 import { initTelegraphBroadcast } from "./lib/telegraphBroadcast";
 import { startSafeReturnScheduler } from "./lib/safeReturnScheduler";
 import { startTripCrewLiveShareScheduler } from "./lib/tripCrewLiveShareScheduler";
@@ -99,6 +100,7 @@ app.listen(port, (err) => {
   startDailyBriefCleanup();
   startSuggestionSeenCleanup();
   startWeatherCacheCleanup();
+  startDiscoveryCacheCleanup();
   initTelegraphBroadcast();
   startSafeReturnScheduler();
   startTripCrewLiveShareScheduler();
