@@ -11,6 +11,39 @@ does not argue with that.
 
 ---
 
+> ## ⚠️ Verified against the tree — 2026-08-29
+>
+> **§1 has been overtaken by implementation. Do not read it as a description of
+> what exists today.** §1 was accurate when written — it pins itself to
+> `494e4d3bc` (§1 preamble) and its counts were exact at that commit. It has not
+> been rewritten; the original claims stay visible and each stale one is annotated
+> inline. Every correction below was produced by running a command, not by reading.
+>
+> **The two that matter, because acting on them would delete working code:**
+>
+> 1. **"the only production import of `mlsSession` anywhere is `SafetyNumberScreen`
+>    … written, tested, and never called"** (§1.3a) — **false.**
+>    `src/services/messaging.ts:200` imports `realCryptoPort` and calls through it
+>    at `:456`, `:466`, `:500` and `:709`. The funnel is `openDirectThread`
+>    (`:644`), which **awaits** `negotiateE2eeForNewThread` at `:675`. The client
+>    encrypts today.
+> 2. **"Nothing ever sets `is_e2ee = true` … written nowhere"** (§1.3b) —
+>    **false.** `artifacts/api-server/src/routes/messaging.ts:1282` does
+>    `.update({ is_e2ee: true })` inside `POST /api/threads/:threadId/e2ee`
+>    (`:1224`), gated on membership, `thread_type = 'direct'` and a delivered
+>    `e2ee_welcome`. The client half is `markThreadE2ee`
+>    (`src/services/messaging.ts:532`), wired at `:724`.
+>
+> **Neither the client encryption path nor the `is_e2ee` write is dead code.**
+>
+> **"tested" is separately false.** The suite covering the encryption functions,
+> `mlsSession.e2.test.ts` (10 cases), executes in no runner. What *does* run is the
+> orchestration layer above them — `src/lib/e2ee/__tests__/` (34 cases, passing
+> under `pnpm test`) — and it drives a fake `CryptoPort`, so it never reaches
+> `mlsSession`. See the corrected test row in §1.1.
+
+---
+
 ## 0.1 DECISIONS — recorded 2026-08-08
 
 Both decided by the owner. Not reopened below; the rest of this document is
@@ -86,12 +119,20 @@ confirming, I say so.
 | MLS session mgmt | `src/lib/mlsSession.ts` (223 ln) | Present — `initGroupAsInitiator/Recipient`, `encryptForThread`, `decryptFromThread`, `deriveSafetyNumberForThread` |
 | Local encrypted store | `src/lib/localMessageDb.ts` (225 ln) | SQLCipher via `@op-engineering/op-sqlite ^17.1.2` (installed). FTS5 referenced. |
 | Crypto bootstrap | `src/hooks/useCryptoInit.ts` | **Mounted** — called at `app/_layout.tsx:88`, so identity generation + device registration run on every launch today |
-| Safety numbers UI | `src/screens/SafetyNumberScreen.tsx` (259 ln), `src/components/ThreadSafetySheet.tsx` (307 ln) | Present, and `SafetyNumberScreen` is the **only** production caller of `mlsSession` |
+| Safety numbers UI | `src/screens/SafetyNumberScreen.tsx` (259 ln), `src/components/ThreadSafetySheet.tsx` (307 ln) | Present, and `SafetyNumberScreen` is the **only** production caller of `mlsSession` — ⚠️ **stale 2026-08-29:** `src/lib/e2ee/realPort.ts:16` is a second importer, and it is the one the send/receive path runs through |
 | Server: devices | `migrations/20260801_e2ee_devices.sql` | **Live** |
 | Server: KeyPackage pool | `migrations/20260802_e2ee_key_packages.sql` + `routes/keyPackages.ts` | **Live.** 3 endpoints: publish, inventory, one-shot consume |
 | Server: ciphertext | `migrations/20260803_messages_ciphertext.sql` | **Live** — confirmed in `database.types.ts`, which was regenerated against the live schema in `1c0cfdaea` |
-| Server: send path | `routes/messaging.ts:1580-1671` | **Implemented.** Accepts `ciphertext`, enforces `body=null` on E2EE threads, rejects plaintext into an E2EE thread, 64 KB cap |
-| Tests | `src/lib/__tests__/{secureStore.e0,localMessageDb.e0,cryptoIdentity.e1,mlsSession.e2}.test.ts` | **CORRECTED 2026-08-08: present but NOT running anywhere.** All four are in the EXCLUDE array in `scripts/run-node-tests.mjs`; they do not match `test:component`'s `\.component\.test\.` filter; and under jest they fail at module resolution. An earlier revision of this table claimed they were part of the green 3696 — that was read off a grep hit inside an exclude list. |
+| Server: send path | `routes/messaging.ts:1580-1671` | **Implemented.** Accepts `ciphertext`, enforces `body=null` on E2EE threads, rejects plaintext into an E2EE thread, 64 KB cap — ⚠️ **line numbers stale 2026-08-29:** `1580` now lands inside the *GET*-messages translation block. The send path is `POST /threads/:threadId/messages` at **`1698-2009`**, ciphertext logic at **`1707-1813`**. The behaviour described is unchanged |
+| Tests | `src/lib/__tests__/{secureStore.e0,localMessageDb.e0,cryptoIdentity.e1,mlsSession.e2}.test.ts` | **CORRECTED 2026-08-08: present but NOT running anywhere.** All four are in the EXCLUDE array in `scripts/run-node-tests.mjs`; they do not match `test:component`'s `\.component\.test\.` filter; and under jest they fail at module resolution. An earlier revision of this table claimed they were part of the green 3696 — that was read off a grep hit inside an exclude list. ⚠️ **The 2026-08-08 correction is itself wrong on two counts, re-checked 2026-08-29.** *(a) The set is wrong.* `secureStore.e0.test.ts` no longer exists — it was repaired, renamed `secureStore.e0.component.test.ts`, removed from the exclude list, and now runs under jest (13 cases passing); and `e0Migration.test.ts`, which this row never named, is orphaned. The orphan set is `cryptoIdentity.e1` (7), `e0Migration` (7), `localMessageDb.e0` (9), `mlsSession.e2` (10) = **33 cases**. *(b) Nothing fails at module resolution under jest.* `cryptoIdentity.e1`, `e0Migration` and `mlsSession.e2` all die at `TypeError: (0, _expoSecureStore._reset) is not a function` — a missing mock, not a resolution failure — and `localMessageDb.e0` never reaches a test: the suite fails to run with `SyntaxError: Cannot use import statement outside a module`, a transform failure. (Run directly under the node:test runner they die inside `expo-modules-core` instead, which is a third failure again.) The array is spelled `KNOWN_BROKEN`, not `EXCLUDE`. |
+
+> ⚠️ **Line counts in the table are the `494e4d3bc` counts — re-measured
+> 2026-08-29.** `cryptoIdentity.ts` 169 → **234**, `secureStore.ts` 158 → **168**
+> (and 286 on the pending `fix/securestore-keychain-resilience` branch),
+> `mlsSession.ts` 223 → **233**, `SafetyNumberScreen.tsx` 259 → **265**,
+> `ThreadSafetySheet.tsx` 307 → **311**. `localMessageDb.ts` is still 225, and
+> `packages/expo-openmls/src/lib.rs` is still 373 — but see §1.6, that is not the
+> file the app builds.
 
 This was executed as a planned programme, not accreted — there are design,
 execution-plan and completion-report documents for it (§1.8). Note however that
@@ -128,13 +169,36 @@ Plaintext `body`, always. Nothing in `src/services/` or `app/` imports
 `mlsSession` anywhere is `SafetyNumberScreen`. The encryption functions are
 written, tested, and never called.
 
+> ⚠️ **FALSE as of 2026-08-29 — this gap was closed.** `sendMessage` now lives at
+> `src/services/messaging.ts:478` and its body is
+> `const payload = await buildOutgoingPayload(realCryptoPort, threadId, body, isE2ee === true)`
+> (`:500`); on an E2EE thread it throws `E2eeSendBlockedError` rather than falling
+> back to plaintext. `realCryptoPort` is imported at `:200`, and
+> `src/lib/e2ee/realPort.ts:16` imports `encryptForThread`/`decryptFromThread` from
+> `mlsSession` — so "the only production import is `SafetyNumberScreen`" is stale
+> too. **"tested" was never true**: `mlsSession.e2.test.ts` runs in no runner.
+
 **(b) Nothing ever sets `is_e2ee = true`.** The flag is *read* in two places
 (send path, translate path) and *written* nowhere. There is no thread-creation
 path that negotiates E2EE, consumes the peer's KeyPackage, or calls
 `initGroupAsInitiator`. So even if (a) were fixed, every thread would still
 take the plaintext branch.
 
+> ⚠️ **FALSE as of 2026-08-29.** `POST /api/threads/:threadId/e2ee`
+> (`artifacts/api-server/src/routes/messaging.ts:1224`) writes the flag at `:1282`,
+> after checking membership, `thread_type = 'direct'`, and that an `e2ee_welcome`
+> system message has already been delivered — no Welcome, no flag. The
+> thread-creation path this paragraph says does not exist is
+> `negotiateE2eeForNewThread` (`src/services/messaging.ts:705`), awaited from
+> `openDirectThread` at `:675` for **newly created** threads only: it consumes the
+> peer's KeyPackage, calls `initGroupAsInitiator` through `realCryptoPort`, sends
+> the Welcome, then calls `markThreadE2ee` (`:532`, wired at `:724`).
+
 These two gaps are why nothing is encrypted despite everything else existing.
+
+> ⚠️ **Both gaps are closed — 2026-08-29.** New 1:1 threads negotiate MLS and
+> encrypt today. What remains unverified is whether the resulting ciphertext is
+> *correct*: see §1.5 and the correction under it.
 
 ### 1.4 What the server genuinely needs to read — the breakage list
 
@@ -186,6 +250,16 @@ Rust "cannot be verified locally" and requires an EAS build. **This code has
 never been compiled, let alone run.** Treat every claim about the Rust — mine
 included — as unexecuted until an EAS build succeeds.
 
+> ⚠️ **Wrong tree — 2026-08-29.** The defect is real at
+> `packages/expo-openmls/src/lib.rs:256`, but that is not the tree the app builds
+> (see §1.6's correction). The shipping tree,
+> `travel-buddy-standalone/vendor/expo-openmls`, is a different and larger
+> implementation whose `encrypt_message` (`src/lib.rs:349`) signs with
+> `own_signer(&provider, &group)` (`:336`) instead of minting a keypair — so this
+> specific defect does not exist in the code that ships. The paragraph's
+> conclusion survives for a different reason: **neither** tree has been compiled
+> here, so this correction is as unexecuted as the claim it corrects.
+
 ### 1.6 Duplication that will bite
 
 `package.json` resolves the module as `expo-openmls: file:./vendor/expo-openmls`
@@ -193,6 +267,18 @@ included — as unexecuted until an EAS build succeeds.
 `packages/expo-openmls`. The two trees are byte-identical today (`diff -q`
 clean), so a fix applied to `packages/` — the one you would naturally open —
 would not reach the app. Worth collapsing to one before any Rust work.
+
+> ⚠️ **"byte-identical" is FALSE — 2026-08-29.**
+> `diff -rq packages/expo-openmls travel-buddy-standalone/vendor/expo-openmls`
+> reports **17 differences** (16 of substance; the seventeenth is `packages/`' own
+> `node_modules`). The trees have diverged, not drifted: `Cargo.toml`, `build.rs`,
+> `package.json`, both native modules and `src/lib.rs` all differ; vendor is
+> OpenMLS **0.6.0** against `packages/`' **0.5.0**; vendor's `lib.rs` is **673**
+> lines against **373**. Only vendor carries `expo-module.config.json`, so only
+> vendor autolinks, and `package.json:69` pins `file:./vendor/expo-openmls`.
+> `packages/expo-openmls` is a stale, unreferenced fork. The section's advice is
+> right and now urgent, with the direction made explicit: **read and fix
+> `vendor/`. `packages/` is the decoy.**
 
 ### 1.7 DM attachments vs public media — CORRECTED 2026-08-08
 

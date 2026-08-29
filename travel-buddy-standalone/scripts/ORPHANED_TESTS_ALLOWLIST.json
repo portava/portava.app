@@ -1,0 +1,146 @@
+{
+  "_comment": "Test files that execute in NO runner. This is tracked DEBT, not an exemption: each entry provides zero coverage while appearing to provide some. The list may shrink, never grow \u2014 scripts/check-orphan-tests.mjs fails on any new orphan and on any stale entry. Generated 2026-08-29 from the measured state.",
+  "_generated": "2026-08-29",
+  "orphans": [
+    {
+      "file": "src/components/__tests__/LivePulseRail.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/components/__tests__/MemoryComposer.duration.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/components/__tests__/PostcardComposer.duration.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/components/map/__tests__/MapCarousel.cardHeight.test.tsx",
+      "reason": "a .test.tsx file: the node runner collects only .test.ts, and it is not named *.component.test.* \u2014 invisible even to KNOWN_BROKEN"
+    },
+    {
+      "file": "src/components/map/__tests__/MapEntityActionRow.test.tsx",
+      "reason": "a .test.tsx file: the node runner collects only .test.ts, and it is not named *.component.test.* \u2014 invisible even to KNOWN_BROKEN"
+    },
+    {
+      "file": "src/hooks/__tests__/useMessageMediaPicker.validation.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/lib/__tests__/cryptoIdentity.e1.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/lib/__tests__/e0Migration.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/lib/__tests__/localMessageDb.e0.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/lib/__tests__/mlsSession.e2.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/lib/__tests__/stampRarity.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/adminCatalogAuditMalformed.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/apiToken.freshToken.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/auth.requestPasswordReset.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/catalogDetail.approvedStale.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/catalogDetail.archivedVersions.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/catalogDetail.earnNullUserId.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/catalogDetail.lastError.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/compass.cityConfidenceCache.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/compass.homeTzOffset.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/compass.reportViewed.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/compass.tzOffsetSurfaces.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/compassAskStream.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/discovery.liveStatusCached.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/discovery.searchSignal.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/friends.sendAutoAccept.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/livekitBridge.activeSpeakers.test.tsx",
+      "reason": "a .test.tsx file: the node runner collects only .test.ts, and it is not named *.component.test.* \u2014 invisible even to KNOWN_BROKEN"
+    },
+    {
+      "file": "src/services/__tests__/media.upload.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/onboardingSaveAlert.partialSave.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/places.getCanonicalPlace.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/postcardWall.blockGate.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/profilePartialSave.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/services/__tests__/profileSaveFlow.partialSave.test.ts",
+      "reason": "listed in KNOWN_BROKEN (node runner skips) and not named *.component.test.* (jest skips)"
+    },
+    {
+      "file": "src/test/compassComponents.test.ts",
+      "reason": "under src/test/ (skipped by the node runner, ignored by jest) and no package script runs it"
+    },
+    {
+      "file": "src/test/stampGracefulDegradation.test.ts",
+      "reason": "reachable only via `pnpm test:stamps`, which no CI workflow invokes"
+    }
+  ]
+}
