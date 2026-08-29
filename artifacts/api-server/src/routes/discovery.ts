@@ -46,6 +46,7 @@ import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
 import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
 import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
+import { pruneAndBound } from "../lib/boundedMapCache.js";
 import {
   readPlacesFromDb,
   writePlacesToDb,
@@ -177,6 +178,31 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
+/**
+ * Ceilings for the three in-process Maps below.
+ *
+ * Each of these Maps checked its TTL only on READ, so an entry nobody asked for
+ * again was never freed and the process retained it until restart. These bounds,
+ * applied through pruneAndBound on every write, are what actually reclaims it.
+ *
+ * The numbers are deliberately generous — they are a backstop against unbounded
+ * growth, not a tuning knob. Hitting one means the process is holding far more
+ * distinct keys than the TTLs suggest it should, which is worth noticing rather
+ * than silently absorbing.
+ *
+ *  - CACHE_A: keyed (destination, category, radius). Realistically a few hundred
+ *    live combinations; 500 leaves room without letting the key space run away.
+ *  - COMPASS_CANDIDATE: keyed per USER x destination. This is the one that grows
+ *    with adoption rather than with content, so it gets the explicit bound even
+ *    though its 10-minute TTL is the shortest of the three.
+ *  - GEOCODE: keyed by city string, 24 h TTL. Bounded in principle by the number
+ *    of distinct destinations ever typed, which is not a small number once users
+ *    can free-text a city.
+ */
+const CACHE_A_MAX_ENTRIES            = 500;
+const COMPASS_CANDIDATE_MAX_ENTRIES  = 1_000;
+const GEOCODE_MAX_ENTRIES            = 2_000;
+
 // ── Compass candidate cache ───────────────────────────────────────────────────
 // Per-user, per-city short-lived cache for the Compass scored candidate list.
 // Skips the full scoring pipeline (profile fetch + Compass context build +
@@ -196,6 +222,19 @@ function cacheKey(dest: string, cat: string, radius: number) {
 
 function isFresh(e: CacheEntry) {
   return Date.now() - e.cachedAt < CACHE_TTL_MS;
+}
+
+/**
+ * Write to cache A and reclaim. Every `cache.set` goes through here so no call
+ * site can add an unbounded entry by forgetting the prune.
+ */
+function setCacheA(key: string, entry: CacheEntry): void {
+  cache.set(key, entry);
+  pruneAndBound(cache, {
+    max: CACHE_A_MAX_ENTRIES,
+    ttlMs: CACHE_TTL_MS,
+    timestampOf: (e) => e.cachedAt,
+  });
 }
 
 // ── Geocode deduplication cache ────────────────────────────────────────────────
@@ -283,11 +322,13 @@ function geocodeCached(location: string): Promise<{ lat: number; lng: number; di
     const dbResult = await readGeocodeFromDb(key);
     if (dbResult) {
       _geocodeMemory.set(key, { r: dbResult, at: Date.now() });
+      pruneAndBound(_geocodeMemory, { max: GEOCODE_MAX_ENTRIES, ttlMs: GEOCODE_CACHE_TTL, timestampOf: (e) => e.at });
       return dbResult;
     }
     // Miss: call Nominatim and persist to both levels.
     const r = await geocode(location);
     _geocodeMemory.set(key, { r, at: Date.now() });
+    pruneAndBound(_geocodeMemory, { max: GEOCODE_MAX_ENTRIES, ttlMs: GEOCODE_CACHE_TTL, timestampOf: (e) => e.at });
     if (r) void writeGeocodeToDb(key, r);
     return r;
   })().finally(() => {
@@ -687,7 +728,7 @@ export function _setTestDbPlacesOverride(fn: typeof _testDbOverride): void {
  * mutations by `patchOsmSavedCount` are observable on the original objects.
  */
 export function _injectTestCacheEntry(key: string, places: DiscoveryPlace[]): void {
-  cache.set(key, { places, cachedAt: Date.now() });
+  setCacheA(key, { places, cachedAt: Date.now() });
 }
 
 /** Test hook: remove a cache entry previously injected by _injectTestCacheEntry. */
@@ -1559,7 +1600,7 @@ router.get("/discovery", async (req, res) => {
   const dbCacheEntry = await readPlacesFromDb(key);
   if (dbCacheEntry) {
     // Populate L1 so the next in-process request skips the DB round-trip.
-    cache.set(key, { places: dbCacheEntry.entry.places as DiscoveryPlace[], cachedAt: dbCacheEntry.entry.cachedAt });
+    setCacheA(key, { places: dbCacheEntry.entry.places as DiscoveryPlace[], cachedAt: dbCacheEntry.entry.cachedAt });
 
     if (!dbCacheEntry.isStale) {
       await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_fresh");
@@ -1577,7 +1618,7 @@ router.get("/discovery", async (req, res) => {
         const freshOsm = await queryOverpass(freshCoords.lat, freshCoords.lng, radiusM, category);
         const enriched  = freshOsm.length > 0 ? await enrichOsmSavedCounts(freshOsm) : freshOsm;
         if (enriched.length > 0) {
-          cache.set(key, { places: enriched, cachedAt: Date.now() });
+          setCacheA(key, { places: enriched, cachedAt: Date.now() });
           void writePlacesToDb(key, destination!, category, radiusKm, enriched, freshCoords);
         }
       } catch { /* non-fatal background revalidation */ }
@@ -1636,7 +1677,7 @@ router.get("/discovery", async (req, res) => {
     // Only cache when we have results — avoids locking out a destination for
     // 2 hours if Overpass timed out or returned nothing transiently.
     if (enrichedOsm.length > 0) {
-      cache.set(key, { places: enrichedOsm, cachedAt: Date.now() });
+      setCacheA(key, { places: enrichedOsm, cachedAt: Date.now() });
       // L2 write (fire-and-forget) — persists across restarts for warm cold starts.
       void writePlacesToDb(key, destination!, category, radiusKm, enrichedOsm, coords);
     }
@@ -1705,6 +1746,13 @@ router.get("/discovery", async (req, res) => {
             // Skip storage for nearest sort — position-dependent results must not be cached.
             if (!skipCache) {
               _compassCandidateCache.set(cCacheKey, { places: compassRanked, at: Date.now() });
+              // Keyed per USER, so this is the Map that grows with adoption
+              // rather than with content. Reclaim on every write.
+              pruneAndBound(_compassCandidateCache, {
+                max: COMPASS_CANDIDATE_MAX_ENTRIES,
+                ttlMs: COMPASS_CANDIDATE_CACHE_TTL_MS,
+                timestampOf: (e) => e.at,
+              });
             }
             // Compass is authoritative: blocked/rejected items are excluded.
             // Only pipeline-passed items appear when the flag is enabled.
@@ -1889,7 +1937,7 @@ router.get("/discovery/counts", async (req, res) => {
           queryDbPlaces(destination, cat, coords.lat, coords.lng),
         ]);
         const enriched = osmPlaces.length > 0 ? await enrichOsmSavedCounts(osmPlaces) : osmPlaces;
-        if (enriched.length > 0) cache.set(k, { places: enriched, cachedAt: Date.now() });
+        if (enriched.length > 0) setCacheA(k, { places: enriched, cachedAt: Date.now() });
         return { cat, total: mergeAndDedup(enriched, dbPlaces).length };
       }),
     );
