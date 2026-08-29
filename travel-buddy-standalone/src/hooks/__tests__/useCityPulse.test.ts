@@ -16,6 +16,20 @@
  *
  * Run:
  *   node --import tsx/esm --test src/hooks/__tests__/useCityPulse.test.ts
+ *
+ * TIME BLOCKS ARE DEVICE-LOCAL (2026-08-29)
+ * -----------------------------------------
+ * cityPulseUtils.blockOf() is `new Date(iso).getHours()`, which reads the
+ * VIEWER'S device timezone. The block fixtures below used to be UTC literals
+ * with comments like "19:00 UTC -> evening", which is only true when the device
+ * is on UTC. CI runs UTC, so the suite was green there and red on every
+ * developer machine in another zone — 30 pass / 5 fail at UTC-4. A suite that
+ * is green only in CI trains people to ignore it.
+ *
+ * Fixtures are now built with localIso(), which pins the LOCAL hour, so these
+ * pass in any timezone. That is a test fix, not an endorsement: see the
+ * "DEFECT" test at the end of the mapper block — classifying a CITY's events by
+ * the VIEWER's clock is a product bug, and it is pinned rather than papered over.
  */
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,6 +42,17 @@ import {
 } from '../cityPulseUtils.ts';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * An ISO instant that falls on `hour`:00 in the DEVICE's timezone.
+ *
+ * blockOf() classifies with getHours() (device-local), so a fixture has to pin
+ * the local hour to mean the same thing everywhere. A UTC literal does not:
+ * '2026-06-20T19:00:00Z' is evening in London and morning in Cebu.
+ */
+function localIso(hour: number, minute = 0): string {
+  return new Date(2026, 5, 20, hour, minute, 0, 0).toISOString(); // month 5 = June
+}
 
 type FakeFetch = (url: string | URL | Request, opts?: RequestInit) => Promise<Response>;
 
@@ -71,23 +96,23 @@ describe('mapApiEvent — response shape mapper', () => {
     assert.equal(ev.score,         null);
   });
 
-  test('blockOf: assigns "morning" for start_time before 12:00', () => {
-    const raw = { id: 'e', title: 'Yoga', start_time: '2026-06-20T08:00:00Z' };
+  test('blockOf: assigns "morning" for a local start time before 12:00', () => {
+    const raw = { id: 'e', title: 'Yoga', start_time: localIso(8) };
     assert.equal(mapApiEvent(raw, 'Cebu', 'cebu').block, 'morning');
   });
 
-  test('blockOf: assigns "afternoon" for start_time 12:00–16:59', () => {
-    const raw = { id: 'e', title: 'Tour', start_time: '2026-06-20T14:00:00Z' };
+  test('blockOf: assigns "afternoon" for a local start time of 12:00–16:59', () => {
+    const raw = { id: 'e', title: 'Tour', start_time: localIso(14) };
     assert.equal(mapApiEvent(raw, 'Cebu', 'cebu').block, 'afternoon');
   });
 
-  test('blockOf: assigns "evening" for start_time 17:00–21:59', () => {
-    const raw = { id: 'e', title: 'Dinner', start_time: '2026-06-20T19:00:00Z' };
+  test('blockOf: assigns "evening" for a local start time of 17:00–21:59', () => {
+    const raw = { id: 'e', title: 'Dinner', start_time: localIso(19) };
     assert.equal(mapApiEvent(raw, 'Cebu', 'cebu').block, 'evening');
   });
 
-  test('blockOf: assigns "late" for start_time 22:00 and later', () => {
-    const raw = { id: 'e', title: 'Club night', start_time: '2026-06-20T23:00:00Z' };
+  test('blockOf: assigns "late" for a local start time of 22:00 or later', () => {
+    const raw = { id: 'e', title: 'Club night', start_time: localIso(23) };
     assert.equal(mapApiEvent(raw, 'Cebu', 'cebu').block, 'late');
   });
 
@@ -114,8 +139,38 @@ describe('mapApiEvent — response shape mapper', () => {
   });
 
   test('capacity is undefined (not 0) when max_capacity is absent in response', () => {
-    const raw = { id: 'e', title: 'Something', start_time: '2026-06-20T08:00:00Z' };
+    const raw = { id: 'e', title: 'Something', start_time: localIso(8) };
     assert.equal(mapApiEvent(raw, 'Bangkok', 'bangkok').capacity, undefined);
+  });
+
+  /**
+   * DEFECT PIN — asserts the CURRENT behaviour, which is wrong.
+   *
+   * Live Pulse renders whatever city the user picked (LocationContext exposes
+   * setManualCity, and the picker is a canonical city search), but blockOf()
+   * reads the VIEWER's clock. So the same instant is bucketed identically no
+   * matter which city the event is in.
+   *
+   * Cebu is UTC+8 and Lima UTC-5 — thirteen hours apart, so one instant cannot
+   * be the same part of the day in both. It should therefore be possible for
+   * these two blocks to DIFFER. They cannot.
+   *
+   * Consequence: from New York, picking Cebu City puts a 20:00 Cebu event at
+   * 08:00 EDT, so blockOf returns 'morning' and PulseFits.tsx:116's "Tonight"
+   * filter (block === 'evening' || 'late') drops it entirely.
+   *
+   * When the product is fixed to classify in the CITY's timezone, this test
+   * SHOULD fail — invert it then. It is here so the bug cannot go quiet again.
+   */
+  test('DEFECT: the block ignores the event city and uses the viewer timezone', () => {
+    const instant = localIso(20);
+    const inCebu = mapApiEvent({ id: 'a', title: 'x', start_time: instant }, 'Cebu City', 'cebu');
+    const inLima = mapApiEvent({ id: 'b', title: 'x', start_time: instant }, 'Lima', 'lima');
+
+    assert.equal(
+      inCebu.block, inLima.block,
+      'documents the defect: city is ignored when assigning the time block',
+    );
   });
 });
 
@@ -136,7 +191,7 @@ describe('fetchCityEvents — fetch, map, and error paths', () => {
       title:          'IT Park food crawl',
       city:           'Cebu',
       city_slug:      'cebu',
-      start_time:     '2026-06-20T19:00:00Z',  // 19:00 UTC → blockOf returns 'evening'
+      start_time:     localIso(19),  // 19:00 LOCAL → blockOf returns 'evening'
       category:       'food',
       attendee_count: 7,
       max_capacity:   10,
@@ -149,7 +204,7 @@ describe('fetchCityEvents — fetch, map, and error paths', () => {
     assert.equal(results[0].id,            'ev1');
     assert.equal(results[0].title,         'IT Park food crawl');
     assert.equal(results[0].citySlug,      'cebu');
-    assert.equal(results[0].block,         'evening');  // 19:00 UTC → evening (17–21)
+    assert.equal(results[0].block,         'evening');  // 19:00 local → evening (17–21)
     assert.equal(results[0].attendeeCount, 7);
     assert.equal(results[0].capacity,      10);
   });
@@ -281,7 +336,7 @@ describe('resolveEventsOnSuccess — live events replace mock data when fetch su
   test('pipe: fetchCityEvents → resolveEventsOnSuccess preserves all mapped fields', async () => {
     const apiEvent = {
       id: 'pipe1', kind: 'meetup', title: 'Sunset run', city: 'Manila',
-      city_slug: 'manila', start_time: '2026-06-21T17:30:00Z',
+      city_slug: 'manila', start_time: localIso(17, 30),
       category: 'fitness', attendee_count: 3, max_capacity: 15,
     };
     globalThis.fetch = async () => makeFakeResponse(true, { events: [apiEvent] }) as Response;
@@ -291,7 +346,7 @@ describe('resolveEventsOnSuccess — live events replace mock data when fetch su
 
     assert.equal(resolved.length, 1);
     assert.equal(resolved[0].id,            'pipe1');
-    assert.equal(resolved[0].block,         'evening'); // 17:30 UTC
+    assert.equal(resolved[0].block,         'evening'); // 17:30 local
     assert.equal(resolved[0].attendeeCount, 3);
     assert.equal(resolved[0].capacity,      15);
   });
