@@ -118,7 +118,10 @@ const KNOWN_BROKEN = [
   'src/lib/__tests__/e0Migration.test.ts',
   'src/lib/__tests__/localMessageDb.e0.test.ts',
   'src/lib/__tests__/mlsSession.e2.test.ts',
-  'src/lib/__tests__/secureStore.e0.test.ts',
+  // secureStore.e0 was here. Removed 2026-08-29: it is now
+  // src/lib/__tests__/secureStore.e0.component.test.ts and runs under jest via
+  // `pnpm test:component`. Being in this list AND not matching the component
+  // pattern meant it executed in neither runner — see the note above KNOWN_BROKEN.
   // discovery.ts → supabase.ts → SecureStoreAdapter → react-native (esbuild "Unexpected typeof")
   'src/services/__tests__/discovery.searchSignal.test.ts',
 ];
