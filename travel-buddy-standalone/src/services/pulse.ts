@@ -94,12 +94,18 @@ export async function getPulseData(opts: {
   limit?: number;
   tab?: string;
   before?: string | null;
-}): Promise<{ ok: true; data: PulseResponse } | { ok: false; error: string }> {
+}): Promise<
+  | { ok: true; data: PulseResponse }
+  // errorKind lets the caller tell "you are signed out" apart from "the network
+  // failed". The Pulse Wall used to render "Check your connection and try again"
+  // for BOTH, so a signed-out user was sent to debug their wifi.
+  | { ok: false; error: string; errorKind: 'unauthenticated' | 'not_configured' | 'http' | 'network' }
+> {
   const base = apiBase();
-  if (!base) return { ok: false, error: 'API not configured' };
+  if (!base) return { ok: false, error: 'API not configured', errorKind: 'not_configured' };
 
   const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not signed in' };
+  if (!token) return { ok: false, error: 'Not signed in', errorKind: 'unauthenticated' };
 
   const params = new URLSearchParams({
     tab: opts.tab ?? 'all',
@@ -114,11 +120,17 @@ export async function getPulseData(opts: {
     const res = await fetch(`${base}/api/pulse?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: `HTTP ${res.status}`,
+        errorKind: res.status === 401 || res.status === 403 ? 'unauthenticated' : 'http',
+      };
+    }
     const data = (await res.json()) as PulseResponse;
     return { ok: true, data: { ...data, placeCards: data.placeCards ?? [] } };
   } catch {
-    return { ok: false, error: 'Network error' };
+    return { ok: false, error: 'Network error', errorKind: 'network' };
   }
 }
 
