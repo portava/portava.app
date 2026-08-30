@@ -480,12 +480,27 @@ const EXEMPT = [
       'Route module; references SUPABASE_URL to build stamp/media URLs for responses. Registered on the ' +
       'production server at boot. Unguarded.',
   },
-  {
-    file: 'src/routes/trips.ts',
-    reason:
-      'Route module; references SUPABASE_URL to build media URLs for responses. Registered on the production ' +
-      'server at boot. Unguarded.',
-  },
+  // src/routes/trips.ts was here. Removed 2026-08-29, and the reason is worth
+  // recording because the entry was never true.
+  //
+  // Its stated justification — "references SUPABASE_URL to build media URLs for
+  // responses" — was copied from the passport.ts entry above and did not
+  // describe this file: trips.ts has never contained SUPABASE_URL and has never
+  // built a media URL. The single token that made the reachability pattern
+  // classify it was a STRING LITERAL inside an error message:
+  //
+  //   res.status(503).json({ error: "Server not configured: SUPABASE_SERVICE_ROLE_KEY is missing" });
+  //
+  // That line went away when the six hand-rolled auth preambles were replaced by
+  // requireUser (which emits the readiness error itself), so the classification
+  // disappeared and this check correctly flagged the exemption as stale.
+  //
+  // NOTE for whoever next re-derives the patterns: matching the bare text
+  // SUPABASE_ also matches error messages and comments, so the "can reach
+  // Supabase directly" population is an over-count, and some other exemptions
+  // here may rest on the same kind of false positive. Narrowing the pattern
+  // would shrink the guarded set, so it is deliberately NOT done in this change
+  // — it needs its own review.
 
   // ── Manual seed / backfill / ops tooling. CI invokes none of it. ──────────
   //
