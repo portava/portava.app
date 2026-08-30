@@ -47,6 +47,29 @@ const BASE_EVENT: PrivateEventPreview = {
   myJoinRequestStatus: null,
 };
 
+/**
+ * A deliberately OVER-FULL object: it carries sensitive fields the private
+ * sentinel type does not declare (address, venue, exact times, attendee roster,
+ * coordinates). The component must read none of them. Each value is a unique
+ * sentinel string, so queryByText proves it never reaches the render tree — and
+ * if the component ever starts rendering one, the matching assertion fails.
+ * (The old tests asserted absence of testIDs the component never emits, so a
+ * plain-<Text> leak of any of these would have stayed green.)
+ */
+const OVERFULL_EVENT = {
+  ...BASE_EVENT,
+  address:        '742 Evergreen Terrace, Springfield',
+  venueName:      'The Hidden Rooftop Loft',
+  startsAt:       '2026-07-04T17:00:00Z',
+  endsAt:         '2026-07-04T22:00:00Z',
+  startTimeLabel: '5:00 PM',
+  attendeeCount:  42,
+  goingCount:     42,
+  attendees:      [{ displayName: 'Leak McLeakface' }],
+  lat:            40.1234567,
+  lng:            -74.7654321,
+} as unknown as PrivateEventPreview;
+
 // ── Mount helper ──────────────────────────────────────────────────────────────
 
 async function mountCard(
@@ -92,40 +115,43 @@ describe('PrivateEventCard', () => {
     });
   });
 
-  it('does NOT render address node — address is never part of PrivateEventPreview', async () => {
-    await mountCard();
+  it('does NOT leak address or venue — even when present on the event object', async () => {
+    await mountCard(OVERFULL_EVENT);
+    // Positive control: queryByText DOES resolve text that the card renders,
+    // so a null below means "absent", not "probe broken".
     await waitFor(() => {
-      // No address text should appear
-      expect(screen.queryByTestId('event-address')).toBeNull();
-      // The wall message tells the user times/location are hidden
-      expect(
-        screen.getByText(
-          'This is a private event. Request to join to see times, location, and details.',
-        ),
-      ).toBeTruthy();
+      expect(screen.getByText('Secret Sunset Gathering')).toBeTruthy();
     });
+    expect(screen.queryByText('742 Evergreen Terrace, Springfield')).toBeNull();
+    expect(screen.queryByText('The Hidden Rooftop Loft')).toBeNull();
+    expect(screen.queryByText(/40\.123|-74\.765/)).toBeNull();
+    // The wall message tells the user times/location are hidden.
+    expect(
+      screen.getByText(
+        'This is a private event. Request to join to see times, location, and details.',
+      ),
+    ).toBeTruthy();
   });
 
-  it('does NOT render exact times or date text', async () => {
-    await mountCard();
+  it('does NOT leak exact times or dates — even when present on the event object', async () => {
+    await mountCard(OVERFULL_EVENT);
     await waitFor(() => {
-      // No time / date nodes rendered anywhere
-      expect(screen.queryByTestId('event-starts-at')).toBeNull();
-      expect(screen.queryByTestId('event-ends-at')).toBeNull();
-      // Verify that specific time strings do not appear
-      expect(screen.queryByText(/17:00|5:00 PM|18:00|2026-/)).toBeNull();
+      expect(screen.getByText('Secret Sunset Gathering')).toBeTruthy(); // positive control
     });
+    expect(screen.queryByText('5:00 PM')).toBeNull();
+    expect(screen.queryByText(/17:00|22:00/)).toBeNull();
+    expect(screen.queryByText(/2026-07-04/)).toBeNull();
   });
 
-  it('does NOT render attendee count', async () => {
-    await mountCard();
+  it('does NOT leak attendee count or roster — even when present on the event object', async () => {
+    await mountCard(OVERFULL_EVENT);
     await waitFor(() => {
-      expect(screen.queryByTestId('going-count')).toBeNull();
-      expect(screen.queryByTestId('attendee-count')).toBeNull();
-      // No "going" or "attendee" count text
-      expect(screen.queryByText(/\d+ going/i)).toBeNull();
-      expect(screen.queryByText(/\d+ attendee/i)).toBeNull();
+      expect(screen.getByText('Secret Sunset Gathering')).toBeTruthy(); // positive control
     });
+    expect(screen.queryByText('Leak McLeakface')).toBeNull();
+    expect(screen.queryByText(/\b42\b/)).toBeNull();
+    expect(screen.queryByText(/\d+ going/i)).toBeNull();
+    expect(screen.queryByText(/\d+ attendee/i)).toBeNull();
   });
 
   it('renders host display name in the "Hosted by" line', async () => {

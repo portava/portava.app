@@ -780,6 +780,19 @@ export function _clearTestCacheEntry(key: string): void {
   cache.delete(key);
 }
 
+/**
+ * Test hooks: READ the L1 cache. Without a read probe the eviction tests could
+ * only assert `doesNotThrow` around the evict calls — which a no-op eviction
+ * passes — so they proved nothing about the moderation-relevant invalidation.
+ * These let a test assert the target was evicted AND a sibling survived.
+ */
+export function _hasTestCacheEntry(key: string): boolean {
+  return cache.has(key);
+}
+export function _testCacheKeys(): string[] {
+  return [...cache.keys()];
+}
+
 /** Test hook: expose enrichOsmSavedCounts for unit testing without going through the route. */
 export const _testEnrichOsmSavedCounts = enrichOsmSavedCounts;
 

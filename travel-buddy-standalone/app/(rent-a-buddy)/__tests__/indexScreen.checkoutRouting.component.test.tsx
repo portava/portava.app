@@ -143,23 +143,32 @@ describe('index.tsx — Available Now strip', () => {
 
 describe('index.tsx — Top Buddies in City strip', () => {
   it('Top Buddies BuddyCard.onBook navigates to checkout with buddyId', async () => {
-    await render(<RentABuddyLanding />);
-    // Two act flushes: onSelect → state → searchBuddies (debounced 600ms skipped in test)
-    await act(async () => {});
-    await act(async () => {});
+    // loadTopBuddies is reached ONLY through a 600 ms debounce (index.tsx:278).
+    // With real timers it never fires within the test, so the Top Buddies strip
+    // never renders and the old test fell through to `expect(true).toBe(true)`.
+    // Drive the debounce with fake timers so the strip actually mounts and we
+    // assert the real onBook destination (mirrors the Available Now test above).
+    jest.useFakeTimers();
+    try {
+      await render(<RentABuddyLanding />);
+      // onSelect useEffect → city state → schedules the 600 ms debounce timer
+      await act(async () => {});
+      // fire the debounce → loadTopBuddies → searchBuddies (mocked) begins
+      await act(async () => { jest.advanceTimersByTime(600); });
+      // flush the searchBuddies promise → setTopBuddies → strip renders BuddyCard
+      await act(async () => {});
 
-    if (capturedOnBook['top-1']) {
+      expect(capturedOnBook['top-1']).toBeDefined();
       capturedOnBook['top-1']!();
+
       expect(routerPush).toHaveBeenCalledWith(
         expect.objectContaining({
           pathname: '/(rent-a-buddy)/checkout',
           params: expect.objectContaining({ buddyId: 'top-1' }),
         }),
       );
-    } else {
-      // Debounce (600 ms) prevented strip render — the onBook lambda is still
-      // correct by source inspection; no regression path exists here.
-      expect(true).toBe(true);
+    } finally {
+      jest.useRealTimers();
     }
   });
 });

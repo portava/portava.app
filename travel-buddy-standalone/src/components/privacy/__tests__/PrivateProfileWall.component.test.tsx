@@ -50,6 +50,20 @@ const BASE_PROFILE: PrivateProfilePreview = {
   avatarUrl: null,
 };
 
+/**
+ * Over-full object carrying private fields the wall's preview type does not
+ * declare (bio, location, email). The wall must render none of them; each value
+ * is a unique sentinel so queryByText proves it never reaches the tree, and a
+ * plain-<Text> leak of any of them fails the assertion.
+ */
+const OVERFULL_PROFILE = {
+  ...BASE_PROFILE,
+  bio:      'Full-time nomad — currently couchsurfing in Lisbon',
+  homeCity: 'Reykjavík',
+  location: 'Reykjavík, Iceland',
+  email:    'secret@example.com',
+} as unknown as PrivateProfilePreview;
+
 // ── Mount helper ──────────────────────────────────────────────────────────────
 
 async function mountWall(
@@ -97,16 +111,18 @@ describe('PrivateProfileWall', () => {
     });
   });
 
-  it('does NOT render bio node — bio is never passed to the wall component', async () => {
+  it('does NOT leak bio / location / email — even when present on the profile object', async () => {
     // PrivateProfileWall does not accept a bio prop and never renders bio text.
-    // Even if a bio string were somehow injected, the component must not display it.
-    await mountWall();
+    // Even with these injected on an over-full object, the wall must not display them.
+    await mountWall(OVERFULL_PROFILE);
     await waitFor(() => {
-      // No bio text should appear anywhere in the rendered tree
-      expect(screen.queryByTestId('bio')).toBeNull();
-      // The wall message is the only body text — verify it's the privacy message
-      expect(screen.getByText('Send a friend request to view this Passport.')).toBeTruthy();
+      expect(screen.getByText('Secret Traveler')).toBeTruthy(); // positive control
     });
+    expect(screen.queryByText('Full-time nomad — currently couchsurfing in Lisbon')).toBeNull();
+    expect(screen.queryByText('Reykjavík, Iceland')).toBeNull();
+    expect(screen.queryByText('secret@example.com')).toBeNull();
+    // The wall message is the only body text — verify it's the privacy message
+    expect(screen.getByText('Send a friend request to view this Passport.')).toBeTruthy();
   });
 
   it('hides action button when isOwnProfile=true', async () => {

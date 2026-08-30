@@ -20,6 +20,7 @@ import { listEvents, type EventListItem } from '../services/events.ts';
 import { listGems, type HiddenGem } from '../services/hiddenGems.ts';
 import { listMyTrips, type TripRow } from '../services/trips.ts';
 import { listVisibleCircleLocations, type CircleMemberLocation } from '../services/map.ts';
+import { coarsenForFriend, isMapVisibleEvent, isMapVisibleTrip } from './mapEntityFilters.ts';
 
 // ── Action capability maps ─────────────────────────────────────────────────────
 
@@ -32,27 +33,9 @@ const LAYER_CAPABILITIES: Record<ToggleableEntityType, MapActionCapability[]> = 
   friends: ['message', 'follow', 'report', 'block'],
 };
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-/**
- * Deterministic ±0.01° jitter (~1 km) based on a string seed so the marker
- * position is stable between renders but never reveals an exact coordinate.
- */
-function deterministicJitter(seed: string): number {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) {
-    h = (Math.imul(h, 31) + seed.charCodeAt(i)) | 0;
-  }
-  // Map unsigned 16-bit hash to [-0.01, +0.01]
-  return ((h & 0xffff) / 0x10000 - 0.5) * 0.02;
-}
-
-function coarsenForFriend(userId: string, lat: number, lng: number): { lat: number; lng: number } {
-  return {
-    lat: lat + deterministicJitter(userId + ':lat'),
-    lng: lng + deterministicJitter(userId + ':lng'),
-  };
-}
+// Privacy / visibility helpers (coarsenForFriend, isMapVisibleEvent,
+// isMapVisibleTrip) live in ./mapEntityFilters.ts so they can be unit-tested
+// without loading this hook's React + service imports.
 
 // ── Layer fetchers ─────────────────────────────────────────────────────────────
 
@@ -105,20 +88,14 @@ async function fetchEvents(
 
   const out: MapEntity<EventListItem>[] = [];
   for (const ev of result.data.events) {
-    if (ev.locationLat == null || ev.locationLng == null) continue;
-    // Respect visibility: public and friends_only events can appear on map.
-    // invite_only / circle / trip events are excluded — they are not meant
-    // for general discovery and must never appear as public map pins.
-    if (
-      ev.visibility === 'invite_only' ||
-      ev.visibility === 'circle' ||
-      ev.visibility === 'trip'
-    ) continue;
+    // Coordinate + visibility guard: only located public / friends_only events
+    // may appear as public map pins (see isMapVisibleEvent).
+    if (!isMapVisibleEvent(ev)) continue;
     out.push({
       id: `event:${ev.id}`,
       type: 'events',
-      lat: ev.locationLat,
-      lng: ev.locationLng,
+      lat: ev.locationLat!,
+      lng: ev.locationLng!,
       payload: ev,
       actionCapabilities: LAYER_CAPABILITIES.events,
       detailRoute: `/event/${ev.id}`,
@@ -160,13 +137,14 @@ async function fetchTrips(): Promise<MapEntity<TripRow>[]> {
   }
   const out: MapEntity<TripRow>[] = [];
   for (const trip of trips) {
-    if (trip.visibility === 'private') continue;
-    if (trip.destinationLat == null || trip.destinationLng == null) continue;
+    // Private trips and coordinate-less trips never appear on the map
+    // (see isMapVisibleTrip).
+    if (!isMapVisibleTrip(trip)) continue;
     out.push({
       id: `trip:${trip.id}`,
       type: 'trips',
-      lat: trip.destinationLat,
-      lng: trip.destinationLng,
+      lat: trip.destinationLat!,
+      lng: trip.destinationLng!,
       payload: trip,
       actionCapabilities: LAYER_CAPABILITIES.trips,
       detailRoute: `/trip/${trip.id}`,

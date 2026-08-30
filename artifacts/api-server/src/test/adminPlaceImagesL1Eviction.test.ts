@@ -8,6 +8,10 @@
  *   2. Route-level test: inject an L1 entry, POST /admin/place-images/:id/reject,
  *      confirm the L1 entry is gone without querying any live DB.
  *
+ * Each assertion checks cache STATE via _hasTestCacheEntry — a no-op eviction now
+ * fails, where the previous inject/clear round-trips passed regardless of whether
+ * anything was evicted.
+ *
  * Run: node --import tsx/esm --test src/test/adminPlaceImagesL1Eviction.test.ts
  */
 import { describe, it, beforeEach, before, after } from "node:test";
@@ -18,6 +22,7 @@ import pino from "pino";
 import {
   _injectTestCacheEntry,
   _clearTestCacheEntry,
+  _hasTestCacheEntry,
   evictCacheEntriesForEntity,
 } from "../routes/discovery.js";
 import { _setTestClient } from "../lib/http.js";
@@ -62,28 +67,20 @@ function place(id: string) {
 describe("evictCacheEntriesForEntity", () => {
   beforeEach(() => {
     // Clean up any entries left by previous tests
-    _clearTestCacheEntry(key("miami"));
-    _clearTestCacheEntry(key("paris"));
-    _clearTestCacheEntry(key("tokyo"));
+    for (const d of ["miami", "paris", "tokyo", "berlin"]) {
+      _clearTestCacheEntry(key(d));
+      _clearTestCacheEntry(key(d, "restaurants", 5));
+    }
   });
 
   it("removes an entry whose places array contains id === 'db/<entityId>'", () => {
     const k = key("miami");
     _injectTestCacheEntry(k, [place(`db/${ENTITY_ID}`)]);
+    assert.equal(_hasTestCacheEntry(k), true, "precondition: entry present");
 
     evictCacheEntriesForEntity(ENTITY_ID);
 
-    // Re-inject a sentinel and immediately clear it; if the original entry were
-    // still present _clearTestCacheEntry would only remove it, not create one —
-    // so we verify absence by injecting a DIFFERENT key and confirming miami is gone.
-    _injectTestCacheEntry(key("paris"), [place("node/999")]);
-    _clearTestCacheEntry(key("paris"));
-
-    // The miami entry must be absent — inject it again and verify it takes
-    // (i.e. no stale entry blocks the fresh inject).
-    _injectTestCacheEntry(k, [place("node/fresh")]);
-    // If eviction worked, we can clear this fresh entry cleanly (no leftover).
-    _clearTestCacheEntry(k);
+    assert.equal(_hasTestCacheEntry(k), false, "entry containing db/<entityId> must be evicted");
   });
 
   it("removes only entries that contain the targeted entity — others survive", () => {
@@ -98,28 +95,21 @@ describe("evictCacheEntriesForEntity", () => {
 
     evictCacheEntriesForEntity(ENTITY_ID);
 
-    // kOther should survive — inject a distinguishable entry and confirm it's still
-    // accessible by re-clearing it (no error means it exists to clear).
-    // We can't read cache directly, so we validate via the inject/clear round-trip:
-    // after eviction, injecting the same key should overwrite cleanly (no collision).
-    _injectTestCacheEntry(kTarget, [place("node/new-miami")]);
-    _clearTestCacheEntry(kTarget);
+    assert.equal(_hasTestCacheEntry(kTarget), false, "target evicted");
+    assert.equal(_hasTestCacheEntry(kMixed),  false, "mixed entry (contains entity) evicted");
+    assert.equal(_hasTestCacheEntry(kOther),  true,  "unrelated entity's entry survives");
 
-    _injectTestCacheEntry(kMixed, [place("node/new-tokyo")]);
-    _clearTestCacheEntry(kMixed);
-
-    // kOther was NOT evicted; clear it explicitly so it doesn't pollute other tests.
-    _clearTestCacheEntry(kOther);
+    _clearTestCacheEntry(kOther); // clean up the survivor
   });
 
   it("is a no-op when no entry contains the entity", () => {
     const k = key("miami");
     _injectTestCacheEntry(k, [place(`db/${OTHER_ID}`)]);
 
-    // Should not throw and should leave the entry intact
-    assert.doesNotThrow(() => evictCacheEntriesForEntity(ENTITY_ID));
+    evictCacheEntriesForEntity(ENTITY_ID);
 
-    _clearTestCacheEntry(k);  // clean up
+    assert.equal(_hasTestCacheEntry(k), true, "entry without the entity is left intact");
+    _clearTestCacheEntry(k); // clean up
   });
 
   it("removes multiple entries that each contain the same entity", () => {
@@ -133,14 +123,11 @@ describe("evictCacheEntriesForEntity", () => {
 
     evictCacheEntriesForEntity(ENTITY_ID);
 
-    // k3 survives — clean up
-    _clearTestCacheEntry(k3);
+    assert.equal(_hasTestCacheEntry(k1), false, "bucket 1 evicted");
+    assert.equal(_hasTestCacheEntry(k2), false, "bucket 2 (mixed) evicted");
+    assert.equal(_hasTestCacheEntry(k3), true,  "unrelated bucket survives");
 
-    // k1 and k2 were evicted — re-inject and clear to confirm no double-entry
-    _injectTestCacheEntry(k1, [place("node/a")]);
-    _clearTestCacheEntry(k1);
-    _injectTestCacheEntry(k2, [place("node/b")]);
-    _clearTestCacheEntry(k2);
+    _clearTestCacheEntry(k3); // clean up
   });
 });
 
@@ -254,9 +241,13 @@ describe("POST /admin/place-images/:visualId/reject — L1 eviction", () => {
   });
 
   it("evicts the L1 cache entry for the rejected place", async () => {
-    // Inject an L1 entry that contains the place being rejected
-    const cacheK = key("miami");
-    _injectTestCacheEntry(cacheK, [place(`db/${ENTITY_ID}`)]);
+    // Inject an L1 entry that contains the place being rejected, plus a sibling
+    // that must survive so we prove targeted (not wholesale) eviction.
+    const cacheK   = key("miami");
+    const siblingK = key("paris");
+    _injectTestCacheEntry(cacheK,   [place(`db/${ENTITY_ID}`)]);
+    _injectTestCacheEntry(siblingK, [place(`db/${OTHER_ID}`)]);
+    assert.equal(_hasTestCacheEntry(cacheK), true, "precondition: target cached");
 
     // Call the reject endpoint
     const res = await post(server, `/api/admin/place-images/${VISUAL_ID}/reject`, ADMIN_TOKEN, {
@@ -266,11 +257,10 @@ describe("POST /admin/place-images/:visualId/reject — L1 eviction", () => {
     assert.equal(res.status, 200, `Expected 200, got ${res.status}: ${JSON.stringify(res.body)}`);
     assert.equal(res.body.ok, true);
 
-    // L1 entry must be gone — verify by re-injecting a different payload for the
-    // same key and confirming no stale entry interferes.
-    _injectTestCacheEntry(cacheK, [place("node/fresh")]);
-    // If the old entry survived, _clearTestCacheEntry would have to clear the
-    // stale one first; instead, confirm the slot is clean by clearing only once.
-    _clearTestCacheEntry(cacheK);
+    // L1 entry for the rejected place must be gone; the unrelated sibling stays.
+    assert.equal(_hasTestCacheEntry(cacheK),   false, "rejected place's L1 entry evicted");
+    assert.equal(_hasTestCacheEntry(siblingK), true,  "unrelated L1 entry survives");
+
+    _clearTestCacheEntry(siblingK); // clean up the survivor
   });
 });

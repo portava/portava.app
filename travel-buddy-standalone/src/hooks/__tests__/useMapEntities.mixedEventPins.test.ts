@@ -45,6 +45,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { isMapVisibleEvent } from '../mapEntityFilters.ts';
 
 // ── Minimal type mirrors ──────────────────────────────────────────────────────
 // These mirror the shapes used in useMapEntities.ts and services/events.ts
@@ -90,19 +91,15 @@ const EVENT_CAPABILITIES: MapActionCapability[] = ['join', 'share', 'report'];
 function buildEventPins(events: FakeEvent[]): FakeMapEntity[] {
   const out: FakeMapEntity[] = [];
   for (const ev of events) {
-    // ── GUARD 1: coordinate completeness (the focus of this test suite) ──────
-    if (ev.locationLat == null || ev.locationLng == null) continue;
-    // ── GUARD 2: visibility (tested separately in the privacy test file) ─────
-    if (
-      ev.visibility === 'invite_only' ||
-      ev.visibility === 'circle' ||
-      ev.visibility === 'trip'
-    ) continue;
+    // Coordinate + visibility guard — the SHIPPED predicate from
+    // useMapEntities' source (mapEntityFilters.ts), not a local copy. Deleting
+    // either guard from the product source turns the pin-count assertions red.
+    if (!isMapVisibleEvent(ev)) continue;
     out.push({
       id: `event:${ev.id}`,
       type: 'events',
-      lat: ev.locationLat,
-      lng: ev.locationLng,
+      lat: ev.locationLat!,
+      lng: ev.locationLng!,
       payload: ev,
       actionCapabilities: EVENT_CAPABILITIES,
       detailRoute: `/event/${ev.id}`,

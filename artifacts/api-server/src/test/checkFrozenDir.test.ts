@@ -13,11 +13,12 @@
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { FROZEN_LEGACY_FILES } from "../scripts/frozenLegacyFiles.js";
+import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "../scripts/frozenLegacyFiles.js";
 
-/** Mirrors the exact filter used in checkFrozenDir.ts. */
+/** Delegates to the SHIPPED predicate (checkFrozenDir.ts + auditMigrationsVsLive.ts
+ * both call findRogueFrozenFiles) — no longer a hand-copied mirror. */
 function findRogueFiles(entries: string[]): string[] {
-  return entries.filter((f) => !FROZEN_LEGACY_FILES.has(f));
+  return findRogueFrozenFiles(entries, FROZEN_LEGACY_FILES);
 }
 
 describe("Frozen-dir guard — rogue .sql file detection", () => {

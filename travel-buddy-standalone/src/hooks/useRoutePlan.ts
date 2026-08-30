@@ -12,6 +12,7 @@ import {
   type PatchStopPayload,
   type RoutePlanMembersResult,
 } from '../services/routePlan.ts';
+import { deriveRouteProgress } from './routeProgress.ts';
 
 const POLL_INTERVAL_MS    = 10_000;
 const MEMBERS_POLL_MS     = 30_000;
@@ -117,10 +118,8 @@ export function useRoutePlan({ planId, pollingEnabled = true }: UseRoutePlanOpti
     await patchStop(stopId, { checkpointStatus: 'skipped' });
   }, [patchStop]);
 
-  const completedCount   = plan?.stops.filter((s) => s.checkpointStatus === 'arrived').length ?? 0;
-  const totalCount       = plan?.stops.length ?? 0;
-  const progressFraction = totalCount > 0 ? completedCount / totalCount : 0;
-  const nextStop         = plan?.stops.find((s) => s.checkpointStatus === 'pending') ?? null;
+  const { completedCount, totalCount, progressFraction, nextStop } =
+    deriveRouteProgress(plan?.stops ?? []);
 
   return {
     plan,
