@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { VisibilityTier } from "./PassportPrivacyGuard.js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
 import { resolveOrEnqueue } from "../../lib/stamps/StampCatalogService.js";
+import { countryCodeFromName } from "../../lib/stamps/countryLookup.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 
 const logger = rootLogger.child({ service: "PassportStampService" });
@@ -145,7 +146,13 @@ export async function createStamp(
   // Fire-and-forget: resolve universal catalog entry for v1 passport_stamps path
   Promise.resolve().then(async () => {
     try {
-      const cc = (country ?? "XX").trim().slice(0, 2).toUpperCase();
+      // Resolve the country NAME to its real ISO code. Slicing the first two
+      // letters fabricated codes — "Vietnam" → "VI" (US Virgin Islands),
+      // "Japan" → "JA" — which split the catalog into a wrong-country key and
+      // steered the wrong artwork (audit STAMP·H3). Two of the launch cities
+      // (Da Nang / Vietnam, Tokyo / Japan) were affected. An unrecognised name
+      // resolves to the "XX" sentinel (as before) rather than a fake code.
+      const cc = countryCodeFromName(country) ?? "XX";
       const { catalogEntry } = await resolveOrEnqueue(
         db,
         {

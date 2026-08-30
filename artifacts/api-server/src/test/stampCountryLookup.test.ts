@@ -71,3 +71,17 @@ test("canonical keys never contain a code abbreviated from spelling", () => {
     "city:xx:mysteryville",
   );
 });
+
+// The six launch cities' countries must resolve to their REAL ISO codes — the
+// old PassportStampService slice(0,2) fabricated "VI"/"JA" for Vietnam/Japan,
+// corrupting Da Nang and Tokyo stamp catalog keys + artwork (audit STAMP·H3).
+test("countryCodeFromName resolves every launch-city country correctly", () => {
+  assert.equal(countryCodeFromName("Vietnam"), "VN");      // Da Nang — was "VI"
+  assert.equal(countryCodeFromName("Japan"), "JP");        // Tokyo   — was "JA"
+  assert.equal(countryCodeFromName("Thailand"), "TH");     // Bangkok
+  assert.equal(countryCodeFromName("Philippines"), "PH");  // Manila
+  assert.equal(countryCodeFromName("United States"), "US");// Miami / Fort Lauderdale
+  // And prove the old bug: slicing the name would have produced the wrong code.
+  assert.notEqual("Vietnam".slice(0, 2).toUpperCase(), countryCodeFromName("Vietnam"));
+  assert.notEqual("Japan".slice(0, 2).toUpperCase(), countryCodeFromName("Japan"));
+});
