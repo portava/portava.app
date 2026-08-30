@@ -250,6 +250,23 @@ describe("authorizeMediaAccess — bare-key column values (post-2081)", () => {
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
   });
 
+  it("3b a post whose media_urls holds ANOTHER user's object does NOT authorize its author (MEDIA-1)", async () => {
+    // The attacker (VIEWER) puts OWNER's private storage key in their OWN public
+    // post's media_urls, then requests the object. The object's owner (from the
+    // key) is OWNER; the post is the attacker's, so it must not republish OWNER's
+    // bytes on its own authority — the exact trap 3d/3e already guard.
+    const sc = makeClient({
+      posts: [{
+        author_id: VIEWER, visibility: "public", status: "active",
+        post_status: "published", trip_id: null, media_urls: [bare],
+      }],
+    });
+    assert.equal(
+      await authorizeMediaAccess(sc, VIEWER, "post-media", path), false,
+      "an attacker's own post carrying a victim's storage key must not authorize the attacker",
+    );
+  });
+
   it("3f trips.cover_url — bare key authorizes a trip member", async () => {
     const sc = makeClient({
       trips: [{ id: TRIP, owner_id: OWNER, cover_url: bare }],

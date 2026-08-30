@@ -269,10 +269,18 @@ async function decide(
         .eq("id", (pm as any).post_id)
         .maybeSingle();
       if (!post) return false;
-      const v = postVisible(post, viewerId);
-      if (v === "allow") return true;
-      if (v === "trip") return isTripMember(sc, (post as any).trip_id, viewerId);
-      return false;
+      // Only a post that OWNS the object may authorize it via post rules. If this
+      // post_media row points at an object owned by someone else (or ownership
+      // can't be attributed), the post has no authority to publish it — fall
+      // through to the other branches (it may be legitimately reachable as e.g. a
+      // generated_visual, and if not, §4 denies). This is the trap branches 3d/3e
+      // already guard against.
+      if (owner && owner === (post as any).author_id) {
+        const v = postVisible(post, viewerId);
+        if (v === "allow") return true;
+        if (v === "trip") return isTripMember(sc, (post as any).trip_id, viewerId);
+        return false;
+      }
     }
   } catch { /* fall through */ }
 
@@ -284,7 +292,13 @@ async function decide(
       .overlaps("media_urls", urlForms)
       .limit(1);
     const post = (posts as any[])?.[0];
-    if (post) {
+    // Found BY media_urls, so the post claiming the object is also the row
+    // publishing it. Only decide here when the post's author OWNS the object, or
+    // any user could put a victim's private storage key in their own public
+    // post's media_urls and read the victim's bytes (mirrors the 3d/3e story /
+    // highlight hardening). On a mismatch (or unknown owner) fall through — the
+    // object may be legitimately reachable via a later branch, else §4 denies.
+    if (post && owner && owner === post.author_id) {
       const v = postVisible(post, viewerId);
       if (v === "allow") return true;
       if (v === "trip") return isTripMember(sc, post.trip_id, viewerId);
