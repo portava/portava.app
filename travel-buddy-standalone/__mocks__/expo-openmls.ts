@@ -1,5 +1,11 @@
 /**
- * Jest mock for expo-openmls (packages/expo-openmls).
+ * Jest mock for expo-openmls.
+ *
+ * Types come from vendor/expo-openmls — the tree that actually ships
+ * (package.json pins "expo-openmls": "file:./vendor/expo-openmls", and only
+ * vendor carries expo-module.config.json, so only vendor autolinks). This mock
+ * previously imported from packages/expo-openmls, a stale unbuilt fork at
+ * OpenMLS 0.5.0, which made it the last thing referencing that tree.
  *
  * All functions return deterministic in-memory results.
  * Key material is fabricated — never real cryptographic material.
@@ -13,7 +19,7 @@ import type {
   GroupCreateResult,
   EncryptResult,
   DecryptResult,
-} from '../../packages/expo-openmls/src/ExpoOpenmls.types';
+} from '../vendor/expo-openmls/src/ExpoOpenmls.types';
 
 // In-memory group state store (base64 string → plaintext message map for test inspection)
 const _groupStore = new Map<string, string>();

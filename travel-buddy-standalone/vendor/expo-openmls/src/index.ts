@@ -14,6 +14,7 @@ import { NativeModulesProxy, requireNativeModule } from 'expo-modules-core';
 import {
   KeyPairBytes,
   DeviceKeyPairBytes,
+  KeyPackageResult,
   GroupCreateResult,
   EncryptResult,
   DecryptResult,
@@ -59,32 +60,39 @@ export function generateDeviceKeyPair(): Promise<DeviceKeyPairBytes> {
 
 /**
  * Generate a KeyPackage for the device's public key material.
- * Return value (base64) should be uploaded to the server's KeyPackage pool.
- * Never stores private keys — those come from SecureStore on the caller side.
+ *
+ * `userId` is a PUBLIC identifier placed in the MLS credential — it travels to
+ * the server and to the peer. It is not key material and must never be one.
+ *
+ * Returns both halves: `keyPackageB64` for the server's pool, and
+ * `pendingStateB64`, the private material processWelcome needs later, which
+ * belongs in SecureStore.
  */
 export function generateKeyPackage(
-  identityPrivB64: string,
+  userId: string,
   deviceEd25519PrivB64: string,
-  deviceX25519PrivB64: string,
-): Promise<string> {
-  return wrapNative<string>('generateKeyPackage', identityPrivB64, deviceEd25519PrivB64, deviceX25519PrivB64);
+  deviceEd25519PubB64: string,
+): Promise<KeyPackageResult> {
+  return wrapNative<KeyPackageResult>('generateKeyPackage', userId, deviceEd25519PrivB64, deviceEd25519PubB64);
 }
 
 /**
  * Create a new MLS group (1:1 thread).
  * Returns `groupStateB64` (store in SecureStore) and `welcomeB64` (send to recipient).
+ *
+ * `userId` is the same PUBLIC credential identifier as in generateKeyPackage.
  */
 export function createGroup(
-  myIdentityPrivB64: string,
-  myDeviceEd25519PrivB64: string,
-  myDeviceX25519PrivB64: string,
+  userId: string,
+  deviceEd25519PrivB64: string,
+  deviceEd25519PubB64: string,
   recipientKeyPackageB64: string,
 ): Promise<GroupCreateResult> {
   return wrapNative<GroupCreateResult>(
     'createGroup',
-    myIdentityPrivB64,
-    myDeviceEd25519PrivB64,
-    myDeviceX25519PrivB64,
+    userId,
+    deviceEd25519PrivB64,
+    deviceEd25519PubB64,
     recipientKeyPackageB64,
   );
 }
@@ -92,20 +100,16 @@ export function createGroup(
 /**
  * Join an MLS group from a Welcome message.
  * Returns `groupStateB64` (store in SecureStore).
+ *
+ * `pendingStateB64` is the private material returned by generateKeyPackage for
+ * the KeyPackage this Welcome was encrypted to. Without the matching one the
+ * Welcome cannot be opened — see SECURE_KEYS.MLS_PENDING_KEY_PACKAGE.
  */
 export function processWelcome(
-  myIdentityPrivB64: string,
-  myDeviceEd25519PrivB64: string,
-  myDeviceX25519PrivB64: string,
   welcomeB64: string,
+  pendingStateB64: string,
 ): Promise<string> {
-  return wrapNative<string>(
-    'processWelcome',
-    myIdentityPrivB64,
-    myDeviceEd25519PrivB64,
-    myDeviceX25519PrivB64,
-    welcomeB64,
-  );
+  return wrapNative<string>('processWelcome', welcomeB64, pendingStateB64);
 }
 
 /** Encrypt plaintext in an MLS group. Updates group state (must be stored back). */
@@ -119,9 +123,15 @@ export function decryptMessage(groupStateB64: string, ciphertextB64: string): Pr
 }
 
 /**
- * Derive a 60-digit decimal safety number from two Ed25519 identity public keys.
- * Commutative: derive_safety_number(A, B) === derive_safety_number(B, A).
+ * Derive a 60-digit decimal safety number from the group's ACTUAL member
+ * signature keys, read out of the ratchet tree in `groupStateB64`. Sorted, so
+ * both devices derive the same value. Substituting a member changes their leaf
+ * signature key and therefore the number — which is what makes it a real check.
+ *
+ * It previously took two caller-supplied identity public keys. Those were never
+ * used by the MLS session, so a match proved nothing; openmls.udl:62-69 records
+ * the change. This wrapper was not updated at the time.
  */
-export function deriveSafetyNumber(identityPubAB64: string, identityPubBB64: string): Promise<string> {
-  return wrapNative<string>('deriveSafetyNumber', identityPubAB64, identityPubBB64);
+export function deriveSafetyNumber(groupStateB64: string): Promise<string> {
+  return wrapNative<string>('deriveSafetyNumber', groupStateB64);
 }
