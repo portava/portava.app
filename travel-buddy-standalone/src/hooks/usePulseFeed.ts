@@ -23,6 +23,13 @@ export interface UsePulseFeedResult {
   loadingMore: boolean;
   hasMore: boolean;
   error: string | null;
+  /**
+   * Why the last load failed, when it did. 'unauthenticated' is the one the UI
+   * must not conflate with a network problem: /api/pulse is auth-only, so a
+   * signed-out user fails here every time, and telling them to check their
+   * connection sends them to debug the wrong thing.
+   */
+  errorKind: string | null;
   reload: () => void;
   loadMore: () => void;
   /** Mark a post as deleted so it is filtered out on every subsequent reload. */
@@ -42,6 +49,9 @@ export function usePulseFeed(opts: {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Carried alongside `error` so the UI can tell a signed-out user to sign in
+  // rather than to check their connection.
+  const [errorKind, setErrorKind] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // Cursor = createdAt of the oldest item on the current page
@@ -91,12 +101,14 @@ export function usePulseFeed(opts: {
           setPlaceCards(result.data.placeCards.map(placeCardToFeedItem));
           setSessionId(result.data.sessionId ?? null);
           setError(null);
+          setErrorKind(null);
         } else {
           setError(result.error);
+          setErrorKind(result.errorKind ?? null);
         }
       })
       .catch(() => {
-        if (!ac.signal.aborted) setError('Network error');
+        if (!ac.signal.aborted) { setError('Network error'); setErrorKind('network'); }
       })
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);
@@ -140,5 +152,5 @@ export function usePulseFeed(opts: {
     return () => { abortRef.current?.abort(); };
   }, [reload]);
 
-  return { items, placeCards, loading, loadingMore, hasMore, error, reload, loadMore, markDeleted, sessionId };
+  return { items, placeCards, loading, loadingMore, hasMore, error, errorKind, reload, loadMore, markDeleted, sessionId };
 }

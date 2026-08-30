@@ -77,6 +77,12 @@ interface UseGemsFeedResult {
   loading: boolean;
   loadingMore: boolean;
   error: string | null;
+  /**
+   * Why the last load failed. 'unauthenticated' matters because the gems feed
+   * is auth-only, so a signed-out user fails here every time and needs to be
+   * told to sign in — not shown a transport error.
+   */
+  errorKind: 'unauthenticated' | 'other' | null;
   hasMore: boolean;
   refresh: () => void;
   loadMore: () => void;
@@ -89,6 +95,7 @@ export function useGemsFeed(opts: UseGemsFeedOptions): UseGemsFeedResult {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<'unauthenticated' | 'other' | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
 
@@ -111,6 +118,7 @@ export function useGemsFeed(opts: UseGemsFeedOptions): UseGemsFeedResult {
 
     reset ? setLoading(true) : setLoadingMore(true);
     setError(null);
+    setErrorKind(null);
 
     try {
       const params = new URLSearchParams({ areaMode: opts.areaMode });
@@ -137,8 +145,15 @@ export function useGemsFeed(opts: UseGemsFeedOptions): UseGemsFeedResult {
       });
 
       if (!resp.ok) {
+        // The server's `message` is diagnostic text for developers — it used to
+        // be thrown straight through and rendered to the user, which is how
+        // "Missing or malformed Authorization header" ended up on screen as the
+        // explanation for an empty Gems tab. Classify it instead; the raw text
+        // stays available to the caller but the UI no longer has to print it.
         const body = await resp.json().catch(() => ({}));
-        throw new Error((body as any)?.message ?? `HTTP ${resp.status}`);
+        const err = new Error((body as any)?.message ?? `HTTP ${resp.status}`);
+        (err as any).status = resp.status;
+        throw err;
       }
 
       const data = await resp.json() as { items: GemsFeedItem[]; nextCursor: string | null; sessionId: string };
@@ -152,9 +167,20 @@ export function useGemsFeed(opts: UseGemsFeedOptions): UseGemsFeedResult {
       setGemsModeState({ sessionId: data.sessionId, cursor: data.nextCursor });
     } catch (e: any) {
       if (e?.name === 'AbortError') return; // expected cancellation
+      const status = (e as any)?.status as number | undefined;
+      setErrorKind(status === 401 || status === 403 ? 'unauthenticated' : 'other');
       setError(e.message ?? 'Failed to load gems');
     } finally {
-      if (!controller.signal.aborted) {
+      // Only a SUPERSEDED request declines to clear the flag — a newer request
+      // is in flight and owns the state. An aborted request that is still the
+      // current one must clear it.
+      //
+      // The old guard was `!controller.signal.aborted`, which skipped the reset
+      // for ANY aborted request. Switching Roam's Watch/Grid/Gems segments
+      // quickly aborts the in-flight fetch, and if no replacement took
+      // ownership the spinner ran forever — observed stuck for over a minute on
+      // an endpoint that answers 401 immediately.
+      if (abortRef.current === controller) {
         reset ? setLoading(false) : setLoadingMore(false);
       }
     }
@@ -183,5 +209,5 @@ export function useGemsFeed(opts: UseGemsFeedOptions): UseGemsFeedResult {
     fetchPage(nextCursor, false);
   }, [hasMore, loadingMore, loading, nextCursor, fetchPage]);
 
-  return { items, loading, loadingMore, error, hasMore, refresh, loadMore };
+  return { items, loading, loadingMore, error, errorKind, hasMore, refresh, loadMore };
 }

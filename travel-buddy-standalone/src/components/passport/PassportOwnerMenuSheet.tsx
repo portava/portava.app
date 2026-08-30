@@ -532,6 +532,7 @@ export function PassportOwnerMenuSheet(props: PassportOwnerMenuSheetProps) {
       animationType="slide"
       onRequestClose={onClose}
     >
+      <View style={s.root}>
       <Pressable style={s.overlay} onPress={onClose} />
       <View style={s.sheet}>
         {/* Handle + title row */}
@@ -566,20 +567,35 @@ export function PassportOwnerMenuSheet(props: PassportOwnerMenuSheetProps) {
           <View style={{ height: space.xl }} />
         </ScrollView>
       </View>
+      </View>
     </Modal>
   );
 }
 
 const s = StyleSheet.create({
-  overlay: {
+  // The sheet must sit inside a parent with a REAL height, or the ScrollView
+  // below collapses. See the note on `scroll`.
+  root: {
     flex: 1,
+    justifyContent: 'flex-end',
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.32)',
   },
   sheet: {
     backgroundColor: PP.paper,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: '82%',
+    // DEFINITE height, not maxHeight.
+    //
+    // maxHeight alone gives Yoga no definite height to resolve a child against,
+    // so the ScrollView below could not be shrunk to fit: its frame took the
+    // full content height, `overflow: hidden` clipped the excess at this
+    // boundary, and the list rendered but would not scroll — the content that
+    // was cut off was simply unreachable. A definite height gives the
+    // ScrollView a real viewport, which is what makes it scrollable.
+    height: '82%',
     overflow: 'hidden',
   },
   topBar: {
@@ -615,6 +631,18 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // flex:1 inside a sheet with a DEFINITE height (see `sheet` above).
+  //
+  // This menu rendered as a bare header with no items: the overlay above was
+  // `flex: 1` and consumed the modal's whole height, leaving `sheet` (which has
+  // only maxHeight, no flex and no height) to size itself from its content. A
+  // child with `flex: 1` inside a content-sized parent resolves to ZERO height,
+  // so the ScrollView — and every one of the eight menu sections in it —
+  // measured 0pt. The data was always fine; nothing was ever visible.
+  //
+  // Now the overlay is an absolute backdrop, `root` gives the sheet somewhere
+  // bounded to sit, and `sheet` has a definite height — so this flex:1 resolves
+  // against a real viewport and the list scrolls.
   scroll: {
     flex: 1,
   },

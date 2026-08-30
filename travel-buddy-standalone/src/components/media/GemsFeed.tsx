@@ -132,7 +132,7 @@ export function GemsFeed({
   const resolvedLng = areaMode === 'near_me' ? userLng : null;
 
   // ── Feed data ─────────────────────────────────────────────────────────────
-  const { items, loading, loadingMore, error, hasMore, refresh, loadMore } = useGemsFeed({
+  const { items, loading, loadingMore, error, errorKind, hasMore, refresh, loadMore } = useGemsFeed({
     areaMode,
     category,
     tripId: resolvedTripId,
@@ -231,8 +231,18 @@ export function GemsFeed({
       <View style={[styles.emptyState, { width: screenWidth, height: screenHeight }]}>
         {error ? (
           <>
-            <Text style={styles.emptyTitle}>Couldn't load gems</Text>
-            <Text style={styles.emptyBody}>{error}</Text>
+            {/* Never render the server's own message. It is diagnostic text —
+                the gems tab used to explain itself to users with "Missing or
+                malformed Authorization header", which is both meaningless to
+                them and an internals leak. */}
+            <Text style={styles.emptyTitle}>
+              {errorKind === 'unauthenticated' ? 'Sign in to see hidden gems' : "Couldn't load gems"}
+            </Text>
+            <Text style={styles.emptyBody}>
+              {errorKind === 'unauthenticated'
+                ? 'Gems are shared by travellers you can follow once you have an account.'
+                : 'Something went wrong. Pull down to try again.'}
+            </Text>
           </>
         ) : (
           <>
@@ -244,7 +254,7 @@ export function GemsFeed({
         )}
       </View>
     );
-  }, [loading, error, screenWidth, screenHeight]);
+  }, [loading, error, errorKind, screenWidth, screenHeight]);
 
   // ── Layout ────────────────────────────────────────────────────────────────
   return (

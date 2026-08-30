@@ -485,7 +485,16 @@ const s = StyleSheet.create({
     backgroundColor: color.paper,
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
-    maxHeight: '85%',
+    // DEFINITE height, not maxHeight.
+    //
+    // `list` below is flex:1, and a flex child of a parent whose height comes
+    // from its own content resolves to ZERO. With maxHeight the sheet hugged
+    // its header + search field, the results list measured 0pt, and searching
+    // for a city returned matches that had nowhere to render — the picker
+    // looked like it found nothing. Since this is the only way to set a city,
+    // and an unset city leaves `destination` empty, that silently emptied
+    // Discovery and the Pulse Wall too.
+    height: '85%',
   },
   header: {
     flexDirection: 'row', alignItems: 'center',

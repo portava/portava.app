@@ -579,11 +579,24 @@ function Pulse() {
   const isLoadingMore =
     feedMode === 'following' ? followingFeed.loadingMore : pulseFeed.loadingMore;
 
+  // The Wall is auth-only: /api/pulse answers 401 without a bearer token. It used
+  // to show "Check your connection and try again" for every failure, including
+  // the signed-out one — which the app already knew about, since getPulseData
+  // returns errorKind:'unauthenticated' before it even makes the request. A
+  // signed-out user was being sent to debug their wifi.
+  const forYouSignedOut = pulseFeed.errorKind === 'unauthenticated';
   const ForYouError = (
     <View style={styles.followingEmpty}>
-      <Text style={styles.followingEmptyTitle}>Couldn't load the For You feed. Check your connection and try again.</Text>
-      <Pressable style={styles.exploreBtn} onPress={() => pulseFeed.reload()}>
-        <Text style={styles.exploreBtnText}>Retry</Text>
+      <Text style={styles.followingEmptyTitle}>
+        {forYouSignedOut
+          ? 'Sign in to see your For You feed.'
+          : "Couldn't load the For You feed. Check your connection and try again."}
+      </Text>
+      <Pressable
+        style={styles.exploreBtn}
+        onPress={() => (forYouSignedOut ? router.push('/(auth)/sign-in' as any) : pulseFeed.reload())}
+      >
+        <Text style={styles.exploreBtnText}>{forYouSignedOut ? 'Sign in' : 'Retry'}</Text>
       </Pressable>
     </View>
   );
