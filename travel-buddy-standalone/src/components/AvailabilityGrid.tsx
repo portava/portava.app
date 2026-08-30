@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { closeThenNavigate } from '../lib/deferredNavigate.ts';
+import { localTodayKey } from '../utils/localDate.ts';
 import { CalendarPlus, X } from 'lucide-react-native';
 import { type MemberAvailability, type Weekday } from '../services/availability.ts';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
@@ -252,7 +253,7 @@ export function AvailabilityGrid({
             <View style={[g.headerRow, { height: HEAD_H }]}>
               {days.map((d) => {
                 const { abbr, num } = dayLabel(d);
-                const isToday = d === new Date().toISOString().slice(0, 10);
+                const isToday = d === localTodayKey();
                 return (
                   <Pressable
                     key={d}

@@ -17,6 +17,7 @@ import {
   type AppStateStatus,
 } from 'react-native';
 import { Avatar } from '../../src/components/ui/Avatar';
+import { localDateKey, localTodayKey } from '../../src/utils/localDate';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useLocalSearchParams, router } from 'expo-router';
@@ -103,8 +104,10 @@ const BLOCK_SHORT: Record<string, string> = {
 // ── Day label helpers ─────────────────────────────────────────────────────────
 
 function formatDayLabel(isoDay: string): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  // LOCAL calendar day, not UTC — see src/utils/localDate. toISOString() here
+  // mislabels dividers by a day for most of the world and permanently in scrollback.
+  const today = localTodayKey();
+  const yest = localDateKey(new Date(Date.now() - 86400000));
   if (isoDay === today) return 'Today';
   if (isoDay === yest) return 'Yesterday';
   return new Date(isoDay + 'T12:00:00').toLocaleDateString(undefined, {
@@ -1378,7 +1381,7 @@ export default function TelegraphThread() {
     let lastDay = '';
     for (let i = 0; i < messages.length; i++) {
       const m = messages[i];
-      const day = m.createdAt.slice(0, 10);
+      const day = localDateKey(m.createdAt);
       const dayBreak = day !== lastDay;
       if (dayBreak) {
         lastDay = day;

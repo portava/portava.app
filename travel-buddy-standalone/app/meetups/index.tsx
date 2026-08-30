@@ -17,6 +17,7 @@ import {
   ArrowLeft, CalendarClock, MapPin, Plus, CalendarX,
 } from 'lucide-react-native';
 import { getMyMeetups, type MeetupListItem, type MeetupStatus, type RsvpStatus } from '../../src/services/meetups';
+import { localTodayKey } from '../../src/utils/localDate';
 import { MeetupCreationSheet } from '../../src/components/MeetupCreationSheet';
 import { RsvpBar } from '../../src/components/RsvpBar';
 import { useSession } from '../../src/context/SessionContext';
@@ -45,7 +46,9 @@ function formatDate(m: MeetupListItem): string {
 function isUpcoming(m: MeetupListItem): boolean {
   if (m.status === 'cancelled') return false;
   if (m.startsAt) return new Date(m.startsAt) >= new Date();
-  if (m.approximateDate) return m.approximateDate >= new Date().toISOString().split('T')[0];
+  // Compare the local approximateDate against the LOCAL today, not UTC — at a
+  // positive offset a meetup dated today was falling into "Past".
+  if (m.approximateDate) return m.approximateDate >= localTodayKey();
   return true; // no date = assume upcoming
 }
 

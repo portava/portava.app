@@ -27,6 +27,7 @@ import {
 import { AvailabilityGrid, type CellStatus } from './AvailabilityGrid.tsx';
 import { BestDaysBanner } from './BestDaysBanner.tsx';
 import { color, space, radius, type as t, shadow } from '../theme/tokens.ts';
+import { localDateKey } from '../utils/localDate.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ function generateTripDays(startDate?: string, endDate?: string): string[] {
   const days: string[] = [];
   const cur = new Date(start);
   while (cur <= end) {
-    days.push(cur.toISOString().slice(0, 10));
+    days.push(localDateKey(cur)); // LOCAL day — cur is built from local midnight
     cur.setDate(cur.getDate() + 1);
   }
   return days;

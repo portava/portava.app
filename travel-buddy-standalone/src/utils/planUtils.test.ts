@@ -5,6 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildBuckets, dayChipLabel, filterByDay } from './planUtils.ts';
+import { localDateKey } from './localDate.ts';
 import type { TripPlanItem } from '../types/models.ts';
 
 // ── Minimal TripPlanItem factory ──────────────────────────────────────────────
@@ -45,7 +46,10 @@ describe('dayChipLabel', () => {
   it('returns Today for today date', () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const key = today.toISOString().slice(0, 10);
+    // LOCAL day key — toISOString() here gave the UTC date, so east of Greenwich
+    // this test went red on a clean checkout (dayChipLabel is correct; the test
+    // was feeding it yesterday's key).
+    const key = localDateKey(today);
     assert.equal(dayChipLabel(key, null, today), 'Today');
   });
 
