@@ -13,6 +13,20 @@
  * inline copy elsewhere.
  */
 
+/**
+ * Rogue-file predicate for the frozen legacy dir. A frozen file is stored as a
+ * bare filename (no path separator); anything nested ("/") or not in `frozenSet`
+ * is rogue. Pure (no I/O) and side-effect-free, so guard tests bind to this
+ * exact filter instead of a hand-copied mirror. Both checkFrozenDir.ts and
+ * auditMigrationsVsLive.ts's inline guard call it.
+ */
+export function findRogueFrozenFiles(
+  entries: string[],
+  frozenSet: Set<string> = FROZEN_LEGACY_FILES,
+): string[] {
+  return entries.filter((f) => !frozenSet.has(f));
+}
+
 /** Every .sql filename (bare, no path separator) that is permitted in the legacy dir. */
 export const FROZEN_LEGACY_FILES = new Set([
   "0011_trip_plan_coords.sql",

@@ -18,7 +18,8 @@ const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'
 const { Map, Camera, Marker, GeoJSONSource, Layer } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { Maximize2 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
-import type { FullRoutePlan, RouteStop } from '../services/routePlan.ts';
+import type { FullRoutePlan } from '../services/routePlan.ts';
+import { computeViewport } from './routeMinimapViewport.ts';
 
 // ── Map tile style ─────────────────────────────────────────────────────────────
 
@@ -34,30 +35,8 @@ interface Props {
   height?: number;
 }
 
-// ── Viewport helper ───────────────────────────────────────────────────────────
-
-function computeViewport(stops: RouteStop[]) {
-  const points = stops
-    .map((s) => ({ lat: s.structuredLocation?.lat, lng: s.structuredLocation?.lng }))
-    .filter((p) => p.lat != null && p.lng != null) as { lat: number; lng: number }[];
-
-  if (points.length === 0) return null;
-
-  const lats = points.map((p) => p.lat);
-  const lngs = points.map((p) => p.lng);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-  const latDelta = Math.max((maxLat - minLat) * 1.6, 0.02);
-  const lngDelta = Math.max((maxLng - minLng) * 1.6, 0.02);
-
-  return {
-    center: [(minLng + maxLng) / 2, (minLat + maxLat) / 2] as [number, number],
-    zoom: Math.min(
-      Math.log2(360 / lngDelta),
-      Math.log2(180 / latDelta),
-    ) - 0.5,
-  };
-}
+// computeViewport lives in ./routeMinimapViewport.ts so it can be unit-tested
+// without a React Native renderer.
 
 // ── Component ─────────────────────────────────────────────────────────────────
 

@@ -6,6 +6,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
+import { buildCombosFromUserStampRows, type LocationCombo } from "../lib/stamps/reconcileStampCatalog.js";
 import { canonicalLocationKey, normalizeSegment, definitionScopedKey } from "../lib/stamps/locationKey.js";
 import { buildStampPrompt, STYLE_VERSION, CANDIDATE_COUNT } from "../lib/stamps/artDirection.js";
 import { PlaceholderProvider } from "../lib/stamps/imageProvider.js";
@@ -147,35 +148,9 @@ describe("canonicalLocationKey — country name resolution", () => {
 // on the nonexistent stamp_type column.
 
 describe("reconciliation — user_stamps combo building", () => {
-  /** Mirrors the combo-building logic in reconcileStampCatalog.ts */
-  interface LocationCombo {
-    stamp_type: string;
-    country: string | null;
-    city: string | null;
-    userStampDefIds: string[];
-  }
-
-  function buildCombosFromUserStampRows(rows: any[]): Map<string, LocationCombo> {
-    const combos = new Map<string, LocationCombo>();
-    for (const row of rows) {
-      const stampType: string = (row.stamp_definitions as any)?.stamp_type ?? "city";
-      const key = `${stampType}|${row.country ?? ""}|${row.city ?? ""}`;
-      const existing = combos.get(key);
-      if (existing) {
-        if (row.stamp_definition_id && !existing.userStampDefIds.includes(row.stamp_definition_id)) {
-          existing.userStampDefIds.push(row.stamp_definition_id);
-        }
-      } else {
-        combos.set(key, {
-          stamp_type:      stampType,
-          country:         row.country ?? null,
-          city:            row.city ?? null,
-          userStampDefIds: row.stamp_definition_id ? [row.stamp_definition_id] : [],
-        });
-      }
-    }
-    return combos;
-  }
+  // buildCombosFromUserStampRows is imported from the shipped
+  // reconcileStampCatalog.ts (not mirrored) so a change to the real combo logic
+  // is exercised here directly.
 
   it("populates userStampDefIds from stamp_definition_id, not stamp_type", () => {
     const rows = [

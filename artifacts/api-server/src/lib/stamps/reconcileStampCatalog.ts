@@ -21,7 +21,7 @@ import { resolveOrEnqueueForDefinition } from "./StampCatalogService.js";
 import { resolveCountry } from "./countryLookup.js";
 import { STYLE_VERSION } from "./artDirection.js";
 
-interface LocationCombo {
+export interface LocationCombo {
   stamp_type:            string;
   country:               string | null;
   city:                  string | null;
@@ -85,6 +85,41 @@ async function writeRunSummary(
  *
  * Returns a stats object: { resolved, flagged, skipped, enqueued, combos }.
  */
+
+/**
+ * Build the distinct location combos contributed by user_stamps rows, keyed by
+ * `${stampType}|${country}|${city}`. user_stamps has no stamp_type column — the
+ * type lives on the joined stamp_definitions row — so we also collect each
+ * stamp_definition_id for the write-side filter. Rows for an existing key
+ * accumulate their definition id; the first row seeds the combo. Exported (pure)
+ * so the reconciliation contract test binds to this exact logic rather than a
+ * hand-copied mirror.
+ */
+export function buildCombosFromUserStampRows(
+  rows: any[],
+  combos: Map<string, LocationCombo> = new Map(),
+): Map<string, LocationCombo> {
+  for (const row of rows) {
+    const stampType: string = (row.stamp_definitions as any)?.stamp_type ?? "city";
+    const key = `${stampType}|${row.country ?? ""}|${row.city ?? ""}`;
+    const existing = combos.get(key);
+    if (existing) {
+      // Accumulate additional definition IDs for this combo
+      if (row.stamp_definition_id && !existing.userStampDefIds.includes(row.stamp_definition_id)) {
+        existing.userStampDefIds.push(row.stamp_definition_id);
+      }
+    } else {
+      combos.set(key, {
+        stamp_type:       stampType,
+        country:          row.country ?? null,
+        city:             row.city ?? null,
+        userStampDefIds:  row.stamp_definition_id ? [row.stamp_definition_id] : [],
+      });
+    }
+  }
+  return combos;
+}
+
 export async function runReconciliation(sc: any): Promise<ReconcileStats> {
   const runId = randomUUID();
   const stats: ReconcileStats = { resolved: 0, flagged: 0, skipped: 0, enqueued: 0, combos: 0 };
@@ -117,24 +152,7 @@ async function reconcile(sc: any, stats: ReconcileStats): Promise<void> {
 
   if (usErr) throw new Error(`Failed to read user_stamps: ${usErr.message}`);
 
-  for (const row of (userStamps ?? []) as any[]) {
-    const stampType: string = (row.stamp_definitions as any)?.stamp_type ?? "city";
-    const key = `${stampType}|${row.country ?? ""}|${row.city ?? ""}`;
-    const existing = combos.get(key);
-    if (existing) {
-      // Accumulate additional definition IDs for this combo
-      if (row.stamp_definition_id && !existing.userStampDefIds.includes(row.stamp_definition_id)) {
-        existing.userStampDefIds.push(row.stamp_definition_id);
-      }
-    } else {
-      combos.set(key, {
-        stamp_type:       stampType,
-        country:          row.country ?? null,
-        city:             row.city ?? null,
-        userStampDefIds:  row.stamp_definition_id ? [row.stamp_definition_id] : [],
-      });
-    }
-  }
+  buildCombosFromUserStampRows((userStamps ?? []) as any[], combos);
 
   // From passport_stamps (v1) — uses country/city columns (not location_country/location_city)
   const { data: passportStamps, error: psErr } = await sc

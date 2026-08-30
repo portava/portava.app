@@ -3,6 +3,10 @@
  * entries that contain the voted-on OSM place, so vote/review counts are not
  * served stale for up to the 2-hour TTL.
  *
+ * These assert the cache STATE after eviction (via _hasTestCacheEntry) — a
+ * no-op eviction now fails, where the previous doesNotThrow-around-clear checks
+ * passed regardless.
+ *
  * Run: node --import tsx/esm --test src/test/discoveryVoteL1Eviction.test.ts
  */
 import { describe, it, beforeEach } from "node:test";
@@ -10,6 +14,7 @@ import assert from "node:assert/strict";
 import {
   _injectTestCacheEntry,
   _clearTestCacheEntry,
+  _hasTestCacheEntry,
   evictOsmPlaceFromL1Cache,
 } from "../routes/discovery.js";
 
@@ -51,66 +56,56 @@ function osmPlace(id: string) {
 
 describe("evictOsmPlaceFromL1Cache", () => {
   beforeEach(() => {
-    _clearTestCacheEntry(key("paris"));
-    _clearTestCacheEntry(key("london"));
-    _clearTestCacheEntry(key("berlin"));
-    _clearTestCacheEntry(key("rome"));
+    for (const d of ["paris", "london", "berlin", "rome"]) {
+      _clearTestCacheEntry(key(d));
+      _clearTestCacheEntry(key(d, "restaurants", 5));
+    }
   });
 
   it("removes an entry whose places array contains the targeted OSM id", () => {
     const k = key("paris");
     _injectTestCacheEntry(k, [osmPlace(OSM_ID)]);
+    assert.equal(_hasTestCacheEntry(k), true, "precondition: entry present");
 
     evictOsmPlaceFromL1Cache(OSM_ID);
 
-    // Verify the slot is gone: re-inject a fresh payload — if the stale entry
-    // were still present a second set would overwrite it silently, so we also
-    // confirm we can clear exactly once without an error from a missing entry.
-    _injectTestCacheEntry(k, [osmPlace(OTHER_OSM_ID)]);
-    _clearTestCacheEntry(k);
+    assert.equal(_hasTestCacheEntry(k), false, "target entry must be evicted");
   });
 
   it("leaves entries that do not contain the targeted OSM id untouched", () => {
     const kTarget = key("paris");
     const kOther  = key("london");
-
     _injectTestCacheEntry(kTarget, [osmPlace(OSM_ID)]);
     _injectTestCacheEntry(kOther,  [osmPlace(OTHER_OSM_ID)]);
 
     evictOsmPlaceFromL1Cache(OSM_ID);
 
-    // kOther must survive — clean it up (would throw if already deleted)
-    assert.doesNotThrow(() => _clearTestCacheEntry(kOther));
+    assert.equal(_hasTestCacheEntry(kTarget), false, "target evicted");
+    assert.equal(_hasTestCacheEntry(kOther),  true,  "sibling survives");
   });
 
   it("evicts all entries that each contain the same OSM id (multiple category buckets)", () => {
     const k1 = key("paris", "restaurants", 5);
     const k2 = key("paris", "for_you",    10);
     const k3 = key("berlin", "for_you",   10);
-
     _injectTestCacheEntry(k1, [osmPlace(OSM_ID)]);
     _injectTestCacheEntry(k2, [osmPlace(OSM_ID), osmPlace(OTHER_OSM_ID)]);
     _injectTestCacheEntry(k3, [osmPlace(OTHER_OSM_ID)]);
 
     evictOsmPlaceFromL1Cache(OSM_ID);
 
-    // k3 survives — clean up
-    _clearTestCacheEntry(k3);
-
-    // k1 and k2 were evicted — re-inject and clear to confirm they are gone
-    _injectTestCacheEntry(k1, [osmPlace(OTHER_OSM_ID)]);
-    _clearTestCacheEntry(k1);
-    _injectTestCacheEntry(k2, [osmPlace(OTHER_OSM_ID)]);
-    _clearTestCacheEntry(k2);
+    assert.equal(_hasTestCacheEntry(k1), false, "bucket 1 evicted");
+    assert.equal(_hasTestCacheEntry(k2), false, "bucket 2 (mixed) evicted");
+    assert.equal(_hasTestCacheEntry(k3), true,  "unrelated bucket survives");
   });
 
   it("is a no-op when no cached entry contains the targeted OSM id", () => {
     const k = key("rome");
     _injectTestCacheEntry(k, [osmPlace(OTHER_OSM_ID)]);
 
-    assert.doesNotThrow(() => evictOsmPlaceFromL1Cache(OSM_ID));
+    evictOsmPlaceFromL1Cache(OSM_ID);
 
-    _clearTestCacheEntry(k);
+    assert.equal(_hasTestCacheEntry(k), true, "unrelated entry untouched");
   });
 
   it("does not evict entries that contain only DB places (id prefixed 'db/')", () => {
@@ -119,7 +114,6 @@ describe("evictOsmPlaceFromL1Cache", () => {
 
     evictOsmPlaceFromL1Cache(OSM_ID);
 
-    // Entry should still be present — clean up confirms it exists
-    assert.doesNotThrow(() => _clearTestCacheEntry(k));
+    assert.equal(_hasTestCacheEntry(k), true, "DB-only entry not evicted by an OSM eviction");
   });
 });

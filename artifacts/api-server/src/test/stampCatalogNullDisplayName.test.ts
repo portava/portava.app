@@ -21,26 +21,13 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-// ── Replicate the route's createCatalogSchema ─────────────────────────────────
-// Defined inline in stampCatalog.ts; reproduced here so we can exercise it
-// without spinning up a full HTTP server.  If the route schema ever changes,
-// update this mirror and the test will catch the drift at typecheck time.
-
-const createCatalogSchema = z.object({
-  canonicalLocationKey: z.string().min(1),
-  stampType:            z.string().min(1),
-  displayName:          z.string().min(1).max(200),
-  country:              z.string().min(1),
-  countryCode:          z.string().length(2),
-  region:               z.string().optional(),
-  city:                 z.string().optional(),
-  neighborhood:         z.string().optional(),
-  lat:                  z.number().optional(),
-  lng:                  z.number().optional(),
-});
+// ── The route's real createCatalogSchema ──────────────────────────────────────
+// Imported from the shipped route (not mirrored) so a change to the route's
+// validation is exercised here directly — if displayName's `.min(1)` is ever
+// dropped, this test fails against the real schema rather than a stale copy.
+import { createCatalogSchema } from "../routes/stampCatalog.js";
 
 // ── Minimal valid base payload ────────────────────────────────────────────────
 

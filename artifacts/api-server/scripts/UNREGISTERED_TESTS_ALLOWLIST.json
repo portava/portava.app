@@ -131,7 +131,6 @@
   "src/test/rlsPolicyShapeLive.test.ts",
   "src/test/rlsPrivacy.test.ts",
   "src/test/rlsPrivacyBaseline.test.ts",
-  "src/test/routePlanHook.test.ts",
   "src/test/routePlanMembers.test.ts",
   "src/test/safeReturnAdmin.test.ts",
   "src/test/stampAuditWriteFailureMergeReject.test.ts",

@@ -439,7 +439,7 @@ router.get("/admin/stamps/catalog/:id/earners", asyncHandler(async (req, res) =>
 
 // ── POST /admin/stamps/catalog ─────────────────────────────────────────────────
 
-const createCatalogSchema = z.object({
+export const createCatalogSchema = z.object({
   canonicalLocationKey: z.string().min(1),
   stampType:            z.string().min(1),
   displayName:          z.string().min(1).max(200),

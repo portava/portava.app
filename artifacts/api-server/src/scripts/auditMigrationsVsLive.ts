@@ -66,7 +66,7 @@ import "../lib/ciProdReadOnlyAuditGuard.mjs";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { FROZEN_LEGACY_FILES } from "./frozenLegacyFiles.js";
+import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -101,9 +101,7 @@ function checkFrozenDirGuard(dir: string, frozenSet: Set<string>, label: string)
     // dir not present — nothing to check
     return;
   }
-  // A frozen file is stored as a bare filename (no path separator).
-  // Anything that contains a "/" (nested) or is not in the known set is rogue.
-  const rogueFiles = entries.filter((f) => !frozenSet.has(f));
+  const rogueFiles = findRogueFrozenFiles(entries, frozenSet);
   if (rogueFiles.length > 0) {
     console.error(
       `\nERROR: ${label} is frozen/archived.\n` +

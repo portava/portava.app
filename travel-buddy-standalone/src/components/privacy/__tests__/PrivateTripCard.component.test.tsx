@@ -47,6 +47,22 @@ const BASE_TRIP: PrivateTripPreview = {
   myJoinRequestStatus: null,
 };
 
+/**
+ * Over-full object carrying sensitive fields the private-trip sentinel type does
+ * not declare. The card must read none of them; each value is a unique sentinel
+ * so queryByText proves it never reaches the render tree, and a plain-<Text>
+ * leak of any of them fails the matching assertion.
+ */
+const OVERFULL_TRIP = {
+  ...BASE_TRIP,
+  startDate:   '2026-08-01',
+  endDate:     '2026-08-14',
+  itinerary:   'Day 1: Chamonix ascent via the Grands Montets',
+  hotelName:   'Auberge du Sommet Caché',
+  members:     [{ displayName: 'Trip Leak Person' }],
+  destination: 'Chamonix-Mont-Blanc',
+} as unknown as PrivateTripPreview;
+
 // ── Mount helper ──────────────────────────────────────────────────────────────
 
 async function mountCard(
@@ -92,31 +108,30 @@ describe('PrivateTripCard', () => {
     });
   });
 
-  it('does NOT render dates node — dates are part of the private preview but not shown in the card body', async () => {
-    await mountCard();
+  it('does NOT leak trip dates — even when present on the trip object', async () => {
+    await mountCard(OVERFULL_TRIP);
     await waitFor(() => {
-      // No date/time nodes rendered
-      expect(screen.queryByTestId('trip-start-date')).toBeNull();
-      expect(screen.queryByTestId('trip-end-date')).toBeNull();
-      // The wall message tells the user the itinerary is hidden
-      expect(
-        screen.getByText(
-          'This is a private trip. Request access to see the itinerary, dates, and members.',
-        ),
-      ).toBeTruthy();
+      expect(screen.getByText('Secret Alps Expedition')).toBeTruthy(); // positive control
     });
+    expect(screen.queryByText(/2026-08-01|2026-08-14/)).toBeNull();
+    expect(screen.queryByText(/2026-\d{2}-\d{2}/)).toBeNull();
+    // The wall message tells the user the itinerary is hidden
+    expect(
+      screen.getByText(
+        'This is a private trip. Request access to see the itinerary, dates, and members.',
+      ),
+    ).toBeTruthy();
   });
 
-  it('does NOT render itinerary, hotel name, or member list text', async () => {
-    await mountCard();
+  it('does NOT leak itinerary, hotel name, or member list — even when present on the trip object', async () => {
+    await mountCard(OVERFULL_TRIP);
     await waitFor(() => {
-      // Verify none of the restricted content appears
-      expect(screen.queryByTestId('trip-itinerary')).toBeNull();
-      expect(screen.queryByTestId('trip-members')).toBeNull();
-      expect(screen.queryByTestId('trip-hotel')).toBeNull();
-      // No date-like strings in the rendered output
-      expect(screen.queryByText(/2026-\d{2}-\d{2}/)).toBeNull();
+      expect(screen.getByText('Secret Alps Expedition')).toBeTruthy(); // positive control
     });
+    expect(screen.queryByText('Day 1: Chamonix ascent via the Grands Montets')).toBeNull();
+    expect(screen.queryByText('Auberge du Sommet Caché')).toBeNull();
+    expect(screen.queryByText('Trip Leak Person')).toBeNull();
+    expect(screen.queryByText('Chamonix-Mont-Blanc')).toBeNull();
   });
 
   it('renders owner display name in "Organized by" line', async () => {

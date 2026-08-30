@@ -5,54 +5,33 @@
  * the friends coordinate jitter (area-level coarsening), and that
  * private trips and null-coord entities are excluded.
  *
+ * These import the REAL helpers from ../mapEntityFilters.ts — the same module
+ * useMapEntities imports — so deleting a guard from the product source turns
+ * these tests red (previously they re-implemented the logic and stayed green).
+ *
  * Run via the mobile-test workflow:
  *   pnpm --dir travel-buddy-standalone test -- --watchAll=false
  */
 import assert from 'node:assert/strict';
-import { describe, it, mock, beforeEach } from 'node:test';
-
-// ── Inline the pure logic under test — no React hook required ─────────────────
-// We pull the pure filtering/coarsening helpers out of the hook file by
-// re-implementing them here exactly as they appear in useMapEntities.ts.
-// This gives deterministic, fast unit coverage with no module-mock pain.
+import { describe, it } from 'node:test';
+import {
+  coarsenForFriend,
+  isMapVisibleEvent,
+  isMapVisibleTrip,
+  type MapEventVisibilityFields,
+  type MapTripVisibilityFields,
+} from '../mapEntityFilters.ts';
 
 type EventVisibility = 'public' | 'friends_only' | 'invite_only' | 'circle' | 'trip';
 
-interface FakeEvent {
+interface FakeEvent extends MapEventVisibilityFields {
   id: string;
   visibility: EventVisibility;
-  locationLat: number | null;
-  locationLng: number | null;
 }
 
-/** Mirrors fetchEvents visibility guard in useMapEntities.ts */
+/** Apply the shipped per-event visibility guard across a batch. */
 function filterEvents(events: FakeEvent[]): FakeEvent[] {
-  return events.filter((ev) => {
-    if (ev.locationLat == null || ev.locationLng == null) return false;
-    if (
-      ev.visibility === 'invite_only' ||
-      ev.visibility === 'circle' ||
-      ev.visibility === 'trip'
-    ) return false;
-    return true;
-  });
-}
-
-/** Mirrors deterministicJitter in useMapEntities.ts */
-function deterministicJitter(seed: string): number {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) {
-    h = (Math.imul(h, 31) + seed.charCodeAt(i)) | 0;
-  }
-  return ((h & 0xffff) / 0x10000 - 0.5) * 0.02;
-}
-
-/** Mirrors coarsenForFriend in useMapEntities.ts */
-function coarsenForFriend(userId: string, lat: number, lng: number) {
-  return {
-    lat: lat + deterministicJitter(userId + ':lat'),
-    lng: lng + deterministicJitter(userId + ':lng'),
-  };
+  return events.filter(isMapVisibleEvent);
 }
 
 // ── Event visibility matrix ────────────────────────────────────────────────────
@@ -163,19 +142,12 @@ describe('coarsenForFriend — area-level jitter', () => {
 // ── Trip visibility guard ──────────────────────────────────────────────────────
 
 describe('trip visibility filter', () => {
-  interface FakeTrip {
+  interface FakeTrip extends MapTripVisibilityFields {
     id: string;
-    visibility: string;
-    destinationLat: number | null;
-    destinationLng: number | null;
   }
 
   function filterTrips(trips: FakeTrip[]): FakeTrip[] {
-    return trips.filter((t) =>
-      t.visibility !== 'private' &&
-      t.destinationLat != null &&
-      t.destinationLng != null,
-    );
+    return trips.filter(isMapVisibleTrip);
   }
 
   it('excludes private trips', () => {
