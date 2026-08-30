@@ -26,6 +26,7 @@ import { _setTestClient, _setTestServiceClient } from "../lib/http.js";
 const ALICE_ID  = "aaaaaaaa-0000-4000-8000-000000000001";
 const BOB_ID    = "bbbbbbbb-0000-4000-8000-000000000002";
 const CAROL_ID  = "cccccccc-0000-4000-8000-000000000003";
+const DAVE_ID   = "dddddddd-0000-4000-8000-000000000004";
 const ADMIN_ID  = "dddddddd-0000-4000-8000-000000000004";
 const DEF_ID    = "eeeeeeee-0000-4000-8000-000000000005";
 const STAMP_ID  = "ffffffff-0000-4000-8000-000000000006";
@@ -1014,5 +1015,84 @@ describe("Stamp system v2 — smoke tests", async () => {
       assert.equal(body.stamps.length, 1);
       assert.equal(body.total, 1);
     });
+  });
+});
+
+// ── Feed read-path privacy (audit six-system STAMP·H1/H2) ────────────────────
+// The recent/city/country feeds were unauthenticated and served the public
+// stamps of users whose PASSPORT is private (per-stamp visibility defaults to
+// 'public'), leaking user_id + city + earned_at; and /stamps/user/:userId did
+// not honor passport_visibility. These pin the fix.
+describe("Stamp feed read-path privacy", () => {
+  let server: ReturnType<typeof createServer>;
+  let port: number;
+
+  const stamp = (uid: string, id: string) => ({
+    id, user_id: uid, stamp_definition_id: DEF_ID, source_type: "manual",
+    earned_at: "2026-07-01T00:00:00Z", city: "Da Nang", country: "Vietnam",
+    title_override: null, visibility: "public", display_on_passport: true,
+    is_revoked: false, created_at: "2026-07-01T00:00:00Z", catalog_id: null,
+  });
+  const state: FakeState = {
+    currentUserId: ALICE_ID,
+    profiles: [
+      { id: ALICE_ID, passport_visibility: "public" },
+      { id: BOB_ID,   passport_visibility: "private" },  // private → must not surface
+      { id: CAROL_ID, passport_visibility: "public" },   // public  → surfaces
+      { id: DAVE_ID,  passport_visibility: null },        // public-by-default, but blocked
+    ],
+    userStamps: [
+      stamp(ALICE_ID, "s-alice"),
+      stamp(BOB_ID,   "s-bob"),
+      stamp(CAROL_ID, "s-carol"),
+      stamp(DAVE_ID,  "s-dave"),
+    ],
+    blocks: [{ id: "blk-1", blocker_id: ALICE_ID, blocked_id: DAVE_ID }],
+  };
+
+  before(async () => {
+    _setTestClient(makeClient(state), true);
+    const app = await makeApp();
+    server = createServer(app);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    port = (server.address() as any).port;
+  });
+  after(() => { server.close(); });
+
+  const get = (path: string, auth = true) =>
+    fetch(`http://127.0.0.1:${port}/api${path}`,
+      auth ? { headers: { Authorization: `Bearer token-${ALICE_ID}` } } : {});
+
+  const ownerIds = (body: any) => new Set((body.stamps ?? []).map((s: any) => s.userId ?? s.user_id));
+
+  it("/stamps/recent requires authentication", async () => {
+    const res = await get("/stamps/recent", false);
+    assert.equal(res.status, 401);
+  });
+
+  for (const path of ["/stamps/recent", "/stamps/city/Da%20Nang", "/stamps/country/Vietnam"]) {
+    it(`${path} hides private-passport owners and blocked users, keeps public + self`, async () => {
+      const res = await get(path);
+      assert.equal(res.status, 200, `${path} status`);
+      const ids = ownerIds(await res.json());
+      assert.ok(ids.has(CAROL_ID), `${path}: public-passport owner must appear (positive control)`);
+      assert.ok(ids.has(ALICE_ID), `${path}: caller's own stamp must appear`);
+      assert.ok(!ids.has(BOB_ID),  `${path}: private-passport owner must be hidden`);
+      assert.ok(!ids.has(DAVE_ID), `${path}: blocked user must be hidden`);
+    });
+  }
+
+  it("/stamps/user/:userId returns empty for a private-passport target", async () => {
+    const res = await get(`/stamps/user/${BOB_ID}`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.stamps, [], "private passport must not be readable via the userId route");
+  });
+
+  it("/stamps/user/:userId still serves a public-passport target (positive control)", async () => {
+    const res = await get(`/stamps/user/${CAROL_ID}`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal((body.stamps ?? []).length, 1, "public passport still served");
   });
 });
