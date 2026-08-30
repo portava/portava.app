@@ -2114,6 +2114,24 @@ router.post('/threads/:threadId/media', async (req, res) => {
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
 
+  // Block guard for 1:1 threads — same as the text-send handler (audit MSG-1).
+  // Without it a blocked user could keep sending photos/videos through a
+  // pre-existing thread, since blocking never closes an existing thread.
+  // Fail-closed via isBlockedBetween.
+  {
+    const blockSc = getServiceClient() ?? client;
+    const { data: otherMembers } = await client
+      .from('message_thread_members')
+      .select('user_id')
+      .eq('thread_id', threadId)
+      .is('left_at', null)
+      .neq('user_id', user.id);
+    const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
+    if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
+      sendError(res, 'forbidden', 'You cannot message this user'); return;
+    }
+  }
+
   // Finding #14 fix: E2EE threads must never accept plaintext media messages.
   // This endpoint has no attachment-encryption path yet, so fail closed —
   // same posture as the text handler's ciphertext-required guard above.
