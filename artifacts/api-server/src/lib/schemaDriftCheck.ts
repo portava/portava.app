@@ -225,6 +225,14 @@ export const CRITICAL_FUNCTIONS: FunctionProbe[] = [
     migration: "0119_toggle_flag_atomic.sql",
     impact: "PATCH /admin/feature-flags/:flag returns 503",
   },
+  {
+    // Probing with the all-zero UUID matches no post, so the call is a no-op
+    // where the function exists and surfaces 42883/PGRST202 where it does not.
+    fn: "tombstone_post",
+    args: { p_post_id: "00000000-0000-0000-0000-000000000000" },
+    migration: "2141_post_tombstones.sql",
+    impact: "GDPR erasure aborts on the tombstone branch → deletable posts survive and the request is marked completed, never retried",
+  },
 ];
 
 export interface SchemaDriftResult {

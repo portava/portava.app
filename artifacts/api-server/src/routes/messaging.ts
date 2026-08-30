@@ -372,10 +372,21 @@ router.post('/users/:userId/open-thread', async (req, res) => {
   }
 
   const threadId = (thread as any).id;
-  await sc.from('message_thread_members').insert([
+  const { error: memErr } = await sc.from('message_thread_members').insert([
     { thread_id: threadId, user_id: user.id, joined_at: now },
     { thread_id: threadId, user_id: recipientId, joined_at: now },
   ]);
+  if (memErr) {
+    // Membership is the ONLY gate on the thread: a thread with no member rows is
+    // permanently unreadable (every read/send 403s "Not a member"), the dedupe
+    // above requires members.length===2 so it is never reused, and no trigger
+    // repairs it. supabase-js resolves rather than throws on a write error, so
+    // this must be checked explicitly. Roll the just-created thread back.
+    req.log.error({ err: memErr, threadId }, 'thread members insert failed — rolling back orphan thread');
+    await sc.from('message_threads').delete().eq('id', threadId);
+    sendError(res, 'db_error', memErr.message ?? 'Failed to add thread members');
+    return;
+  }
 
   res.status(201).json({ threadId, created: true });
 });
@@ -723,10 +734,19 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
 
     threadId = (thread as any).id;
 
-    await sc.from('message_thread_members').insert([
+    const { error: memErr } = await sc.from('message_thread_members').insert([
       { thread_id: threadId, user_id: req_.sender_id, joined_at: now },
       { thread_id: threadId, user_id: req_.recipient_id, joined_at: now },
     ]);
+    if (memErr) {
+      // A thread with no member rows is permanently unreadable and never reused
+      // or repaired. supabase-js resolves rather than throws on a write error,
+      // so check it and roll the just-created thread back.
+      req.log.error({ err: memErr, threadId }, 'thread members insert failed — rolling back orphan thread');
+      await sc.from('message_threads').delete().eq('id', threadId);
+      sendError(res, 'db_error', memErr.message ?? 'Failed to add thread members');
+      return;
+    }
   }
 
   res.status(200).json({ status: 'accepted', threadId, requestId });
