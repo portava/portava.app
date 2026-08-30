@@ -14,6 +14,7 @@
  */
 
 import { isFlagEnabled } from "./featureFlags.js";
+import { logger } from "./logger.js";
 
 // ── Event type taxonomy ────────────────────────────────────────────────────────
 
@@ -138,13 +139,21 @@ export function recordMediaEvent(
 
       const safePayload = sanitisePayload(payload);
 
-      await sc.from("media_events").insert({
+      // supabase-js resolves rather than throws on a DB error — unchecked, a
+      // missing/broken media_events table silently dropped every analytics
+      // event. Analytics stays fire-and-forget (never surfaces to users), but
+      // the failure is now visible in the server log.
+      const { error } = await sc.from("media_events").insert({
         event_type:  type,
         payload:     safePayload,
         occurred_at: new Date().toISOString(),
       });
-    } catch {
-      // Fail silent — analytics must never surface errors to users
+      if (error) {
+        logger.warn({ err: error, type }, "recordMediaEvent: media_events insert failed");
+      }
+    } catch (err) {
+      // Fail silent toward users — analytics must never surface errors to them.
+      logger.warn({ err, type }, "recordMediaEvent: unexpected error");
     }
   })();
 }

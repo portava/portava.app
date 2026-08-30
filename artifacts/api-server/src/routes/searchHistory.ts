@@ -13,6 +13,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { checkRateLimit } from "../lib/rateLimit";
+import { logger } from "../lib/logger";
 
 const router = Router();
 
@@ -147,19 +148,32 @@ router.delete("/me/search-history", async (req, res) => {
  */
 async function pruneOldest(sc: any, userId: string): Promise<void> {
   try {
-    const { data } = await sc
+    // supabase-js resolves rather than throws on a DB error — unchecked, a
+    // failing prune silently disabled the history cap, so search history grew
+    // without bound (a retention promise the API stops keeping). Still
+    // non-fatal, but failures are now visible in the server log.
+    const { data, error: selErr } = await sc
       .from("search_history")
       .select("id")
       .eq("user_id", userId)
       .order("searched_at", { ascending: false })
       .range(MAX_HISTORY, MAX_HISTORY + 99);
+    if (selErr) {
+      logger.warn({ err: selErr, userId }, "pruneOldest: search_history select failed — cap not enforced this round");
+      return;
+    }
 
     if (data && (data as any[]).length > 0) {
       const ids = (data as any[]).map((r: any) => r.id as string);
-      await sc.from("search_history").delete().in("id", ids);
+      const { error: delErr } = await sc.from("search_history").delete().in("id", ids);
+      if (delErr) {
+        logger.warn({ err: delErr, userId, count: ids.length },
+          "pruneOldest: search_history delete failed — cap not enforced this round");
+      }
     }
-  } catch {
-    // non-fatal
+  } catch (err) {
+    // non-fatal, but observable
+    logger.warn({ err, userId }, "pruneOldest: unexpected error");
   }
 }
 

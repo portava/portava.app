@@ -2328,7 +2328,10 @@ router.delete("/events/:id", async (req, res) => {
   const { data: ev } = await sc.from("events").select("title, state").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
-  await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
+  // supabase-js resolves rather than throws — unchecked, a failed cancel
+  // returned {ok:true} while the event stayed open.
+  const { error: cancelErr } = await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
+  if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
 
   // Notify all Going/Maybe attendees (fire-and-forget)
   void (async () => {
@@ -2341,7 +2344,10 @@ router.delete("/events/:id", async (req, res) => {
           data: { eventId: id, type: "event_cancelled" },
         });
       }
-    } catch {}
+    } catch (err) {
+      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
+      req.log?.warn({ err, eventId: id }, "event-cancelled push notify failed");
+    }
   })();
 
   res.json({ ok: true });
@@ -3041,7 +3047,10 @@ router.post("/events/:id/requests", async (req, res) => {
           data: { eventId: id, type: "event_join_request" },
         });
       }
-    } catch {}
+    } catch (err) {
+      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
+      req.log?.warn({ err, eventId: id }, "join-request push notify failed");
+    }
   })();
 
   res.status(201).json({ ok: true, status: "pending" });
@@ -3199,7 +3208,10 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
           data: { eventId: id, type: "event_request_decision", decision: action },
         });
       }
-    } catch {}
+    } catch (err) {
+      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
+      req.log?.warn({ err, eventId: id }, "request-decision push notify failed");
+    }
   })();
 
   res.json({ ok: true, action });
@@ -3339,10 +3351,13 @@ router.post("/events/:id/attendance/:userId", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await sc.from("event_attendee_states").upsert(
+  // supabase-js resolves rather than throws — unchecked, a failed upsert
+  // returned {ok:true} while the attendance confirmation was never recorded.
+  const { error: confirmErr } = await sc.from("event_attendee_states").upsert(
     { event_id: id, user_id: userId, confirmed_at: now, confirmed_by: user.id, updated_at: now },
     { onConflict: "event_id,user_id" },
   );
+  if (confirmErr) { sendError(res, "db_error", confirmErr.message); return; }
 
   // Trust Score event (fire-and-forget)
   void (async () => {
@@ -3356,7 +3371,11 @@ router.post("/events/:id/attendance/:userId", async (req, res) => {
         sourceType: "event",
         sourceId: id,
       });
-    } catch {}
+    } catch (err) {
+      // recordTrustEvent THROWS on a DB error — a swallowed throw here means the
+      // attendee's trust credit was silently lost, so log it (still non-fatal).
+      req.log?.warn({ err, eventId: id, userId }, "attendance-confirmed trust event failed");
+    }
   })();
 
   res.json({ ok: true, confirmedAt: now });
@@ -3393,10 +3412,13 @@ router.post("/events/:id/noshow/:userId", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await sc.from("event_attendee_states").upsert(
+  // supabase-js resolves rather than throws — unchecked, a failed upsert
+  // returned {ok:true} while the no-show was never recorded.
+  const { error: noShowErr } = await sc.from("event_attendee_states").upsert(
     { event_id: id, user_id: userId, no_show_at: now, no_show_by: user.id, updated_at: now },
     { onConflict: "event_id,user_id" },
   );
+  if (noShowErr) { sendError(res, "db_error", noShowErr.message); return; }
 
   // Trust Score penalty (fire-and-forget)
   void (async () => {
@@ -3411,7 +3433,11 @@ router.post("/events/:id/noshow/:userId", async (req, res) => {
         sourceId: id,
         dedupWindowHours: 48,
       });
-    } catch {}
+    } catch (err) {
+      // recordTrustEvent THROWS on a DB error — a swallowed throw here means the
+      // no-show penalty was silently lost, so log it (still non-fatal).
+      req.log?.warn({ err, eventId: id, userId }, "no-show trust penalty failed");
+    }
   })();
 
   res.json({ ok: true, noShowAt: now });
@@ -3664,7 +3690,10 @@ router.post("/events/:id/updates", async (req, res) => {
             data: { eventId: id, type: "event_update" },
           });
         }
-      } catch {}
+      } catch (err) {
+        // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
+        req.log?.warn({ err, eventId: id }, "event-update push notify failed");
+      }
     })();
   }
 
@@ -4252,7 +4281,10 @@ router.post("/events/:id/cancel", async (req, res) => {
 
   const reason = z.string().max(500).optional().parse(req.body.reason);
 
-  await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
+  // supabase-js resolves rather than throws — unchecked, a failed cancel
+  // returned {ok:true} while the event stayed open.
+  const { error: cancelErr } = await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
+  if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
 
   await logEventActivity(sc, id, user.id, "cancelled", { reason: reason ?? null });
 
@@ -4266,7 +4298,10 @@ router.post("/events/:id/cancel", async (req, res) => {
           data: { eventId: id, type: "event_cancelled" },
         });
       }
-    } catch {}
+    } catch (err) {
+      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
+      req.log?.warn({ err, eventId: id }, "admin-cancel push notify failed");
+    }
   })();
 
   res.json({ ok: true });
@@ -4296,7 +4331,10 @@ router.post("/events/:id/postpone", async (req, res) => {
 
   const reason = z.string().max(500).optional().parse(req.body.reason);
 
-  await sc.from("events").update({ state: "draft", updated_at: new Date().toISOString() }).eq("id", id);
+  // supabase-js resolves rather than throws — unchecked, a failed postpone
+  // returned {ok:true} while the event stayed live.
+  const { error: postponeErr } = await sc.from("events").update({ state: "draft", updated_at: new Date().toISOString() }).eq("id", id);
+  if (postponeErr) { sendError(res, "db_error", postponeErr.message); return; }
   await logEventActivity(sc, id, user.id, "postponed", { reason: reason ?? null });
 
   void (async () => {
@@ -4309,7 +4347,10 @@ router.post("/events/:id/postpone", async (req, res) => {
           data: { eventId: id, type: "event_postponed" },
         });
       }
-    } catch {}
+    } catch (err) {
+      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
+      req.log?.warn({ err, eventId: id }, "event-postponed push notify failed");
+    }
   })();
 
   res.json({ ok: true });
@@ -4638,7 +4679,10 @@ router.post("/events/:id/join-request", async (req, res) => {
           data: { eventId: id, type: "event_join_request" },
         });
       }
-    } catch {}
+    } catch (err) {
+      // resolves-not-throws-ok: fire-and-forget push — best-effort, logged.
+      req.log?.warn({ err, eventId: id }, "join-request push notify failed");
+    }
   })();
 
   res.status(201).json({ ok: true, status: "pending" });
@@ -5970,7 +6014,11 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
         if (await isBlocked(sc, (ev as any).host_id ?? user.id, uid)) continue;
         await addUserToChatThread(sc, threadId, uid);
       }
-    } catch {}
+    } catch (err) {
+      // Best-effort sync, but a silent failure leaves Going attendees out of the
+      // event chat — log it (re-synced on the next open).
+      req.log?.warn({ err, eventId: id, threadId }, "event chat attendee sync failed");
+    }
   })();
 
   // Post a pinned context card if this thread was freshly created
@@ -5997,15 +6045,21 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
           visibility: e.visibility ?? "public",
           text: lines,
         });
-        await sc.from("messages").insert({
+        const { error: cardErr } = await sc.from("messages").insert({
           thread_id: threadId,
           sender_id: e.host_id ?? user.id,
           body: cardBody,
           msg_type: "system",
           subtype: "event_context_card",
         });
+        if (cardErr) {
+          req.log?.warn({ err: cardErr, eventId: id, threadId }, "event context card insert failed");
+        }
       }
-    } catch {}
+    } catch (err) {
+      // resolves-not-throws-ok: cosmetic system card — best-effort, logged.
+      req.log?.warn({ err, eventId: id, threadId }, "event context card post failed");
+    }
   })();
 
   await logEventActivity(sc, id, user.id, "telegraph_thread_ensured", { threadId });

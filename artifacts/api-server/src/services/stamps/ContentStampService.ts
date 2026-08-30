@@ -10,6 +10,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger } from "../../lib/logger.js";
 
 export const STAMPABLE_TYPES = [
   "post",
@@ -179,9 +180,14 @@ export async function countContentStampsReceived(
     }
 
     // If the error is NOT "function not found" we log and fall through anyway —
-    // the paged loop is an exact fallback, not a degraded one.
-  } catch {
+    // the paged loop is an exact fallback, not a degraded one. (This comment
+    // used to promise a log that didn't exist; the RPC error vanished silently.)
+    if (rpcErr.code !== "PGRST202") {
+      logger.warn({ err: rpcErr, userId }, "countContentStampsReceived: RPC failed — using paged fallback");
+    }
+  } catch (err) {
     // Unexpected throw — fall through to the paged loop.
+    logger.warn({ err, userId }, "countContentStampsReceived: unexpected throw — using paged fallback");
   }
 
   // --- Fallback path: paged traversal (schema-drift safe) ---
