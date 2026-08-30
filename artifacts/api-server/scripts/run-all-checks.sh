@@ -106,6 +106,12 @@ run_gate() {
 }
 
 run_check "check:guard-coverage" pnpm run check:guard-coverage
+# check:route-auth-gate — requireUser is the ONLY place the account ban/suspend
+# gate is applied, and banning does not revoke sessions, so a route that verifies
+# its own JWT accepts a banned user's still-valid token. Six mutating routes in
+# trips.ts did exactly that. Structural rule: if a handler writes, it goes
+# through requireUser.
+run_check "check:route-auth-gate" pnpm run check:route-auth-gate
 # check:flag-polarity — every feature flag is classified STOP/CAPABILITY/CONFIG
 # and read through the reader that classification demands. Wired 2026-08-10
 # after c89f09a7 converted eleven emergency stops that had been reading

@@ -198,16 +198,39 @@ function applySafetyAndPrivacy(
 
 // ── Block list loader ─────────────────────────────────────────────────────────
 
+/**
+ * Load the two-way block list. THROWS if either read errors.
+ *
+ * This used to destructure only `data` and swallow everything in
+ * `catch { /* fail-open *\/ }`. Both halves of that were wrong:
+ *
+ *   - supabase-js RESOLVES with { data: null, error } on a query error, so the
+ *     catch was dead code — it could not fire for the failure that matters.
+ *   - `data ?? []` then turned a failed load into an EMPTY block set, and an
+ *     empty block set disables every downstream exclusion: the seven category
+ *     fetchers and buildSafeProfile all take `blockedIds` and filter on it. A
+ *     blocks-table error therefore served a blocked user's content.
+ *
+ * CompassProfileService already fails CLOSED here and documents the identical
+ * hazard. This is the same rule in the fallback path — which matters more, not
+ * less, because routes/compass.ts reaches this builder precisely by catching
+ * that service's fail-closed throw. Left fail-open, the deliberate protection
+ * was converted into a leak on exactly the DB-degradation path it guards.
+ */
 async function loadBlockedIds(db: SupabaseClient, userId: string): Promise<Set<string>> {
   const blocked = new Set<string>();
-  try {
-    const [{ data: outgoing }, { data: incoming }] = await Promise.all([
-      db.from("blocks").select("blocked_id").eq("blocker_id", userId),
-      db.from("blocks").select("blocker_id").eq("blocked_id",  userId),
-    ]);
-    for (const r of (outgoing as any[] ?? [])) blocked.add(r.blocked_id as string);
-    for (const r of (incoming as any[] ?? [])) blocked.add(r.blocker_id as string);
-  } catch { /* fail-open */ }
+  const [outgoingRes, incomingRes] = await Promise.all([
+    db.from("blocks").select("blocked_id").eq("blocker_id", userId),
+    db.from("blocks").select("blocker_id").eq("blocked_id",  userId),
+  ]);
+  if (outgoingRes.error || incomingRes.error) {
+    throw new Error(
+      "CompassFallbackFeedBuilder: block-list load failed — failing closed: " +
+      (outgoingRes.error?.message ?? incomingRes.error?.message),
+    );
+  }
+  for (const r of ((outgoingRes.data as any[]) ?? [])) blocked.add(r.blocked_id as string);
+  for (const r of ((incomingRes.data as any[]) ?? [])) blocked.add(r.blocker_id as string);
   return blocked;
 }
 
@@ -569,9 +592,30 @@ export async function buildFallbackFeed(
     return { sections: [], nextCursor: null, fallback: true, fallbackReason: reason, safeItems: [] };
   }
 
-  const city       = profile?.currentCity ?? null;
-  const blockedIds = await loadBlockedIds(db, userId);
-  const safeProf   = buildSafeProfile(userId, blockedIds, city);
+  const city = profile?.currentCity ?? null;
+
+  // If the block list cannot be loaded we cannot safely show ANY user content,
+  // because every category fetcher below filters on it. Degrade to the static
+  // safety tools — admin-controlled app features, not user content, so they are
+  // safe to serve with no block list — rather than either serving unfiltered
+  // UGC or returning nothing at all.
+  let blockedIds: Set<string>;
+  try {
+    blockedIds = await loadBlockedIds(db, userId);
+  } catch {
+    return {
+      sections: (() => {
+        const tools = buildSafetyTools();
+        return [{ name: "safety_tools", items: tools, total: tools.length }];
+      })(),
+      nextCursor: null,
+      fallback: true,
+      fallbackReason: `${reason}+block_list_unavailable`,
+      safeItems: [],
+    };
+  }
+
+  const safeProf = buildSafeProfile(userId, blockedIds, city);
 
   // Load all Compass feature flags once so the safety filter can enforce
   // COMPASS_LAUNCH_CONTROL_ENABLED and COMPASS_<TYPE>_SAFETY_BLOCK in fallback

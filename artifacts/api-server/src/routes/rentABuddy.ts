@@ -3037,18 +3037,32 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/feel-unsafe", async (req, 
   const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
   if (!party) return;
 
-  await serviceClient
+  // The safety event is written FIRST and its failure is fatal: this row is the
+  // only notification anyone gets. There is no push and no page — the sole
+  // consumer is the admin queue behind GET /admin/safety/events?status=open. If
+  // it does not land, nobody has been told, and answering {ok:true} would tell a
+  // traveller who has just said they feel unsafe that the safety team is on it.
+  //
+  // supabase-js RESOLVES on a rejected write rather than throwing, so this has to
+  // be an explicit error check; a try/catch around it would be dead code.
+  const { error: safetyEventError } = await serviceClient
+    .from("rent_buddy_safety_events")
+    .insert({
+      booking_id: bookingId,
+      actor_user_id: auth.user.id,
+      event_type: "feel_unsafe",
+      event_status: "open",
+      metadata: req.body ?? {},
+    });
+  if (safetyEventError) return sendError(res, "db_error", safetyEventError.message);
+
+  // Secondary: flags the booking for the same admin queue. Also checked, because
+  // a booking left un-flagged is one the queue cannot correlate.
+  const { error: bookingFlagError } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ safety_status: "uncomfortable", updated_at: new Date().toISOString() })
     .eq("id", bookingId);
-
-  await serviceClient.from("rent_buddy_safety_events").insert({
-    booking_id: bookingId,
-    actor_user_id: auth.user.id,
-    event_type: "feel_unsafe",
-    event_status: "open",
-    metadata: req.body ?? {},
-  });
+  if (bookingFlagError) return sendError(res, "db_error", bookingFlagError.message);
 
   return res.json({ ok: true });
 });
@@ -3145,13 +3159,20 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req, re
   // risk-scan threshold types, so nothing is made inert by omitting it, whereas
   // populating it would manufacture an accusation against the other party out of
   // what is often a blameless early finish.
-  await serviceClient.from("rent_buddy_safety_events").insert({
-    booking_id: bookingId,
-    actor_user_id: auth.user.id,
-    event_type: "end_early",
-    event_status: "open",
-    metadata: req.body ?? {},
-  });
+  // "Written even if the audit row below fails" was the intent, but the write was
+  // never checked, so a failure of THIS row was silent too — the endpoint's whole
+  // point vanishing while it answered {ok:true}. supabase-js resolves on a
+  // rejected write, so the check has to be explicit.
+  const { error: endEarlyEventError } = await serviceClient
+    .from("rent_buddy_safety_events")
+    .insert({
+      booking_id: bookingId,
+      actor_user_id: auth.user.id,
+      event_type: "end_early",
+      event_status: "open",
+      metadata: req.body ?? {},
+    });
+  if (endEarlyEventError) return sendError(res, "db_error", endEarlyEventError.message);
 
   // Every other transition in this file writes a booking event; this one did not,
   // which is what made the abuse above silent. Fire-and-forget: an audit failure
@@ -3209,19 +3230,27 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase", async (
     /* non-fatal — an unattributed event still records that this happened */
   }
 
-  await serviceClient.from("rent_buddy_safety_events").insert({
-    booking_id: bookingId,
-    actor_user_id: auth.user.id,
-    target_user_id: emergencyTargetUserId,
-    event_type: "emergency_phrase_triggered",
-    event_status: "open",
-    metadata: { phrase: "I need to check my passport" },
-  });
+  // Emergency phrase — the highest-stakes write in this file. It is the only
+  // record that a traveller used the duress phrase, and it is checked for the
+  // same reason as feel-unsafe: a discarded error meant the phrase was triggered,
+  // nothing was recorded, and the traveller still saw the reassuring prompt.
+  const { error: emergencyEventError } = await serviceClient
+    .from("rent_buddy_safety_events")
+    .insert({
+      booking_id: bookingId,
+      actor_user_id: auth.user.id,
+      target_user_id: emergencyTargetUserId,
+      event_type: "emergency_phrase_triggered",
+      event_status: "open",
+      metadata: { phrase: "I need to check my passport" },
+    });
+  if (emergencyEventError) return sendError(res, "db_error", emergencyEventError.message);
 
-  await serviceClient
+  const { error: checkRequestedError } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ safety_status: "check_requested", updated_at: new Date().toISOString() })
     .eq("id", bookingId);
+  if (checkRequestedError) return sendError(res, "db_error", checkRequestedError.message);
 
   // Private prompt — returned to traveler ONLY. Buddy is never informed.
   return res.json({

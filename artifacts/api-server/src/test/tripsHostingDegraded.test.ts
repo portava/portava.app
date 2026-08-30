@@ -142,10 +142,19 @@ function req(body: any, token = VIEWER_TOKEN): Promise<{ status: number; body: a
 }
 
 async function withMode<T>(mode: RestrictionMode, fn: () => Promise<T>): Promise<T> {
-  _setTestServiceClient(buildFakeClient(mode) as any);
+  // POST /trips now authenticates through requireUser, which resolves its client
+  // from _testClient (lib/http.ts:204) — not from getServiceClient(). The fake
+  // therefore has to be injected on that seam too, otherwise requireUser reads
+  // the `{}` placeholder set in before() and dies on `{}.auth.getUser`.
+  //
+  // The route was changed because hand-rolling auth.getUser() skipped the
+  // account ban/suspend gate, which requireUser is the only place that applies.
+  // _setTestClient also sets the service client, so one call covers both.
+  _setTestClient(buildFakeClient(mode) as any, true);
   try {
     return await fn();
   } finally {
+    _setTestClient({} as any, true);
     _setTestServiceClient(null as any);
   }
 }
