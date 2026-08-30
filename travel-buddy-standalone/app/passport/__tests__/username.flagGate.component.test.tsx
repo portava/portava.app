@@ -82,27 +82,31 @@ jest.mock('../../../src/hooks/useHighlightRingState', () => ({
 // ── Services ──────────────────────────────────────────────────────────────────
 // getPublicShowcase drives showcaseItems — controllable per test.
 const mockGetPublicShowcase = jest.fn();
+// NOTE: intentionally exhaustive — stampShowcase imports Supabase; only getPublicShowcase is used.
 jest.mock('../../../src/services/stampShowcase', () => ({
   getPublicShowcase: (...args: unknown[]) => mockGetPublicShowcase(...args),
 }));
 
-// NOTE: intentionally exhaustive — all import Supabase.
+// NOTE: intentionally exhaustive — imports Supabase.
 jest.mock('../../../src/services/blocks', () => ({
   blockUser: jest.fn().mockResolvedValue({ ok: true }),
 }));
+// NOTE: intentionally exhaustive — imports Supabase.
 jest.mock('../../../src/services/messaging', () => ({
   openDirectThread: jest.fn().mockResolvedValue({ ok: false }),
 }));
+// NOTE: intentionally exhaustive — imports Supabase.
 jest.mock('../../../src/services/reports', () => ({
   submitReport: jest.fn().mockResolvedValue({ ok: true }),
 }));
 
 // ── Hooks ─────────────────────────────────────────────────────────────────────
-// NOTE: intentionally exhaustive — accesses native scroll / inset metrics.
+// NOTE: intentionally exhaustive — accesses native scroll metrics.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({
   useNavBarScrollHandler: () => () => {},
   NavBarFiller:           () => null,
 }));
+// NOTE: intentionally exhaustive — accesses native inset metrics.
 jest.mock('../../../src/hooks/useBottomInset', () => ({
   usePlainBottomInset: () => 0,
 }));
@@ -128,9 +132,11 @@ jest.mock('../../../src/components/passport/PassportIdentityCard', () => ({
   PassportIdentityCard: Null,
   PassportStatsRow:     Null,
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/passport/PassportDivider', () => ({
   PassportDivider: Null,
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/profile/CircleSection', () => ({
   CircleSection: Null,
 }));
@@ -154,16 +160,23 @@ jest.mock('../../../src/components/stamps/PublicStampShowcaseSection', () => {
   };
 });
 
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/privacy/PrivateProfileWall', () => ({
   PrivateProfileWall: Null,
 }));
+// NOTE: intentional stub — not under test here; pulls native video modules.
 jest.mock('../../../src/components/HighlightViewer', () => ({
   HighlightViewer: Null,
 }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/PostcardsTab', () => ({ PostcardsTab: Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/StampsTab',    () => ({ StampsTab:    Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/MemoriesTab',  () => ({ MemoriesTab:  Null }));
+// NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/TripsTab',     () => ({ TripsTab:     Null }));
+// NOTE: intentional stub — MapTab pulls maplibre native modules.
 jest.mock('../../../src/components/MapTab', () => ({ MapTab: Null }));
 
 // ── Typed mock refs ───────────────────────────────────────────────────────────
