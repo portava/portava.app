@@ -120,6 +120,47 @@ async function isBlocked(
   return data != null;
 }
 
+/**
+ * Filter an aggregate stamp feed (recent / city / country) so it never exposes a
+ * stamp whose owner has a PRIVATE passport, nor one owned by someone in a block
+ * relationship with the caller. Per-stamp `visibility` defaults to 'public', so
+ * a user who set passport_visibility='private' (which the /profile/:username
+ * route honors) would otherwise leak their user_id + city + earned_at through
+ * these feeds. The caller's own stamps are always kept. Fails CLOSED: if owner
+ * privacy or the block set cannot be read, nothing is exposed.
+ */
+async function filterFeedByOwnerPrivacy(
+  sc: ReturnType<typeof getServiceClient>,
+  callerId: string,
+  rows: any[],
+): Promise<any[]> {
+  if (!sc || rows.length === 0) return rows;
+  const ownerIds = [...new Set(rows.map((r) => r.user_id as string).filter(Boolean))];
+  if (ownerIds.length === 0) return rows;
+
+  const { data: profs, error: profErr } = await sc
+    .from("profiles")
+    .select("id, passport_visibility")
+    .in("id", ownerIds);
+  if (profErr) return []; // fail closed — cannot confirm privacy → expose nothing
+  const privateSet = new Set(
+    ((profs ?? []) as any[]).filter((p) => p.passport_visibility === "private").map((p) => p.id),
+  );
+
+  const [{ data: outBlocks, error: e1 }, { data: inBlocks, error: e2 }] = await Promise.all([
+    sc.from("blocks").select("blocked_id").eq("blocker_id", callerId).in("blocked_id", ownerIds),
+    sc.from("blocks").select("blocker_id").eq("blocked_id", callerId).in("blocker_id", ownerIds),
+  ]);
+  if (e1 || e2) return []; // fail closed — an unreadable blocks table denies
+  const blockedSet = new Set<string>();
+  for (const b of (outBlocks ?? []) as any[]) blockedSet.add(b.blocked_id);
+  for (const b of (inBlocks ?? []) as any[]) blockedSet.add(b.blocker_id);
+
+  return rows.filter(
+    (r) => r.user_id === callerId || (!privateSet.has(r.user_id) && !blockedSet.has(r.user_id)),
+  );
+}
+
 // ── Internal award gate ───────────────────────────────────────────────────────
 // POST /stamps/award is service-role internal only. Caller must supply
 // X-Internal-Secret matching INTERNAL_API_SECRET env var (same pattern as
@@ -366,6 +407,12 @@ router.get("/stamps/user/:userId", async (req, res) => {
   if (!isSelf) {
     const blocked = await isBlocked(sc, callerId, userId);
     if (blocked) { sendError(res, "forbidden", "User not available"); return; }
+
+    // Respect passport_visibility — the /stamps/profile/:username route hides a
+    // private passport, and this userId route must too, or it is a bypass.
+    const { data: prof } = await sc
+      .from("profiles").select("passport_visibility").eq("id", userId).maybeSingle();
+    if ((prof as any)?.passport_visibility === "private") { res.json({ stamps: [] }); return; }
   }
 
   if (isSelf) {
@@ -492,6 +539,8 @@ router.get("/stamps/profile/:username", async (req, res) => {
 // ── GET /stamps/recent ────────────────────────────────────────────────────────
 
 router.get("/stamps/recent", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
@@ -507,12 +556,15 @@ router.get("/stamps/recent", async (req, res) => {
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ stamps: await formatStamps(sc, data ?? []) });
+  const visible = await filterFeedByOwnerPrivacy(sc, auth.user.id, (data ?? []) as any[]);
+  res.json({ stamps: await formatStamps(sc, visible) });
 });
 
 // ── GET /stamps/city/:city ────────────────────────────────────────────────────
 
 router.get("/stamps/city/:city", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
@@ -528,12 +580,15 @@ router.get("/stamps/city/:city", async (req, res) => {
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ stamps: await formatStamps(sc, data ?? []) });
+  const visible = await filterFeedByOwnerPrivacy(sc, auth.user.id, (data ?? []) as any[]);
+  res.json({ stamps: await formatStamps(sc, visible) });
 });
 
 // ── GET /stamps/country/:country ──────────────────────────────────────────────
 
 router.get("/stamps/country/:country", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
@@ -549,7 +604,8 @@ router.get("/stamps/country/:country", async (req, res) => {
     .limit(limit);
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  res.json({ stamps: await formatStamps(sc, data ?? []) });
+  const visible = await filterFeedByOwnerPrivacy(sc, auth.user.id, (data ?? []) as any[]);
+  res.json({ stamps: await formatStamps(sc, visible) });
 });
 
 // ── GET /stamps/:stampId ──────────────────────────────────────────────────────
