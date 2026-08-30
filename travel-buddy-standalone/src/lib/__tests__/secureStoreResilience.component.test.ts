@@ -90,6 +90,7 @@ beforeEach(() => {
   // Drop the in-process fallback copy between tests.
   void SecureStoreAdapter.removeItem(KEY);
   jest.spyOn(console, 'error').mockImplementation(() => {});
+  jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
 afterEach(() => {
@@ -141,11 +142,38 @@ describe('getItem when the keychain rejects', () => {
     expect(getSecureStorePersistenceHealth().failures.getItem).toBe(40);
   });
 
-  it('does not flood the log — 40 failures produce far fewer lines', async () => {
+  it('raises console.error EXACTLY once, however many times it fails', async () => {
+    // console.error opens the full-screen red LogBox in a dev build, and this
+    // failure repeats on GoTrue's ~30s refresh timer. Reporting at error level
+    // more than once covered the running app with a modal every ~25 minutes on a
+    // build whose keychain cannot work at all. Announcing it once is the signal;
+    // announcing it forever is what trains people to dismiss LogBox reflexively.
     mockNative.fail = ENTITLEMENT_ERROR;
-    for (let i = 0; i < 40; i += 1) await SecureStoreAdapter.getItem(KEY);
+    for (let i = 0; i < 200; i += 1) await SecureStoreAdapter.getItem(KEY);
+
+    expect((console.error as jest.Mock).mock.calls.length).toBe(1);
+  });
+
+  it('still reports later milestones, at warn level', async () => {
+    // The repeats must not vanish — they just must not be modal. Without this
+    // assertion "log once" could silently become "log once and never again",
+    // and a keychain that starts failing hours in would leave no trace.
+    mockNative.fail = ENTITLEMENT_ERROR;
+    for (let i = 0; i < 120; i += 1) await SecureStoreAdapter.getItem(KEY);
+
+    const warns = (console.warn as jest.Mock).mock.calls.length;
+    expect(warns).toBeGreaterThan(0);
+    expect(warns).toBeLessThan(10); // 120 failures, not 120 lines
+  });
+
+  it('does not flood — 200 failures produce a handful of lines in total', async () => {
+    mockNative.fail = ENTITLEMENT_ERROR;
+    for (let i = 0; i < 200; i += 1) await SecureStoreAdapter.getItem(KEY);
+    const total =
+      (console.error as jest.Mock).mock.calls.length +
+      (console.warn as jest.Mock).mock.calls.length;
     // Unthrottled this would be ~2,880 identical lines a day.
-    expect((console.error as jest.Mock).mock.calls.length).toBeLessThan(5);
+    expect(total).toBeLessThan(8);
   });
 });
 
