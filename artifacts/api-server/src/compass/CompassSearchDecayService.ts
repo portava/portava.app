@@ -41,6 +41,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger } from "../lib/logger.js";
 
 /** Default half-life used when the feature_flags row is absent. */
 const DEFAULT_DECAY_DAYS = 7;
@@ -77,13 +78,21 @@ export async function logSearchNudge(
 ): Promise<void> {
   if (delta <= 0) return; // weight was already at cap — nothing contributed
   try {
-    await (db as any).rpc("upsert_compass_search_signal", {
+    // supabase-js RESOLVES (does not throw) on a DB error, so the try/catch alone
+    // is dead for the failure that matters (e.g. the RPC/table absent in an
+    // under-migrated environment — 42883/42P01). Destructure and log the error
+    // so the drift is observable instead of silently swallowed (audit M2). Still
+    // non-fatal: the search nudge itself already succeeded.
+    const { error } = await (db as any).rpc("upsert_compass_search_signal", {
       p_user_id:  userId,
       p_category: category,
       p_delta:    delta,
     });
-  } catch {
-    // Non-fatal — search nudge already succeeded; log failure is best-effort.
+    if (error) {
+      logger.warn({ err: error, userId, category }, "logSearchNudge: upsert_compass_search_signal failed");
+    }
+  } catch (err) {
+    logger.warn({ err, userId, category }, "logSearchNudge: unexpected error");
   }
 }
 
@@ -138,12 +147,16 @@ export async function getDecayConfig(
   db: SupabaseClient,
 ): Promise<{ enabled: boolean; halfLifeDays: number }> {
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("feature_flags")
       .select("enabled, numeric_value")
       .eq("flag", "SEARCH_SIGNAL_DECAY_DAYS")
       .maybeSingle();
 
+    if (error) {
+      // e.g. numeric_value column absent (42703) in an under-migrated env.
+      logger.warn({ err: error }, "getDecayConfig: feature_flags read failed — using default decay config");
+    }
     if (!data) return { enabled: true, halfLifeDays: DEFAULT_DECAY_DAYS };
 
     const enabled      = Boolean((data as any).enabled);
@@ -172,11 +185,16 @@ export async function getDecayedWeights(
     const config = await getDecayConfig(db);
     if (!config.enabled) return { ...weights };
 
-    const { data } = await db
+    const { data, error } = await db
       .from("compass_search_signal_log")
       .select("category, last_nudge_at, search_weight")
       .eq("user_id", userId);
 
+    if (error) {
+      // e.g. the whole table absent (42P01) in an under-migrated env — the boost
+      // then never decays. Surface it rather than silently returning undecayed.
+      logger.warn({ err: error, userId }, "getDecayedWeights: signal log read failed — returning undecayed weights");
+    }
     const rows: SearchSignalRow[] = (data as any[]) ?? [];
     if (rows.length === 0) return { ...weights };
 

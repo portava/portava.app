@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
-import verificationRouter, { webhookHandler, webhookRawParser } from "../routes/verification.js";
+import verificationRouter, { webhookHandler, webhookRawParser, persistResult } from "../routes/verification.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -36,6 +36,9 @@ interface FakeState {
   verificationRows?: any[];
   profileVerificationLevel?: string;
   insertError?: any;
+  /** Injects an error on UPDATE (optionally scoped to updateErrorTable). */
+  updateError?: any;
+  updateErrorTable?: string;
 }
 
 function makeClient(state: FakeState = {}) {
@@ -81,6 +84,9 @@ function makeClient(state: FakeState = {}) {
             return resolve({ data: [saved], error: null });
           }
           if (updatePatch) {
+            if (state.updateError && (!state.updateErrorTable || state.updateErrorTable === table)) {
+              return resolve({ data: null, error: state.updateError });
+            }
             db[table] = (db[table] ?? []).map((r) => {
               const match = Object.entries(filters).every(([k, v]) => {
                 if (k.endsWith("__in")) return (v as any[]).includes(r[k.replace("__in", "")]);
@@ -346,6 +352,51 @@ describe("Verification routes", () => {
       _setTestClient(makeClient() as any, true);
       const { status } = await req(server, "POST", "/api/verification/webhook", {});
       assert.equal(status, 200);
+    });
+
+  });
+
+  // ── persistResult — write errors must propagate, not be discarded ──────────
+  // supabase-js RESOLVES (does not throw) on a write error. The webhook's
+  // try/catch around persistResult now returns 5xx (so the provider retries)
+  // instead of a silent 200 — but only because persistResult actually throws.
+  describe("persistResult — write errors propagate (audit H5b)", () => {
+    const VERIFIED = {
+      provider: "mock",
+      providerSessionId: SESSION_ID,
+      status: "verified",
+      selfieMatch: false,
+      isOver18: true,
+      documentCountry: "US",
+      verifiedAt: new Date().toISOString(),
+      failureReason: null,
+      providerVerificationRef: "ref-1",
+    } as any;
+
+    it("throws when the profiles verification_level UPDATE errors (:55)", async () => {
+      const c = makeClient({
+        updateError: { code: "23514", message: 'violates check constraint "profiles_verification_level_check"' },
+        updateErrorTable: "profiles",
+      });
+      _setTestClient(c as any, true); // applyVerifiedProfile uses getServiceClient()
+      await assert.rejects(
+        () => persistResult(c as any, VERIFIED, ALICE_ID),
+        /verification_level/,
+        "a rejected profiles UPDATE must propagate",
+      );
+    });
+
+    it("throws when the identity_verifications UPDATE errors (:108)", async () => {
+      const c = makeClient({
+        updateError: { code: "08006", message: "connection failure" },
+        updateErrorTable: "identity_verifications",
+      });
+      _setTestClient(c as any, true);
+      await assert.rejects(
+        () => persistResult(c as any, VERIFIED, ALICE_ID),
+        /identity_verifications/,
+        "a rejected identity_verifications UPDATE must propagate",
+      );
     });
   });
 });

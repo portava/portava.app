@@ -52,13 +52,18 @@ async function applyVerifiedProfile(
   const level = toVerificationLevel(result);
   if (level === "none") return;
 
-  await client
+  // supabase-js RESOLVES (does not throw) on a write error, so the error must be
+  // destructured and re-thrown. Silently discarding it here reported a clean 200
+  // to the provider while the user's verification_level was never persisted
+  // (e.g. a CHECK-constraint rejection of the level vocabulary — see audit H5).
+  const { error } = await client
     .from("profiles")
     .update({
       verification_level: level,
       verified_at: result.verifiedAt ?? new Date().toISOString(),
     })
     .eq("id", userId);
+  if (error) throw new Error(`persist verification_level: ${error.message}`);
 
   // Trust Score hook. V-4 has shipped — IDENTITY_VERIFIED is a declared member
   // of TRUST_EVENT_TYPES (TrustEventService.ts), so the dynamic `as any` lookup
@@ -72,8 +77,9 @@ async function applyVerifiedProfile(
   }).catch(() => {/* fire-and-forget — never block the webhook response */});
 }
 
-/** Upsert the identity_verifications row from a VerificationResult. */
-async function persistResult(
+/** Upsert the identity_verifications row from a VerificationResult.
+ *  Exported for testing: a persist error must propagate (throw), not be swallowed. */
+export async function persistResult(
   client: ReturnType<typeof getServiceClient>,
   result: VerificationResult,
   userId?: string,
@@ -105,10 +111,11 @@ async function persistResult(
     patch.provider_verification_ref = result.providerVerificationRef ?? null;
   }
 
-  await client
+  const { error: updErr } = await client
     .from("identity_verifications")
     .update(patch)
     .eq("provider_session_id", result.providerSessionId);
+  if (updErr) throw new Error(`persist identity_verifications: ${updErr.message}`);
 
   if (result.status === "verified") {
     const sc = getServiceClient();
@@ -268,8 +275,13 @@ export const webhookHandler = async (req: any, res: any) => {
   try {
     await persistResult(getServiceClient(), result);
   } catch (err) {
-    req.log?.error({ err }, "verification webhook: persist failed");
-    // Still return 200 so the provider doesn't retry forever — we log the error.
+    // A persist failure means the KYC result was NOT recorded. Returning 200
+    // here told the provider "handled" and stopped retries, silently stranding
+    // the user at their old level. Return 5xx so the provider retries (or
+    // dead-letters) instead of dropping the event (audit H5).
+    req.log?.error({ err }, "verification webhook: persist failed — returning 5xx so the provider retries");
+    res.sendStatus(500);
+    return;
   }
 
   res.sendStatus(200);

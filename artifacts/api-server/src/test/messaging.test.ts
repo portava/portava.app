@@ -66,6 +66,12 @@ interface FakeState {
    * prove messaging.ts's catch block still tells the two apart.
    */
   blocks_error?: { code?: string; message: string };
+  /**
+   * Injects an error on the `message_thread_members` INSERT (open-thread /
+   * accept-request), to exercise the orphan-thread rollback. supabase-js resolves
+   * rather than throws on a write error, so the route must destructure it.
+   */
+  message_thread_members_error?: { code?: string; message: string };
 }
 
 function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
@@ -125,6 +131,7 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
     const filters: Array<(r: any) => boolean> = [];
     let _insertResult: any = null;
     let _inserted = false;
+    let _deleted = false;
     let _limit: number | null = null;
 
     const b: any = {
@@ -162,6 +169,7 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
           .forEach((r) => Object.assign(r, patch));
         return b;
       },
+      delete() { _deleted = true; return b; },
       upsert(payload: any) {
         _inserted = true;
         const row = Array.isArray(payload)
@@ -182,6 +190,14 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
         return Promise.resolve({ data: rows[0] ?? null, error: null });
       },
       then(resolve: (v: any) => void, reject?: (e: any) => void) {
+        if (table === "message_thread_members" && _inserted && state.message_thread_members_error) {
+          return Promise.resolve({ data: null, error: state.message_thread_members_error }).then(resolve, reject);
+        }
+        if (_deleted) {
+          const before = db[table] ?? [];
+          db[table] = before.filter((r) => !filters.every((f) => f(r)));
+          return Promise.resolve({ data: null, error: null }).then(resolve, reject);
+        }
         if (table === "trust_restrictions" && state.trust_restrictions_error) {
           trustRestrictionsCallCount += 1;
           const threshold = state.trust_restrictions_error_from_call ?? 1;
@@ -201,6 +217,7 @@ function makeClient(state: FakeState = {}, authUserId = ALICE_ID) {
   }
 
   return {
+    _db: db,
     from,
     auth: {
       getUser: async (_token: string) => ({
@@ -467,6 +484,35 @@ describe("POST /api/users/:userId/open-thread", () => {
     );
     const { status } = await callApi("POST", `/api/users/${BOB_ID}/open-thread`);
     assert.equal(status, 403);
+  });
+
+  it("creates the thread AND its two member rows on the happy path (positive control)", async () => {
+    const c = makeClient({ message_threads: [], message_thread_members: [] });
+    _setTestClient(c as any, true);
+
+    const { status, body } = await callApi("POST", `/api/users/${BOB_ID}/open-thread`);
+
+    assert.equal(status, 201, JSON.stringify(body));
+    assert.equal(body.created, true);
+    assert.equal(c._db.message_threads.length, 1, "thread row created");
+    assert.equal(c._db.message_thread_members.length, 2, "both members inserted");
+  });
+
+  it("returns 5xx (not 201) and rolls back the thread when the members insert errors", async () => {
+    // supabase-js resolves rather than throws on a write error, so the old code
+    // returned 201 with an unusable, permanently-orphaned thread.
+    const c = makeClient({
+      message_threads: [],
+      message_thread_members: [],
+      message_thread_members_error: { code: "23503", message: "insert or update violates foreign key constraint" },
+    });
+    _setTestClient(c as any, true);
+
+    const { status, body } = await callApi("POST", `/api/users/${BOB_ID}/open-thread`);
+
+    assert.ok(status >= 500, `expected 5xx, got ${status}: ${JSON.stringify(body)}`);
+    assert.notEqual(status, 201, "must not report success when membership was not written");
+    assert.equal(c._db.message_threads.length, 0, "the orphan thread must be rolled back, not left behind");
   });
 });
 

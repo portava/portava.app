@@ -254,20 +254,37 @@ export async function executeAccountDeletion(
 
     let tombstoned = 0;
     let deleted = 0;
+    // Attempt every post independently. A failing tombstone (e.g. the RPC is
+    // absent in an under-migrated environment, returning PGRST202/42883) must
+    // NOT abort the loop: doing so leaves every not-yet-reached post untouched,
+    // including ordinary posts the else-branch would have hard-deleted, while
+    // the caller still marks the request completed. Collect per-post failures,
+    // keep going, and throw once at the end so the step fails overall and the
+    // account is never reported erased with survivors behind it.
+    const postFailures: string[] = [];
     for (const row of ((data as any[]) ?? [])) {
-      if (await hasThirdPartyInterest(row.id)) {
-        // One auditable blanking path — see migration 2141. Assembling the
-        // UPDATE here would miss a column the day someone adds one; posts has 70.
-        const { error: rpcErr } = await sc.rpc("tombstone_post", { p_post_id: row.id });
-        if (rpcErr) throw new Error(`tombstone_post(${row.id}): ${rpcErr.message}`);
-        tombstoned += 1;
-      } else {
-        must(await sc.from("posts").delete().eq("id", row.id), `delete post ${row.id}`);
-        deleted += 1;
+      try {
+        if (await hasThirdPartyInterest(row.id)) {
+          // One auditable blanking path — see migration 2141. Assembling the
+          // UPDATE here would miss a column the day someone adds one; posts has 70.
+          const { error: rpcErr } = await sc.rpc("tombstone_post", { p_post_id: row.id });
+          if (rpcErr) throw new Error(`tombstone_post(${row.id}): ${rpcErr.message}`);
+          tombstoned += 1;
+        } else {
+          must(await sc.from("posts").delete().eq("id", row.id), `delete post ${row.id}`);
+          deleted += 1;
+        }
+      } catch (e) {
+        postFailures.push((e as Error).message);
       }
     }
     tombstonedCounts.posts = tombstoned;
     deletedCounts.posts = deleted;
+    if (postFailures.length > 0) {
+      throw new Error(
+        `${postFailures.length} of ${((data as any[]) ?? []).length} post(s) failed to erase: ${postFailures.join("; ")}`,
+      );
+    }
   });
   if (!postsOk) warnings.push("posts may remain");
 
