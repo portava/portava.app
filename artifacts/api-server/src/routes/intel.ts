@@ -12,7 +12,7 @@
  * time and expiry — never location proof. Gated by intel_capture_quick_signal;
  * off means every call is a fail-closed no-op (the service returns `disabled`).
  */
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
@@ -172,7 +172,7 @@ router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
 }));
 
 // ── Claim lifecycle ───────────────────────────────────────────────────────────
-router.post("/v1/intel/observations/:id/claims:propose", asyncHandler(async (req, res) => {
+const handleProposeClaim = asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient()!;
@@ -188,14 +188,14 @@ router.post("/v1/intel/observations/:id/claims:propose", asyncHandler(async (req
     return sendError(res, "db_error", out.reason ?? "propose failed");
   }
   res.status(201).json({ claim: out.claim });
-}));
+});
 
 // APPROVAL IS THE TRUST GATE OF THE LIFECYCLE (candidate → active → publishable).
 // It is restricted to an authorised admin/moderator capability — never an ordinary
 // authenticated user, and never the feature flag alone. (A system/service auto-
 // promotion path, if one is built later, would call approveClaim with the service
 // client directly, not through this user-facing route.)
-router.post("/v1/intel/observations/:id/claims:approve", asyncHandler(async (req, res) => {
+const handleApproveClaim = asyncHandler(async (req: Request, res: Response) => {
   const ctx = await requireAdmin(req, res);
   if (!ctx) return;
   const claimId = z.string().uuid().safeParse((req.body ?? {}).claimId);
@@ -203,6 +203,38 @@ router.post("/v1/intel/observations/:id/claims:approve", asyncHandler(async (req
   const out = await approveClaim(getServiceClient()!, claimId.data);
   if (!out.ok) return sendError(res, out.reason === "disabled" ? "feature_disabled" : "db_error", out.reason ?? "approve failed");
   res.json({ ok: true });
+});
+
+// ── Registration ──────────────────────────────────────────────────────────────
+//
+// THE BUG THIS SHAPE FIXES (2026-08-29)
+//
+// These were registered as "/claims:propose" and "/claims:approve". Under
+// express 5 / path-to-regexp 8, ":propose" is a PARAMETER, not literal text, so
+// the first registration matched BOTH URLs and the approve route was
+// unreachable. Proven against the installed express 5.2.1:
+//
+//   POST /v1/intel/observations/abc/claims:propose -> propose handler, params {id:"abc", propose:":propose"}
+//   POST /v1/intel/observations/abc/claims:approve -> propose handler, params {id:"abc", propose:":approve"}
+//
+// So requireAdmin below never ran. The live caller is the AUTHOR — the
+// "Approve & make it live" button in app/intel/moment.tsx — so pressing it hit
+// the propose handler, inserted a SECOND status='candidate' row, and returned
+// 201. The client read {ok:true}, the screen showed approved, the claim was
+// never promoted, and every press left another duplicate.
+//
+// Slash segments are the canonical form. The legacy colon URL is kept and
+// dispatched explicitly so clients already shipped against it keep working —
+// and, more to the point, so approve reaches its admin gate for them too rather
+// than silently proposing.
+router.post("/v1/intel/observations/:id/claims/propose", handleProposeClaim);
+router.post("/v1/intel/observations/:id/claims/approve", handleApproveClaim);
+
+router.post("/v1/intel/observations/:id/claims:action", asyncHandler(async (req: Request, res: Response) => {
+  const action = String((req.params as Record<string, string>).action ?? "");
+  if (action === ":approve") return handleApproveClaim(req, res, (() => {}) as never);
+  if (action === ":propose") return handleProposeClaim(req, res, (() => {}) as never);
+  return sendError(res, "not_found", "unknown claim action");
 }));
 
 router.post("/v1/intel/claims/:id/confirm", asyncHandler(async (req, res) => {
