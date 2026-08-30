@@ -228,11 +228,29 @@ function noteNativeFailure(op: NativeOp, key: string, err: unknown): void {
   _health.lastError = message;
   const n = (_health.failures[op] += 1);
 
-  if (n === 1 || n % 50 === 0) {
-    console.error(
-      `[secureStore] keychain ${op} failed (${n} so far) for "${key}": ${message} — ` +
-        'the Supabase session is NOT being persisted; sign-in will not survive a relaunch.',
-    );
+  // FIRST failure only, at error level. Every subsequent report is a warning.
+  //
+  // console.error opens the full-screen red LogBox in a dev build, and this
+  // failure repeats on GoTrue's ~30s auto-refresh timer for as long as the
+  // condition lasts. Reporting every 50th at error level therefore covered the
+  // running app with a modal roughly every 25 minutes — permanently, on a
+  // simulator build that cannot sign into the keychain at all because it is
+  // ad-hoc signed with no entitlements.
+  //
+  // That is not a transient the developer can act on mid-session: it is either
+  // fixed by signing the build or it is not. Announcing it once is the whole
+  // useful signal; announcing it forever obscures the app being debugged and
+  // trains people to dismiss LogBox reflexively, which is how the NEXT real
+  // error gets missed. Repeats stay visible in the console and in
+  // getSecureStorePersistenceHealth(), which is the assertable record anyway.
+  const detail =
+    `[secureStore] keychain ${op} failed (${n} so far) for "${key}": ${message} — ` +
+    'the Supabase session is NOT being persisted; sign-in will not survive a relaunch.';
+
+  if (n === 1) {
+    console.error(detail);
+  } else if (n % 50 === 0) {
+    console.warn(detail);
   }
 }
 
