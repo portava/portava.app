@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { View, Text, ScrollView, Image, Pressable, StyleSheet, ActivityIndicator, RefreshControl, Alert, TextInput } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MessageCircle, CalendarClock, ChevronDown, ChevronUp, Compass, Shield, UserPlus } from 'lucide-react-native';
+import { localDateKey } from '../src/utils/localDate';
 import { AppHeader } from '../src/components/ui/AppHeader';
 import { getMyFollowing, getMyFollowers, type FollowUser } from '../src/services/follows';
 import { sendTripInvite } from '../src/services/friends';
@@ -122,7 +123,9 @@ function next14Days(): string[] {
   for (let i = 0; i < 14; i++) {
     const d = new Date(today);
     d.setDate(d.getDate() + i);
-    days.push(d.toISOString().slice(0, 10));
+    // LOCAL day, not toISOString()'s UTC day — east of UTC the first column was
+    // yesterday and the 14th bookable day silently vanished.
+    days.push(localDateKey(d));
   }
   return days;
 }

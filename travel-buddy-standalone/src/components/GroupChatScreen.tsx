@@ -55,14 +55,18 @@ import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
+import { localDateKey, localTodayKey } from '../utils/localDate.ts';
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDayLabel(isoDay: string): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  // LOCAL calendar day, not UTC. With toISOString() a message shown as "07:30 PM"
+  // could sit under "Yesterday", and one local day straddling two UTC days
+  // mislabels scrollback permanently.
+  const today = localTodayKey();
+  const yest = localDateKey(new Date(Date.now() - 86400000));
   if (isoDay === today) return 'Today';
   if (isoDay === yest) return 'Yesterday';
   return new Date(isoDay + 'T12:00:00').toLocaleDateString(undefined, {
@@ -541,7 +545,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
     const items: ListItem[] = [];
     let lastDay = '';
     for (const m of messages) {
-      const day = m.createdAt.slice(0, 10);
+      const day = localDateKey(m.createdAt);
       if (day !== lastDay) {
         lastDay = day;
         items.push({ _t: 'day', label: formatDayLabel(day), key: `day-${day}` });
