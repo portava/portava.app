@@ -33,6 +33,7 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
+import { logger } from "../lib/logger.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 
 const router = Router();
@@ -206,7 +207,11 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
       });
     }
 
-    await sc.from("notifications").insert({
+    // supabase-js resolves rather than throws on a DB error, so the old
+    // `.then(()=>{}).catch(()=>{})` discarded a failed insert silently — and this
+    // notification is how the tagged user learns they can approve/remove the tag.
+    // Still non-fatal, but a failure is now visible in the server log.
+    const { error: notifErr } = await sc.from("notifications").insert({
       user_id: taggedUserId,
       actor_id: memory.owner_id,
       event_type: "trip.memory_tagged",
@@ -214,9 +219,14 @@ async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise
       title: "You were tagged in a Memory",
       body: "Tap to approve or remove the tag.",
       metadata: { memoryId: memory.id, memoryTitle: memory.title },
-    }).then(() => {}).catch(() => {});
-  } catch {
-    // Non-fatal
+    });
+    if (notifErr) {
+      logger.warn({ err: notifErr, taggedUserId, memoryId: memory.id },
+        "notifyTagged: notifications insert failed — tagged user not informed in-app");
+    }
+  } catch (err) {
+    // Non-fatal, but observable.
+    logger.warn({ err, taggedUserId, memoryId: memory?.id }, "notifyTagged: unexpected error");
   }
 }
 

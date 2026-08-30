@@ -35,6 +35,7 @@ import { getServiceClient } from "../lib/supabase.js";
 // shadow is behaviour-neutral there and only changes the unhealthy-DB case,
 // which now stays closed like every other capability gate in the codebase.
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { logger } from "../lib/logger.js";
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
@@ -459,7 +460,11 @@ router.post("/airport/sessions", async (req, res) => {
           await emitLayoverEvent(sc, session.id, user.id, "passport_seam_emitted", { type: "layover_start" });
         }
       }
-    } catch {}
+    } catch (err) {
+      // Best-effort seam, but a silently lost layover stamp is a product-integrity
+      // gap — make the failure visible in the server log.
+      logger.warn({ err, sessionId: session.id, userId: user.id }, "layover passport seam failed — stamp not emitted");
+    }
   })();
 
   // Trip timeline mirror (best-effort)

@@ -1898,19 +1898,32 @@ router.post('/threads/:threadId/messages', async (req, res) => {
             .in('booking_id', buddyBookingIds);
           const threshold = Number(process.env['OFF_APP_SUSPENSION_THRESHOLD'] ?? '3');
           if ((priorCount ?? 0) >= threshold) {
-            await svcClient
+            // SAFETY enforcement: supabase-js resolves rather than throws on a DB
+            // error, so these results must be checked — a silently failed update
+            // here leaves a repeat off-app solicitor ACTIVE with no trace.
+            const { error: suspErr } = await svcClient
               .from('rent_buddy_profiles')
               .update({ status: 'suspended', admin_status: 'under_review', updated_at: new Date().toISOString() })
               .eq('id', buddyProfileId);
-            await svcClient.from('buddy_booking_events').insert({
+            if (suspErr) {
+              req.log.error({ err: suspErr, buddyProfileId, priorCount },
+                'off-app auto-suspension UPDATE failed — repeat offender remains active');
+            }
+            const { error: evErr } = await svcClient.from('buddy_booking_events').insert({
               booking_id: bookingId,
               actor_user_id: user.id,
               event: 'buddy_auto_suspended',
               metadata: { reason: 'repeated_off_app_solicitation', offense_count: priorCount, visibility: 'admin_only' },
             });
+            if (evErr) {
+              req.log.error({ err: evErr, buddyProfileId },
+                'buddy_auto_suspended event insert failed — suspension unaudited');
+            }
           }
         }
-      } catch (_) {}
+      } catch (err) {
+        req.log.error({ err }, 'off-app solicitation post-processing threw');
+      }
     })();
   }
 

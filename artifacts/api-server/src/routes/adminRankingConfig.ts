@@ -198,17 +198,23 @@ router.put("/admin/ranking/config", asyncHandler(async (req, res) => {
   // Invalidate the in-memory cache so the next read picks up the new value
   invalidateRankingConfigCache();
 
-  // Write audit log (best-effort — never blocks the config update)
+  // Write audit log (best-effort — never blocks the config update).
+  // supabase-js resolves rather than throws on a DB error, so the result must be
+  // checked or a failed audit write (e.g. the table absent, 42P01) vanishes and
+  // the admin change goes unrecorded.
   try {
-    await sc.from("ranking_config_audit_log").insert({
+    const { error: auditErr } = await sc.from("ranking_config_audit_log").insert({
       config_key:         key,
       changed_by_user_id: userId,
       old_value:          oldValue,
       new_value:          value,
       changed_at:         new Date().toISOString(),
     });
-  } catch {
-    // Audit table may not exist yet — non-fatal
+    if (auditErr) {
+      req.log?.warn({ err: auditErr, key }, "ranking_config_audit_log insert failed — config change unaudited");
+    }
+  } catch (err) {
+    req.log?.warn({ err, key }, "ranking_config_audit_log insert threw — config change unaudited");
   }
 
   res.json({ ok: true, key, value, old_value: oldValue });
@@ -289,17 +295,22 @@ router.put("/admin/ranking/flags/:key", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Write audit log (pattern mirrors feature_flag_audit_log from migration 0118)
+  // Write audit log (pattern mirrors feature_flag_audit_log from migration 0118).
+  // supabase-js resolves rather than throws on a DB error — check the result so a
+  // failed audit write is logged instead of leaving the flag flip unrecorded.
   try {
-    await sc.from("feature_flag_audit_log").insert({
+    const { error: auditErr } = await sc.from("feature_flag_audit_log").insert({
       flag:               flagKey,
       changed_by_user_id: userId,
       old_enabled:        oldEnabled,
       new_enabled:        enabled,
       changed_at:         new Date().toISOString(),
     });
-  } catch {
-    // Best-effort — never blocks the flag update
+    if (auditErr) {
+      req.log?.warn({ err: auditErr, flag: flagKey }, "feature_flag_audit_log insert failed — flag change unaudited");
+    }
+  } catch (err) {
+    req.log?.warn({ err, flag: flagKey }, "feature_flag_audit_log insert threw — flag change unaudited");
   }
 
   res.json({ ok: true, flag: flagKey, old_enabled: oldEnabled, new_enabled: enabled });

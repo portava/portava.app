@@ -14,6 +14,8 @@
 export type AdminRecordType = "profile" | "event" | "trip" | "gps_event" | "check_in";
 export type AdminActionTaken = "view" | "expand" | "export";
 
+import { logger } from "./logger.js";
+
 export async function logAdminAccess(
   sc: any,
   adminId: string,
@@ -23,7 +25,11 @@ export async function logAdminAccess(
   reason: string | null,
 ): Promise<void> {
   try {
-    await sc.from("admin_access_log").insert({
+    // supabase-js RESOLVES (does not throw) on a DB error, so the insert result
+    // must be checked — a bare await here silently punched holes in the admin
+    // access audit trail. Still never throws (see contract above), but a failed
+    // audit write is now visible in the server log instead of vanishing.
+    const { error } = await sc.from("admin_access_log").insert({
       admin_id:     adminId,
       record_type:  recordType,
       record_id:    recordId,
@@ -31,8 +37,13 @@ export async function logAdminAccess(
       action_taken: actionTaken,
       timestamp:    new Date().toISOString(),
     });
-  } catch {
-    // Best-effort — never block a read on a log failure.
+    if (error) {
+      logger.warn({ err: error, adminId, recordType, recordId, actionTaken },
+        "logAdminAccess: admin_access_log insert failed — audit trail has a hole");
+    }
+  } catch (err) {
+    // Best-effort — never block a read on a log failure, but say so.
+    logger.warn({ err, adminId, recordType, recordId }, "logAdminAccess: unexpected error");
   }
 }
 

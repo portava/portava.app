@@ -741,36 +741,55 @@ router.post("/highlights/:id/reply", async (req, res) => {
     }
     threadId = (newThread as any).id as string;
     const now2 = new Date().toISOString();
-    await sc.from("message_thread_members").insert([
+    // supabase-js resolves rather than throws on a write error — membership is
+    // the only gate on the thread, so an unchecked failure here creates a
+    // permanently-unreadable orphan thread (same defect as audit M1 in
+    // messaging.ts). Check it and roll the just-created thread back.
+    const { error: memErr } = await sc.from("message_thread_members").insert([
       { thread_id: threadId, user_id: user.id, joined_at: now2 },
       { thread_id: threadId, user_id: ownerId, joined_at: now2 },
     ]);
+    if (memErr) {
+      req.log.error({ err: memErr, threadId }, "highlight reply: thread members insert failed — rolling back orphan thread");
+      await sc.from("message_threads").delete().eq("id", threadId);
+      sendError(res, "db_error", "Could not create message thread", { exposeDetail: true });
+      return;
+    }
   }
 
-  // Send a system context message linking to the highlight
-  await sc.from("messages").insert({
+  // Send a system context message linking to the highlight (cosmetic — a
+  // failure is logged but does not block the actual reply below).
+  const { error: ctxErr } = await sc.from("messages").insert({
     thread_id: threadId,
     sender_id: user.id,
     body: `↩ Replied to your highlight`,
     msg_type: "highlight_reply",
     subtype: id,
   });
+  if (ctxErr) {
+    req.log.warn({ err: ctxErr, threadId }, "highlight reply: context message insert failed");
+  }
 
-  // Send the actual reply message
-  await sc.from("messages").insert({
+  // Send the actual reply message. Unchecked, this returned 200 {threadId} with
+  // NOTHING sent — the sender believed the reply was delivered.
+  const { error: msgErr } = await sc.from("messages").insert({
     thread_id: threadId,
     sender_id: user.id,
     body: message,
     msg_type: "text",
   });
+  if (msgErr) {
+    req.log.error({ err: msgErr, threadId }, "highlight reply: message insert failed");
+    sendError(res, "db_error", "Could not send the reply", { exposeDetail: true });
+    return;
+  }
 
-  // Record the reply in highlight_replies (best-effort)
-  try {
-    await sc
-      .from("highlight_replies")
-      .insert({ highlight_id: id, replier_id: user.id, thread_id: threadId });
-  } catch {
-    // best-effort; ignore
+  // Record the reply in highlight_replies (best-effort, but observable)
+  const { error: recErr } = await sc
+    .from("highlight_replies")
+    .insert({ highlight_id: id, replier_id: user.id, thread_id: threadId });
+  if (recErr) {
+    req.log.warn({ err: recErr, highlightId: id }, "highlight_replies insert failed — reply not recorded on the highlight");
   }
 
   res.status(200).json({ threadId });
