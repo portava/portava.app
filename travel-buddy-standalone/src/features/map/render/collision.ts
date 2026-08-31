@@ -39,6 +39,12 @@
  */
 
 import {
+  ZOOM_BANDS,
+  isZoomBand,
+  zoomBandRank,
+  type ZoomBand,
+} from '../vocabulary.ts';
+import {
   CONFIDENCE_STATES,
   KIND_DEFAULT_PRIORITY,
   MAP_OBJECT_KINDS,
@@ -202,8 +208,10 @@ export function circlePolygon(
 // ── §17 zoom model ────────────────────────────────────────────────────────────
 
 /** The five render bands of §17's zoom table, widest first. */
-export const ZOOM_BANDS = ['world', 'city', 'district', 'street', 'venue'] as const;
-export type ZoomBand = (typeof ZOOM_BANDS)[number];
+// The band NAMES live in features/map/vocabulary.ts (a leaf module) so the
+// layer model and this module cannot drift apart on spelling. The numeric
+// thresholds below stay here: those are a rendering policy, not vocabulary.
+export { ZOOM_BANDS, isZoomBand, zoomBandRank, type ZoomBand };
 
 /**
  * Lower bound (inclusive) of each band. `world` is everything below `city`.

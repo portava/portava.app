@@ -49,6 +49,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  FRESHNESS_THRESHOLDS_MS,
   isRenderable,
   narrowestPrivacyClass,
   precisionRank,
@@ -202,13 +203,12 @@ export function normalizeScope(scope: string): string {
  * mirror the vocabulary the spec's own table uses ("Live", "2m ago", "8m ago",
  * "Recently", "Last confirmed 1h ago", "Historical").
  */
-export const FRESHNESS_AGE_MS: Readonly<Record<Exclude<FreshnessState, 'unknown'>, number>> = {
-  live: 2 * 60 * 1_000,
-  recent: 10 * 60 * 1_000,
-  aging: 60 * 60 * 1_000,
-  stale: 24 * 60 * 60 * 1_000,
-  historical: Number.POSITIVE_INFINITY,
-};
+// Re-exported from the contract, NOT redeclared. `rehydrate` recomputes the
+// same `freshness` field the server stamps on the wire, so a second table here
+// would mean one object reading "Live" from the network and "aging" from the
+// cache at the same age. This module's extra conservatism comes from
+// `worseFreshness(stored, recomputed)` — never from different numbers.
+export const FRESHNESS_AGE_MS = FRESHNESS_THRESHOLDS_MS;
 
 /** 0 = most current. `unknown` is worst, because it is the fail-closed default. */
 const FRESHNESS_RANK: Record<FreshnessState, number> = {
@@ -232,10 +232,10 @@ export function worseFreshness(a: FreshnessState, b: FreshnessState): FreshnessS
 /** Freshness implied purely by age. Negative ages (clock skew) clamp to 0. */
 export function freshnessForAge(ageMs: number): FreshnessState {
   const age = Number.isFinite(ageMs) ? Math.max(0, ageMs) : Number.POSITIVE_INFINITY;
-  if (age < FRESHNESS_AGE_MS.live) return 'live';
-  if (age < FRESHNESS_AGE_MS.recent) return 'recent';
-  if (age < FRESHNESS_AGE_MS.aging) return 'aging';
-  if (age < FRESHNESS_AGE_MS.stale) return 'stale';
+  if (age <= FRESHNESS_AGE_MS.live) return 'live';
+  if (age <= FRESHNESS_AGE_MS.recent) return 'recent';
+  if (age <= FRESHNESS_AGE_MS.aging) return 'aging';
+  if (age <= FRESHNESS_AGE_MS.stale) return 'stale';
   return 'historical';
 }
 

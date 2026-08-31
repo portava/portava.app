@@ -114,15 +114,18 @@ function entry(overrides: Partial<MapCacheEntry> = {}): MapCacheEntry {
 // ── Freshness ladder ──────────────────────────────────────────────────────────
 
 test('freshnessForAge maps every §7 band, boundaries inclusive-upward', () => {
+  // Boundaries belong to the FRESHER band, matching the server's deriveFreshness
+  // exactly — these thresholds are FRESHNESS_THRESHOLDS_MS from the contract,
+  // not a second table (see the note on FRESHNESS_AGE_MS).
   assert.equal(freshnessForAge(0), 'live');
-  assert.equal(freshnessForAge(2 * MIN - 1), 'live');
-  assert.equal(freshnessForAge(2 * MIN), 'recent');
-  assert.equal(freshnessForAge(10 * MIN - 1), 'recent');
-  assert.equal(freshnessForAge(10 * MIN), 'aging');
-  assert.equal(freshnessForAge(HOUR - 1), 'aging');
-  assert.equal(freshnessForAge(HOUR), 'stale');
-  assert.equal(freshnessForAge(DAY - 1), 'stale');
-  assert.equal(freshnessForAge(DAY), 'historical');
+  assert.equal(freshnessForAge(5 * MIN), 'live');
+  assert.equal(freshnessForAge(5 * MIN + 1), 'recent');
+  assert.equal(freshnessForAge(30 * MIN), 'recent');
+  assert.equal(freshnessForAge(30 * MIN + 1), 'aging');
+  assert.equal(freshnessForAge(3 * HOUR), 'aging');
+  assert.equal(freshnessForAge(3 * HOUR + 1), 'stale');
+  assert.equal(freshnessForAge(DAY), 'stale');
+  assert.equal(freshnessForAge(DAY + 1), 'historical');
   assert.equal(freshnessForAge(30 * DAY), 'historical');
 });
 
@@ -140,9 +143,9 @@ test('worseFreshness picks the less fresh of two states, unknown worst', () => {
 test('decayFreshness never returns the stored value when time has passed', () => {
   const stored = obj({ freshness: 'live', observedAt: new Date(T0).toISOString() });
   assert.equal(decayFreshness(stored, T0), 'live');
-  assert.equal(decayFreshness(stored, T0 + 3 * MIN), 'recent');
-  assert.equal(decayFreshness(stored, T0 + 20 * MIN), 'aging');
-  assert.equal(decayFreshness(stored, T0 + 3 * HOUR), 'stale');
+  assert.equal(decayFreshness(stored, T0 + 20 * MIN), 'recent');
+  assert.equal(decayFreshness(stored, T0 + 2 * HOUR), 'aging');
+  assert.equal(decayFreshness(stored, T0 + 6 * HOUR), 'stale');
   assert.equal(decayFreshness(stored, T0 + 2 * DAY), 'historical');
 });
 
@@ -283,16 +286,16 @@ test('rehydrate recomputes freshness as of now, not as of the write', () => {
   const e = entry({
     objects: [
       obj({ id: 'a', freshness: 'live', observedAt: new Date(T0).toISOString() }),
-      obj({ id: 'b', freshness: 'recent', observedAt: new Date(T0 - 90 * MIN).toISOString() }),
+      obj({ id: 'b', freshness: 'recent', observedAt: new Date(T0 - 5 * HOUR).toISOString() }),
     ],
   });
 
-  const out = rehydrate(e, T0 + 12 * MIN);
+  const out = rehydrate(e, T0 + 45 * MIN);
   const a = out.objects.find((o) => o.id === 'a')!;
   const b = out.objects.find((o) => o.id === 'b')!;
 
-  assert.equal(a.freshness, 'aging', 'a stored live object is 12m old => aging');
-  assert.equal(b.freshness, 'stale', '102m old => stale');
+  assert.equal(a.freshness, 'aging', 'a stored live object is 45m old => aging');
+  assert.equal(b.freshness, 'stale', '5h45m old => stale');
   assert.equal(mayRenderAsLive(a.freshness), false);
   assert.equal(mayRenderAsLive(b.freshness), false);
 });
@@ -302,10 +305,10 @@ test('rehydrate crosses every freshness boundary as the clock advances', () => {
   const at = (ms: number) => rehydrate(e, T0 + ms).objects[0].freshness;
 
   assert.equal(at(0), 'live');
-  assert.equal(at(2 * MIN), 'recent');
-  assert.equal(at(10 * MIN), 'aging');
-  assert.equal(at(HOUR), 'stale');
-  assert.equal(at(DAY), 'historical');
+  assert.equal(at(5 * MIN + 1), 'recent');
+  assert.equal(at(30 * MIN + 1), 'aging');
+  assert.equal(at(3 * HOUR + 1), 'stale');
+  assert.equal(at(DAY + 1), 'historical');
 });
 
 test('rehydrate stamps cachedAt, fromCache and a staleness label on every object', () => {
@@ -466,11 +469,11 @@ test('write then read round-trips, with freshness recomputed on the way out', as
   assert.equal(res.evicted, 0);
   assert.ok(res.bytes > 0);
 
-  now = T0 + 25 * MIN;
+  now = T0 + 45 * MIN;
   const out = await cache.read('place_intel', 'Da Nang');
   assert.ok(out);
   assert.equal(out!.objects[0].freshness, 'aging');
-  assert.equal(out!.staleness.label, 'Last updated 25m ago');
+  assert.equal(out!.staleness.label, 'Last updated 45m ago');
 });
 
 test('scope is normalized so "Da Nang" and "da nang" share one entry', async () => {

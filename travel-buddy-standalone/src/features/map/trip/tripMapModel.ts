@@ -538,6 +538,7 @@ export function optimizeToday(
   const insertOne = (candidate: TripStop, bias: StopBias): number => {
     const closesAtMs = ms(candidate.closesAt);
     const limit = maxIndexFor(closesAtMs);
+    const slotsBefore = seq.length;
     const here: LatLng = { lat: candidate.lat, lng: candidate.lng };
 
     let bestIndex = 0;
@@ -562,10 +563,16 @@ export function optimizeToday(
     }
 
     seq.splice(bestIndex, 0, candidate);
-    if (closesAtMs != null && limit < seq.length) noteFactor('closing_times', candidate.id);
-    if (bias.live !== 0) noteFactor('live_conditions', candidate.id);
-    if (bias.crew !== 0) noteFactor('crew_position', candidate.id);
-    if (bias.weather !== 0) noteFactor('weather', candidate.id);
+
+    // Cite a factor only when it could actually have changed the outcome. With
+    // a single legal slot there was no decision to explain, and a rationale
+    // that claims credit for a forced move is worse than saying nothing.
+    if (closesAtMs != null && limit < slotsBefore) noteFactor('closing_times', candidate.id);
+    if (slotsBefore > 0 && Math.min(limit, slotsBefore) > 0) {
+      if (bias.live !== 0) noteFactor('live_conditions', candidate.id);
+      if (bias.crew !== 0) noteFactor('crew_position', candidate.id);
+      if (bias.weather !== 0) noteFactor('weather', candidate.id);
+    }
     return bestIndex;
   };
 

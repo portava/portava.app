@@ -154,7 +154,7 @@ describe('contextual resolution', () => {
   });
 
   it('resolves Trip on in TRIP mode even without an active trip flag', () => {
-    const r = resolveLayers(EMPTY_LAYER_PREFERENCES, ctx({ mode: 'trip', tripActive: false }));
+    const r = resolveLayers(EMPTY_LAYER_PREFERENCES, ctx({ mode: 'TRIP', tripActive: false }));
     assert.equal(r.trip.visible, true);
   });
 
@@ -172,7 +172,7 @@ describe('contextual resolution', () => {
   it('resolves People on in Locate My Friends mode', () => {
     const r = resolveLayers(
       EMPTY_LAYER_PREFERENCES,
-      ctx({ mode: 'locate_friends', zoomBand: 'city', sharingPresenceCount: 0 }),
+      ctx({ mode: 'LOCATE_FRIENDS', zoomBand: 'city', sharingPresenceCount: 0 }),
     );
     assert.equal(r.people.visible, true);
   });
@@ -187,7 +187,7 @@ describe('contextual resolution', () => {
     const tooClose = resolveLayers(EMPTY_LAYER_PREFERENCES, ctx({ density: 'very_dense', zoomBand: 'venue' }));
     assert.equal(tooClose.crowd_flow.visible, false);
 
-    const mode = resolveLayers(EMPTY_LAYER_PREFERENCES, ctx({ mode: 'crowd_flow', density: 'sparse', zoomBand: 'venue' }));
+    const mode = resolveLayers(EMPTY_LAYER_PREFERENCES, ctx({ mode: 'CROWD_FLOW', density: 'sparse', zoomBand: 'venue' }));
     assert.equal(mode.crowd_flow.visible, true);
   });
 
@@ -220,7 +220,7 @@ describe('explicit user choice', () => {
     assert.equal(resolveLayers(forcedOn, quiet).crowd_flow.source, 'user');
 
     const forcedOff = setLayerChoice(EMPTY_LAYER_PREFERENCES, 'trip', 'off');
-    const touring = ctx({ tripActive: true, mode: 'trip' });
+    const touring = ctx({ tripActive: true, mode: 'TRIP' });
     assert.equal(resolveLayers(EMPTY_LAYER_PREFERENCES, touring).trip.visible, true);
     assert.equal(resolveLayers(forcedOff, touring).trip.visible, false);
   });
@@ -235,10 +235,10 @@ describe('explicit user choice', () => {
   it('SURVIVES a context change — the choice lives in prefs, not in context', () => {
     const prefs = setLayerChoice(EMPTY_LAYER_PREFERENCES, 'people', 'off');
     const contexts: LayerContext[] = [
-      ctx({ mode: 'locate_friends', zoomBand: 'venue', sharingPresenceCount: 20 }),
-      ctx({ mode: 'live', zoomBand: 'world', sharingPresenceCount: 0 }),
-      ctx({ mode: 'trip', zoomBand: 'street', tripActive: true, sharingPresenceCount: 3 }),
-      ctx({ mode: 'crowd_flow', density: 'very_dense', zoomBand: 'city' }),
+      ctx({ mode: 'LOCATE_FRIENDS', zoomBand: 'venue', sharingPresenceCount: 20 }),
+      ctx({ mode: 'LIVE', zoomBand: 'world', sharingPresenceCount: 0 }),
+      ctx({ mode: 'TRIP', zoomBand: 'street', tripActive: true, sharingPresenceCount: 3 }),
+      ctx({ mode: 'CROWD_FLOW', density: 'very_dense', zoomBand: 'city' }),
     ];
     for (const c of contexts) {
       const r = resolveLayers(prefs, c);
@@ -284,9 +284,9 @@ describe('§5/§24 Safety cannot be switched off', () => {
   it('resolves visible under every context, including hostile ones', () => {
     const contexts: LayerContext[] = [
       ctx(),
-      ctx({ zoomBand: 'world', mode: 'time_machine', density: 'sparse' }),
-      ctx({ zoomBand: 'venue', mode: 'locate_friends', density: 'very_dense' }),
-      ctx({ mode: 'compass', compassActive: true, tripActive: true }),
+      ctx({ zoomBand: 'world', mode: 'TIME_MACHINE', density: 'sparse' }),
+      ctx({ zoomBand: 'venue', mode: 'LOCATE_FRIENDS', density: 'very_dense' }),
+      ctx({ mode: 'COMPASS', compassActive: true, tripActive: true }),
     ];
     for (const c of contexts) {
       const r = resolveLayers(EMPTY_LAYER_PREFERENCES, c);

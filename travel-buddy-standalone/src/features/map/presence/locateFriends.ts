@@ -459,9 +459,9 @@ export function rangeFor(
         : null;
     return { minMeters: lo, maxMeters: hi };
   }
-  const ladder = APPROXIMATE_DISTANCE_LADDER;
+  const ladder: readonly number[] = APPROXIMATE_DISTANCE_LADDER;
   const min = Math.max(0, range.minMeters);
-  let lo = ladder[0];
+  let lo: number = ladder[0];
   for (const step of ladder) if (step <= min) lo = step;
   const rawHi = range.maxMeters;
   if (rawHi == null || !Number.isFinite(rawHi)) return { minMeters: lo, maxMeters: null };

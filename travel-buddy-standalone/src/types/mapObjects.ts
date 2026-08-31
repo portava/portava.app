@@ -120,6 +120,40 @@ export type FreshnessState = (typeof FRESHNESS_STATES)[number];
 /** Only these two may be rendered with a live/pulsing treatment. */
 export const LIVE_FRESHNESS_STATES: readonly FreshnessState[] = ['live', 'recent'];
 
+/**
+ * Age buckets for the §7 freshness column, in SECONDS.
+ *
+ * These mirror the server's `FRESHNESS_THRESHOLDS_SECONDS`
+ * (api-server/src/lib/mapObjects.ts) and the contract drift test pins them
+ * equal. They must agree, because the server stamps `freshness` on the wire
+ * while the client recomputes it for cached objects — two different tables
+ * would mean the SAME object at the SAME age reads "Live" from the network and
+ * "aging" from the cache.
+ *
+ * They are display buckets, not a TTL: authoritative expiry is `expiresAt`,
+ * which the server derives per claim_type from lib/freshnessPolicy. Expiry
+ * always wins over the bucket.
+ */
+export const FRESHNESS_THRESHOLDS_SECONDS = {
+  /** ≤ 5 min: "Live". */
+  live: 300,
+  /** ≤ 30 min: "12m ago". */
+  recent: 1800,
+  /** ≤ 3 h: "Recently". */
+  aging: 10800,
+  /** ≤ 24 h: "Last confirmed 6h ago". Beyond this, 'historical'. */
+  stale: 86400,
+} as const;
+
+/** The same buckets in milliseconds, for callers working in epoch ms. */
+export const FRESHNESS_THRESHOLDS_MS: Readonly<Record<Exclude<FreshnessState, 'unknown'>, number>> = {
+  live: FRESHNESS_THRESHOLDS_SECONDS.live * 1000,
+  recent: FRESHNESS_THRESHOLDS_SECONDS.recent * 1000,
+  aging: FRESHNESS_THRESHOLDS_SECONDS.aging * 1000,
+  stale: FRESHNESS_THRESHOLDS_SECONDS.stale * 1000,
+  historical: Number.POSITIVE_INFINITY,
+};
+
 export function mayRenderAsLive(freshness: FreshnessState | null | undefined): boolean {
   return freshness != null && LIVE_FRESHNESS_STATES.includes(freshness);
 }

@@ -88,6 +88,13 @@
  *     precedence — no mode may suppress it.
  */
 
+import { MAP_MODES, isMapMode, type MapMode } from '../vocabulary.ts';
+import {
+  ALWAYS_ON_LAYER_IDS,
+  MAP_LAYER_IDS,
+  isMapLayerId,
+  type MapLayerId,
+} from '../layers/layerModel.ts';
 import { MAP_OBJECT_KINDS } from '../../../types/mapObjects.ts';
 import type { MapObjectKind } from '../../../types/mapObjects.ts';
 import { TOGGLEABLE_LAYERS } from '../../../types/mapTypes.ts';
@@ -102,17 +109,11 @@ import type { ToggleableEntityType } from '../../../types/mapTypes.ts';
  * (§13: "temporary context, not a permanent preference rewrite"). What is
  * left is exactly the seven §30 names.
  */
-export const MAP_MODES = [
-  'LIVE',
-  'PLACE_SELECTED',
-  'COMPASS',
-  'TRIP',
-  'CROWD_FLOW',
-  'LOCATE_FRIENDS',
-  'TIME_MACHINE',
-] as const;
-
-export type MapMode = (typeof MAP_MODES)[number];
+// Declared in features/map/vocabulary.ts, a leaf module, because
+// features/map/layers/layerModel.ts keys its policies BY MODE while this module
+// needs its LAYERS — importing each other directly would be a runtime cycle.
+// Re-exported here so `MapMode` still reads as part of the machine's API.
+export { MAP_MODES, isMapMode, type MapMode };
 
 /** LIVE is the home state — §3: "This is the default map state." */
 export const HOME_MODE: MapMode = 'LIVE';
@@ -128,10 +129,6 @@ export const SECONDARY_MODES: readonly MapMode[] = [
   'LOCATE_FRIENDS',
   'TIME_MACHINE',
 ];
-
-export function isMapMode(value: unknown): value is MapMode {
-  return typeof value === 'string' && (MAP_MODES as readonly string[]).includes(value);
-}
 
 export function isSecondaryMode(mode: MapMode): boolean {
   return SECONDARY_MODES.includes(mode);
@@ -312,26 +309,13 @@ export function enterableModes(capabilities: MapCapabilities | null | undefined)
  * layerModel's; `MODE_LAYER_POLICY` below is the only part of the layer story
  * this file actually owns.
  */
-export const MAP_LAYERS = [
-  'live_activity',
-  'relevant_places',
-  'people',
-  'events',
-  'trip',
-  'buddies',
-  'saved',
-  'crowd_flow',
-  'hidden_gems',
-  'safety',
-  'transport',
-  'memories',
-] as const;
-
-export type MapLayerId = (typeof MAP_LAYERS)[number];
-
-export function isMapLayerId(value: unknown): value is MapLayerId {
-  return typeof value === 'string' && (MAP_LAYERS as readonly string[]).includes(value);
-}
+// features/map/layers/layerModel.ts is the owner: it holds §16's core/extra
+// split, the tri-state defaults and the legend. This module only needs the
+// vocabulary to key MODE_LAYER_POLICY by, so it imports rather than restates —
+// two lists of the same twelve ids is exactly how one of them silently loses a
+// layer.
+export { isMapLayerId, type MapLayerId };
+export const MAP_LAYERS = MAP_LAYER_IDS;
 
 /**
  * §16 suggested defaults: "Live Activity on, Events on, Relevant Places on,
@@ -345,7 +329,7 @@ export const DEFAULT_ENABLED_LAYERS: readonly MapLayerId[] = ['live_activity', '
  * popularity or activity." A mode may not suppress safety, and a user
  * preference may not switch it off.
  */
-export const ALWAYS_ON_LAYERS: readonly MapLayerId[] = ['safety'];
+export const ALWAYS_ON_LAYERS: readonly MapLayerId[] = ALWAYS_ON_LAYER_IDS;
 
 export interface ModeLayerPolicy {
   /** Shown in this mode even if the user has the layer toggled off. */

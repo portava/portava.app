@@ -26,6 +26,7 @@ import {
   padBounds,
   pulseItemToMapState,
   reconcileOrDrop,
+  selectHeadlinePulseItem,
 } from '../pulseMapBridge.ts';
 import type { PulseIntelItem } from '../pulseMapBridge.ts';
 import type { LivePulseItem, LivePulseItemType } from '../../../../services/livePulse.ts';
@@ -266,6 +267,36 @@ test('the round trip preserves the subject', () => {
   const q = mapStateToPulseQuery(pulseItemToMapState(item, { center: { lat: 1, lng: 2 } }));
   assert.equal(q.focusItemId, 'gem-7');
   assert.ok(q.itemTypes.includes('hidden_gem'));
+});
+
+// ── The §3 headline ────────────────────────────────────────────────────────────
+
+test('safety outranks everything on the Live Pulse card', () => {
+  const pick = selectHeadlinePulseItem([
+    pulseItem({ id: 'a', item_type: 'event', status_label: 'Action Needed' }),
+    pulseItem({ id: 'b', item_type: 'safe_return', status_label: 'My Plan' }),
+  ]);
+  assert.equal(pick?.id, 'b');
+});
+
+test('the headline falls through urgency, then crowd size, then id', () => {
+  const pick = selectHeadlinePulseItem([
+    pulseItem({ id: 'z', status_label: 'Upcoming' }),
+    pulseItem({ id: 'y', status_label: 'Starting Soon', people_count: 4 }),
+    pulseItem({ id: 'x', status_label: 'Starting Soon', people_count: 40 }),
+  ]);
+  assert.equal(pick?.id, 'x');
+});
+
+test('the headline is deterministic and honours exclusions', () => {
+  const items = [
+    pulseItem({ id: 'a', status_label: 'Starting Soon' }),
+    pulseItem({ id: 'b', status_label: 'Starting Soon' }),
+  ];
+  assert.equal(selectHeadlinePulseItem(items)?.id, 'a');
+  assert.equal(selectHeadlinePulseItem([...items].reverse())?.id, 'a');
+  assert.equal(selectHeadlinePulseItem(items, (i) => i.id === 'a')?.id, 'b');
+  assert.equal(selectHeadlinePulseItem([]), null);
 });
 
 // ── Geometry helpers ───────────────────────────────────────────────────────────

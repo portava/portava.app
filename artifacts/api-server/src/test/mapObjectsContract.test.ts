@@ -34,6 +34,7 @@ import {
   ACTIVITY_LEVELS,
   CONFIDENCE_STATES,
   FRESHNESS_STATES,
+  FRESHNESS_THRESHOLDS_SECONDS,
   KIND_DEFAULT_PRIORITY,
   MAP_ACTIONS,
   MAP_OBJECT_KINDS,
@@ -112,6 +113,16 @@ describe("Map Object contract — server and app mirrors agree", () => {
     // Server side is derived, so this is really a check on the app mirror.
     assert.deepEqual([...CONFIDENCE_STATES], [...CONFIDENCE_BANDS]);
     assert.deepEqual(appStringArray("CONFIDENCE_STATES"), [...CONFIDENCE_BANDS]);
+  });
+
+  test("FRESHNESS_THRESHOLDS_SECONDS is identical", () => {
+    // The server stamps `freshness` on the wire; the app recomputes it for
+    // cached objects. Two tables would mean the same object at the same age
+    // reads "Live" from the network and "aging" from the cache.
+    assert.deepEqual(
+      appNumericRecord("FRESHNESS_THRESHOLDS_SECONDS"),
+      { ...FRESHNESS_THRESHOLDS_SECONDS },
+    );
   });
 
   test("RENDERING_PRIORITY tiers and values are identical", () => {

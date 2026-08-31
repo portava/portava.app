@@ -350,6 +350,60 @@ export function pulseItemToMapState(
   };
 }
 
+/**
+ * The single "most important nearby change" the §3 Live Pulse card shows.
+ *
+ * Pure and deterministic, so the card cannot flicker between two equally-ranked
+ * items across renders. The ladder mirrors §5's precedence rule — safety first,
+ * then things the user must act on, then things that are about to happen:
+ *
+ *   safe_return  →  Action Needed  →  time pressure  →  crowd size  →  id
+ *
+ * `exclude` lets the caller drop session-dismissed cards without this function
+ * needing to know about the dismiss store (which is stateful, and lives in
+ * services/livePulse.ts).
+ */
+const STATUS_URGENCY: Record<string, number> = {
+  'Action Needed': 0,
+  'Starting Soon': 1,
+  'Ends Soon': 2,
+  Ongoing: 3,
+  Tonight: 4,
+  Tomorrow: 5,
+  Upcoming: 6,
+  'My Plan': 7,
+};
+
+export function selectHeadlinePulseItem<T extends LivePulseItem>(
+  items: readonly T[],
+  exclude: (item: T) => boolean = () => false,
+): T | null {
+  let best: T | null = null;
+  let bestKey: [number, number, number, string] | null = null;
+
+  for (const item of items ?? []) {
+    if (!item || exclude(item)) continue;
+    const key: [number, number, number, string] = [
+      item.item_type === 'safe_return' ? 0 : 1,
+      STATUS_URGENCY[item.status_label] ?? 99,
+      -(item.people_count ?? 0),
+      item.id ?? '',
+    ];
+    if (
+      bestKey == null ||
+      key[0] < bestKey[0] ||
+      (key[0] === bestKey[0] &&
+        (key[1] < bestKey[1] ||
+          (key[1] === bestKey[1] &&
+            (key[2] < bestKey[2] || (key[2] === bestKey[2] && key[3] < bestKey[3])))))
+    ) {
+      best = item;
+      bestKey = key;
+    }
+  }
+  return best;
+}
+
 // ── Reverse direction ──────────────────────────────────────────────────────────
 
 /** Parameters for GET /api/pulse/live that correspond to a given map state. */

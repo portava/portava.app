@@ -46,6 +46,14 @@
  */
 
 import {
+  MAP_MODES,
+  ZOOM_BANDS,
+  isMapMode,
+  isZoomBand,
+  type MapMode,
+  type ZoomBand,
+} from '../vocabulary.ts';
+import {
   MAP_OBJECT_KINDS,
   type MapObjectKind,
 } from '../../../types/mapObjects.ts';
@@ -208,20 +216,20 @@ export function layerControlValue(
  * by construction; if the render lane exports an identical union the lead
  * should alias one to the other rather than keep two spellings.
  */
-export const LAYER_ZOOM_BANDS = ['world', 'city', 'district', 'street', 'venue'] as const;
-export type LayerZoomBand = (typeof LAYER_ZOOM_BANDS)[number];
-
-/** §30's primary modes. */
-export const MAP_MODES = [
-  'live',
-  'place_selected',
-  'compass',
-  'trip',
-  'crowd_flow',
-  'locate_friends',
-  'time_machine',
-] as const;
-export type MapMode = (typeof MAP_MODES)[number];
+// Both vocabularies live in features/map/vocabulary.ts, a leaf module — see
+// its header. `LayerZoomBand` is kept as an ALIAS rather than a second union so
+// existing callers keep compiling while there is exactly one set of band names
+// in the codebase. Modes are UPPERCASE because §30 writes them that way; the
+// lowercase spelling this file used to declare would silently mismatch any
+// Record<MapMode, ...> built against the machine's spelling.
+export {
+  ZOOM_BANDS as LAYER_ZOOM_BANDS,
+  MAP_MODES,
+  isMapMode,
+  isZoomBand,
+  type MapMode,
+};
+export type LayerZoomBand = ZoomBand;
 
 /** Viewport crowding, as measured by the projection/aggregation layer. */
 export const LAYER_DENSITY_LEVELS = ['sparse', 'moderate', 'dense', 'very_dense'] as const;
@@ -249,7 +257,7 @@ export interface LayerContext {
 /** A neutral context, useful for tests and for the very first render. */
 export const DEFAULT_LAYER_CONTEXT: LayerContext = Object.freeze({
   zoomBand: 'city',
-  mode: 'live',
+  mode: 'LIVE',
   tripActive: false,
   compassActive: false,
   density: 'moderate',
@@ -290,7 +298,7 @@ function resolveContextual(
   switch (layerId) {
     case 'people': {
       // §12 Locate My Friends is the mode built for this layer.
-      if (ctx.mode === 'locate_friends') {
+      if (ctx.mode === 'LOCATE_FRIENDS') {
         return { visible: true, reason: 'Locate My Friends is active' };
       }
       // §17: World and City render neighbourhoods and zones, not individuals.
@@ -305,13 +313,13 @@ function resolveContextual(
     }
 
     case 'trip': {
-      if (ctx.mode === 'trip') return { visible: true, reason: 'Trip Map is active' };
+      if (ctx.mode === 'TRIP') return { visible: true, reason: 'Trip Map is active' };
       if (ctx.tripActive) return { visible: true, reason: 'Trip in progress' };
       return { visible: false, reason: 'No active trip' };
     }
 
     case 'crowd_flow': {
-      if (ctx.mode === 'crowd_flow') return { visible: true, reason: 'Crowd Flow mode is active' };
+      if (ctx.mode === 'CROWD_FLOW') return { visible: true, reason: 'Crowd Flow mode is active' };
       // §17 City band: "major flow". Flow arrows are noise when nothing moves,
       // and unreadable at street/venue scale, so they earn their place only in
       // a crowded city/district viewport.

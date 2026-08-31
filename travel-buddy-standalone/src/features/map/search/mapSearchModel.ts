@@ -304,10 +304,15 @@ export function anchorOf(result: MapSearchResult): LatLng | null {
       const b = result.points ? boundsOfPoints(result.points) : null;
       return b ? centerOfBounds(b) : null;
     }
+    case 'saved':
+      // A saved item inherits whatever geography the thing it saved had: a
+      // saved area carries bounds, a saved place carries a point.
+      return result.center ?? (result.bounds ? centerOfBounds(result.bounds) : null);
     case 'user':
     case 'buddy':
-    case 'saved':
-      return result.center ?? (result.bounds ? centerOfBounds(result.bounds) : null) ?? null;
+      // Neither carries bounds — a person is a point or nothing. §23 means that
+      // point is already coarsened (or absent), so there is nothing to frame.
+      return result.center ?? null;
   }
 }
 
@@ -431,8 +436,10 @@ export function groupResults(
  * The frame that shows ALL results at once — what the map should do when the
  * user runs a search without picking one result yet.
  *
- * Only anchors of geographic results contribute. Returns a `none` frame when
- * nothing in the result set can be placed.
+ * An Area contributes its CORNERS, not its centroid: a set frame built from
+ * centroids would crop exactly the regions the user searched for, which is the
+ * same §27 bug `frameFor` exists to avoid, one level up. Returns a `none` frame
+ * when nothing in the result set can be placed.
  */
 export function frameForResultSet(results: readonly MapSearchResult[]): MapCameraFrame {
   const anchors: LatLng[] = [];
@@ -440,11 +447,18 @@ export function frameForResultSet(results: readonly MapSearchResult[]): MapCamer
   let geographicCount = 0;
 
   for (const r of results ?? []) {
-    if (!isGeographic(r)) continue;
+    const frame = frameFor(r);
+    if (frame.kind === 'none') continue;
     geographicCount += 1;
     onlyResult = r;
-    const a = anchorOf(r);
-    if (a) anchors.push(a);
+    if (frame.kind === 'bounds') {
+      anchors.push(
+        { lat: frame.bounds.south, lng: frame.bounds.west },
+        { lat: frame.bounds.north, lng: frame.bounds.east },
+      );
+      continue;
+    }
+    anchors.push(frame.center);
   }
 
   if (geographicCount === 1 && onlyResult) return frameFor(onlyResult);

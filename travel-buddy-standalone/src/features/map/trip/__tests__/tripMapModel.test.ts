@@ -199,21 +199,29 @@ test('crew position is cited when a stop sits near the crew', () => {
   assert.ok(proposal.rationale.some((r) => r.factor === 'crew_position'));
 });
 
-test('bad weather is cited and pushes outdoor stops later', () => {
-  const stops = [
-    stop({ id: 'indoor', orderIndex: 0, lng: 108.22 }),
-    stop({ id: 'outdoor', orderIndex: 1, lng: 108.221, outdoor: true }),
+test('bad weather is cited and pushes an outdoor stop later than distance alone would', () => {
+  // `outdoor` sits closest to the origin, so on distance alone it goes first.
+  const stops = () => [
+    stop({ id: 'indoor-1', orderIndex: 0, lng: 108.2200 }),
+    stop({ id: 'indoor-2', orderIndex: 1, lng: 108.2300 }),
+    stop({ id: 'outdoor', orderIndex: 2, lng: 108.2195, outdoor: true }),
   ];
-  const proposal = optimizeToday(stops, {
-    now: NOW,
-    origin: { lat: 16.06, lng: 108.219 },
+  const ctx = { now: NOW, origin: { lat: 16.06, lng: 108.219 } };
+
+  const dry = optimizeToday(stops(), ctx);
+  assert.deepEqual(dry.proposed.map((s) => s.id), ['outdoor', 'indoor-1', 'indoor-2']);
+  assert.ok(!dry.rationale.some((r) => r.factor === 'weather'), 'no weather, no weather line');
+
+  const wet = optimizeToday(stops(), {
+    ...ctx,
     weather: { outdoorRisk: 'high', summary: 'Heavy rain until 8pm' },
   });
-  const weatherLine = proposal.rationale.find((r) => r.factor === 'weather');
+  const ids = wet.proposed.map((s) => s.id);
+  assert.ok(ids.indexOf('outdoor') > ids.indexOf('indoor-1'), 'weather moved it later');
+
+  const weatherLine = wet.rationale.find((r) => r.factor === 'weather');
   assert.ok(weatherLine, 'weather is one of the §11 factors and must be cited when used');
   assert.match(weatherLine.text, /Heavy rain until 8pm/);
-  const ids = proposal.proposed.map((s) => s.id);
-  assert.ok(ids.indexOf('outdoor') > ids.indexOf('indoor'));
 });
 
 test('a saved idea on the path is PROPOSED, capped, and flagged as an insertion', () => {

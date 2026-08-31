@@ -38,7 +38,7 @@ const CAFE: PlaceSearchResult = {
   id: 'place-1',
   type: 'place',
   title: '43 Factory',
-  center: { lat: 16.045, lng: 108.245 },
+  center: { lat: 16.071, lng: 108.211 },
   score: 9,
 };
 
@@ -157,13 +157,21 @@ test('every one of the nine §27 types has a framing rule and a label', () => {
 
 // ── Result-set framing ─────────────────────────────────────────────────────────
 
-test('a whole result set frames everything geographic', () => {
+test('a whole result set frames everything geographic, Areas included whole', () => {
   const frame = frameForResultSet([
     CAFE,
     DA_NANG,
     { id: 'u1', type: 'user', title: 'kim' },
   ]);
   assert.equal(frame.kind, 'bounds');
+  if (frame.kind !== 'bounds') return;
+  // The Area's far corners, not just its centroid, are inside the set frame.
+  assert.ok(frame.bounds.south <= DA_NANG.bounds.south);
+  assert.ok(frame.bounds.north >= DA_NANG.bounds.north);
+  assert.ok(frame.bounds.west <= DA_NANG.bounds.west);
+  assert.ok(frame.bounds.east >= DA_NANG.bounds.east);
+  // …and so is the point result.
+  assert.ok(frame.bounds.north >= CAFE.center.lat && frame.bounds.west <= CAFE.center.lng);
 });
 
 test('a result set with one geographic result reuses that result\'s frame', () => {
