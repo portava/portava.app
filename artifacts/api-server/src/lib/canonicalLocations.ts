@@ -40,6 +40,14 @@ export interface CanonicalRow {
   kind: string;
   name: string;
   normalized_name: string;
+  /**
+   * Diacritic/stroke-folded search key (§10). Populated by the
+   * `search_key` STORED generated column added in migration 2220 (mirrors
+   * `searchKey()` below). Optional here so pre-migration rows and unit
+   * fixtures without the column still type-check; the folded resolver falls
+   * back to `normalized_name` when it is absent.
+   */
+  search_key?: string | null;
   display_name: string;
   city: string | null;
   region: string | null;
@@ -92,6 +100,57 @@ export function normalizeLocationName(name: string): string {
   return stripped.length > 0 ? stripped : n;
 }
 
+// ── Stroke-letter fold (§10) ──────────────────────────────────────────────────
+//
+// Unicode NFD (used by normalizeLocationName) decomposes a *precomposed base +
+// combining mark* — but a Latin letter whose diacritic is a STROKE or BAR
+// THROUGH the glyph (đ, Đ, ø, ł, …) has NO canonical decomposition: the stroke
+// is part of the base codepoint, so NFD leaves it intact and the subsequent
+// `[^a-z0-9\s]` strip then deletes it entirely. For Đà Nẵng (a launch city) that
+// silently turns "Đà Nẵng" into "a nang", which never matches a typed "da nang".
+// The client Phase-1 SDK hit and fixed this exact bug; this mirrors it
+// server-side so the stored search key and the typed query fold identically.
+//
+// This is an EXPLICIT, additive fold applied BEFORE normalization so the base
+// letter survives the punctuation strip. It never touches stored *display*
+// spelling (`name`/`display_name`) — only the derived comparison key.
+const STROKE_FOLD: Record<string, string> = {
+  "đ": "d", "Đ": "d", // Latin small/capital d with stroke (Vietnamese, Croatian)
+  "ø": "o", "Ø": "o", // o with stroke (Danish, Norwegian)
+  "ł": "l", "Ł": "l", // l with stroke (Polish)
+  "ħ": "h", "Ħ": "h", // h with stroke (Maltese)
+  "ŧ": "t", "Ŧ": "t", // t with stroke (Sámi)
+  "ð": "d", "Ð": "d", // eth (Icelandic) — folds to d for search
+  "ı": "i", "İ": "i", // dotless i / dotted capital I (Turkish)
+};
+const STROKE_FOLD_RE = new RegExp(`[${Object.keys(STROKE_FOLD).join("")}]`, "g");
+
+/**
+ * Fold stroke/bar Latin letters (đ→d, Đ→d, ø→o, ł→l, …) to their base ASCII
+ * letter. Pure, deterministic, and idempotent. Applied before NFD so the base
+ * letter is preserved through diacritic stripping. Non-stroke input is returned
+ * unchanged.
+ */
+export function strokeFold(s: string): string {
+  if (!s) return s;
+  return s.replace(STROKE_FOLD_RE, (ch) => STROKE_FOLD[ch] ?? ch);
+}
+
+/**
+ * The canonical geographic SEARCH KEY for a name: stroke-fold then the existing
+ * diacritic/case/punctuation normalization. Diacritic-insensitive and
+ * case-insensitive while never mutating the stored display spelling.
+ *
+ *   searchKey("Đà Nẵng") === searchKey("da nang") === "da nang"
+ *   searchKey("Ho Chi Minh City")                  === "ho chi minh"
+ *
+ * The `search_key` generated column (migration 2220) computes the identical
+ * value in SQL, so the query side and the stored side always fold the same way.
+ */
+export function searchKey(name: string): string {
+  return normalizeLocationName(strokeFold(name));
+}
+
 // ── Canonical city keys (shared with the intelligence graph) ─────────────────
 //
 // Known misspellings/variants observed in live rows that normalization alone
@@ -103,6 +162,44 @@ export const CITY_NAME_ALIASES: Record<string, string> = {
   "siargoa": "siargao",   // common misspelling of Siargao
   "nyc": "new york",
 };
+
+// ── City abbreviations / transliterations / misspellings (§10, §11) ───────────
+//
+// Maps an already-`searchKey`ed query form to the `searchKey` of the CANONICAL
+// city it means, so free text resolves to a city ID (not merely a country).
+// The audit flagged that "hcmc"/"saigon"/"danang" resolved to a COUNTRY at best;
+// these entries resolve them to the canonical CITY row instead.
+//
+// Keys and values are POST-searchKey (lowercase, diacritic/stroke-folded, and —
+// crucially — the generic "city" suffix is already stripped, so "Ho Chi Minh
+// City" canonicalizes to "ho chi minh"). Never destructive: this only steers the
+// LOOKUP KEY; stored display spelling is untouched (§10).
+export const CITY_GEO_ALIASES: Record<string, string> = {
+  // Ho Chi Minh City — abbreviation + historical/local name + spacing variants.
+  "hcmc": "ho chi minh",
+  "saigon": "ho chi minh",
+  "sai gon": "ho chi minh",
+  "hochiminh": "ho chi minh",
+  // Đà Nẵng — closed-up spelling and its airport-adjacent shorthand.
+  "danang": "da nang",
+  // Phú Quốc — the canonical example misspelling ("phu qouc") + closed-up form.
+  "phu qouc": "phu quoc",
+  "phuquoc": "phu quoc",
+  // Other launch-city shorthands.
+  "ft lauderdale": "fort lauderdale",
+  "krung thep": "bangkok",
+};
+
+/**
+ * Resolve a raw query to its canonical geographic lookup key: `searchKey` it,
+ * then apply the abbreviation/misspelling alias dictionary. Returns the folded
+ * key the canonical registry is indexed by. Non-aliased input just returns its
+ * own `searchKey`.
+ */
+export function resolveGeoAlias(rawOrKey: string): string {
+  const key = searchKey(rawOrKey);
+  return CITY_GEO_ALIASES[key] ?? CITY_NAME_ALIASES[key] ?? key;
+}
 
 // Junk/fragment strings seen in live city columns that must never become
 // city nodes ("san" is a truncated "San ..." fragment, not a city).
@@ -436,4 +533,77 @@ export async function suggestCanonicalLocations(
   } catch {
     return [];
   }
+}
+
+// ── Diacritic/stroke/alias-aware canonical city resolution (§10/§11/§12) ──────
+//
+// The strengthened city path behind the Global Input Intelligence gateway.
+// Unlike suggestCanonicalLocations (which matches raw `normalized_name`), this:
+//   - folds the query with `searchKey` (so "da nang" matches stored "Đà Nẵng"),
+//   - applies the abbreviation/misspelling dictionary ("hcmc" → the HCMC city),
+//   - queries the `search_key` generated column (migration 2220) AND, as a
+//     graceful fallback for the pre-migration deploy window (or fixtures without
+//     the column), the legacy `normalized_name` — whichever returns rows.
+// Prefix matches lead contains matches; rows are deduped and city-class only.
+// Fail-soft: any hard error returns [].
+export async function suggestCanonicalLocationsFolded(
+  db: SupabaseClient,
+  q: string,
+  limit = 5,
+): Promise<CanonicalRow[]> {
+  const key = resolveGeoAlias(q);
+  if (!key || key.length < 2) return [];
+  const escKey = key.replace(/[%_]/g, "\\$&");
+  // Fallback pattern for the legacy column: the plain normalized form of the
+  // *aliased* key (ASCII already, so identical to its own searchKey).
+  const escNorm = key.replace(/[%_]/g, "\\$&");
+  const fetch = limit * 3;
+  try {
+    const [skPrefix, skContains, nnPrefix, nnContains] = await Promise.all([
+      db.from(TABLE).select("*").ilike("search_key", `${escKey}%`).limit(fetch),
+      db.from(TABLE).select("*").ilike("search_key", `%${escKey}%`).limit(fetch),
+      db.from(TABLE).select("*").ilike("normalized_name", `${escNorm}%`).limit(fetch),
+      db.from(TABLE).select("*").ilike("normalized_name", `%${escNorm}%`).limit(fetch),
+    ]);
+    // Prefix rows first (both columns), then contains rows. A per-result error
+    // (e.g. search_key missing pre-migration) is simply skipped — the other
+    // column still yields matches.
+    const prefixRows = [
+      ...((skPrefix.data ?? []) as CanonicalRow[]),
+      ...((nnPrefix.data ?? []) as CanonicalRow[]),
+    ];
+    const containsRows = [
+      ...((skContains.data ?? []) as CanonicalRow[]),
+      ...((nnContains.data ?? []) as CanonicalRow[]),
+    ];
+    const seenId = new Set<string>();
+    const seenName = new Set<string>();
+    const out: CanonicalRow[] = [];
+    for (const r of [...prefixRows, ...containsRows]) {
+      if (kindClass(r.kind) !== "city") continue;
+      if (seenId.has(r.id)) continue;
+      const nameKey = (r.search_key ?? r.normalized_name ?? "").toLowerCase();
+      // Dedupe by normalized identity too, but keep same-name rows in DIFFERENT
+      // countries (genuine ambiguity, e.g. Paris FR vs Paris TX) so the caller
+      // can disambiguate them.
+      const dedupeKey = `${nameKey}|${(r.country_code ?? r.country ?? "").toLowerCase()}`;
+      if (seenName.has(dedupeKey)) continue;
+      seenId.add(r.id);
+      seenName.add(dedupeKey);
+      out.push(r);
+      if (out.length >= limit) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The folded search key actually stored for a canonical row: the generated
+ * `search_key` column when present, else derived from the display name. Used to
+ * decide exact-tier equality for disambiguation.
+ */
+export function rowSearchKey(row: CanonicalRow): string {
+  return (row.search_key ?? searchKey(row.name)) || "";
 }
