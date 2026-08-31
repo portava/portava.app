@@ -45,6 +45,56 @@
  * in the bucket, which is exactly how intel_evidence's media survived. Any new
  * table holding a storage reference must therefore be added to section 1 by
  * hand; being ERASED_BY_CASCADE says nothing about its objects.
+ *
+ * ── Every storage-bearing column this service knows about ───────────────────
+ * The inventory, so the next person does not have to rediscover it:
+ *
+ *   COLLECTED (section 1), row-deleting step named alongside:
+ *     post_media.storage_path / thumbnail_storage_path / feed_storage_path
+ *     media_assets.storage_path / thumbnail_path        → delete_media_assets
+ *     profiles.avatar_url / cover_photo_url             → anonymise_profile
+ *     memory_items.media_url                            → delete_memory_items
+ *     intel_evidence.reference                          → erase_intel_contributions
+ *     stories.media_url                                 → delete_stories
+ *     messages.media_url / media_thumbnail_url          → delete_messages
+ *     hidden_gems.image_url                             → delete_hidden_gems
+ *     reviews.photos (text[])                           → delete_reviews
+ *
+ *   NOT COLLECTED, deliberately:
+ *     passport_memories.photo_url — the ROWS are not deleted either. The table
+ *     sits in deletionDispositions' UNCLASSIFIED_BACKLOG, which is explicitly
+ *     "NOT a decision" and carries no D6 classification, so nothing here has
+ *     been authorised to erase it. Deleting the bytes under a row that survives
+ *     would manufacture a broken record and pre-empt a ruling nobody has made;
+ *     the row's survival is the larger defect and is the thing to fix first.
+ *     When it is classified ERASE, add the row delete AND this collection in the
+ *     same change — either alone leaves the account half-erased.
+ *     highlights.media_url is the same shape: also UNCLASSIFIED_BACKLOG, also
+ *     never row-deleted here. Note that a story SAVED to a highlight has its
+ *     bytes collected below (delete_stories takes every story regardless of
+ *     state), so the surviving highlight row will point at removed bytes until
+ *     highlights gets its own fate. That is the backlog entry showing through,
+ *     not a regression: erasing a departing user's uploads is the promise, and
+ *     retaining their story media to keep a row that should not exist would
+ *     invert it.
+ *
+ * ── The four client-supplied columns need guards the server-written ones do not
+ * intel_evidence.reference is written by lib/intelEvidenceCapture, which has
+ * ALREADY proven the object is ours and theirs. The four added here have not:
+ *   * stories.media_url    — POST /stories checks appStorageUrlInfo AND
+ *                            ownerFromPath === user.id (routes/stories.ts).
+ *   * messages.media_url / media_thumbnail_url — POST /threads/:id/media checks
+ *                            appStorageUrlInfo only; NO ownership check, so a
+ *                            sender can legitimately store another user's key.
+ *   * hidden_gems.image_url — `z.string().url()`, nothing more.
+ *   * reviews.photos        — `z.array(z.string().url())`, nothing more.
+ * A value in any of them may be a foreign URL, a data URI, someone else's key
+ * or junk. So collection RESOLVES rather than trusts: a reference that does not
+ * land in an allow-listed bucket is skipped (it is somebody else's URL and we
+ * have no business issuing a delete for it), and one whose path names a
+ * different owner is refused. On a DELETE path "should only ever hold their own
+ * media" is not a guarantee, and a mismatched remove() destroys a third party's
+ * file — a worse outcome than the orphan being fixed.
  */
 
 import { logger as rootLogger } from "../../lib/logger.js";
@@ -76,7 +126,7 @@ const REFERENCE_BUCKETS: readonly string[] = [POST_MEDIA_BUCKET, PROFILE_MEDIA_B
  * the STEPS change; bump the policy version when the RULES do.
  */
 export const DELETION_POLICY_VERSION = "d6-2026-08-23";
-export const DELETION_WORKER_VERSION = "2026-08-31.1";
+export const DELETION_WORKER_VERSION = "2026-08-31.2";
 
 /** Per-step outcome. Steps are independent so one failure cannot hide another. */
 export interface DeletionStepResult {
@@ -122,6 +172,50 @@ export function storagePathFromPublicUrl(url: string | null | undefined, bucket:
   if (idx === -1) return null;
   const path = url.slice(idx + marker.length);
   return path.length > 0 ? path : null;
+}
+
+/**
+ * Resolve ONE stored media reference and, only if it is provably this user's
+ * object in one of our buckets, add it to the removal set. Returns whether it
+ * was collected, so a step can report a count.
+ *
+ * This is the single guard every storage-reference collector routes through —
+ * one implementation rather than six copies that can drift apart. Each check is
+ * load-bearing on a DELETE path:
+ *
+ *   * resolveStoragePath is the repo's ONE reference parser. It understands
+ *     `<bucket>/<path>` as well as the public / sign / authenticated URL forms,
+ *     and returns a non-"path" kind for anything that is not in the bucket
+ *     asked about — which is what makes trying each allowed bucket in turn safe
+ *     rather than a way to cross-match one bucket's key onto another's remove().
+ *   * A reference naming no allowed bucket (an external host, a data URI, a
+ *     foreign object store, junk) resolves to "external"/"unresolvable"/"none"
+ *     for every bucket and is SKIPPED. Skipping is the correct outcome, not a
+ *     miss: those bytes are not ours to delete.
+ *   * `..` and an owner mismatch RETURN rather than continue to the next bucket:
+ *     the reference matched this bucket and was refused. Falling through would
+ *     let a refused reference get a second chance under a different bucket.
+ *   * ownerFromPath must equal the user being erased even for columns that
+ *     "should" only hold their own media. messages.media_url provably does not
+ *     — its write path validates the bucket and not the owner — and on this
+ *     path a wrong answer deletes a third party's file.
+ */
+function collectOwnedReference(
+  raw: unknown,
+  userId: string,
+  targets: Array<{ bucket: string; path: string }>,
+): boolean {
+  const value = typeof raw === "string" ? raw.trim() : "";
+  if (!value) return false;
+  for (const bucket of REFERENCE_BUCKETS) {
+    const ref = resolveStoragePath(value, bucket);
+    if (ref.kind !== "path") continue;
+    if (ref.path.includes("..")) return false;
+    if (ownerFromPath(ref.path) !== userId) return false;
+    targets.push({ bucket, path: ref.path });
+    return true;
+  }
+  return false;
 }
 
 async function step(
@@ -298,36 +392,123 @@ export async function executeAccountDeletion(
     let found = 0;
     for (const row of (data ?? []) as any[]) {
       // NULL by design for 'text_note' and 'sensor' evidence — those reference
-      // no stored object at all, so skipping is correct, not a miss.
-      const raw = typeof row?.reference === "string" ? row.reference.trim() : "";
-      if (!raw) continue;
-      for (const bucket of REFERENCE_BUCKETS) {
-        // resolveStoragePath is the repo's ONE reference parser (it is what the
-        // producer's header names as the module that resolves this column for
-        // deletion). It already understands `<bucket>/<path>` as well as the
-        // public/sign/authenticated URL forms, and returns a non-"path" kind for
-        // a reference that does not belong to this bucket — so trying each
-        // allowed bucket in turn cannot cross-match one bucket's key onto
-        // another's remove().
-        const ref = resolveStoragePath(raw, bucket);
-        if (ref.kind !== "path") continue;
-        // Defence in depth on a DELETE path. The producer validated all of this
-        // on write (appStorageUrlInfo + ownerFromPath), but a row is not a
-        // promise: re-checking here means a malformed, hand-written or
-        // future-producer reference cannot aim a remove() outside the object's
-        // own bucket, and cannot aim it at somebody else's object. Both break
-        // out of the bucket loop rather than falling through to the next
-        // bucket — the reference matched this one and was refused.
-        if (ref.path.includes("..")) break;
-        if (ownerFromPath(ref.path) !== userId) break;
-        storageTargets.push({ bucket, path: ref.path });
-        found += 1;
-        break;
-      }
+      // no stored object at all, so skipping is correct, not a miss. Defence in
+      // depth: the producer validated bucket + owner on write
+      // (appStorageUrlInfo + ownerFromPath), but a row is not a promise, so the
+      // shared guard re-checks both here.
+      if (collectOwnedReference(row?.reference, userId, storageTargets)) found += 1;
     }
     return found;
   });
   if (!evPathsOk) warnings.push("intel evidence media objects may remain in storage — their references could not be read");
+
+  // ── Story media ───────────────────────────────────────────────────────────
+  // stories.media_url is the photo/video of a 24h story. `delete_stories` (in
+  // section 3b) removes the ROWS by owner_id with no state filter, so every
+  // story — active, expired and saved-to-highlight — goes; nothing else records
+  // where those bytes live, and the objects survived the account deletion.
+  //
+  // sweepExpiredStories (routes/stories.ts) already deletes story bytes on
+  // EXPIRY, but only for stories with saved_to_highlight_id IS NULL, and only
+  // for the ones that expire while the account exists. Neither restriction
+  // applies to an erasure request: the account and all its content are going.
+  //
+  // POST /stories validates appStorageUrlInfo AND ownerFromPath on write, so
+  // this is the best-validated of the four client-supplied columns — the guard
+  // below should never fire on a row that endpoint wrote. It is still applied,
+  // because "the current write path checks it" is not a property of the rows
+  // already in the table.
+  const storyPathsOk = await step(steps, "collect_story_media_paths", async () => {
+    const { data, error } = await sc
+      .from("stories")
+      .select("media_url")
+      .eq("owner_id", userId);
+    if (error) throw new Error(error.message);
+    let found = 0;
+    for (const row of (data ?? []) as any[]) {
+      if (collectOwnedReference(row?.media_url, userId, storageTargets)) found += 1;
+    }
+    return found;
+  });
+  if (!storyPathsOk) warnings.push("story media objects may remain in storage — their references could not be read");
+
+  // ── Message media ─────────────────────────────────────────────────────────
+  // TWO objects per media message: messages.media_url and, for video, the
+  // separately uploaded messages.media_thumbnail_url. `delete_messages` removes
+  // the rows by sender_id, and the policy calls this "the message ciphertext we
+  // remove" — the attachments were never part of that removal.
+  //
+  // This column is the reason the ownership guard is not optional. POST
+  // /threads/:threadId/media validates appStorageUrlInfo (ours) and does NOT
+  // check ownerFromPath, so a sender can store a key belonging to somebody
+  // else and the row is legitimate. Collecting it unguarded would let one
+  // user's deletion destroy another user's file.
+  const msgPathsOk = await step(steps, "collect_message_media_paths", async () => {
+    const { data, error } = await sc
+      .from("messages")
+      .select("media_url, media_thumbnail_url")
+      .eq("sender_id", userId);
+    if (error) throw new Error(error.message);
+    let found = 0;
+    for (const row of (data ?? []) as any[]) {
+      // Independent: a text message has neither, a photo has only the first,
+      // a video has both, and a thumbnail that fails the guard must not
+      // suppress its original.
+      if (collectOwnedReference(row?.media_url, userId, storageTargets)) found += 1;
+      if (collectOwnedReference(row?.media_thumbnail_url, userId, storageTargets)) found += 1;
+    }
+    return found;
+  });
+  if (!msgPathsOk) warnings.push("message media objects may remain in storage — their references could not be read");
+
+  // ── Hidden gem media ──────────────────────────────────────────────────────
+  // hidden_gems.image_url — the representative photo of a submitted gem
+  // (migration 20260804). `delete_hidden_gems` removes the rows by submitted_by.
+  // The write path types it `z.string().url().max(2048)` and nothing else: no
+  // bucket check, no ownership check, so the stored value is as likely to be an
+  // external URL as one of ours. The guard is what separates the two.
+  const gemPathsOk = await step(steps, "collect_hidden_gem_media_paths", async () => {
+    const { data, error } = await sc
+      .from("hidden_gems")
+      .select("image_url")
+      .eq("submitted_by", userId);
+    if (error) throw new Error(error.message);
+    let found = 0;
+    for (const row of (data ?? []) as any[]) {
+      if (collectOwnedReference(row?.image_url, userId, storageTargets)) found += 1;
+    }
+    return found;
+  });
+  if (!gemPathsOk) warnings.push("hidden gem media objects may remain in storage — their references could not be read");
+
+  // ── Review photos ─────────────────────────────────────────────────────────
+  // reviews.photos is `text[] NOT NULL DEFAULT '{}'` (migration 0196), up to 3
+  // URLs per review, written straight through from
+  // `z.array(z.string().url()).max(3)` — unvalidated beyond being URLs.
+  // `delete_reviews` removes the rows by reviewer_id.
+  //
+  // Being an array changes the failure mode, so it is handled explicitly: one
+  // element that resolves to a foreign host, another user's key or junk is
+  // skipped ON ITS OWN. It must not discard the sibling elements of the same
+  // review and it must not throw, or a single bad value in one review would
+  // orphan every other photo the user ever attached.
+  const reviewPathsOk = await step(steps, "collect_review_photo_paths", async () => {
+    const { data, error } = await sc
+      .from("reviews")
+      .select("photos")
+      .eq("reviewer_id", userId);
+    if (error) throw new Error(error.message);
+    let found = 0;
+    for (const row of (data ?? []) as any[]) {
+      const photos = row?.photos;
+      if (!Array.isArray(photos)) continue;
+      for (const photo of photos) {
+        if (collectOwnedReference(photo, userId, storageTargets)) found += 1;
+      }
+    }
+    return found;
+  });
+  if (!reviewPathsOk) warnings.push("review photo objects may remain in storage — their references could not be read");
 
   // ── 2. Delete the storage objects ─────────────────────────────────────────
   if (storageTargets.length > 0) {
