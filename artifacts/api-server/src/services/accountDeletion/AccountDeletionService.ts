@@ -482,6 +482,14 @@ export async function executeAccountDeletion(
       // Derived claims/snapshots are intentionally not deleted; they are
       // aggregate beliefs about a place and are recomputed.
       { name: "erase_intel_contributions", run: () => sc.rpc("erase_intel_for_actor", { p_actor_id: userId }) },
+      // IG-02 contribution consent (migration 2172). NOT append-only, so cleared
+      // with a direct scoped delete rather than the erasure RPC. Its ON DELETE
+      // CASCADE to profiles never fires — the deletion keeps an anonymised
+      // tombstone profile rather than deleting the row (migration 2172's header
+      // assumed the cascade would erase it; it cannot, the same mistake 2187 made
+      // for derived memory and 2190 corrected). 2203 grants service_role DELETE on
+      // the table so this step actually removes the row. Keyed by user_id (the PK).
+      { name: "delete_intel_consent", run: () => sc.from("intel_contribution_consent").delete().eq("user_id", userId) },
     { name: "delete_search_history",      run: () => sc.from("search_history").delete().eq("user_id", userId) },
   ];
   for (const d of tailDeletes) {
