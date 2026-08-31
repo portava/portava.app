@@ -59,6 +59,13 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "intel_evidence",
   "intel_confirmations",
   "intel_state_snapshots",
+  // IG-02 contribution consent (migration 2172, user_id-keyed). Its ON DELETE
+  // CASCADE to profiles never fires because the deletion keeps an anonymised
+  // tombstone profile — the same mistake 2187 made for derived memory. Erased
+  // explicitly by AccountDeletionService's `delete_intel_consent` step (a direct
+  // scoped delete; the table is not append-only), with service_role DELETE
+  // granted by migration 2203.
+  "intel_contribution_consent",
   "comment_likes",
   "devices",
   "event_saves",
@@ -380,6 +387,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "intel_evidence",
   "intel_confirmations",
   "intel_state_snapshots",
+  "intel_contribution_consent",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",
