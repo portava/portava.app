@@ -585,6 +585,13 @@ router.delete("/memories/:id", async (req, res) => {
   if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
   if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
+  // Soft-delete by design: the memory becomes invisible everywhere (every read
+  // path filters `state != 'deleted'`) but the row, its items and their media
+  // are retained, e.g. so support can recover an accidental deletion. This is
+  // NOT a privacy hole on account deletion: executeAccountDeletion sweeps
+  // memories by owner_id with no state filter and removes the items' storage
+  // objects, so soft-deleted memories are hard-erased when the account goes
+  // (audit MEM·H2).
   await sc
     .from("memories")
     .update({ state: "deleted", updated_at: new Date().toISOString() })
