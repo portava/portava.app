@@ -17,13 +17,14 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   View,
+  Text,
   Pressable,
   StyleSheet,
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import { Camera, Gem } from 'lucide-react-native';
+import { Camera, Gem, Globe } from 'lucide-react-native';
 
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import {
@@ -180,6 +181,29 @@ function MediaScreenInner() {
         )}
       </Pressable>
 
+      {/* ── World shell entry (additive; flag-gated) ─────────────────
+          A subtle top-left pill opening the new World-first Media shell
+          (/media-world). Hidden unless MEDIA_WORLD_SHELL_ENABLED is on, so
+          this tab's default behaviour is completely unchanged when the flag
+          is absent (fail-soft isEnabled → false). Additive: the Watch/Grid/
+          Gems surface below is untouched. */}
+      {isEnabled('MEDIA_WORLD_SHELL_ENABLED') && (
+        <Pressable
+          style={[
+            styles.worldEntryBtn,
+            { top: insets.top + 8 },
+            !isImmersive && styles.worldEntryBtnLight,
+          ]}
+          onPress={() => router.push('/media-world')}
+          accessibilityRole="button"
+          accessibilityLabel="Open the World media shell"
+          hitSlop={8}
+        >
+          <Globe size={15} color={isImmersive ? '#fff' : color.ink} strokeWidth={2.2} />
+          <Text style={[styles.worldEntryText, { color: isImmersive ? '#fff' : color.ink }]}>World</Text>
+        </Pressable>
+      )}
+
       {/* ── Quick-create sheet (Gems mode only) ─────────────────────── */}
       <MediaQuickCreateSheet
         visible={quickSheetOpen}
@@ -253,6 +277,29 @@ const styles = StyleSheet.create({
   fabGems: {
     // Gem-mode FAB uses the gem green accent instead of signal red.
     backgroundColor: '#10B981',
+  },
+  // World shell entry pill — top-left, subtle; additive (flag-gated).
+  worldEntryBtn: {
+    position: 'absolute',
+    left: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(17,17,15,0.45)',
+    zIndex: 20,
+  },
+  worldEntryBtnLight: {
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  worldEntryText: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: -0.2,
   },
   // Grid-mode create button: subtle, positioned at screen top-right (not inside
   // the GridFeed offset container, so safe-area inset is not double-counted).

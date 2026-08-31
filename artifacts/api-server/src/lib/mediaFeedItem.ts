@@ -210,6 +210,16 @@ export interface HydrateInput {
    * When omitted or null, linkedEntity is null in the output.
    */
   linkedEntity?: MediaFeedLinkedEntity | null;
+  /**
+   * Pre-resolved, privacy-coarsened location (Media v2 §33 LocationVisibility +
+   * Hidden-Gem protection, via lib/mediaLocationVisibility). When this key is
+   * PRESENT (even as null), it REPLACES the row-derived location entirely — the
+   * caller is the enforcement seam and has already coarsened name/city/country
+   * to no finer than the asset's tier and the stricter of any hosting gem's
+   * ceiling. When the key is ABSENT (undefined), the legacy row-derived label
+   * behaviour is used (back-compat for callers that do not gate location).
+   */
+  resolvedLocation?: MediaFeedLocation | null;
 }
 
 // ── Private entity field strippers ────────────────────────────────────────────
@@ -500,7 +510,18 @@ export interface MediaGridItem {
  *   - processingStatus is returned for all items so the owner's client can
  *     render a progress overlay; it is a status enum, not sensitive content.
  */
-export function hydrateMediaGridItem(row: any, postMedia: any[], apiBaseUrl: string = ""): MediaGridItem {
+export function hydrateMediaGridItem(
+  row: any,
+  postMedia: any[],
+  apiBaseUrl: string = "",
+  /**
+   * Pre-resolved, privacy-coarsened location label (Media v2 §33 +
+   * Hidden-Gem protection). When PRESENT (even as null) it REPLACES the
+   * row-derived label — the caller is the enforcement seam. Undefined ⇒
+   * legacy row-derived behaviour.
+   */
+  resolvedLabel?: string | null,
+): MediaGridItem {
   const sorted = [...postMedia].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
   );
@@ -554,11 +575,15 @@ export function hydrateMediaGridItem(row: any, postMedia: any[], apiBaseUrl: str
       : null;
 
   // Location label: no coordinates, just the human-readable label.
+  // A caller-supplied resolvedLabel (present ⇒ used, even if null) REPLACES the
+  // row-derived label — the caller has coarsened it per §33 / gem protection.
   const locationLabel: string | null =
-    (row.location_name as string | null | undefined) ??
-    (row.location_city as string | null | undefined) ??
-    (row.location_country as string | null | undefined) ??
-    null;
+    resolvedLabel !== undefined
+      ? resolvedLabel
+      : ((row.location_name as string | null | undefined) ??
+        (row.location_city as string | null | undefined) ??
+        (row.location_country as string | null | undefined) ??
+        null);
 
   // Only expose a non-ready processing_status — null means "ready, no overlay needed".
   const rawStatus: string | null | undefined = primary?.processing_status;
@@ -717,14 +742,24 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   // Only human-readable labels (name/city/country) are returned.
   // Callers that need precise coordinates must use a dedicated detail endpoint
   // that enforces its own access-control policy.
-  const hasLocation = row.location_city || row.location_name || row.location_country;
-  const location: MediaFeedLocation | null = hasLocation
-    ? {
-        name: row.location_name ?? null,
-        city: row.location_city ?? null,
-        country: row.location_country ?? null,
-      }
-    : null;
+  //
+  // When the caller supplies `resolvedLocation` (the Media v2 §33 /
+  // Hidden-Gem-protected label from lib/mediaLocationVisibility), it REPLACES
+  // the row-derived label — the caller is the enforcement seam. Undefined ⇒
+  // legacy row-derived behaviour.
+  let location: MediaFeedLocation | null;
+  if (input.resolvedLocation !== undefined) {
+    location = input.resolvedLocation;
+  } else {
+    const hasLocation = row.location_city || row.location_name || row.location_country;
+    location = hasLocation
+      ? {
+          name: row.location_name ?? null,
+          city: row.location_city ?? null,
+          country: row.location_country ?? null,
+        }
+      : null;
+  }
 
   // ── Viewer state ───────────────────────────────────────────────────────────
   const itemId: string = row.id;
