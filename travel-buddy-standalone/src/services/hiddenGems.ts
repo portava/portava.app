@@ -6,8 +6,17 @@
  */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import type {
+  GemState,
+  GemConfidence,
+  GemContributionType,
+} from '../lib/gems/gemStateDisplay.ts';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+
+// Re-export the Phase-8 Hidden Gem Intelligence types so callers can pull the
+// gem-state contract from the service layer alongside the rest of the gem API.
+export type { GemState, GemConfidence, GemContributionType };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -55,6 +64,17 @@ export interface HiddenGem {
   visitCount: number;
   createdAt: string;
   updatedAt: string;
+  /**
+   * §16 Hidden Gem Intelligence — the ten-state semantic status, derived at
+   * read time by the Phase-8 backend. Optional: older payloads omit it, in
+   * which case the client renders as it did before (degrade, never throws).
+   */
+  gemState: GemState | null;
+  /**
+   * §16 bounded evidence confidence ({ score 0..1, band }). A calm indicator,
+   * NOT a popularity metric. Optional / degrade-safe like gemState.
+   */
+  gemConfidence: GemConfidence | null;
 }
 
 export interface GuideProfile {
@@ -135,7 +155,20 @@ function mapGem(r: any): HiddenGem {
     visitCount:            r.visit_count ?? r.visitCount ?? 0,
     createdAt:             r.created_at ?? r.createdAt ?? '',
     updatedAt:             r.updated_at ?? r.updatedAt ?? '',
+    // §16 Phase-8 projections. The backend attaches these camelCase on gem
+    // detail + discovery-list responses; absent on older / non-enriched paths.
+    gemState:              r.gemState ?? r.gem_state ?? null,
+    gemConfidence:         normalizeGemConfidence(r.gemConfidence ?? r.gem_confidence),
   };
+}
+
+/** Coerce a raw gemConfidence into { score, band } or null (degrade-safe). */
+function normalizeGemConfidence(raw: any): GemConfidence | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const score = typeof raw.score === 'number' ? raw.score : null;
+  const band = typeof raw.band === 'string' ? raw.band : null;
+  if (score == null && band == null) return null;
+  return { score: score ?? 0, band: band ?? '' };
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -288,6 +321,45 @@ export async function reportGem(
     method: 'POST',
     body: JSON.stringify({ reason, notes }),
   });
+}
+
+/**
+ * §16.3 — record a structured contribution about a gem (an OBSERVATION).
+ *
+ * Posts one of the nine contribution types to POST /hidden-gems/:id/contribute.
+ * The backend guarantees a single contribution never flips the gem's canonical
+ * state — it takes CONTRIBUTION_FLIP_THRESHOLD independent observations. The
+ * response echoes the freshly-derived (community-derived, not flipped) gemState
+ * + gemConfidence so the caller can update the display in place.
+ */
+export async function contributeToGem(
+  gemId: string,
+  contributionType: GemContributionType,
+  notes?: string,
+): Promise<{
+  ok: boolean;
+  contributionId: string | null;
+  alreadyObserved: boolean;
+  gemState: GemState | null;
+  gemConfidence: GemConfidence | null;
+}> {
+  const data = await apiFetch<{
+    ok: boolean;
+    contributionId: string | null;
+    alreadyObserved: boolean;
+    gemState: GemState | null;
+    gemConfidence: any;
+  }>(`/api/hidden-gems/${gemId}/contribute`, {
+    method: 'POST',
+    body: JSON.stringify({ contributionType, notes }),
+  });
+  return {
+    ok: data.ok ?? false,
+    contributionId: data.contributionId ?? null,
+    alreadyObserved: data.alreadyObserved ?? false,
+    gemState: (data.gemState ?? null) as GemState | null,
+    gemConfidence: normalizeGemConfidence(data.gemConfidence),
+  };
 }
 
 /** Share a gem to a Telegraph thread. */

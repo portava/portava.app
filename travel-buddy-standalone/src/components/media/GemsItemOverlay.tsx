@@ -33,6 +33,7 @@ import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { GemsFeedItem } from '../../hooks/useGemsFeed.ts';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 import { StampButton } from '../stamps/StampButton.tsx';
+import { GemStateBadge } from '../gems/GemStateBadge.tsx';
 
 // ── Helper: place type display label ─────────────────────────────────────────
 
@@ -210,6 +211,15 @@ export function GemsItemOverlay({
             <Text style={styles.placeName} numberOfLines={2}>
               {loc.name ?? 'Hidden Gem'}
             </Text>
+
+            {/* §16 / §46.1 — calm gem-state pill + confidence. Renders nothing
+                when the item carries no gemState (degrade to today's layout). */}
+            <GemStateBadge
+              state={item.gemState}
+              confidence={item.gemConfidence}
+              showConfidence
+              style={styles.gemStateBadge}
+            />
 
             {/* City / area */}
             {(loc.city || loc.country) && (
@@ -443,6 +453,9 @@ const styles = StyleSheet.create({
   placeName: {
     ...t.title,
     color: color.onInk,
+    marginTop: space.xs,
+  },
+  gemStateBadge: {
     marginTop: space.xs,
   },
   placeArea: {

@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { freshToken } from '../services/apiToken.ts';
 import { useMediaStore, type GeoAreaMode, type GemCategory } from '../stores/mediaStore.ts';
+import type { GemState, GemConfidence } from '../lib/gems/gemStateDisplay.ts';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -60,6 +61,13 @@ export interface GemsFeedItem {
     isFollowingCreator: boolean;
     hasFollowRequestPending: boolean;
   };
+  /**
+   * §16 Hidden Gem Intelligence projections. Optional: the media gems-feed only
+   * carries these once the backend enriches the item; when absent the overlay
+   * renders exactly as before (degrade, never throws).
+   */
+  gemState?: GemState | null;
+  gemConfidence?: GemConfidence | null;
 }
 
 export interface UseGemsFeedOptions {
