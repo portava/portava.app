@@ -84,3 +84,27 @@ export function isFoldedPrefix(query: string, candidate: string): boolean {
   if (!q) return false;
   return foldForMatch(candidate).startsWith(q);
 }
+
+/**
+ * §10 (geographic, Phase 2) — does `query` match a geographic candidate's
+ * display name, tolerating case, diacritics, non-decomposing stroke letters
+ * (đ→d), and known aliases/abbreviations?
+ *
+ * A candidate matches when EITHER:
+ *   - the folded query is a folded prefix of the candidate display name
+ *     ("danang" → "Đà Nẵng", "da" → "Da Nang"), OR
+ *   - the query resolves to a local alias whose canonical spelling the candidate
+ *     starts with ("hcmc"/"saigon" → "Ho Chi Minh City").
+ *
+ * Used for on-device filtering of cached/zero-state geographic rows in degraded
+ * or offline mode; the server remains authoritative when online. Pure, so the
+ * fold + alias behavior is directly unit-testable.
+ */
+export function matchesGeographicQuery(query: string, candidateDisplay: string): boolean {
+  const q = foldForMatch(query);
+  if (!q) return false;
+  if (isFoldedPrefix(query, candidateDisplay)) return true;
+  const alias = resolveLocalAlias(query);
+  if (alias && isFoldedPrefix(alias, candidateDisplay)) return true;
+  return false;
+}

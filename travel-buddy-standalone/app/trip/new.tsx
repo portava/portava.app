@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, StyleSheet, Switch, Alert, Image } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { router } from 'expo-router';
@@ -14,6 +14,11 @@ import { addDestination } from '../../src/services/tripDestinations';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { formatDisplayDate, fromISODate } from '../../src/lib/dateTime/formatters';
 import type { Place } from '../../src/lib/location/placeTypes';
+// Global Input Intelligence — Phase 2 (Geographic Core). Pure helpers only
+// (registry + trip-destination hydration + binding type); no RN/network here.
+import { registerGeographicFields, GEO_FIELD_IDS } from '../../src/platform/input-assistance/geographic/geoFields.ts';
+import { hydrateTripDestination } from '../../src/platform/input-assistance/geographic/tripDestination.ts';
+import type { CanonicalPlaceBinding } from '../../src/platform/input-assistance/geographic/canonicalBinding.ts';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { uploadMedia, type PickedMedia } from '../../src/services/media.ts';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
@@ -29,9 +34,15 @@ export default function NewTrip() {
   const [nlBusy, setNlBusy] = useState(false);
   const [nlError, setNlError] = useState<string | null>(null);
 
+  // Register the geographic field policies once (§5/§52 — idempotent).
+  useEffect(() => { registerGeographicFields(); }, []);
+
   // ── Single-destination form fields ────────────────────────────────────────
   const [title, setTitle] = useState('');
   const [place, setPlace] = useState<Place | null>(null);
+  // §17/§53 — canonical binding captured when the destination is picked
+  // (city id + country + timezone + coordinates). Dependent fields can inherit it.
+  const [destBinding, setDestBinding] = useState<CanonicalPlaceBinding | null>(null);
   const [startDate, setStartDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | null>(null);
   const [tripNotes, setTripNotes] = useState('');
@@ -122,26 +133,21 @@ export default function NewTrip() {
           })),
         );
       } else if (validDestinations && validDestinations.length === 1) {
-        // Single destination from the array — stay in single mode
+        // Single destination from the array — stay in single mode.
+        // hydrateTripDestination builds a well-formed Place (real id + fields)
+        // instead of the old `{…} as Place` with null id/lat/lng, so the value
+        // can be canonically resolved on save rather than persisted raw.
         const d = validDestinations[0];
         const city = d.city as string;
         const country = typeof d.country === 'string' && d.country ? d.country : undefined;
-        setPlace({
-          name: city,
-          city,
-          country,
-          displayName: country ? `${city}, ${country}` : city,
-        } as Place);
+        setPlace(hydrateTripDestination(city, country));
+        setDestBinding(null);
       } else if (typeof draft.destinationCity === 'string' && draft.destinationCity) {
-        // Existing single-destination fallback path (unchanged)
+        // Existing single-destination fallback path.
         const city = draft.destinationCity as string;
         const country = typeof draft.destinationCountry === 'string' ? draft.destinationCountry : undefined;
-        setPlace({
-          name: city,
-          city,
-          country,
-          displayName: country ? `${city}, ${country}` : city,
-        } as Place);
+        setPlace(hydrateTripDestination(city, country));
+        setDestBinding(null);
       }
 
       if (typeof draft.startDate === 'string') setStartDate(draft.startDate);
@@ -191,8 +197,10 @@ export default function NewTrip() {
 
       const trip = await createTrip({
         title: title.trim(),
-        destinationCity: primaryCity?.city ?? (place?.city ?? place?.name ?? ''),
-        destinationCountry: primaryCity?.country ?? place?.country ?? undefined,
+        // Prefer the canonical binding's spelling when the destination was picked
+        // (§53), else the place fields, else the multi-city primary.
+        destinationCity: primaryCity?.city ?? (destBinding?.city ?? place?.city ?? place?.name ?? ''),
+        destinationCountry: primaryCity?.country ?? (destBinding?.country ?? place?.country ?? undefined),
         startDate: startDate ?? undefined,
         endDate: endDate ?? undefined,
         status: 'planning',
@@ -233,7 +241,7 @@ export default function NewTrip() {
       setBusy(false);
       saveLock.current = false;
     }
-  }, [title, place, live, startDate, endDate, tripNotes, checkForNewStamps, multiCity, destinations, coverUrl]);
+  }, [title, place, destBinding, live, startDate, endDate, tripNotes, checkForNewStamps, multiCity, destinations, coverUrl]);
 
   const startD = startDate ? fromISODate(startDate) : null;
   const endD = endDate ? fromISODate(endDate) : null;
@@ -310,7 +318,7 @@ export default function NewTrip() {
                 {place ? place.displayName : 'Choose a city…'}
               </Text>
               {place && (
-                <Pressable hitSlop={8} onPress={() => setPlace(null)}>
+                <Pressable hitSlop={8} onPress={() => { setPlace(null); setDestBinding(null); }}>
                   <X size={14} color={color.mute} />
                 </Pressable>
               )}
@@ -423,12 +431,18 @@ export default function NewTrip() {
         title="Trip Dates"
       />
 
-      {/* Place picker — single-destination mode only */}
+      {/* Place picker — single-destination mode only.
+          §53 flagship: sources canonical suggestions from the P1 gateway
+          (assistContext) and captures the canonical binding on select. */}
       <GlobalPlacePicker
         visible={placeOpen}
         title="Destination"
         allowGPS={false}
         usedFor="trip_destination"
+        assistContext="trip_destination"
+        assistFieldId={GEO_FIELD_IDS.tripDestination}
+        sessionContext={{ surface: 'trip_new' }}
+        onCanonicalBinding={setDestBinding}
         onSelect={(p) => setPlace(p)}
         onClose={() => setPlaceOpen(false)}
       />
