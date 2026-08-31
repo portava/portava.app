@@ -315,13 +315,17 @@ export async function updateMemory(
       ? patch.category
       : "general";
   }
-  const { data } = await sc
+  const { data, error } = await sc
     .from("compass_memories")
     .update(updates)
     .eq("id", memoryId)
     .eq("user_id", userId)
     .select("id, user_id, scope, circle_owner_id, trip_id, conversation_id, category, content, source, confidence, created_at, updated_at")
     .maybeSingle();
+  // Distinguish a real DB error from "not found" (audit MEM·M7). Without this,
+  // a failed update returned null and the caller reported the memory as
+  // not-found — a silent write failure surfaced to the user as success/no-op.
+  if (error) throw new Error(`compass_memories update failed — ${error.message}`);
   return data ? rowToMemory(data) : null;
 }
 
@@ -331,12 +335,14 @@ export async function forgetMemory(
   userId: string,
   memoryId: string,
 ): Promise<boolean> {
-  const { data } = await sc
+  const { data, error } = await sc
     .from("compass_memories")
     .delete()
     .eq("id", memoryId)
     .eq("user_id", userId)
     .select("id");
+  // A failed delete must not be reported as "nothing to delete" (audit MEM·M7).
+  if (error) throw new Error(`compass_memories delete failed — ${error.message}`);
   return ((data as any[]) ?? []).length > 0;
 }
 
