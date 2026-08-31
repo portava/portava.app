@@ -20,6 +20,14 @@ import { VideoThumbnail } from '../../src/components/ui/VideoThumbnail';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { formatDisplayDate, fromISODate } from '../../src/lib/dateTime/formatters';
 import type { Place } from '../../src/lib/location/placeTypes';
+import { resolveCanonicalPlace } from '../../src/lib/location/resolveCanonical';
+// Global Input Intelligence — Phase 2 (Geographic Core).
+import { registerGeographicFields, GEO_FIELD_IDS } from '../../src/platform/input-assistance/geographic/geoFields.ts';
+import {
+  hydrateTripDestination,
+  prepareTripDestinationForSave,
+} from '../../src/platform/input-assistance/geographic/tripDestination.ts';
+import type { CanonicalPlaceBinding } from '../../src/platform/input-assistance/geographic/canonicalBinding.ts';
 import type { TripVisibility } from '../../src/types/models';
 
 const VISIBILITY_OPTIONS: { value: TripVisibility; label: string }[] = [
@@ -40,6 +48,8 @@ export default function EditTrip() {
 
   const [title, setTitle] = useState('');
   const [place, setPlace] = useState<Place | null>(null);
+  // §17/§53 — canonical binding captured when the destination is re-picked.
+  const [destBinding, setDestBinding] = useState<CanonicalPlaceBinding | null>(null);
   const [startDate, setStartDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<TripVisibility>('private');
@@ -65,6 +75,9 @@ export default function EditTrip() {
   // is immediate and visible within the same JS turn.
   const saveLock = useRef(false);
 
+  // Register the geographic field policies once (§5/§52 — idempotent).
+  useEffect(() => { registerGeographicFields(); }, []);
+
   useEffect(() => {
     if (!id || !live) { setLoading(false); return; }
     getTrip(id).then(async (tr) => {
@@ -76,14 +89,13 @@ export default function EditTrip() {
         if (role !== 'co_host') { setNotOwner(true); setLoading(false); return; }
       }
       setTitle(tr.title ?? '');
-      const city = tr.destinationCity ?? '';
-      const country = tr.destinationCountry ?? undefined;
-      setPlace({
-        name: city,
-        city,
-        country,
-        displayName: country ? `${city}, ${country}` : city,
-      } as Place);
+      // Build a well-formed Place (real id + fields) from the stored destination
+      // instead of the old `{…} as Place` with null id/lat/lng. That placeholder
+      // carried no canonicalId, so saving without re-picking persisted a
+      // non-canonical destination (audit bug). The value is now canonically
+      // resolved on save (see `save` below).
+      setPlace(hydrateTripDestination(tr.destinationCity, tr.destinationCountry));
+      setDestBinding(null);
       setStartDate(tr.startDate ?? null);
       setEndDate(tr.endDate ?? null);
       setVisibility((tr.visibility as TripVisibility) ?? 'private');
@@ -176,10 +188,20 @@ export default function EditTrip() {
     if (!live || !id) { setError('Sign in to edit trips.'); saveLock.current = false; return; }
     setBusy(true);
     try {
+      // Canonical-resolution fix (audit bug): a destination that was hydrated
+      // from stored strings (or otherwise never picked) carries no canonicalId.
+      // Resolve it through the universal location registry before persisting so
+      // the saved destination is canonical — not the raw text. resolveCanonical
+      // is capped (~1.3s) and returns the input unchanged on any failure, so the
+      // save never blocks (§38).
+      const { needsResolution } = prepareTripDestinationForSave(place);
+      const dest = needsResolution ? await resolveCanonicalPlace(place) : place;
       const updated = await updateTrip(id, {
         title: title.trim(),
-        destinationCity: place.city ?? place.name,
-        destinationCountry: place.country ?? undefined,
+        // Prefer the canonical binding's spelling when the destination was
+        // re-picked (§53), else the resolved place's fields.
+        destinationCity: destBinding?.city ?? dest.city ?? dest.name,
+        destinationCountry: destBinding?.country ?? dest.country ?? undefined,
         startDate: startDate ?? undefined,
         endDate: endDate ?? undefined,
         visibility,
@@ -201,7 +223,7 @@ export default function EditTrip() {
       setBusy(false);
       saveLock.current = false;
     }
-  }, [title, place, live, id, startDate, endDate, visibility, tripNotes, coverUrl, coverMediaType, showHeaderPublicly]);
+  }, [title, place, destBinding, live, id, startDate, endDate, visibility, tripNotes, coverUrl, coverMediaType, showHeaderPublicly]);
 
   if (!live) {
     return (
@@ -295,7 +317,7 @@ export default function EditTrip() {
                 {place ? place.displayName : 'Choose a city…'}
               </Text>
               {place && (
-                <Pressable hitSlop={8} onPress={() => setPlace(null)}>
+                <Pressable hitSlop={8} onPress={() => { setPlace(null); setDestBinding(null); }}>
                   <X size={14} color={color.mute} />
                 </Pressable>
               )}
@@ -449,6 +471,10 @@ export default function EditTrip() {
         title="Destination"
         allowGPS={false}
         usedFor="trip_destination"
+        assistContext="trip_destination"
+        assistFieldId={GEO_FIELD_IDS.tripDestination}
+        sessionContext={{ tripId: id, surface: 'trip_edit' }}
+        onCanonicalBinding={setDestBinding}
         onSelect={(p) => setPlace(p)}
         onClose={() => setPlaceOpen(false)}
       />

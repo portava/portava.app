@@ -53,6 +53,18 @@ import {
   useGooglePlacesAutocomplete,
   fetchGooglePlaceDetails,
 } from '../../hooks/useGooglePlacesAutocomplete.ts';
+// ── Global Input Intelligence — Phase 2 (Geographic Core), ADDITIVE ────────────
+// When a caller opts in via `assistContext`, the picker ALSO sources canonical
+// suggestions from the P1 gateway and captures the §17/§53 binding on select.
+// Every one of these code paths is guarded on `assistContext` being set, so the
+// ~25 existing surfaces that pass none get byte-identical behavior.
+import { useInputAssistance } from '../../platform/input-assistance/hooks/useInputAssistance.ts';
+import { suggestionToPlace } from '../../platform/input-assistance/geographic/geoSuggestions.ts';
+import { captureCanonicalBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
+import { foldForMatch } from '../../platform/input-assistance/services/queryNormalization.ts';
+import type { InputContext } from '../../platform/input-assistance/types/inputContext.ts';
+import type { InputSessionContext } from '../../platform/input-assistance/types/inputSuggestion.ts';
+import type { CanonicalPlaceBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -95,6 +107,20 @@ interface Props {
   mode?: 'all' | 'city';
   /** Caller-provided sections, e.g. trip destinations or saved places. */
   contextSections?: PlacePickerContextSection[];
+
+  // ── Global Input Intelligence opt-in (Phase 2), ALL OPTIONAL + ADDITIVE ──────
+  /** Opt in to gateway-sourced canonical suggestions for this geographic field.
+   *  When set, `/input-assistance/suggest` results are merged (canonical-first)
+   *  into the search rows and the §17/§53 binding is captured on select. When
+   *  omitted (the ~25 existing surfaces), the picker behaves exactly as before. */
+  assistContext?: InputContext;
+  /** Registered field id for policy/cache/telemetry. Defaults to assistContext. */
+  assistFieldId?: string;
+  /** Bounded task/session context forwarded to the gateway (§16). */
+  sessionContext?: InputSessionContext;
+  /** §17/§53 — receives the canonical binding (city id + country + timezone +
+   *  coordinates) captured on selection, so dependent fields can prefill. */
+  onCanonicalBinding?: (binding: CanonicalPlaceBinding) => void;
 }
 
 type GpsState = 'idle' | 'loading' | 'denied' | 'error';
@@ -102,6 +128,7 @@ type GpsState = 'idle' | 'loading' | 'denied' | 'error';
 export function GlobalPlacePicker({
   visible, onSelect, onClose, title, allowGPS = true, countryCode, placeholder, usedFor,
   mode = 'all', contextSections,
+  assistContext, assistFieldId, sessionContext, onCanonicalBinding,
 }: Props) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
@@ -134,6 +161,44 @@ export function GlobalPlacePicker({
     lng: nearbyCoords?.lng,
     enabled: visible,
   });
+
+  // ── Gateway-sourced canonical suggestions (Phase 2, opt-in) ──────────────────
+  // The hook is called unconditionally (Rules of Hooks) but only fetches when a
+  // caller opted in via `assistContext`. It degrades gracefully: a missing /
+  // undeployed endpoint yields zero suggestions and the picker falls back to its
+  // existing provider search (§38). Coordinates from silent nearby detection are
+  // folded into the bounded session context for geographic ranking (§15).
+  const assistSession = React.useMemo<InputSessionContext | undefined>(() => {
+    if (!assistContext) return undefined;
+    const base = sessionContext ?? {};
+    if (nearbyCoords && base.lat == null && base.lng == null) {
+      return { ...base, lat: nearbyCoords.lat, lng: nearbyCoords.lng };
+    }
+    return base;
+  }, [assistContext, sessionContext, nearbyCoords]);
+  const { suggestions: gatewaySuggestions } = useInputAssistance({
+    fieldId: assistFieldId ?? assistContext ?? '__geo_no_assist__',
+    text: query,
+    context: assistContext,
+    sessionContext: assistSession,
+    enabled: visible && !!assistContext,
+  });
+  // Map gateway suggestions → Places, deduped by canonical id / folded name, so
+  // they can render + resolve through the picker's existing pipeline.
+  const gatewayPlaces = React.useMemo<Place[]>(() => {
+    if (!assistContext || gatewaySuggestions.length === 0) return [];
+    const out: Place[] = [];
+    const seen = new Set<string>();
+    for (const s of gatewaySuggestions) {
+      const p = suggestionToPlace(s);
+      if (!p) continue;
+      const key = foldForMatch(p.canonicalId ?? p.name);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(p);
+    }
+    return out;
+  }, [assistContext, gatewaySuggestions]);
 
   // Reset + silent nearby detection on open. GPS must NEVER block the sheet:
   // we only use an already-granted permission and the last known position.
@@ -197,12 +262,15 @@ export function GlobalPlacePicker({
       }
       const resolved = await resolveCanonicalPlace(enriched);
       saveRecent(resolved, usedFor);
+      // §17/§53 — capture the canonical binding (city id + country + timezone +
+      // coordinates) so dependent fields can prefill. No-op unless a caller opted in.
+      onCanonicalBinding?.(captureCanonicalBinding(resolved));
       onSelect(resolved);
       onClose();
     } finally {
       if (aliveRef.current) setResolvingId(null);
     }
-  }, [onSelect, onClose, saveRecent, usedFor, resolvingId]);
+  }, [onSelect, onClose, saveRecent, usedFor, resolvingId, onCanonicalBinding]);
 
   async function useGPS() {
     setGpsState('loading');
@@ -258,6 +326,9 @@ export function GlobalPlacePicker({
   // zero suggestions.
   function submitSearch() {
     if (searching || googleLoading) return;
+    // Canonical (gateway) matches win over provider rows when present — but this
+    // still NEVER commits raw text over a live suggestion list (§19).
+    if (assistContext && gatewayPlaces.length > 0) { void select(gatewayPlaces[0]); return; }
     const top = selectSearchRows({ googlePlaces, searchResults, cityMode }).rows[0];
     if (top) { void select(top); return; }
     commitFreeText();
@@ -312,9 +383,22 @@ export function GlobalPlacePicker({
     // and out mid-type, because Nominatim answers partial names erratically.
     // Outside city mode the additive merge is unchanged.
     const selection = selectSearchRows({ googlePlaces, searchResults, cityMode });
-    if (searchError && !searching && selection.rows.length === 0) items.push({ kind: 'error' });
+    // Additive canonical section (Phase 2): gateway matches render first, and
+    // provider rows that duplicate them (by folded name) are dropped so a city
+    // is not listed twice. Empty when the caller did not opt in.
+    const gatewayRows = assistContext ? gatewayPlaces : [];
+    const gatewayNames = new Set(gatewayRows.map((p) => foldForMatch(p.name)));
+    if (searchError && !searching && selection.rows.length === 0 && gatewayRows.length === 0) {
+      items.push({ kind: 'error' });
+    }
+    if (gatewayRows.length > 0) {
+      items.push({ kind: 'section', label: 'Best matches' });
+      gatewayRows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
+    }
     if (selection.showGoogleAttribution) items.push({ kind: 'google-attribution' });
-    selection.rows.forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
+    selection.rows
+      .filter((p) => !gatewayNames.has(foldForMatch(p.name)))
+      .forEach((p) => items.push({ kind: 'place', place: p, icon: 'pin' }));
     if (showCustom) items.push({ kind: 'custom' });
   }
 

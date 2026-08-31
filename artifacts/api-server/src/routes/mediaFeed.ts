@@ -18,6 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
@@ -36,6 +37,7 @@ import {
   hydrateGemFeedItem,
   type MediaFeedItem,
   type MediaFeedLinkedEntity,
+  type MediaFeedLocation,
   type MediaGridItem,
 } from "../lib/mediaFeedItem.js";
 import {
@@ -45,6 +47,12 @@ import {
   reportGem,
 } from "../services/hiddenGems/HiddenGemModerationService.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
+import {
+  loadRestrictiveGems,
+  gemCeilingForItem,
+  resolveMediaLocationWithGemProtection,
+  type RestrictiveGem,
+} from "../lib/mediaLocationVisibility.js";
 import {
   encodeCursor,
   decodeCursor,
@@ -148,6 +156,100 @@ const POST_MEDIA_COLUMNS =
 
 const PROFILE_COLUMNS =
   "id, username, full_name, avatar_url, show_profile_picture_publicly, is_private, verified, bio, account_status, is_official";
+
+// ── Media location visibility + Hidden-Gem protection (Media v2 §33 / P1b) ─────
+
+/**
+ * Batch context for coarsening a page of media locations. `determined=false`
+ * means the restrictive-gem lookup FAILED (threw) and every item must be
+ * coarsened defensively (fail-closed), never treated as "no gem here".
+ */
+interface FeedGemContext {
+  gems: RestrictiveGem[];
+  determined: boolean;
+}
+
+/**
+ * Load the restrictive Hidden Gems that could constrain any row on this page, in
+ * ONE query, keyed by the rows' canonical_place_id and city. Fail-closed: a
+ * lookup error yields determined=false so callers coarsen every item.
+ */
+async function loadFeedGemContext(
+  sc: SupabaseClient,
+  rows: any[],
+  log?: { warn?: (o: unknown, m?: string) => void },
+): Promise<FeedGemContext> {
+  try {
+    const gems = await loadRestrictiveGems(sc, {
+      placeIds: rows.map((r) => (r as any).canonical_place_id ?? null),
+      cities: rows.map((r) => (r as any).location_city ?? null),
+    });
+    return { gems, determined: true };
+  } catch (err) {
+    log?.warn?.({ err }, "mediaFeed: Hidden-Gem location protection lookup failed; coarsening");
+    return { gems: [], determined: false };
+  }
+}
+
+/**
+ * Coarsen one media row's location for the viewer, applying the independent §33
+ * LocationVisibility tier AND Hidden-Gem protection (stricter of the two). A
+ * legacy post with no stored location_visibility keeps its place-level LABEL
+ * (name/city/country, never coordinates); the gem cross-check still tightens it.
+ * The feed never emits coordinates, so emitCoarseCoords stays false.
+ */
+function protectedMediaLocation(
+  row: any,
+  ctx: FeedGemContext,
+  viewerUserId: string,
+) {
+  const placeId = (row as any).canonical_place_id ?? null;
+  const lat = (row as any).location_lat ?? null;
+  const lng = (row as any).location_lng ?? null;
+  const ceiling = ctx.determined
+    ? gemCeilingForItem(ctx.gems, { placeId, lat, lng })
+    : null;
+  return resolveMediaLocationWithGemProtection(
+    {
+      name: (row as any).location_name ?? null,
+      city: (row as any).location_city ?? null,
+      country: (row as any).location_country ?? null,
+      lat,
+      lng,
+    },
+    {
+      // Legacy posts have no independent tier column → default 'place' (keep the
+      // current place-level label). A real media_assets tier flows through here
+      // unchanged once the canonical read path is enabled.
+      locationVisibility: (row as any).location_visibility ?? "place",
+      isOwner: (row as any).author_id === viewerUserId,
+      coarsenSeed: (row as any).id ?? null,
+      emitCoarseCoords: false,
+      gem: { ceiling, determined: ctx.determined },
+    },
+  );
+}
+
+/** Feed label object (name/city/country) after gem-protected coarsening, or null. */
+function protectedFeedLocation(
+  row: any,
+  ctx: FeedGemContext,
+  viewerUserId: string,
+): MediaFeedLocation | null {
+  const d = protectedMediaLocation(row, ctx, viewerUserId);
+  if (d.name == null && d.city == null && d.country == null) return null;
+  return { name: d.name, city: d.city, country: d.country };
+}
+
+/** Grid label (single string) after gem-protected coarsening, or null. */
+function protectedGridLabel(
+  row: any,
+  ctx: FeedGemContext,
+  viewerUserId: string,
+): string | null {
+  const d = protectedMediaLocation(row, ctx, viewerUserId);
+  return d.name ?? d.city ?? d.country ?? null;
+}
 
 // ── Linked entity resolution ──────────────────────────────────────────────────
 
@@ -662,10 +764,18 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
     ? encodeCursor({ created_at: cursorAnchor.created_at, id: cursorAnchor.id })
     : null;
 
+  // ── Hidden-Gem location protection (fail-closed) ────────────────────────────
+  const gridGemCtx = await loadFeedGemContext(sc, page, req.log);
+
   // ── Hydrate into lightweight grid items ─────────────────────────────────────
   const items: MediaGridItem[] = page.map((c) => {
     const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
-    return hydrateMediaGridItem(c, postMedia, process.env.API_BASE_URL ?? "");
+    return hydrateMediaGridItem(
+      c,
+      postMedia,
+      process.env.API_BASE_URL ?? "",
+      protectedGridLabel(c, gridGemCtx, user.id),
+    );
   });
 
   // ── Analytics (fire-and-forget) ─────────────────────────────────────────────
@@ -1470,6 +1580,9 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     } catch { /* non-fatal: badge omitted */ }
   }
 
+  // ── Hidden-Gem location protection (fail-closed) ────────────────────────────
+  const feedGemCtx = await loadFeedGemContext(sc, page, req.log);
+
   const items: MediaFeedItem[] = page.map((c) => {
     const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
     const featuredCategory = pageFeaturedMap.get(c.id) ?? null;
@@ -1487,6 +1600,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       supabaseUrl,
       apiBaseUrl,
       linkedEntity: linkedEntityMap.get(c.id) ?? null,
+      resolvedLocation: protectedFeedLocation(c, feedGemCtx, user.id),
     });
   });
 
@@ -1685,6 +1799,9 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
   // Resolve linked entity (event or trip) for the single item
   const singleLinkedEntityMap = await resolveLinkedEntities([row as any], user.id, sc);
 
+  // Hidden-Gem location protection for the single item (fail-closed).
+  const singleGemCtx = await loadFeedGemContext(sc, [row as any], req.log);
+
   const item = hydrateMediaFeedItem({
     row: { ...(row as any), stamp_it_count: singleStampCount, stamp_like_count: singleLikeCount },
     sourceType: "post",
@@ -1699,6 +1816,7 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
     supabaseUrl: process.env.SUPABASE_URL ?? "",
     apiBaseUrl: process.env.API_BASE_URL ?? "",
     linkedEntity: singleLinkedEntityMap.get((row as any).id) ?? null,
+    resolvedLocation: protectedFeedLocation(row as any, singleGemCtx, user.id),
   });
 
   res.json({ item });

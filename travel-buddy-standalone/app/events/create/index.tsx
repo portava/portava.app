@@ -39,6 +39,7 @@ import { listMyTrips, type TripRow } from '../../../src/services/trips';
 import { searchUsers, type TravelerSearchResult } from '../../../src/services/follows';
 import { uploadMedia, validateMedia } from '../../../src/services/media';
 import { formatEventLocation } from '../../../src/lib/location/formatEventLocation';
+import { resolvePickedPlace } from '../../../src/lib/location/applyPickedPlace';
 import { GlobalCalendarPicker } from '../../../src/components/selectors/GlobalCalendarPicker';
 import { GlobalTimePicker } from '../../../src/components/selectors/GlobalTimePicker';
 import {
@@ -926,16 +927,38 @@ export default function CreateEventScreen() {
                 usedFor="event_location"
                 onSelect={(place) => {
                   setLocationName(place.displayName);
-                  // QA round 2, bug 6: only auto-fill City/Country when the user has
-                  // not typed their own. Picking a venue used to silently overwrite
-                  // a manually entered city with the picker's guess.
-                  if (place.city && !city.trim()) setCity(place.city);
-                  if (place.country && !country.trim()) setCountry(place.country);
+                  // QA round 2, bug 6 — routed through the shared resolvePickedPlace
+                  // rule (the same one gems/submit uses). Blank fields fill silently;
+                  // a divergent typed spelling is reported as a CONFLICT the user is
+                  // asked about, instead of being silently kept — which let divergent
+                  // city/country spellings persist. Manual override is preserved.
+                  const { fill, conflict, hasConflict } = resolvePickedPlace(place, { city, country });
+                  if (fill.city) { setCity(fill.city); }
+                  if (fill.country) { setCountry(fill.country); }
+                  // Coordinates + timezone are §17 dependent fields, not free text,
+                  // so they bind directly from the resolved place.
                   if (place.lat != null) setLocationLat(place.lat);
                   if (place.lng != null) setLocationLng(place.lng);
                   if (place.timezone) setLocationTimezone(place.timezone);
                   setLocationPickerVisible(false);
                   scheduleSave();
+                  if (hasConflict) {
+                    Alert.alert(
+                      'Replace what you typed?',
+                      `${place.displayName} is linked. Replace the location details you entered with its own?`,
+                      [
+                        { text: 'Keep mine', style: 'cancel' },
+                        {
+                          text: 'Use this place',
+                          onPress: () => {
+                            if (conflict.city) setCity(conflict.city);
+                            if (conflict.country) setCountry(conflict.country);
+                            scheduleSave();
+                          },
+                        },
+                      ],
+                    );
+                  }
                 }}
                 onClose={() => setLocationPickerVisible(false)}
               />
