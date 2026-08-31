@@ -79,6 +79,13 @@ export interface RememberItem {
   subjectType: string;
   subjectId: string;
   memoryType: string | null;
+  /**
+   * When this memory/content is "about" in wall-clock terms — the visit/save/
+   * earn/create/trip date. Additive, optional: §12 does not use it, but §5
+   * (Personal Recaps / On This Day) windows and anniversary-matches on it. ISO
+   * timestamptz string or undefined when the source row has no usable date.
+   */
+  occurredAt?: string;
   controls: RememberControls;
 }
 
@@ -103,7 +110,7 @@ const FORGET_ENDPOINT = "/compass/me/passport/remembers/forget";
 const CORRECT_ENDPOINT = "/compass/me/passport/remembers/correct";
 
 /** Suppression keys the user has set (forget/hide), plus suppressed projection ids. */
-interface SuppressionSet {
+export interface SuppressionSet {
   keys: Set<string>;
   projectionIds: Set<string>;
 }
@@ -145,7 +152,7 @@ export async function loadSuppressions(
   return set;
 }
 
-function isSuppressed(item: RememberItem, sup: SuppressionSet): boolean {
+export function isSuppressed(item: RememberItem, sup: SuppressionSet): boolean {
   if (sup.keys.has(keyOf(item.subjectType, item.subjectId))) return true;
   // Derived items carry their projection id as the client id.
   if (item.group === "derived_memory" && sup.projectionIds.has(item.id)) return true;
@@ -165,7 +172,7 @@ const SENSITIVE_CATEGORY_RE =
  * fixture, a future caller) is still dropped before it reaches the owner. It is
  * fail-closed: anything it is unsure about, it excludes.
  */
-function derivedRowIsAllowed(r: Record<string, unknown>): boolean {
+export function derivedRowIsAllowed(r: Record<string, unknown>): boolean {
   const state = r.state == null ? "active" : String(r.state);
   if (state !== "active") return false;                       // decayed/hidden/forgotten/retracted
   if (String(r.sensitivity ?? "normal") === "sensitive") return false; // §19 sensitive
@@ -180,6 +187,60 @@ function derivedRowIsAllowed(r: Record<string, unknown>): boolean {
 }
 
 // ── Group 1: derived memory (the SQL-filtered core) ──────────────────────────
+/**
+ * Map ONE derived-memory row (as memory_remembers_for_user / its windowed
+ * delegate memory_recaps_for_user return it) to a RememberItem, applying the
+ * defence-in-depth deny gate. Returns null for a row that must not be shown.
+ *
+ * Exported so §5 (Personal Recaps) consumes derived memory through the SAME
+ * mapping and the SAME deny gate as §12 — the label, the inferred caveat and the
+ * controls are defined in exactly one place.
+ */
+export function mapDerivedRow(r: Record<string, unknown>): RememberItem | null {
+  if (!derivedRowIsAllowed(r)) return null; // defence in depth over the SQL deny gate
+  const isInferred = Boolean(r.is_inferred);
+  const memoryType = (r.memory_type as string) ?? null;
+  const subjectType = (r.subject_type as string) ?? "";
+  const subjectId = (r.subject_id as string) ?? "";
+  const obs = Number(r.observation_count ?? 0);
+  return {
+    id: String(r.id ?? keyOf(subjectType, subjectId)),
+    group: "derived_memory",
+    label: isInferred ? "Inferred preference" : labelForMemoryType(memoryType),
+    title: String(r.content ?? ""),
+    detail: undefined,
+    isInferred,
+    inferredNote: isInferred
+      ? `Portava inferred this from your activity${obs > 0 ? ` (${obs} observation${obs === 1 ? "" : "s"})` : ""}. It is a guess, not something you told us.`
+      : undefined,
+    visibility: String(r.visibility ?? "private"),
+    source: {
+      kind: "derivation",
+      derivation: (r.derivation as string) ?? undefined,
+      sourceEventIds: Array.isArray(r.source_event_ids) ? (r.source_event_ids as string[]) : undefined,
+      observationCount: isInferred ? obs : undefined,
+    },
+    subjectType,
+    subjectId,
+    memoryType,
+    // Derived memory's "when" is when it was last supported by activity, else
+    // when it became valid. §5 windows/anniversary-matches recaps on this.
+    occurredAt: isoOrUndefined(r.last_supported_at ?? r.valid_from),
+    controls: {
+      viewSource: true,
+      correct: {
+        supported: true,
+        endpoint: CORRECT_ENDPOINT,
+        note: isInferred
+          ? "Tell Portava the right value; the inferred one stops showing and will not be re-derived."
+          : "Record that this is wrong; it stops showing and will not be re-derived.",
+      },
+      forget: { supported: true, endpoint: FORGET_ENDPOINT, behavior: "suppress_no_regen" },
+      visibility: String(r.visibility ?? "private"),
+    },
+  };
+}
+
 export async function buildDerivedMemory(
   client: SupabaseClient,
   userId: string,
@@ -188,45 +249,8 @@ export async function buildDerivedMemory(
   if (error || !Array.isArray(data)) return [];
   const out: RememberItem[] = [];
   for (const r of data as Array<Record<string, unknown>>) {
-    if (!derivedRowIsAllowed(r)) continue; // defence in depth over the SQL deny gate
-    const isInferred = Boolean(r.is_inferred);
-    const memoryType = (r.memory_type as string) ?? null;
-    const subjectType = (r.subject_type as string) ?? "";
-    const subjectId = (r.subject_id as string) ?? "";
-    const obs = Number(r.observation_count ?? 0);
-    out.push({
-      id: String(r.id ?? keyOf(subjectType, subjectId)),
-      group: "derived_memory",
-      label: isInferred ? "Inferred preference" : labelForMemoryType(memoryType),
-      title: String(r.content ?? ""),
-      detail: undefined,
-      isInferred,
-      inferredNote: isInferred
-        ? `Portava inferred this from your activity${obs > 0 ? ` (${obs} observation${obs === 1 ? "" : "s"})` : ""}. It is a guess, not something you told us.`
-        : undefined,
-      visibility: String(r.visibility ?? "private"),
-      source: {
-        kind: "derivation",
-        derivation: (r.derivation as string) ?? undefined,
-        sourceEventIds: Array.isArray(r.source_event_ids) ? (r.source_event_ids as string[]) : undefined,
-        observationCount: isInferred ? obs : undefined,
-      },
-      subjectType,
-      subjectId,
-      memoryType,
-      controls: {
-        viewSource: true,
-        correct: {
-          supported: true,
-          endpoint: CORRECT_ENDPOINT,
-          note: isInferred
-            ? "Tell Portava the right value; the inferred one stops showing and will not be re-derived."
-            : "Record that this is wrong; it stops showing and will not be re-derived.",
-        },
-        forget: { supported: true, endpoint: FORGET_ENDPOINT, behavior: "suppress_no_regen" },
-        visibility: String(r.visibility ?? "private"),
-      },
-    });
+    const item = mapDerivedRow(r);
+    if (item) out.push(item);
   }
   return out;
 }
@@ -361,6 +385,7 @@ export async function buildSavedContent(
         subjectType: "passport:saved_place", subjectId: String(r.id),
         originTable: "saved_places", originId: String(r.id),
         visibility: "private",
+        occurredAt: isoOrUndefined(r.saved_at),
       }));
     }
   });
@@ -383,6 +408,7 @@ export async function buildSavedContent(
         subjectType: "passport:memory", subjectId: String(r.id),
         originTable: "memories", originId: String(r.id),
         visibility: String(r.visibility ?? "private"),
+        occurredAt: isoOrUndefined(r.created_at),
       }));
     }
   });
@@ -404,6 +430,7 @@ export async function buildSavedContent(
         subjectType: "passport:postcard", subjectId: String(r.id),
         originTable: "passport_postcards", originId: String(r.id),
         visibility: String(r.visibility ?? "private"),
+        occurredAt: isoOrUndefined(r.created_at),
       }));
     }
   });
@@ -424,6 +451,7 @@ export async function buildSavedContent(
         subjectType: "passport:stamp", subjectId: String(r.id),
         originTable: "user_stamps", originId: String(r.id),
         visibility: String(r.visibility ?? "private"),
+        occurredAt: isoOrUndefined(r.earned_at),
       }));
     }
   });
@@ -432,7 +460,7 @@ export async function buildSavedContent(
   await safe(async () => {
     const { data } = await client
       .from("trips")
-      .select("id, title, status, visibility, destination_city")
+      .select("id, title, status, visibility, destination_city, start_date, end_date, created_at")
       .eq("owner_id", userId)
       .order("id", { ascending: false })
       .limit(SOURCE_LIMIT);
@@ -446,6 +474,8 @@ export async function buildSavedContent(
         subjectType: "passport:trip", subjectId: String(r.id),
         originTable: "trips", originId: String(r.id),
         visibility: String(r.visibility ?? "private"),
+        // A trip's anniversary is when it BEGAN; fall back to when it was created.
+        occurredAt: isoOrUndefined(r.start_date ?? r.created_at),
       }));
     }
   });
@@ -479,6 +509,7 @@ export async function buildSavedCompassMemories(
         // These have a dedicated editor (PATCH/DELETE /compass/me/memories/:id).
         correctSupported: false,
         correctNote: "Edit or delete this saved memory in Compass.",
+        occurredAt: isoOrUndefined(r.created_at),
       }));
     }
   });
@@ -511,7 +542,7 @@ export async function buildSharedMoments(
     if (consented.size === 0) return;
     const { data: moments } = await client
       .from("shared_moments")
-      .select("id, title, status, visibility, archived_at")
+      .select("id, title, status, visibility, archived_at, created_at")
       .in("id", Array.from(consented))
       .limit(SOURCE_LIMIT);
     for (const r of asRows(moments)) {
@@ -528,6 +559,7 @@ export async function buildSharedMoments(
         visibility: String(r.visibility ?? "private"),
         correctSupported: false,
         correctNote: "Manage this in Shared Moments.",
+        occurredAt: isoOrUndefined(r.created_at),
       }));
     }
   });
@@ -565,7 +597,7 @@ export async function buildAvailability(
 function userProvidedItem(o: {
   group: RememberGroup; label: string; title: string; detail?: string;
   subjectType: string; subjectId: string; originTable: string; originId: string;
-  correctSupported: boolean; correctNote?: string; visibility: string;
+  correctSupported: boolean; correctNote?: string; visibility: string; occurredAt?: string;
 }): RememberItem {
   return {
     id: `${o.subjectType}:${o.subjectId}`,
@@ -574,6 +606,7 @@ function userProvidedItem(o: {
     visibility: o.visibility,
     source: { kind: "user_provided", originTable: o.originTable, originId: o.originId },
     subjectType: o.subjectType, subjectId: o.subjectId, memoryType: null,
+    occurredAt: o.occurredAt,
     controls: {
       viewSource: true,
       correct: { supported: o.correctSupported, endpoint: CORRECT_ENDPOINT, note: o.correctNote },
@@ -586,7 +619,7 @@ function userProvidedItem(o: {
 function originItem(o: {
   group: RememberGroup; label: string; title: string; detail?: string;
   subjectType: string; subjectId: string; originTable: string; originId: string;
-  visibility: string; correctSupported?: boolean; correctNote?: string;
+  visibility: string; correctSupported?: boolean; correctNote?: string; occurredAt?: string;
 }): RememberItem {
   return {
     id: `${o.subjectType}:${o.subjectId}`,
@@ -595,6 +628,7 @@ function originItem(o: {
     visibility: o.visibility,
     source: { kind: "origin_row", originTable: o.originTable, originId: o.originId },
     subjectType: o.subjectType, subjectId: o.subjectId, memoryType: null,
+    occurredAt: o.occurredAt,
     controls: {
       viewSource: true,
       correct: {
@@ -614,6 +648,15 @@ async function safe(fn: () => Promise<void>): Promise<void> {
 
 function asRows(data: unknown): Array<Record<string, unknown>> {
   return Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
+}
+
+/** Normalise a DB date/timestamp cell to an ISO string, or undefined if unusable. */
+function isoOrUndefined(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  const s = String(v).trim();
+  if (s === "") return undefined;
+  const t = new Date(s);
+  return Number.isNaN(t.getTime()) ? undefined : s;
 }
 
 const GROUP_DESCRIPTIONS: Record<RememberGroup, string> = {
