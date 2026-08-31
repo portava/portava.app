@@ -28,6 +28,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { wrapUgc } from "./CompassStructuredContext.js";
 
 export const PROJECTED_MEMORY_BUDGET_CHARS = 900;
 export const PROJECTED_MEMORY_MAX_ROWS = 12;
@@ -145,7 +146,7 @@ export async function buildProjectedMemoryBlock(
         if (seen.has(key)) continue;
 
         // UGC-as-data: projected content embeds user-supplied place/city names.
-        const line = `• [${labelFor(row)}] <portava:ugc>${content}</portava:ugc>`;
+        const line = `• [${labelFor(row)}] ${wrapUgc(content)}`;
         const cost = line.length + 1;
         if (laneUsed + cost > laneBudget) continue; // try the next, shorter candidate
         if (used + cost > budget) break;            // global ceiling
