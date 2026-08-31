@@ -131,6 +131,10 @@ router.post(
       typeof body.tz === 'string' && body.tz.trim().length > 0 && body.tz.length <= 64
         ? body.tz.trim()
         : null;
+    // §22 opt-in for AI-assisted writing. Strictly boolean-true; anything else
+    // (absent, false, truthy non-boolean) means NOT opted in, so AI writing is
+    // never enabled by an ambiguous value.
+    const aiAssist = body.aiAssist === true;
 
     // limit: honor the request but never exceed the policy's maxSuggestions.
     const rawLimit = typeof body.limit === 'number' ? body.limit : parseInt(String(body.limit), 10);
@@ -166,6 +170,7 @@ router.post(
         city,
         draft,
         tz,
+        aiAssist,
       });
 
       const payload: SuggestResponse = {

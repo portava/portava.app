@@ -47,6 +47,7 @@ import {
   buildUnresolvedAddress,
 } from './creation';
 import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
+import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
 import {
   projectSearchResult,
   projectCanonicalCity,
@@ -120,6 +121,8 @@ export interface GenerateParams {
   draft?: CreationDraft;
   /** §18 IANA timezone for temporal-window normalization (optional). */
   tz?: string | null;
+  /** §22 per-request opt-in for AI-assisted writing (default false). */
+  aiAssist?: boolean;
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -134,7 +137,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist } = params;
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
@@ -353,16 +356,24 @@ export async function generateSuggestions(
     suggestions.push(buildQueryCompletion(context, POLICY_VERSION, q));
   }
 
-  // ── Compass prompt starters (§56, AI lane) ──────────────────────────────────
-  // Static opt-in prompts, gated by the policy's AI allowance. Real AI writing
-  // (§22) is deferred; these are canned starters resolving to editable text.
+  // ── Compass prompt starters (§56) ───────────────────────────────────────────
+  // DETERMINISTIC, contextual (surface/Trip-aware) starter prompts, gated only by
+  // the policy's AI allowance — NOT by the AI flag or opt-in (they need no model,
+  // so they always work, incl. offline/AI-unavailable). Each carries structured
+  // refs (a coarse {surface, city, cityId, tripId} payload) so tapping one hands
+  // Compass structured context, not a raw string. The action is `replace_text`,
+  // so nothing is ever silently inserted (§22).
   if (
     context === 'compass_prompt' &&
     policy.allowAI &&
     policy.allowedSuggestionTypes.includes('ai_suggestion')
   ) {
     suggestions.push(
-      ...buildCompassStarters(context, POLICY_VERSION, q, policy.maxSuggestions),
+      ...buildCompassStarters(context, POLICY_VERSION, q, policy.maxSuggestions, {
+        city,
+        cityId: sessionContext?.cityId ?? null,
+        tripId: sessionContext?.tripId ?? null,
+      }),
     );
   }
 
@@ -386,6 +397,36 @@ export async function generateSuggestions(
       max: policy.maxSuggestions,
     }).catch(() => [] as InputSuggestion[]);
     suggestions.push(...semanticRows);
+  }
+
+  // ── Phase-7 AI-assisted writing (§22) — OPT-IN, flag-gated, SECONDARY ────────
+  // Proposes editable caption/description/title/prompt text via the EXISTING
+  // Compass AI (getOpenAI → gpt-5-mini). Requires ALL of: the per-request opt-in
+  // (§22), the field policy's allowAI + ai_suggestion allowance (§6), and — inside
+  // buildAiAssistedWriting — the reused `compass_ai_enabled` flag AND an available
+  // model. Any of those missing ⇒ no ai_suggestion is added, and the field's
+  // deterministic assistance above is unaffected (degrade-to-no-AI). Every row is
+  // `type:'ai_suggestion'` / `source:'ai'` with an editable `replace_text` action,
+  // so it is never silently inserted (§22) and — sorting LAST by type rank — never
+  // outranks a canonical entity (§9). It creates NO canonical fact.
+  if (
+    aiAssist === true &&
+    policy.allowAI &&
+    policy.allowedSuggestionTypes.includes('ai_suggestion') &&
+    isAiTextContext(context) &&
+    q.length >= 1
+  ) {
+    const aiRows = await buildAiAssistedWriting(sc, {
+      context,
+      policy,
+      text: trimmed,
+      draft: draft ?? {},
+      sessionContext,
+      city,
+      policyVersion: POLICY_VERSION,
+      max: 2,
+    }).catch(() => [] as InputSuggestion[]);
+    suggestions.push(...aiRows);
   }
 
   // ── Phase-5: merge creation assistance + unresolved-address fallback ─────────
