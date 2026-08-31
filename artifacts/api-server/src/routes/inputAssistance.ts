@@ -36,6 +36,7 @@ import { generateSuggestions } from '../lib/inputAssistance/gateway';
 import type {
   SuggestResponse,
   SuggestSessionContext,
+  CreationDraft,
 } from '../lib/inputAssistance/types';
 
 const router = Router();
@@ -53,6 +54,42 @@ function parseSessionContext(raw: unknown): SuggestSessionContext | undefined {
   if (typeof obj.tripId === 'string' && obj.tripId.length <= 100) out.tripId = obj.tripId;
   if (typeof obj.cityId === 'string' && obj.cityId.length <= 200) out.cityId = obj.cityId;
   return out.tripId || out.cityId ? out : undefined;
+}
+
+// §23/§55 creation draft. Every field is optional and bounded; unknown keys and
+// oversized values are dropped so the draft can never smuggle unexpected input.
+function str(raw: unknown, max: number): string | undefined {
+  return typeof raw === 'string' && raw.trim().length > 0 && raw.length <= max
+    ? raw.trim()
+    : undefined;
+}
+function num(raw: unknown, max: number): number | undefined {
+  const n = typeof raw === 'number' ? raw : parseFloat(String(raw));
+  return Number.isFinite(n) && Math.abs(n) <= max ? n : undefined;
+}
+function parseCreationDraft(raw: unknown): CreationDraft | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const out: CreationDraft = {};
+  const name = str(o.name, 200);
+  const city = str(o.city, 100);
+  const country = str(o.country, 100);
+  const category = str(o.category, 80);
+  const address = str(o.address, 300);
+  const startDate = str(o.startDate, 40);
+  const endDate = str(o.endDate, 40);
+  const lat = num(o.lat, 90);
+  const lng = num(o.lng, 180);
+  if (name) out.name = name;
+  if (city) out.city = city;
+  if (country) out.country = country;
+  if (category) out.category = category;
+  if (address) out.address = address;
+  if (startDate) out.startDate = startDate;
+  if (endDate) out.endDate = endDate;
+  if (lat !== undefined) out.lat = lat;
+  if (lng !== undefined) out.lng = lng;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 router.post(
@@ -81,6 +118,7 @@ router.post(
 
     const text = typeof body.text === 'string' ? body.text : '';
     const sessionContext = parseSessionContext(body.sessionContext);
+    const draft = parseCreationDraft(body.draft);
     const lat = clampCoord(body.lat, 90);
     const lng = clampCoord(body.lng, 180);
     const city =
@@ -120,6 +158,7 @@ router.post(
         lat,
         lng,
         city,
+        draft,
       });
 
       const payload: SuggestResponse = {

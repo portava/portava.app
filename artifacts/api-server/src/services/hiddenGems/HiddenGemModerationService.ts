@@ -7,6 +7,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { recordTrustEvent, TRUST_EVENT_TYPES } from "../trust/TrustEventService.js";
 import { recomputeGuideAccuracy } from "./LocalGuideService.js";
+import {
+  scoreGemDuplicate,
+  DUPLICATE_THRESHOLD,
+  type DedupEntity,
+} from "../../lib/inputAssistance/duplicateDetection.js";
 
 const logger = rootLogger.child({ service: "HiddenGemModerationService" });
 
@@ -256,23 +261,63 @@ export async function getSensitiveGems(
   return data ?? [];
 }
 
-/** Admin queue: gems that are likely duplicate submissions (same city + category, high report count). */
+/**
+ * Admin queue: pending gems that GENUINELY duplicate an existing active/approved
+ * gem, each annotated with the record it collides with.
+ *
+ * This is the REAL duplicate-detection replacement for the former stub (which
+ * returned every pending gem with no similarity at all). It scores each pending
+ * gem against the active pool with the shared `scoreGemDuplicate` core (folded
+ * name + coordinate proximity + city), the SAME math the Phase-5 creation-time
+ * gateway uses — so the admin queue and the create flow agree on what "duplicate"
+ * means. Only pending gems that clear the surfacing threshold are returned.
+ */
 export async function getDuplicateCandidates(
   db: SupabaseClient,
   limit = 50,
 ): Promise<any[]> {
-  // Return pending or active gems flagged as duplicate candidates
-  // (submitted as near-duplicate by reporters or whose name+city matches another active gem)
-  const { data, error } = await db
-    .from("hidden_gems")
-    .select("id, name, category, city, country, sensitivity_level, status, report_count, created_at")
-    .eq("status", "pending")
-    .order("created_at", { ascending: true })
-    .limit(limit);
+  const cols = "id, name, category, city, country, latitude, longitude, sensitivity_level, status, report_count, created_at";
 
-  if (error) throw error;
-  // In a real system, a dedup job would populate a duplicate_candidates view.
-  // For now return pending gems in the same cities as existing active ones —
-  // callers can use the merge endpoint to consolidate.
-  return data ?? [];
+  const [{ data: pending, error: pErr }, { data: active, error: aErr }] = await Promise.all([
+    db.from("hidden_gems").select(cols).eq("status", "pending").order("created_at", { ascending: true }),
+    db.from("hidden_gems").select(cols).in("status", ["approved", "active"]).limit(2000),
+  ]);
+  if (pErr) throw pErr;
+  if (aErr) throw aErr;
+
+  const toEntity = (g: any): DedupEntity => ({
+    id: g.id,
+    name: (g.name as string) ?? "",
+    city: (g.city as string | null) ?? null,
+    country: (g.country as string | null) ?? null,
+    category: (g.category as string | null) ?? null,
+    lat: (g.latitude as number | null) ?? null,
+    lng: (g.longitude as number | null) ?? null,
+  });
+
+  const activePool = (active ?? []) as any[];
+  const out: any[] = [];
+  for (const p of (pending ?? []) as any[]) {
+    const cand = toEntity(p);
+    if (!cand.name) continue;
+    let best: { gem: any; score: number } | null = null;
+    for (const a of activePool) {
+      if (a.id === p.id) continue;
+      const score = scoreGemDuplicate(
+        { name: cand.name, city: cand.city, country: cand.country, category: cand.category, lat: cand.lat, lng: cand.lng },
+        toEntity(a),
+      );
+      if (score >= DUPLICATE_THRESHOLD && (!best || score > best.score)) {
+        best = { gem: a, score };
+      }
+    }
+    if (best) {
+      out.push({
+        ...p,
+        duplicateOf: { id: best.gem.id, name: best.gem.name, city: best.gem.city, score: Math.round(best.score * 100) / 100 },
+      });
+    }
+    if (out.length >= limit) break;
+  }
+  return out;
 }

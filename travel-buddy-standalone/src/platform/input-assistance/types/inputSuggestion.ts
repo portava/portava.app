@@ -96,6 +96,11 @@ export interface InputSessionContext {
   lng?: number;
   /** IANA timezone for temporal intent parsing ("tonight" etc., §18). */
   tz?: string;
+  /** §23 — candidate trip/event window (ISO), so the gateway can explain a date
+   *  conflict with the viewer's existing plans. A NEW entity has no id yet to look
+   *  its window up by, so the window is passed explicitly. Optional + additive. */
+  startDate?: string;
+  endDate?: string;
   /** Current app surface, for context-aware zero-state (§14, §56). */
   surface?: string;
 }

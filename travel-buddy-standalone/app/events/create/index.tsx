@@ -48,6 +48,15 @@ import {
 import { GlobalPlacePicker } from '../../../src/components/selectors/GlobalPlacePicker';
 import { Avatar } from '../../../src/components/ui';
 import { color, space, radius, type as t, shadow, aspect, dot} from '../../../src/theme/tokens';
+// Global Input Intelligence — Phase 5 (Creation). Inline, NON-BLOCKING duplicate
+// detection (§20/§55) + §23 validation on the event title. Degrades to nothing
+// when the (parallel-PR) endpoint is absent; never blocks or changes submit.
+import { useCreationAssistance } from '../../../src/hooks/useCreationAssistance.ts';
+import {
+  CreationAssist,
+  CREATION_FIELD_IDS,
+  type DuplicateCandidate,
+} from '../../../src/platform/input-assistance';
 
 // ── Date/time display helpers ─────────────────────────────────────────────────
 
@@ -143,6 +152,21 @@ export default function CreateEventScreen() {
   // Cebu) — falls back to the device timezone only until a location has
   // been picked in Step 3, so Step 2's date/time display isn't misleading.
   const [locationTimezone, setLocationTimezone] = useState<string | null>(null);
+
+  // §20/§55 — as the event is titled, surface likely-existing Events/Places so
+  // the user can confirm the intended entity instead of creating a duplicate, plus
+  // any §23 validation. NON-BLOCKING: advisory + dismissible; submit is unchanged.
+  const titleAssist = useCreationAssistance({
+    context: 'event_title',
+    fieldId: CREATION_FIELD_IDS.eventTitle,
+    text: title,
+    sessionContext: { surface: 'event_create' },
+  });
+  const handlePickExistingEvent = useCallback((c: DuplicateCandidate) => {
+    // §55 "user confirms intended entity" — route to the existing record to
+    // verify. The in-progress draft is preserved; this never blocks creation.
+    if (c.route) router.push(c.route as any);
+  }, []);
 
   // ── Step 4: Capacity ────────────────────────────────────────────────────────
   const [maxAttendees, setMaxAttendees] = useState('');
@@ -687,6 +711,12 @@ export default function CreateEventScreen() {
                 onChangeText={(v) => { setTitle(v); scheduleSave(); }}
                 maxLength={200}
                 autoFocus
+              />
+
+              <CreationAssist
+                duplicates={titleAssist.duplicates}
+                validation={titleAssist.validation}
+                onPickExisting={handlePickExistingEvent}
               />
 
               {/* ── Compass category hints ── */}
