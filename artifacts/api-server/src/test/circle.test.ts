@@ -721,6 +721,21 @@ describe("GET /circle/contexts/:type/:id/members — access guard", () => {
     assert.equal(member, undefined, "target should be hidden");
   });
 
+  it("target hidden when consent_version is stale/null (audit CIRCLE-1)", async () => {
+    // A row enabled + consented but under a superseded policy version (or a
+    // pre-migration null version) must not share presence. The batch guard used
+    // by this endpoint ignored the version entirely; only the unreachable
+    // single-shot guard enforced it.
+    state.circleVisibility[TARGET_ID] = {
+      ...state.circleVisibility[TARGET_ID],
+      consent_version: null,
+    };
+    const r = await req("GET", `/circle/contexts/trip/${TRIP_ID}/members`);
+    assert.equal(r.status, 200);
+    const member = r.body.members.find((m: any) => m.userId === TARGET_ID);
+    assert.equal(member, undefined, "target with a stale consent_version must be hidden");
+  });
+
   it("target hidden when context sharing disabled", async () => {
     state.circleContextSettings.push({
       id:                     "ctx-1",
