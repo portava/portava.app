@@ -48,22 +48,28 @@ const OUTSIDE_LNG = 2.3522;
 // ── Fake client factory ────────────────────────────────────────────────────────
 
 function makeGeofenceClient(opts: {
-  memberRole?: "owner" | "member" | null;
+  memberRole?: "owner" | "member" | "co_host" | "viewer" | null;
+  memberStatus?: string | null;
   geofence?: any;
   eventStore?: any[];
   checkinStore?: any[];
   memberIds?: string[];
   locationSnap?: any;
   trustSuspicious?: boolean;
+  tripVisibility?: string;
+  checkinUpsertError?: any;
 }) {
   const {
     memberRole     = null,
+    memberStatus   = "accepted",
     geofence       = null,
     eventStore     = [],
     checkinStore   = [],
     memberIds      = [],
     locationSnap   = null,
     trustSuspicious = false,
+    tripVisibility = "public",
+    checkinUpsertError = null,
   } = opts;
 
   return {
@@ -90,16 +96,29 @@ function makeGeofenceClient(opts: {
         update: (patch: any) => { store.push({ table, op: "update", patch }); return builder; },
         delete: () => { store.push({ table, op: "delete" }); return builder; },
         insert: (row: any) => { store.push({ table, op: "insert", row }); lastInsert = row; return builder; },
-        upsert: (row: any) => { checkinStore.push({ table, op: "upsert", row }); return builder; },
+        upsert: (row: any) => {
+          checkinStore.push({ table, op: "upsert", row });
+          // plan_checkins upserts resolve to an error when configured (supabase-js
+          // resolves on DB error rather than throwing).
+          const upsertErr = table === "plan_checkins" ? checkinUpsertError : null;
+          return {
+            ...builder,
+            then: (onF: any) => Promise.resolve({ data: null, error: upsertErr ?? null }).then(onF),
+          };
+        },
         maybeSingle: async () => {
           if (table === "feature_flags") return { data: { enabled: true }, error: null };
 
           if (table === "trips") {
-            return { data: { owner_id: OWNER_ID }, error: null };
+            return { data: { owner_id: OWNER_ID, visibility: tripVisibility }, error: null };
           }
 
           if (table === "trip_members") {
-            if (memberRole === "member") return { data: { user_id: MEMBER_ID, role: "member" }, error: null };
+            // A non-owner accepted role (member / co_host / viewer) resolves to a
+            // member-level row; null memberRole is a non-member.
+            if (memberRole && memberRole !== "owner") {
+              return { data: { user_id: MEMBER_ID, role: memberRole, status: memberStatus }, error: null };
+            }
             return { data: null, error: null };
           }
 
@@ -184,6 +203,12 @@ async function withGeofenceServer(
 
   const app = express();
   app.use(express.json());
+  // Stub the pino-http request logger (production supplies req.log; the bare
+  // test app does not, so error paths that call req.log.error would throw).
+  app.use((req, _res, next) => {
+    (req as any).log = { error() {}, warn() {}, info() {}, debug() {} };
+    next();
+  });
   app.use("/api", geofenceRouter);
 
   const server = http.createServer(app);
@@ -672,5 +697,158 @@ describe("Feature flag gating", () => {
     } finally {
       await new Promise<void>((res) => server.close(() => res()));
     }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Audit cluster — TRAILS F6 / F5 / GEOFENCE-2 / GEOFENCE-1
+// ═════════════════════════════════════════════════════════════════════════════
+
+// TRAILS F6 — a failed plan_checkins write must NOT report a successful check-in.
+describe("Check-in — write failure is not reported as success (TRAILS F6)", () => {
+  const geofence = {
+    id: GEOFENCE_ID, lat: MEETUP_LAT, lng: MEETUP_LNG,
+    check_in_radius_m: 150, check_in_required: true,
+    check_in_window_start: null, check_in_window_end: null,
+    host_enabled: true, trip_id: TRIP_ID,
+  };
+
+  it("plan_checkins upsert error → no success message, no ok=true, 5xx", async () => {
+    const checkinStore: any[] = [];
+    const eventStore: any[] = [];
+    await withGeofenceServer(
+      {
+        memberRole: "member",
+        geofence,
+        eventStore,
+        checkinStore,
+        checkinUpsertError: { message: "duplicate key value", code: "23505" },
+      },
+      async (port) => {
+        const { status, body } = await request(port, "POST", `/api/trips/${TRIP_ID}/geofence/check-in`, {
+          lat: INSIDE_LAT, lng: INSIDE_LNG,
+        }, MEMBER_TOKEN);
+        // Must not masquerade as a success.
+        assert.notEqual(body.ok, true, `check-in write failed but ok=${JSON.stringify(body.ok)}`);
+        assert.notEqual(body.status, "arrived", "must not report arrived on a failed write");
+        assert.notEqual(
+          body.message,
+          "You're checked in! 🎉",
+          "success message must not be returned when the write failed",
+        );
+        assert.ok(status >= 500, `expected a 5xx status on write failure, got ${status}`);
+      },
+    );
+  });
+});
+
+// TRAILS F5 — public preview card must not leak fields finer than the level.
+describe("Public preview level hierarchy (TRAILS F5)", () => {
+  const baseGeofence = {
+    id: GEOFENCE_ID, lat: MEETUP_LAT, lng: MEETUP_LNG,
+    check_in_radius_m: 150,
+    exact_visibility: "exact_after_acceptance",
+    check_in_required: false, check_in_window_start: null, check_in_window_end: null,
+    arrival_status_visible: true, no_show_affects_reliability: false,
+    host_enabled: true, host_revealed: false,
+    location_name: "Secret Venue", city: "Paris", neighborhood: "Marais", venue_name: "Le Labo",
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  };
+
+  it("city_only non-member card withholds venueName AND neighborhood (keeps city)", async () => {
+    const geofence = { ...baseGeofence, public_preview_level: "city_only" };
+    await withGeofenceServer({ memberRole: null, geofence, tripVisibility: "public" }, async (port) => {
+      const { status, body } = await request(port, "GET", `/api/trips/${TRIP_ID}/geofence`, undefined, OTHER_TOKEN);
+      assert.equal(status, 200);
+      const gf = body.geofence;
+      assert.equal(gf.city, "Paris", "city_only exposes city");
+      assert.equal(gf.neighborhood, null, "city_only must withhold neighborhood");
+      assert.equal(gf.venueName, null, "city_only must withhold venueName");
+      assert.equal(gf.locationName, null, "city_only must withhold locationName");
+      // Belt-and-braces: the finer strings must not appear anywhere in the card.
+      const json = JSON.stringify(gf);
+      assert.ok(!json.includes("Marais"), "neighborhood string leaked at city_only");
+      assert.ok(!json.includes("Le Labo"), "venue string leaked at city_only");
+    });
+  });
+});
+
+// GEOFENCE-2 — a private/invite trip must not surface a public preview card.
+describe("Non-member preview honours trip visibility (GEOFENCE-2)", () => {
+  const geofence = {
+    id: GEOFENCE_ID, lat: MEETUP_LAT, lng: MEETUP_LNG,
+    check_in_radius_m: 150, public_preview_level: "venue_tagged",
+    exact_visibility: "exact_after_acceptance",
+    check_in_required: false, check_in_window_start: null, check_in_window_end: null,
+    arrival_status_visible: true, no_show_affects_reliability: false,
+    host_enabled: true, host_revealed: false,
+    location_name: "Secret Venue", city: "Paris", neighborhood: "Marais", venue_name: "Le Labo",
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  };
+
+  it("private trip returns no public card to a non-member", async () => {
+    await withGeofenceServer({ memberRole: null, geofence, tripVisibility: "private" }, async (port) => {
+      const { status, body } = await request(port, "GET", `/api/trips/${TRIP_ID}/geofence`, undefined, OTHER_TOKEN);
+      assert.equal(status, 404, "private trip must not expose a preview");
+      assert.ok(!body.geofence, "no geofence card for a private trip");
+    });
+  });
+
+  it("public trip still returns a preview card to a non-member", async () => {
+    await withGeofenceServer({ memberRole: null, geofence, tripVisibility: "public" }, async (port) => {
+      const { status, body } = await request(port, "GET", `/api/trips/${TRIP_ID}/geofence`, undefined, OTHER_TOKEN);
+      assert.equal(status, 200);
+      assert.ok(body.geofence, "public trip exposes a preview card");
+      assert.equal(body.geofence.viewerRole, "none");
+    });
+  });
+});
+
+// GEOFENCE-1 — an accepted co_host is a member-level participant.
+describe("Accepted co_host has member access (GEOFENCE-1)", () => {
+  const viewGeofence = {
+    id: GEOFENCE_ID, lat: MEETUP_LAT, lng: MEETUP_LNG,
+    check_in_radius_m: 150, public_preview_level: "neighborhood",
+    exact_visibility: "exact_after_acceptance",
+    check_in_required: false, check_in_window_start: null, check_in_window_end: null,
+    arrival_status_visible: true, no_show_affects_reliability: false,
+    host_enabled: true, host_revealed: false,
+    location_name: "Secret Venue", city: "Paris", neighborhood: "Marais", venue_name: "Le Labo",
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  };
+  const checkinGeofence = {
+    id: GEOFENCE_ID, lat: MEETUP_LAT, lng: MEETUP_LNG,
+    check_in_radius_m: 150, check_in_required: true,
+    check_in_window_start: null, check_in_window_end: null,
+    host_enabled: true, trip_id: TRIP_ID,
+  };
+
+  it("accepted co_host can VIEW the geofence (member-level card, not 403)", async () => {
+    await withGeofenceServer({ memberRole: "co_host", memberStatus: "accepted", geofence: viewGeofence }, async (port) => {
+      const { status, body } = await request(port, "GET", `/api/trips/${TRIP_ID}/geofence`, undefined, MEMBER_TOKEN);
+      assert.equal(status, 200, "accepted co_host must not be locked out");
+      assert.equal(body.geofence.viewerRole, "member", "co_host resolves to member-level");
+      assert.ok(body.geofence.exactLocationRevealed, "accepted co_host sees exact reveal");
+    });
+  });
+
+  it("accepted co_host can CHECK IN", async () => {
+    await withGeofenceServer({ memberRole: "co_host", memberStatus: "accepted", geofence: checkinGeofence }, async (port) => {
+      const { status, body } = await request(port, "POST", `/api/trips/${TRIP_ID}/geofence/check-in`, {
+        lat: INSIDE_LAT, lng: INSIDE_LNG,
+      }, MEMBER_TOKEN);
+      assert.equal(status, 200);
+      assert.equal(body.ok, true, `accepted co_host should check in, got: ${JSON.stringify(body)}`);
+      assert.equal(body.status, "arrived");
+    });
+  });
+
+  it("a co_host whose invite is still pending (status!=accepted) is denied check-in", async () => {
+    await withGeofenceServer({ memberRole: "co_host", memberStatus: "invited", geofence: checkinGeofence }, async (port) => {
+      const { status } = await request(port, "POST", `/api/trips/${TRIP_ID}/geofence/check-in`, {
+        lat: INSIDE_LAT, lng: INSIDE_LNG,
+      }, MEMBER_TOKEN);
+      assert.equal(status, 403, "a pending co_host invite must not gain check-in access");
+    });
   });
 });
