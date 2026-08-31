@@ -62,11 +62,8 @@ import {
   GROUP_SCOPE_KINDS,
   LOCATE_SIGNAL_RUNGS,
   MAX_SESSION_MINUTES,
-  MEMBERS_TABLE,
   MIN_SESSION_MINUTES,
-  POSITIONS_TABLE,
   POSITION_TTL_MS,
-  SESSIONS_TABLE,
   isLocationPrecision,
   isMembershipLive,
   isSessionActive,
@@ -230,7 +227,7 @@ export async function startOrJoinSession(
 
   // (3) An existing session for this scope, if it is STILL ACTIVE at nowMs.
   const { data: existingRows, error: existingError } = await sc
-    .from(SESSIONS_TABLE)
+    .from("locate_friends_sessions")
     .select("id, group_scope_kind, group_scope_id, created_by, started_at, expires_at, ended_at, ceiling, label")
     .eq("group_scope_kind", v.groupScopeKind)
     .eq("group_scope_id", v.groupScopeId)
@@ -249,7 +246,7 @@ export async function startOrJoinSession(
 
     // Either a first join, or a re-join after leaving. Both are a fresh opt-in,
     // so both re-stamp the consent moment and clear left_at.
-    const { error: joinError } = await sc.from(MEMBERS_TABLE).upsert(
+    const { error: joinError } = await sc.from("locate_friends_members").upsert(
       {
         session_id: active.id,
         user_id: userId,
@@ -275,7 +272,7 @@ export async function startOrJoinSession(
   }
 
   const { data: created, error: createError } = await sc
-    .from(SESSIONS_TABLE)
+    .from("locate_friends_sessions")
     .insert({
       group_scope_kind: v.groupScopeKind,
       group_scope_id: v.groupScopeId,
@@ -295,7 +292,7 @@ export async function startOrJoinSession(
 
   const session = created as SessionRow;
 
-  const { error: memberError } = await sc.from(MEMBERS_TABLE).insert({
+  const { error: memberError } = await sc.from("locate_friends_members").insert({
     session_id: session.id,
     user_id: userId,
     opted_in_at: new Date(nowMs).toISOString(),
@@ -398,7 +395,7 @@ export async function publishPosition(
   );
 
   const { error: writeError } = await sc
-    .from(POSITIONS_TABLE)
+    .from("locate_friends_positions")
     .upsert({ ...row, written_at: new Date(nowMs).toISOString() }, { onConflict: "session_id,user_id" });
   if (writeError) return { ok: false, code: "db_error", detail: "Could not store position." };
 

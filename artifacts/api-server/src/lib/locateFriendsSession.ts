@@ -960,7 +960,7 @@ export async function writeAudit(
     nowMs: number;
   },
 ): Promise<{ ok: boolean; error?: unknown }> {
-  const { error } = await db.from(AUDIT_TABLE).insert({
+  const { error } = await db.from("locate_friends_audit").insert({
     event: row.event,
     session_id: row.sessionId,
     actor_id: row.actorId,
@@ -976,7 +976,7 @@ export async function loadSession(
   sessionId: string,
 ): Promise<{ row: SessionRow | null; unreadable: boolean }> {
   const { data, error } = await db
-    .from(SESSIONS_TABLE)
+    .from("locate_friends_sessions")
     .select("id, group_scope_kind, group_scope_id, created_by, started_at, expires_at, ended_at, ceiling, label")
     .eq("id", sessionId)
     .maybeSingle();
@@ -997,7 +997,7 @@ export async function loadMembership(
   userId: string,
 ): Promise<{ row: MembershipRow | null; unreadable: boolean }> {
   const { data, error } = await db
-    .from(MEMBERS_TABLE)
+    .from("locate_friends_members")
     .select("session_id, user_id, opted_in_at, consent_source, left_at")
     .eq("session_id", sessionId)
     .eq("user_id", userId)
@@ -1124,7 +1124,7 @@ export async function readSessionForViewer(
   const zones = await loadProtectedZones(db);
 
   const { data: memberRows, error: membersError } = await db
-    .from(MEMBERS_TABLE)
+    .from("locate_friends_members")
     .select("session_id, user_id, opted_in_at, consent_source, left_at")
     .eq("session_id", sessionId)
     .is("left_at", null);
@@ -1140,7 +1140,7 @@ export async function readSessionForViewer(
   }
 
   const { data: positionRows, error: positionsError } = await db
-    .from(POSITIONS_TABLE)
+    .from("locate_friends_positions")
     .select("session_id, user_id, rung, precision, lat, lng, proximity_bucket, checkpoint_label, observed_at, expires_at")
     .eq("session_id", sessionId)
     .in("user_id", otherIds);
@@ -1219,13 +1219,13 @@ export async function leaveSession(
   if (!row) return { outcome: "not_member" };
 
   const { error: delError } = await db
-    .from(POSITIONS_TABLE)
+    .from("locate_friends_positions")
     .delete()
     .eq("session_id", sessionId)
     .eq("user_id", userId);
 
   const { error: updError } = await db
-    .from(MEMBERS_TABLE)
+    .from("locate_friends_members")
     .update({ left_at: new Date(nowMs).toISOString() })
     .eq("session_id", sessionId)
     .eq("user_id", userId);
