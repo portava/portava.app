@@ -48,6 +48,7 @@ import {
 } from './creation';
 import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
+import { enrichSuggestionsWithLive } from './liveSuggestions';
 import {
   fetchSelectionMemory,
   applyPriorSelectionBoost,
@@ -564,14 +565,28 @@ export async function generateSuggestions(
     ? applyPriorSelectionBoost(biased, memory, personalQueryKey)
     : biased;
 
+  // ── Phase-9 Live Intelligence (§31/§15/§8) ──────────────────────────────────
+  // Attach a §8 `freshness` projection to place/gem suggestions that have a
+  // CURRENT live state, and add the §15 Freshness rank term (a small confidence
+  // nudge). It consumes ONLY the gated, fail-closed `readLiveClaimEnvelopes`, so
+  // a live label is NEVER fabricated: off/stale/unavailable/unpromoted ⇒ no
+  // label (§2/§31). Policy-gated by `allowLiveContext` and additive — with live
+  // off (the prod default, ~0 observations) it is a no-op after one flag read.
+  // Runs BEFORE the final rank so the Freshness term participates in ordering.
+  const withLive = await enrichSuggestionsWithLive(sc, personalized, {
+    policy,
+    context,
+    max: Math.min(limit, policy.maxSuggestions),
+  }).catch(() => personalized);
+
   // ── Rank + cap (§9 trust order, §15 tie-break by confidence) ────────────────
   // When the field carries query completions (§13 "SEARCH FOR" rows — global_
   // search, buddy_service, hashtag), reserve a slot so a submittable-search row
   // is never capped out by a full page of entity matches. Otherwise a plain cap.
   const cap = Math.min(limit, policy.maxSuggestions);
   const ranked = policy.allowedSuggestionTypes.includes('completion')
-    ? orderSuggestionsReserving(personalized, cap, COMPLETION_RESERVED_TYPES, 1)
-    : orderSuggestions(personalized, cap);
+    ? orderSuggestionsReserving(withLive, cap, COMPLETION_RESERVED_TYPES, 1)
+    : orderSuggestions(withLive, cap);
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.
