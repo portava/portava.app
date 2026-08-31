@@ -33,14 +33,15 @@ import { forwardGeocode } from "../lib/geocodeForward.js";
 const router = Router();
 
 // ── events aggregation — reuses the SAME gates as GET /api/events/nearby ──────
-async function loadNearbyEvents(
+/** Exported for testing: coordinate redaction must survive a refactor. */
+export async function loadNearbyEvents(
   sc: any, viewerId: string, lat: number, lng: number, radiusKm: number, blockedSet: Set<string>,
 ): Promise<any[]> {
   const latDelta = radiusKm / 111;
   const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
   const { data, error } = await sc
     .from("events")
-    .select("id, host_id, title, location_name, location_lat, location_lng, starts_at, cover_url, visibility, state, age_min, age_max, trust_score_min, verified_only")
+    .select("id, host_id, title, location_name, location_lat, location_lng, show_exact_location, starts_at, cover_url, visibility, state, age_min, age_max, trust_score_min, verified_only")
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public", "friends_only"])
     .gte("location_lat", lat - latDelta).lte("location_lat", lat + latDelta)
@@ -60,6 +61,14 @@ async function loadNearbyEvents(
     }
     const elig = await checkEventEligibility(sc, ev, viewerId);
     if (!elig.ok) continue;
+    // Honor show_exact_location, matching formatEvent(): a host who hid the exact
+    // location must not have its coordinates echoed on the discovery map to
+    // anyone but themselves. (Participants still see the exact spot in the event
+    // detail via formatEvent; here they simply get no precise map pin.)
+    if (ev.show_exact_location === false && ev.host_id !== viewerId) {
+      ev.location_lat = null;
+      ev.location_lng = null;
+    }
     out.push(ev);
   }
   return out;
