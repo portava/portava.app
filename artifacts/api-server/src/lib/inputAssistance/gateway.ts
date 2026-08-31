@@ -42,13 +42,24 @@ import {
   buildQueryCompletion,
   buildCompassStarters,
   orderSuggestions,
+  orderSuggestionsReserving,
+  dropDeadRows,
 } from './projection';
 import type {
+  AssistanceType,
   InputContext,
   InputFieldPolicy,
   InputSuggestion,
   SuggestSessionContext,
 } from './types';
+
+// §13: the "SEARCH FOR" query-completion row is a first-class part of a global-
+// search result and must not be capped out by a long run of entity rows (which
+// always sort ahead of it under §9 trust order). The final ranker reserves a
+// slot for these types so at least one completion always survives the cap.
+const COMPLETION_RESERVED_TYPES: ReadonlySet<AssistanceType> = new Set<AssistanceType>([
+  'completion',
+]);
 
 // Geographic PICKER contexts (§12) that resolve to a canonical city and, on
 // selection, return the §17/§53 binding. These get the strengthened city path:
@@ -127,9 +138,11 @@ export async function generateSuggestions(
       max: policy.maxSuggestions,
     }).catch(() => []);
     const projected = defaults.map((d, i) => projectGeoDefault(d, context, POLICY_VERSION, i));
-    return orderSuggestions(
-      applySessionBias(projected, sessionContext, normalized),
-      Math.min(limit, policy.maxSuggestions),
+    return dropDeadRows(
+      orderSuggestions(
+        applySessionBias(projected, sessionContext, normalized),
+        Math.min(limit, policy.maxSuggestions),
+      ),
     );
   }
 
@@ -247,7 +260,17 @@ export async function generateSuggestions(
   const biased = applySessionBias(suggestions, sessionContext, normalized);
 
   // ── Rank + cap (§9 trust order, §15 tie-break by confidence) ────────────────
-  return orderSuggestions(biased, Math.min(limit, policy.maxSuggestions));
+  // When the field carries query completions (§13 "SEARCH FOR" rows — global_
+  // search, buddy_service, hashtag), reserve a slot so a submittable-search row
+  // is never capped out by a full page of entity matches. Otherwise a plain cap.
+  const cap = Math.min(limit, policy.maxSuggestions);
+  const ranked = policy.allowedSuggestionTypes.includes('completion')
+    ? orderSuggestionsReserving(biased, cap, COMPLETION_RESERVED_TYPES, 1)
+    : orderSuggestions(biased, cap);
+
+  // §13 "no dead rows": final safety net — every returned row must resolve to an
+  // action, a canonical entity, or a routable destination.
+  return dropDeadRows(ranked);
 }
 
 /**
