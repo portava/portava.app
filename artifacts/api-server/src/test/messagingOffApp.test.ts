@@ -234,6 +234,21 @@ function sendMessageWith(token: string, body: string): Promise<{ status: number;
 const sendBuddyMessage    = (body: string) => sendMessageWith(BUDDY_TOKEN, body);
 const sendTravelerMessage = (body: string) => sendMessageWith(TRAVELER_TOKEN, body);
 
+function sendMediaWith(token: string, senderId: string): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    // Bare app-storage path (accepted by appStorageUrlInfo even when no storage base is configured).
+    const payload = JSON.stringify({ mediaUrl: `post-media/${senderId}/photo.webp`, mediaType: "image" });
+    const r = http.request(
+      { hostname: "127.0.0.1", port: Number(new URL(base).port),
+        path: `/api/threads/${THREAD_ID}/media`, method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` } },
+      (res) => { let raw = ""; res.on("data", (c) => (raw += c));
+        res.on("end", () => { let p: any; try { p = JSON.parse(raw); } catch { p = raw; } resolve({ status: res.statusCode ?? 0, body: p }); }); },
+    );
+    r.on("error", reject); r.write(payload); r.end();
+  });
+}
+
 before(async () => {
   const app = express();
   app.use(express.json());
@@ -261,6 +276,20 @@ describe("Off-app solicitation detection — messaging route", () => {
     const r = await sendMessageWith(BUDDY_TOKEN, "hello there");
     assert.equal(r.status, 403, JSON.stringify(r.body));
     assert.equal(state.messages.length, 0, "no message written when blocked");
+  });
+
+  it("BLOCKS a MEDIA send through a pre-existing 1:1 thread when blocked (MSG-1)", async () => {
+    // The media handler had no block guard, so a blocked user could keep sending
+    // photos/videos even though the text handler rejects them.
+    (state as any).blocks.push({ blocker_id: TRAVELER_ID, blocked_id: BUDDY_USER });
+    const r = await sendMediaWith(BUDDY_TOKEN, BUDDY_USER);
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(state.messages.length, 0, "no media message written when blocked");
+  });
+
+  it("allows a MEDIA send when there is no block (positive control)", async () => {
+    const r = await sendMediaWith(BUDDY_TOKEN, BUDDY_USER);
+    assert.notEqual(r.status, 403, JSON.stringify(r.body));
   });
 
   it("buddy sends clean travel message — no warning event created", async () => {

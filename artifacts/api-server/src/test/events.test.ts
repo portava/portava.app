@@ -434,6 +434,33 @@ describe("Events — RSVP state machine", () => {
   });
 });
 
+describe("Events — waitlist visibility gate (audit EVENTS WL-1)", () => {
+  function inviteOnlyWaitlistClient() {
+    return makeFakeClient({
+      events: { rows: [makeEvent({ id: ID.ev1, host_id: ID.host1, visibility: "invite_only", state: "waitlist", waitlist_enabled: true, max_attendees: 1, going_count: 1 })] },
+      event_join_requests: { rows: [{ id: ID.jr1, event_id: ID.ev1, user_id: ID.user2, status: "approved" }] },
+    });
+  }
+
+  it("rejects a waitlist join from an uninvited user on an invite_only event", async () => {
+    _setTestClient(inviteOnlyWaitlistClient(), true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "POST", `/api/events/${ID.ev1}/waitlist`, {}, ID.user3);
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+    } finally { await close(); }
+  });
+
+  it("allows a waitlist join from a user with an approved join request (positive control)", async () => {
+    _setTestClient(inviteOnlyWaitlistClient(), true);
+    const { port, close } = await startServer();
+    try {
+      const r = await apiReq(port, "POST", `/api/events/${ID.ev1}/waitlist`, {}, ID.user2);
+      assert.notEqual(r.status, 403, JSON.stringify(r.body));
+    } finally { await close(); }
+  });
+});
+
 describe("Events — waitlist promotion on RSVP cancellation", () => {
   it("sets offer_expires_at on waitlisted user after cancellation", async () => {
     const client = makeFakeClient({
