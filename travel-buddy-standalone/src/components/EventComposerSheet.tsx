@@ -11,7 +11,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
-  ScrollView, Switch, ActivityIndicator, Image,
+  ScrollView, Switch, ActivityIndicator, Image, Alert,
 } from 'react-native';
 import { X, ChevronRight, ChevronLeft, CalendarClock, MapPin, Settings2, Eye, Clock, Camera, ImageIcon, Video as VideoIcon, RefreshCw } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -27,6 +27,7 @@ import { GlobalTimePicker } from './selectors/GlobalTimePicker.tsx';
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { color, space, radius, type as t, dot } from '../theme/tokens.ts';
 import { formatEventLocation } from '../lib/location/formatEventLocation.ts';
+import { resolvePickedPlace } from '../lib/location/applyPickedPlace.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 
 interface Props {
@@ -603,11 +604,32 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
                   usedFor="event_location"
                   onSelect={(place) => {
                     setLocationName(place.displayName);
-                    // QA round 2, bug 6 (same defect as app/events/create/index.tsx):
-                    // never overwrite a city/country the user typed themselves.
-                    if (place.city && !city.trim()) setCity(place.city);
-                    if (place.country && !country.trim()) setCountry(place.country);
+                    // QA round 2, bug 6 — routed through the shared resolvePickedPlace
+                    // rule (the same one gems/submit uses). Blank fields fill silently;
+                    // a divergent typed spelling is reported as a CONFLICT the user is
+                    // asked about, instead of being silently kept — which is how
+                    // divergent city/country spellings used to persist. Manual override
+                    // is preserved: typed text is never overwritten without a prompt.
+                    const { fill, conflict, hasConflict } = resolvePickedPlace(place, { city, country });
+                    if (fill.city) setCity(fill.city);
+                    if (fill.country) setCountry(fill.country);
                     setLocationPickerVisible(false);
+                    if (hasConflict) {
+                      Alert.alert(
+                        'Replace what you typed?',
+                        `${place.displayName} is linked. Replace the location details you entered with its own?`,
+                        [
+                          { text: 'Keep mine', style: 'cancel' },
+                          {
+                            text: 'Use this place',
+                            onPress: () => {
+                              if (conflict.city) setCity(conflict.city);
+                              if (conflict.country) setCountry(conflict.country);
+                            },
+                          },
+                        ],
+                      );
+                    }
                   }}
                   onClose={() => setLocationPickerVisible(false)}
                 />

@@ -90,6 +90,7 @@ export {
   normalizeDisplay,
   resolveLocalAlias,
   isFoldedPrefix,
+  matchesGeographicQuery,
 } from './services/queryNormalization.ts';
 export {
   resolveSuggestion,
@@ -125,3 +126,37 @@ export { ActionSuggestionRow, type ActionSuggestionRowProps } from './components
 export { CorrectionBanner, type CorrectionBannerProps } from './components/CorrectionBanner.tsx';
 export { DisambiguationSheet, type DisambiguationSheetProps } from './components/DisambiguationSheet.tsx';
 export { EntityIcon, AssistanceTypeIcon } from './components/entityIcon.tsx';
+
+// ── geographic (Phase 2) ──────────────────────────────────────────────────────
+export {
+  captureCanonicalBinding,
+  bindingToSessionContext,
+  placeNeedsCanonicalResolution,
+  entityTypeForPlace,
+  type CanonicalPlaceBinding,
+} from './geographic/canonicalBinding.ts';
+export {
+  hydrateTripDestination,
+  prepareTripDestinationForSave,
+  type TripDestinationSavePrep,
+} from './geographic/tripDestination.ts';
+export {
+  suggestionToPlace,
+  placeToSuggestion,
+  assembleGeoZeroState,
+  type GeoZeroStateInputs,
+  type PlaceToSuggestionOptions,
+} from './geographic/geoSuggestions.ts';
+export {
+  classifyGeoDisambiguation,
+  DEFAULT_GEO_THRESHOLDS,
+  type GeoConfidenceTier,
+  type GeoDisambiguation,
+  type GeoDisambiguationThresholds,
+} from './geographic/geoDisambiguation.ts';
+export {
+  registerGeographicFields,
+  GEO_FIELD_IDS,
+  GEO_FIELD_CONTEXTS,
+  type GeoFieldId,
+} from './geographic/geoFields.ts';
