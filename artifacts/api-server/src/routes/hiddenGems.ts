@@ -71,6 +71,12 @@ import {
   recordContribution,
   setGuideStatus,
 } from "../services/hiddenGems/LocalGuideService.js";
+import {
+  recordGemContribution,
+  batchDeriveGemProjections,
+  deriveGemProjection,
+} from "../services/hiddenGems/HiddenGemContributionService.js";
+import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
 
 import { isAdmin } from "../lib/requireAdmin.js";
 
@@ -177,6 +183,12 @@ const checkinSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   tripId: z.string().uuid().optional().nullable(),
+});
+
+// §16.3 structured gem contribution — an observation, never a canonical flip.
+const contributionSchema = z.object({
+  contributionType: z.enum(GEM_CONTRIBUTION_TYPES),
+  notes: z.string().max(500).optional().nullable(),
 });
 
 // ── Helper: resolve caller ID from bearer token (optional auth) ───────────────
@@ -512,10 +524,16 @@ router.get("/hidden-gems", async (req, res) => {
     const rawGems = ranked.map((r) => r.gem);
     const safe = await applyGemPrivacyBatch(rawGems, sc, callerId, callerTripId);
     const gemIds3 = (safe as any[]).map((g: any) => g.id as string);
-    const agg3 = await batchFetchGemAggregates(sc, gemIds3);
+    const [agg3, projections3] = await Promise.all([
+      batchFetchGemAggregates(sc, gemIds3),
+      batchDeriveGemProjections(sc, rawGems),
+    ]);
     const enriched3 = (safe as any[]).map((g: any) => {
       const a = agg3.get(g.id);
-      return a ? { ...g, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : g;
+      const p = projections3.get(g.id);
+      const base = a ? { ...g, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : { ...g };
+      if (p) { base.gemState = p.gemState; base.gemConfidence = p.gemConfidence; }
+      return base;
     });
     res.json({ gems: enriched3, total: enriched3.length });
   } catch (err: any) {
@@ -667,10 +685,16 @@ router.get("/hidden-gems/nearby", async (req, res) => {
       limit: parsed.data.limit,
     });
 
+    const projections = await batchDeriveGemProjections(sc, ranked.map((r) => r.gem));
     const gems = await Promise.all(
       ranked.map(async ({ gem, distanceKm }) => {
         const safe = await applyGemPrivacy(gem, sc, user.id);
-        return { ...safe, distanceKm };
+        const p = projections.get((gem as any).id);
+        return {
+          ...safe,
+          distanceKm,
+          ...(p ? { gemState: p.gemState, gemConfidence: p.gemConfidence } : {}),
+        };
       }),
     );
 
@@ -708,6 +732,13 @@ router.get("/hidden-gems/:id", async (req, res) => {
     }
 
     const safe = await applyGemPrivacy(gem, sc, callerId, callerTripId);
+
+    // Derive the §16 semantic state + numeric confidence at read time from the
+    // gem's existing signals + structured contributions (never stored). Reads no
+    // coordinate values beyond presence, so it is privacy-neutral.
+    const projection = await deriveGemProjection(sc, gem);
+    (safe as any).gemState = projection.gemState;
+    (safe as any).gemConfidence = projection.gemConfidence;
 
     // Attach guide profile if gem has guide_verified_by
     let guideProfile: any = null;
@@ -981,6 +1012,55 @@ router.post("/hidden-gems/:id/report", async (req, res) => {
   try {
     const result = await reportGem(sc, req.params.id, user.id, parsed.data.reason, parsed.data.notes);
     res.json({ ok: true, alreadyReported: result.alreadyReported });
+  } catch (err: any) {
+    sendError(res, "db_error", err.message);
+  }
+});
+
+// ── POST /api/hidden-gems/:id/contribute — §16.3 structured contribution ──────
+// Records one of the nine structured contribution types as an OBSERVATION. It
+// feeds gem confidence and the derived state; it NEVER flips canonical status on
+// its own (§16.3). Returns the freshly-derived projection so the client can show
+// the updated (still community-derived, not canonically-flipped) state.
+
+router.post("/hidden-gems/:id/contribute", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
+  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  const parsed = contributionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  try {
+    const result = await recordGemContribution(
+      sc, req.params.id, user.id, parsed.data.contributionType, parsed.data.notes ?? null,
+    );
+
+    if (result.error === "gem_not_found") { sendError(res, "not_found", "Gem not found"); return; }
+    if (result.error === "gem_not_active") { sendError(res, "invalid_payload", "Gem is not active"); return; }
+    if (result.error === "invalid_contribution_type") { sendError(res, "invalid_payload", "Invalid contribution type"); return; }
+    if (!result.ok) { sendError(res, "db_error", "Failed to record contribution"); return; }
+
+    // Re-derive the projection so the caller sees the state as it now reads.
+    const gem = await getGem(sc, req.params.id);
+    const projection = gem ? await deriveGemProjection(sc, gem) : null;
+
+    res.json({
+      ok: true,
+      contributionId: result.contributionId,
+      alreadyObserved: result.alreadyObserved,
+      gemState: projection?.gemState ?? null,
+      gemConfidence: projection?.gemConfidence ?? null,
+    });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }

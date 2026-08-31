@@ -2,33 +2,22 @@
  * HiddenGemDiscoveryService
  *
  * Ranking, proximity scoring, and vibe-tag matching for gem discovery.
- * Ranking formula: verificationWeight + saveScore + visitScore + vibeMatchBonus
+ *
+ * Ranking is EVIDENCE / FRESHNESS / RELEVANCE based and is deliberately NOT
+ * popularity-first (§16.2). The scoring lives in the pure `scoreGemForRanking`
+ * (lib/hiddenGemState) so it can be unit-tested and so a diff shows any change:
+ *   evidence(verification) + freshness(updated_at) + vibe + proximity
+ *   − overcrowding demotion
+ * save_count / visit_count are NOT ranking inputs — the previous
+ * saveScore/visitScore terms were the §16.2 popularity-first violation, and a
+ * fragile overcrowded gem is now demoted rather than boosted by its saves.
  *
  * Proximity: haversine distance used to sort/filter by lat/lng radius.
  * Only public + approximate gems expose coordinates for proximity ranking.
  * Protected gems are never distance-ranked (no coords).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-
-const VERIFICATION_WEIGHT: Record<string, number> = {
-  admin:        5,
-  guide:        4,
-  gps_verified: 3,
-  community:    2,
-  unverified:   0,
-};
-
-function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-    Math.cos((lat2 * Math.PI) / 180) *
-    Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
+import { scoreGemForRanking } from "../../lib/hiddenGemState.js";
 
 /**
  * Lat/lng bounding box for a radius around a point (mirrors lib/mapTravelers).
@@ -49,40 +38,17 @@ function radiusBoundingBox(lat: number, lng: number, radiusKm: number): {
   };
 }
 
-/** Compute a single gem's discovery score (higher = better rank). */
+/**
+ * Compute a single gem's discovery score (higher = better rank).
+ * Delegates to the pure, popularity-free `scoreGemForRanking`.
+ */
 function scoreGem(
   gem: any,
   vibeTags: string[],
   userLat?: number,
   userLng?: number,
 ): { score: number; distanceKm: number | null } {
-  const vw = VERIFICATION_WEIGHT[gem.verification_level] ?? 0;
-  const saveScore  = Math.min(gem.save_count  ?? 0, 200) / 200 * 3;
-  const visitScore = Math.min(gem.visit_count ?? 0, 100) / 100 * 2;
-
-  // Vibe-tag overlap bonus (+1 per matching tag, max 3)
-  const gemTags   = (gem.vibe_tags ?? []) as string[];
-  const tagBonus  = Math.min(
-    gemTags.filter((t) => vibeTags.includes(t)).length,
-    3,
-  );
-
-  // Proximity decay: perfect score at 0 km, 0 at 50 km+
-  let proximityBonus = 0;
-  let distanceKm: number | null = null;
-  if (userLat != null && userLng != null) {
-    const lat = gem.latitude ?? gem.approx_latitude;
-    const lng = gem.longitude ?? gem.approx_longitude;
-    if (lat != null && lng != null) {
-      distanceKm = haversineKm(userLat, userLng, lat, lng);
-      proximityBonus = Math.max(0, 2 * (1 - distanceKm / 50));
-    }
-  }
-
-  return {
-    score: vw + saveScore + visitScore + tagBonus + proximityBonus,
-    distanceKm,
-  };
+  return scoreGemForRanking(gem, { vibeTags, userLat, userLng });
 }
 
 export interface DiscoverGemsOptions {

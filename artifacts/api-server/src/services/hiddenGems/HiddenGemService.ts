@@ -174,13 +174,24 @@ export async function getGem(db: SupabaseClient, gemId: string) {
   return data;
 }
 
-/** List gems with filters. */
+/**
+ * List gems with filters.
+ *
+ * Ordering is NOT popularity-first (§16.2). It was `save_count DESC`, which
+ * made the raw list rank by saves — the exact popularity-first behaviour the
+ * spec forbids for gems, and a path (layover-safe, trip-city) that does NOT go
+ * through the evidence-based discovery ranker. It now orders by the verification
+ * ladder then recency: `verification_level DESC` (the enum is defined
+ * unverified→…→admin, so DESC puts admin/guide/gps first) then `updated_at
+ * DESC`. Evidence and freshness, never save count.
+ */
 export async function listGems(db: SupabaseClient, opts: GemListOptions = {}) {
   let q = db
     .from("hidden_gems")
     .select(GEM_SELECT_COLS)
     .eq("status", opts.status ?? "active")
-    .order("save_count", { ascending: false })
+    .order("verification_level", { ascending: false })
+    .order("updated_at", { ascending: false })
     .limit(opts.limit ?? 40);
 
   if (opts.city) q = q.ilike("city", opts.city);
