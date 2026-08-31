@@ -92,6 +92,42 @@ describe("intelProjection — projectClaim", () => {
     assert.equal(r.snapshot!.privacy_eligible, true);
     assert.equal(r.snapshot!.confidence_band, "unverified");
   });
+
+  it("keys the publication delay to publicationAnchorAt, not the newest observedAt (H3)", async () => {
+    const freshObserved = new Date(NOW.getTime() - 2 * 60_000).toISOString();  // 2 min ago (< 10-min delay)
+    const stableAnchor = new Date(NOW.getTime() - 30 * 60_000).toISOString();  // 30 min ago (> delay)
+
+    // Measured from the stable earliest anchor, the 10-minute delay has elapsed.
+    const withAnchor = await projectClaim(
+      client(), "place-1", { ...passing, observedAt: freshObserved, publicationAnchorAt: stableAnchor }, { now: NOW });
+    assert.equal(withAnchor.snapshot!.privacy_eligible, true,
+      "delay measured from the stable anchor, not the 2-min-old newest observation");
+
+    // With no anchor it falls back to the 2-min-old observedAt and is still delayed —
+    // proving the delay really is keyed to the anchor when present.
+    const withoutAnchor = await projectClaim(
+      client(), "place-1", { ...passing, observedAt: freshObserved }, { now: NOW });
+    assert.equal(withoutAnchor.snapshot!.privacy_eligible, false);
+    assert.equal(withoutAnchor.privacy.reason, "publication_delay_not_elapsed");
+  });
+
+  it("caps the snapshot expires_at at the hard-expiry ceiling (finding 5)", async () => {
+    const ttl = CLAIM_TYPES.find((c) => c.claimType === "crowd.level")!.ttlSeconds;
+    const ttlExpiry = new Date(Date.parse(OBSERVED) + ttl * 1000).toISOString(); // OBSERVED + 45m = NOW + 25m
+
+    // A ceiling BEFORE the TTL horizon collapses expires_at onto it. Here the
+    // ceiling is already in the past, so the snapshot is born expired → the reader
+    // (expires_at > now) drops it: the absolute age cap is enforced.
+    const ceiling = new Date(NOW.getTime() - 5 * 60_000).toISOString();
+    const capped = await projectClaim(client(), "place-1", { ...passing, hardExpiresAt: ceiling }, { now: NOW });
+    assert.equal(capped.snapshot!.expires_at, ceiling, "expires_at collapses to the hard ceiling");
+    assert.ok(Date.parse(capped.snapshot!.expires_at) <= NOW.getTime(), "a past ceiling makes it already expired");
+
+    // A ceiling BEYOND the TTL horizon changes nothing — ordinary TTL expiry stands.
+    const farCeiling = new Date(NOW.getTime() + 100 * 60_000).toISOString();
+    const uncapped = await projectClaim(client(), "place-1", { ...passing, hardExpiresAt: farCeiling }, { now: NOW });
+    assert.equal(uncapped.snapshot!.expires_at, ttlExpiry, "a ceiling past the TTL leaves expires_at at the TTL horizon");
+  });
 });
 
 describe("intelProjection — projectAndStore", () => {
