@@ -33,7 +33,6 @@ import {
   privacyClassFromStoredVisibility,
   ceilingFromLocationPrivacy,
   PRESENCE_PURPOSES,
-  PURPOSE_CEILINGS,
   purposeCeilingRow,
   UNKNOWN_PURPOSE_CEILING,
   ceilingForPurpose,

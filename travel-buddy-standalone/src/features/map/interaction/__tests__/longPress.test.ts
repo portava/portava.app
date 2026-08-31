@@ -26,7 +26,6 @@ import {
   type MapAction,
   type MapObject,
   type MapObjectKind,
-  type PrivacyClass,
 } from '../../../../types/mapObjects.ts';
 import type { PrecisionGrant } from '../../presence/presenceLadder.ts';
 import {
