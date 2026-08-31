@@ -440,3 +440,105 @@ describe("memory lifecycle (live DB)", () => {
     assert.ok((bLeft ?? []).length > 0, "another user's memory must be untouched");
   });
 });
+
+/**
+ * MEM·C1 — a GDPR-erased account must not be RESURRECTED by the projector fan-out.
+ *
+ * Erasure (erase_memory_for_user) deletes what exists; it does not stop re-derivation.
+ * project_all_memory is the 6-hourly scheduler entrypoint and re-derives memory from
+ * still-present source rows. Account deletion keeps an anonymised TOMBSTONE profile
+ * (account_status='deleted') and does NOT scrub compass_graph_edges / user_follows /
+ * compass_user_preferences, so before the fix the fan-out re-enumerated the tombstone
+ * and its derived memory came back within one pass (~6h).
+ *
+ * This exercises the real fan-out (project_all_memory), which is where the enumeration
+ * guard lives — the per-user projector deliberately does NOT check account_status.
+ * It is MUTATION-PROVEN: remove `AND p.account_status <> 'deleted'` from the fan-out
+ * and step 4's assertion goes red, because the tombstone is re-projected. The live
+ * control proves the pass actually ran and still projects a non-deleted account, so
+ * the exclusion is by account_status, not by a dead pass.
+ */
+describe("MEM·C1 — the fan-out must not resurrect a tombstoned (deleted) account", () => {
+  const EMAIL_CTL = `${TAG}c1_ctl@portava-test.invalid`;
+  const EMAIL_DEL = `${TAG}c1_del@portava-test.invalid`;
+  let ctl = "";
+  let del = "";
+
+  /** Count every projection a user owns — resurrection is any row reappearing after erasure. */
+  async function projCount(uid: string): Promise<number> {
+    const { count } = await sc.from("memory_projections")
+      .select("id", { count: "exact", head: true }).eq("user_id", uid);
+    return count ?? 0;
+  }
+
+  /**
+   * Give one user qualifying signal on three of the four person-fan-out branches:
+   * a visited-city edge (graph branch), a follow (follows branch) and an interest
+   * (preferences branch). The fix is a SINGLE outer guard over the union of all
+   * branches, so any one branch enumerating the tombstone is enough to prove it.
+   */
+  async function seedSources(uid: string, followTarget: string) {
+    await sc.from("compass_graph_edges").insert({
+      src_type: "person", src_key: uid, dst_type: "city", dst_key: "Lisbon",
+      edge_type: "visited", observed_count: 3,
+      first_seen: new Date(Date.now() - 86_400_000).toISOString(),
+      last_seen: new Date().toISOString(),
+    });
+    await sc.from("user_follows").upsert(
+      { follower_id: uid, following_id: followTarget }, { onConflict: "follower_id,following_id" });
+    await sc.from("compass_user_preferences").upsert(
+      { user_id: uid, interests: ["nightlife"] }, { onConflict: "user_id" });
+  }
+
+  before(async () => {
+    if (!CREDS) return;
+    ctl = await ensureUser(EMAIL_CTL, `${TAG}c1c`);
+    del = await ensureUser(EMAIL_DEL, `${TAG}c1d`);
+    await purge(ctl); await purge(del);
+    // A reused fixture from a crashed run could still be tombstoned; ensureUser's
+    // upsert does not touch account_status, so reset it explicitly.
+    await sc.from("profiles").update({ account_status: "active" }).in("id", [ctl, del]);
+  });
+
+  after(async () => {
+    if (!CREDS || !sc) return;
+    await purge(ctl); await purge(del);
+    for (const id of [ctl, del]) if (id) await sc.auth.admin.deleteUser(id).catch(() => {});
+  });
+
+  it("erased + tombstoned memory stays gone across a full projector pass; a live control still projects", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+
+    // 1. Both accounts start live and identically sourced (they follow each other,
+    //    so each has a follow target that is itself a live profile).
+    await seedSources(del, ctl);
+    await seedSources(ctl, del);
+
+    // 2. The subject earns real derived memory while still a live account.
+    await sc.rpc("project_user_memory_with_retraction", { p_user_id: del, p_enforce_flag: false });
+    assert.ok(await projCount(del) > 0, "precondition: the subject must have derived memory before deletion");
+
+    // 3. GDPR deletion, as AccountDeletionService performs it: tombstone the profile
+    //    and erase the derived memory. Source rows are deliberately left in place —
+    //    deletion does not scrub the graph edges / follows / preferences, which is
+    //    exactly why the fan-out could resurrect.
+    const { error: tombErr } = await sc.from("profiles")
+      .update({ account_status: "deleted" }).eq("id", del);
+    assert.equal(tombErr, null, "tombstoning the profile must succeed");
+    await sc.rpc("erase_memory_for_user", { p_user_id: del });
+    assert.equal(await projCount(del), 0, "precondition: erasure must leave zero projections");
+
+    // 4. The 6-hourly scheduler pass — the exact call memoryProjectionScheduler makes.
+    const { error: fanErr } = await sc.rpc("project_all_memory", { p_enforce_flag: false });
+    assert.equal(fanErr, null, "the fan-out pass must not error");
+
+    // 5. THE REGRESSION (MEM·C1): the tombstoned account must NOT be re-projected.
+    assert.equal(await projCount(del), 0,
+      "a GDPR-erased (tombstoned) account must not have its derived memory resurrected by the fan-out");
+
+    // 6. CONTROL: the same pass DID run and DOES still project a live, identically
+    //    sourced account — so step 5 is exclusion by account_status, not a dead pass.
+    assert.ok(await projCount(ctl) > 0,
+      "the fan-out must still project a live, identically-sourced control account");
+  });
+});
