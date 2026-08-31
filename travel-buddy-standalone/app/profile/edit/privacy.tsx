@@ -27,6 +27,7 @@ import {
   SettingsScreen, SettingsSection, SettingsRow, SettingsDivider, ToggleRow,
   SaveBar, ChipGrid, useUnsavedGuard, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
+import { ContributorViewOptInToggle } from '../../../src/features/media/components/ContributorViewOptInToggle';
 
 const VIS_OPTIONS = [
   { key: 'public', label: 'Public' },
@@ -447,6 +448,11 @@ export default function PrivacyVisibilityScreen() {
       <Text style={st.footerNote}>
         Your exact GPS coordinates are never shared publicly. All public surfaces show only city, neighborhood, or approximate distance.
       </Text>
+
+      {/* Media v2 Phase 10 (§19): opt in/out of being asked to contribute a live
+          view. ADDITIVE + flag-gated (media_request_a_view_enabled) — renders
+          nothing until the capability is enabled. Off by default, revocable. */}
+      <ContributorViewOptInToggle />
     </SettingsScreen>
   );
 }
