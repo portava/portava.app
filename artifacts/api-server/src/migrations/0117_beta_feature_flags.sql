@@ -24,8 +24,13 @@
 -- is the simpler alias consumed by kill-switch checks.
 
 INSERT INTO feature_flags (flag, enabled, description) VALUES
-  -- ── Feature gates (enabled by default) ──────────────────────────────────────
-  ('rent_buddy_enabled',              TRUE,  'Feature gate — Rent a Buddy is available in launch cities'),
+  -- ── Feature gates (enabled by default — EXCEPT rent_buddy_enabled) ───────────
+  -- CORRECTION: `rent_buddy_enabled` is NOT enabled by default. This TRUE is an
+  -- inert no-op — the statement is ON CONFLICT DO NOTHING (below) and the row
+  -- already exists (0050 seeds it FALSE, 0090 forces it TRUE). Its real default is
+  -- reasserted to FALSE by 2210_rent_buddy_default_off.sql per the owner decision
+  -- that Rent a Buddy stays OFF until an admin enables it post-launch-readiness.
+  ('rent_buddy_enabled',              TRUE,  'Feature gate (INERT no-op here — see 0090/2210; real default is OFF)'),
   ('safe_return_live_share_enabled',  TRUE,  'Feature gate — Safe Return live location share'),
   ('find_your_circle_enabled',        TRUE,  'Feature gate — Find Your Circle social discovery'),
   ('compass_ai_enabled',              TRUE,  'Feature gate — Compass AI recommendation engine'),
