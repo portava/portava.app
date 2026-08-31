@@ -13,6 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { VisibilityTier } from "./PassportPrivacyGuard.js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { recordEntityMedia } from "../../lib/mediaAssets.js";
 
 const logger = rootLogger.child({ service: "PassportMemoryService" });
 
@@ -126,7 +127,23 @@ export async function createMemory(
     logger.error({ table: "passport_memories", op: "insert", message: error.message }, "createMemory failed");
     return null;
   }
-  return (data as any).id;
+  const memoryId = (data as any).id as string;
+
+  // Canonical dual-write (flag-gated OFF; fail-soft — legacy photo_url path
+  // unaffected). Records the media_assets + media_attachments(entityType=memory)
+  // rows so the memory's photo participates in the §6.1 "one asset, many
+  // entities" model once media_canonical_enabled is lit.
+  if (input.photoUrl) {
+    void recordEntityMedia(db, {
+      ownerUserId: input.userId,
+      publicUrl: input.photoUrl,
+      entityType: "memory",
+      entityId: memoryId,
+      isCover: true,
+    });
+  }
+
+  return memoryId;
 }
 
 /**
