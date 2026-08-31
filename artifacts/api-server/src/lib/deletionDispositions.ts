@@ -66,6 +66,14 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // scoped delete; the table is not append-only), with service_role DELETE
   // granted by migration 2203.
   "intel_contribution_consent",
+  // IG-10 non-cash reward ledger (migration 2170, actor_id-keyed). Its ON DELETE
+  // CASCADE to profiles never fires under the tombstone (same as consent above),
+  // so a departed contributor's earning rows would survive while the observations
+  // that earned them are erased by erase_intel_for_actor. Erased explicitly by
+  // AccountDeletionService's `delete_intel_reward_ledger` step (a direct scoped
+  // delete; the ledger has no DELETE-blocking trigger), with service_role DELETE
+  // granted by migration 2204. Non-cash, so no financial-retention reason to keep it.
+  "intel_reward_ledger",
   "comment_likes",
   "devices",
   "event_saves",
@@ -388,6 +396,8 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "intel_confirmations",
   "intel_state_snapshots",
   "intel_contribution_consent",
+  // IG-10 non-cash reward ledger, added by migration 2170 (post-baseline).
+  "intel_reward_ledger",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",

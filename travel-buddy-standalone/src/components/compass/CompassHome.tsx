@@ -25,6 +25,7 @@ import {
   type CompassHomeResponse,
   type CompassHomeEvent,
 } from '../../services/compass.ts';
+import { CompassRediscover } from './CompassRediscover.tsx';
 
 // ── Six core actions — each prefills a grounded intent into the chat flow ─────
 
@@ -206,6 +207,12 @@ export function CompassHome({
             {[home.bestNextMove.category, home.bestNextMove.city].filter(Boolean).join(' · ')}
           </Text>
         </Pressable>
+      ) : null}
+
+      {/* Rediscovery (§8) — memory resurfaced on returning to this city.
+          Collapses to nothing until the memory_projection flag is on. */}
+      {showData && home?.city ? (
+        <CompassRediscover city={home.city} collapseWhenEmpty />
       ) : null}
 
       {/* Circle activity */}
