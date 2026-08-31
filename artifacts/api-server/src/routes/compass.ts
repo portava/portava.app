@@ -93,6 +93,7 @@ import {
 } from "../compass/CompassMemoryService.js";
 import { buildProjectedMemoryBlock } from "../compass/ProjectedMemoryPrompt.js";
 import { buildRememberSurface } from "../compass/PassportRemembersService.js";
+import { generateRecap, buildOnThisDay, type RecapKind } from "../compass/MemoryRecapsService.js";
 import { recordIntentFromQuery } from "../lib/intentMemory.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
 import { buildTripContextLines }                 from "../compass/CompassTripContext.js";
@@ -2458,6 +2459,65 @@ router.post("/compass/me/passport/remembers/correct", async (req, res) => {
   } catch (err) {
     req.log.error({ err, userId: auth.user.id }, "compass/me/passport/remembers/correct failed");
     sendError(res, "db_error", "Could not record your correction", { exposeDetail: true });
+  }
+});
+
+// ── §5 "Personal Recaps" + "On This Day" — PRIVATE, owner-only, SHIPS DISABLED ─
+// Behind the `memory_recaps` flag (seeded OFF; certification gate). These reuse
+// the §12 eligibility core wholesale (memory_remembers_for_user via the windowed
+// delegate memory_recaps_for_user, and the §12 source builders) — they invent no
+// second allow/deny boundary. Owner-only and session-scoped exactly like §12: a
+// smuggled ?user_id= is ignored; the caller is always auth.user.id. Generation is
+// READ-ONLY and NEVER auto-publishes. Every read is stateless — eligibility is
+// re-checked on each call, so a since-forgotten / made-sensitive / unconsented /
+// deleted item drops out. With the flag OFF these return inert and do zero work.
+
+// GET /api/compass/me/recaps?kind=trip|month|year|milestone&tripId=&year=&month=&milestone=
+const recapQuerySchema = z.object({
+  kind: z.enum(["trip", "month", "year", "milestone"]),
+  tripId: z.string().uuid().optional(),
+  year: z.coerce.number().int().min(1970).max(3000).optional(),
+  month: z.coerce.number().int().min(1).max(12).optional(),
+  milestone: z.string().min(1).max(120).optional(),
+});
+router.get("/compass/me/recaps", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  const parsed = recapQuerySchema.safeParse(req.query);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid query"); return; }
+  try {
+    // auth.user.id is the SESSION identity; any ?user_id= is never read.
+    // The route derives "now" from the request time; the service is fully
+    // date-injected (tests pass a fixed date).
+    const recap = await generateRecap(sc, auth.user.id, {
+      kind: parsed.data.kind as RecapKind,
+      tripId: parsed.data.tripId,
+      year: parsed.data.year,
+      month: parsed.data.month,
+      milestone: parsed.data.milestone,
+      now: new Date(),
+    });
+    res.json(recap);
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/recaps failed");
+    sendError(res, "db_error", "Could not build your recap", { exposeDetail: true });
+  }
+});
+
+// GET /api/compass/me/on-this-day — anniversaries of today (same month-day, earlier year).
+router.get("/compass/me/on-this-day", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  try {
+    const surface = await buildOnThisDay(sc, auth.user.id, { now: new Date() });
+    res.json(surface);
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/on-this-day failed");
+    sendError(res, "db_error", "Could not load On This Day", { exposeDetail: true });
   }
 });
 

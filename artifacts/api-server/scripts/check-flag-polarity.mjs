@@ -371,6 +371,17 @@ const CLASSIFIED = [
       'only the writers/readers. Nothing client-facing yet; no cash.',
   },
   {
+    flag: 'memory_recaps',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` enables §5 Personal Recaps + On This Day (compass/MemoryRecapsService.ts, read via isFlagEnabled at ' +
+      'isRecapsEnabled). Read-only, owner-only reads that draw on the §12 eligibility core (memory_remembers_for_user) ' +
+      'and never auto-publish. False-on-error is correct and is the whole design: generateRecap / buildOnThisDay return ' +
+      'an inert, empty surface (enabled:false) and do ZERO work — no derived RPC, no source reads — and shouldNotifyRecaps ' +
+      'returns {notify:false, reason:"flag_off"}. Seeded false (2214); STAYS off until deletion/consent/retention are ' +
+      'certified. Nothing client-facing until flipped; no cash.',
+  },
+  {
     flag: 'intel_rewards',
     kind: 'CAPABILITY',
     reason:
