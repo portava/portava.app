@@ -35,7 +35,7 @@ type ChatEntry =
 
 export default function AiChat() {
   const router = useRouter();
-  const { prefillMessage } = useLocalSearchParams<{ prefillMessage?: string }>();
+  const { prefillMessage, mediaId } = useLocalSearchParams<{ prefillMessage?: string; mediaId?: string }>();
   const planPicker = usePlanPicker();
   // Pre-seed Compass with the user's resolved city (GPS → last-known → home)
   // so it never has to ask "where are you right now?" when the app already
@@ -78,7 +78,11 @@ export default function AiChat() {
   useEffect(() => {
     if (!prefillMessage || sentPrefillRef.current) return;
     sentPrefillRef.current = true;
-    send(prefillMessage);
+    // The media action rail hands off both a prompt and (optionally) the media
+    // id so Compass grounds its first reply in the media context (§32); the
+    // context only needs to ride the initiating turn — follow-ups carry it via
+    // the conversation id.
+    send(prefillMessage, typeof mediaId === 'string' ? mediaId : undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefillMessage]);
 
@@ -104,7 +108,7 @@ export default function AiChat() {
     }
   }, []);
 
-  async function send(promptOverride?: string) {
+  async function send(promptOverride?: string, mediaIdOverride?: string) {
     const text = (promptOverride ?? input).trim();
     if (!text || loading) return;
     if (!promptOverride) setInput('');
@@ -125,7 +129,7 @@ export default function AiChat() {
     // Stream the reply so it types out live; postCompassAskStream falls back
     // to the plain non-streaming request on any SSE failure.
     const streamId = 'stream_' + Date.now();
-    const result = await postCompassAskStream(text, { city: currentCity }, {
+    const result = await postCompassAskStream(text, { city: currentCity, mediaId: mediaIdOverride }, {
       onDelta: (messageSoFar) => {
         setEntries((prev) => {
           const without = prev.filter((e) => e.id !== typingId && e.id !== streamId);
