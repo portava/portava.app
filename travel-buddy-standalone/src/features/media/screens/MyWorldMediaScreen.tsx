@@ -1,15 +1,21 @@
 /**
- * MyWorldMediaScreen — the MY WORLD lens (spec §5/§29/§30).
+ * MyWorldMediaScreen — the MY WORLD lens (spec §5/§29/§30/§31).
  *
  * The owner's own library and personal experience history. The §43 /media/me
  * projection returns real, bucketed collections (All · Posts · Postcards ·
  * Memories · Trips · Tagged · Hidden Gems) plus owner-only operational buckets
- * (Drafts · Archived · Processing) — this lens drives its filter chips from those
- * buckets and their true counts, and renders the selected bucket as a
+ * (Drafts · Archived · Uploads · Processing) — this lens drives its filter chips
+ * from those buckets and their true counts, and renders the selected bucket as a
  * Grid / Timeline (Map is deferred). Passport remains the primary Postcard
  * surface — this lens does not duplicate the full Passport media product (§29).
  *
+ * It also renders the §31 / §31.1 Memory Integration surface — the owner's OWN
+ * derived memory groupings + Hidden Gem Memory lines — as a private "Your travel
+ * memory" section (MyWorldMemorySection), clearly framed as owner-only. This is
+ * the viewer's OWN My World; another user's is never rendered here.
+ *
  * Degrades cleanly (§33/§39): 404 / empty ⇒ clean empty state, never a throw.
+ * No precise-location map, no fake-live (§46.2).
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
@@ -21,6 +27,7 @@ import { fetchMyWorld, isMyWorldEmpty } from '../services/mediaProjection.ts';
 import { useLensProjection } from '../hooks/useLensProjection.ts';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
+import { MyWorldMemorySection } from '../components/MyWorldMemorySection.tsx';
 
 export interface MyWorldMediaScreenProps {
   mode: PresentationMode;
@@ -38,6 +45,7 @@ const BUCKET_ORDER = [
   'gems',
   'drafts',
   'archived',
+  'uploads',
   'processing',
 ];
 
@@ -58,6 +66,7 @@ export function MyWorldMediaScreen({ mode, onOpenMedia }: MyWorldMediaScreenProp
   const buckets = useMemo(() => orderedBuckets(state.data?.buckets ?? []), [state.data]);
   const active = buckets.find((b) => b.key === selectedKey) ?? buckets[0] ?? null;
   const media = active?.media ?? [];
+  const memory = state.data?.memory ?? null;
 
   return (
     <View style={styles.wrap}>
@@ -87,7 +96,8 @@ export function MyWorldMediaScreen({ mode, onOpenMedia }: MyWorldMediaScreenProp
         <View style={styles.placeholder}>
           <Text style={styles.placeholderTitle}>Your world on the map</Text>
           <Text style={styles.placeholderBody}>
-            A map of everywhere you&apos;ve been arrives with the Media Map phase.
+            A map of everywhere you&apos;ve been arrives with the Media Map phase. Your library and
+            memory live in the Grid and Timeline views.
           </Text>
         </View>
       ) : state.status !== 'ready' || !state.data ? (
@@ -97,19 +107,30 @@ export function MyWorldMediaScreen({ mode, onOpenMedia }: MyWorldMediaScreenProp
           message="Media you capture and are tagged in will gather here as your travel history."
           onRetry={reload}
         />
-      ) : media.length === 0 ? (
-        <View style={styles.placeholder}>
-          <Text style={styles.placeholderTitle}>Nothing in {active?.label ?? 'this collection'} yet</Text>
-          <Text style={styles.placeholderBody}>
-            Pick another collection, or add media to fill this one.
-          </Text>
-        </View>
       ) : (
+        // Ready with content (empty ⇒ status 'empty' ⇒ handled above). Render the
+        // private §31 memory section first, then the selected bucket's Grid /
+        // Timeline. The memory section shows regardless of which bucket is active,
+        // and self-hides when there is nothing to remember.
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          {mode === 'timeline' ? (
+          {memory ? <MyWorldMemorySection memory={memory} /> : null}
+
+          {mode === 'timeline' && media.length > 0 ? (
             <Text style={styles.modeNote}>Newest first — your captures over time.</Text>
           ) : null}
-          <PerspectiveMosaic media={media} onOpen={onOpenMedia} />
+
+          {media.length > 0 ? (
+            <PerspectiveMosaic media={media} onOpen={onOpenMedia} />
+          ) : (
+            <View style={styles.bucketEmpty}>
+              <Text style={styles.placeholderTitle}>Nothing in {active?.label ?? 'this collection'} yet</Text>
+              <Text style={styles.placeholderBody}>
+                {active && active.count > 0
+                  ? `${active.label} lives in its own space — ${active.count} item${active.count === 1 ? '' : 's'} to open there.`
+                  : 'Pick another collection, or add media to fill this one.'}
+              </Text>
+            </View>
+          )}
         </ScrollView>
       )}
     </View>
@@ -141,6 +162,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.xl,
     gap: space.sm,
   },
-  placeholderTitle: { color: color.onInk, fontSize: 18, fontWeight: '800' },
+  bucketEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: space.xl,
+    paddingVertical: space.xxl,
+    gap: space.sm,
+  },
+  placeholderTitle: { color: color.onInk, fontSize: 18, fontWeight: '800', textAlign: 'center' },
   placeholderBody: { color: color.onInkMute, fontSize: 14, lineHeight: 20, textAlign: 'center' },
 });
