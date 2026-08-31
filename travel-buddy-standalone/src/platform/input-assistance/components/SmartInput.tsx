@@ -35,6 +35,7 @@ import type { InputSuggestion, InputSessionContext } from '../types/inputSuggest
 import { useInputAssistance } from '../hooks/useInputAssistance.ts';
 import { SuggestionOverlay } from './SuggestionOverlay.tsx';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
+import { recordSuggestionSelection } from '../services/selectionRecorder.ts';
 import { color, space, radius, type as t } from '../../../theme/tokens.ts';
 
 export interface SmartInputProps extends Omit<TextInputProps, 'onChange'> {
@@ -114,9 +115,15 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
       if (result !== false && s.replacementText != null) {
         onChangeText(s.replacementText);
       }
+      // §35 Phase 8 — record this EXPLICIT accept as selection memory so the
+      // gateway can personalize THIS user's future rank + zero-char recents. It
+      // is a fire-and-forget, fail-soft SIDE-EFFECT: it runs only on an explicit
+      // accept (never on view/hover/type), never awaits, never throws, and never
+      // gates or changes the selection above. `value` is the query that led here.
+      recordSuggestionSelection(s, { policy, query: value });
       setActiveIndex(-1);
     },
-    [fieldId, policy, onSelectSuggestion, onChangeText],
+    [fieldId, policy, onSelectSuggestion, onChangeText, value],
   );
 
   const handleKeyPress = useCallback(

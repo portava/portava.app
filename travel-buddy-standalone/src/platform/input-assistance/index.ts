@@ -104,6 +104,21 @@ export {
   clearRecentSelections,
   type RecentSelection,
 } from './services/suggestionHistory.ts';
+// Phase 8 (Personalization, §35/§15/§14) — explicit-selection recorder. The pure
+// predicate + body builder + fail-soft core (selectBody.ts, node:test-safe) and
+// the RN fire-and-forget wiring (selectionRecorder.ts).
+export {
+  selectionFromSuggestion,
+  buildSelectBody,
+  recordSelectionWith,
+  type SelectRequest,
+  type SelectDeps,
+  type RecordResult,
+} from './services/selectBody.ts';
+export {
+  recordExplicitSelection,
+  recordSuggestionSelection,
+} from './services/selectionRecorder.ts';
 export {
   emitInputEvent,
   setTelemetrySink,
