@@ -44,9 +44,21 @@ export type MissionTrigger =
   | "demand_spike_missing_family"
   | "material_contradiction"
   | "stale_critical_in_plan"
-  | "funded_campaign";
+  | "funded_campaign"
+  // ADDITIVE (Media v2 §19 Request-a-View). Produced ONLY by the human-network
+  // Request-a-View producer (services/media/MediaViewRequestService), NEVER by
+  // evaluateMissionTriggers below — the four auto-generation triggers are
+  // unchanged, so demand-driven mission generation behaves byte-identically.
+  // This member lets a user-initiated request reuse buildMissionCandidate to
+  // create a NON-CASH targeted coverage task in the SAME intel_mission_candidates
+  // store, rather than forking a parallel mission system.
+  | "request_a_view";
 
-/** Every trigger that fires for this context (§16 mission trigger v1). */
+/**
+ * Every trigger that fires for this context (§16 mission trigger v1).
+ * NOTE: never returns "request_a_view" — that trigger is created by a viewer's
+ * explicit request, not by the automated coverage-gap evaluation.
+ */
 export function evaluateMissionTriggers(ctx: MissionTriggerContext): MissionTrigger[] {
   const fired: MissionTrigger[] = [];
   if (ctx.qualifiedDemandEvents6h >= MISSION_TRIGGER_THRESHOLDS.minDemandEvents6h && ctx.requiredLiveFamilyMissing)
