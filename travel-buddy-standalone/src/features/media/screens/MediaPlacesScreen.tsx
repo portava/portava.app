@@ -17,12 +17,19 @@ import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
 import type { PlaceCurrentView } from '../types/perspective.ts';
 import type { MediaProjection } from '../types/media.ts';
-import { fetchPlaceView, isPlaceViewEmpty } from '../services/mediaProjection.ts';
+import type { MediaTimelineProjection } from '../types/mediaTimeline.ts';
+import {
+  fetchPlaceView,
+  isPlaceViewEmpty,
+  fetchTimeline,
+  isTimelineEmpty,
+  mapTimeline,
+} from '../services/mediaProjection.ts';
 import { useLensProjection } from '../hooks/useLensProjection.ts';
 import { CurrentPictureBadge } from '../components/CurrentPictureBadge.tsx';
 import { IntelligenceStrip } from '../components/IntelligenceStrip.tsx';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
-import { MediaTimeRail, type TimeRailSegment } from '../components/MediaTimeRail.tsx';
+import { MediaTimeRail } from '../components/MediaTimeRail.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
 import { relativeAgeLabel } from '../state/freshness.ts';
 import { zoneStateLabel } from '../state/cityPulse.ts';
@@ -145,7 +152,12 @@ function PlaceDetail({
         )}
       </View>
 
-      {state.status !== 'ready' || !view ? (
+      {mode === 'time' ? (
+        // The §17 Time rail is its own place-scoped projection (GET /media/timeline),
+        // independent of the current-picture load, so it renders even when this
+        // place has no observed media yet (it may still carry Typical / Likely-Next).
+        <PlaceTimeRail placeId={placeId} />
+      ) : state.status !== 'ready' || !view ? (
         <LensStateView
           status={state.status === 'idle' ? 'loading' : state.status}
           title="No current picture yet"
@@ -183,11 +195,7 @@ function PlaceDetail({
             </View>
           ) : null}
 
-          {mode === 'time' ? (
-            <View style={styles.timeBlock}>
-              <MediaTimeRail segments={buildPlaceRail(view)} />
-            </View>
-          ) : mode === 'map' ? (
+          {mode === 'map' ? (
             <Text style={styles.mapNote}>
               Place-level perspective clusters on the map arrive with the Media Map phase.
             </Text>
@@ -213,17 +221,47 @@ function zoneSubtitle(z: CityVisualZone): string {
   return 'Tap to see its current picture';
 }
 
-function buildPlaceRail(view: PlaceCurrentView): TimeRailSegment[] {
-  // 'Later' is a forecast (§17) — labeled predicted and never asserted as fact.
-  // With no observed trend the honest forecast is "Likely similar", not a
-  // fabricated direction.
-  const trend = view.currentPicture.trend;
-  const laterNote = trend === 'rising' ? 'Busier' : trend === 'falling' ? 'Easing' : 'Likely similar';
-  return [
-    { key: 'earlier', label: 'EARLIER', observationClass: 'observed', note: 'Earlier' },
-    { key: 'now', label: 'NOW', observationClass: 'observed', isNow: true, note: view.stateLabel ?? 'Now' },
-    { key: 'later', label: 'LATER', observationClass: 'predicted', note: laterNote },
-  ];
+/**
+ * PLACES → Time mode: the §17 four-band rail for a place, sourced from the real
+ * GET /media/timeline bands (Earlier / Now / Typical / Likely-Next). Loads
+ * independently of the current-picture view and degrades cleanly (§33/§39):
+ * empty ⇒ empty bands (rendered as neutral states), a failed refresh keeps the
+ * last good data (SWR) but is flagged `stale` so it is never shown as live.
+ */
+function PlaceTimeRail({ placeId }: { placeId: string }) {
+  const fetcher = useCallback(
+    (opts: { signal: AbortSignal }) => {
+      // A label-only zone (no canonical place UUID) has no place-scoped timeline;
+      // short-circuit to a well-formed empty projection rather than a doomed call.
+      if (!UUID_RE.test(placeId)) {
+        return Promise.resolve({ ok: true as const, data: mapTimeline({}) });
+      }
+      return fetchTimeline({ placeId, signal: opts.signal });
+    },
+    [placeId],
+  );
+  const { state, reload } = useLensProjection<MediaTimelineProjection>(fetcher, isTimelineEmpty, [placeId]);
+  const timeline = state.data;
+  // A 'ready' status that still carries an error kind = a failed refresh over
+  // good data (SWR). Treat that data as stale so the Now band is not shown live.
+  const stale = state.status === 'ready' && state.errorKind != null;
+
+  if (timeline && (state.status === 'ready' || state.status === 'empty' || state.status === 'revalidating')) {
+    return (
+      <ScrollView contentContainerStyle={styles.timeScroll} showsVerticalScrollIndicator={false}>
+        <Text style={styles.timeIntro}>Earlier · Now · Typical · Likely next</Text>
+        <MediaTimeRail bands={timeline.bands} stale={stale} />
+      </ScrollView>
+    );
+  }
+  return (
+    <LensStateView
+      status={state.status === 'idle' ? 'loading' : state.status}
+      title="No timeline yet"
+      message="Earlier, Now, Typical and Likely-Next fill in as this place gathers perspectives and intelligence."
+      onRetry={reload}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
@@ -257,6 +295,13 @@ const styles = StyleSheet.create({
   areaLabel: { color: color.onInkMute, fontSize: 13, fontWeight: '700', marginTop: -2 },
   coverage: { color: color.onInkMute, fontSize: 13, fontWeight: '600' },
   heroStripBlock: { paddingHorizontal: space.lg },
-  timeBlock: { paddingVertical: space.sm },
+  timeScroll: { paddingTop: space.sm, paddingBottom: space.xxxl, gap: space.md },
+  timeIntro: {
+    color: color.onInkMute,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    paddingHorizontal: space.lg,
+  },
   mapNote: { color: color.onInkMute, fontSize: 14, lineHeight: 20, paddingHorizontal: space.lg },
 });
