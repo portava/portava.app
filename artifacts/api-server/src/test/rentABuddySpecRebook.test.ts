@@ -82,10 +82,17 @@ function makeClient() {
       select() { return this; },
       insert(data: any) { this._insertData = data; return this; },
       eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
+      neq(col: string, val: any) { this._filters.push(["neq", col, val]); return this; },
       lte(col: string, val: any) { this._filters.push(["lte", col, val]); return this; },
       gte(col: string, val: any) { this._filters.push(["gte", col, val]); return this; },
+      lt(col: string, val: any) { this._filters.push(["lt", col, val]); return this; },
+      gt(col: string, val: any) { this._filters.push(["gt", col, val]); return this; },
+      in(col: string, val: any) { this._filters.push(["in", col, val]); return this; },
+      ilike(col: string, val: any) { this._filters.push(["ilike", col, val]); return this; },
+      is(col: string, val: any) { this._filters.push(["is", col, val]); return this; },
       or() { return this; },
       order() { return this; },
+      limit() { return this; },
       maybeSingle() { this._maybeSingle = true; return this; },
       single() { this._maybeSingle = true; return this; },
 
@@ -105,7 +112,25 @@ function makeClient() {
         }
 
         if (t === "feature_flags") {
-          return { data: this._maybeSingle ? { flag: "rent_buddy_enabled", enabled: true } : [], error: null };
+          // Flag-aware: only rent_buddy_enabled is ON. Every other flag (the
+          // booking kill switches, RENT_BUDDY_ADMIN_ONLY_MODE / MVP_MODE /
+          // BETA_ONLY_MODE, etc.) reads OFF, so the shared creation-gate stack
+          // the rebook path now runs is not spuriously tripped.
+          const flagEq = this._filters.find(([op, col]) => op === "eq" && col === "flag");
+          const flagName = flagEq ? flagEq[2] : null;
+          const enabled = flagName === "rent_buddy_enabled";
+          if (this._maybeSingle) {
+            return { data: flagName ? { flag: flagName, enabled } : null, error: null };
+          }
+          return { data: [], error: null };
+        }
+
+        if (t === "rent_buddy_city_rollouts") {
+          // Permissive: no explicit rollout rows are seeded, so treat every city
+          // as open (public_mvp) — matches the fallback in rentABuddy.test.ts and
+          // keeps these blocked-date tests focused on availability, not rollout.
+          if (this._maybeSingle) return { data: { id: "default-rollout", city: "default", status: "public_mvp" }, error: null };
+          return { data: [], count: 0, error: null };
         }
 
         if (t === "rent_buddy_profiles") {
