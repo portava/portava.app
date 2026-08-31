@@ -316,6 +316,27 @@ describe("GET /api/memories/:id", () => {
       assert.equal(status, 400);
     } finally { await app.close(); }
   });
+
+  it("denies a hidden viewer even for a friends_only memory (audit MEM·M1)", async () => {
+    const state = baseState();
+    state.memories[0].visibility = "friends_only";
+    state.memories[0].hidden_user_ids = [FRIEND_ID]; // owner hid this mutual follower
+    const app = await startApp(state);
+    try {
+      const { status } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("friend-tok"));
+      assert.equal(status, 404, "a hidden friend must not read a friends_only memory");
+    } finally { await app.close(); }
+  });
+
+  it("still allows a non-hidden friend to read a friends_only memory (positive control)", async () => {
+    const state = baseState();
+    state.memories[0].visibility = "friends_only";
+    const app = await startApp(state);
+    try {
+      const { status } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("friend-tok"));
+      assert.equal(status, 200);
+    } finally { await app.close(); }
+  });
 });
 
 describe("POST /api/memories", () => {
