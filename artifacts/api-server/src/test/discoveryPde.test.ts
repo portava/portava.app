@@ -461,3 +461,47 @@ describe("PDE viewer loading", () => {
     assert.equal(v.userId, "u-1");
   });
 });
+
+// ── Place-engagement affinity boost (placeAffinities → ×1.15) ──────────────────
+//
+// portavaRank has a PLACE_ENGAGEMENT_BOOST kernel that lifts a place the viewer
+// has engaged with (≥2 place_view events). It was a designed-but-dormant signal:
+// ViewerContext never carried placeAffinities and the candidate map never set
+// placeId, so it could never fire. rankForViewer now wires both.
+
+describe("N. place-engagement affinity boost", () => {
+  function twin(id: string): PdePlace & { name: string } {
+    return {
+      id, name: id, category: "food", distanceKm: 1.0, savedCount: 5,
+      rating: 4.0, tags: ["t"], lat: 48.85, lng: 2.35,
+      headerImageUrl: null, description: null,
+    } as PdePlace & { name: string };
+  }
+
+  it("promotes a place in the viewer's placeAffinities above an identical one without it", async () => {
+    const AFF = twin("db/aff");
+    const PLAIN = twin("db/plain");
+    // Identical candidates; only AFF is in placeAffinities (≥2 views).
+    const viewer = {
+      userId: "u-1", city: "paris",
+      followedIds: new Set<string>(), interestTags: new Set<string>(),
+      placeAffinities: { "db/aff": 5 },
+    };
+    // Input order puts PLAIN first, so without the boost the tie preserves that.
+    const out = await rankForViewer([PLAIN, AFF], viewer, { sc: null, served: false });
+    const ids = out.ranked.map((p) => p.id);
+    assert.ok(
+      ids.indexOf("db/aff") < ids.indexOf("db/plain"),
+      `the engaged place must rank above the identical un-engaged one — got ${JSON.stringify(ids)}`,
+    );
+  });
+
+  it("does nothing when the viewer has no affinity for the place (safe default)", async () => {
+    const A = twin("db/a");
+    const B = twin("db/b");
+    const viewer = { userId: "u-1", city: "paris", followedIds: new Set<string>(), interestTags: new Set<string>(), placeAffinities: {} };
+    const out = await rankForViewer([A, B], viewer, { sc: null, served: false });
+    // No boost, identical candidates → input order preserved.
+    assert.deepEqual(out.ranked.map((p) => p.id), ["db/a", "db/b"]);
+  });
+});

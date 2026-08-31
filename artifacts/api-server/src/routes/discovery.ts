@@ -1553,11 +1553,47 @@ router.get("/discovery", async (req, res) => {
       : osmPlaces;
     const merged   = mergeAndDedup(osmWithDist, dbPlaces);
     const filtered = applyFilters(merged);
-    const slice    = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+
+    // ── PDE mode (ruling D5=B — "rank every request") ──────────────────────────
+    // This is the beam that makes `pde` mode actually change what a cache-A serve
+    // returns. Cache A stores the user-INDEPENDENT candidate set (raw Overpass +
+    // curated), never a per-user order; today serve points 1/2/3 hand that raw
+    // order straight to the user, so `pde` mode was a labelled no-op. When the
+    // mode resolves to pde AND the authenticated caller is in the D6 cohort, we
+    // rank those same cached candidates for this viewer, per request, and serve
+    // that order instead. `served: true` because this IS the serve path — its
+    // result is what the user receives and it writes real impressions (serve
+    // point 6's pattern). Fail-safe: anonymous callers, out-of-cohort users, or a
+    // ranking error fall back to the legacy cached order, unchanged.
+    let servedFiltered = filtered;
+    let pdeScoredById: Map<string, ScoredCandidate<RankCandidate>> | null = null;
+    const pdeCohort = (callerUserId && engineMode.mode === "pde")
+      ? isInDiscoveryCohort(engineMode.cohort, callerUserId)
+      : null;
+    if (pdeCohort?.included && callerUserId) {
+      try {
+        const rankSc    = getServiceClient();
+        const pdeViewer = await loadPdeViewer(
+          rankSc, callerUserId, destination!.split(",")[0]?.trim().toLowerCase() ?? null,
+        );
+        const outcome = await rankForViewer(merged, pdeViewer, { sc: rankSc, served: true });
+        // Same filters as the legacy path — comparing/serving a ranked full list
+        // against a differently-filtered one would attribute to ranking what
+        // filtering did.
+        servedFiltered = applyFilters(outcome.ranked);
+        pdeScoredById  = outcome.scoredById;
+      } catch (err) {
+        req.log.warn({ err }, "discovery: pde ranking failed — serving legacy cached order");
+        servedFiltered = filtered;
+        pdeScoredById  = null;
+      }
+    }
+
+    const slice    = servedFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
     const totalMs  = Date.now() - t0;
-    req.log.info({ cacheLevel, destination, category, totalMs }, "discovery: cache hit");
+    req.log.info({ cacheLevel, destination, category, totalMs, pdeServed: pdeScoredById !== null }, "discovery: cache hit");
     res.json({
-      places: slice, total: filtered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+      places: slice, total: servedFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: { cacheLevel, timings: { totalMs } },
     });
@@ -1569,13 +1605,29 @@ router.get("/discovery", async (req, res) => {
         cacheLevel === "L1"       ? DiscoveryServePoint.CACHE_A_L1 :
         cacheLevel === "L2_fresh" ? DiscoveryServePoint.CACHE_A_L2_FRESH :
                                     DiscoveryServePoint.CACHE_A_L2_STALE;
-      void logDiscoveryServe(getServiceClient(), {
-        userId: callerUserId, servePoint, items: slice,
-        context: {
+      if (pdeScoredById) {
+        // PDE ranked and served this cache-A request (mode=pde, in-cohort). Log
+        // impressions carrying the real ranking features (serve point 6's
+        // mechanism), tagged rankedInRequest + the cache-level serve point. Do
+        // NOT also call logDiscoveryServe — that would write a second impression
+        // row for every served item.
+        const servedScored = slice
+          .map((p) => pdeScoredById!.get(p.id))
+          .filter((s): s is ScoredCandidate<RankCandidate> => s !== undefined);
+        void logImpression(servedScored, callerUserId, "discovery", undefined, {
+          servePoint, route: "GET /discovery", rankedInRequest: true,
           destination: destination!, category, cacheLevel,
           engineMode: engineMode.mode, modeReason: engineMode.reason,
-        },
-      });
+        });
+      } else {
+        void logDiscoveryServe(getServiceClient(), {
+          userId: callerUserId, servePoint, items: slice,
+          context: {
+            destination: destination!, category, cacheLevel,
+            engineMode: engineMode.mode, modeReason: engineMode.reason,
+          },
+        });
+      }
 
       // ── Stage 2 shadow — observe only, after the response has left ─────────
       //

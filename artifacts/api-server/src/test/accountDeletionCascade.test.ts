@@ -284,6 +284,24 @@ describe("executeAccountDeletion — full cascade", () => {
     );
   });
 
+  it("erases the IG-02 contribution consent row — its profiles cascade never fires under the tombstone", async () => {
+    // intel_contribution_consent (migration 2172) FKs profiles(id) ON DELETE
+    // CASCADE, but the tombstone profile means that cascade never fires, so the
+    // consent row (user_id + version + timestamps) would survive deletion as
+    // orphaned personal data. It is not append-only, so it is cleared with a
+    // direct scoped delete (not the erasure RPC), keyed by user_id.
+    const c = makeClient();
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+
+    const del = opFor(c, "intel_contribution_consent", "delete");
+    assert.ok(del, "the cascade must delete the intel contribution consent row");
+    assert.deepEqual(del!.filters, [["eq", "user_id", USER_ID]],
+      "consent must be deleted scoped to this user by its user_id primary key");
+    assert.ok(out.steps.some((s) => s.step === "delete_intel_consent" && s.ok),
+      "the delete_intel_consent step must run and succeed");
+  });
+
   it("ABORTS the deletion when the memory purge fails — never silently leaves memory behind", async () => {
     // The privacy guarantee: a deletion request that cannot purge derived memory
     // must fail loudly and stay retryable, rather than reporting success with the

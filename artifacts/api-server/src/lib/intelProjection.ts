@@ -33,7 +33,23 @@ import { LIVE_ELIGIBLE_CLAIM_STATUSES } from "./intelContracts.js";
 export interface ProjectionInput {
   claimType: string;
   value: unknown;
+  /** Newest-observation timestamp — the freshness/serving clock (snapshot
+   *  observed_at + TTL expiry). NOT the publication-delay clock. */
   observedAt: string;
+  /**
+   * STABLE anchor for the publication-delay clock (the earliest qualifying
+   * observation, or when the claim first crossed the k-anon threshold). Keeping
+   * this separate from `observedAt` is what stops a venue with continuous fresh
+   * signals from perpetually resetting the delay and never publishing. Falls back
+   * to `observedAt` when the caller does not supply it.
+   */
+  publicationAnchorAt?: string;
+  /**
+   * Absolute ceiling past which this claim may NEVER serve, however fresh the
+   * newest observation is. Caps the snapshot's servable `expires_at`. Null/absent
+   * means no code-side ceiling (e.g. an unknown claim type).
+   */
+  hardExpiresAt?: string | null;
   /** Distinct PEOPLE who contributed, counted by the caller from confirmations. */
   distinctActors: number;
   distinctGroups?: number;
@@ -83,9 +99,22 @@ export async function projectClaim(
   // A claim type with no policy has no defined lifetime; freshnessPolicy already
   // treats it as stale, so projecting it would create a snapshot that can never
   // be live. Skip rather than invent a TTL.
-  const expires = await policyExpiresAt(sc, input.claimType, input.observedAt);
+  let expires = await policyExpiresAt(sc, input.claimType, input.observedAt);
   if (!expires) {
     return { snapshot: null, privacy: { publishable: false, reason: "invalid_input" }, skippedReason: "no_ttl_policy" };
+  }
+
+  // Absolute hard-expiry ceiling: however fresh the newest observation is, the
+  // claim may never serve past this cap. The read path only checks
+  // `expires_at > now`, so capping the servable horizon here is what actually
+  // stops a continuously-refreshed claim from living forever (finding 5). A
+  // ceiling already in the past collapses expires_at to it, and the reader then
+  // drops the row as expired.
+  if (input.hardExpiresAt) {
+    const hardMs = Date.parse(input.hardExpiresAt);
+    if (Number.isFinite(hardMs) && hardMs < Date.parse(expires)) {
+      expires = new Date(hardMs).toISOString();
+    }
   }
 
   const scored = scoreConfidence(input.components, input.penalties);
@@ -93,7 +122,10 @@ export async function projectClaim(
     distinctActors: input.distinctActors,
     distinctGroups: input.distinctGroups,
     maxGroupShare: input.maxGroupShare,
-    observedAt: input.observedAt,
+    // Publication-delay clock keyed to the STABLE anchor (earliest qualifying
+    // observation), NOT the newest-observation freshness clock — otherwise a
+    // venue with continuous fresh signals resets the delay forever (H3).
+    observedAt: input.publicationAnchorAt ?? input.observedAt,
     now,
     sensitiveSubject: input.sensitiveSubject,
   });
