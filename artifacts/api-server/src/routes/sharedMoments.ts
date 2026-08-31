@@ -7,6 +7,7 @@ import { fetchBlockedSet } from "../lib/blocks.js";
 import { excludePrivateAuthorPosts } from "../lib/privacyFilter.js";
 import { isLivePlacesCapabilityEnabled } from "../lib/featureFlags.js";
 import { appendMomentAudit, areSharedMomentsEnabled, momentRole } from "../lib/places/sharedMoments.js";
+import { recordMediaAttachment } from "../lib/mediaAssets.js";
 
 const router = Router();
 const uuid = z.string().uuid();
@@ -234,6 +235,17 @@ router.post("/shared-moments/:id/contributions", asyncHandler(async (req, res) =
     media_asset_id: parsed.data.mediaAssetId ?? null, caption: parsed.data.caption ?? null, status: "pending",
   }, { onConflict: "moment_id,contributor_id,post_id,media_asset_id" }).select("*").maybeSingle();
   if (error) { sendError(res, "db_error", error.message); return; }
+  // Canonical dual-write (flag-gated OFF; fail-soft). The asset already exists
+  // (verified above) and is FK'd on the contribution row; this adds the §6.1
+  // media_attachments(entityType=shared_moment) link so the asset joins the
+  // canonical "one asset, many entities" model once the flag is lit.
+  if (parsed.data.mediaAssetId) {
+    void recordMediaAttachment(ctx.sc, {
+      mediaAssetId: parsed.data.mediaAssetId,
+      entityType: "shared_moment",
+      entityId: params.data.id,
+    });
+  }
   await appendMomentAudit(ctx.sc, params.data.id, ctx.userId, "contribution_submitted", { contributionId: (data as any)?.id });
   res.status(201).json({ contribution: data });
 }));
