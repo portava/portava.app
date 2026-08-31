@@ -151,7 +151,7 @@ jest.mock('../../../src/components/map/MapCarousel', () => {
 
 // NOTE: intentional stub — supplies a fixed entity list so index → id is known.
 jest.mock('../../../src/hooks/useMapEntities', () => ({
-  useMapEntities: () => ({ entities: MOCK_ENTITIES }),
+  useMapEntities: () => ({ entities: MOCK_ENTITIES, objects: [], liveEnrichment: null, loading: false, error: null, refresh: () => {}, source: 'legacy' }),
 }));
 
 // ── Shared test data ──────────────────────────────────────────────────────────

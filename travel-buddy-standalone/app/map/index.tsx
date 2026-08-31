@@ -17,7 +17,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CameraRef } from '@maplibre/maplibre-react-native';
 import {
-  View, Text, Pressable, StyleSheet, Platform, ActivityIndicator,
+  View, Text, Pressable, StyleSheet, Platform, ActivityIndicator, AppState, BackHandler,
 } from 'react-native';
 import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { router } from 'expo-router';
@@ -43,6 +43,31 @@ import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 import { MapStoreProvider, useMapStore } from '../../src/stores/mapStore.tsx';
+import { resolveBack } from '../../src/features/map/state/mapMachine.ts';
+import { activeIntent } from '../../src/features/map/intent/intentModel.ts';
+import { NOW_OFFSET } from '../../src/features/map/time/timeMachine.ts';
+import { IntentSheet } from '../../src/components/map/IntentSheet.tsx';
+import { LayersSheet, loadLayerPreferences } from '../../src/components/map/LayersSheet.tsx';
+import { LivePlaceSheet } from '../../src/components/map/LivePlaceSheet.tsx';
+import { WhyShownSheet } from '../../src/components/map/WhyShownSheet.tsx';
+import { MapContributionSheet } from '../../src/components/map/MapContributionSheet.tsx';
+import { MapBottomActions } from '../../src/components/map/MapBottomActions.tsx';
+import { TimeMachineControl } from '../../src/components/map/TimeMachineControl.tsx';
+import {
+  EMPTY_LAYER_PREFERENCES,
+  DEFAULT_LAYER_CONTEXT,
+  type LayerPreferences,
+} from '../../src/features/map/layers/layerModel.ts';
+import {
+  createFetchTelemetryTransport,
+  describeMapObject,
+  emitMapEvent,
+  endMapSession,
+  notifyMapAppStateChange,
+  setMapTelemetryTransport,
+} from '../../src/features/map/telemetry/mapTelemetry.ts';
+import { freshToken } from '../../src/services/apiToken.ts';
+import type { MapObject } from '../../src/types/mapObjects.ts';
 import type { DiscoveryMapViewProps } from '../../src/components/discovery/DiscoveryMapView.tsx';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
@@ -344,6 +369,13 @@ function FullScreenMapScreenInner() {
     cameraZoom,
     setCameraCenter,
     setCameraZoom,
+    machine,
+    dispatchMapEvent,
+    intent,
+    setIntent,
+    clearIntent,
+    timeOffset,
+    setTimeOffset,
   } = useMapStore();
 
   // Shared camera ref — forwarded into DiscoveryMapView so the Camera element
@@ -511,12 +543,61 @@ function FullScreenMapScreenInner() {
   // `title` is used as the city name — passed in from Discovery / Trips entry points.
   // In passport mode the hook still runs but its output is discarded in favour of
   // passportEntities — React hooks cannot be called conditionally.
-  const { entities: defaultEntities } = useMapEntities({
+  const {
+    entities: defaultEntities,
+    objects: defaultObjects,
+    liveEnrichment,
+  } = useMapEntities({
     enabledLayers: mode === 'passport' ? [] : enabledLayers,
     city: mode === 'passport' ? null : title,
     lat: fallbackLat,
     lng: fallbackLng,
+    zoom: cameraZoom ?? paramZoom,
   });
+
+  // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
+  const [layerPrefs, setLayerPrefs] = useState<LayerPreferences>(EMPTY_LAYER_PREFERENCES);
+  useEffect(() => {
+    loadLayerPreferences().then(setLayerPrefs).catch(() => {});
+  }, []);
+
+  // ── §35 telemetry ───────────────────────────────────────────────────────────
+  // Transport is installed once per map session. Without one the emitter keeps
+  // queueing rather than discarding, so boot-time events survive.
+  useEffect(() => {
+    setMapTelemetryTransport(
+      createFetchTelemetryTransport({
+        baseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? '',
+        getToken: freshToken,
+      }),
+    );
+    const sub = AppState.addEventListener('change', notifyMapAppStateChange);
+    emitMapEvent('map_opened', {
+      entry: mode ?? 'direct',
+      mode: machine.mode,
+      zoom: cameraZoom ?? paramZoom,
+      hasTripContext: entityTypes.includes('trips'),
+      hasCrewContext: entityTypes.includes('friends'),
+    });
+    return () => {
+      sub.remove();
+      endMapSession();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── §30 Back ladder ─────────────────────────────────────────────────────────
+  // Overlay -> selection -> secondary mode -> let the router pop. Navigation is
+  // deliberately NOT a rung: a stray back must not drop the user out of
+  // turn-by-turn.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      const outcome = resolveBack(machine);
+      if (!outcome.handled) return false;
+      dispatchMapEvent({ type: 'BACK' });
+      return true;
+    });
+    return () => sub.remove();
+  }, [machine, dispatchMapEvent]);
 
   // ── Compass search override ─────────────────────────────────────────────────
   // When a Compass query is active, compassOverrideEntities replaces defaultEntities
@@ -743,6 +824,23 @@ function FullScreenMapScreenInner() {
     [entities, setCameraCenter, setCameraZoom, setActiveIndex, setSelectedEntityId],
   );
 
+  // ── §8 the selected MapObject, and its §30 overlays ─────────────────────────
+  const objects: MapObject[] = defaultObjects;
+  const selectedObject = useMemo(
+    () => objects.find((o) => o.id === machine.selection?.objectId) ?? null,
+    [objects, machine.selection?.objectId],
+  );
+  const [whyObject, setWhyObject] = useState<MapObject | null>(null);
+  const [contributeObject, setContributeObject] = useState<MapObject | null>(null);
+
+  const layerContext = useMemo(
+    () => ({ ...DEFAULT_LAYER_CONTEXT, mode: machine.mode }),
+    [machine.mode],
+  );
+
+  const overlayOpen = (o: 'INTENT' | 'LAYERS' | 'FILTERS' | 'SEARCH') =>
+    machine.overlays.includes(o);
+
   /** Called when the user taps a marker on the map. */
   const handleSelectEntity = useCallback(
     (entity: MapEntity) => {
@@ -901,7 +999,7 @@ function FullScreenMapScreenInner() {
         fallbackLng={fallbackLng}
         title={title}
         topInset={insets.top}
-        onFiltersPress={() => setFilterSheetOpen(true)}
+        onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'LAYERS' })}
       />
 
       {/* Places loading indicator — small spinner overlay while getDiscoveryPlaces
@@ -977,6 +1075,20 @@ function FullScreenMapScreenInner() {
             </View>
           ) : null}
 
+          {/* §13 Intent entry — "tell Portava what you want right now".
+              Shows the active intent's label so a live TTL is visible rather
+              than silently expiring behind a generic button. */}
+          <Pressable
+            style={s2.intentChip}
+            onPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'INTENT' })}
+            accessibilityRole="button"
+            accessibilityLabel="Set what you want right now"
+          >
+            <Text style={s2.intentChipText} numberOfLines={1}>
+              {activeIntent(intent) ? `Intent: ${activeIntent(intent)!.kind}` : 'What do you want right now?'}
+            </Text>
+          </Pressable>
+
           {/* Ask Compass search bar */}
           <AskCompassBar
             city={title ?? ''}
@@ -989,6 +1101,99 @@ function FullScreenMapScreenInner() {
         </View>
       )}
 
+      {/* ── §15 Time Machine scrubber ──────────────────────────────────────
+          Floating above the carousel. Rendered only when the surface is
+          actually enabled — canEnterMode fails closed, so an unbuilt surface
+          is unreachable rather than half-present. */}
+      {machine.capabilities.TIME_MACHINE ? (
+        <TimeMachineControl
+          offset={timeOffset}
+          onChange={setTimeOffset}
+          bottomInset={insets.bottom + 140}
+        />
+      ) : null}
+
+      {/* ── §25 persistent action rail ──────────────────────────────────────
+          Ask Compass · Meet Here · Add to Trip · Navigate. Actions are driven
+          by the selected object's own interaction config; the rail keeps four
+          slots so it never reflows. */}
+      {selectedObject ? (
+        <MapBottomActions
+          selected={selectedObject}
+          bottomInset={insets.bottom}
+          onAction={(action, obj) => {
+            if (action === 'contribute') setContributeObject(obj);
+          }}
+        />
+      ) : null}
+
+      {/* ── §8 Live Place sheet ─────────────────────────────────────────────
+          Replaces the legacy preview card for objects whose contract says they
+          open a sheet. The map stays visible behind Peek and Half (§32). */}
+      {selectedObject?.interaction?.opensSheet ? (
+        <LivePlaceSheet
+          object={selectedObject}
+          onClose={() => dispatchMapEvent({ type: 'CLEAR_SELECTION' })}
+          onWhyPress={(obj) => {
+            setWhyObject(obj);
+            emitMapEvent('why_shown_opened', {
+              ref: describeMapObject(obj),
+              lineCount: obj.provenance?.lines.length ?? 0,
+              provenanceRefs: obj.sourceRefs,
+            });
+          }}
+          onContribute={setContributeObject}
+        />
+      ) : null}
+
+      {/* ── §9 "Why Portava says this" ──────────────────────────────────── */}
+      <WhyShownSheet
+        visible={whyObject !== null}
+        object={whyObject}
+        onClose={() => setWhyObject(null)}
+      />
+
+      {/* ── §22 one-tap contribution ────────────────────────────────────────
+          An observation, never a rating — and a reward may never raise
+          confidence (§22, §37). Submission is the caller's seam. */}
+      <MapContributionSheet
+        visible={contributeObject !== null}
+        object={contributeObject}
+        onClose={() => setContributeObject(null)}
+        onSubmit={(contribution) => {
+          if (!contributeObject) return;
+          emitMapEvent('contribution_submitted', {
+            ref: describeMapObject(contributeObject),
+            contributionKind: contribution.kind,
+            prompt: 'sheet',
+          });
+          setContributeObject(null);
+        }}
+      />
+
+      {/* ── §13 Intent Mode ─────────────────────────────────────────────────
+          Temporary context with a TTL — never a preference rewrite. */}
+      <IntentSheet
+        visible={overlayOpen('INTENT')}
+        intent={activeIntent(intent)}
+        onChange={setIntent}
+        onClear={clearIntent}
+        onClose={() => dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'INTENT' })}
+        bottomInset={insets.bottom}
+      />
+
+      {/* ── §16 Layers + legend ─────────────────────────────────────────────
+          The tri-state sheet over MapObject kinds. The legacy MapFilterSheet
+          below still drives the old MapEntity layer set; they use different
+          storage keys and coexist until the projection path is the only one. */}
+      <LayersSheet
+        visible={overlayOpen('LAYERS')}
+        onClose={() => dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'LAYERS' })}
+        preferences={layerPrefs}
+        onChangePreferences={setLayerPrefs}
+        context={layerContext}
+      />
+
       {/* Layer filter bottom sheet */}
       <MapFilterSheet
         visible={filterSheetOpen}
@@ -999,6 +1204,23 @@ function FullScreenMapScreenInner() {
     </View>
   );
 }
+
+/** Styles for the surfaces added by the Map spec integration. */
+const s2 = StyleSheet.create({
+  intentChip: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(10,61,74,0.92)',
+  },
+  intentChipText: {
+    color: '#FAF9F6',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+});
 
 const s = StyleSheet.create({
   root: {

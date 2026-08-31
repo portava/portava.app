@@ -77,6 +77,8 @@
  * being discarded, so telemetry fired during app boot is not lost.
  */
 
+import type { MapMode } from '../vocabulary.ts';
+import type { MapContributionKind } from '../truth/liveTruth.ts';
 import {
   centroidOf,
   type ConfidenceState,
@@ -315,7 +317,10 @@ export type MapEntryPoint =
   | 'place'
   | 'unknown';
 
-export type MapMode = 'explore' | 'live' | 'trip' | 'crowd_flow' | 'social' | 'time_machine';
+// The §30 modes, from features/map/vocabulary.ts. Declared there rather than
+// here so telemetry reports the SAME mode value the state machine is actually
+// in — a private enum would have silently recorded a mode the map never had.
+export type { MapMode };
 
 export type PlaceOpenSource =
   | 'marker'
@@ -329,15 +334,15 @@ export type PlaceOpenSource =
 
 export type TravelMode = 'walk' | 'transit' | 'drive' | 'ride_hail' | 'cycle' | 'unknown';
 
-export type ContributionKind =
-  | 'crowd_level'
-  | 'vibe'
-  | 'queue'
-  | 'still_open'
-  | 'closed'
-  | 'photo'
-  | 'correction'
-  | 'safety';
+/**
+ * The §22 contribution set, taken from features/map/truth/liveTruth.ts rather
+ * than restated. That module owns the capture vocabulary and quotes §22
+ * verbatim; a private list here drifted from it immediately (it had
+ * 'still_open'/'closed'/'photo' where §22 says entry/access, closure and
+ * photo/video), which would have made the telemetry unjoinable to the
+ * observations it is supposed to measure.
+ */
+export type ContributionKind = MapContributionKind;
 
 export type DeclineReason =
   | 'not_interested'

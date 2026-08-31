@@ -73,7 +73,7 @@ jest.mock('../../../src/context/LocationContext', () => ({
 // NOTE: intentional stub — entities from the hook are not under test here; place
 // entities come from getDiscoveryPlaces which is mocked separately.
 jest.mock('../../../src/hooks/useMapEntities', () => ({
-  useMapEntities: () => ({ entities: [] }),
+  useMapEntities: () => ({ entities: [], objects: [], liveEnrichment: null, loading: false, error: null, refresh: () => {}, source: 'legacy' }),
 }));
 
 // ── MapFilterSheet / loadEnabledLayers ─────────────────────────────────────────

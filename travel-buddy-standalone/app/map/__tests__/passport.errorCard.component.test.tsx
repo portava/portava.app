@@ -109,7 +109,7 @@ jest.mock('../../../src/context/LocationContext', () => ({
 // NOTE: intentionally exhaustive — the real hook calls Supabase real-time
 // subscriptions that are unavailable under Jest.
 jest.mock('../../../src/hooks/useMapEntities', () => ({
-  useMapEntities: () => ({ entities: [] }),
+  useMapEntities: () => ({ entities: [], objects: [], liveEnrichment: null, loading: false, error: null, refresh: () => {}, source: 'legacy' }),
 }));
 
 // ── MapFilterSheet / loadEnabledLayers ─────────────────────────────────────────

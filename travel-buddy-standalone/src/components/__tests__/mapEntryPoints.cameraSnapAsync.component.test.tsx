@@ -225,7 +225,7 @@ jest.mock('../../services/discovery', () => ({
 // NOTE: intentionally exhaustive — the real hook depends on multiple Supabase
 // services (rentABuddy, events, hiddenGems, trips, map) that are not safe under jest.
 jest.mock('../../hooks/useMapEntities', () => ({
-  useMapEntities: jest.fn(() => ({ entities: [] })),
+  useMapEntities: jest.fn(() => ({ entities: [], objects: [], liveEnrichment: null, loading: false, error: null, refresh: () => {}, source: 'legacy' })),
 }));
 // NOTE: intentionally exhaustive — MapFilterSheet depends on AsyncStorage and
 // native-module internals that are not safe under jest.
@@ -324,7 +324,7 @@ describe('FullScreenMapScreen — camera snap fires on async entity arrival', ()
     // be exhausted and return undefined, dropping the entity list.  A live
     // variable keeps every render consistent within each phase.
     let currentEntities: Array<typeof asyncEntity> = [];
-    (useMapEntities as jest.Mock).mockImplementation(() => ({ entities: currentEntities }));
+    (useMapEntities as jest.Mock).mockImplementation(() => ({ entities: currentEntities, objects: [], liveEnrichment: null, loading: false, error: null, refresh: () => {}, source: 'legacy' }));
 
     const mockEaseTo = jest.fn();
 
@@ -373,7 +373,7 @@ describe('FullScreenMapScreen — camera snap fires on async entity arrival', ()
     const { DiscoveryMapView } = require('../../components/discovery/DiscoveryMapView');
 
     // Entities never arrive in this test — we only care about the first render.
-    (useMapEntities as jest.Mock).mockReturnValue({ entities: [] });
+    (useMapEntities as jest.Mock).mockReturnValue({ entities: [], objects: [], liveEnrichment: null, loading: false, error: null, refresh: () => {}, source: 'legacy' });
 
     const mockEaseTo = jest.fn();
     (DiscoveryMapView as jest.Mock).mockImplementation((props: any) => {
