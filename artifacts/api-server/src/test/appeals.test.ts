@@ -469,6 +469,34 @@ describe("PATCH /api/appeals/:id", () => {
     assert.equal(notif.action_url, "/appeals");
   });
 
+  it("approval is HELD (not committed) and NOT notified when the reversal fails", async () => {
+    // resolveAppeal returns { ok:false, action:'noop' } for an unknown/unhandled
+    // target_type. The handler must run the reversal BEFORE writing 'approved'
+    // (a terminal, non-re-drivable state) and, on failure, leave the appeal in
+    // under_review without telling the appellant the action was reversed.
+    const tables = adminTables("under_review");
+    // Force a reversal failure: a target_type resolveAppeal cannot handle.
+    tables.appeals.rows[0].target_type = "widget_that_does_not_exist";
+    server = await startServer(tables);
+    const { status, body } = await patch(
+      server.url, `/api/appeals/${APPEAL_ID}`, "admin-token",
+      { state: "approved", resolutionNote: "Restore it." },
+    );
+
+    assert.equal(status, 422, "a failed reversal must surface an error, not a 200");
+    assert.equal(body.error, "reversal_failed");
+
+    // The appeal row must NOT have been flipped to the terminal 'approved' state.
+    assert.equal(tables.appeals.rows[0].state, "under_review",
+      "appeal must be held in under_review so a moderator can retry");
+
+    // No 'approved' notification may have been sent for a reversal that failed.
+    await new Promise((r) => setTimeout(r, 20));
+    const approvedNotif = tables.notifications.rows.find((n) => n.event_type === "appeal.approved");
+    assert.equal(approvedNotif, undefined,
+      "must not tell the appellant the action was reversed when it was not");
+  });
+
   it("under_review → denied inserts appeal_denied notification", async () => {
     const tables = adminTables("under_review");
     server = await startServer(tables);
