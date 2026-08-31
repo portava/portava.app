@@ -316,6 +316,27 @@ describe("GET /api/memories/:id", () => {
       assert.equal(status, 400);
     } finally { await app.close(); }
   });
+
+  it("never exposes the owner's allow/hide lists to a non-owner viewer (audit MEM·M2)", async () => {
+    const state = baseState();
+    // A public memory the owner has hidden from a specific user.
+    state.memories[0].hidden_user_ids = ["99999999-9999-4999-8999-000000000001"];
+    state.memories[0].allowed_user_ids = ["88888888-8888-4888-8888-000000000002"];
+    const app = await startApp(state);
+    try {
+      // Owner sees their own audience lists.
+      const owner = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"));
+      assert.equal(owner.status, 200);
+      assert.deepEqual(owner.body.memory.hiddenUserIds, ["99999999-9999-4999-8999-000000000001"]);
+      assert.deepEqual(owner.body.memory.allowedUserIds, ["88888888-8888-4888-8888-000000000002"]);
+
+      // A stranger reading the same public memory must NOT learn who was hidden.
+      const stranger = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("stranger-tok"));
+      assert.equal(stranger.status, 200);
+      assert.equal(stranger.body.memory.hiddenUserIds, undefined, "hidden list must not leak to a non-owner");
+      assert.equal(stranger.body.memory.allowedUserIds, undefined, "allow list must not leak to a non-owner");
+    } finally { await app.close(); }
+  });
 });
 
 describe("POST /api/memories", () => {
