@@ -38,6 +38,16 @@
  * to the intel steps in section 3: erase_intel_for_actor deletes the evidence
  * rows, and their `reference` is the only record of where the bytes live.
  *
+ * ── Every collection read is PAGED ──────────────────────────────────────────
+ * A range-less PostgREST read stops at the project's db-max-rows (1000 here)
+ * without an error, so the collectors under-read exactly the accounts with the
+ * most media and reported the deletion successful anyway. Every set-returning
+ * read in section 1 now goes through `pagedCollectStep`, which is also the only
+ * thing that knows how to page — a new collection step gets `readAll` injected
+ * and cannot quietly reintroduce the bug. See the block comment on
+ * COLLECTION_PAGE_SIZE for why the page size must stay below db-max-rows and
+ * why stopping early raises a warning instead of passing silently.
+ *
  * ── The gap this class of bug lives in ──────────────────────────────────────
  * `check:deletion-coverage` asks whether every user-keyed TABLE has a stated
  * fate. Nothing asks whether every stored OBJECT does. A table can be fully
@@ -126,7 +136,7 @@ const REFERENCE_BUCKETS: readonly string[] = [POST_MEDIA_BUCKET, PROFILE_MEDIA_B
  * the STEPS change; bump the policy version when the RULES do.
  */
 export const DELETION_POLICY_VERSION = "d6-2026-08-23";
-export const DELETION_WORKER_VERSION = "2026-08-31.2";
+export const DELETION_WORKER_VERSION = "2026-08-31.3";
 
 /** Per-step outcome. Steps are independent so one failure cannot hide another. */
 export interface DeletionStepResult {
@@ -241,6 +251,138 @@ function must<T extends { error?: any }>(res: T, what: string): T {
 }
 
 /**
+ * ── PAGING: the one read path for every collection step ─────────────────────
+ *
+ * THE DEFECT this closes. A range-less PostgREST read is SILENTLY capped by the
+ * project's `db-max-rows` — 1000 on this deployment, the figure
+ * lib/intelProjectionScheduler records and paginates against, using the SAME
+ * service-role client this service is handed (db-max-rows is a PostgREST server
+ * setting; no role, service_role included, is exempt from it). Not one of the
+ * collection steps below passed a `.range()` or a `.limit()`. So a user with
+ * more rows than the cap in ANY of these tables had the surplus dropped with no
+ * error: the step reported ok, with a count, and the deletion was reported
+ * successful while their bytes stayed in the bucket. The failure was reserved
+ * for the users with the MOST content — the worst possible distribution for it.
+ *
+ * PAGE SIZE MUST STAY STRICTLY BELOW db-max-rows. A SHORT page is what ends the
+ * loop; if the server capped a full page at fewer rows than we asked for, the
+ * loop would read that as "the end" and under-collect exactly as before. 500
+ * against a recorded cap of 1000 keeps 2x of headroom, and matches the sweep in
+ * lib/stamps/generationWorker. Raising this above the project's Max rows
+ * setting reintroduces the bug it fixes.
+ *
+ * ORDERED BY PRIMARY KEY. Offset paging over an unordered read may repeat or
+ * skip rows between pages, since nothing obliges Postgres to return two offsets
+ * of the same query in the same order. Every table paged here has an `id` uuid
+ * primary key, so `order("id")` supplies the total order the offsets index into.
+ *
+ * PAGE CAP: 1000 pages = 500,000 rows per collection step. An unbounded
+ * `while (true)` over a paging cursor is its own hazard — a backend that
+ * ignored the offset, or an off-by-one, would spin forever INSIDE a deletion —
+ * so the loop terminates unconditionally. 500,000 is far above any plausible
+ * per-user count in these tables (the largest, `messages`, is bounded by how
+ * fast a person can type), so no real user reaches it; a backend that does is
+ * malformed, and 1000 round trips is a bounded price for finding that out.
+ * Hitting the cap RAISES A WARNING — the whole point of this change is that
+ * under-collection is never again silent.
+ */
+export const COLLECTION_PAGE_SIZE = 500;
+export const COLLECTION_MAX_PAGES = 1_000;
+
+/**
+ * Read EVERY row a collection query matches, one page at a time, handing each
+ * page to `consume`. `build` must return a FRESH query builder per page — a
+ * supabase-js builder is single-use, and re-ranging a spent one would replay
+ * the first page forever.
+ *
+ * `consume` returns how many things that page contributed to the step's count,
+ * so a step whose count is rows (post_media) and one whose count is collected
+ * references (stories) both work without the pager knowing the difference.
+ */
+type PagedRead = (build: () => any, consume: (rows: any[]) => number) => Promise<number>;
+
+/**
+ * step() + pagination + both warning shapes, in ONE place.
+ *
+ * The step body does not get a client to read from — it gets `readAll`. That is
+ * deliberate: a future collection step cannot be added unpaginated without
+ * visibly reaching around the reader it was handed, which is what let this bug
+ * be written six times over.
+ *
+ * Two distinct outcomes, two distinct warnings, neither of them silent:
+ *   * the read FAILED (any page)      → the step fails and warns; whatever
+ *     earlier pages collected is still removed, since a partial removal beats
+ *     none, and the warning says objects may remain;
+ *   * the read STOPPED SHORT (the page cap, or a client with no way to ask for
+ *     a second page) → the step succeeds with what it got and warns that the
+ *     collection is INCOMPLETE.
+ */
+async function pagedCollectStep(
+  steps: DeletionStepResult[],
+  warnings: string[],
+  spec: { name: string; subject: string; noun: "paths" | "references" },
+  run: (readAll: PagedRead) => Promise<number>,
+): Promise<boolean> {
+  let truncated = false;
+
+  const readAll: PagedRead = async (build, consume) => {
+    let collected = 0;
+    let offset = 0;
+    for (let page = 0; page < COLLECTION_MAX_PAGES; page += 1) {
+      const q = build();
+      // `.range()` IS the paging primitive. `.limit()` is the fallback for a
+      // client that implements no `.range` at all: the read is still BOUNDED,
+      // and it cannot pass off a truncation as a complete read — a FULL page
+      // with no way to ask for the next one is reported as truncated below,
+      // exactly like the page cap.
+      const canPage = typeof q.range === "function";
+      const bounded = canPage
+        ? q.range(offset, offset + COLLECTION_PAGE_SIZE - 1)
+        : q.limit(COLLECTION_PAGE_SIZE);
+      const { data, error } = await bounded;
+      // Fail closed, per page: throwing puts the failure on the step and the
+      // warning in the outcome. Returning what we have so far would be the
+      // original defect wearing a loop.
+      if (error) throw new Error(error.message ?? String(error));
+      const rows = ((data ?? []) as any[]);
+      collected += consume(rows);
+      // A short page is the end of the data — and the end of the requests. A
+      // user whose rows fit in one page costs exactly one round trip.
+      if (rows.length < COLLECTION_PAGE_SIZE) return collected;
+      offset += rows.length;
+      if (!canPage) { truncated = true; return collected; }
+    }
+    truncated = true;
+    return collected;
+  };
+
+  const ok = await step(steps, spec.name, () => run(readAll));
+  if (!ok) {
+    warnings.push(`${spec.subject} objects may remain in storage — their ${spec.noun} could not be read`);
+  } else if (truncated) {
+    warnings.push(
+      `${spec.subject} objects may remain in storage — the read stopped at the ` +
+        `${COLLECTION_MAX_PAGES}-page cap (${COLLECTION_MAX_PAGES * COLLECTION_PAGE_SIZE} rows) ` +
+        `and the collection is INCOMPLETE`,
+    );
+  }
+  return ok;
+}
+
+/**
+ * PostgREST `in.(…)` lists ride in the URL. Pagination just removed the
+ * db-max-rows ceiling that used to keep the memory-id list short by accident,
+ * so it has to be chunked on purpose: 200 uuids is ~8KB of query string, well
+ * inside any proxy's limit. Same reasoning as lib/trustMaintenanceScheduler.
+ */
+const IN_LIST_CHUNK = 200;
+function chunkIds(ids: string[]): string[][] {
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += IN_LIST_CHUNK) out.push(ids.slice(i, i + IN_LIST_CHUNK));
+  return out;
+}
+
+/**
  * Execute a deletion request end to end.
  *
  * Fatal steps (profile anonymisation, auth-user deletion, marking the request
@@ -262,42 +404,64 @@ export async function executeAccountDeletion(
   // ── 1. Collect storage paths BEFORE the rows that hold them are deleted ────
   const storageTargets: Array<{ bucket: string; path: string }> = [];
 
-  const pmPathsOk = await step(steps, "collect_post_media_paths", async () => {
-    const { data, error } = await sc
-      .from("post_media")
-      .select("storage_bucket, storage_path, thumbnail_storage_path, feed_storage_path")
-      .eq("user_id", userId);
-    if (error) throw new Error(error.message);
-    for (const row of (data ?? []) as any[]) {
-      const bucket = (row.storage_bucket as string) || POST_MEDIA_BUCKET;
-      if (row.storage_path) storageTargets.push({ bucket, path: row.storage_path });
-      if (row.thumbnail_storage_path) storageTargets.push({ bucket, path: row.thumbnail_storage_path });
-      // feed_storage_path is the 0208 1500px derivative — a THIRD object per
-      // upload, written by POST /media/upload alongside the original and the
-      // thumbnail. It was never collected here, so every feed variant a user
-      // ever generated survived their deletion in the private post-media
-      // bucket. Same table, same row, same query: one more column.
-      if (row.feed_storage_path) storageTargets.push({ bucket, path: row.feed_storage_path });
-    }
-    return (data ?? []).length;
-  });
-  if (!pmPathsOk) warnings.push("post media objects may remain in storage — their paths could not be read");
+  const pmPathsOk = await pagedCollectStep(
+    steps,
+    warnings,
+    { name: "collect_post_media_paths", subject: "post media", noun: "paths" },
+    (readAll) =>
+      readAll(
+        () =>
+          sc
+            .from("post_media")
+            .select("storage_bucket, storage_path, thumbnail_storage_path, feed_storage_path")
+            .eq("user_id", userId)
+            .order("id", { ascending: true }),
+        (rows) => {
+          for (const row of rows) {
+            const bucket = (row.storage_bucket as string) || POST_MEDIA_BUCKET;
+            if (row.storage_path) storageTargets.push({ bucket, path: row.storage_path });
+            if (row.thumbnail_storage_path) storageTargets.push({ bucket, path: row.thumbnail_storage_path });
+            // feed_storage_path is the 0208 1500px derivative — a THIRD object per
+            // upload, written by POST /media/upload alongside the original and the
+            // thumbnail. It was never collected here, so every feed variant a user
+            // ever generated survived their deletion in the private post-media
+            // bucket. Same table, same row, same query: one more column.
+            if (row.feed_storage_path) storageTargets.push({ bucket, path: row.feed_storage_path });
+          }
+          // The count this step reports is ROWS read, as it always was.
+          return rows.length;
+        },
+      ),
+  );
 
-  const maPathsOk = await step(steps, "collect_media_asset_paths", async () => {
-    const { data, error } = await sc
-      .from("media_assets")
-      .select("storage_bucket, storage_path, thumbnail_path")
-      .or(`owner_user_id.eq.${userId},uploader_user_id.eq.${userId}`);
-    if (error) throw new Error(error.message);
-    for (const row of (data ?? []) as any[]) {
-      const bucket = (row.storage_bucket as string) || POST_MEDIA_BUCKET;
-      if (row.storage_path) storageTargets.push({ bucket, path: row.storage_path });
-      if (row.thumbnail_path) storageTargets.push({ bucket, path: row.thumbnail_path });
-    }
-    return (data ?? []).length;
-  });
-  if (!maPathsOk) warnings.push("media_assets objects may remain in storage — their paths could not be read");
+  const maPathsOk = await pagedCollectStep(
+    steps,
+    warnings,
+    { name: "collect_media_asset_paths", subject: "media_assets", noun: "paths" },
+    (readAll) =>
+      readAll(
+        () =>
+          sc
+            .from("media_assets")
+            .select("storage_bucket, storage_path, thumbnail_path")
+            .or(`owner_user_id.eq.${userId},uploader_user_id.eq.${userId}`)
+            .order("id", { ascending: true }),
+        (rows) => {
+          for (const row of rows) {
+            const bucket = (row.storage_bucket as string) || POST_MEDIA_BUCKET;
+            if (row.storage_path) storageTargets.push({ bucket, path: row.storage_path });
+            if (row.thumbnail_path) storageTargets.push({ bucket, path: row.thumbnail_path });
+          }
+          return rows.length;
+        },
+      ),
+  );
 
+  // The ONE collection read that is not paged, and the reason is structural
+  // rather than an oversight: it is a single row addressed by primary key
+  // (`.eq("id", userId).maybeSingle()`). There is no second page of one row, so
+  // db-max-rows cannot truncate it. Every OTHER read in this section returns a
+  // set and goes through pagedCollectStep.
   const pfPathsOk = await step(steps, "collect_profile_media_paths", async () => {
     const { data, error } = await sc
       .from("profiles")
@@ -327,38 +491,54 @@ export async function executeAccountDeletion(
   // items, BEFORE section 3 deletes them. No state filter: soft-deleted
   // memories still hold media, so they must be swept too.
   const memoryIds: string[] = [];
-  const memPathsOk = await step(steps, "collect_memory_media_paths", async () => {
-    const { data: mems, error } = await sc
-      .from("memories")
-      .select("id")
-      .eq("owner_id", userId);
-    if (error) throw new Error(error.message);
-    for (const m of (mems ?? []) as any[]) {
-      if (m?.id) memoryIds.push(m.id as string);
-    }
-    if (memoryIds.length === 0) return 0;
+  const memPathsOk = await pagedCollectStep(
+    steps,
+    warnings,
+    { name: "collect_memory_media_paths", subject: "memory media", noun: "paths" },
+    async (readAll) => {
+      // BOTH reads are paged. The memory-id read is the one that feeds the
+      // second, so truncating it would silently shrink the item read too — one
+      // capped page here used to cost a user every item of every memory past
+      // the thousandth.
+      await readAll(
+        () => sc.from("memories").select("id").eq("owner_id", userId).order("id", { ascending: true }),
+        (rows) => {
+          for (const m of rows) if (m?.id) memoryIds.push(m.id as string);
+          return 0; // the count this step reports is COLLECTED PATHS, not memories
+        },
+      );
+      if (memoryIds.length === 0) return 0;
 
-    const { data: items, error: itemErr } = await sc
-      .from("memory_items")
-      .select("media_url")
-      .in("memory_id", memoryIds);
-    if (itemErr) throw new Error(itemErr.message);
-    let found = 0;
-    for (const it of (items ?? []) as any[]) {
-      const path = storagePathFromPublicUrl(it?.media_url, POST_MEDIA_BUCKET);
-      // media_url is client-supplied at insert time (addItemSchema only checks
-      // it is a URL), so an owner could point an item at another user's object.
-      // Removing only paths under this user's own memories/{userId}/ prefix means
-      // account deletion can never be weaponised to delete someone else's media —
-      // the exact guard DELETE /memories/:id/items already enforces.
-      if (path && path.startsWith(`memories/${userId}/`)) {
-        storageTargets.push({ bucket: POST_MEDIA_BUCKET, path });
-        found += 1;
+      let found = 0;
+      for (const ids of chunkIds(memoryIds)) {
+        found += await readAll(
+          () =>
+            sc
+              .from("memory_items")
+              .select("media_url")
+              .in("memory_id", ids)
+              .order("id", { ascending: true }),
+          (rows) => {
+            let n = 0;
+            for (const it of rows) {
+              const path = storagePathFromPublicUrl(it?.media_url, POST_MEDIA_BUCKET);
+              // media_url is client-supplied at insert time (addItemSchema only checks
+              // it is a URL), so an owner could point an item at another user's object.
+              // Removing only paths under this user's own memories/{userId}/ prefix means
+              // account deletion can never be weaponised to delete someone else's media —
+              // the exact guard DELETE /memories/:id/items already enforces.
+              if (path && path.startsWith(`memories/${userId}/`)) {
+                storageTargets.push({ bucket: POST_MEDIA_BUCKET, path });
+                n += 1;
+              }
+            }
+            return n;
+          },
+        );
       }
-    }
-    return found;
-  });
-  if (!memPathsOk) warnings.push("memory media objects may remain in storage — their paths could not be read");
+      return found;
+    },
+  );
 
   // ── IG-02 evidence media (map contributions) ──────────────────────────────
   // intel_evidence.reference holds a `<bucket>/<path>` STORAGE KEY for a photo
@@ -383,24 +563,32 @@ export async function executeAccountDeletion(
   // the intel steps in section 3: `erase_intel_contributions` calls
   // erase_intel_for_actor, which deletes these very rows. Read them after that
   // and there is nothing left to read, and the bytes would be orphaned for good.
-  const evPathsOk = await step(steps, "collect_intel_evidence_paths", async () => {
-    const { data, error } = await sc
-      .from("intel_evidence")
-      .select("reference")
-      .eq("actor_id", userId);
-    if (error) throw new Error(error.message);
-    let found = 0;
-    for (const row of (data ?? []) as any[]) {
-      // NULL by design for 'text_note' and 'sensor' evidence — those reference
-      // no stored object at all, so skipping is correct, not a miss. Defence in
-      // depth: the producer validated bucket + owner on write
-      // (appStorageUrlInfo + ownerFromPath), but a row is not a promise, so the
-      // shared guard re-checks both here.
-      if (collectOwnedReference(row?.reference, userId, storageTargets)) found += 1;
-    }
-    return found;
-  });
-  if (!evPathsOk) warnings.push("intel evidence media objects may remain in storage — their references could not be read");
+  const evPathsOk = await pagedCollectStep(
+    steps,
+    warnings,
+    { name: "collect_intel_evidence_paths", subject: "intel evidence media", noun: "references" },
+    (readAll) =>
+      readAll(
+        () =>
+          sc
+            .from("intel_evidence")
+            .select("reference")
+            .eq("actor_id", userId)
+            .order("id", { ascending: true }),
+        (rows) => {
+          let found = 0;
+          for (const row of rows) {
+            // NULL by design for 'text_note' and 'sensor' evidence — those reference
+            // no stored object at all, so skipping is correct, not a miss. Defence in
+            // depth: the producer validated bucket + owner on write
+            // (appStorageUrlInfo + ownerFromPath), but a row is not a promise, so the
+            // shared guard re-checks both here.
+            if (collectOwnedReference(row?.reference, userId, storageTargets)) found += 1;
+          }
+          return found;
+        },
+      ),
+  );
 
   // ── Story media ───────────────────────────────────────────────────────────
   // stories.media_url is the photo/video of a 24h story. `delete_stories` (in
@@ -418,19 +606,22 @@ export async function executeAccountDeletion(
   // below should never fire on a row that endpoint wrote. It is still applied,
   // because "the current write path checks it" is not a property of the rows
   // already in the table.
-  const storyPathsOk = await step(steps, "collect_story_media_paths", async () => {
-    const { data, error } = await sc
-      .from("stories")
-      .select("media_url")
-      .eq("owner_id", userId);
-    if (error) throw new Error(error.message);
-    let found = 0;
-    for (const row of (data ?? []) as any[]) {
-      if (collectOwnedReference(row?.media_url, userId, storageTargets)) found += 1;
-    }
-    return found;
-  });
-  if (!storyPathsOk) warnings.push("story media objects may remain in storage — their references could not be read");
+  const storyPathsOk = await pagedCollectStep(
+    steps,
+    warnings,
+    { name: "collect_story_media_paths", subject: "story media", noun: "references" },
+    (readAll) =>
+      readAll(
+        () => sc.from("stories").select("media_url").eq("owner_id", userId).order("id", { ascending: true }),
+        (rows) => {
+          let found = 0;
+          for (const row of rows) {
+            if (collectOwnedReference(row?.media_url, userId, storageTargets)) found += 1;
+          }
+          return found;
+        },
+      ),
+  );
 
   // ── Message media ─────────────────────────────────────────────────────────
   // TWO objects per media message: messages.media_url and, for video, the
@@ -443,23 +634,34 @@ export async function executeAccountDeletion(
   // check ownerFromPath, so a sender can store a key belonging to somebody
   // else and the row is legitimate. Collecting it unguarded would let one
   // user's deletion destroy another user's file.
-  const msgPathsOk = await step(steps, "collect_message_media_paths", async () => {
-    const { data, error } = await sc
-      .from("messages")
-      .select("media_url, media_thumbnail_url")
-      .eq("sender_id", userId);
-    if (error) throw new Error(error.message);
-    let found = 0;
-    for (const row of (data ?? []) as any[]) {
-      // Independent: a text message has neither, a photo has only the first,
-      // a video has both, and a thumbnail that fails the guard must not
-      // suppress its original.
-      if (collectOwnedReference(row?.media_url, userId, storageTargets)) found += 1;
-      if (collectOwnedReference(row?.media_thumbnail_url, userId, storageTargets)) found += 1;
-    }
-    return found;
-  });
-  if (!msgPathsOk) warnings.push("message media objects may remain in storage — their references could not be read");
+  // This is also the table most likely to EXCEED one page: messages outnumber
+  // every other row a user creates, so it is where the unpaginated read failed
+  // first and hardest.
+  const msgPathsOk = await pagedCollectStep(
+    steps,
+    warnings,
+    { name: "collect_message_media_paths", subject: "message media", noun: "references" },
+    (readAll) =>
+      readAll(
+        () =>
+          sc
+            .from("messages")
+            .select("media_url, media_thumbnail_url")
+            .eq("sender_id", userId)
+            .order("id", { ascending: true }),
+        (rows) => {
+          let found = 0;
+          for (const row of rows) {
+            // Independent: a text message has neither, a photo has only the first,
+            // a video has both, and a thumbnail that fails the guard must not
+            // suppress its original.
+            if (collectOwnedReference(row?.media_url, userId, storageTargets)) found += 1;
+            if (collectOwnedReference(row?.media_thumbnail_url, userId, storageTargets)) found += 1;
+          }
+          return found;
+        },
+      ),
+  );
 
   // ── Hidden gem media ──────────────────────────────────────────────────────
   // hidden_gems.image_url — the representative photo of a submitted gem
@@ -467,19 +669,27 @@ export async function executeAccountDeletion(
   // The write path types it `z.string().url().max(2048)` and nothing else: no
   // bucket check, no ownership check, so the stored value is as likely to be an
   // external URL as one of ours. The guard is what separates the two.
-  const gemPathsOk = await step(steps, "collect_hidden_gem_media_paths", async () => {
-    const { data, error } = await sc
-      .from("hidden_gems")
-      .select("image_url")
-      .eq("submitted_by", userId);
-    if (error) throw new Error(error.message);
-    let found = 0;
-    for (const row of (data ?? []) as any[]) {
-      if (collectOwnedReference(row?.image_url, userId, storageTargets)) found += 1;
-    }
-    return found;
-  });
-  if (!gemPathsOk) warnings.push("hidden gem media objects may remain in storage — their references could not be read");
+  const gemPathsOk = await pagedCollectStep(
+    steps,
+    warnings,
+    { name: "collect_hidden_gem_media_paths", subject: "hidden gem media", noun: "references" },
+    (readAll) =>
+      readAll(
+        () =>
+          sc
+            .from("hidden_gems")
+            .select("image_url")
+            .eq("submitted_by", userId)
+            .order("id", { ascending: true }),
+        (rows) => {
+          let found = 0;
+          for (const row of rows) {
+            if (collectOwnedReference(row?.image_url, userId, storageTargets)) found += 1;
+          }
+          return found;
+        },
+      ),
+  );
 
   // ── Review photos ─────────────────────────────────────────────────────────
   // reviews.photos is `text[] NOT NULL DEFAULT '{}'` (migration 0196), up to 3
@@ -492,23 +702,26 @@ export async function executeAccountDeletion(
   // skipped ON ITS OWN. It must not discard the sibling elements of the same
   // review and it must not throw, or a single bad value in one review would
   // orphan every other photo the user ever attached.
-  const reviewPathsOk = await step(steps, "collect_review_photo_paths", async () => {
-    const { data, error } = await sc
-      .from("reviews")
-      .select("photos")
-      .eq("reviewer_id", userId);
-    if (error) throw new Error(error.message);
-    let found = 0;
-    for (const row of (data ?? []) as any[]) {
-      const photos = row?.photos;
-      if (!Array.isArray(photos)) continue;
-      for (const photo of photos) {
-        if (collectOwnedReference(photo, userId, storageTargets)) found += 1;
-      }
-    }
-    return found;
-  });
-  if (!reviewPathsOk) warnings.push("review photo objects may remain in storage — their references could not be read");
+  const reviewPathsOk = await pagedCollectStep(
+    steps,
+    warnings,
+    { name: "collect_review_photo_paths", subject: "review photo", noun: "references" },
+    (readAll) =>
+      readAll(
+        () => sc.from("reviews").select("photos").eq("reviewer_id", userId).order("id", { ascending: true }),
+        (rows) => {
+          let found = 0;
+          for (const row of rows) {
+            const photos = row?.photos;
+            if (!Array.isArray(photos)) continue;
+            for (const photo of photos) {
+              if (collectOwnedReference(photo, userId, storageTargets)) found += 1;
+            }
+          }
+          return found;
+        },
+      ),
+  );
 
   // ── 2. Delete the storage objects ─────────────────────────────────────────
   if (storageTargets.length > 0) {
@@ -646,14 +859,23 @@ export async function executeAccountDeletion(
   // memories is swept by owner_id with NO state filter, so soft-deleted
   // (state='deleted') memories left behind by DELETE /memories/:id go too.
   if (memoryIds.length > 0) {
-    const ownedMemoryDeletes: Array<{ name: string; run: () => PromiseLike<{ error?: any }> }> = [
-      { name: "delete_memory_items",       run: () => sc.from("memory_items").delete().in("memory_id", memoryIds) },
-      { name: "delete_memory_tags_owned",  run: () => sc.from("memory_tags").delete().in("memory_id", memoryIds) },
-      { name: "delete_memory_likes_owned", run: () => sc.from("memory_likes").delete().in("memory_id", memoryIds) },
-      { name: "delete_memory_saves_owned", run: () => sc.from("memory_saves").delete().in("memory_id", memoryIds) },
+    // CHUNKED, and it has to be: the id list used to be capped at one page by
+    // the very defect this change fixes, so `.in(memoryIds)` was short by
+    // accident. Paginating the collection removed that accidental ceiling, and
+    // an unchunked `.in()` over thousands of uuids is a query string long
+    // enough to be rejected — which would turn a fixed read into a failed
+    // delete. One chunk for every realistic account, so the op sequence is
+    // unchanged for everyone the old code happened to serve correctly.
+    const ownedMemoryDeletes: Array<{ name: string; run: (ids: string[]) => PromiseLike<{ error?: any }> }> = [
+      { name: "delete_memory_items",       run: (ids) => sc.from("memory_items").delete().in("memory_id", ids) },
+      { name: "delete_memory_tags_owned",  run: (ids) => sc.from("memory_tags").delete().in("memory_id", ids) },
+      { name: "delete_memory_likes_owned", run: (ids) => sc.from("memory_likes").delete().in("memory_id", ids) },
+      { name: "delete_memory_saves_owned", run: (ids) => sc.from("memory_saves").delete().in("memory_id", ids) },
     ];
     for (const d of ownedMemoryDeletes) {
-      const ok = await step(steps, d.name, async () => { must(await d.run(), d.name); });
+      const ok = await step(steps, d.name, async () => {
+        for (const ids of chunkIds(memoryIds)) must(await d.run(ids), d.name);
+      });
       if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
     }
   }
