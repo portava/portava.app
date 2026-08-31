@@ -218,3 +218,51 @@ test('getSubmitQuery returns null for entity rows and the query for completion r
   assert.equal(getSubmitQuery(city), null);
   assert.equal(getSubmitQuery(q), 'paris cafes');
 });
+
+// ── §21 smart actions are lifted to the action lane, NOT the search groups ─────
+
+test('an add_to_trip row is NOT rendered as a city entity row (it dispatches, not navigates)', () => {
+  // The gateway's add_to_trip row carries a /city route + city identity, which
+  // would otherwise mis-map to a "cities" entity row that navigates to the city
+  // page. It must be skipped here so the action-chip lane owns it.
+  const groups = mapSuggestionsToGroups(
+    [
+      sug({ label: 'Bangkok', entityType: 'city', entityId: 'c_real' }), // a real city entity
+      sug({
+        id: 'add',
+        type: 'action',
+        label: 'Add Bangkok to your trip',
+        entityType: 'city',
+        entityId: 'c_bkk',
+        subtitle: 'Thailand',
+        action: { type: 'add_to_trip', entityId: 'c_bkk' },
+        destination: { route: '/city/bangkok', entityType: 'city', entityId: 'c_bkk' },
+      }),
+    ],
+    'bang',
+  );
+  const allIds = allRows(groups).map((r) => r.id);
+  assert.equal(allIds.includes('add'), false, 'the add_to_trip row is not in any search group');
+  assert.equal(allIds.includes('c_real'), true, 'the real city entity still renders');
+  // Only the real city entity group survives — no duplicate "cities" row for the action.
+  const cities = groups.find((g) => g.type === 'cities');
+  assert.equal(cities!.items.length, 1);
+});
+
+// ── staged / sequenced rows render in order (§18 sequence) ────────────────────
+
+test('sequenced stage rows (submit_search) render as ordered "Search for" rows', () => {
+  // buildSequencedRows emits one submit_search row per stage, in order; the
+  // mapper must preserve that order within the query group.
+  const groups = mapSuggestionsToGroups(
+    [
+      sug({ id: 's1', type: 'action', label: '1. Dinner', action: { type: 'submit_search', query: 'dinner' } }),
+      sug({ id: 's2', type: 'action', label: '2. Nightlife', action: { type: 'submit_search', query: 'nightlife' } }),
+      sug({ id: 's3', type: 'action', label: '3. Late-night food', action: { type: 'submit_search', query: 'late night food' } }),
+    ],
+    'dinner then drinks then food',
+  );
+  const q = groups.find((g) => g.type === QUERY_GROUP_TYPE)!;
+  assert.deepEqual(q.items.map((i) => getSubmitQuery(i)), ['dinner', 'nightlife', 'late night food']);
+  assert.deepEqual(q.items.map((i) => i.title), ['1. Dinner', '2. Nightlife', '3. Late-night food']);
+});

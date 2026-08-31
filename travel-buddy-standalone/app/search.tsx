@@ -23,6 +23,9 @@ import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
 import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel';
 import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
 import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
+import { getAddToTripTarget } from '../src/platform/input-assistance/search/smartActions';
+import type { InputSuggestion } from '../src/platform/input-assistance/types/inputSuggestion';
+import { TripWishlistPicker, type AddToTripPayload } from '../src/components/discovery/TripWishlistPicker';
 import { usePlainBottomInset } from '../src/hooks/useBottomInset';
 import { resolveRoute } from '../src/components/search/searchNav';
 import { color, space, radius, type as t } from '../src/theme/tokens';
@@ -148,7 +151,7 @@ export default function SearchScreen() {
   // Routes through the P1 gateway (`global_search`) additively: gateway rows are
   // shown when available, else it degrades to the proven legacy typeahead.
   const suggestActive = !submitted && query.trim().length >= 2;
-  const { groups: suggestGroups, loading: suggestLoading } = useGlobalSearchSuggestions(query, {
+  const { groups: suggestGroups, actionSuggestions, loading: suggestLoading } = useGlobalSearchSuggestions(query, {
     lat: userCoords?.lat,
     lng: userCoords?.lng,
     city: userCoords?.city,
@@ -402,6 +405,30 @@ export default function SearchScreen() {
     }
   }
 
+  // §21 smart-action dispatch. An action chip PROPOSES; the write happens behind
+  // the target flow's own authorization (§47). `add_to_trip` opens the existing
+  // propose-only trip picker (user confirms which trip). Unknown/unhandled
+  // actions are a no-op — the chip lane already filters to dispatchable actions,
+  // so this never renders a dead chip and never throws.
+  const [addToTripPayload, setAddToTripPayload] = useState<AddToTripPayload | null>(null);
+
+  function handleSuggestionAction(suggestion: InputSuggestion) {
+    const target = getAddToTripTarget(suggestion);
+    if (target) {
+      setAddToTripPayload({
+        id: target.entityId,
+        name: target.city,
+        category: 'city',
+        type: 'city',
+        address: target.country,
+        // A city destination has no exact point to save — the trip picker
+        // stores name/identity only (privacy-safe, §21 propose-only).
+        lat: null,
+        lng: null,
+      });
+    }
+  }
+
   function handleLoadMore() {
     if (loadingMore || loading || !nextCursor) return;
     const currentIntent = buildIntentParams(detectedIntent, activeChips);
@@ -553,6 +580,8 @@ export default function SearchScreen() {
           onSubmit={submitSearch}
           onPickRecent={handlePickRecent}
           onPickResult={handleSuggestionPick}
+          actionSuggestions={actionSuggestions}
+          onPickAction={handleSuggestionAction}
         />
       ) : loading ? (
         <View style={styles.center}>
@@ -800,6 +829,14 @@ export default function SearchScreen() {
           }
         />
       )}
+
+      {/* §21 propose-only add-to-trip flow, opened by a smart-action chip. The
+          picker itself performs the authorized write when the user picks a trip. */}
+      <TripWishlistPicker
+        place={addToTripPayload}
+        visible={!!addToTripPayload}
+        onClose={() => setAddToTripPayload(null)}
+      />
     </KeyboardSafeScrollView>
   );
 }

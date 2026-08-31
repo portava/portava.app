@@ -27,8 +27,9 @@ import { useSearchSuggestions, type UseSearchSuggestionsOpts } from './useSearch
 import type { SuggestGroup } from '../services/discovery.ts';
 import { useInputAssistance } from '../platform/input-assistance/hooks/useInputAssistance.ts';
 import { mapSuggestionsToGroups } from '../platform/input-assistance/search/globalSearch.ts';
+import { extractActionSuggestions } from '../platform/input-assistance/search/smartActions.ts';
 import { registerSearchFields, SEARCH_FIELD_IDS } from '../platform/input-assistance/search/searchFields.ts';
-import type { InputSessionContext } from '../platform/input-assistance/types/inputSuggestion.ts';
+import type { InputSessionContext, InputSuggestion } from '../platform/input-assistance/types/inputSuggestion.ts';
 
 // Register the global-search field's policy once at module load (idempotent).
 registerSearchFields();
@@ -42,6 +43,10 @@ export interface UseGlobalSearchSuggestionsOpts extends UseSearchSuggestionsOpts
 
 export interface GlobalSearchSuggestionsResult {
   groups: SuggestGroup[];
+  /** §21 smart-action chips (e.g. "Add Bangkok to your trip") the panel renders
+   *  via ActionSuggestionRow and dispatches — distinct from search/entity rows.
+   *  Only ever populated from the gateway; empty on the legacy fallback path. */
+  actionSuggestions: InputSuggestion[];
   loading: boolean;
   /** Which source produced the shown groups — 'gateway' when P1 rows are live,
    *  'legacy' when the proven typeahead is (the default + fallback). */
@@ -80,13 +85,22 @@ export function useGlobalSearchSuggestions(
     [gateway.suggestions, query],
   );
 
+  // §21 smart-action chips lifted out of the same gateway rows (add_to_trip).
+  const gatewayActions = useMemo(
+    () => (gateway.unavailable ? [] : extractActionSuggestions(gateway.suggestions)),
+    [gateway.suggestions, gateway.unavailable],
+  );
+
   const gatewayHasRows = gatewayGroups.some((g) => g.items.length > 0);
-  // Prefer the gateway ONLY when it is enabled, available, and actually has rows
-  // — otherwise fall back to the legacy list (never empty over a live list).
-  const preferGateway = enabled && !gateway.unavailable && gatewayHasRows;
+  // Prefer the gateway ONLY when it is enabled, available, and actually has
+  // content — grouped rows OR a smart-action chip (an "add to trip" parse can
+  // yield an action with no search rows; it must still surface). Otherwise fall
+  // back to the legacy list (never empty over a live list).
+  const preferGateway = enabled && !gateway.unavailable && (gatewayHasRows || gatewayActions.length > 0);
 
   return {
     groups: preferGateway ? gatewayGroups : legacy.groups,
+    actionSuggestions: preferGateway ? gatewayActions : [],
     loading: preferGateway ? gateway.loading : legacy.loading,
     source: preferGateway ? 'gateway' : 'legacy',
   };
