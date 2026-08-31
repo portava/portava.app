@@ -24,6 +24,8 @@ import type { ProjectionInput } from "./intelProjection.js";
 import type { ConfidenceComponents, ConfidencePenalties } from "./confidenceScore.js";
 import { PRIVACY_THRESHOLD_V1, PILOT_CLAIMABLE_MODERATION_STATES, CLAIM_TYPES } from "./intelContracts.js";
 import { getPolicy } from "./freshnessPolicy.js";
+import { isFlagEnabled } from "./featureFlags.js";
+import { observationsHaveEligibleMediaEvidence } from "./media/mediaEvidenceLink.js";
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
@@ -133,7 +135,7 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
   // invalidated after a snapshot was written drops out at the next pass.
   const { data: obs } = await sc
     .from("intel_observations")
-    .select("actor_id, presence_level, source_class, expires_at, group_key, observed_at, value")
+    .select("id, actor_id, presence_level, source_class, expires_at, group_key, observed_at, value")
     .eq("subject_id", claim.subject_id)
     .eq("claim_type", claim.claim_type)
     .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[]);
@@ -275,11 +277,28 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
     ? new Date(anchorMs + hardSpec.hardExpirySeconds * 1000).toISOString()
     : null;
 
-  // Evidence quality: intel_evidence links to an observation (observation_id) and
-  // its contributor, not to a claim/subject directly, and Phase-1 quick signals
-  // attach none. v1 treats a claim as evidence-thin (conservative) until the
-  // observation→evidence linkage is wired into this assembly.
-  const hasEvidence = false;
+  // ── Evidence quality — media→intel evidence seam (Media v2 Phase 5, §9/§35) ──
+  // GATED by the master flag `media_evidence_enabled`, seeded OFF (migration
+  // 2255). THE SAFETY INVARIANT: while the flag is OFF — or unreadable —
+  // hasEvidence is EXACTLY `false`, byte-identical to the pre-seam aggregator
+  // (evidenceQuality stays 0.3; no confidence band moves, live serving is
+  // unchanged). ONLY when an admin flips the flag ON does a linked, STILL-§35-
+  // eligible media raise hasEvidence (→ evidenceQuality 0.8). The flag read is
+  // fail-closed (isFlagEnabled returns false on any error), so an unhealthy DB
+  // keeps the seam OFF. When ON, observationsHaveEligibleMediaEvidence re-checks
+  // each linked asset's §35 eligibility and is itself fail-soft (never invents
+  // evidence). This is the ONLY live-serving change in this file, and it is inert
+  // until the owner's explicit flag press.
+  // Flag name is a LITERAL here (not the imported MEDIA_EVIDENCE_FLAG const) so
+  // check-flag-polarity can statically resolve which flag this call reads.
+  const mediaEvidenceEnabled = await isFlagEnabled(sc, "media_evidence_enabled");
+  const hasEvidence = mediaEvidenceEnabled
+    ? await observationsHaveEligibleMediaEvidence(
+        sc,
+        freshObs.map((o) => o.id).filter(Boolean),
+        now.getTime(),
+      )
+    : false; // flag OFF ⇒ EXACTLY false (byte-identical to pre-seam main)
 
   // Freshness clock: the LATEST fresh, consented observation of this
   // (subject, claim_type) — NOT the promoted anchor claim's frozen observed_at.
