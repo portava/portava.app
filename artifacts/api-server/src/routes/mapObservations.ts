@@ -9,10 +9,13 @@
  *   Map Prompt → Observation → Identity/Trust → Evidence Qualification
  *               → Claim System → Projection → Map changes
  *
- * THIS ROUTE IS THE FIRST ARROW ONLY. It turns a §22 map prompt answer into one
- * append-only `intel_observations` row and stops. Everything downstream of
- * "Observation" already exists and already has a single owner:
+ * THIS ROUTE IS THE FIRST TWO ARROWS ONLY. It turns a §22 map prompt answer
+ * into one append-only `intel_observations` row — or, for the one prompt that
+ * is an ARTIFACT rather than a proposition, into one append-only
+ * `intel_evidence` row bolted to an observation that already exists — and
+ * stops. Everything downstream already exists and already has a single owner:
  *
+ *   evidence attachment     lib/intelEvidenceCapture.ts
  *   evidence qualification  services/intel/IntelCaptureService.ts
  *   claim system            IntelCaptureService.proposeClaim / system promotion
  *   projection              lib/intelProjection.ts (the SOLE writer of snapshots)
@@ -42,6 +45,12 @@
  * live map change only by earning it through the projection, and the response
  * below deliberately carries no confidence and no live value — a caller cannot
  * mistake the 201 for "the map now says this".
+ *
+ * That holds for evidence too, and there it is worth stating twice: attaching a
+ * photo raises NOTHING. lib/intelProjectionAggregator scores evidence quality
+ * from a hardcoded `hasEvidence = false`, and neither this route nor
+ * lib/intelEvidenceCapture changes it. A one-tap confidence boost bought by
+ * uploading a picture would be the same defect as one bought by paying.
  *
  * REWARDS NEVER TOUCH CONFIDENCE
  * ==============================
@@ -100,6 +109,7 @@ import {
   type VibeState,
 } from "../lib/intelContracts.js";
 import { writeObservation, type CaptureInput } from "../services/intel/IntelCaptureService.js";
+import { attachMediaEvidence } from "../lib/intelEvidenceCapture.js";
 
 const router = Router();
 
@@ -197,8 +207,10 @@ export function isPromptAllowed(objectKind: MapObjectKind, kind: MapContribution
 // validators) is what the projection, the freshness policy and the confidence
 // formula are all defined over.
 //
-// SEVEN of the eight prompts now have an exact canonical claim. The eighth —
-// media — is still REFUSED, and that refusal is a ruling, not a gap.
+// SEVEN of the eight prompts have an exact canonical claim. The eighth — media
+// — has none and never will, and that is a ruling, not a gap. It is no longer
+// DISCARDED, though: it now takes the evidence arrow instead of the claim
+// arrow. See the media note below.
 //
 // HOW THE FOUR NEW ONES WERE ADDED, AND WHAT WAS NOT DONE
 // ======================================================
@@ -225,7 +237,14 @@ export function isPromptAllowed(objectKind: MapObjectKind, kind: MapContribution
 // A refusal is visible (`unsupported_kind`, with the reason). A wrong mapping
 // is invisible and ends up on the map as truth.
 
-/** The prompts that have an exact canonical claim. */
+/**
+ * The prompts that have an exact canonical claim.
+ *
+ * `media` is absent and must stay absent. This constant is not "the prompts
+ * that work" — it is "the prompts that are PROPOSITIONS", and a photo is not
+ * one. Media is accepted by this route through a different arrow entirely
+ * (see below); adding it here would be minting it a claim.
+ */
 export const SUPPORTED_CONTRIBUTION_KINDS = [
   "crowd_level",
   "queue",
@@ -237,8 +256,8 @@ export const SUPPORTED_CONTRIBUTION_KINDS = [
 ] as const;
 
 /**
- * The prompts refused, each with the reason, so the hole is documented not
- * silent.
+ * The prompts that map to NO CLAIM, each with the reason, so the hole is
+ * documented not silent.
  *
  * MEDIA: THE RULING, NOT A TODO
  * =============================
@@ -260,20 +279,41 @@ export const SUPPORTED_CONTRIBUTION_KINDS = [
  * statement about the WORLD, not about the artifact, and would therefore
  * belong to whatever claim the photo is evidence FOR.
  *
- * The right home already exists and is not this route. `intel_evidence`
- * (migration 2130) is the append-only table for "artifacts supporting an
- * observation" — media attaches to an observation by observation_id. Wiring
- * that is a real piece of work (upload, moderation_state, retention, the
- * storage-object privacy rules) and none of it is claim-mapping. Accepting a
- * `mediaUri` here would open a second, ungated media path around all of it.
+ * WHAT CHANGED: THE DESTINATION, NOT THE RULING
+ * =============================================
+ * The right home was already named and already built — `intel_evidence`
+ * (migration 2130), "artifacts supporting an observation", keyed by
+ * observation_id. It is now WIRED, in lib/intelEvidenceCapture.ts, and the
+ * three pieces of work that were owed before it could be are done or accounted
+ * for:
  *
- * So media stays refused, and the schema below still REQUIRES `mediaUri` on a
- * media contribution: the payload contract stays honest about what the client
- * sends, and the refusal is loud rather than a silently dropped field.
+ *   upload      the contributor uploads through POST /api/media/upload as they
+ *               do for any other media; this route accepts only a reference to
+ *               the object that produced, proved ours AND proved theirs.
+ *   retention   2173 already sweeps intel_evidence at the ruled 180 days and
+ *               2130's erase_intel_for_actor already deletes it on account
+ *               deletion. Both were written before the table had a producer.
+ *   moderation  intel_evidence has none, and none was invented. It does not
+ *               need one YET because evidence is write-only: authenticated
+ *               holds no grant on the table, no read path selects from it, and
+ *               the aggregator's hasEvidence is a hardcoded false. A read path
+ *               may not be added without ruling on moderation first.
+ *
+ * So this entry no longer means "media is dropped". It means media has NO CLAIM
+ * TYPE — and, because §21 orders Observation before Evidence, that a media
+ * contribution arriving ALONE, with no observation to support, is still
+ * refused, with this string as the reason. Media that names its observation is
+ * accepted, as evidence, on the evidence arrow.
+ *
+ * The schema below still REQUIRES `mediaUri` on a media contribution, and still
+ * refuses to validate it there: a `mediaUri` is untrusted input, and the check
+ * that matters (ours, and this contributor's) needs the actor, which a zod
+ * schema does not have. It happens in lib/intelEvidenceCapture instead, where
+ * the refusal is a named reason rather than a parse issue.
  */
 export const UNSUPPORTED_CONTRIBUTION_KINDS: Readonly<Record<string, string>> = {
   media:
-    "a photo is evidence, not a claim — it asserts no proposition to confirm, contradict or expire, so it has no claim type; media attaches to an observation via intel_evidence, which no route wires yet",
+    "a photo is evidence, not a claim — it asserts no proposition to confirm, contradict or expire, so it has no claim type and never gets one; media is stored in intel_evidence attached to the observation it supports, so send that observation first and resend this with its observationId",
 };
 
 /**
@@ -413,8 +453,26 @@ export const mapContributionSchema = z.discriminatedUnion("kind", [
   z.object({ ...baseFields, kind: z.literal("event_status"), value: z.enum(EVENT_STATUS_STATES) }).strict(),
   z.object({ ...baseFields, kind: z.literal("closure"), value: z.enum(CLOSURE_STATES) }).strict(),
   z.object({ ...baseFields, kind: z.literal("crowd_direction"), value: z.enum(CROWD_DIRECTIONS) }).strict(),
+  // The media member carries two extra fields and neither is loosened here.
+  //
+  //   mediaUri        REQUIRED but NOT validated by the schema. Proving a media
+  //                   reference is ours AND this contributor's needs the actor,
+  //                   which zod does not have; doing half the check here would
+  //                   read as the whole check. lib/intelEvidenceCapture does it.
+  //   observationId   OPTIONAL in the SCHEMA and REQUIRED by the ruling. It is
+  //                   optional here so a client that sends none gets the §21
+  //                   reason ("evidence attaches to an observation") rather
+  //                   than a bare "observationId: Required" parse issue — and
+  //                   so this schema stays exactly the client's
+  //                   `MapContribution`, which does not carry the field yet.
   z
-    .object({ ...baseFields, kind: z.literal("media"), value: z.enum(MEDIA_KINDS), mediaUri: z.string().min(1) })
+    .object({
+      ...baseFields,
+      kind: z.literal("media"),
+      value: z.enum(MEDIA_KINDS),
+      mediaUri: z.string().min(1),
+      observationId: z.string().uuid().optional(),
+    })
     .strict(),
 ]);
 
@@ -468,10 +526,24 @@ const REASON_CODE: Readonly<Record<string, ApiErrorCode>> = {
   invalid_value: "invalid_payload",
   unknown_subject: "not_found",
   db_error: "db_error",
+  // ── Evidence-arrow rejections (lib/intelEvidenceCapture) ──────────────────
+  // `evidence_requires_observation` never reaches here: a media contribution
+  // with no observationId is refused earlier, as `unsupported_kind`, because
+  // that IS what it is — a bare artifact with no proposition. It is mapped
+  // anyway so the table stays a total function over the service's reasons.
+  evidence_requires_observation: "invalid_payload",
+  unsupported_media_kind: "invalid_payload",
+  invalid_media_reference: "invalid_payload",
+  media_not_owned: "forbidden",
+  // Not `not_found`: distinguishing "no such observation" from "not yours"
+  // would make this an oracle for other people's contributions.
+  unknown_observation: "not_found",
+  observation_subject_mismatch: "invalid_payload",
 };
 
 export type MapIngestResult =
   | { ok: true; observation: Record<string, any>; deduped: boolean }
+  | { ok: true; evidence: Record<string, any>; observationId: string; deduped: boolean }
   | { ok: false; reason: string; code: ApiErrorCode; detail?: string };
 
 function reject(reason: string, detail?: string): MapIngestResult {
@@ -503,6 +575,38 @@ export async function ingestMapContribution(
 
   if (!isPromptAllowed(c.objectKind, c.kind)) {
     return reject("prompt_not_allowed", `the ${c.kind} prompt is not applicable to a ${c.objectKind}`);
+  }
+
+  // ── The evidence arrow ──────────────────────────────────────────────────────
+  //
+  // Taken BEFORE the claim mapping, and it is the only branch in this function.
+  // A media contribution has no claim to map, so falling through to
+  // mapContributionToClaim would refuse it — which is exactly what happened
+  // before, and is still what happens to a media contribution that names no
+  // observation.
+  //
+  // The order inside the branch matters. "Which observation does this support?"
+  // is asked FIRST, before the asset is looked at at all: a bare photo is not a
+  // §22 contribution regardless of whether its URI would have validated, and
+  // answering with a media error would suggest a better URI could fix it.
+  if (c.kind === "media") {
+    if (!c.observationId) {
+      // §21 orders Observation before Evidence. This is the same refusal the
+      // route has always given a bare media contribution, and the same reason
+      // string — the ruling — now ending in what to do instead.
+      return reject("unsupported_kind", `${c.kind} cannot be recorded on its own: ${UNSUPPORTED_CONTRIBUTION_KINDS.media}`);
+    }
+    const attached = await attachMediaEvidence(sc, actorId, {
+      observationId: c.observationId,
+      subjectId: c.objectId,
+      mediaUri: c.mediaUri,
+      mediaKind: c.value,
+      observedAt: c.observedAt,
+    });
+    if (!attached.ok) return reject(attached.reason, attached.detail);
+    // No claim, no confidence, no snapshot, no reward — and no observation
+    // either: this arrow attaches to one, it does not create one.
+    return { ok: true, evidence: attached.evidence, observationId: c.observationId, deduped: attached.deduped };
   }
 
   const mapped = mapContributionToClaim(c.kind, c.value);
@@ -570,6 +674,26 @@ function envelope(observation: any, kind: string): Record<string, unknown> {
   };
 }
 
+/**
+ * The evidence envelope.
+ *
+ * Carries no claim type, no value, no confidence and no `validUntil` — an
+ * artifact makes no assertion, so there is nothing for it to be valid UNTIL.
+ * It does not echo the storage key back either: the client sent the reference,
+ * knows it, and returning the resolved key would make this endpoint a cheap way
+ * to ask "did that key resolve, and to what?".
+ */
+function evidenceEnvelope(evidence: any, observationId: string, kind: string): Record<string, unknown> {
+  return {
+    id: evidence.id,
+    observationId,
+    kind,
+    evidenceKind: evidence.evidence_kind,
+    state: "evidence_attached",
+    note: "Attached as evidence to your observation. It supports that observation; it makes no claim of its own and does not change the live map.",
+  };
+}
+
 // ── Rate limit ────────────────────────────────────────────────────────────────
 //
 // A §22 prompt is a single tap on a sheet that is always one tap away, which
@@ -625,11 +749,21 @@ router.post(
     }
 
     const kind = (req.body as any)?.kind;
+    const kindLabel = typeof kind === "string" ? kind : "";
+    if ("evidence" in result) {
+      res.status(result.deduped ? 200 : 201).json({
+        ok: true,
+        accepted: 1,
+        deduped: result.deduped,
+        evidence: evidenceEnvelope(result.evidence, result.observationId, kindLabel),
+      });
+      return;
+    }
     res.status(result.deduped ? 200 : 201).json({
       ok: true,
       accepted: 1,
       deduped: result.deduped,
-      observation: envelope(result.observation, typeof kind === "string" ? kind : ""),
+      observation: envelope(result.observation, kindLabel),
     });
   }),
 );

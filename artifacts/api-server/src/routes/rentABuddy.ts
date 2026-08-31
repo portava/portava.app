@@ -47,6 +47,16 @@ import {
   scanText,
   worstSeverity,
 } from "../lib/rentaBuddyScanner.js";
+import {
+  // The public buddy field-exposure rules live in lib/buddyMapRead.ts so the
+  // Map Intelligence Gateway (§19) and this marketplace read through ONE
+  // definition. They moved out of this file unchanged; `mapProfile` keeps its
+  // local name here so every call site below is byte-identical to before.
+  BUDDY_PUBLIC_COLUMNS,
+  hasMeetupBase,
+  mapBuddyPublicProfile as mapProfile,
+  stripBuddyPrivateFields,
+} from "../lib/buddyMapRead.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
@@ -237,62 +247,6 @@ async function requireBookingParty(
 }
 
 // ── Row mapper helpers ─────────────────────────────────────────────────────────
-
-/**
- * Explicit column list for all public-facing buddy profile selects.
- * Intentionally excludes admin-only and private contact fields:
- *   admin_status, risk_hold, id_verification_ref, legal_name,
- *   exact_address, home_address, phone_number.
- */
-const BUDDY_PUBLIC_COLUMNS =
-  "id, user_id, display_name, tagline, bio, intro_video_url, languages, city, country, " +
-  "categories, hourly_rate_usd, status, verified, verified_at, verification_status, " +
-  "average_rating, review_count, completed_bookings, completed_count, response_time_h, " +
-  "cover_photo_url, gallery_urls, vibe_tags, safety_badges, buddy_level, category_approvals, " +
-  "new_buddy_public_only, new_buddy_daytime_only, new_buddy_max_hours, max_group_size, " +
-  "preferred_meetup_zones, availability_blocks, meetup_base_lat, meetup_base_lng, featured, available_now, cancel_count, no_show_count, " +
-  "favorites_count, created_at, updated_at, profiles!user_id(verification_level)";
-
-function mapProfile(row: any) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    userId: row.user_id,
-    displayName: row.display_name,
-    tagline: row.tagline,
-    bio: row.bio,
-    introVideoUrl: row.intro_video_url,
-    languages: row.languages ?? [],
-    city: row.city,
-    country: row.country,
-    categories: row.categories ?? [],
-    hourlyRateUsd: row.hourly_rate_usd ? Number(row.hourly_rate_usd) : null,
-    status: row.status,
-    verified: row.verified,
-    verifiedAt: row.verified_at,
-    averageRating: row.average_rating ? Number(row.average_rating) : null,
-    reviewCount: row.review_count ?? 0,
-    completedBookings: row.completed_count ?? row.completed_bookings ?? 0,
-    responseTimeH: row.response_time_h ? Number(row.response_time_h) : null,
-    coverPhotoUrl: row.cover_photo_url,
-    galleryUrls: row.gallery_urls ?? [],
-    vibeTags: row.vibe_tags ?? [],
-    safetyBadges: row.safety_badges ?? [],
-    buddyLevel: row.buddy_level,
-    categoryApprovals: row.category_approvals ?? {},
-    newBuddyPublicOnly: row.new_buddy_public_only,
-    newBuddyDaytimeOnly: row.new_buddy_daytime_only,
-    newBuddyMaxHours: row.new_buddy_max_hours,
-    maxGroupSize: row.max_group_size,
-    preferredMeetupZones: row.preferred_meetup_zones ?? [],
-    availabilityBlocks: row.availability_blocks ?? [],
-    meetupBaseLat: typeof row.meetup_base_lat === "number" ? row.meetup_base_lat : null,
-    meetupBaseLng: typeof row.meetup_base_lng === "number" ? row.meetup_base_lng : null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    verificationLevel: (row.profiles?.verification_level as string) ?? null,
-  };
-}
 
 function mapBooking(row: any) {
   if (!row) return null;
@@ -509,12 +463,6 @@ async function geocodeBuddyCity(city: string, country: string | null): Promise<{
     expiresAt: Date.now() + (coords ? GEOCODE_OK_TTL_MS : GEOCODE_FAIL_TTL_MS),
   });
   return coords;
-}
-
-/** True when a buddy row carries a usable approximate meetup-base pin. */
-function hasMeetupBase(r: Record<string, unknown>): boolean {
-  return typeof r.meetup_base_lat === "number" && Number.isFinite(r.meetup_base_lat)
-    && typeof r.meetup_base_lng === "number" && Number.isFinite(r.meetup_base_lng);
 }
 
 router.post("/rent-a-buddy/search", async (req, res) => {
@@ -4924,13 +4872,6 @@ function hasNightlifeProhibitedContent(text: string): boolean {
 function stripTravelerPrivateFields(travelerRow: any): any {
   if (!travelerRow) return null;
   const { legal_name, id_document_ref, hotel_address, exact_location, home_address, ...safe } = travelerRow;
-  return safe;
-}
-
-function stripBuddyPrivateFields(buddyRow: any, confirmed: boolean): any {
-  if (!buddyRow) return null;
-  if (confirmed) return buddyRow;
-  const { id_verification_ref, legal_name, exact_address, home_address, phone_number, ...safe } = buddyRow;
   return safe;
 }
 

@@ -44,18 +44,25 @@
  * coarsening step could never have protected anything, because the value it
  * "protects" has already been delivered to the device.
  *
- * SCOPE — stated rather than implied
- * ==================================
- * Buddies are still fetched per-layer by the client, deliberately. Their source
- * is POST /api/rent-a-buddy/search, whose visibility rules
- * (status/admin_status), public column allow-list (BUDDY_PUBLIC_COLUMNS) and
- * private-field strip (stripBuddyPrivateFields) are all module-private to
+ * SCOPE — all six layers now arrive through the gateway
+ * =====================================================
+ * Buddies were the last hold-out, and for a real reason: their visibility rules
+ * (the rent_buddy_enabled flag, then status/admin_status), their public column
+ * allow-list (BUDDY_PUBLIC_COLUMNS) and their private-field strip
+ * (stripBuddyPrivateFields → mapBuddyPublicProfile) were module-private to
  * routes/rentABuddy.ts, interleaved with marketplace ranking, pagination and an
- * outbound Nominatim geocode. There is no privacy-complete function to call, and
- * restating "which buddy fields are public" here would create exactly the second
- * implementation this route exists to avoid. Serving that layer needs an
- * extraction inside rentABuddy.ts first. `sources` names what actually arrived
- * through the gateway, so nobody has to guess which path a layer took.
+ * outbound Nominatim geocode. Restating "which buddy fields are public" here
+ * would have created exactly the second implementation this route exists to
+ * remove. So the privacy-complete part was EXTRACTED into lib/buddyMapRead —
+ * one BUDDY_PUBLIC_COLUMNS, one stripBuddyPrivateFields, shared by the
+ * marketplace and this route — while ranking, pagination and the geocode stayed
+ * behind in the marketplace, where they belong.
+ *
+ *   buddies   → readBuddyMapPins       (feature flag + status/admin_status +
+ *                                       blocks + meetup-base-only, no geocode)
+ *
+ * `sources` names what actually arrived through the gateway, so nobody has to
+ * guess which path a layer took.
  */
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -66,6 +73,7 @@ import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { listMapTravelers } from "../lib/mapTravelers.js";
 import { readCircleLocations } from "../lib/circleLocationsRead.js";
+import { readBuddyMapPins } from "../lib/buddyMapRead.js";
 import { toAuthorizedTripView } from "../lib/privacy/tripSerializers.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
@@ -81,6 +89,7 @@ import {
   paginate,
   parseBbox,
   parseKinds,
+  projectBuddy,
   projectCircleMember,
   projectEvent,
   projectGem,
@@ -341,6 +350,28 @@ router.get(
           if (!read || !read.ok) return;
           for (const m of read.locations) collected.push(projectCircleMember(m));
           sources.push("circle");
+        })(),
+      );
+    }
+
+    if (wantKind("buddy_zone")) {
+      tasks.push(
+        (async () => {
+          // The SAME fail-closed block set every other people-bearing source
+          // got. A buddy is a person, so this layer cannot be allowed to
+          // disagree with the traveler and circle layers about who is blocked.
+          const read = await readBuddyMapPins(sc, user.id, {
+            lat,
+            lng,
+            radiusKm,
+            blockedSet,
+          }).catch(() => null);
+          // A read failure is NOT an empty marketplace: leaving the layer out
+          // of `sources` is how the client learns the difference between "no
+          // buddies here" and "we could not tell".
+          if (!read || !read.ok) return;
+          for (const b of read.pins) collected.push(projectBuddy(b));
+          sources.push("buddies");
         })(),
       );
     }

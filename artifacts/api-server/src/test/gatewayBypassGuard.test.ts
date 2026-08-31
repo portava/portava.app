@@ -54,6 +54,17 @@ const READERS: Record<string, { approved: Record<string, string> }> = {
       "routes/location.ts": "GET /api/me/circle-locations, the endpoint it was extracted from",
     },
   },
+  readBuddyMapPins: {
+    approved: {
+      "lib/buddyMapRead.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+      // NOTE: routes/rentABuddy.ts is deliberately NOT approved. The
+      // marketplace search shares the FIELD-EXPOSURE rules (BUDDY_PUBLIC_COLUMNS,
+      // stripBuddyPrivateFields, mapBuddyPublicProfile) with this reader, but it
+      // must not call the map read itself: that read is viewport-scoped,
+      // block-filtered and meetup-base-only, none of which the marketplace wants.
+    },
+  },
 };
 
 /** Every .ts file under src/, excluding tests and scripts. */

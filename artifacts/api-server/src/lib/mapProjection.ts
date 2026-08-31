@@ -294,6 +294,83 @@ export type CircleMemberLike = {
   updatedAt?: string | null;
 };
 
+// ── Buddy (spec §18 buddy_zone, §23 approximate) ─────────────────────────────
+
+/**
+ * A buddy pin is ALWAYS `approximate`, never `place_level`.
+ *
+ * `meetupBaseLat/Lng` is an area-rounded MEETUP BASE the buddy chose — the
+ * client renders it through MeetupAreaPreview as a ~100 m area for exactly that
+ * reason — not an address and not a live position. The client projector
+ * (features/map/projection/clientProjection.ts `projectBuddy`) already stamps
+ * `approximate`; this rung must agree, or the same buddy would be labelled
+ * differently depending on which transport happened to serve them.
+ *
+ * `precise_temporary` is not reachable here and must never be claimed: nothing
+ * on this path carries a temporary precise share.
+ */
+export const BUDDY_PRIVACY_CLASS: PrivacyClass = "approximate";
+
+/**
+ * The public buddy DTO's shape, as far as this projector reads it. The real
+ * input is `readBuddyMapPins`' already-safe row (lib/buddyMapRead) — the ONE
+ * privacy-complete buddy read. This function decides nothing: it cannot tell a
+ * suspended buddy from an active one, and it must never be handed a raw
+ * rent_buddy_profiles row.
+ */
+export type BuddyPinLike = {
+  id: string;
+  userId?: string | null;
+  displayName?: string | null;
+  city?: string | null;
+  tagline?: string | null;
+  meetupBaseLat?: number | null;
+  meetupBaseLng?: number | null;
+};
+
+/**
+ * Project one already-authorized buddy.
+ *
+ * No freshness and no confidence. A buddy's `available_now` flag is a
+ * self-declared marketplace setting, not an observation of conditions at a
+ * place, and `updatedAt` is when the profile row was written. Manufacturing
+ * "live" from either would make a listing read as a confirmed sighting
+ * (spec §37) — so neither is asserted, exactly as the client projector does not
+ * assert them.
+ *
+ * SUBTITLE, stated because it is the one place this diverges from the client
+ * projector: the client reads `buddy.headline`, a field the buddy DTO has never
+ * carried (`mapBuddyPublicProfile` emits `tagline`), so the client's subtitle
+ * has always collapsed to the city alone. This uses `tagline`, the field that
+ * actually exists and is already public in the marketplace payload. That is a
+ * presentation difference, not a disclosure one: no field is exposed here that
+ * the buddy's own public listing does not already show.
+ */
+export function projectBuddy(b: BuddyPinLike): MapObject | null {
+  if (!b?.id) return null;
+  const lat = b.meetupBaseLat ?? null;
+  const lng = b.meetupBaseLng ?? null;
+  // No meetup base, no pin. This projector will NOT fall back to a city
+  // centroid the buddy never chose — that would invent a location.
+  if (lat == null || lng == null) return null;
+
+  return {
+    id: `buddy:${b.id}`,
+    kind: "buddy_zone",
+    geometry: point(Number(lat), Number(lng)),
+    title: b.displayName ?? "Buddy",
+    subtitle: joinParts([b.city, b.tagline], " · ") ?? undefined,
+    privacyClass: BUDDY_PRIVACY_CLASS,
+    renderingPriority: KIND_DEFAULT_PRIORITY.buddy_zone,
+    interaction: {
+      actions: ["view", "book", "message", "report"],
+      detailRoute: `/(rent-a-buddy)/buddy/${b.id}`,
+      opensSheet: true,
+    },
+    payload: b,
+  };
+}
+
 // ── Trip (spec §18 trip_stop) ────────────────────────────────────────────────
 
 /**
