@@ -19,6 +19,12 @@ import type { Place } from '../../src/lib/location/placeTypes';
 import { registerGeographicFields, GEO_FIELD_IDS } from '../../src/platform/input-assistance/geographic/geoFields.ts';
 import { hydrateTripDestination } from '../../src/platform/input-assistance/geographic/tripDestination.ts';
 import type { CanonicalPlaceBinding } from '../../src/platform/input-assistance/geographic/canonicalBinding.ts';
+// Global Input Intelligence — Phase 5 (Creation). Inline, NON-BLOCKING §23
+// validation on the trip title (e.g. date-conflict explanation). A trip is not a
+// deduped entity kind, so this surfaces validation only. Degrades to nothing when
+// the (parallel-PR) endpoint is absent; never blocks or changes submit.
+import { useCreationAssistance } from '../../src/hooks/useCreationAssistance.ts';
+import { CreationAssist, CREATION_FIELD_IDS } from '../../src/platform/input-assistance';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { uploadMedia, type PickedMedia } from '../../src/services/media.ts';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
@@ -46,6 +52,22 @@ export default function NewTrip() {
   const [startDate, setStartDate] = useState<string | null>(null);
   const [endDate, setEndDate] = useState<string | null>(null);
   const [tripNotes, setTripNotes] = useState('');
+
+  // §23 — inline, NON-BLOCKING validation on the trip title. A trip is not a
+  // deduped entity kind (allowedKinds: [] → no duplicate rows), so this surfaces
+  // validation only — e.g. a date conflict with the viewer's existing trips, using
+  // the candidate window below. Degrades to nothing when the endpoint is absent.
+  const titleAssist = useCreationAssistance({
+    context: 'trip_title',
+    fieldId: CREATION_FIELD_IDS.tripTitle,
+    text: title,
+    allowedKinds: [],
+    sessionContext: {
+      surface: 'trip_create',
+      startDate: startDate ?? undefined,
+      endDate: endDate ?? undefined,
+    },
+  });
 
   // ── Multi-city ────────────────────────────────────────────────────────────
   const [multiCity, setMultiCity] = useState(false);
@@ -288,6 +310,7 @@ export default function NewTrip() {
 
         {/* Trip name */}
         <Field label="Trip name" placeholder="Visayas, June" value={title} onChange={setTitle} />
+        <CreationAssist duplicates={titleAssist.duplicates} validation={titleAssist.validation} />
 
         {/* Destination — single or multi-city */}
         <View>
