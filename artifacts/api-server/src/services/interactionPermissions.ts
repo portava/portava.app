@@ -365,6 +365,27 @@ export async function resolveInteractionPermissions(
     reasonCodes.push("age_restricted");
   }
 
+  // ── Interaction opt-outs (audit PRIV-3) ───────────────────────────────────
+  // PATCH /me/privacy writes allow_follow / allow_friend_requests /
+  // allow_tagging into profile_privacy_settings, but only profile_visibility is
+  // synced across to user_privacy_settings — so these three opt-outs were
+  // advisory-only (the passport hint hid the button, but a direct
+  // POST /users/:id/follow|friend-request bypassed it). Read them from the table
+  // the settings UI writes and enforce them below. Absent row / null = allowed.
+  const ppSettings = await optQuery<{
+    allow_follow: boolean | null;
+    allow_friend_requests: boolean | null;
+    allow_tagging: boolean | null;
+  }>(
+    sc.from("profile_privacy_settings")
+      .select("allow_follow, allow_friend_requests, allow_tagging")
+      .eq("user_id", targetUserId)
+      .maybeSingle() as unknown as Promise<{ data: any; error: any }>,
+  );
+  const allowFollow = ppSettings?.allow_follow !== false;
+  const allowFriendRequests = ppSettings?.allow_friend_requests !== false;
+  const allowTagging = ppSettings?.allow_tagging !== false;
+
   // ── Parallel relationship + profile queries ───────────────────────────────
   const ua = viewerId < targetUserId ? viewerId : targetUserId;
   const ub = viewerId < targetUserId ? targetUserId : viewerId;
@@ -581,6 +602,8 @@ export async function resolveInteractionPermissions(
     case "approval_required":   canTagPending = true; canTag = false; break;
     default:                    canTag = true;
   }
+  // allow_tagging=false is a hard opt-out that overrides who_can_tag (PRIV-3).
+  if (!allowTagging) { canTag = false; canTagPending = false; }
 
   // ── Final permissions ─────────────────────────────────────────────────────
   return {
@@ -597,12 +620,12 @@ export async function resolveInteractionPermissions(
     canAcceptMessageRequest: false,
     canDeclineMessageRequest: false,
 
-    canAddFriend:          !isFriend && !hasOutgoingFriendReq && !hasIncomingFriendReq && !viewerSuspended && !friendReqCooldownActive,
+    canAddFriend:          allowFriendRequests && !isFriend && !hasOutgoingFriendReq && !hasIncomingFriendReq && !viewerSuspended && !friendReqCooldownActive,
     canAcceptFriendRequest: hasIncomingFriendReq && !viewerSuspended,
     canDeclineFriendRequest: hasIncomingFriendReq && !viewerSuspended,
     canCancelFriendRequest: hasOutgoingFriendReq,
 
-    canFollow:   !viewerFollowsTarget && !viewerSuspended && !followCooldownActive,
+    canFollow:   allowFollow && !viewerFollowsTarget && !viewerSuspended && !followCooldownActive,
     canUnfollow: viewerFollowsTarget,
 
     canSaveProfile:   true,

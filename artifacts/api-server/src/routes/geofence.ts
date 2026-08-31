@@ -31,6 +31,16 @@ const PUBLIC_PREVIEW_LEVELS = ["city_only", "neighborhood", "venue_tagged"] as c
 const EXACT_VISIBILITY       = ["exact_after_acceptance", "exact_private_host_reveal"] as const;
 const ATTENDANCE_STATUSES    = ["not_checked_in","on_the_way","nearby","arrived","late","no_show","left"] as const;
 
+// Accepted trip-membership roles — mirrors ACCEPTED_TRIP_ROLES in
+// lib/circleAccessGuard.ts. An accepted co_host/viewer is a full member for
+// geofence purposes (view + check-in); only pending invitees are excluded.
+const ACCEPTED_TRIP_ROLES = new Set(["owner", "co_host", "member", "viewer"]);
+
+// Trip visibility values that expose a non-member public preview card. Mirrors
+// GET /trips/:tripId gating in routes/trips-expansion.ts (private/invite → no
+// preview). A missing value is treated as "private" (no preview).
+const PUBLIC_PREVIEW_VISIBILITIES = new Set(["public", "buddies"]);
+
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 const createSchema = z.object({
@@ -89,12 +99,20 @@ async function getMemberRole(
 
     const { data: member } = await db
       .from("trip_members")
-      .select("user_id, role")
+      .select("user_id, role, status")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
       .maybeSingle();
     if (!member) return null;
-    return (member as any).role === "member" ? "member" : "invited";
+
+    // Mirror circleAccessGuard's acceptance rule: role must be in the accepted
+    // set AND (status is null OR exactly "accepted"). A pending invitee — role
+    // outside the set, or status set to anything other than "accepted" — is
+    // "invited" and must not gain member-level view/check-in access.
+    const m = member as { role?: string | null; status?: string | null };
+    const roleAccepted = ACCEPTED_TRIP_ROLES.has(m.role ?? "");
+    const statusAccepted = m.status == null || m.status === "accepted";
+    return roleAccepted && statusAccepted ? "member" : "invited";
   } catch {
     return null;
   }
@@ -145,7 +163,15 @@ async function writeAttendanceEvent(
   }
 }
 
-/** Upsert a check-in row and write the matching attendance event. */
+/**
+ * Upsert a check-in row and write the matching attendance event.
+ *
+ * Returns `true` only when the plan_checkins write succeeded. supabase-js
+ * RESOLVES (does not throw) on a DB error, so the caller MUST honour this
+ * boolean — otherwise a failed write would still report a successful check-in.
+ * The attendance event is best-effort telemetry and stays non-fatal, but is
+ * skipped when the load-bearing check-in write failed.
+ */
 async function upsertCheckin(
   db: ReturnType<typeof getServiceClient>,
   opts: {
@@ -157,8 +183,8 @@ async function upsertCheckin(
     actorId?: string;
     metadata?: Record<string, unknown>;
   },
-): Promise<void> {
-  await db!.from("plan_checkins").upsert(
+): Promise<boolean> {
+  const { error } = await db!.from("plan_checkins").upsert(
     {
       geofence_id:   opts.geofenceId,
       trip_id:       opts.tripId,
@@ -169,6 +195,8 @@ async function upsertCheckin(
     },
     { onConflict: "geofence_id,user_id" },
   );
+  if (error) return false;
+
   await writeAttendanceEvent(db, {
     geofenceId: opts.geofenceId,
     tripId:     opts.tripId,
@@ -177,6 +205,7 @@ async function upsertCheckin(
     actorId:    opts.actorId,
     metadata:   opts.metadata ?? {},
   });
+  return true;
 }
 
 // ── GET /api/trips/:tripId/geofence ───────────────────────────────────────────
@@ -229,18 +258,43 @@ router.get("/trips/:tripId/geofence", async (req, res) => {
 
   // Non-members get a stripped public card (no coords, no check-in data)
   if (!role) {
+    // GEOFENCE-2: never emit a public preview card for a trip that is not itself
+    // publicly visible. Mirror GET /trips/:tripId visibility gating
+    // (routes/trips-expansion.ts): only "public"/"buddies" trips expose a
+    // non-member preview; "private"/"invite" (or a missing value) reveal nothing.
+    const { data: tripVis } = await db
+      .from("trips")
+      .select("visibility")
+      .eq("id", tripId)
+      .maybeSingle();
+    const visibility = ((tripVis as any)?.visibility ?? "private") as string;
+    if (!PUBLIC_PREVIEW_VISIBILITIES.has(visibility)) {
+      sendError(res, "not_found", "No geofence preview available");
+      return;
+    }
+
+    // F5: gate the public fields by the preview-level hierarchy. Each level is a
+    // superset of the coarser one; never leak a finer field than the level
+    // permits.
+    //   city_only     → city only
+    //   neighborhood  → city + neighborhood
+    //   venue_tagged  → city + neighborhood + venueName + locationName
+    const level = (g.public_preview_level ?? "neighborhood") as string;
+    const showNeighborhood = level === "neighborhood" || level === "venue_tagged";
+    const showVenue        = level === "venue_tagged";
+
     res.status(200).json({
       featureEnabled: true,
       geofence: {
-        id:               g.id,
-        publicPreviewLevel: g.public_preview_level ?? "neighborhood",
-        city:             g.city ?? null,
-        neighborhood:     g.neighborhood ?? null,
-        venueName:        g.venue_name ?? null,
-        locationName:     g.public_preview_level === "venue_tagged" ? (g.location_name ?? null) : null,
-        exactRevealLabel: "Exact meetup revealed after acceptance",
-        hostEnabled:      g.host_enabled,
-        viewerRole:       "none",
+        id:                 g.id,
+        publicPreviewLevel: level,
+        city:               g.city ?? null,
+        neighborhood:       showNeighborhood ? (g.neighborhood ?? null) : null,
+        venueName:          showVenue ? (g.venue_name ?? null) : null,
+        locationName:       showVenue ? (g.location_name ?? null) : null,
+        exactRevealLabel:   "Exact meetup revealed after acceptance",
+        hostEnabled:        g.host_enabled,
+        viewerRole:         "none",
       },
     });
     return;
@@ -533,7 +587,7 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
   const arrivalStatus = isLate ? "late" : "arrived";
   const eventType     = isLate ? "late_check_in" : "checked_in_successfully";
 
-  await upsertCheckin(db, {
+  const checkinPersisted = await upsertCheckin(db, {
     geofenceId,
     tripId,
     userId: user.id,
@@ -541,6 +595,14 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
     eventType,
     metadata:  { distanceBucket: distanceM <= 100 ? "same_venue" : "inside_radius" },
   });
+
+  // The check-in row write is load-bearing: if it failed, the member is NOT
+  // recorded as arrived, so we must NOT report success (nor award trust/stamp).
+  if (!checkinPersisted) {
+    req.log.error({ tripId, geofenceId, userId: user.id }, "geofence: check-in write failed");
+    sendError(res, "db_error", "Check-in could not be saved. Please try again.");
+    return;
+  }
 
   // Feed plan attendance into Trust Engine (fire-and-forget; flag-gated internally)
   void recordTrustEvent(db, {

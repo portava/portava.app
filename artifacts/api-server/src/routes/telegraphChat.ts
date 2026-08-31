@@ -372,6 +372,20 @@ router.post(
       return;
     }
 
+    // Never write server-readable plaintext into an end-to-end encrypted thread.
+    // A direct thread can be e2ee and telegraph suggestions surface in DMs, so a
+    // poll body (JSON plaintext) would violate the E2EE invariant (audit MSG-3).
+    // Mirror the messaging media/text handlers' e2ee_thread refusal.
+    const { data: threadMeta } = await client
+      .from("message_threads")
+      .select("is_e2ee")
+      .eq("id", threadId)
+      .maybeSingle();
+    if ((threadMeta as any)?.is_e2ee === true) {
+      sendError(res, "e2ee_thread", "Polls are not supported on end-to-end encrypted threads");
+      return;
+    }
+
     const parsed = StartPollSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
       sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");

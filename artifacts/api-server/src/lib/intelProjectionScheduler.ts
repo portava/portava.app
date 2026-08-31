@@ -93,27 +93,61 @@ export async function runIntelProjectionPass(opts: { client?: any; now?: Date } 
     // LIVE_ELIGIBLE claims, so a claim that LEFT that set (retracted, rejected,
     // superseded, expired) is never touched and its snapshot would keep serving
     // as LIVE until its TTL. Expire any servable snapshot with no live-eligible
-    // claim behind it. The live-key set is read UNLIMITED (keys only) so the
-    // capped claim read above can never cause a false expiry.
+    // claim behind it. BOTH the live-key set and the servable set are read with
+    // FULL pagination: a range-less PostgREST read silently caps at 1000 rows with
+    // no error, so past 1000 live claims an unpaginated read would miss real live
+    // keys and force-expire the servable snapshots those keys back — a silent
+    // deletion of live intelligence. Every page is accumulated until a short page
+    // ends it, and if ANY page errors the whole reconciliation aborts WITHOUT
+    // expiring anything (fail-closed: never expire on a partial/errored read).
     try {
-      const [liveKeyRes, servableRes] = await Promise.all([
-        db.from("intel_claims")
+      const PAGE = 1000;
+
+      // Full live-key set, paginated. A short (or empty) page ends the loop.
+      const liveKeys = new Set<string>();
+      let liveKeysComplete = true;
+      for (let offset = 0; ; offset += PAGE) {
+        const { data, error } = await db
+          .from("intel_claims")
           .select("subject_id, zone_id, claim_type")
-          .in("status", LIVE_ELIGIBLE_CLAIM_STATUSES as unknown as string[]),
-        db.from("intel_state_snapshots")
+          .in("status", LIVE_ELIGIBLE_CLAIM_STATUSES as unknown as string[])
+          .range(offset, offset + PAGE - 1);
+        if (error) {
+          liveKeysComplete = false;
+          logger.warn({ err: error }, "intelProjection pass: live-key page read failed; skipping expiry (fail-closed)");
+          break;
+        }
+        const rows = (data as any[]) ?? [];
+        for (const c of rows) liveKeys.add(JSON.stringify([c.subject_id, c.zone_id ?? "", c.claim_type]));
+        if (rows.length < PAGE) break;
+      }
+
+      // Full servable-snapshot set, paginated (the same silent cap applies).
+      const servable: any[] = [];
+      let servableComplete = true;
+      for (let offset = 0; ; offset += PAGE) {
+        const { data, error } = await db
+          .from("intel_state_snapshots")
           .select("id, subject_id, zone_id, claim_type")
           .eq("privacy_eligible", true)
-          .gt("expires_at", now.toISOString()),
-      ]);
-      // Only reconcile when BOTH reads succeeded — otherwise we cannot safely tell
-      // an orphan from an unread row, so leave snapshots alone (fail-closed on the
-      // side of not wrongly expiring live data; the TTL still bounds staleness).
-      if (!liveKeyRes.error && !servableRes.error) {
-        const liveKeys = new Set(
-          ((liveKeyRes.data as any[]) ?? []).map((c) =>
-            JSON.stringify([c.subject_id, c.zone_id ?? "", c.claim_type])),
-        );
-        const orphanIds = ((servableRes.data as any[]) ?? [])
+          .gt("expires_at", now.toISOString())
+          .range(offset, offset + PAGE - 1);
+        if (error) {
+          servableComplete = false;
+          logger.warn({ err: error }, "intelProjection pass: servable page read failed; skipping expiry (fail-closed)");
+          break;
+        }
+        const rows = (data as any[]) ?? [];
+        servable.push(...rows);
+        if (rows.length < PAGE) break;
+      }
+
+      // Expire only when BOTH sets were read IN FULL. A partial live-key read
+      // cannot tell a real orphan from a key it simply did not read, so a
+      // partial/errored read must never delete a servable row — leave snapshots
+      // alone (the TTL still bounds staleness).
+      if (liveKeysComplete && servableComplete) {
+        const orphanIds = servable
           .filter((s) => !liveKeys.has(JSON.stringify([s.subject_id, s.zone_id ?? "", s.claim_type])))
           .map((s) => s.id);
         if (orphanIds.length > 0) {

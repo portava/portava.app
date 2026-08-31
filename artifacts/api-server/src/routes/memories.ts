@@ -66,14 +66,20 @@ async function canViewMemory(
   const vis: MemoryVisibility = memory.visibility ?? "only_me";
 
   if (vis === "only_me") return false;
-  if (vis === "public") return true;
 
-  if (!viewerId) return false;
+  if (!viewerId) return vis === "public";
+
+  // A hidden viewer is denied for EVERY visibility mode. The hide list used to be
+  // consulted only in the 'custom' branch, so a user the owner hid could still
+  // read the memory when it was public / friends_only / trip_crew / circle_only
+  // (audit MEM·M1). Owner already returned true above, so this never self-hides.
+  const hidden: string[] = memory.hidden_user_ids ?? [];
+  if (hidden.includes(viewerId)) return false;
+
+  if (vis === "public") return true;
 
   if (vis === "custom") {
     const allowed: string[] = memory.allowed_user_ids ?? [];
-    const hidden: string[] = memory.hidden_user_ids ?? [];
-    if (hidden.includes(viewerId)) return false;
     if (allowed.includes(viewerId)) return true;
     return false;
   }
