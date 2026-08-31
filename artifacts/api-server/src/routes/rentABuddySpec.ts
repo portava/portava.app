@@ -2,7 +2,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits } from "./rentABuddy.js";
+import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
@@ -18,55 +18,11 @@ function sc(fallback?: any) {
 }
 
 // ── Launch-control resolution (A1) ─────────────────────────────────────────────
-// Mirrors getLaunchControl() in rentABuddy.ts (which is not exported, so it is
-// reproduced here rather than imported — the other file is owned elsewhere).
-//
-// The canonical helper runs a cascade of `.eq/.is` probes, most-specific first.
-// This version fetches every control once and resolves the same precedence in
-// JS: identical result, and it avoids the `.is("col", null)` builder call that
-// several route paths' fakes do not implement.
-interface ResolvedLaunchControl {
-  enabled: boolean;
-  waitlistOnly: boolean;
-  minAge: number;
-  nightlifeMinAge: number;
-  requireIdVerification: boolean;
-  requirePhoneVerification: boolean;
-  fullPaymentRequired: boolean;
-}
-
-function pickLaunchControl(
-  rows: any[],
-  { countryCode, city, category }: { countryCode?: string | null; city?: string | null; category?: string | null },
-): ResolvedLaunchControl | null {
-  // Precedence order matches rentABuddy.ts getLaunchControl() exactly.
-  const specs: Array<{ country_code: string | null; city: string | null; category: string | null }> = [];
-  if (category && city && countryCode) specs.push({ country_code: countryCode, city, category });
-  if (category && countryCode)         specs.push({ country_code: countryCode, city: null, category });
-  if (city && countryCode)             specs.push({ country_code: countryCode, city, category: null });
-  if (countryCode)                     specs.push({ country_code: countryCode, city: null, category: null });
-  if (category)                        specs.push({ country_code: null, city: null, category });
-  specs.push({ country_code: null, city: null, category: null });
-
-  for (const s of specs) {
-    const m = (rows ?? []).find((c: any) =>
-      ((c.country_code ?? null) === s.country_code) &&
-      ((c.city ?? null) === s.city) &&
-      ((c.category ?? null) === s.category));
-    if (m) {
-      return {
-        enabled: (m as any).enabled,
-        waitlistOnly: (m as any).waitlist_only,
-        minAge: (m as any).min_age ?? 18,
-        nightlifeMinAge: (m as any).nightlife_min_age ?? 21,
-        requireIdVerification: (m as any).require_id_verification ?? true,
-        requirePhoneVerification: (m as any).require_phone_verification ?? true,
-        fullPaymentRequired: (m as any).full_payment_required ?? false,
-      };
-    }
-  }
-  return null;
-}
+// The shorthand loads every launch control once and resolves precedence with the
+// SHARED resolver exported from rentABuddy.ts (resolveLaunchControlFromRows), so
+// "which control applies" can never drift from the canonical booking path. This
+// in-memory form also avoids the `.is("col", null)` builder call that several
+// route paths' fakes do not implement.
 
 async function requireAdminCtx(req: any, res: any) {
   const auth = await requireUser(req, res);
@@ -489,8 +445,11 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   const { buddyId } = req.params;
   const {
     bookingDate, durationH, city, category, notes, groupSize,
-    countryCode, paymentMode = "full_in_app", meetupType, meetupLocation,
+    paymentMode = "full_in_app", meetupType, meetupLocation,
   } = req.body ?? {};
+  // NOTE: `countryCode` is intentionally NOT read from the body — the service
+  // country is derived server-side from the buddy (below), so the client cannot
+  // assert a false country to dodge that country's launch controls.
 
   const rolloutAccess = await checkRentBuddyAccess({
     sc: serviceClient, userId: user.id,
@@ -526,10 +485,11 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
     return res.status(409).json({ error: "self_booking_not_allowed" });
   }
 
-  // Verify buddy exists and is active
+  // Verify buddy exists and is active. `country` is selected so the service
+  // country can be derived server-side from the buddy (never the client body).
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
-    .select("id, user_id, status, admin_status, verified, categories")
+    .select("id, user_id, status, admin_status, verified, categories, country")
     .eq("id", buddyId)
     .maybeSingle();
 
@@ -580,14 +540,28 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   // so a traveler blocked on the canonical POST /rent-a-buddy/bookings by the
   // age gate (min_age / nightlife_min_age), require_id_verification,
   // require_phone_verification or full_payment_required could still book here.
-  // Mirror of rentABuddy.ts:1079-1116. Additive: when no launch control matches
-  // (pickLaunchControl → null) nothing changes for a compliant traveler.
+  // Mirror of rentABuddy.ts:1079-1116, powered by the SHARED resolver and the
+  // server-derived service country. Additive: when no launch control matches
+  // nothing changes for a compliant traveler.
+  const serviceCountry = deriveServiceCountry(bp);
   {
     const { data: launchRows } = await serviceClient
       .from("rent_buddy_launch_controls")
       .select("*");
-    const launchCtrl = pickLaunchControl(launchRows ?? [], {
-      city, countryCode: countryCode ?? undefined, category,
+
+    // Fail closed on unresolved country — same invariant as the canonical gate
+    // (rentABuddy.ts:1098-1111). Now that the country is server-derived and
+    // reliable, refuse rather than seat a booking under unknown country policy
+    // whenever ANY launch control is configured.
+    if (!serviceCountry && (launchRows ?? []).length > 0) {
+      return res.status(400).json({
+        error: "invalid_payload",
+        message: "This buddy has no registered country, so booking policy cannot be verified for this location.",
+      });
+    }
+
+    const launchCtrl = resolveLaunchControlFromRows(launchRows ?? [], {
+      city, countryCode: serviceCountry ?? undefined, category,
     });
     if (launchCtrl) {
       if (!launchCtrl.enabled) {
@@ -656,6 +630,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
       booking_date: bookingDate,
       duration_h: durationH,
       city,
+      country_code: serviceCountry,
       category,
       notes: notes ?? null,
       group_size: groupSize ?? 1,

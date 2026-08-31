@@ -1944,6 +1944,9 @@ describe("Rent a Buddy — booking: launch control and age enforcement", () => {
       buddyProfiles: {
         [BUDDY_PROF]: {
           id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active",
+          // `country` is the server-side source of the service country now that
+          // the gate derives it from the buddy rather than the request body.
+          country: "JP",
           hourly_rate_usd: 25, categories: ["city", "nightlife"], category_approvals: {},
           new_buddy_public_only: false, new_buddy_max_hours: 8,
         },
