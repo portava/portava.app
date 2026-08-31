@@ -102,6 +102,17 @@ function makeFakeClient(opts: {
     auth: {
       getUser: () => Promise.resolve({ data: { user: { id: "uid1" } }, error: null }),
     },
+    // The config handler now routes each toggle through the audited RPC
+    // (toggle_feature_flag_with_audit) instead of a raw .update() (audit FLAG-1/2).
+    // Simulate a successful audited toggle so these behavioural tests still pass.
+    rpc: (name: string, args: any) => {
+      if (name !== "toggle_feature_flag_with_audit") return Promise.resolve({ data: [], error: null });
+      const { p_flag, p_new_enabled } = args ?? {};
+      return Promise.resolve({
+        data: [{ flag: p_flag, enabled: p_new_enabled, updated_at: "2026-01-01T00:00:00Z", changed_at: "2026-01-01T00:00:00Z", old_enabled: !p_new_enabled }],
+        error: null,
+      });
+    },
   } as any;
 }
 
