@@ -403,6 +403,11 @@ export async function canBeSeenByViewersBatch(
     targetDenyReason = "target_sharing_off";
   } else if (!settings.consented_at) {
     targetDenyReason = "target_not_consented";
+  } else if (settings.consent_version !== CURRENT_CONSENT_VERSION) {
+    // Stale/null consent version → presence must not be shared under a superseded
+    // (or pre-migration) policy. The single-shot canViewCirclePresence enforced
+    // this; the live batch guards ignored it entirely (audit CIRCLE-1).
+    targetDenyReason = "consent_version_stale";
   } else if (settings.is_paused) {
     targetDenyReason = "global_paused";
   } else {
@@ -637,6 +642,12 @@ export async function canViewCirclePresenceBatch(
     }
     if (!settings.consented_at) {
       out.set(targetUserId, { allowed: false, reason: "target_not_consented" });
+      continue;
+    }
+    if (settings.consent_version !== CURRENT_CONSENT_VERSION) {
+      // Stale/null consent version → deny, matching the single-shot guard the
+      // live batch path ignored (audit CIRCLE-1).
+      out.set(targetUserId, { allowed: false, reason: "consent_version_stale" });
       continue;
     }
     if (settings.is_paused) {
