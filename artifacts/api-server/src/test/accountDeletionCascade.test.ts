@@ -311,6 +311,91 @@ describe("executeAccountDeletion — full cascade", () => {
   });
 });
 
+// ── Memory UGC + media (audit MEM·H2) ────────────────────────────────────────
+// Trip "Memories" and their photos survived deletion: DELETE /memories/:id is a
+// soft-delete, no cascade step touched them, and the media stayed publicly
+// served under the "Deleted User" tombstone. These assert the media is
+// collected then removed and every memory row scope is cleared.
+
+describe("executeAccountDeletion — memory UGC (MEM·H2)", () => {
+  const OWN = `https://x/storage/v1/object/public/post-media/memories/${USER_ID}/a.jpg`;
+  const FOREIGN =
+    "https://x/storage/v1/object/public/post-media/memories/22222222-2222-2222-2222-222222222222/evil.jpg";
+
+  it("collects item media, then deletes items/tags/likes/saves and the memories", async () => {
+    const c = makeClient({
+      rows: {
+        memories: [{ id: "mem-1" }, { id: "mem-2" }],
+        memory_items: [{ media_url: OWN }],
+      },
+    });
+
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+
+    // The item's media object was removed from the post-media bucket.
+    const removed = c._storageRemoved.flatMap((r) => r.paths);
+    assert.ok(removed.includes(`memories/${USER_ID}/a.jpg`), "memory media object removed");
+
+    // Owned children deleted by the collected memory ids (first memory_tags op
+    // is the owned one, keyed by memory_id).
+    assert.deepEqual(opFor(c, "memory_items", "delete")!.filters, [["in", "memory_id", ["mem-1", "mem-2"]]]);
+    assert.deepEqual(opFor(c, "memory_tags", "delete")!.filters, [["in", "memory_id", ["mem-1", "mem-2"]]]);
+
+    // The memories themselves, by owner_id and with NO state filter so
+    // soft-deleted (state='deleted') rows are swept too.
+    assert.deepEqual(opFor(c, "memories", "delete")!.filters, [["eq", "owner_id", USER_ID]]);
+
+    // Collection ran before the rows were deleted.
+    const idxCollect = c._ops.findIndex((o: Op) => o.table === "memory_items" && o.op === "select");
+    const idxDelete = c._ops.findIndex((o: Op) => o.table === "memory_items" && o.op === "delete");
+    assert.ok(idxCollect >= 0 && idxDelete >= 0 && idxCollect < idxDelete,
+      "must read item media before deleting the items");
+  });
+
+  it("also clears the footprint the user left on OTHER people's memories", async () => {
+    const c = makeClient();
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+
+    const likeOps = c._ops.filter((o: Op) => o.table === "memory_likes" && o.op === "delete");
+    assert.ok(likeOps.some((o: Op) => o.filters.some((f: any[]) => f[1] === "user_id" && f[2] === USER_ID)),
+      "memory_likes the user made elsewhere are deleted by user_id");
+    const saveOps = c._ops.filter((o: Op) => o.table === "memory_saves" && o.op === "delete");
+    assert.ok(saveOps.some((o: Op) => o.filters.some((f: any[]) => f[1] === "user_id" && f[2] === USER_ID)),
+      "memory_saves the user made elsewhere are deleted by user_id");
+    const tagOps = c._ops.filter((o: Op) => o.table === "memory_tags" && o.op === "delete");
+    assert.ok(tagOps.some((o: Op) => o.filters.some((f: any[]) => f[1] === "tagged_user_id" && f[2] === USER_ID)),
+      "tags OF the user on other people's memories are deleted by tagged_user_id");
+  });
+
+  it("never removes storage objects outside the user's own memories/{userId}/ prefix", async () => {
+    // media_url is client-supplied, so an item could point at another user's
+    // object. Account deletion must not become a lever to delete it.
+    const c = makeClient({
+      rows: {
+        memories: [{ id: "mem-1" }],
+        memory_items: [{ media_url: OWN }, { media_url: FOREIGN }],
+      },
+    });
+    await executeAccountDeletion(c, USER_ID, { actorId: null });
+
+    const removed = c._storageRemoved.flatMap((r) => r.paths);
+    assert.ok(removed.includes(`memories/${USER_ID}/a.jpg`), "the user's own object is removed");
+    assert.ok(!removed.some((p) => p.includes("evil")),
+      "an item pointed at another user's object is NOT removed");
+  });
+
+  it("skips the owned-children sweep when the user has no memories", async () => {
+    const c = makeClient(); // no memory fixtures → memories select returns []
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+    assert.equal(opFor(c, "memory_items", "delete"), undefined,
+      "no owned-child sweep without any memory ids");
+    assert.ok(opFor(c, "memories", "delete"), "still sweeps memories by owner_id");
+  });
+});
+
 // ── Merged legacy cascade steps (old services/accountDeletion.ts union) ──────
 
 describe("executeAccountDeletion — merged legacy cascade steps", () => {
