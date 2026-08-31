@@ -44,7 +44,14 @@ import type {
 import type { HiddenGemMediaProjection, HiddenGemState, GemLocationPrecision } from '../types/hiddenGemMedia.ts';
 import type { ConfidenceState } from '../types/media.ts';
 import type { PeopleLensGroup, PeopleLensProjection } from '../types/peopleLens.ts';
-import type { MyWorldBucket, MyWorldLibrary } from '../types/myWorld.ts';
+import type {
+  MyWorldBucket,
+  MyWorldLibrary,
+  MyWorldMemory,
+  MyWorldMemoryEntry,
+  MyWorldMemoryGroup,
+  HiddenGemMemoryLine,
+} from '../types/myWorld.ts';
 import type {
   MediaTimelineProjection,
   TimeBandKind,
@@ -752,10 +759,111 @@ function mapMyWorldBucket(raw: unknown): MyWorldBucket | null {
   };
 }
 
+// ── §31 / §31.1 Memory Integration (owner-only) ──────────────────────────────
+
 /**
- * Map GET /media/me (§30). Server shape: `{ generatedAt, buckets:[…] }`. The
- * buckets are always well-formed (even when empty) so the lens can render its
- * filter chips from real data.
+ * Map one §31 derived-memory entry. OWNER-ONLY: `visibility` is pinned to
+ * 'owner_only' here so a mutated / hand-rolled payload can never downgrade the
+ * privacy of an entry rendered in the owner's private memory section. An entry
+ * with no id is dropped (nothing to key it by).
+ */
+function mapMyWorldMemoryEntry(raw: unknown): MyWorldMemoryEntry | null {
+  if (!isObj(raw)) return null;
+  const id = asString(raw.id);
+  if (!id) return null;
+  return {
+    id,
+    group: asString(raw.group) ?? '',
+    title: asString(raw.title) ?? '',
+    detail: asString(raw.detail),
+    occurredAt: asString(raw.occurredAt),
+    visibility: 'owner_only',
+  };
+}
+
+/** Map one §31 group block; requires a group key + label to be renderable. */
+function mapMyWorldMemoryGroup(raw: unknown): MyWorldMemoryGroup | null {
+  if (!isObj(raw)) return null;
+  const group = asString(raw.group);
+  const label = asString(raw.label);
+  if (!group || !label) return null;
+  return {
+    group,
+    label,
+    description: asString(raw.description) ?? '',
+    entries: asArray(raw.entries)
+      .map(mapMyWorldMemoryEntry)
+      .filter((e): e is MyWorldMemoryEntry => e !== null),
+  };
+}
+
+/**
+ * Map one §31.1 Hidden Gem Memory line. OWNER-ONLY (see above). Requires a gem
+ * id + label; the gem name may be absent (an unreadable / protected gem still
+ * carries the owner's own private line).
+ */
+function mapHiddenGemMemoryLine(raw: unknown): HiddenGemMemoryLine | null {
+  if (!isObj(raw)) return null;
+  const gemId = asString(raw.gemId);
+  const label = asString(raw.label);
+  if (!gemId || !label) return null;
+  return {
+    gemId,
+    gemName: asString(raw.gemName),
+    kind: asString(raw.kind) ?? '',
+    label,
+    occurredAt: asString(raw.occurredAt),
+    visibility: 'owner_only',
+  };
+}
+
+/**
+ * Map the §31 / §31.1 memory surface. Always returns a well-formed, OWNER-ONLY
+ * MyWorldMemory — an absent / partial / garbage payload degrades to an empty
+ * surface (empty groups + no gem lines), never a throw. `visibility` is pinned
+ * to 'owner_only' regardless of the payload.
+ */
+export function mapMyWorldMemory(raw: unknown): MyWorldMemory {
+  const o = isObj(raw) ? raw : {};
+  const totals = isObj(o.totals) ? o.totals : {};
+  return {
+    visibility: 'owner_only',
+    groups: asArray(o.groups)
+      .map(mapMyWorldMemoryGroup)
+      .filter((g): g is MyWorldMemoryGroup => g !== null),
+    hiddenGemMemory: asArray(o.hiddenGemMemory)
+      .map(mapHiddenGemMemoryLine)
+      .filter((l): l is HiddenGemMemoryLine => l !== null),
+    totals: {
+      surfaced: asNumber(totals.surfaced) ?? 0,
+      suppressed: asNumber(totals.suppressed) ?? 0,
+    },
+    notes: asArray(o.notes)
+      .map(asString)
+      .filter((s): s is string => s !== null),
+  };
+}
+
+/** True when the owner-only memory surface carries nothing to show (§31/§31.1). */
+export function isMyWorldMemoryEmpty(mem: MyWorldMemory): boolean {
+  return mem.groups.every((g) => g.entries.length === 0) && mem.hiddenGemMemory.length === 0;
+}
+
+/**
+ * The §31 groups that actually have entries — the section renders these (and its
+ * §31.1 gem lines) and hides an all-empty group. Pure selector so the private
+ * memory section's render decision is unit-testable without React Native.
+ */
+export function visibleMemoryGroups(mem: MyWorldMemory): MyWorldMemoryGroup[] {
+  return mem.groups.filter((g) => g.entries.length > 0);
+}
+
+/**
+ * Map GET /media/me (§30/§31). Server shape:
+ * `{ generatedAt, buckets:[…], memory:{ groups, hiddenGemMemory, … } }`.
+ * The buckets and the memory surface are always well-formed (even when empty) so
+ * the lens can render its filter chips and its private memory section from real
+ * data, and a route not yet deployed / partial payload degrades cleanly.
  */
 export function mapMyWorldLibrary(raw: unknown): MyWorldLibrary {
   const o = isObj(raw) ? raw : {};
@@ -763,13 +871,21 @@ export function mapMyWorldLibrary(raw: unknown): MyWorldLibrary {
     buckets: asArray(o.buckets)
       .map(mapMyWorldBucket)
       .filter((b): b is MyWorldBucket => b !== null),
+    memory: mapMyWorldMemory(o.memory),
     generatedAt: asString(o.generatedAt),
   };
 }
 
-/** True when a My World library carries no media in any bucket. */
+/**
+ * True when a My World library has nothing to show at all: no media sample in
+ * any bucket, no bucket count, and no owner-only memory. A bucket that carries a
+ * COUNT only (Postcards / Memories / Gems / Uploads live in their own domains'
+ * surfaces) still means the world is not empty, and so does any private memory.
+ */
 export function isMyWorldEmpty(lib: MyWorldLibrary): boolean {
-  return lib.buckets.every((b) => b.media.length === 0);
+  const noMedia = lib.buckets.every((b) => b.media.length === 0);
+  const noCounts = lib.buckets.every((b) => b.count === 0);
+  return noMedia && noCounts && isMyWorldMemoryEmpty(lib.memory);
 }
 
 // ── §17 Time Architecture (Earlier / Now / Typical / Likely-Next) ─────────────
