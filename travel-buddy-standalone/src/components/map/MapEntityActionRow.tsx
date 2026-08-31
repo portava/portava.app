@@ -16,7 +16,7 @@
  * useFollow can seed the icon instantly before the getFollowStatus fetch
  * completes.
  */
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -53,6 +53,111 @@ import { useOptionalMapStore } from '../../stores/mapStore.tsx';
 import { TripWishlistPicker } from '../discovery/TripWishlistPicker.tsx';
 import type { AddToTripPayload } from '../discovery/TripWishlistPicker.tsx';
 import { ReportSheet } from '../ReportSheet.tsx';
+import {
+  MAP_OBJECT_KINDS,
+  type MapObject,
+  type MapObjectKind,
+  type PrivacyClass,
+} from '../../types/mapObjects.ts';
+import {
+  countBucket,
+  currentDecisionId,
+  describeMapObject,
+  distanceBucket,
+  emitMapEvent,
+  type MapObjectRef,
+} from '../../features/map/telemetry/mapTelemetry.ts';
+
+// ── §35 telemetry: recovering a contract object from the legacy envelope ──────
+//
+// `describeMapObject` is the ONLY sanctioned way to put an object into a §35
+// payload — it coarsens geometry to a ~4.9 km cell, withholds identity-bearing
+// kinds and drops title/contributor. It takes a `MapObject`, and this component
+// is on the LEGACY `MapEntity` path, so the object has to be recovered first.
+//
+// Two cases:
+//   • Projection path — `mapObjectToEntity` keeps the whole `MapObject` on
+//     `payload`. Describe THAT: privacyClass, freshness and confidence are then
+//     the projection's own recorded values rather than a guess here.
+//   • Legacy producers — the envelope carries no §23 rung at all, so one is
+//     derived from the layer below, conservatively, and documented as derived.
+//
+// NOTE: this helper is duplicated in MapCarousel.tsx and MapEntityPreviewCard.tsx
+// rather than shared. Every candidate host module is wholesale `jest.mock`ed by
+// one of the existing component tests (a mocked module would export `undefined`
+// for it), and this lane may not add files. It should move to
+// features/map/telemetry/ when that constraint lifts.
+
+/** Legacy layer → §18 contract kind. */
+const TELEMETRY_KIND_BY_TYPE: Record<MapEntityType, MapObjectKind> = {
+  places: 'place',
+  events: 'event',
+  gems: 'hidden_gem',
+  trips: 'trip_stop',
+  friends: 'crew_member',
+  buddies: 'buddy_zone',
+  travelers: 'social_zone',
+  stamps: 'memory',
+};
+
+/**
+ * DERIVED §23 rung for legacy envelopes, which record none. Chosen as the
+ * coarsest rung the layer's own UI already claims: places/events/gems/trips
+ * publish the venue's real coordinate, the Friends card states "area level
+ * only", travelers and passport pins are aggregates.
+ */
+const TELEMETRY_PRIVACY_BY_TYPE: Record<MapEntityType, PrivacyClass> = {
+  places: 'place_level',
+  events: 'place_level',
+  gems: 'place_level',
+  trips: 'place_level',
+  friends: 'approximate',
+  buddies: 'approximate',
+  travelers: 'aggregate_only',
+  stamps: 'aggregate_only',
+};
+
+function isMapObjectPayload(value: unknown): value is MapObject {
+  if (value == null || typeof value !== 'object') return false;
+  const o = value as { kind?: unknown; geometry?: unknown; privacyClass?: unknown };
+  return (
+    typeof o.kind === 'string' &&
+    (MAP_OBJECT_KINDS as readonly string[]).includes(o.kind) &&
+    typeof o.geometry === 'object' &&
+    o.geometry !== null &&
+    typeof o.privacyClass === 'string'
+  );
+}
+
+function entityTelemetryRef(entity: MapEntity): MapObjectRef {
+  if (isMapObjectPayload(entity.payload)) return describeMapObject(entity.payload);
+  return describeMapObject({
+    id: entity.id,
+    kind: TELEMETRY_KIND_BY_TYPE[entity.type],
+    geometry: { type: 'Point', coordinates: [entity.lng, entity.lat] },
+    // Never a real name: describeMapObject drops title, and supplying one here
+    // would put a place name one refactor away from a payload.
+    title: '',
+    privacyClass: TELEMETRY_PRIVACY_BY_TYPE[entity.type],
+    renderingPriority: 0,
+  });
+}
+
+/** Distance the projection already computed, when there is one. */
+function entityDistanceKm(entity: MapEntity): number | null {
+  if (!isMapObjectPayload(entity.payload)) return null;
+  const d = entity.payload.distanceKm;
+  return typeof d === 'number' ? d : null;
+}
+
+/** Telemetry is fire-and-forget: it may never block or break a user action. */
+function fireAndForget(emit: () => void): void {
+  try {
+    emit();
+  } catch {
+    // Deliberately swallowed.
+  }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -142,22 +247,45 @@ interface MapEntityActionRowProps {
   /** Called immediately before any detail push so the map screen can record
    *  the navigation origin and restore state correctly on back-nav. */
   onBeforeNavigate?: () => void;
+  /**
+   * True when this card is one of the options an active Compass decision
+   * offered (§35). ONLY then may an action here also count as
+   * `recommendation_accepted` — without it there is no honest way to tell a
+   * recommendation the user took from an unrelated place they happened to act
+   * on while a decision was still open. MapCarousel threads it down from its
+   * own `compassResults` prop.
+   */
+  isRecommendation?: boolean;
 }
 
-export function MapEntityActionRow({ entity, onBeforeNavigate }: MapEntityActionRowProps) {
+export function MapEntityActionRow({ entity, onBeforeNavigate, isRecommendation }: MapEntityActionRowProps) {
   const caps = entity.actionCapabilities ?? [];
 
   // Render nothing when there are no capabilities.
   if (caps.length === 0) return null;
 
-  return <ActionRowInner entity={entity} onBeforeNavigate={onBeforeNavigate} />;
+  return (
+    <ActionRowInner
+      entity={entity}
+      onBeforeNavigate={onBeforeNavigate}
+      isRecommendation={isRecommendation}
+    />
+  );
 }
 
 /**
  * Inner component so hooks are always called in the same order (the outer
  * early-return guard cannot be above hook calls in React).
  */
-function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBeforeNavigate?: () => void }) {
+function ActionRowInner({
+  entity,
+  onBeforeNavigate,
+  isRecommendation,
+}: {
+  entity: MapEntity;
+  onBeforeNavigate?: () => void;
+  isRecommendation?: boolean;
+}) {
   const baseCaps = entity.actionCapabilities ?? [];
   const perms = entity.permissions;
   const isPersonEntity = PERSON_TYPES.includes(entity.type);
@@ -182,7 +310,23 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
   });
 
   const { doBlock, loading: blockLoading } = useBlockUser();
-  const { open: openPlanPicker } = usePlanPicker();
+  const { open: openPlanPicker, isAdded } = usePlanPicker();
+
+  // ── §35 decision outcomes ─────────────────────────────────────────────────
+  //
+  // `recommendation_accepted` is emitted ALONGSIDE the concrete action, never
+  // instead of it, and only when BOTH are true: this card was a Compass option
+  // (isRecommendation) and a decision is still active in the emitter. The
+  // decisionId is auto-attached, so the accept, the route and any later
+  // contribution all land on the id `compass_requested` minted.
+  const emitAccepted = useCallback(
+    (via: 'route' | 'trip_stop' | 'meet_here' | 'save' | 'plan_join' | 'open') => {
+      if (!isRecommendation) return;
+      if (currentDecisionId() === null) return;
+      emitMapEvent('recommendation_accepted', { ref: entityTelemetryRef(entity), via });
+    },
+    [entity, isRecommendation],
+  );
 
   // Effective capabilities: store patch wins over entity's initial caps so
   // post-mutation state survives card unmount/remount (e.g. camera pan).
@@ -263,6 +407,20 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
       );
     } else {
       setRsvpState('going');
+      // §35 `plan_joined` — emitted only on the CONFIRMED branch. A waitlist
+      // placement is not a join, so it deliberately does not fire above.
+      fireAndForget(() => {
+        emitAccepted('plan_join');
+        const going = typeof entityPayload.goingCount === 'number' ? entityPayload.goingCount : null;
+        emitMapEvent('plan_joined', {
+          ref: entityTelemetryRef(entity),
+          planKind: 'event',
+          // The joiner is definitionally a participant; when the card carried no
+          // goingCount this is a floor of 1, not an invented total.
+          participants: countBucket((going ?? 0) + 1),
+          discovery: isRecommendation ? 'compass' : 'map',
+        });
+      });
       Alert.alert("You're going!", 'Your RSVP has been confirmed.');
       // Remove 'join' from capabilities so the button is hidden on remount
       // (the user has already RSVPed and shouldn't see the button again).
@@ -271,7 +429,7 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
         caps.filter((c) => c !== 'join'),
       );
     }
-  }, [rawEntityId, mapStore, entity.id, caps]);
+  }, [rawEntityId, mapStore, entity, entityPayload, caps, emitAccepted, isRecommendation]);
 
   const handleFollowToggle = useCallback(async () => {
     const succeeded = await followState.toggle();
@@ -293,6 +451,33 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
       },
     ]);
   }, [userId, doBlock]);
+
+  // ── §35 `trip_stop_added` ─────────────────────────────────────────────────
+  //
+  // The Add-to-plan button OPENS a picker; it does not add anything. Emitting
+  // on the press would record an add for every user who opened the sheet and
+  // cancelled. PlanPickerController marks a source id added only after the
+  // write succeeds, so the honest signal is that flag flipping true — and only
+  // while THIS row is the one waiting on the picker it opened, so an add made
+  // later from another surface is not claimed by the map.
+  const awaitingPlanAddRef = useRef(false);
+  const planAdded = isAdded(rawEntityId);
+  const lastPlanAddedRef = useRef(planAdded);
+  useEffect(() => {
+    const wasAdded = lastPlanAddedRef.current;
+    lastPlanAddedRef.current = planAdded;
+    if (!planAdded || wasAdded || !awaitingPlanAddRef.current) return;
+    awaitingPlanAddRef.current = false;
+    fireAndForget(() => {
+      emitAccepted('trip_stop');
+      emitMapEvent('trip_stop_added', {
+        ref: entityTelemetryRef(entity),
+        // dayIndex / slotIndex are the picker's, not this row's — omitted
+        // rather than defaulted to a zero nobody chose.
+        source: isRecommendation ? 'compass_pick' : 'action_rail',
+      });
+    });
+  }, [planAdded, entity, emitAccepted, isRecommendation]);
 
   const savePayload = buildSavePayload(entity);
   const subjectType = getModerationSubjectType(entity.type);
@@ -322,7 +507,22 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
             testID="map-action-directions"
             icon={<Navigation size={15} color={color.mute} />}
             label="Directions"
-            onPress={() => openInMaps(entity.lat, entity.lng)}
+            onPress={() => {
+              // §35 `route_started`, emitted BEFORE the handoff. openInMaps
+              // hands the route to the platform maps app, so `external` is
+              // genuinely true here; travelMode is the external app's to choose
+              // and eta is unknown, so neither is invented.
+              fireAndForget(() => {
+                emitAccepted('route');
+                emitMapEvent('route_started', {
+                  ref: entityTelemetryRef(entity),
+                  travelMode: 'unknown',
+                  distance: distanceBucket(entityDistanceKm(entity)),
+                  external: true,
+                });
+              });
+              openInMaps(entity.lat, entity.lng);
+            }}
           />
         )}
         {showAddToTrip && (
@@ -330,15 +530,18 @@ function ActionRowInner({ entity, onBeforeNavigate }: { entity: MapEntity; onBef
             testID="map-action-add-to-trip"
             icon={<CalendarPlus size={15} color={color.mute} />}
             label="Add to plan"
-            onPress={() =>
+            onPress={() => {
+              // Arm the confirmation watcher above; the event fires only if the
+              // picker actually adds the stop.
+              awaitingPlanAddRef.current = true;
               openPlanPicker({
                 id: rawEntityId,
                 type: entity.type,
                 title: entityName,
                 city: entityPayload.city ?? entityPayload.destinationCity,
                 category: entity.type,
-              })
-            }
+              });
+            }}
           />
         )}
         {showJoin && (

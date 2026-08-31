@@ -200,6 +200,25 @@ describe('the shared style module is the only place a style URL is written', () 
     }
   });
 
+  it('the Map Shell keeps a DARK basemap through its whole failure ladder', () => {
+    // §4 is dark-mode-first. Dropping straight from the dark style to demotiles
+    // puts a LIGHT grey basemap under dark chrome, which reads as a broken
+    // screen rather than a degraded one — so the ladder must pass through the
+    // verified keyless dark URL first. Pinning it here stops a future refactor
+    // from quietly collapsing the ladder back to one step.
+    const src = readFileSync(resolve('src/components/discovery/DiscoveryMapView.tsx'), 'utf8');
+    assert.match(
+      src,
+      /useState<string \| StyleSpecification>\(PORTAVA_DARK_MAP_STYLE\)/,
+      'the Map Shell must start on the Portava dark style object',
+    );
+    assert.match(
+      src,
+      /setMapStyle\(DARK_MAP_STYLE_URL\)/,
+      'the first fallback must still be dark',
+    );
+  });
+
   it('the failure handler swaps to the fallback and cannot loop', () => {
     for (const f of [
       'src/components/discovery/DiscoveryMapView.tsx',

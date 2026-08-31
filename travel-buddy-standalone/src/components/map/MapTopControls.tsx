@@ -6,15 +6,28 @@
  *   ◎ Recenter — re-centers the camera on the user's location or city fallback
  *   ⊞ Filters  — placeholder; expanded in a later task
  *
- * Each touch target is at least 44 px tall per HIG guidelines.
- * The card background is white with a subtle shadow so the controls stay
- * legible over any map tile.
+ * ## Dark chrome (map spec §4)
+ *
+ * This card used to be `#fff` with `color.ink` glyphs — correct against the
+ * old bright OpenFreeMap Liberty base, and unreadable against the near-black
+ * navy base the map now renders (see constants/mapStyle.ts). §4 asks for
+ * "near-black/navy interface chrome" and "rounded translucent cards", so the
+ * card is now a translucent dark surface with a hairline edge: it reads as
+ * chrome floating over geography rather than as a white slab punched into it.
+ *
+ * All colours come from theme/mapChrome.ts — the shared map palette — so this
+ * bar restyles with every other map surface rather than drifting on its own.
+ *
+ * Each touch target is at least 44 px (`avatar.s44`) per HIG guidelines; §4
+ * calls for "large mobile touch targets", so that floor is the one number here
+ * that must not shrink.
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { ArrowLeft, Navigation, SlidersHorizontal } from 'lucide-react-native';
-import { color, radius, type as t } from '../../theme/tokens.ts';
+import { radius, space, avatar, icon, type as t } from '../../theme/tokens.ts';
+import { mapChrome } from '../../theme/mapChrome.ts';
 
 export interface MapTopControlsProps {
   /** Camera ref forwarded from the map screen so Recenter can call setCamera. */
@@ -66,7 +79,7 @@ export function MapTopControls({
   };
 
   return (
-    <View style={[s.container, { top: topInset + 8 }]} pointerEvents="box-none">
+    <View style={[s.container, { top: topInset + space.sm }]} pointerEvents="box-none">
       <View style={s.card}>
         {/* ← Back */}
         <Pressable
@@ -76,7 +89,7 @@ export function MapTopControls({
           accessibilityLabel="Back"
           accessibilityRole="button"
         >
-          <ArrowLeft size={18} color={color.ink} />
+          <ArrowLeft size={icon.s18} color={mapChrome.textOnDark} />
         </Pressable>
 
         {/* Title */}
@@ -95,7 +108,7 @@ export function MapTopControls({
             accessibilityLabel="Recenter map"
             accessibilityRole="button"
           >
-            <Navigation size={18} color={color.signal} />
+            <Navigation size={icon.s18} color={mapChrome.signal} />
           </Pressable>
         )}
 
@@ -107,7 +120,7 @@ export function MapTopControls({
           accessibilityLabel="Open filters"
           accessibilityRole="button"
         >
-          <SlidersHorizontal size={18} color={color.mute} />
+          <SlidersHorizontal size={icon.s18} color={mapChrome.textOnDarkMute} />
         </Pressable>
       </View>
     </View>
@@ -117,34 +130,34 @@ export function MapTopControls({
 const s = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: 12,
-    right: 12,
+    left: space.md,
+    right: space.md,
     zIndex: 20,
   },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: mapChrome.surfaceTranslucent,
     borderRadius: radius.md,
-    paddingHorizontal: 4,
-    paddingVertical: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.18,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: mapChrome.hairline,
+    paddingHorizontal: space.xs,
+    paddingVertical: space.xs,
+    ...mapChrome.float,
     gap: 2,
   },
   btn: {
-    minHeight: 44,
-    minWidth: 44,
+    // §4 "large mobile touch targets" — this is the HIG 44px floor, expressed
+    // as a token so it moves with the rest of the sizing scale.
+    minHeight: avatar.s44,
+    minWidth: avatar.s44,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radius.sm,
   },
   title: {
     ...t.bodyStrong,
-    color: color.ink,
+    color: mapChrome.textOnDark,
     fontSize: 14,
     flex: 1,
     textAlign: 'center',

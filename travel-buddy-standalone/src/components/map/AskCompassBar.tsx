@@ -28,6 +28,13 @@ import {
   type CompassRecommendation,
 } from '../../services/compass.ts';
 import type { MapEntity, MapEntityType } from '../../types/mapTypes.ts';
+import {
+  cellFor,
+  clearActiveDecision,
+  currentDecisionId,
+  emitMapEvent,
+} from '../../features/map/telemetry/mapTelemetry.ts';
+import { useOptionalMapStore } from '../../stores/mapStore.tsx';
 
 // ── Prompt chips ──────────────────────────────────────────────────────────────
 
@@ -114,9 +121,53 @@ export function AskCompassBar({
 
   const inputRef = useRef<TextInput>(null);
 
-  async function submit(q: string) {
+  // §35 telemetry context. Optional store: this bar renders inside the map
+  // screen's MapStoreProvider, but the hook fails soft so a stray mount (or a
+  // test) can never crash on a missing provider.
+  const mapStore = useOptionalMapStore();
+
+  /**
+   * §35 `compass_requested` — the event that MINTS the decisionId every later
+   * outcome (`compass_option_selected` → `recommendation_accepted` →
+   * `route_started` → `contribution_submitted`) is joined on.
+   *
+   * Before minting a new one, an unresolved previous decision is closed out:
+   * asking Compass a second question without acting on the first answer IS the
+   * negative arm, and leaving the old id active would mis-attribute the NEXT
+   * ask's outcomes to the PREVIOUS question. `clearActiveDecision()` exists for
+   * exactly this.
+   *
+   * The query text is deliberately absent — §35 payloads carry an intent slug,
+   * never free text, and a search string is a location by another route.
+   */
+  function emitCompassRequested(trigger: 'action_rail' | 'empty_state'): void {
+    try {
+      if (currentDecisionId() !== null) {
+        emitMapEvent('recommendation_declined', {
+          reason: 'unspecified',
+          explicit: false,
+        });
+        clearActiveDecision();
+      }
+      const lat = typeof userLat === 'number' ? userLat : null;
+      const lng = typeof userLng === 'number' ? userLng : null;
+      const intentKind = mapStore?.intent?.kind;
+      emitMapEvent('compass_requested', {
+        trigger,
+        mode: mapStore?.machine.mode ?? 'LIVE',
+        contextCell: lat != null && lng != null ? cellFor(lat, lng) : null,
+        ...(intentKind ? { intent: intentKind } : {}),
+      });
+    } catch {
+      // Telemetry may never block, reorder or break the ask.
+    }
+  }
+
+  async function submit(q: string, trigger: 'action_rail' | 'empty_state' = 'action_rail') {
     const trimmed = q.trim();
     if (!trimmed || loading) return;
+
+    emitCompassRequested(trigger);
 
     setLoading(true);
     setErrorMsg(null);
@@ -149,7 +200,9 @@ export function AskCompassBar({
 
   function handleChipPress(chip: string) {
     setQuery(chip);
-    submit(chip);
+    // Chips only appear in the idle/empty state — record that as the trigger
+    // rather than flattening every ask into 'action_rail'.
+    submit(chip, 'empty_state');
   }
 
   function handleClearError() {
