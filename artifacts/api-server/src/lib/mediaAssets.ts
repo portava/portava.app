@@ -88,6 +88,7 @@ export interface CompleteTranscodeInput {
   height: number;
   thumbnailPath?: string | null;
   thumbnailUrl?: string | null;
+  /** Transcoder-reported duration in seconds; stored as duration_ms (×1000). */
   durationSeconds?: number | null;
 }
 
@@ -128,7 +129,13 @@ export async function completeVideoTranscode(
         height: input.height,
         thumbnail_path: input.thumbnailPath ?? null,
         thumbnail_url: input.thumbnailUrl ?? null,
-        duration_seconds: input.durationSeconds ?? null,
+        // media_assets models duration as duration_ms (INTEGER, migration
+        // 0191) — there is no duration_seconds column here. The transcoder
+        // reports seconds (often fractional), so convert to whole ms.
+        duration_ms:
+          input.durationSeconds != null
+            ? Math.round(input.durationSeconds * 1000)
+            : null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", assetId);

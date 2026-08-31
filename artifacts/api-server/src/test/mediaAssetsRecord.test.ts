@@ -193,7 +193,11 @@ describe("completeVideoTranscode — transition guard", () => {
     assert.equal(row.processing_status, "ready");
     assert.equal(row.width, 1920);
     assert.equal(row.height, 1080);
-    assert.equal(row.duration_seconds, 42.5);
+    // duration is written to media_assets.duration_ms (INTEGER, migration 0191),
+    // not a duration_seconds column — 42.5s must persist as 42500ms. Asserting
+    // the wrong column name here is what let the schema mismatch stay dormant.
+    assert.equal(row.duration_ms, 42500);
+    assert.equal(row.duration_seconds, undefined, "must not write a nonexistent duration_seconds column");
     assert.equal(updates[0].eqCol, "id");
     assert.equal(updates[0].eqVal, "asset-abc");
   });
