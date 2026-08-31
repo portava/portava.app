@@ -38,15 +38,33 @@
  * to the intel steps in section 3: erase_intel_for_actor deletes the evidence
  * rows, and their `reference` is the only record of where the bytes live.
  *
- * ── Every collection read is PAGED ──────────────────────────────────────────
+ * ── Every set-returning read is PAGED ───────────────────────────────────────
  * A range-less PostgREST read stops at the project's db-max-rows (1000 here)
- * without an error, so the collectors under-read exactly the accounts with the
- * most media and reported the deletion successful anyway. Every set-returning
- * read in section 1 now goes through `pagedCollectStep`, which is also the only
- * thing that knows how to page — a new collection step gets `readAll` injected
- * and cannot quietly reintroduce the bug. See the block comment on
- * COLLECTION_PAGE_SIZE for why the page size must stay below db-max-rows and
- * why stopping early raises a warning instead of passing silently.
+ * without an error, so the reads under-returned exactly the accounts with the
+ * most content and reported the deletion successful anyway. That defect had two
+ * halves, and BOTH are closed here:
+ *
+ *   * COLLECTION (section 1) — a short read left BYTES in a bucket. Every
+ *     set-returning read there goes through `pagedCollectStep`.
+ *   * ROW DELETES (section 3) — a short read left ROWS in the database, which
+ *     is the worse half: `tombstone_or_delete_posts` read post ids unbounded,
+ *     so a user past the cap had the surplus posts neither tombstoned nor
+ *     deleted, still authored by the "Deleted User" tombstone, with the step
+ *     reporting ok. `delete_key_packages` carried `.limit(5000)`, above the
+ *     server cap and therefore inert. Both now go through `pagedRowStep`.
+ *
+ * The two wrappers share ONE pager (`createPagedReader`) and differ only in the
+ * sentence they warn with — objects-in-storage vs rows-in-the-database. Both
+ * hand the step body a `readAll` rather than the client, so a new step cannot
+ * quietly reintroduce the bug without visibly reaching around what it was
+ * given. See the block comment on COLLECTION_PAGE_SIZE for why the page size
+ * must stay below db-max-rows and why stopping early raises a warning instead
+ * of passing silently.
+ *
+ * The reads deliberately NOT paged are the two existence probes in
+ * `hasThirdPartyInterest`, which ask "is there at least one?" under `.limit(1)`,
+ * and the single-row profile read addressed by primary key. Neither can lose
+ * data by being bounded — bounding is the whole point of the first two.
  *
  * ── The gap this class of bug lives in ──────────────────────────────────────
  * `check:deletion-coverage` asks whether every user-keyed TABLE has a stated
@@ -136,7 +154,7 @@ const REFERENCE_BUCKETS: readonly string[] = [POST_MEDIA_BUCKET, PROFILE_MEDIA_B
  * the STEPS change; bump the policy version when the RULES do.
  */
 export const DELETION_POLICY_VERSION = "d6-2026-08-23";
-export const DELETION_WORKER_VERSION = "2026-08-31.3";
+export const DELETION_WORKER_VERSION = "2026-08-31.4";
 
 /** Per-step outcome. Steps are independent so one failure cannot hide another. */
 export interface DeletionStepResult {
@@ -302,27 +320,19 @@ export const COLLECTION_MAX_PAGES = 1_000;
 type PagedRead = (build: () => any, consume: (rows: any[]) => number) => Promise<number>;
 
 /**
- * step() + pagination + both warning shapes, in ONE place.
- *
- * The step body does not get a client to read from — it gets `readAll`. That is
- * deliberate: a future collection step cannot be added unpaginated without
- * visibly reaching around the reader it was handed, which is what let this bug
- * be written six times over.
- *
- * Two distinct outcomes, two distinct warnings, neither of them silent:
- *   * the read FAILED (any page)      → the step fails and warns; whatever
- *     earlier pages collected is still removed, since a partial removal beats
- *     none, and the warning says objects may remain;
- *   * the read STOPPED SHORT (the page cap, or a client with no way to ask for
- *     a second page) → the step succeeds with what it got and warns that the
- *     collection is INCOMPLETE.
+ * A reader plus the one bit of state that must outlive it: whether any read it
+ * served STOPPED SHORT of the data. Both step wrappers below ask it the same
+ * question, because "the read was truncated" means the same thing whether the
+ * step was collecting storage paths or ids it is about to delete.
  */
-async function pagedCollectStep(
-  steps: DeletionStepResult[],
-  warnings: string[],
-  spec: { name: string; subject: string; noun: "paths" | "references" },
-  run: (readAll: PagedRead) => Promise<number>,
-): Promise<boolean> {
+type PagedReader = { readAll: PagedRead; stoppedShort: () => boolean };
+
+/**
+ * THE pager. There is exactly one, and both step wrappers build on it, so a
+ * second (subtly different, subtly wrong) paging loop cannot appear alongside
+ * it.
+ */
+function createPagedReader(): PagedReader {
   let truncated = false;
 
   const readAll: PagedRead = async (build, consume) => {
@@ -356,14 +366,83 @@ async function pagedCollectStep(
     return collected;
   };
 
-  const ok = await step(steps, spec.name, () => run(readAll));
+  return { readAll, stoppedShort: () => truncated };
+}
+
+/**
+ * step() + pagination + both warning shapes, in ONE place.
+ *
+ * The step body does not get a client to read from — it gets `readAll`. That is
+ * deliberate: a future collection step cannot be added unpaginated without
+ * visibly reaching around the reader it was handed, which is what let this bug
+ * be written six times over.
+ *
+ * Two distinct outcomes, two distinct warnings, neither of them silent:
+ *   * the read FAILED (any page)      → the step fails and warns; whatever
+ *     earlier pages collected is still removed, since a partial removal beats
+ *     none, and the warning says objects may remain;
+ *   * the read STOPPED SHORT (the page cap, or a client with no way to ask for
+ *     a second page) → the step succeeds with what it got and warns that the
+ *     collection is INCOMPLETE.
+ */
+async function pagedCollectStep(
+  steps: DeletionStepResult[],
+  warnings: string[],
+  spec: { name: string; subject: string; noun: "paths" | "references" },
+  run: (readAll: PagedRead) => Promise<number>,
+): Promise<boolean> {
+  const reader = createPagedReader();
+  const ok = await step(steps, spec.name, () => run(reader.readAll));
   if (!ok) {
     warnings.push(`${spec.subject} objects may remain in storage — their ${spec.noun} could not be read`);
-  } else if (truncated) {
+  } else if (reader.stoppedShort()) {
     warnings.push(
       `${spec.subject} objects may remain in storage — the read stopped at the ` +
         `${COLLECTION_MAX_PAGES}-page cap (${COLLECTION_MAX_PAGES * COLLECTION_PAGE_SIZE} rows) ` +
         `and the collection is INCOMPLETE`,
+    );
+  }
+  return ok;
+}
+
+/**
+ * ── The ROW-DELETE twin of pagedCollectStep ─────────────────────────────────
+ *
+ * The collectors were not the only unpaginated reads. Two steps in section 3
+ * read a SET OF IDS and then delete by it, and a truncated read there is worse
+ * than a truncated collection: a collector that stops short leaves BYTES in a
+ * bucket, but one of these leaves the user's ROWS — their posts — in the
+ * database, while the step still reports `ok` and the receipt still says the
+ * account was erased.
+ *
+ * Same pager, different sentence. The collect wrapper's warnings talk about
+ * objects in storage, which would be simply untrue here, so the subject is
+ * spelled out by the caller and the warning is about rows. The FAILURE wording
+ * is deliberately byte-identical to the ad-hoc `warnings.push(...)` these steps
+ * used before, so an existing caller reading the outcome sees no change on the
+ * path that already worked.
+ *
+ * READ EVERYTHING FIRST, THEN ACT — every caller does, and it is not optional.
+ * Offset paging indexes into a result set; deleting rows from that set between
+ * pages shifts every later offset backwards and the loop skips exactly as many
+ * rows as it removed. Draining the reader before the first delete is what makes
+ * the offsets meaningful.
+ */
+async function pagedRowStep(
+  steps: DeletionStepResult[],
+  warnings: string[],
+  spec: { name: string; subject: string },
+  run: (readAll: PagedRead) => Promise<number | void>,
+): Promise<boolean> {
+  const reader = createPagedReader();
+  const ok = await step(steps, spec.name, () => run(reader.readAll));
+  if (!ok) {
+    warnings.push(`${spec.subject} may remain`);
+  } else if (reader.stoppedShort()) {
+    warnings.push(
+      `${spec.subject} may remain — the read of the rows to delete stopped at the ` +
+        `${COLLECTION_MAX_PAGES}-page cap (${COLLECTION_MAX_PAGES * COLLECTION_PAGE_SIZE} rows), ` +
+        `so the deletion is INCOMPLETE`,
     );
   }
   return ok;
@@ -781,9 +860,34 @@ export async function executeAccountDeletion(
     return ((reports as any[]) ?? []).length > 0;
   }
 
-  const postsOk = await step(steps, "tombstone_or_delete_posts", async () => {
-    const { data, error } = await sc.from("posts").select("id").eq("author_id", userId);
-    if (error) throw new Error(error.message);
+  //
+  // THE READ IS PAGED, and this is the more serious half of the defect the
+  // collectors had. `select("id").eq("author_id", …)` carried no bound, so a
+  // user with more posts than db-max-rows had the surplus never even
+  // considered: not tombstoned, not deleted, just left in place, authored by a
+  // profile that now reads "Deleted User" — while the step reported ok and the
+  // receipt said the account was erased. Silent success on ROWS rather than
+  // bytes, and the same distribution as before: only the heaviest accounts.
+  //
+  // COLLECT ALL IDS BEFORE TOUCHING ANY POST. The else-branch hard-deletes, and
+  // deleting rows out of the very set being offset-paged shifts every later
+  // page backwards — a read/act interleave would skip one post for each one it
+  // removed, which is the original bug reappearing as an off-by-page. Draining
+  // the reader first costs one array of uuids and makes the offsets mean what
+  // they say.
+  //
+  // No `.in()` chunking is needed here, unlike the memory and device id lists:
+  // each post is acted on individually by `.eq("id", …)`, so the id list never
+  // rides in a URL.
+  const postsOk = await pagedRowStep(steps, warnings, { name: "tombstone_or_delete_posts", subject: "posts" }, async (readAll) => {
+    const postIds: string[] = [];
+    await readAll(
+      () => sc.from("posts").select("id").eq("author_id", userId).order("id", { ascending: true }),
+      (rows) => {
+        for (const row of rows) if (row?.id) postIds.push(row.id as string);
+        return rows.length;
+      },
+    );
 
     let tombstoned = 0;
     let deleted = 0;
@@ -795,16 +899,16 @@ export async function executeAccountDeletion(
     // keep going, and throw once at the end so the step fails overall and the
     // account is never reported erased with survivors behind it.
     const postFailures: string[] = [];
-    for (const row of ((data as any[]) ?? [])) {
+    for (const postId of postIds) {
       try {
-        if (await hasThirdPartyInterest(row.id)) {
+        if (await hasThirdPartyInterest(postId)) {
           // One auditable blanking path — see migration 2141. Assembling the
           // UPDATE here would miss a column the day someone adds one; posts has 70.
-          const { error: rpcErr } = await sc.rpc("tombstone_post", { p_post_id: row.id });
-          if (rpcErr) throw new Error(`tombstone_post(${row.id}): ${rpcErr.message}`);
+          const { error: rpcErr } = await sc.rpc("tombstone_post", { p_post_id: postId });
+          if (rpcErr) throw new Error(`tombstone_post(${postId}): ${rpcErr.message}`);
           tombstoned += 1;
         } else {
-          must(await sc.from("posts").delete().eq("id", row.id), `delete post ${row.id}`);
+          must(await sc.from("posts").delete().eq("id", postId), `delete post ${postId}`);
           deleted += 1;
         }
       } catch (e) {
@@ -815,11 +919,10 @@ export async function executeAccountDeletion(
     deletedCounts.posts = deleted;
     if (postFailures.length > 0) {
       throw new Error(
-        `${postFailures.length} of ${((data as any[]) ?? []).length} post(s) failed to erase: ${postFailures.join("; ")}`,
+        `${postFailures.length} of ${postIds.length} post(s) failed to erase: ${postFailures.join("; ")}`,
       );
     }
   });
-  if (!postsOk) warnings.push("posts may remain");
 
   // messages CASCADEs to message_translations (decrypted/translated copies)
   // and saved_messages. This is the "message ciphertext" the policy promises
@@ -955,15 +1058,36 @@ export async function executeAccountDeletion(
 
   // Devices + E2EE key packages. key_packages FKs devices via device_id, so
   // collect device ids and clear key_packages FIRST, then the devices rows.
-  const kpOk = await step(steps, "delete_key_packages", async () => {
-    const { data, error } = await sc.from("devices").select("id").eq("user_id", userId).limit(5000);
-    if (error) throw new Error(`collect device ids: ${error.message ?? error}`);
-    const deviceIds = ((data ?? []) as any[]).map((r) => r?.id).filter(Boolean);
+  //
+  // THE DEVICE READ IS PAGED. It used to carry `.limit(5000)`, which is a
+  // no-op dressed as a bound: 5000 is ABOVE the project's db-max-rows, so the
+  // server capped the read at 1000 anyway and the surplus devices' key_packages
+  // survived — while the step reported ok. A limit that cannot take effect is
+  // worse than no limit at all, because it reads as a deliberate decision and
+  // stops anyone looking further. Only reachable past 1000 devices, so no real
+  // account has hit it; it is fixed because the next reader should not have to
+  // re-derive that it was inert.
+  //
+  // CHUNKED, because paging removed the ceiling: the id list feeds
+  // `.in("device_id", …)`, whose list rides in the URL. Unchunked, a heavy
+  // account's request would now be long enough to be rejected — turning a
+  // silently-short delete into a failed one. Same 200-uuid chunk as the memory
+  // ids, which is one chunk for every account that exists.
+  const kpOk = await pagedRowStep(steps, warnings, { name: "delete_key_packages", subject: "key_packages rows" }, async (readAll) => {
+    const deviceIds: string[] = [];
+    await readAll(
+      () => sc.from("devices").select("id").eq("user_id", userId).order("id", { ascending: true }),
+      (rows) => {
+        for (const row of rows) if (row?.id) deviceIds.push(row.id as string);
+        return rows.length;
+      },
+    );
     if (deviceIds.length === 0) return 0;
-    must(await sc.from("key_packages").delete().in("device_id", deviceIds), "delete key_packages");
+    for (const ids of chunkIds(deviceIds)) {
+      must(await sc.from("key_packages").delete().in("device_id", ids), "delete key_packages");
+    }
     return deviceIds.length;
   });
-  if (!kpOk) warnings.push("key_packages rows may remain");
   const devOk = await step(steps, "delete_devices", async () => {
     must(await sc.from("devices").delete().eq("user_id", userId), "delete devices");
   });
