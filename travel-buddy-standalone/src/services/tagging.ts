@@ -20,12 +20,13 @@ async function freshToken(): Promise<string | null> {
   }
 }
 
-async function apiGet<T>(path: string): Promise<{ ok: boolean; data?: T; error?: string }> {
+async function apiGet<T>(path: string, signal?: AbortSignal): Promise<{ ok: boolean; data?: T; error?: string }> {
   const token = await freshToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
   try {
     const res = await fetch(`${apiBase()}${path}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal,
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -126,10 +127,11 @@ export interface TagSpan {
 export async function fetchEntitySuggestions(
   q: string,
   surface: MentionSurface = 'post',
+  signal?: AbortSignal,
 ): Promise<EntityTagSuggestion[]> {
   if (!q.trim()) return [];
   const qs = new URLSearchParams({ q, surface }).toString();
-  const res = await apiGet<{ suggestions: any[] }>(`/api/tags/suggestions?${qs}`);
+  const res = await apiGet<{ suggestions: any[] }>(`/api/tags/suggestions?${qs}`, signal);
   if (!res.ok || !res.data) return [];
   return (res.data.suggestions ?? []).map((s: any) => ({
     id: s.id,
@@ -154,10 +156,10 @@ function buildSubtitle(s: any): string | null {
  * Fetch # hashtag autocomplete suggestions.
  * Ordered: followed → city-trending → prefix-matched, excluding blocked hashtags.
  */
-export async function fetchHashtagSuggestions(q: string): Promise<HashtagSuggestion[]> {
+export async function fetchHashtagSuggestions(q: string, signal?: AbortSignal): Promise<HashtagSuggestion[]> {
   if (!q.trim()) return [];
   const qs = new URLSearchParams({ q }).toString();
-  const res = await apiGet<{ suggestions: any[] }>(`/api/hashtags/suggestions?${qs}`);
+  const res = await apiGet<{ suggestions: any[] }>(`/api/hashtags/suggestions?${qs}`, signal);
   if (!res.ok || !res.data) return [];
   return (res.data.suggestions ?? []).map((h: any) => ({
     id: h.id,
@@ -175,9 +177,10 @@ export async function fetchHashtagSuggestions(q: string): Promise<HashtagSuggest
 export async function fetchMentionSuggestions(
   trigger: { char: '@' | '#'; query: string },
   surface: MentionSurface = 'post',
+  signal?: AbortSignal,
 ): Promise<AnyMentionSuggestion[]> {
-  if (trigger.char === '#') return fetchHashtagSuggestions(trigger.query);
-  return fetchEntitySuggestions(trigger.query, surface);
+  if (trigger.char === '#') return fetchHashtagSuggestions(trigger.query, signal);
+  return fetchEntitySuggestions(trigger.query, surface, signal);
 }
 
 /**

@@ -22,6 +22,12 @@ import { markProfileStale } from '../../../src/hooks/usePassport';
 import { PP } from '../../../src/theme/passportTokens';
 import { space } from '../../../src/theme/tokens';
 import {
+  sanitizeUsername,
+  usernameSyntaxError,
+  interpretAvailability,
+  USERNAME_MAX_LENGTH,
+} from '../../../src/platform/input-assistance/social/usernameValidation';
+import {
   SettingsScreen, SettingsSection, SaveButton, useUnsavedGuard, useSavedThenBack,
   FieldLabel, FieldHint, TextField, ChipGrid, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
@@ -122,7 +128,10 @@ export default function IdentityScreen() {
   }, []);
 
   const handleUsernameChange = useCallback((text: string) => {
-    const cleaned = text.replace(/^@+/, '').toLowerCase().replace(/[^a-z0-9_.]/g, '');
+    // Shared canonical rules (§23) — the SAME sanitize + min-length +
+    // availability interpretation the onboarding username field now reuses, so
+    // the two entry points can never diverge.
+    const cleaned = sanitizeUsername(text);
     setForm((f) => ({ ...f, username: cleaned }));
     setUsernameStatus('idle');
     setUsernameMessage(null);
@@ -130,22 +139,19 @@ export default function IdentityScreen() {
     if (usernameTimer.current) clearTimeout(usernameTimer.current);
     if (!cleaned || cleaned === (profile?.username ?? '')) return;
 
-    if (cleaned.length < 3) {
+    const syntaxError = usernameSyntaxError(cleaned);
+    if (syntaxError) {
       setUsernameStatus('invalid');
-      setUsernameMessage('At least 3 characters required');
+      setUsernameMessage(syntaxError);
       return;
     }
 
     setUsernameStatus('checking');
     usernameTimer.current = setTimeout(async () => {
       const res = await checkUsername(cleaned);
-      if (res.available) {
-        setUsernameStatus('available');
-        setUsernameMessage(null);
-      } else {
-        setUsernameStatus('taken');
-        setUsernameMessage(res.reason ?? 'Username not available');
-      }
+      const interpreted = interpretAvailability(res);
+      setUsernameStatus(interpreted.status);
+      setUsernameMessage(interpreted.message);
     }, 500);
   }, [profile?.username]);
 
@@ -342,7 +348,7 @@ export default function IdentityScreen() {
               value={form.username}
               onChangeText={handleUsernameChange}
               placeholder="username"
-              maxLength={30}
+              maxLength={USERNAME_MAX_LENGTH}
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="next"
