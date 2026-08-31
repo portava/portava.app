@@ -92,6 +92,7 @@ import {
   type MemoryScope,
 } from "../compass/CompassMemoryService.js";
 import { buildProjectedMemoryBlock } from "../compass/ProjectedMemoryPrompt.js";
+import { buildRememberSurface } from "../compass/PassportRemembersService.js";
 import { recordIntentFromQuery } from "../lib/intentMemory.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
 import { buildTripContextLines }                 from "../compass/CompassTripContext.js";
@@ -2288,6 +2289,175 @@ router.post("/compass/me/memory/reset", async (req, res) => {
   } catch (err) {
     req.log.error({ err, userId: auth.user.id }, "compass/me/memory/reset failed");
     sendError(res, "db_error", "Could not reset memory", { exposeDetail: true });
+  }
+});
+
+// ── §12 "What Portava Remembers" — a PRIVATE, owner-only Passport sub-surface ─
+// This is the owner's transparency-and-control view over the memory Portava
+// holds about them. It is OWNER-ONLY and never part of the public Passport: the
+// caller is always the authenticated session user (a smuggled ?user_id= is
+// ignored — the 2182 lesson), and every read/write is scoped to that id.
+//
+// The read assembles allow-listed classes only. The derived-memory allow/deny
+// boundary is enforced in SQL (memory_remembers_for_user, 2213, fail-closed);
+// deny-listed classes (raw location trails, trust/safety signals, sensitive
+// inferences, unconsented shared content, deleted/expired/suppressed data) are
+// never read or are filtered out. See PassportRemembersService for the details.
+
+// GET /api/compass/me/passport/remembers — the owner-only remembers surface.
+router.get("/compass/me/passport/remembers", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  try {
+    // auth.user.id is the SESSION identity; any ?user_id= in the query is never read.
+    const surface = await buildRememberSurface(sc, auth.user.id);
+    res.json(surface);
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/passport/remembers failed");
+    sendError(res, "db_error", "Could not load your remembered data", { exposeDetail: true });
+  }
+});
+
+// Resolve a caller-owned projection for a subject key, ENFORCING OWNERSHIP: the
+// lookup is scoped to the caller, so a guessed/borrowed projection id belonging
+// to another user resolves to nothing and is rejected. Returns the durable
+// subject key to denormalise onto the feedback row, or null if not owned.
+async function resolveOwnedProjection(
+  sc: ReturnType<typeof getServiceClient>,
+  userId: string,
+  projectionId: string,
+): Promise<{ memoryType: string | null; subjectType: string | null; subjectId: string | null } | null> {
+  const { data, error } = await sc!
+    .from("memory_projections")
+    .select("id, memory_type, subject_type, subject_id")
+    .eq("id", projectionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const row = data as Record<string, unknown>;
+  return {
+    memoryType: (row.memory_type as string) ?? null,
+    subjectType: (row.subject_type as string) ?? null,
+    subjectId: (row.subject_id as string) ?? null,
+  };
+}
+
+// POST /api/compass/me/passport/remembers/forget — forget an item.
+// For DERIVED memory: records a durable, subject-keyed 'forget' that the read
+// (SQL + TS) excludes and that SURVIVES re-projection, so it will not regenerate.
+// For user-created SOURCE content: "forget from this view" — hides it here and
+// NEVER deletes the underlying Postcard / saved place / trip / etc.
+const rememberForgetSchema = z.object({
+  projectionId: z.string().uuid().optional(),
+  subjectType:  z.string().min(1).max(60).optional(),
+  subjectId:    z.string().min(1).max(200).optional(),
+  memoryType:   z.string().min(1).max(40).optional(),
+}).refine((b) => b.projectionId !== undefined || (b.subjectType !== undefined && b.subjectId !== undefined), {
+  message: "Provide projectionId, or both subjectType and subjectId",
+});
+router.post("/compass/me/passport/remembers/forget", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  const parsed = rememberForgetSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const { projectionId } = parsed.data;
+  let { subjectType, subjectId, memoryType } = parsed.data;
+  let derived = false;
+  try {
+    if (projectionId) {
+      const owned = await resolveOwnedProjection(sc, auth.user.id, projectionId);
+      if (!owned) { sendError(res, "not_found", "Memory not found"); return; }
+      subjectType = owned.subjectType ?? subjectType ?? null as any;
+      subjectId = owned.subjectId ?? subjectId ?? null as any;
+      memoryType = owned.memoryType ?? memoryType;
+      derived = true;
+    } else {
+      // A non-namespaced subject is derived memory; 'passport:*' is source content.
+      derived = !(subjectType ?? "").startsWith("passport:");
+    }
+    const { error } = await sc.from("memory_feedback").insert({
+      user_id: auth.user.id,
+      kind: "forget",
+      projection_id: projectionId ?? null,
+      memory_type: memoryType ?? null,
+      subject_type: subjectType ?? null,
+      subject_id: subjectId ?? null,
+    });
+    if (error && (error as { code?: string }).code !== "23505") throw error; // dup = idempotent
+    res.status(201).json({
+      forgotten: true,
+      behavior: derived ? "suppress_no_regen" : "suppress_from_view",
+      // Be explicit about what Forget did, so the owner is never surprised.
+      sourceDeleted: false,
+      message: derived
+        ? "Forgotten. This memory will no longer be shown and will not be re-derived."
+        : "Removed from this view. The original content you created was not deleted.",
+    });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/passport/remembers/forget failed");
+    sendError(res, "db_error", "Could not forget this item", { exposeDetail: true });
+  }
+});
+
+// POST /api/compass/me/passport/remembers/correct — correct an inferred/derived item.
+// Records an 'incorrect' signal (which the remembers read treats as a
+// suppression, so the wrong value stops showing and cannot be re-derived) plus
+// the value the user says is right (memory_feedback.corrected_value, 2213).
+const rememberCorrectSchema = z.object({
+  projectionId:   z.string().uuid().optional(),
+  subjectType:    z.string().min(1).max(60).optional(),
+  subjectId:      z.string().min(1).max(200).optional(),
+  memoryType:     z.string().min(1).max(40).optional(),
+  correctedValue: z.string().min(1).max(400),
+}).refine((b) => b.projectionId !== undefined || (b.subjectType !== undefined && b.subjectId !== undefined), {
+  message: "Provide projectionId, or both subjectType and subjectId",
+});
+router.post("/compass/me/passport/remembers/correct", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  const parsed = rememberCorrectSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const { projectionId, correctedValue } = parsed.data;
+  let { subjectType, subjectId, memoryType } = parsed.data;
+  try {
+    // Correction is only meaningful for derived/inferred memory. Reject source
+    // content, whose facts are edited where they were created.
+    if (!projectionId && (subjectType ?? "").startsWith("passport:")) {
+      sendError(res, "invalid_payload", "This item is content you created; edit it where you made it.");
+      return;
+    }
+    if (projectionId) {
+      const owned = await resolveOwnedProjection(sc, auth.user.id, projectionId);
+      if (!owned) { sendError(res, "not_found", "Memory not found"); return; }
+      subjectType = owned.subjectType ?? subjectType ?? null as any;
+      subjectId = owned.subjectId ?? subjectId ?? null as any;
+      memoryType = owned.memoryType ?? memoryType;
+    }
+    const { error } = await sc.from("memory_feedback").insert({
+      user_id: auth.user.id,
+      kind: "incorrect",
+      projection_id: projectionId ?? null,
+      memory_type: memoryType ?? null,
+      subject_type: subjectType ?? null,
+      subject_id: subjectId ?? null,
+      corrected_value: correctedValue,
+    });
+    if (error && (error as { code?: string }).code !== "23505") throw error;
+    res.status(201).json({
+      corrected: true,
+      correctedValue,
+      message: "Recorded. The prior value will no longer be shown and will not be re-derived.",
+    });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "compass/me/passport/remembers/correct failed");
+    sendError(res, "db_error", "Could not record your correction", { exposeDetail: true });
   }
 });
 
