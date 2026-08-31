@@ -58,6 +58,9 @@ function makeFakeSc(opts: {
   bestOf?:          any | null;
   aiSummaries?:     any | null;
   capturedUpserts?: Array<{ table: string; row: any }>;
+  // Extra feature_flags rows (e.g. the intel Live-label flags + kill switch) so a
+  // test can drive liveLabelsServable at cache-serve time.
+  extraFlags?:      Array<{ flag: string; enabled: boolean }>;
 }) {
   // Use `in` check so an explicit `place: null` means "no place" (not "use default")
   const place          = "place" in opts ? opts.place : FAKE_PLACE;
@@ -74,6 +77,7 @@ function makeFakeSc(opts: {
     feature_flags: [
       { flag: "external_places_enabled", enabled: true },
       { flag: "live_places_enabled",     enabled: true },
+      ...(opts.extraFlags ?? []),
     ],
     places:                     place ? [place] : [],
     external_place_references:  [],
@@ -484,6 +488,108 @@ describe("GET /places/:id/living", () => {
     assert.ok(res.body.buckets !== undefined);
 
     server.close();
+  });
+});
+
+describe("GET /places/:id/living — cached Live label honours the serve-time kill switch", () => {
+  // Regression lock for H4. place_living_cache bakes the Live label (crowdLevel /
+  // liveClaims / timeline.crowdLevel) in at COMPUTE time and serves it stale-while-
+  // revalidate for up to the 24h sparse TTL. The kill switch and Live flags were
+  // only consulted at compute time, so a Live label kept serving from cache for
+  // hours after the switch was thrown. The route now re-checks liveLabelsServable at
+  // serve time and strips the Live portion when Live is no longer servable.
+  let server: http.Server;
+
+  before(() => {
+    _setTestOpenAI({
+      chat: { completions: { create: async () => ({ choices: [{ message: { content: null } }] }) } },
+    } as any);
+  });
+
+  after(() => {
+    _setTestOpenAI(null);
+    server?.close();
+  });
+
+  // The four capability flags liveLabelsServable requires to be ON.
+  const LIVE_FLAGS_ON = [
+    { flag: "intel_live_label_crowd",       enabled: true },
+    { flag: "intel_claim_projection_crowd", enabled: true },
+    { flag: "intel_capture_quick_signal",   enabled: true },
+    { flag: "intel_limited_live",           enabled: true },
+  ];
+
+  // A cached payload that already carries a baked-in Live label.
+  function cacheWithLiveLabel() {
+    const payload = {
+      placeId:    PLACE_ID,
+      sparseMode: false,
+      hero:       { imageUrl: null, videoUrl: null },
+      rating:     null,
+      crowdLevel: "busy",
+      liveClaims: [{ id: "snap-1", claimType: "crowd.level", value: { level: "busy" }, state: "live" }],
+      officialInfo: {},
+      timeline:   { slice: "today", posts: [], crowdLevel: "busy", weatherBrief: null },
+      generatedAt: hoursAgo(0.1),
+    };
+    return {
+      place_id:  PLACE_ID,
+      payload,
+      cached_at: hoursAgo(0.5), // 30 min — within the 1h hot TTL → HIT
+      sparse:    false,
+    };
+  }
+
+  async function get(sc: any) {
+    const app = makeApp(sc);
+    server = http.createServer(app);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const res = await request(server, "GET", `/places/${PLACE_ID}/living`);
+    server.close();
+    return res;
+  }
+
+  it("serves the cached Live label when Live IS servable (kill switch clear, flags on)", async () => {
+    const res = await get(makeFakeSc({ livingCache: cacheWithLiveLabel(), extraFlags: LIVE_FLAGS_ON }));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["x-cache"]?.toLowerCase(), "hit");
+    // Not over-stripped: the label survives when Live is still servable.
+    assert.equal(res.body.crowdLevel, "busy");
+    assert.equal(res.body.liveClaims.length, 1);
+    assert.equal(res.body.timeline.crowdLevel, "busy");
+  });
+
+  it("strips the cached Live label when the kill switch is engaged", async () => {
+    const res = await get(makeFakeSc({
+      livingCache: cacheWithLiveLabel(),
+      extraFlags: [...LIVE_FLAGS_ON, { flag: "disable_intel_live_labels", enabled: true }],
+    }));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers["x-cache"]?.toLowerCase(), "hit", "still a cache hit — the row is not rewritten");
+    // The stale Live label must NOT keep serving once the switch is thrown.
+    assert.equal(res.body.crowdLevel, null, "crowdLevel must be suppressed at serve time");
+    assert.deepEqual(res.body.liveClaims, [], "liveClaims must be suppressed at serve time");
+    assert.equal(res.body.timeline.crowdLevel, null, "timeline crowdLevel must be suppressed too");
+    // Everything else in the cached payload is untouched.
+    assert.equal(res.body.placeId, PLACE_ID);
+    assert.ok("officialInfo" in res.body);
+  });
+
+  it("strips the cached Live label when a Live flag is turned off", async () => {
+    // intel_live_label_crowd off ⇒ liveLabelsServable false ⇒ Live portion stripped.
+    const res = await get(makeFakeSc({
+      livingCache: cacheWithLiveLabel(),
+      extraFlags: [
+        { flag: "intel_live_label_crowd",       enabled: false },
+        { flag: "intel_claim_projection_crowd", enabled: true },
+        { flag: "intel_capture_quick_signal",   enabled: true },
+        { flag: "intel_limited_live",           enabled: true },
+      ],
+    }));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.crowdLevel, null);
+    assert.deepEqual(res.body.liveClaims, []);
+    assert.equal(res.body.timeline.crowdLevel, null);
   });
 });
 
