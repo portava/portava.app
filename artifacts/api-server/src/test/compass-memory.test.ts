@@ -31,6 +31,8 @@ import {
   buildMemoryPromptBlock,
   compressConversationIfDue,
   createMemory,
+  updateMemory,
+  forgetMemory,
   scrubMemoryText,
   MEMORY_PROMPT_BUDGET_CHARS,
   TAUGHT_CONFIDENCE_FLOOR,
@@ -594,5 +596,42 @@ describe("F. Compression cadence", () => {
     const again = await compressConversationIfDue(client, ALICE, convId);
     assert.equal(again, 0);
     assert.equal(client._db.compass_memories.length, 2);
+  });
+});
+
+// ── MEM·M7: updateMemory / forgetMemory must not mask a DB error as not-found ──
+//
+// A minimal sc whose update/delete resolve with a Supabase error. Before the
+// fix these functions discarded { error } and returned null / false, so a real
+// write failure was reported to the user as "memory not found" / "nothing
+// deleted". They must now surface the failure (throw).
+
+describe("F. MEM·M7 — compass memory write errors are not swallowed", () => {
+  function erroringClient(): any {
+    const chain: any = {
+      update: () => chain,
+      delete: () => chain,
+      eq: () => chain,
+      select: () => chain,
+      maybeSingle: () => Promise.resolve({ data: null, error: { message: "boom" } }),
+      then: (res: any, rej: any) => Promise.resolve({ data: null, error: { message: "boom" } }).then(res, rej),
+    };
+    return { from: () => chain };
+  }
+
+  it("updateMemory throws when the update errors (not a silent null)", async () => {
+    await assert.rejects(
+      () => updateMemory(erroringClient(), ALICE, randomUUID(), { content: "hi" }),
+      /update failed/,
+      "a DB error on update must surface, not read as not-found",
+    );
+  });
+
+  it("forgetMemory throws when the delete errors (not a silent false)", async () => {
+    await assert.rejects(
+      () => forgetMemory(erroringClient(), ALICE, randomUUID()),
+      /delete failed/,
+      "a DB error on delete must surface, not read as nothing-deleted",
+    );
   });
 });
