@@ -51,6 +51,7 @@ import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGua
 import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
 import { loadNearbyEvents } from "./mapSearch.js";
 import { aggregateForViewport } from "../lib/mapAggregation.js";
+import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { type MapObject, type MapObjectKind } from "../lib/mapObjects.js";
 import {
   bboxToCenterRadius,
@@ -68,6 +69,60 @@ import {
 } from "../lib/mapProjection.js";
 
 const router = Router();
+
+/**
+ * §24 protected zones.
+ *
+ * FAIL-CLOSED IS SUBTLE HERE, so it is spelled out: `applyProtection([], ...)`
+ * with an empty zone list is an IDENTITY PASS — it means "no protection policy
+ * exists", not "the policy could not be read". Returning [] on a read failure
+ * would therefore silently disable the gate exactly when the database is
+ * unhealthy. So a failed read returns null, and the caller answers with the
+ * empty envelope instead of serving unprotected objects.
+ *
+ * Cached briefly: the table is tiny and effectively static, and a per-request
+ * read on a polled endpoint would be pure waste. 30s mirrors the flag cache.
+ */
+const ZONE_CACHE_TTL_MS = 30_000;
+let _zoneCache: { zones: ProtectedZone[]; at: number } | null = null;
+
+export function _clearProtectedZoneCache(): void { _zoneCache = null; }
+
+async function loadProtectedZones(sc: any): Promise<ProtectedZone[] | null> {
+  if (_zoneCache && Date.now() - _zoneCache.at < ZONE_CACHE_TTL_MS) return _zoneCache.zones;
+  const { data, error } = await sc
+    .from("protected_zones")
+    .select("id, category, action, privacy_floor, shape, center_lat, center_lng, radius_meters, ring, jurisdiction, policy_ref")
+    .eq("active", true);
+  if (error || !Array.isArray(data)) return null;
+
+  const zones: ProtectedZone[] = [];
+  for (const row of data as any[]) {
+    const base = {
+      id: String(row.id),
+      category: String(row.category),
+      action: row.action ?? undefined,
+      privacyFloor: row.privacy_floor ?? undefined,
+      jurisdiction: row.jurisdiction ?? undefined,
+      policyRef: row.policy_ref ?? undefined,
+    };
+    if (row.shape === "circle") {
+      zones.push({
+        ...base,
+        shape: "circle",
+        center: { lat: Number(row.center_lat), lng: Number(row.center_lng) },
+        radiusMeters: Number(row.radius_meters),
+      } as ProtectedZone);
+    } else {
+      // A malformed ring stays in the list on purpose: applyProtection treats
+      // unparseable geometry as SUPPRESS, which is the safe direction. Dropping
+      // the row here would quietly turn a broken policy into no policy.
+      zones.push({ ...base, shape: "polygon", ring: row.ring } as ProtectedZone);
+    }
+  }
+  _zoneCache = { zones, at: Date.now() };
+  return zones;
+}
 
 router.get(
   "/map/projection",
@@ -101,6 +156,7 @@ router.get(
         nextCursor: null,
         sources: [],
         aggregation: null,
+        protection: null,
         liveEnrichment: null,
         generatedAt,
       });
@@ -147,6 +203,7 @@ router.get(
         nextCursor: null,
         sources: [],
         aggregation: null,
+        protection: null,
         liveEnrichment: null,
         generatedAt,
       });
@@ -226,6 +283,31 @@ router.get(
     );
     objects = enrichment.objects;
 
+    // §24 — the last gate before anything is counted or serialized. It runs
+    // AFTER enrichment (which could otherwise re-attach live signals to an
+    // object that is about to be coarsened) and BEFORE aggregation (so a
+    // protected object never contributes to a cell's cohort). Everything
+    // downstream only coarsens or reorders, so nothing can re-sharpen this.
+    const zones = await loadProtectedZones(sc);
+    if (zones === null) {
+      // See loadProtectedZones: an unreadable policy is NOT an absent policy.
+      res.json({
+        enabled: true,
+        objects: [],
+        viewport: { bbox, zoom },
+        total: 0,
+        nextCursor: null,
+        sources: [],
+        aggregation: null,
+        protection: null,
+        liveEnrichment: null,
+        generatedAt,
+      });
+      return;
+    }
+    const protection = applyProtection(objects, zones);
+    objects = protection.objects;
+
     // §31 viewport aggregation. At wide zoom many objects collapse into
     // activity zones; below the k-anonymity floor a cell is SUPPRESSED rather
     // than drawn as a small zone that would reveal a lone person's position.
@@ -252,6 +334,9 @@ router.get(
         suppressedForKAnonymity: aggregation.suppressedForKAnonymity,
         zones: aggregation.zones,
       },
+      // Counts only, by construction — naming WHICH zone hid what would
+      // re-leak the location the gate just removed.
+      protection: protection.report,
       liveEnrichment: {
         considered: enrichment.considered,
         enriched: enrichment.enriched,
