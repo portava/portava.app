@@ -21,7 +21,8 @@ import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow
 import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
 import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel';
-import { useSearchSuggestions } from '../src/hooks/useSearchSuggestions';
+import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
+import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
 import { usePlainBottomInset } from '../src/hooks/useBottomInset';
 import { resolveRoute } from '../src/components/search/searchNav';
 import { color, space, radius, type as t } from '../src/theme/tokens';
@@ -143,12 +144,16 @@ export default function SearchScreen() {
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return undefined; }
   }, []);
 
-  // Live typeahead — active only in suggest mode with a viable query
+  // Live typeahead — active only in suggest mode with a viable query.
+  // Routes through the P1 gateway (`global_search`) additively: gateway rows are
+  // shown when available, else it degrades to the proven legacy typeahead.
   const suggestActive = !submitted && query.trim().length >= 2;
-  const { groups: suggestGroups, loading: suggestLoading } = useSearchSuggestions(query, {
+  const { groups: suggestGroups, loading: suggestLoading } = useGlobalSearchSuggestions(query, {
     lat: userCoords?.lat,
     lng: userCoords?.lng,
     city: userCoords?.city,
+    tz,
+    surface: 'search',
     enabled: suggestActive,
   });
 
@@ -381,6 +386,13 @@ export default function SearchScreen() {
           return [entry, ...deduped].slice(0, 10);
         });
       }).catch(() => {/* non-fatal */});
+    }
+    // Query-completion rows ("SEARCH FOR …", §13/§43 submit_search) carry the
+    // search text to run; entity rows route via the shared resolveRoute (§43).
+    const submitQuery = getSubmitQuery(result);
+    if (submitQuery) {
+      submitSearch(submitQuery);
+      return;
     }
     const route = resolveRoute(result);
     if (route) {

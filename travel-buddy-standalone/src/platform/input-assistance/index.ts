@@ -160,3 +160,17 @@ export {
   GEO_FIELD_CONTEXTS,
   type GeoFieldId,
 } from './geographic/geoFields.ts';
+
+// ── global search (Phase 3) ───────────────────────────────────────────────────
+export {
+  mapSuggestionsToGroups,
+  getSubmitQuery,
+  isResolvableRow,
+  QUERY_GROUP_TYPE,
+} from './search/globalSearch.ts';
+export {
+  registerSearchFields,
+  SEARCH_FIELD_IDS,
+  SEARCH_FIELD_CONTEXTS,
+  type SearchFieldId,
+} from './search/searchFields.ts';
