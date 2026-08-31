@@ -181,6 +181,12 @@ function buildQuery(rows: any[]) {
       out = out.filter((r) => Array.isArray(r[col]) && vals.every((v) => r[col].includes(v)));
       return q;
     },
+    // `or()` exists because /sections now resolves fetchBlockedSet, which uses
+    // it. Without it the fake throws, the resolver catches and returns null,
+    // and the endpoint correctly fails CLOSED to an empty list — so every
+    // positive assertion here would fail for a reason that has nothing to do
+    // with what this suite is testing.
+    or() { return q; },
     maybeSingle() { return Promise.resolve({ data: out[0] ?? null, error: null }); },
     then(resolve: (v: any) => void, reject?: (e: any) => void) {
       return Promise.resolve({ data: out, count: out.length, error: null }).then(resolve, reject);
