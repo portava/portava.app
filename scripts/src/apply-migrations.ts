@@ -1212,22 +1212,105 @@ async function main(): Promise<never> {
       `                  mode ${dryRun ? "DRY RUN (writes nothing)" : "APPLY"}`,
   );
 
-  // ── The ledger must exist. Applying without it is applying unrecorded. ────
+  // ── The ledger must exist — but it is itself a migration ─────────────────
+  //
+  // BOOTSTRAP. The ledger is created by a migration, so on a database that has
+  // never seen it there is a cycle: the applier will not run without the
+  // ledger, and only the applier applies the migration that creates it. An
+  // earlier version exited 2 here, which made a fresh database impossible to
+  // bootstrap by any route except the manual hand-application this script
+  // exists to abolish.
+  //
+  // A MISSING TABLE and an UNREADABLE one are different facts and get
+  // different handling. 42P01 (undefined_table) means "not bootstrapped yet",
+  // which is a legitimate starting state. Anything else — permissions, a
+  // network failure, a malformed response — is still fatal, because then we
+  // genuinely cannot establish what has been applied.
   let ledger: LedgerRow[];
+  let bootstrapping = false;
   try {
     ledger = await query<LedgerRow>(
       `select filename, checksum, applied_by from ${LEDGER_TABLE} order by filename`,
     );
   } catch (err) {
-    console.error(
-      `::error::apply-migrations: could not read ${LEDGER_TABLE}: ` +
-        `${(err as Error).message}\n` +
-        `The ledger is what makes this script idempotent and what makes an ` +
-        `apply RECORDED. Without it every run would re-apply the whole chain ` +
-        `and record nothing — the state this script exists to eliminate. ` +
-        `Apply the migration that creates ${LEDGER_TABLE} first, then re-run.`,
+    const msg = (err as Error).message ?? "";
+    // Postgres 42P01, surfaced through the Management API's message body.
+    const missingTable =
+      msg.includes("42P01") ||
+      /relation .*schema_migration_ledger.* does not exist/i.test(msg);
+    if (!missingTable) {
+      console.error(
+        `::error::apply-migrations: could not read ${LEDGER_TABLE}: ` +
+          `${msg}\n` +
+          `This is NOT the not-yet-bootstrapped case (that reports 42P01). The ` +
+          `ledger is what makes this script idempotent and what makes an apply ` +
+          `RECORDED, and we cannot currently read it — so we cannot say what has ` +
+          `been applied. Refusing rather than guessing.`,
+      );
+      process.exit(2);
+    }
+    bootstrapping = true;
+    ledger = [];
+  }
+
+  if (bootstrapping) {
+    const readFile = (f: string) => readFileSync(join(MIGRATIONS_DIR, f), "utf8");
+    const bootstrapFile = listMigrationFiles().find((f) =>
+      readFile(f).includes("CREATE TABLE IF NOT EXISTS public.schema_migration_ledger"),
     );
-    process.exit(2);
+    if (!bootstrapFile) {
+      console.error(
+        `::error::apply-migrations: ${LEDGER_TABLE} does not exist and no migration ` +
+          `in ${MIGRATIONS_DIR} creates it. The ledger cannot be bootstrapped, and ` +
+          `without it nothing can be applied as RECORDED.`,
+      );
+      process.exit(2);
+    }
+
+    if (dryRun) {
+      console.log(
+        `\nBOOTSTRAP REQUIRED — ${LEDGER_TABLE} does not exist on this project.\n` +
+          `  An apply run would first apply ${bootstrapFile} alone, then re-read the\n` +
+          `  ledger and continue. Nothing else can be applied before that, because\n` +
+          `  there would be nowhere to record it.\n` +
+          `\n  This is a dry run, so nothing was written. Exiting 0: "not bootstrapped\n` +
+          `  yet" is a state to report, not a failure to fix.`,
+      );
+      process.exit(0);
+    }
+
+    console.log(
+      `\n${LEDGER_TABLE} does not exist — bootstrapping with ${bootstrapFile} before anything else.`,
+    );
+    const bootOutcomes = await runPlan(
+      [bootstrapFile],
+      readFile,
+      async (filename, statement, phase) => {
+        await query(statement);
+        console.log(
+          phase === "apply"
+            ? `  → ${filename}: applied + recorded (one transaction)`
+            : `  → ${filename}: postconditions verified (separate transaction)`,
+        );
+      },
+      {
+        appliedBy: process.env.GITHUB_ACTIONS ? "ci" : "manual",
+        notes: "bootstrap: created the ledger it records itself in",
+      },
+    );
+    const bootBad = bootOutcomes.find((o) => o.status !== "applied");
+    if (bootBad) {
+      console.error(
+        `::error::apply-migrations: bootstrap of ${bootstrapFile} ${bootBad.status}. ` +
+          `${bootBad.detail ?? ""} Nothing else was attempted.`,
+      );
+      process.exit(decideExitCode(bootOutcomes));
+    }
+    // Re-read: the ledger now exists AND has backfilled itself, so the normal
+    // proven/unproven classification below applies from here as usual.
+    ledger = await query<LedgerRow>(
+      `select filename, checksum, applied_by from ${LEDGER_TABLE} order by filename`,
+    );
   }
 
   let files: string[];
