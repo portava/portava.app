@@ -27,6 +27,13 @@ import {
   type LocationPrivacyMode,
 } from "../lib/postSchemas";
 import { verifyLocation, shouldCreatePostcard } from "../lib/locationVerify";
+import {
+  loadRestrictiveGems,
+  gemCeilingForItem,
+  coarsenMediaLocation,
+  UNDETERMINED_GEM_CEILING,
+  type RestrictiveGem,
+} from "../lib/mediaLocationVisibility";
 import { upsertCityStamp } from "../lib/stampHelper";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
@@ -347,6 +354,85 @@ async function withPostMediaOne(sc: any, row: any): Promise<any> {
  */
 const PENDING_POST_COLUMNS =
   POST_COLUMNS + ", location_lat, location_lng, venue_name";
+
+// ── Hidden-Gem location protection for public post reads (Media v2 P1b) ────────
+//
+// A post's public_lat/public_lng become the EXACT published coordinate once a
+// delayed geotag clears (lib/delayedPostPublisher). If that coordinate sits at /
+// near a protected Hidden Gem — or the post is tagged to the gem's canonical
+// place — serving it de-anonymizes a location the gem's own guard hides. This
+// gate coarsens the public location (coords + labels) ONLY when a gem constrains
+// it, so a normal post that intentionally published its exact location is left
+// untouched. Fail-closed: if the gem lookup fails, coarsen.
+
+interface PostGemContext {
+  gems: RestrictiveGem[];
+  /** post id → canonical_place_id (fetched separately so the id is never served). */
+  placeById: Map<string, string | null>;
+  determined: boolean;
+}
+
+async function loadPostGemContext(
+  db: SupabaseClient,
+  rows: any[],
+): Promise<PostGemContext> {
+  const ids = rows.map((r) => r?.id).filter((v): v is string => typeof v === "string");
+  const placeById = new Map<string, string | null>();
+  try {
+    if (ids.length > 0) {
+      const { data, error } = await db
+        .from("posts")
+        .select("id, canonical_place_id")
+        .in("id", ids);
+      if (error) throw error;
+      for (const r of (data as any[]) ?? []) placeById.set(r.id, r.canonical_place_id ?? null);
+    }
+    const gems = await loadRestrictiveGems(db, {
+      placeIds: Array.from(placeById.values()),
+      cities: rows.map((r) => r?.location_city ?? null),
+    });
+    return { gems, placeById, determined: true };
+  } catch {
+    // Fail-closed: undetermined ⇒ every non-owner read coarsens.
+    return { gems: [], placeById, determined: false };
+  }
+}
+
+/**
+ * Coarsen a public post row's location when a protected/approximate Hidden Gem
+ * constrains it. Owner sees their own post unchanged. When no gem constrains and
+ * the batch was determined, the row passes through untouched (preserving the
+ * user's intentional delayed-publish exact coordinate).
+ */
+function gemProtectPost(row: any, ctx: PostGemContext, viewerId: string): any {
+  if (row?.author_id === viewerId) return row; // owner sees their own exact
+  const lat = row?.public_lat ?? null;
+  const lng = row?.public_lng ?? null;
+  const placeId = ctx.placeById.get(row?.id) ?? null;
+  const ceiling = ctx.determined
+    ? gemCeilingForItem(ctx.gems, { placeId, lat, lng })
+    : UNDETERMINED_GEM_CEILING; // fail-closed
+  if (ceiling == null) return row; // no gem constraint → unchanged
+  const d = coarsenMediaLocation(
+    {
+      name: row?.location_name ?? null,
+      city: row?.location_city ?? null,
+      country: row?.location_country ?? null,
+      lat,
+      lng,
+    },
+    { locationVisibility: ceiling, isOwner: false, coarsenSeed: String(row?.id ?? ""), emitCoarseCoords: true },
+  );
+  return {
+    ...row,
+    location_name: d.name,
+    location_city: d.city,
+    location_country: d.country,
+    public_location_label: d.name ?? d.city ?? d.country ?? null,
+    public_lat: d.lat, // coarse grid-snapped — never the exact published coord
+    public_lng: d.lng,
+  };
+}
 
 /**
  * Redact sensitive location fields from responses served to non-author
@@ -1150,8 +1236,11 @@ router.get("/posts", async (req, res) => {
     }
 
     // Step 6: merge author + engagement + spans + media into each post.
+    // Hidden-Gem location protection (fail-closed) — coarsens public coords/labels
+    // for posts that sit at / are tagged to a protected gem.
+    const followingGemCtx = await loadPostGemContext(sc, posts);
     const merged = posts.map((p) => {
-      const safe = mapPublicPost(p);
+      const safe = gemProtectPost(mapPublicPost(p), followingGemCtx, user.id);
       const pr = profileMap[p.author_id];
       const eng = engMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false, stampCount: 0, isStampedByViewer: false };
       const spans = (followingSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
@@ -1305,8 +1394,10 @@ router.get("/posts", async (req, res) => {
     } catch { /* fail-open */ }
   }
 
+  // Hidden-Gem location protection (fail-closed).
+  const globalGemCtx = await loadPostGemContext(svc, globalPosts);
   const mergedGlobal = globalPosts.map((p) => {
-    const safe = mapPublicPost(p);
+    const safe = gemProtectPost(mapPublicPost(p), globalGemCtx, user.id);
     const pr = globalProfileMap[p.author_id];
     const eng = globalEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false, stampCount: 0, isStampedByViewer: false };
     const spans = (globalSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
@@ -1714,7 +1805,11 @@ router.get("/posts/:postId", async (req, res) => {
       stamp_overlay:     m.stamp_overlay ?? null,
     }));
 
-  const base = isAuthor ? post : mapPublicPost(post);
+  // Hidden-Gem location protection (fail-closed) for non-author reads.
+  const singlePostGemCtx = isAuthor ? null : await loadPostGemContext(sc, [post]);
+  const base = isAuthor
+    ? post
+    : gemProtectPost(mapPublicPost(post), singlePostGemCtx!, user.id);
   const featuredByPortava = featuredRow
     ? { category: (featuredRow as any).category, featuredAt: (featuredRow as any).featured_at }
     : null;

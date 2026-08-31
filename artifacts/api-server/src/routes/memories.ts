@@ -35,10 +35,75 @@ import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 import { logger } from "../lib/logger.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  loadRestrictiveGems,
+  gemCeilingForItem,
+  coarsenMediaLocation,
+  UNDETERMINED_GEM_CEILING,
+  type RestrictiveGem,
+} from "../lib/mediaLocationVisibility.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 function isUuid(s: string) { return UUID_RE.test(s); }
+
+// ── Hidden-Gem location protection for memory reads (Media v2 P1b) ─────────────
+//
+// A memory carries an exact location_lat/location_lng that reaches non-owner
+// viewers (the public discovery feed, and any shared/visible single memory). If
+// that coordinate sits on a protected Hidden Gem it de-anonymizes a location the
+// gem guard hides. Memories link to places via canonical_location_id (not the
+// gem's canonical_place_id), so the cross-check here is coordinate proximity
+// (plus city, to scope the gem load). Owner sees their own memory unchanged.
+// Fail-closed: a gem-lookup failure coarsens every non-owner read.
+
+interface MemoryGemContext {
+  gems: RestrictiveGem[];
+  determined: boolean;
+}
+
+async function loadMemoryGemContext(
+  db: SupabaseClient,
+  rows: any[],
+): Promise<MemoryGemContext> {
+  try {
+    const gems = await loadRestrictiveGems(db, {
+      placeIds: [],
+      cities: rows.map((r) => r?.location_city ?? null),
+    });
+    return { gems, determined: true };
+  } catch {
+    return { gems: [], determined: false };
+  }
+}
+
+/**
+ * Coarsen a raw memory row's location (snake_case) when a protected/approximate
+ * gem sits on its coordinates. Owner bypass. No gem constraint (determined) ⇒
+ * unchanged. Operates before mapMemory / enrichMemories so the coarsened values
+ * flow through every projection.
+ */
+function gemProtectMemoryRow(row: any, ctx: MemoryGemContext, viewerId: string): any {
+  if (row?.owner_id === viewerId) return row; // owner sees their own exact
+  const lat = row?.location_lat != null ? Number(row.location_lat) : null;
+  const lng = row?.location_lng != null ? Number(row.location_lng) : null;
+  const ceiling = ctx.determined
+    ? gemCeilingForItem(ctx.gems, { placeId: null, lat, lng })
+    : UNDETERMINED_GEM_CEILING; // fail-closed
+  if (ceiling == null) return row; // no gem constraint → unchanged
+  const d = coarsenMediaLocation(
+    { name: null, city: row?.location_city ?? null, country: row?.location_country ?? null, lat, lng },
+    { locationVisibility: ceiling, isOwner: false, coarsenSeed: String(row?.id ?? ""), emitCoarseCoords: true },
+  );
+  return {
+    ...row,
+    location_city: d.city,
+    location_country: d.country,
+    location_lat: d.lat, // coarse grid-snapped — never the exact stored coord
+    location_lng: d.lng,
+  };
+}
 
 // ── Feature flag ───────────────────────────────────────────────────────────────
 
@@ -398,7 +463,12 @@ router.get("/memories", async (req, res) => {
     ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
   ]);
 
-  const visible = rows.filter((m) => !blockedSet.has(m.owner_id as string));
+  const visibleRaw = rows.filter((m) => !blockedSet.has(m.owner_id as string));
+
+  // Hidden-Gem location protection (fail-closed): coarsen coords of any public
+  // memory that sits on a protected gem before enrichment/serialization.
+  const memoryGemCtx = await loadMemoryGemContext(sc, visibleRaw);
+  const visible = visibleRaw.map((m) => gemProtectMemoryRow(m, memoryGemCtx, user.id));
 
   const enriched = await enrichMemories(sc, visible, user.id);
 
@@ -478,9 +548,14 @@ router.get("/memories/:id", async (req, res) => {
 
   const ownerNameAllowed = memory.owner_id === user.id || await nameVisibleFor(sc, memory.owner_id);
 
+  // Hidden-Gem location protection (fail-closed) — coarsen coords for non-owner
+  // reads of a memory that sits on a protected gem.
+  const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
+  const safeMemory = gemProtectMemoryRow(memory, singleMemoryGemCtx, user.id);
+
   res.json({
     memory: {
-      ...mapMemory(memory, user.id),
+      ...mapMemory(safeMemory, user.id),
       items: (items.data ?? []).map(mapItem),
       tags: (tags.data ?? []).map((t: any) => ({ userId: t.tagged_user_id, status: t.status })),
       likeCount: likeCount.count ?? 0,
@@ -1071,9 +1146,13 @@ router.get("/trips/:tripId/memory", async (req, res) => {
 
   const ownerNameAllowed = ownerId === user.id || await nameVisibleFor(sc, ownerId);
 
+  // Hidden-Gem location protection (fail-closed) for non-owner reads.
+  const tripMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
+  const safeTripMemory = gemProtectMemoryRow(memory, tripMemoryGemCtx, user.id);
+
   res.json({
     memory: {
-      ...mapMemory(memory, user.id),
+      ...mapMemory(safeTripMemory, user.id),
       likeCount: likeCount.count ?? 0,
       likedByMe: Boolean(likedByMe.data),
       cover: coverRow.data ? { mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type } : null,
