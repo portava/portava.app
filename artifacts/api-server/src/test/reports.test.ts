@@ -95,7 +95,12 @@ interface FakeState {
   moderation_actions?:         Record<string, any>[];
 }
 
-function makeFakeClient(state: FakeState, callerToken: string, callerId: string) {
+function makeFakeClient(
+  state: FakeState,
+  callerToken: string,
+  callerId: string,
+  upsertErrors: Record<string, { message: string }> = {},
+) {
   const inserted: Record<string, any[]> = {};
 
   function getRows(table: string): any[] {
@@ -116,6 +121,7 @@ function makeFakeClient(state: FakeState, callerToken: string, callerId: string)
     let rows = getRows(table);
     let pendingInsert: any = null;
     let pendingUpdate: any = null;
+    let pendingUpsertError: { message: string } | null = null;
     const filters: Array<(r: any) => boolean> = [];
     let _single = false;
     let _maybe  = false;
@@ -131,6 +137,10 @@ function makeFakeClient(state: FakeState, callerToken: string, callerId: string)
       },
       update(patch: any) { pendingUpdate = patch; return b; },
       upsert(row: any, _opts?: any) {
+        // Injected failure: simulate a DB error on the upsert for this table
+        // (real PostgREST would insert nothing), so tests can prove the handler
+        // checks the result instead of swallowing it.
+        if (upsertErrors[table]) { pendingUpsertError = upsertErrors[table]; return b; }
         if (!inserted[table]) inserted[table] = [];
         if (Array.isArray(row)) inserted[table].push(...row);
         else inserted[table].push({ ...row });
@@ -151,6 +161,7 @@ function makeFakeClient(state: FakeState, callerToken: string, callerId: string)
     };
 
     async function resolve() {
+      if (pendingUpsertError) return { data: null, error: pendingUpsertError };
       if (pendingInsert) {
         const base = Array.isArray(pendingInsert) ? pendingInsert[0] : pendingInsert;
         const row = { id: `gen-${table}-${Math.random().toString(36).slice(2)}`, status: "open", severity: "normal", ...base };
@@ -167,6 +178,7 @@ function makeFakeClient(state: FakeState, callerToken: string, callerId: string)
     }
 
     async function resolveList() {
+      if (pendingUpsertError) return { data: null, error: pendingUpsertError, count: 0 };
       if (pendingInsert) {
         const base = Array.isArray(pendingInsert) ? pendingInsert[0] : pendingInsert;
         const row = { id: `gen-${table}-${Math.random().toString(36).slice(2)}`, status: "open", severity: "normal", ...base };
@@ -385,6 +397,61 @@ describe("reports routes", () => {
       const r = await req("POST", "/reports", { target_type: "user", target_id: TARGET_ID, reason_code: "spam" }, USER_E_TOKEN);
       assert.equal(r.status, 201, JSON.stringify(r.body));
       assert.equal(r.body.severity, "normal");
+    });
+  });
+
+  // ── REPORT-1: 'profile' and 'user' address the same subject ────────────────
+  // A 'profile' target is the same id space as a 'user' target, so every
+  // user-subject guard must treat them alike. Before the fix a 'profile' report
+  // slipped past the self-report guard and never triggered reporter protection.
+  describe("POST /reports — profile/user normalization (REPORT-1)", () => {
+    it("R1a. reporting your OWN profile via target_type=profile is blocked", async () => {
+      setClients(makeFakeClient({}, USER_A_TOKEN, USER_A_ID));
+      const r = await req("POST", "/reports", {
+        target_type: "profile", target_id: USER_A_ID,
+        reason_code: "harassment", reason_detail: "self-report attempt routed through profile",
+      }, USER_A_TOKEN);
+      assert.equal(r.status, 400, JSON.stringify(r.body));
+      assert.equal(r.body.error, "invalid_payload");
+      assert.match(r.body.message, /yourself/i);
+    });
+
+    it("R1b. high-severity profile report protects the reporter (restriction + cooldowns)", async () => {
+      // 'profile' does not run the permission engine, so empty state is enough.
+      const client = makeFakeClient({}, USER_D_TOKEN, USER_D_ID);
+      setClients(client);
+      const r = await req("POST", "/reports", {
+        target_type: "profile", target_id: TARGET_ID,
+        reason_code: "harassment", reason_detail: "abusive profile content",
+      }, USER_D_TOKEN);
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.equal(r.body.severity, "high");
+      assert.equal(r.body.protectionApplied, true);
+
+      const restrictions = client.__inserted.user_restrictions ?? [];
+      assert.equal(restrictions.length, 1, "auto-restrict must be written for a profile high-severity report");
+      assert.equal(restrictions[0].restrictor_id, USER_D_ID);
+      assert.equal(restrictions[0].restricted_id, TARGET_ID);
+
+      const cooldowns = client.__inserted.user_interaction_cooldowns ?? [];
+      assert.equal(cooldowns.length, 2, "both anti-retaliation cooldowns must be written");
+      assert.ok(cooldowns.every((c: any) => c.user_id === TARGET_ID && c.target_user_id === USER_D_ID));
+    });
+
+    it("R1c. a failed protection upsert is surfaced (protectionApplied=false), not swallowed", async () => {
+      const client = makeFakeClient(
+        { blocks: [], profiles: [{ id: TARGET_ID, is_private: true }] },
+        USER_E_TOKEN, USER_E_ID,
+        { user_restrictions: { message: "unique or fk violation" } },
+      );
+      setClients(client);
+      const r = await req("POST", "/reports", {
+        target_type: "user", target_id: TARGET_ID, reason_code: "violence",
+      }, USER_E_TOKEN);
+      // The report itself still succeeds; the protection failure must be reported.
+      assert.equal(r.status, 201, JSON.stringify(r.body));
+      assert.equal(r.body.protectionApplied, false,
+        "a failed protection upsert must be reported, not silently discarded");
     });
   });
 

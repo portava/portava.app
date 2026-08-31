@@ -85,7 +85,15 @@ router.post("/reports", async (req, res) => {
 
   const { target_type, target_id, reason_code, reason_detail, context_type, context_id } = parsed.data;
 
-  if (target_type === "user" && target_id === user.id) {
+  // 'user' and 'profile' address the same subject by the same id (a profile id
+  // IS the user id). Normalize so every user-subject guard treats them alike;
+  // otherwise a caller slips past any 'user'-only guard by sending 'profile'.
+  const subjectUserId =
+    target_type === "user" || target_type === "profile" ? target_id : null;
+
+  // Self-report guard — must cover 'profile' too, else a user can report their
+  // OWN profile via target_type='profile' (the 'user'-only check missed it).
+  if (subjectUserId && subjectUserId === user.id) {
     sendError(res, "invalid_payload", "Cannot report yourself");
     return;
   }
@@ -145,8 +153,13 @@ router.post("/reports", async (req, res) => {
     }).then(undefined, () => {});
   }
 
-  // High-severity user report: protect reporter from retaliation
-  if (target_type === "user" && reportSeverity === "high") {
+  // High-severity report about a PERSON (user OR profile — same id space):
+  // protect reporter from retaliation. Keyed on subjectUserId so a 'profile'
+  // high-severity report gets the same restriction + cooldowns a 'user' one
+  // does; the old 'user'-only check left profile reporters unprotected.
+  let protectionApplied: boolean | undefined = undefined;
+  if (subjectUserId && reportSeverity === "high") {
+    protectionApplied = true;
     const expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(); // 90 days
 
     // Auto-restrict: reporter restricts the reported user so that their future
@@ -156,26 +169,39 @@ router.post("/reports", async (req, res) => {
     // The permission engine checks: "does targetUserId restrict viewerId?" →
     //   when Bob (future viewer) tries to contact Alice (future target/reporter),
     //   the engine queries restrictor_id=Alice, restricted_id=Bob → match → protected.
-    await sc.from("user_restrictions").upsert(
+    // Results are checked, not swallowed: a failed protection upsert leaves the
+    // reporter exposed, so we log it and report protectionApplied=false rather
+    // than silently discarding the error.
+    const { error: restrictErr } = await sc.from("user_restrictions").upsert(
       {
-        restrictor_id: user.id,   // reporter (Alice) restricts
-        restricted_id: target_id, // reported user (Bob)
+        restrictor_id: user.id,        // reporter (Alice) restricts
+        restricted_id: subjectUserId,  // reported user (Bob)
         options: { auto_restricted_by_report: true, report_id: reportId },
       },
       { onConflict: "restrictor_id,restricted_id", ignoreDuplicates: true },
-    ).then(undefined, () => {});
+    );
+    if (restrictErr) {
+      protectionApplied = false;
+      req.log.error({ err: restrictErr, reportId }, "auto-restrict upsert failed");
+    }
 
     // Anti-retaliation cooldowns: block target from DMing or friend-requesting reporter
-    await sc.from("user_interaction_cooldowns").upsert(
+    const { error: cooldownErr } = await sc.from("user_interaction_cooldowns").upsert(
       [
-        { user_id: target_id, target_user_id: user.id, cooldown_type: "message_request", expires_at: expiresAt },
-        { user_id: target_id, target_user_id: user.id, cooldown_type: "friend_request",  expires_at: expiresAt },
+        { user_id: subjectUserId, target_user_id: user.id, cooldown_type: "message_request", expires_at: expiresAt },
+        { user_id: subjectUserId, target_user_id: user.id, cooldown_type: "friend_request",  expires_at: expiresAt },
       ],
       { onConflict: "user_id,target_user_id,cooldown_type", ignoreDuplicates: true },
-    ).then(undefined, () => {});
+    );
+    if (cooldownErr) {
+      protectionApplied = false;
+      req.log.error({ err: cooldownErr, reportId }, "anti-retaliation cooldown upsert failed");
+    }
   }
 
-  res.status(201).json({ reportId, status: "open", severity: reportSeverity });
+  const responseBody: Record<string, unknown> = { reportId, status: "open", severity: reportSeverity };
+  if (protectionApplied !== undefined) responseBody.protectionApplied = protectionApplied;
+  res.status(201).json(responseBody);
 });
 
 /* ===========================================================================

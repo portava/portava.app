@@ -234,6 +234,43 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
 
   const now = new Date().toISOString();
 
+  // ── Reversal on approval — run BEFORE committing the state ────────────────
+  // resolveAppeal returns { ok:false, action:'noop', reason } when the reversal
+  // cannot be applied (wrong owner scope, DB error, or unknown target_type).
+  // 'approved' is a terminal state that the state machine can never re-drive,
+  // so committing it first and only then discovering the reversal failed would
+  // leave the content moderated while the appellant is told it was restored.
+  // Gate the state write on a successful reversal: if it fails, hold the appeal
+  // in its current state and surface an error instead.
+  let reversal: Awaited<ReturnType<typeof resolveAppeal>> | null = null;
+  if (state === "approved") {
+    reversal = await resolveAppeal(sc, {
+      id:              (appeal as any).id,
+      appellant_id:    (appeal as any).appellant_id,
+      target_type:     (appeal as any).target_type,
+      target_id:       (appeal as any).target_id,
+      resolution_note: resolutionNote ?? null,
+    });
+
+    req.log.info({ appealId: id, reversal }, "appeal reversal");
+
+    if (!reversal.ok) {
+      // Do NOT commit 'approved' and do NOT notify the appellant that the
+      // action was reversed. Leave the appeal in under_review so a moderator
+      // can retry once the underlying cause is fixed.
+      req.log.error(
+        { appealId: id, reason: reversal.reason, targetType: (appeal as any).target_type },
+        "appeal reversal failed — holding under_review, not approving",
+      );
+      sendError(
+        res,
+        "reversal_failed",
+        `The moderated action could not be reversed (${reversal.reason}). The appeal remains under review.`,
+      );
+      return;
+    }
+  }
+
   const { data: updated, error: updateErr } = await sc
     .from("appeals")
     .update({
@@ -248,19 +285,9 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
 
   if (updateErr) { req.log.error({ err: updateErr }, "patch appeal"); sendError(res, "db_error", updateErr.message); return; }
 
-  // ── Reversal on approval ──────────────────────────────────────────────────
+  // ── Notify on approval (reversal already succeeded above) ─────────────────
 
   if (state === "approved") {
-    const result = await resolveAppeal(sc, {
-      id:              (appeal as any).id,
-      appellant_id:    (appeal as any).appellant_id,
-      target_type:     (appeal as any).target_type,
-      target_id:       (appeal as any).target_id,
-      resolution_note: resolutionNote ?? null,
-    });
-
-    req.log.info({ appealId: id, reversal: result }, "appeal reversal");
-
     // Notify appellant
     await sc.from("notifications").insert({
       user_id:           (appeal as any).appellant_id,
@@ -276,7 +303,7 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
         appealId:       id,
         targetType:     (appeal as any).target_type,
         resolutionNote: resolutionNote ?? null,
-        reversalAction: result.action,
+        reversalAction: reversal!.action,
       },
     }).then(() => {}).catch(() => {});
   }

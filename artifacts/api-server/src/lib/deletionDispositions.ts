@@ -83,6 +83,19 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "story_views",
   "user_follows",
   "wishlist_places",
+  // Trip "Memories" UGC + engagement (audit MEM·H2). AccountDeletionService now
+  // collects each memory_item's media path (post-media/memories/{userId}/…)
+  // BEFORE deleting, removes the storage objects, and clears the rows: the
+  // user's owned memories (owner_id, all states incl. soft-deleted), their
+  // children (memory_items, memory_tags/likes/saves by memory_id), and the
+  // footprint the user left on other people's memories (likes/saves by user_id,
+  // tags by tagged_user_id). memory_items and memory_tags are NOT listed here:
+  // this manifest only tracks tables carrying a USER_IDENTIFYING_COLUMN, and
+  // neither has one (memory_id / tagged_user_id are not in that set) — the
+  // coverage check would flag them as STALE.
+  "memories",
+  "memory_likes",
+  "memory_saves",
   // Derived memory (migrations 2183-2191). Erased explicitly by
   // AccountDeletionService's `erase_derived_memory` step, which calls the
   // SECURITY DEFINER erase_memory_for_user in one atomic, idempotent statement.
@@ -228,9 +241,7 @@ export const UNCLASSIFIED_BACKLOG: readonly string[] = [
   "media_stamp_reactions",
   "meetup_invites",
   "meetup_time_votes",
-  "memories",
-  "memory_likes",
-  "memory_saves",
+  // memories / memory_likes / memory_saves moved to ERASED_BY_CASCADE (MEM·H2).
   "message_reports",
   "message_requests",
   "message_thread_members",
