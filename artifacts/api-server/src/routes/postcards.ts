@@ -27,6 +27,7 @@ import {
   verifyUploadedBytes,
   MEDIA_SIZE_LIMITS,
 } from '../lib/mediaPipeline.js';
+import { recordEntityMedia } from '../lib/mediaAssets.js';
 
 const router = Router();
 
@@ -880,7 +881,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     const pcCount = (existsRes as any).count ?? 0;
 
     if (postData?.add_to_passport === true && pcCount === 0) {
-      await sc
+      const pcIns = await sc
         .from('passport_postcards')
         .insert({
           post_id:            postId,
@@ -899,9 +900,23 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
           has_video:          counts.hasVideo,
           primary_media_type: counts.primaryMediaType,
         })
-        .then(undefined, (err: any) => {
-          req.log.warn({ err }, 'postcards: passport_postcard auto-create failed (non-fatal)');
+        .select('id')
+        .maybeSingle();
+      if (pcIns.error) {
+        req.log.warn({ err: pcIns.error }, 'postcards: passport_postcard auto-create failed (non-fatal)');
+      } else if (pcIns.data && counts.firstReadyUrl) {
+        // Canonical dual-write (flag-gated OFF; fail-soft — legacy media_url
+        // path unaffected). Records media_assets +
+        // media_attachments(entityType=postcard) so the postcard photo joins
+        // the §6.1 canonical model once media_canonical_enabled is lit.
+        void recordEntityMedia(sc, {
+          ownerUserId: user.id,
+          publicUrl: counts.firstReadyUrl,
+          entityType: 'postcard',
+          entityId: (pcIns.data as any).id as string,
+          isCover: true,
         });
+      }
     }
   }
 
