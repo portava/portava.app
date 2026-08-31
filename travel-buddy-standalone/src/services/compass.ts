@@ -697,6 +697,8 @@ export async function postCompassAsk(
     /** @deprecated ignored when conversationId is present */
     conversationContext?: string;
     stream?:          boolean;
+    /** Optional media context (§32): the server hydrates it via CompassMediaContext. */
+    mediaId?:         string;
   } = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
@@ -833,7 +835,7 @@ export interface CompassAskStreamHandlers {
  */
 export async function postCompassAskStream(
   prompt: string,
-  opts: { city?: string; conversationId?: string } = {},
+  opts: { city?: string; conversationId?: string; mediaId?: string } = {},
   handlers: CompassAskStreamHandlers = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string; streamed?: boolean }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();

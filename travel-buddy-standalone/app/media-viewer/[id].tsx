@@ -46,6 +46,7 @@ import {
   VolumeX,
   ChevronLeft,
   Zap,
+  Compass,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -65,6 +66,8 @@ import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon.ts
 import { color, space, type as t, radius, avatar, dot} from '../../src/theme/tokens.ts';
 import { useSession } from '../../src/context/SessionContext.tsx';
 import { PlaceQuickActions } from '../../src/components/PlaceQuickActions.tsx';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
+import { MediaActionRail } from '../../src/features/media/components/MediaActionRail.tsx';
 
 // ── Web: force expo-av <video> to cover-fill ──────────────────────────────────
 if (typeof document !== 'undefined') {
@@ -153,6 +156,10 @@ interface OverlayProps {
   isOwner: boolean;
   /** Number of distinct viewers who stamped this post. Shown only to the creator. */
   stampItCount: number;
+  /** Media v2 World shell (§15): show the action-rail entry when enabled. */
+  showActions?: boolean;
+  /** Opens the media action rail. */
+  onActions?: () => void;
 }
 
 function ViewerOverlay({
@@ -171,6 +178,8 @@ function ViewerOverlay({
   locationName,
   isOwner,
   stampItCount,
+  showActions,
+  onActions,
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
 
@@ -326,6 +335,13 @@ function ViewerOverlay({
           <Pressable style={ov.actionBtn} onPress={onShare} hitSlop={6} accessibilityRole="button" accessibilityLabel="Share this media">
             <PortavaShareIcon size={26} color="#fff" />
           </Pressable>
+
+          {/* Media v2 action rail entry — additive, only when the World shell is on */}
+          {showActions && onActions ? (
+            <Pressable style={ov.actionBtn} onPress={onActions} hitSlop={6} accessibilityRole="button" accessibilityLabel="More actions">
+              <Compass size={28} color="#fff" strokeWidth={1.8} />
+            </Pressable>
+          ) : null}
         </View>
       </View>
     </View>
@@ -546,6 +562,11 @@ export default function MediaViewer() {
   const insets = useSafeAreaInsets();
   const session = useSession();
   const currentUserId = session?.userId ?? undefined;
+  const { isEnabled } = useFeatureFlags();
+  // Media v2 World shell (§15): the action rail is ADDITIVE and only appears
+  // when the World shell flag is on — the existing viewer is untouched otherwise.
+  const worldShellEnabled = isEnabled('MEDIA_WORLD_SHELL_ENABLED');
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   // ── Read viewer context (snapshot on mount) ────────────────────────────────
   const [items] = useState<ViewerContextItem[]>(() => {
@@ -759,6 +780,8 @@ export default function MediaViewer() {
         locationName={activeItem?.locationName}
         isOwner={activeIsOwner}
         stampItCount={activeStampItCount}
+        showActions={worldShellEnabled}
+        onActions={() => setActionsOpen(true)}
       />
 
       {/* ── Comment sheet ─────────────────────────────────────────── */}
@@ -767,6 +790,15 @@ export default function MediaViewer() {
         visible={commentItemId !== null}
         onClose={() => setCommentItemId(null)}
       />
+
+      {/* ── Media v2 action rail (§15) — additive, World-shell-gated ── */}
+      {worldShellEnabled ? (
+        <MediaActionRail
+          mediaId={activeItem?.id ?? null}
+          visible={actionsOpen}
+          onClose={() => setActionsOpen(false)}
+        />
+      ) : null}
 
       {/* Page indicator dots (only when multiple items) */}
       {items.length > 1 ? (
