@@ -49,6 +49,15 @@ import {
 import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
 import {
+  fetchSelectionMemory,
+  applyPriorSelectionBoost,
+  buildLearnedGeoInjections,
+  buildSelectionRecents,
+  selectionQueryKey,
+  emptyMemory,
+  type SelectionMemory,
+} from './personalization';
+import {
   projectSearchResult,
   projectCanonicalCity,
   projectAirportDisambiguation,
@@ -159,11 +168,28 @@ export async function generateSuggestions(
   const isGeoPicker = GEO_PICKER_CONTEXTS.has(context);
   const wantsRecent = policy.allowedSuggestionTypes.includes('recent');
   const wantsEntities = policy.allowedSuggestionTypes.includes('entity');
+  const wantsPersonalized = policy.allowedSuggestionTypes.includes('personalized');
+
+  // ── §35 Selection Memory (Phase 8) ──────────────────────────────────────────
+  // Load the OWNER's per-context explicit-selection memory ONCE, gated by the
+  // field policy's allowPersonalization (so username / private-message / hidden-
+  // gem contexts never fetch or feed it). Fail-soft to an empty memory, which
+  // makes every personalization step below a no-op — a user with no history gets
+  // today's behaviour exactly (graceful cold-start). `personalQueryKey` is folded
+  // WITHOUT alias expansion, matching how the /select write path stores it, so a
+  // user's own abbreviation ("bkk") maps even when the global alias dictionary
+  // does not know it.
+  const personalizationOn = policy.allowPersonalization === true;
+  const memory: SelectionMemory = personalizationOn
+    ? await fetchSelectionMemory(sc, { userId, context, max: 200 }).catch(() => emptyMemory())
+    : emptyMemory();
+  const personalQueryKey = selectionQueryKey(trimmed);
 
   // ── §14 zero-character assistance (geographic pickers) ──────────────────────
   // When the field is EMPTY and the policy allows recents/entities, serve the
-  // viewer's current city + active/upcoming Trip destinations (§53). Sourced
-  // only from the viewer's OWN rows, so no person-privacy gate is required.
+  // viewer's current city + active/upcoming Trip destinations (§53), plus the
+  // user's own recent explicit selections (§35). Sourced only from the viewer's
+  // OWN rows / public geo entities, so no person-privacy gate is required.
   if (q.length === 0 && isGeoPicker && (wantsRecent || wantsEntities)) {
     const defaults = await zeroCharGeoDefaults(sc, {
       userId,
@@ -171,12 +197,53 @@ export async function generateSuggestions(
       max: policy.maxSuggestions,
     }).catch(() => []);
     const projected = defaults.map((d, i) => projectGeoDefault(d, context, POLICY_VERSION, i));
+    const existingIds = new Set(projected.map((s) => s.entityId).filter((x): x is string => !!x));
+    const recents = personalizationOn
+      ? await buildSelectionRecents(sc, {
+          memory,
+          context,
+          isGeoPicker: true,
+          policyVersion: POLICY_VERSION,
+          max: policy.maxSuggestions,
+          existingEntityIds: existingIds,
+        }).catch(() => [])
+      : [];
     return dropDeadRows(
       orderSuggestions(
-        applySessionBias(projected, sessionContext, normalized),
+        applySessionBias([...projected, ...recents], sessionContext, normalized),
         Math.min(limit, policy.maxSuggestions),
       ),
     );
+  }
+
+  // ── §14/§35 zero-character recents (non-geo personalization contexts) ────────
+  // For a search-like field that allows personalization (e.g. global_search),
+  // an empty query serves the user's own recent explicit GEO selections before
+  // the first keystroke. telegraph_recipient is excluded — it serves eligibility-
+  // scoped recipient recents through its own path below. Cold-start (no memory)
+  // returns nothing and falls through to today's behaviour.
+  if (
+    q.length === 0 &&
+    !isGeoPicker &&
+    personalizationOn &&
+    context !== 'telegraph_recipient' &&
+    (wantsRecent || wantsPersonalized)
+  ) {
+    const recents = await buildSelectionRecents(sc, {
+      memory,
+      context,
+      isGeoPicker: false,
+      policyVersion: POLICY_VERSION,
+      max: policy.maxSuggestions,
+    }).catch(() => []);
+    if (recents.length > 0) {
+      return dropDeadRows(
+        orderSuggestions(
+          applySessionBias(recents, sessionContext, normalized),
+          Math.min(limit, policy.maxSuggestions),
+        ),
+      );
+    }
   }
 
   // ── Social identity contexts (Phase 4, §26/§47/§54) ─────────────────────────
@@ -429,6 +496,29 @@ export async function generateSuggestions(
     suggestions.push(...aiRows);
   }
 
+  // ── §35 learned abbreviation → canonical geo mapping (Phase 8) ──────────────
+  // When the typed query is one the user has REPEATEDLY used to select a public
+  // canonical city/country ("bkk" → Bangkok, for THIS user), and that entity is
+  // not already a candidate, inject it as a `personalized` row. It resolves to
+  // the EXISTING canonical entity — changing no canonical data and affecting no
+  // other user. `personalized` sorts after `entity` (projection TYPE_RANK), so it
+  // never outranks a canonical match (§9). Only public geo entities are injected;
+  // a remembered person/place is re-surfaced only by re-ranking a candidate that
+  // already passed the privacy gate, never injected around it.
+  if (personalizationOn && (wantsEntities || wantsPersonalized) && q.length >= 1) {
+    const existingIds = new Set(suggestions.map((s) => s.entityId).filter((x): x is string => !!x));
+    const injected = await buildLearnedGeoInjections(sc, {
+      memory,
+      queryKey: personalQueryKey,
+      context,
+      isGeoPicker,
+      policyVersion: POLICY_VERSION,
+      max: 3,
+      existingEntityIds: existingIds,
+    }).catch(() => [] as InputSuggestion[]);
+    suggestions.push(...injected);
+  }
+
   // ── Phase-5: merge creation assistance + unresolved-address fallback ─────────
   // §20/§23: the duplicate + validation rows are ranked ALONGSIDE the entity
   // candidates (disambiguation/correction/validation sort after entities per §9).
@@ -462,14 +552,26 @@ export async function generateSuggestions(
   // deferred.
   const biased = applySessionBias(suggestions, sessionContext, normalized);
 
+  // ── §15 PriorSelection boost (Phase 8) ──────────────────────────────────────
+  // AUGMENT the ranking with the OWNER's repeated-selection history: raise the
+  // confidence of candidates this user has selected before in this context
+  // (stronger when the SAME query led to them — the abbreviation signal). It only
+  // nudges confidence, the SECONDARY sort key, and is clamped below the exact-
+  // match band, so it reorders WITHIN a type and never displaces a strong
+  // canonical match or a canonical entity above an AI guess (§9). Empty memory ⇒
+  // identity (cold-start unchanged).
+  const personalized = personalizationOn
+    ? applyPriorSelectionBoost(biased, memory, personalQueryKey)
+    : biased;
+
   // ── Rank + cap (§9 trust order, §15 tie-break by confidence) ────────────────
   // When the field carries query completions (§13 "SEARCH FOR" rows — global_
   // search, buddy_service, hashtag), reserve a slot so a submittable-search row
   // is never capped out by a full page of entity matches. Otherwise a plain cap.
   const cap = Math.min(limit, policy.maxSuggestions);
   const ranked = policy.allowedSuggestionTypes.includes('completion')
-    ? orderSuggestionsReserving(biased, cap, COMPLETION_RESERVED_TYPES, 1)
-    : orderSuggestions(biased, cap);
+    ? orderSuggestionsReserving(personalized, cap, COMPLETION_RESERVED_TYPES, 1)
+    : orderSuggestions(personalized, cap);
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.
