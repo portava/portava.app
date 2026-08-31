@@ -296,6 +296,8 @@ export interface SuggestRequest {
   lat?: number;
   lng?: number;
   city?: string;
+  /** §18 optional IANA timezone for semantic temporal-window normalization. */
+  tz?: string;
   /** §23/§55 creation draft — read only by creation contexts. */
   draft?: CreationDraft;
 }

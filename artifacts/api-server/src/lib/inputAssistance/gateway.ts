@@ -46,6 +46,7 @@ import {
   buildCreationAssistance,
   buildUnresolvedAddress,
 } from './creation';
+import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
 import {
   projectSearchResult,
   projectCanonicalCity,
@@ -117,6 +118,8 @@ export interface GenerateParams {
   city: string | null;
   /** §23/§55 creation draft — read only by creation contexts. */
   draft?: CreationDraft;
+  /** §18 IANA timezone for temporal-window normalization (optional). */
+  tz?: string | null;
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -131,7 +134,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz } = params;
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
@@ -361,6 +364,28 @@ export async function generateSuggestions(
     suggestions.push(
       ...buildCompassStarters(context, POLICY_VERSION, q, policy.maxSuggestions),
     );
+  }
+
+  // ── Phase-6 semantic intent (§18/§21) ───────────────────────────────────────
+  // For the search-like contexts (global_search / compass_prompt) a
+  // sufficiently-confident deterministic parse ADDS structured suggestions/
+  // actions (a scoped search, a sequenced plan, an editable Compass prompt) and
+  // recognizes §21 smart actions ("add Bangkok to my trip"). It NEVER removes the
+  // raw query row: a LOW/VERY-LOW parse adds nothing (§2/§19 — raw preserved),
+  // and every semantic row is an `action`/`ai_suggestion` type, so it sorts AFTER
+  // entities under §9 trust order (a canonical entity always outranks the parse).
+  // The parser is fed the alias-expanded text so multi-word phrases survive.
+  if (isSemanticContext(context) && q.length >= 1) {
+    const semanticRows = await buildSemanticAssistance(sc, {
+      context,
+      policy,
+      text: aliased,
+      tz: tz ?? null,
+      sessionContext,
+      policyVersion: POLICY_VERSION,
+      max: policy.maxSuggestions,
+    }).catch(() => [] as InputSuggestion[]);
+    suggestions.push(...semanticRows);
   }
 
   // ── Phase-5: merge creation assistance + unresolved-address fallback ─────────
