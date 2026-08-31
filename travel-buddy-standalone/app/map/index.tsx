@@ -69,6 +69,8 @@ import {
 } from '../../src/features/map/trip/tripMapModel.ts';
 import { fetchTripPlanMap } from '../../src/services/tripPlan.ts';
 import { submitMapObservation } from '../../src/services/mapObservations.ts';
+import { openInMaps } from '../../src/lib/openInMaps.ts';
+import { centroidOf } from '../../src/types/mapObjects.ts';
 import { MapSearchSheet } from '../../src/components/map/MapSearchSheet.tsx';
 import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
 import {
@@ -92,7 +94,7 @@ import {
   setMapTelemetryTransport,
 } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { freshToken } from '../../src/services/apiToken.ts';
-import type { MapObject } from '../../src/types/mapObjects.ts';
+import type { MapObject, MapAction } from '../../src/types/mapObjects.ts';
 import {
   prepareForRender,
   zoomRenderBand,
@@ -1086,6 +1088,48 @@ function FullScreenMapScreenInner() {
   const overlayOpen = (o: 'INTENT' | 'LAYERS' | 'FILTERS' | 'SEARCH') =>
     machine.overlays.includes(o);
 
+  /**
+   * §25 action dispatch, shared by the persistent rail and the Live Place
+   * sheet. Both were previously inert for everything except 'contribute',
+   * which meant the rail rendered four buttons and three of them did nothing.
+   *
+   * Routes to the SAME flows MapEntityActionRow already uses, rather than
+   * reimplementing them — two navigate paths would drift.
+   */
+  const handleMapAction = useCallback(
+    (action: MapAction, obj: MapObject | null) => {
+      // The rail renders with nothing selected too, so a null subject is a
+      // normal state rather than a bug — the action simply has no object.
+      if (!obj) return;
+      const c = centroidOf(obj.geometry);
+      switch (action) {
+        case 'navigate':
+          if (c) openInMaps(c.lat, c.lng);
+          return;
+        case 'contribute':
+          setContributeObject(obj);
+          return;
+        case 'ask_compass':
+          dispatchMapEvent({ type: 'ENTER_MODE', mode: 'COMPASS' });
+          return;
+        case 'view':
+          if (obj.interaction?.detailRoute) router.push(obj.interaction.detailRoute as never);
+          return;
+        case 'add_to_trip':
+        case 'meet_here':
+          // Both open flows this screen does not own (the plan picker and the
+          // meeting-point flow). Selecting the object is the honest step here;
+          // the detail surface owns the rest. Doing nothing silently was worse,
+          // but so would be a fake confirmation.
+          if (obj.interaction?.detailRoute) router.push(obj.interaction.detailRoute as never);
+          return;
+        default:
+          return;
+      }
+    },
+    [dispatchMapEvent],
+  );
+
   /** Called when the user taps a marker on the map. */
   const handleSelectEntity = useCallback(
     (entity: MapEntity) => {
@@ -1282,6 +1326,11 @@ function FullScreenMapScreenInner() {
       <MapCarousel
         ref={carouselRef}
         entities={entities}
+        // §35: the carousel cannot infer this. A decisionId stays live across
+        // the whole accept -> route -> arrive -> contribute loop, so "a decision
+        // is open" is not the same claim as "these cards are that decision's
+        // options".
+        compassResults={compassOverrideEntities !== null}
         activeIndex={activeIndex}
         onIndexChange={handleCarouselIndexChange}
         onFiltersPress={() => setFilterSheetOpen(true)}
@@ -1459,9 +1508,7 @@ function FullScreenMapScreenInner() {
         <MapBottomActions
           selected={selectedObject}
           bottomInset={insets.bottom}
-          onAction={(action, obj) => {
-            if (action === 'contribute') setContributeObject(obj);
-          }}
+          onAction={handleMapAction}
         />
       ) : null}
 
@@ -1471,6 +1518,8 @@ function FullScreenMapScreenInner() {
       {selectedObject?.interaction?.opensSheet ? (
         <LivePlaceSheet
           object={selectedObject}
+          openSource={compassPickObjects !== null ? 'compass_pick' : 'marker'}
+          onAction={handleMapAction}
           onClose={() => dispatchMapEvent({ type: 'CLEAR_SELECTION' })}
           onWhyPress={(obj) => {
             setWhyObject(obj);
