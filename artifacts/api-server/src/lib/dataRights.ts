@@ -155,6 +155,12 @@ export const INTERNAL_COLUMNS: readonly string[] = [
   "id", "created_at", "computed_at", "schema_version", "event_version",
   "idempotency_key", "superseded_by", "observation_id", "claim_id",
   "hard_expires_at", "subject_kind",
+  // intel_evidence.media_asset_id (2255): an internal FK/lineage pointer to the
+  // canonical media asset, exactly like observation_id/claim_id. Never itself
+  // redistributed — a bare UUID hands out nothing; the artifact is reachable
+  // only through media_assets + storage access, and the storage KEY that would
+  // hand out the artifact is `reference`, already classified restricted.
+  "media_asset_id",
   // Internal promotion provenance ('admin' | 'system'): never surfaced publicly,
   // never redistributed — pure lineage, like superseded_by.
   "promotion_source",
