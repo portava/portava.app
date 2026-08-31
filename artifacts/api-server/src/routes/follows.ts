@@ -1464,6 +1464,27 @@ const PUBLIC_PASSPORT_FIELDS =
   "id, handle, name, avatar_url, bio, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, account_status, is_official";
 
 /** Build the public passport JSON payload from a profile row + context. */
+/**
+ * Load the two location opt-outs for a target. The opt-out model is show-by-
+ * default, so an absent settings row shows; but a READ ERROR fails CLOSED (hide),
+ * since these guard the known location-after-opt-out privacy class.
+ */
+async function loadLocationVisibility(
+  sc: any,
+  targetId: string,
+): Promise<{ showCurrentCity: boolean; showHomeCountry: boolean }> {
+  const { data, error } = await sc
+    .from("profile_privacy_settings")
+    .select("show_current_city, show_home_country")
+    .eq("user_id", targetId)
+    .maybeSingle();
+  if (error) return { showCurrentCity: false, showHomeCountry: false };
+  return {
+    showCurrentCity: (data as any)?.show_current_city !== false,
+    showHomeCountry: (data as any)?.show_home_country !== false,
+  };
+}
+
 function buildPassportResponse(
   p: any,
   followersCount: number,
@@ -1472,6 +1493,7 @@ function buildPassportResponse(
   isOwnProfile: boolean,
   reason: string | null,
   allowRealName = false,
+  locVis: { showCurrentCity: boolean; showHomeCountry: boolean } = { showCurrentCity: true, showHomeCountry: true },
 ): object {
   // Universal display-name rule: name only for the owner or opted-in subjects.
   const nameOk = isOwnProfile || allowRealName;
@@ -1505,8 +1527,12 @@ function buildPassportResponse(
     avatarUrl: p.avatar_url ?? null,
     bio: p.bio ?? null,
     homeCity: p.home_city ?? null,
-    homeCountry: p.home_country ?? null,
-    currentCity: p.current_city ?? null,
+    // Location opt-outs (show_home_country / show_current_city). Owner always
+    // sees their own; a non-owner (incl. an anonymous caller — these routes have
+    // optional auth) gets null when the subject opted out. Was returned
+    // unconditionally — the known location-after-opt-out leak (audit LOC-1).
+    homeCountry: (isOwnProfile || locVis.showHomeCountry) ? (p.home_country ?? null) : null,
+    currentCity: (isOwnProfile || locVis.showCurrentCity) ? (p.current_city ?? null) : null,
     travelStyle: p.travel_style ?? null,
     interests: p.interests ?? [],
     verified: p.verified ?? false,
@@ -1621,9 +1647,12 @@ router.get("/users/:userId", async (req, res) => {
     reason = reasonResult;
   }
 
-  const allowRealName = await nameVisibleFor(sc, target);
+  const [allowRealName, locVis] = await Promise.all([
+    nameVisibleFor(sc, target),
+    loadLocationVisibility(sc, target),
+  ]);
   res.status(200).json(
-    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName),
+    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis),
   );
 });
 
@@ -1718,9 +1747,12 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     reason = reasonResult;
   }
 
-  const allowRealName = await nameVisibleFor(sc, target);
+  const [allowRealName, locVis] = await Promise.all([
+    nameVisibleFor(sc, target),
+    loadLocationVisibility(sc, target),
+  ]);
   res.status(200).json(
-    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName),
+    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis),
   );
 });
 
