@@ -1485,6 +1485,26 @@ async function loadLocationVisibility(
   };
 }
 
+/**
+ * Does an ACCEPTED friendship exist between the two users? user_friendships is
+ * keyed by the sorted (user_a, user_b) pair. A private profile is
+ * approval-required: only a friendship unlocks it — a raw user_follows edge does
+ * NOT (audit PRIV-2 / SEC-01). Fail-closed: a lookup error returns false.
+ */
+async function areFriends(sc: any, a: string, b: string): Promise<boolean> {
+  if (a === b) return true;
+  const ua = a < b ? a : b;
+  const ub = a < b ? b : a;
+  const { data, error } = await sc
+    .from("user_friendships")
+    .select("user_a")
+    .eq("user_a", ua)
+    .eq("user_b", ub)
+    .maybeSingle();
+  if (error) return false;
+  return Boolean(data);
+}
+
 function buildPassportResponse(
   p: any,
   followersCount: number,
@@ -1494,17 +1514,22 @@ function buildPassportResponse(
   reason: string | null,
   allowRealName = false,
   locVis: { showCurrentCity: boolean; showHomeCountry: boolean } = { showCurrentCity: true, showHomeCountry: true },
+  // Whether the viewer has APPROVED access to a private profile. A private
+  // profile is approval-required, so this is an accepted friendship — NOT a raw
+  // follow edge. Defaults false (fail-closed) so a caller that omits it redacts.
+  hasApprovedAccess = false,
 ): object {
   // Universal display-name rule: name only for the owner or opted-in subjects.
   const nameOk = isOwnProfile || allowRealName;
   // passport_visibility='private' makes the account private independent of the
   // is_private flag — mirror resolveProfileVisibility (lib/profileVisibility.ts).
   const isPrivate = (p.is_private ?? false) || p.passport_visibility === "private";
-  // Private profile viewed by a non-follower non-owner: redact rich fields.
-  // Locked-preview contract: no avatar (profileSerializers.toPrivateProfilePreview
-  // returns avatarUrl:null), no follower/following counts (passport.ts
-  // limited_preview omits them), and no shared-destination reason.
-  if (isPrivate && !isOwnProfile && !isFollowing) {
+  // Private profile viewed by a non-approved non-owner: redact rich fields.
+  // Gate on an accepted friendship, NOT isFollowing — a raw user_follows edge is
+  // unapproved (POST /follow inserts it with no owner consent), so a follower of
+  // a since-gone-private account must not read its rich passport (audit PRIV-2 /
+  // SEC-01). Locked-preview contract: no avatar, no counts, no shared reason.
+  if (isPrivate && !isOwnProfile && !hasApprovedAccess) {
     return {
       id: p.id,
       handle: p.handle,
@@ -1647,12 +1672,16 @@ router.get("/users/:userId", async (req, res) => {
     reason = reasonResult;
   }
 
-  const [allowRealName, locVis] = await Promise.all([
+  // A private profile is approval-required: only an accepted friendship unlocks
+  // the rich passport (a raw follow does not — audit PRIV-2).
+  const targetPrivate = (p.is_private ?? false) || p.passport_visibility === "private";
+  const [allowRealName, locVis, hasApprovedAccess] = await Promise.all([
     nameVisibleFor(sc, target),
     loadLocationVisibility(sc, target),
+    (callerId && !isOwnProfile && targetPrivate) ? areFriends(sc, callerId, target) : Promise.resolve(false),
   ]);
   res.status(200).json(
-    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis),
+    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis, hasApprovedAccess),
   );
 });
 
@@ -1747,12 +1776,16 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     reason = reasonResult;
   }
 
-  const [allowRealName, locVis] = await Promise.all([
+  // A private profile is approval-required: only an accepted friendship unlocks
+  // the rich passport (a raw follow does not — audit PRIV-2).
+  const targetPrivate = (p.is_private ?? false) || p.passport_visibility === "private";
+  const [allowRealName, locVis, hasApprovedAccess] = await Promise.all([
     nameVisibleFor(sc, target),
     loadLocationVisibility(sc, target),
+    (callerId && !isOwnProfile && targetPrivate) ? areFriends(sc, callerId, target) : Promise.resolve(false),
   ]);
   res.status(200).json(
-    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis),
+    buildPassportResponse(p, followersRes.count ?? 0, followingRes.count ?? 0, isFollowing, isOwnProfile, reason, allowRealName, locVis, hasApprovedAccess),
   );
 });
 
