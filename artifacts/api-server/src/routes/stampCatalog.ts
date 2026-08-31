@@ -722,6 +722,52 @@ router.post("/admin/stamps/catalog/:id/regenerate", asyncHandler(async (req, res
     return;
   }
 
+  // Archive `generating` jobs whose lock has expired — a crashed worker never
+  // released them. The partial unique index uix_queue_catalog_active counts
+  // `generating` as an active row, so without freeing this slot the fresh insert
+  // below hits 23505 and is swallowed as success while the entry stays stuck
+  // forever (audit STAMP·H4). Only stale rows (lock past expiry) are touched; a
+  // row a worker is actively generating (lock still valid) is left alone so we
+  // never orphan in-flight work. The staleness cutoff is evaluated in-process
+  // (rather than a DB-side comparison); a single clock read governs both the
+  // cutoff and the archive's updated_at stamp.
+  const staleGenAt     = new Date();
+  const staleGenNowMs  = staleGenAt.getTime();
+  const staleGenNowIso = staleGenAt.toISOString();
+  const { data: genRows, error: genReadErr } = await sc
+    .from("stamp_generation_queue")
+    .select("id, locked_until")
+    .eq("catalog_id", id)
+    .eq("status", "generating");
+
+  if (genReadErr) {
+    sendError(res, "db_error", genReadErr.message, { exposeDetail: true });
+    return;
+  }
+
+  const staleGenIds = ((genRows ?? []) as Array<{ id: string; locked_until: string | null }>)
+    .filter((r) => r.locked_until != null && new Date(r.locked_until).getTime() < staleGenNowMs)
+    .map((r) => r.id);
+
+  if (staleGenIds.length > 0) {
+    // Must check the error for the same reason as the review_required archive
+    // above: proceeding to insert after a failed archive would trip the unique
+    // index and report a misleading success. The `.eq("status","generating")`
+    // guard keeps this idempotent against a concurrent reclaim sweep.
+    const { error: staleGenErr } = await sc
+      .from("stamp_generation_queue")
+      .update({ status: "archived", updated_at: staleGenNowIso })
+      .in("id", staleGenIds)
+      .eq("status", "generating");
+
+    if (staleGenErr) {
+      // Admin-only diagnostic route — expose the underlying failure (mirrors the
+      // archive-extras / survivor-reset error handling below).
+      sendError(res, "db_error", staleGenErr.message, { exposeDetail: true });
+      return;
+    }
+  }
+
   // Reset failed jobs to queued (admin action also resets the auto-requeue cap).
   //
   // An entry can accumulate multiple failed rows (e.g. one retryable_failed AND
@@ -1175,10 +1221,11 @@ router.post("/admin/stamps/catalog/:id/merge-into/:targetId", asyncHandler(async
   if (!admin) return;
   const { userId: adminId, sc } = admin;
 
-  // Verify both exist
+  // Verify both exist. earn_count is read here so the merge can carry the
+  // source's earns onto the survivor instead of dropping them (audit STAMP·H5).
   const [sourceRes, targetRes] = await Promise.all([
-    sc.from("universal_stamp_catalog").select("id, canonical_location_key, stamp_type, status").eq("id", sourceId).maybeSingle(),
-    sc.from("universal_stamp_catalog").select("id").eq("id", targetId).maybeSingle(),
+    sc.from("universal_stamp_catalog").select("id, canonical_location_key, stamp_type, status, earn_count").eq("id", sourceId).maybeSingle(),
+    sc.from("universal_stamp_catalog").select("id, earn_count").eq("id", targetId).maybeSingle(),
   ]);
 
   if (!sourceRes.data) { sendError(res, "not_found", "Source catalog entry not found"); return; }
@@ -1191,17 +1238,61 @@ router.post("/admin/stamps/catalog/:id/merge-into/:targetId", asyncHandler(async
     return;
   }
 
-  // Re-point all user ownership records to target
-  await Promise.all([
+  // Re-point all user ownership records to target.
+  //
+  // These writes MUST be checked before archiving the source (audit STAMP·H5):
+  // if a re-point fails and we archive anyway, the earners it left behind still
+  // point at the now-archived source, and the passport read path only resolves
+  // artwork for `status = 'approved'` catalog rows (see buildCatalogArtworkMap
+  // in routes/stamps.ts) — so their stamp artwork silently disappears. On any
+  // failure we abort WITHOUT archiving: the source stays active (its artwork
+  // still renders) and re-running the merge retries the re-point idempotently.
+  //
+  // passport_stamps is optional on some deployments, so "relation does not
+  // exist" is tolerated (mirrors reconcile / xx-repair); every other error, and
+  // any user_stamps error, blocks the archive.
+  const [psRepoint, usRepoint] = await Promise.all([
     sc.from("passport_stamps").update({ catalog_id: targetId }).eq("catalog_id", sourceId),
     sc.from("user_stamps").update({ catalog_id: targetId }).eq("catalog_id", sourceId),
   ]);
 
-  // Archive source catalog entry (don't delete to preserve history)
-  await sc
+  if (psRepoint.error && !/does not exist/i.test(psRepoint.error.message)) {
+    sendError(res, "db_error", psRepoint.error.message);
+    return;
+  }
+  if (usRepoint.error) {
+    sendError(res, "db_error", usRepoint.error.message);
+    return;
+  }
+
+  // Carry the source's earn_count onto the survivor. Read-add-write (mirrors
+  // mergeCatalogEntry in xxCatalogRepair); target presence is already verified
+  // above. Done before the archive so a mid-merge failure leaves the source
+  // active (recoverable) rather than archived-with-earns-stranded.
+  const sourceEarn = Number((sourceRes.data as any).earn_count ?? 0);
+  if (sourceEarn > 0) {
+    const targetEarn = Number((targetRes.data as any).earn_count ?? 0);
+    const { error: earnErr } = await sc
+      .from("universal_stamp_catalog")
+      .update({ earn_count: targetEarn + sourceEarn, updated_at: new Date().toISOString() })
+      .eq("id", targetId);
+    if (earnErr) {
+      sendError(res, "db_error", earnErr.message);
+      return;
+    }
+  }
+
+  // Archive source catalog entry (don't delete to preserve history). Only
+  // reached once every earner has been re-pointed and earn_count carried over.
+  const { error: archiveSourceErr } = await sc
     .from("universal_stamp_catalog")
     .update({ status: "archived", updated_at: new Date().toISOString() })
     .eq("id", sourceId);
+
+  if (archiveSourceErr) {
+    sendError(res, "db_error", archiveSourceErr.message);
+    return;
+  }
 
   // Invalidate caches
   invalidateCatalogCache(
