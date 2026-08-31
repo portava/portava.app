@@ -69,6 +69,7 @@ import {
 } from '../../src/features/map/trip/tripMapModel.ts';
 import { fetchTripPlanMap } from '../../src/services/tripPlan.ts';
 import { submitMapObservation } from '../../src/services/mapObservations.ts';
+import { MapSearchSheet } from '../../src/components/map/MapSearchSheet.tsx';
 import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
 import {
   coordinateTarget,
@@ -1573,6 +1574,44 @@ function FullScreenMapScreenInner() {
           if (action === 'ask_compass') {
             const pt = coordinateOf(target);
             if (pt) void geocodeAndFly(`${pt.lat.toFixed(3)},${pt.lng.toFixed(3)}`);
+          }
+        }}
+      />
+
+      {/* ── §27 Search ──────────────────────────────────────────────────────
+          "Geographic results should center or frame the relevant map object."
+          A result with no geometry yields frame.kind === 'none', and the camera
+          deliberately does NOT move — it navigates instead. Flying somewhere
+          confident and wrong is the failure this avoids. */}
+      <MapSearchSheet
+        visible={overlayOpen('SEARCH')}
+        onClose={() => dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'SEARCH' })}
+        lat={userLat ?? fallbackLat}
+        lng={userLng ?? fallbackLng}
+        city={title}
+        onSelect={(result, frame) => {
+          dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'SEARCH' });
+          const cam = cameraRef.current;
+          if (frame.kind === 'none') {
+            // No geometry: honour the detail route rather than moving the map.
+            if (result.detailRoute) router.push(result.detailRoute as never);
+            return;
+          }
+          if (!cam || typeof cam.easeTo !== 'function') return;
+          if (frame.kind === 'center') {
+            cam.easeTo({
+              center: [frame.center.lng, frame.center.lat],
+              zoom: frame.zoom,
+              duration: 600,
+            });
+          } else {
+            // An Area FRAMES its bounds rather than centring on a centroid.
+            // v11 takes a single [west, south, east, north] tuple; frameFor has
+            // already applied its own fractional padding around the subject.
+            cam.fitBounds?.(
+              [frame.bounds.west, frame.bounds.south, frame.bounds.east, frame.bounds.north],
+              { duration: 600 },
+            );
           }
         }}
       />
