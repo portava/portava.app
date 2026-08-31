@@ -509,6 +509,31 @@ export async function executeAccountDeletion(
     if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
   }
 
+  // ── IG mission-candidate acceptance (migration 2167) ──────────────────────
+  // intel_mission_candidates.accepted_by names the contributor who accepted a
+  // dispatched mission. The column is `uuid REFERENCES profiles(id) ON DELETE
+  // SET NULL`, so the FK's declared intent is: when the profile goes away, NULL
+  // the identifier and keep the ops row. That SET NULL never fires — the deletion
+  // keeps an anonymised TOMBSTONE profile rather than deleting profiles(id), so no
+  // profiles-keyed cascade or SET-NULL ever runs (the same mistake 2172/2170/2187
+  // made for consent/reward-ledger/derived-memory, corrected by 2203/2204/2190).
+  // The departed user's uuid would otherwise survive here as a residual identifier
+  // in an operational record, still joinable to that uuid across tables, while the
+  // contributions the mission produced were already erased by erase_intel_for_actor.
+  //
+  // This is a SET NULL, NOT a delete: the row is a city-scoped ops record with no
+  // other user-identifying column, so it is retained and only the identifier is
+  // removed — exactly what the FK declared. UPDATE was already granted to
+  // service_role by 2167; migration 2211 reaffirms it so this step's authority is
+  // explicit and drift-tolerant. Non-fatal, matching the surrounding intel steps.
+  const missionOk = await step(steps, "null_intel_mission_accepted_by", async () => {
+    must(
+      await sc.from("intel_mission_candidates").update({ accepted_by: null }).eq("accepted_by", userId),
+      "null intel_mission_candidates.accepted_by",
+    );
+  });
+  if (!missionOk) warnings.push("intel_mission_candidates.accepted_by may still name the deleted user");
+
   // ── Derived memory (FATAL on failure) ─────────────────────────────────────
   // memory_projections / memory_events / memory_feedback hold derived facts about
   // the user (places visited, people followed, inferred preferences). They are
