@@ -97,6 +97,7 @@ import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingS
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import { emitCreatorCapAnalytics } from "../services/ranking/CreatorCapEnforcer.js";
 import { emitFeedSlotAnalytics } from "../services/ranking/FeedSlotAllocator.js";
+import { buildPlaceAffinities } from "../services/ranking/MediaFeedRankingService.js";
 
 /**
  * The structural subset of a discovery place that ranking reads.
@@ -145,6 +146,14 @@ export interface PdeViewer {
    * penalty, which is the current behaviour.
    */
   seenIds?: Set<string>;
+  /**
+   * placeId → recent place_view count (last 30d). Feeds portavaRank's ×1.15
+   * place-engagement boost (PLACE_ENGAGEMENT_BOOST), which was a designed signal
+   * that never fired because ViewerContext never carried it and the candidate
+   * map never set placeId. Empty when the viewer has no place-view history —
+   * then the boost contributes nothing, which is a safe default.
+   */
+  placeAffinities?: Record<string, number>;
 }
 
 /**
@@ -415,7 +424,19 @@ export async function loadPdeViewer(
     } catch { /* non-fatal */ }
   }
 
-  return { userId, city, followedIds, interestTags, categoryAffinities, seenIds };
+  // Place-engagement affinity → portavaRank's ×1.15 PLACE_ENGAGEMENT_BOOST.
+  // buildPlaceAffinities keys by rank_events.item_id (the same place id the
+  // candidate map uses), so this matches rather than silently never firing. It
+  // is its own read (place_view event_type, not the discovery-surface seen read
+  // above), non-fatal, and returns {} for a viewer with no place-view history.
+  let placeAffinities: Record<string, number> | undefined;
+  if (sc) {
+    try {
+      placeAffinities = await buildPlaceAffinities(sc, userId);
+    } catch { /* non-fatal */ }
+  }
+
+  return { userId, city, followedIds, interestTags, categoryAffinities, seenIds, placeAffinities };
 }
 
 type PlaceCandidate<T extends PdePlace> = RankCandidate & { __place: T };
@@ -455,6 +476,10 @@ export async function rankForViewer<T extends PdePlace>(
     // Was omitted, so f.seenPenalty was a constant 0 and nothing suppressed
     // repeats at the portavaRank layer.
     seenIds: viewer.seenIds,
+    // Was omitted, so f.placeEngagement (the ×1.15 boost) never fired even though
+    // both the signal (place_view history) and the kernel exist. Paired with
+    // candidate.placeId below.
+    placeAffinities: viewer.placeAffinities,
   };
 
   // Map place → RankCandidate.
@@ -469,6 +494,9 @@ export async function rankForViewer<T extends PdePlace>(
     verified:   p.id.startsWith("db/") ? true : null,
     likeCount:  p.savedCount ?? null,
     tags:       (p.tags ?? []).map((t) => t.toLowerCase()),
+    // Enables the ×1.15 place-engagement boost when the viewer's placeAffinities
+    // carry this place id (same id space as the candidate). Harmless otherwise.
+    placeId:    p.id,
     __place:    p,
   }));
 
