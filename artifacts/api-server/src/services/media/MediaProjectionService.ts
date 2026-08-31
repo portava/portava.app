@@ -363,15 +363,29 @@ export async function buildPlaceProjection(
   let placeCountry: string | null = null;
   let placeNeighborhood: string | null = null;
   try {
-    const { data } = await (sc as any)
+    // `country_code`, NOT `country`: the places table has never had a `country`
+    // column. PostgREST fails the WHOLE read on an unknown select-list column
+    // (PGRST100), and the catch below turns that into "leave the nulls" — so
+    // this did not degrade one field, it silently emptied place identity
+    // entirely, on every projection, for as long as the line has existed.
+    const { data, error } = await (sc as any)
       .from("places")
-      .select("id, name, city, country, neighborhood")
+      .select("id, name, city, country_code, neighborhood")
       .eq("id", placeId)
       .maybeSingle();
+    // Best-effort stays best-effort, but a schema error is not a missing row.
+    // Logging it is what turns the next occurrence of this into a five-minute
+    // fix instead of another silent emptiness.
+    if (error) {
+      console.warn(
+        "[MediaProjectionService] place identity read failed; projection will carry nulls",
+        { placeId, code: (error as any)?.code, message: (error as any)?.message },
+      );
+    }
     if (data) {
       placeName = (data as any).name ?? null;
       placeCity = (data as any).city ?? null;
-      placeCountry = (data as any).country ?? null;
+      placeCountry = (data as any).country_code ?? null;
       placeNeighborhood = (data as any).neighborhood ?? null;
     }
   } catch {
