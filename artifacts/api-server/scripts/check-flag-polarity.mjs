@@ -974,8 +974,10 @@ const DIRECT_READS = [
       'RENT_BUDDY_NIGHTLIFE_ENABLED',     // :304  403 when off
     ],
     reason: `Local getFlag(sc, flag) helper reading rollout flags by parameter. ${V}: no try/catch, \`!!data?.enabled\`; reads only rent_buddy_* CAPABILITY flags from admin rollout routes. Every name in \`covers\` was verified at its call site by the 2026-08-12 census (docs/ops/flag-disposition.md), which read each one in context rather than trusting the string match.` },
-  { file: 'routes/notifications.ts',     shape: 'var', reason: `Admin update of notification flags by loop variable (\`.update({enabled}).eq("flag", flagName)\`). A write, not a gate. ${V}.` },
-  { file: 'routes/admin.ts',             shape: 'var', reason: `Admin bulk toggle: \`.update({enabled}).eq("flag", key)\` over a submitted map. A write, not a gate. ${V}.` },
+  // notifications.ts and admin.ts (safe-return) previously wrote flags via a raw
+  // `.update({enabled}).eq("flag", <var>)`; audit FLAG-1/2 moved both onto the
+  // audited toggle_feature_flag_with_audit RPC, so those var-shaped direct
+  // writes no longer exist and their DIRECT_READS entries were removed.
   { file: 'routes/adminRankingConfig.ts', shape: 'var', reason: `Admin read-then-update of one ranking flag by variable; the update's error is checked and surfaced as db_error. A write. ${V}.` },
   {
     file: 'compass/CompassNotificationEngine.ts', shape: 'var',
