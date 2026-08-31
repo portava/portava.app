@@ -33,10 +33,12 @@ import {
   POLICY_VERSION,
 } from '../lib/inputAssistance/policyRegistry';
 import { generateSuggestions } from '../lib/inputAssistance/gateway';
+import { recordSelection } from '../lib/inputAssistance/personalization';
 import type {
   SuggestResponse,
   SuggestSessionContext,
   CreationDraft,
+  EntityType,
 } from '../lib/inputAssistance/types';
 
 const router = Router();
@@ -194,6 +196,90 @@ router.post(
       };
       res.status(200).json(payload);
     }
+  }),
+);
+
+// ── POST /api/input-assistance/select — record an EXPLICIT selection (§35) ────
+//
+// Phase 8 (Personalization). Called ONLY when the user explicitly ACCEPTS a
+// suggestion (selects an entity/completion). It records the (context, canonical
+// entity, the query that led to the selection) so the gateway can — for THIS
+// user only — rank their repeatedly-selected entities higher (§15) and serve
+// zero-character recents (§14). It records EXPLICIT selections only: there is no
+// view/typing/dwell path into this table.
+//
+// Owner-scoped (session-derived user id, never a query param) and additive: it
+// creates NO canonical fact and touches NO existing endpoint, so it cannot
+// regress the suggest path. recordSelection refuses (records nothing) for a
+// context whose field policy disallows personalization (username / private-
+// message / hidden-gem), so those are never tracked.
+router.post(
+  '/input-assistance/select',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const context = body.context;
+    if (!isKnownContext(context)) {
+      sendError(res, 'invalid_payload', 'Unknown or missing input context');
+      return;
+    }
+    const fieldId = typeof body.fieldId === 'string' ? body.fieldId : undefined;
+    const policy = resolvePolicy(context, fieldId);
+    if (!policy) {
+      sendError(res, 'invalid_payload', 'No policy registered for context');
+      return;
+    }
+
+    const entityType = typeof body.entityType === 'string' ? body.entityType.trim() : '';
+    const entityId = typeof body.entityId === 'string' ? body.entityId.trim() : '';
+    if (!entityType || entityType.length > 40 || !entityId || entityId.length > 200) {
+      sendError(res, 'invalid_payload', 'entityType and entityId are required');
+      return;
+    }
+    const query =
+      typeof body.query === 'string' && body.query.trim().length > 0
+        ? body.query.trim().slice(0, 200)
+        : null;
+    const label =
+      typeof body.label === 'string' && body.label.trim().length > 0
+        ? body.label.trim().slice(0, 200)
+        : null;
+
+    const rl = checkRateLimit('input_assist_select', user.id, 60, 60_000);
+    if (!rl.allowed) {
+      res.setHeader('Retry-After', Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, 'rate_limited', 'Too many selection events. Please wait.');
+      return;
+    }
+
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, 'server_not_configured', 'Service client not ready');
+      return;
+    }
+
+    // recordSelection enforces the explicit-only + owner-scoped gate: it records
+    // only for personalization-enabled contexts and only entity types the policy
+    // allows, and is fail-soft (a write failure never surfaces to the client).
+    const result = await recordSelection(
+      sc,
+      policy,
+      {
+        userId: user.id,
+        context,
+        entityType: entityType as EntityType,
+        entityId,
+        query,
+        label,
+      },
+      logger,
+    );
+
+    res.status(200).json({ ok: true, recorded: result.recorded, policyVersion: POLICY_VERSION });
   }),
 );
 
