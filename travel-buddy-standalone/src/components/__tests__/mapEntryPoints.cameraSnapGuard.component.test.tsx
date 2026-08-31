@@ -227,7 +227,7 @@ jest.mock('../../services/discovery', () => ({
 // NOTE: intentionally exhaustive — the real hook depends on multiple Supabase
 // services (rentABuddy, events, hiddenGems, trips, map) that are not safe under jest.
 jest.mock('../../hooks/useMapEntities', () => ({
-  useMapEntities: jest.fn(() => ({ entities: [] })),
+  useMapEntities: jest.fn(() => ({ entities: [], objects: [], liveEnrichment: null, loading: false, error: null, refresh: () => {}, source: 'legacy' })),
 }));
 // NOTE: intentionally exhaustive — MapFilterSheet depends on AsyncStorage and
 // native-module internals that are not safe under jest.
@@ -356,6 +356,12 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
 
     (useMapEntities as jest.Mock).mockReturnValue({
       entities: [focusEntity],
+      objects: [],
+      liveEnrichment: null,
+      loading: false,
+      error: null,
+      refresh: () => {},
+      source: 'legacy',
     });
 
     const mockEaseTo = jest.fn();
@@ -379,6 +385,12 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
     // Refresh: both entities, user near Paris → proximity picks nearbyEntity.
     (useMapEntities as jest.Mock).mockReturnValue({
       entities: [nearbyEntity, focusEntity],
+      objects: [],
+      liveEnrichment: null,
+      loading: false,
+      error: null,
+      refresh: () => {},
+      source: 'legacy',
     });
 
     await act(async () => {
@@ -439,6 +451,12 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
     // Initial entity list: only focusEntity — triggers the focusId snap.
     (useMapEntities as jest.Mock).mockReturnValue({
       entities: [focusEntity],
+      objects: [],
+      liveEnrichment: null,
+      loading: false,
+      error: null,
+      refresh: () => {},
+      source: 'legacy',
     });
 
     const mockEaseTo = jest.fn();
@@ -476,6 +494,12 @@ describe('FullScreenMapScreen — focusAppliedRef guard prevents re-snap on enti
     // restored — now includes both nearbyEntity (proximity winner) and focusEntity.
     (useMapEntities as jest.Mock).mockReturnValue({
       entities: [nearbyEntity, focusEntity],
+      objects: [],
+      liveEnrichment: null,
+      loading: false,
+      error: null,
+      refresh: () => {},
+      source: 'legacy',
     });
 
     await act(async () => {

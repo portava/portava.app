@@ -217,7 +217,7 @@ jest.mock('../../services/discovery', () => ({
 // NOTE: intentionally exhaustive — the real hook depends on multiple Supabase
 // services (rentABuddy, events, hiddenGems, trips, map) that are not safe under jest.
 jest.mock('../../hooks/useMapEntities', () => ({
-  useMapEntities: jest.fn(() => ({ entities: [] })),
+  useMapEntities: jest.fn(() => ({ entities: [], objects: [], liveEnrichment: null, loading: false, error: null, refresh: () => {}, source: 'legacy' })),
 }));
 // NOTE: intentionally exhaustive — MapFilterSheet depends on AsyncStorage and
 // native-module internals that are not safe under jest.
@@ -309,6 +309,12 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
           data: {},
         },
       ],
+      objects: [],
+      liveEnrichment: null,
+      loading: false,
+      error: null,
+      refresh: () => {},
+      source: 'legacy',
     });
 
     const mockEaseTo = jest.fn();
@@ -368,6 +374,12 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
           data: {},
         },
       ],
+      objects: [],
+      liveEnrichment: null,
+      loading: false,
+      error: null,
+      refresh: () => {},
+      source: 'legacy',
     });
 
     const mockEaseTo = jest.fn();
@@ -414,6 +426,12 @@ describe('FullScreenMapScreen — camera snaps to entity pin after entities load
           data: {},
         },
       ],
+      objects: [],
+      liveEnrichment: null,
+      loading: false,
+      error: null,
+      refresh: () => {},
+      source: 'legacy',
     });
 
     let capturedProps: Record<string, any> | null = null;

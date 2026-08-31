@@ -159,6 +159,11 @@ const storeSetters = {
   setCameraZoom:       jest.fn(),
   setEnabledLayers:    jest.fn(),
   setCarouselIndex:    jest.fn(),
+  dispatchMapEvent:    jest.fn(),
+  setMapCapabilities:  jest.fn(),
+  setIntent:           jest.fn(),
+  clearIntent:         jest.fn(),
+  setTimeOffset:       jest.fn(),
 };
 
 let storeSnapshot = {
@@ -168,6 +173,24 @@ let storeSnapshot = {
   cameraZoom:       null as number | null,
   enabledLayers:    ['places', 'events'] as string[],
   carouselIndex:    0,
+  // The real store owns a §30 machine slice; a snapshot without it does not
+  // describe the store under test.
+  machine: {
+    mode: 'LIVE',
+    overlays: [],
+    camera: 'FOLLOW_USER',
+    cameraTargetId: null,
+    selection: null,
+    navigation: null,
+    timeOffsetMinutes: 0,
+    capabilities: {
+      CROWD_FLOW: false,
+      LOCATE_FRIENDS: false,
+      TIME_MACHINE: false,
+    },
+  },
+  intent: null,
+  timeOffset: { kind: 'now' },
 };
 
 jest.mock('../../../src/stores/mapStore', () => {
@@ -190,7 +213,7 @@ jest.mock('../../../src/stores/mapStore', () => {
 
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/hooks/useMapEntities', () => ({
-  useMapEntities: () => ({ entities: MOCK_ENTITIES }),
+  useMapEntities: () => ({ entities: MOCK_ENTITIES, objects: [], liveEnrichment: null, loading: false, error: null, refresh: () => {}, source: 'legacy' }),
 }));
 
 // ── Shared test data ──────────────────────────────────────────────────────────
