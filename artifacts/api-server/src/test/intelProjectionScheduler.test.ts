@@ -21,41 +21,79 @@ const baseEvidence = (over: Partial<ClaimEvidence> = {}): ClaimEvidence => ({
   hasEvidence: false, sourceClass: "firsthand_unverified", ageRatio: 0.33, ...over,
 });
 
-function makeDb(cfg: { flags: Record<string, boolean>; claims?: any[]; observations?: any[]; confirmations?: any[]; policies?: any[]; errorTable?: string; withdrawnActors?: string[] }) {
-  const snaps: any[] = [];
+// PostgREST returns at most this many rows for a read with NEITHER an explicit
+// .limit() NOR a .range() — silently, with no error. An explicit limit or range
+// overrides that implicit ceiling. STAMP·H6 is a reconciliation read that relied
+// on the implicit ceiling, so the fake must reproduce it: a range-less/limit-less
+// select truncates to this many rows, while .range() serves the exact slice.
+const POSTGREST_IMPLICIT_CAP = 1000;
+
+function makeDb(cfg: {
+  flags: Record<string, boolean>; claims?: any[]; observations?: any[]; confirmations?: any[];
+  policies?: any[]; snapshots?: any[]; errorTable?: string; withdrawnActors?: string[];
+  // Inject an error on a specific PAGINATED page of `table`, but only once the
+  // window has advanced to (or past) `minOffset` — lets a test succeed on page 1
+  // and fail on a later page, proving a PARTIAL read expires nothing.
+  rangeError?: { table: string; minOffset?: number };
+}) {
+  const snaps: any[] = [...(cfg.snapshots ?? [])];
+  // Every .update(...).in("id",[...]) is recorded here so a test can assert which
+  // snapshot ids (if any) the reconciliation force-expired.
+  const updates: { table: string; ids: any[]; patch: any }[] = [];
   // D4: every observation actor is consented by default; withdrawnActors lets a
   // test mark some as withdrawn so the aggregator's consent filter can exclude them.
   const withdrawn = new Set(cfg.withdrawnActors ?? []);
   const consentRows = [...new Set((cfg.observations ?? []).map((o: any) => o.actor_id).filter(Boolean))]
     .map((id: string) => ({ user_id: id, enabled: !withdrawn.has(id), withdrawn_at: withdrawn.has(id) ? NOW.toISOString() : null }));
   function from(table: string) {
-    let op: "select" | "upsert" = "select"; let payload: any = null;
-    const eqs: [string, any][] = []; let inF: [string, any[]] | null = null; let lim = Infinity;
+    let op: "select" | "upsert" | "update" = "select"; let payload: any = null;
+    const eqs: [string, any][] = []; const gts: [string, any][] = [];
+    let inF: [string, any[]] | null = null; let lim = Infinity; let rangeF: [number, number] | null = null;
     // Observations default to moderation_state 'allowed' (explicit values override),
     // so fixtures that don't care about moderation still pass the aggregator's
     // pilot-claimable .in() filter; a fixture can set 'blocked'/'removed' to test exclusion.
     const src = (): any[] => (({ intel_claims: cfg.claims, intel_observations: (cfg.observations ?? []).map((o: any) => ({ moderation_state: "allowed", ...o })), intel_confirmations: cfg.confirmations, freshness_policies: cfg.policies, intel_state_snapshots: snaps, intel_contribution_consent: consentRows } as any)[table] ?? []);
-    const match = (r: any) => eqs.every(([c, v]) => r[c] === v) && (!inF || inF[1].includes(r[inF[0]]));
-    const rows = () => src().filter(match).slice(0, lim);
+    const match = (r: any) =>
+      eqs.every(([c, v]) => r[c] === v)
+      && gts.every(([c, v]) => r[c] != null && r[c] > v)
+      && (!inF || inF[1].includes(r[inF[0]]));
+    const rows = () => {
+      const filtered = src().filter(match);
+      if (rangeF) return filtered.slice(rangeF[0], rangeF[1] + 1);       // explicit pagination — exact slice
+      if (lim !== Infinity) return filtered.slice(0, lim);               // explicit limit — honored as-is
+      return filtered.slice(0, POSTGREST_IMPLICIT_CAP);                  // range-less/limit-less — silently capped
+    };
     const run = () => {
       if (table === "feature_flags") { const f = eqs.find(([c]) => c === "flag")?.[1]; return { data: { enabled: Boolean(cfg.flags[f]) }, error: null }; }
       if (cfg.errorTable === table) return { data: null, error: { message: "boom" } };
+      if (cfg.rangeError && cfg.rangeError.table === table && rangeF && rangeF[0] >= (cfg.rangeError.minOffset ?? 0)) {
+        return { data: null, error: { message: "range boom" } };
+      }
       if (op === "upsert") { snaps.push(...(Array.isArray(payload) ? payload : [payload])); return { data: null, error: null }; }
+      if (op === "update") {
+        const ids = inF && inF[0] === "id" ? [...inF[1]] : [];
+        for (const r of src()) if (match(r)) Object.assign(r, payload); // mutate the store in place
+        updates.push({ table, ids, patch: payload });
+        return { data: null, error: null };
+      }
       return { data: rows(), error: null };
     };
     const b: any = {
       select() { return b; },
       upsert(row: any) { op = "upsert"; payload = row; return Promise.resolve(run()); },
+      update(patch: any) { op = "update"; payload = patch; return b; },
       eq(c: string, v: any) { eqs.push([c, v]); return b; },
+      gt(c: string, v: any) { gts.push([c, v]); return b; },
       is(c: string, v: any) { eqs.push([c, v]); return b; },
       in(c: string, v: any[]) { inF = [c, v]; return b; },
+      range(from: number, to: number) { rangeF = [from, to]; return Promise.resolve(run()); },
       limit(n: number) { lim = n; return Promise.resolve(run()); },
       maybeSingle() { return Promise.resolve(run()); },
       then(res: (r: any) => any) { return Promise.resolve(run()).then(res); },
     };
     return b;
   }
-  return { from, _snaps: snaps };
+  return { from, _snaps: snaps, _updates: updates };
 }
 
 describe("intelProjection aggregator — deriveComponents (conservative)", () => {
@@ -281,5 +319,75 @@ describe("intelProjection scheduler — runIntelProjectionPass (flag-gated, fail
     const err = await runIntelProjectionPass({ client: makeDb({ ...cfgBase, flags: { intel_claim_projection_crowd: true }, errorTable: "intel_claims" }) as any, now: NOW });
     assert.equal(err.reason, "error");
     assert.equal(err.skippedRun, true);
+  });
+
+  // ── STAMP·H6: snapshot reconciliation must read the FULL live-key set ──────────
+  // The expiry step force-expires any servable snapshot whose (subject, zone,
+  // claim_type) key is not backed by a live-eligible claim. A range-less PostgREST
+  // read silently caps at 1000 rows, so past 1000 live claims the live-key set is
+  // incomplete and snapshots backed by claims in the tail are wrongly expired —
+  // silent deletion of servable intelligence. The fake below enforces that cap on
+  // an unpaginated read but serves .range() slices, so the unpaginated (pre-fix)
+  // reconciliation sees only 1000 keys and expires, while the paginated fix does not.
+  const RECON_CLAIM_COUNT = 1500;
+  const reconClaimType = (i: number) => `ct-${String(i).padStart(4, "0")}`;
+  const RECON_TAIL_INDEX = 1200; // beyond the 1000-row cap → only a paginated read reaches it
+  const RECON_TAIL_TYPE = reconClaimType(RECON_TAIL_INDEX);
+  // 1500 live claims, all one (subject, zone) so the projection groups them once,
+  // and each with a claim_type that has NO freshness policy so projectClaim skips
+  // it — the projection writes nothing and leaves only the seeded snapshot below.
+  const reconClaims = () =>
+    Array.from({ length: RECON_CLAIM_COUNT }, (_, i) => ({
+      id: `rc-${i}`, subject_id: "subj-recon", zone_id: null,
+      claim_type: reconClaimType(i), value: { level: "busy" }, status: "active", observed_at: OBSERVED,
+    }));
+  // A servable snapshot whose key matches a live claim in the 1001–1500 TAIL.
+  const tailSnapshot = () => ({
+    id: "snap-tail", subject_id: "subj-recon", zone_id: "", claim_type: RECON_TAIL_TYPE,
+    value: { level: "busy" }, confidence: 0.9, confidence_band: "very_current",
+    source_count: 15, distinct_actors: 15, privacy_eligible: true,
+    observed_at: OBSERVED, expires_at: new Date(NOW.getTime() + 60 * 60_000).toISOString(),
+  });
+
+  it("does NOT expire a servable snapshot backed by a live claim past the 1000-row read cap (STAMP·H6)", async () => {
+    const db = makeDb({
+      flags: { intel_claim_projection_crowd: true },
+      claims: reconClaims(),
+      observations: [],
+      confirmations: [],
+      policies: [], // no policy → projection skips every claim, writing no snapshots
+      snapshots: [tailSnapshot()],
+    });
+    const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+    assert.equal(r.reason, null, "pass completes");
+
+    // The snapshot's claim (ct-1200) is live-eligible, so it must NOT be expired.
+    const expiredTail = db._updates.some((u) => u.ids.includes("snap-tail"));
+    assert.equal(expiredTail, false, "the tail snapshot must not be force-expired: its claim is still live");
+    const snap = db._snaps.find((s: any) => s.id === "snap-tail");
+    assert.ok(snap, "snapshot still present");
+    assert.equal(snap.privacy_eligible, true, "snapshot stays servable (privacy_eligible untouched)");
+  });
+
+  it("aborts reconciliation and expires NOTHING when a live-key page errors (partial read is fail-closed)", async () => {
+    // Page 1 (offset 0) succeeds with 1000 keys — none of them the tail key — but
+    // page 2 (offset 1000, which carries the tail key) errors. A partial read must
+    // never delete: the whole reconciliation aborts, expiring nothing.
+    const db = makeDb({
+      flags: { intel_claim_projection_crowd: true },
+      claims: reconClaims(),
+      observations: [],
+      confirmations: [],
+      policies: [],
+      snapshots: [tailSnapshot()],
+      rangeError: { table: "intel_claims", minOffset: 1000 },
+    });
+    const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+    assert.equal(r.reason, null, "pass still completes (reconciliation failure is non-fatal)");
+
+    const anyExpiry = db._updates.some((u) => u.table === "intel_state_snapshots");
+    assert.equal(anyExpiry, false, "an errored live-key page must abort expiry entirely");
+    const snap = db._snaps.find((s: any) => s.id === "snap-tail");
+    assert.equal(snap.privacy_eligible, true, "servable snapshot untouched after a partial live-key read");
   });
 });
