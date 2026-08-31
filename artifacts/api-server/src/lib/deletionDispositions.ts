@@ -124,6 +124,27 @@ export const ERASED_BY_CASCADE: readonly string[] = [
 ];
 
 /**
+ * Tables the service does NOT delete, but where it NULLs a user-identifying
+ * column on deletion — the 'anonymised / FK nulled' fate. The ROW is retained
+ * (it is an operational record, not the user's content) and only the identifier
+ * is removed. Distinct from ERASED_BY_CASCADE, whose rows are gone entirely.
+ *
+ * These carry a column declared `REFERENCES profiles(id) ON DELETE SET NULL`,
+ * whose SET NULL never fires because the deletion keeps an anonymised TOMBSTONE
+ * profile rather than deleting profiles(id) — so the service performs the SET
+ * NULL by hand, restoring the FK's own declared intent.
+ */
+export const ANONYMISED_FK_NULLED: readonly string[] = [
+  // intel_mission_candidates.accepted_by (migration 2167) names the contributor
+  // who accepted a dispatched mission. The row is a city-scoped ops record with
+  // no other user-identifying column, so it is kept while accepted_by is NULLed by
+  // AccountDeletionService's `null_intel_mission_accepted_by` step — exactly what
+  // the column's ON DELETE SET NULL declared, which the tombstone otherwise
+  // silently defeats. UPDATE granted to service_role by 2167 and reaffirmed by 2211.
+  "intel_mission_candidates",
+];
+
+/**
  * Tables read or written by the deletion flow itself, not user content to erase.
  */
 export const DELETION_FLOW_TABLES: readonly string[] = [
@@ -398,6 +419,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "intel_contribution_consent",
   // IG-10 non-cash reward ledger, added by migration 2170 (post-baseline).
   "intel_reward_ledger",
+  // IG mission candidates, added by migration 2167 (post-baseline). Classified
+  // in ANONYMISED_FK_NULLED (accepted_by is NULLed, the row is kept).
+  "intel_mission_candidates",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",
@@ -409,6 +433,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */
 export const USER_IDENTIFYING_COLUMNS: readonly string[] = [
+  "accepted_by",
   "actor_id",
   "author_id",
   "buddy_id",
