@@ -490,6 +490,16 @@ export async function executeAccountDeletion(
       // for derived memory and 2190 corrected). 2203 grants service_role DELETE on
       // the table so this step actually removes the row. Keyed by user_id (the PK).
       { name: "delete_intel_consent", run: () => sc.from("intel_contribution_consent").delete().eq("user_id", userId) },
+      // IG-10 non-cash reward ledger (migration 2170). Keyed by actor_id →
+      // profiles(id) ON DELETE CASCADE, but that cascade never fires under the
+      // tombstone (same as consent above), so a departed contributor's earning
+      // rows — actor_id + qiu + earned_units + source + timestamps — would survive
+      // as orphaned personal data while the observations that earned them were
+      // erased by erase_intel_for_actor. The ledger is append-only by grant (no
+      // DELETE-blocking trigger), so a direct scoped delete clears it; migration
+      // 2204 grants service_role the DELETE this needs. Non-cash (cash_amount = 0
+      // enforced), so no financial-retention reason to keep it.
+      { name: "delete_intel_reward_ledger", run: () => sc.from("intel_reward_ledger").delete().eq("actor_id", userId) },
     { name: "delete_search_history",      run: () => sc.from("search_history").delete().eq("user_id", userId) },
   ];
   for (const d of tailDeletes) {

@@ -302,6 +302,26 @@ describe("executeAccountDeletion — full cascade", () => {
       "the delete_intel_consent step must run and succeed");
   });
 
+  it("erases the IG-10 reward-ledger rows — its profiles cascade never fires under the tombstone", async () => {
+    // intel_reward_ledger (migration 2170) FKs profiles(id) ON DELETE CASCADE via
+    // actor_id, but the tombstone profile means that cascade never fires, so the
+    // contributor's earning rows (actor_id + qiu + earned_units + source +
+    // timestamps) would survive deletion as orphaned personal data — while every
+    // observation that earned them was erased by erase_intel_for_actor. The ledger
+    // is append-only by GRANT (no DELETE-blocking trigger), so it is cleared with a
+    // direct scoped delete keyed by actor_id (migration 2204 grants the DELETE).
+    const c = makeClient();
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+
+    const del = opFor(c, "intel_reward_ledger", "delete");
+    assert.ok(del, "the cascade must delete the intel reward-ledger rows");
+    assert.deepEqual(del!.filters, [["eq", "actor_id", USER_ID]],
+      "reward-ledger rows must be deleted scoped to this user by actor_id");
+    assert.ok(out.steps.some((s) => s.step === "delete_intel_reward_ledger" && s.ok),
+      "the delete_intel_reward_ledger step must run and succeed");
+  });
+
   it("ABORTS the deletion when the memory purge fails — never silently leaves memory behind", async () => {
     // The privacy guarantee: a deletion request that cannot purge derived memory
     // must fail loudly and stay retryable, rather than reporting success with the
