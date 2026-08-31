@@ -357,6 +357,19 @@ describe("executeAccountDeletion — merged legacy cascade steps", () => {
     assert.deepEqual(opFor(c, "search_history", "delete")!.filters,       [["eq", "user_id", USER_ID]]);
   });
 
+  it("clears compass personal content, a projection source, and gem-visit coordinates (audit MEM·H1/C1, TRAIL·F3)", async () => {
+    const c = makeClient();
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+    // Gem-visit check-ins carry raw lat/lng and survived deletion (TRAIL·F3).
+    assert.deepEqual(opFor(c, "hidden_gem_visits", "delete")!.filters, [["eq", "user_id", USER_ID]]);
+    // The most literally personal Compass text survived deletion (MEM·H1).
+    assert.deepEqual(opFor(c, "compass_memories", "delete")!.filters,       [["eq", "user_id", USER_ID]]);
+    assert.deepEqual(opFor(c, "compass_conversations", "delete")!.filters,  [["eq", "user_id", USER_ID]]);
+    // A source the memory projector would otherwise re-enumerate from (MEM·C1).
+    assert.deepEqual(opFor(c, "compass_user_preferences", "delete")!.filters, [["eq", "user_id", USER_ID]]);
+  });
+
   it("deletes key_packages by device_id BEFORE deleting the devices rows", async () => {
     const c = makeClient({ rows: { devices: [{ id: "dev-1" }, { id: "dev-2" }] } });
 

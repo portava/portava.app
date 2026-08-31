@@ -344,6 +344,9 @@ export async function executeAccountDeletion(
     // Hidden gems: saves first (FK), then authored submissions.
     { name: "delete_hidden_gem_saves", run: () => sc.from("hidden_gem_saves").delete().eq("user_id", userId) },
     { name: "delete_hidden_gems",      run: () => sc.from("hidden_gems").delete().eq("submitted_by", userId) },
+    // Gem-visit check-ins store raw lat/lng; the FK to the tombstoned profile
+    // never cascades, so clear them by hand (audit TRAIL·F3).
+    { name: "delete_hidden_gem_visits", run: () => sc.from("hidden_gem_visits").delete().eq("user_id", userId) },
     // Saved items across the various save surfaces.
     { name: "delete_saved_places",    run: () => sc.from("saved_places").delete().eq("user_id", userId) },
     { name: "delete_user_saves",      run: () => sc.from("user_saves").delete().eq("saver_id", userId) },
@@ -352,6 +355,17 @@ export async function executeAccountDeletion(
     // Follow graph, both directions.
     { name: "delete_follows_outgoing", run: () => sc.from("user_follows").delete().eq("follower_id", userId) },
     { name: "delete_follows_incoming", run: () => sc.from("user_follows").delete().eq("following_id", userId) },
+    // Compass personal content + a projection source. compass_memories ("Teach My
+    // Compass" statements) and compass_conversations (full chat history) are the
+    // most literally personal text in the product and survived deletion (audit
+    // MEM·H1). compass_user_preferences is one of the two sources the memory
+    // projector re-enumerates a deleted user from (audit MEM·C1) — clearing it
+    // removes that branch (the graph-edge branch is closed separately by the
+    // project_all_memory deleted-account filter). erase_memory_for_user below
+    // covers only the 2183 memory_* contract tables, not these.
+    { name: "delete_compass_memories",      run: () => sc.from("compass_memories").delete().eq("user_id", userId) },
+    { name: "delete_compass_conversations", run: () => sc.from("compass_conversations").delete().eq("user_id", userId) },
+    { name: "delete_compass_user_preferences", run: () => sc.from("compass_user_preferences").delete().eq("user_id", userId) },
   ];
   for (const d of contentDeletes) {
     const ok = await step(steps, d.name, async () => {
