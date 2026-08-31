@@ -36,6 +36,12 @@ import {
 import { readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
 import { aggregateFreshness, type FreshnessState } from "../../lib/media/mediaFreshness.js";
 import {
+  assembleTimeBands,
+  readIntelTimeSubstrate,
+  type MediaTimeBands,
+} from "../../lib/media/mediaTimeBands.js";
+import { logger } from "../../lib/logger.js";
+import {
   buildCategoryBuckets,
   buildPerspectiveSummary,
   type CategoryBucket,
@@ -577,9 +583,23 @@ export interface TimeRail {
 export interface TimelineProjection {
   generatedAt: string;
   rails: TimeRail[];
-  /** Forecast/"likely next" is never fabricated from media. */
+  /**
+   * Media alone never fabricates a forecast — this stays false. The §17
+   * Likely-Next forecast, when it exists, comes from the intel substrate and is
+   * surfaced in `bands.likelyNext`, carrying its confidence band. It is NEVER a
+   * media-derived signal.
+   */
   forecastAvailable: false;
   totalPerspectives: number;
+  /**
+   * The §17 Time Architecture — Earlier / Now / Typical / Likely-Next. Each band
+   * carries its source class so the client renders distinct visual treatments
+   * (§46). Now is the ONLY band that may be live (gated); Typical and Likely-Next
+   * are read from the intel substrate and are NEVER live; a Likely-Next forecast
+   * always carries a confidence band. Place-scoped: Now/Typical/Likely-Next
+   * populate only when a placeId subject is provided (else well-formed empty).
+   */
+  bands: MediaTimeBands;
 }
 
 export async function buildTimelineProjection(
@@ -615,7 +635,32 @@ export async function buildTimelineProjection(
     { key: "historical", label: "Historical", count: historical.length, media: historical.slice(0, 40) },
   ];
 
-  return { generatedAt, rails, forecastAvailable: false, totalPerspectives: media.length };
+  // ── §17 four-band Time Architecture (additive) ──────────────────────────────
+  // Now = the gated live current-state (fail-closed; empty ⇒ no now label, never
+  // fabricated). Typical + Likely-Next = the intel time substrate, read READ-ONLY
+  // and OFF the live path — they are never live, and a forecast carries its
+  // confidence band. Earlier = the observed media record. Place-scoped: without a
+  // placeId, the gated read and the substrate read both return empty, so those
+  // three bands are well-formed empty while Earlier still carries the media.
+  const [currentState, substrate] = await Promise.all([
+    readCurrentState(sc, opts.placeId ?? null, nowMs),
+    readIntelTimeSubstrate(sc, opts.placeId ?? null, nowMs),
+  ]);
+  const { bands, neverLiveRemoved } = assembleTimeBands({
+    media,
+    now: { available: currentState.live, liveClaims: currentState.claims, crowdLabel: currentState.crowdLabel },
+    substrate,
+  });
+  if (neverLiveRemoved > 0) {
+    // A prediction/pattern reached a live flag — a truth-boundary regression.
+    // Dropped fail-closed above; logged here so it is visible, not silent.
+    logger.error(
+      { placeId: opts.placeId ?? null, neverLiveRemoved },
+      "mediaTimeline: never-live invariant removed items — a projector tagged a non-observation as live",
+    );
+  }
+
+  return { generatedAt, rails, forecastAvailable: false, totalPerspectives: media.length, bands };
 }
 
 // ── §21 Media Map (perspective counts per place — NO location engine) ────────
