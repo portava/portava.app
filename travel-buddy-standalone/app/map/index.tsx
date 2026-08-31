@@ -72,6 +72,9 @@ import { submitMapObservation } from '../../src/services/mapObservations.ts';
 import { openInMaps } from '../../src/lib/openInMaps.ts';
 import { centroidOf } from '../../src/types/mapObjects.ts';
 import { MapSearchSheet } from '../../src/components/map/MapSearchSheet.tsx';
+import { MeetHereSheet } from '../../src/components/map/MeetHereSheet.tsx';
+import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
+import { countBucket } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
 import {
   coordinateTarget,
@@ -801,6 +804,9 @@ function FullScreenMapScreenInner() {
         raw: e.payload,
       };
     });
+    // A new question starts a new round count — "show me something else" is
+    // scoped to one decision, not to the session.
+    alternativeRoundRef.current = 0;
     const picked = selectCompassPicks(candidates);
     // `ok:false` means fewer than the §14 minimum survived. Render what there
     // is rather than nothing — but do not pad the list to reach three.
@@ -1084,6 +1090,9 @@ function FullScreenMapScreenInner() {
     anchor?: { x: number; y: number };
   } | null>(null);
   const [contributeObject, setContributeObject] = useState<MapObject | null>(null);
+  const [meetTarget, setMeetTarget] = useState<MeetTarget | null>(null);
+  /** §35 alternative_requested: which round of "show me something else" this is. */
+  const alternativeRoundRef = useRef(0);
 
   const overlayOpen = (o: 'INTENT' | 'LAYERS' | 'FILTERS' | 'SEARCH') =>
     machine.overlays.includes(o);
@@ -1115,12 +1124,13 @@ function FullScreenMapScreenInner() {
         case 'view':
           if (obj.interaction?.detailRoute) router.push(obj.interaction.detailRoute as never);
           return;
-        case 'add_to_trip':
         case 'meet_here':
-          // Both open flows this screen does not own (the plan picker and the
-          // meeting-point flow). Selecting the object is the honest step here;
-          // the detail surface owns the rest. Doing nothing silently was worse,
-          // but so would be a fake confirmation.
+          setMeetTarget({ kind: 'object', object: obj });
+          return;
+        case 'add_to_trip':
+          // Opens a flow this screen does not own (the plan picker). Navigating
+          // to the detail surface is the honest step; a fake confirmation here
+          // would be worse than the handoff.
           if (obj.interaction?.detailRoute) router.push(obj.interaction.detailRoute as never);
           return;
         default:
@@ -1620,12 +1630,67 @@ function FullScreenMapScreenInner() {
             setContributeObject(target.object);
             return;
           }
+          if (action === 'meet_here') {
+            // A long-press can land on empty map, so the target is a union —
+            // proposeMeetHere decides whether it can anchor a meeting at all.
+            setMeetTarget(
+              target.kind === 'object'
+                ? { kind: 'object', object: target.object }
+                : { kind: 'coordinate', lat: target.lat, lng: target.lng },
+            );
+            return;
+          }
           if (action === 'ask_compass') {
             const pt = coordinateOf(target);
             if (pt) void geocodeAndFly(`${pt.lat.toFixed(3)},${pt.lng.toFixed(3)}`);
           }
         }}
       />
+
+      {/* ── §25 Meet Here ───────────────────────────────────────────────────
+          The rung the meeting point publishes at is decided by the model from
+          the subject, never requested here. An aggregate subject is refused
+          with its reason shown rather than silently doing nothing. */}
+      <MeetHereSheet
+        target={meetTarget}
+        onClose={() => setMeetTarget(null)}
+        onCreated={(info) => {
+          const subject =
+            meetTarget?.kind === 'object' ? describeMapObject(meetTarget.object) : null;
+          if (subject) {
+            emitMapEvent('meet_here_created', {
+              ref: subject,
+              audience: info.audience,
+              invitees: countBucket(info.inviteeCount),
+              // The rung it ACTUALLY published at, not the one asked for.
+              sharedAs: info.sharedAs,
+            });
+          }
+        }}
+      />
+
+      {/* ── §14 "show me something else" ────────────────────────────────────
+          The affordance §35's alternative_requested measures. Re-asks Compass
+          within the SAME decision, incrementing the round, so a user who
+          rejects three suggestions is one decision with three rounds rather
+          than three unrelated asks. */}
+      {compassQuery && compassPickObjects ? (
+        <Pressable
+          style={[s2.altChip, { bottom: insets.bottom + 168 }]}
+          onPress={() => {
+            alternativeRoundRef.current += 1;
+            emitMapEvent('alternative_requested', {
+              reason: 'not_interested',
+              round: alternativeRoundRef.current,
+            });
+            void geocodeAndFly(compassQuery);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Show me something else"
+        >
+          <Text style={s2.altChipText}>Show me something else</Text>
+        </Pressable>
+      ) : null}
 
       {/* ── §27 Search ──────────────────────────────────────────────────────
           "Geographic results should center or frame the relevant map object."
@@ -1725,6 +1790,19 @@ const s2 = StyleSheet.create({
   moreChipText: {
     color: '#FAF9F6',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  altChip: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: 'rgba(23,28,34,0.94)',
+  },
+  altChipText: {
+    color: '#FAF9F6',
+    fontSize: 13,
     fontWeight: '600',
   },
   cacheBanner: {
