@@ -33,15 +33,39 @@
  *
  * ── Ordering ────────────────────────────────────────────────────────────────
  * Storage paths are collected BEFORE the owning DB rows are deleted, because
- * deleting posts cascades post_media away and we would lose the paths.
+ * deleting posts cascades post_media away and we would lose the paths. The same
+ * rule is what puts `collect_intel_evidence_paths` in section 1 rather than next
+ * to the intel steps in section 3: erase_intel_for_actor deletes the evidence
+ * rows, and their `reference` is the only record of where the bytes live.
+ *
+ * ── The gap this class of bug lives in ──────────────────────────────────────
+ * `check:deletion-coverage` asks whether every user-keyed TABLE has a stated
+ * fate. Nothing asks whether every stored OBJECT does. A table can be fully
+ * erased — row-complete, guard green — while the bytes its rows pointed at stay
+ * in the bucket, which is exactly how intel_evidence's media survived. Any new
+ * table holding a storage reference must therefore be added to section 1 by
+ * hand; being ERASED_BY_CASCADE says nothing about its objects.
  */
 
 import { logger as rootLogger } from "../../lib/logger.js";
+import { resolveStoragePath } from "../../lib/storagePath.js";
+import { ownerFromPath } from "../../lib/mediaAccess.js";
 
 const logger = rootLogger.child({ service: "AccountDeletionService" });
 
 export const PROFILE_MEDIA_BUCKET = "profile-media";
 export const POST_MEDIA_BUCKET = "post-media";
+
+/**
+ * The buckets a stored `<bucket>/<path>` reference is allowed to name.
+ *
+ * Mirrors `lib/mediaUrl`'s ALLOWED_BUCKETS, which is the allow-list every write
+ * path validates against before a reference is ever persisted. Kept as an
+ * explicit list here because this is a DELETE path: a reference that names
+ * anything else is skipped, never coerced onto a default bucket, so a malformed
+ * or foreign row can never turn into a remove() against a bucket nobody meant.
+ */
+const REFERENCE_BUCKETS: readonly string[] = [POST_MEDIA_BUCKET, PROFILE_MEDIA_BUCKET];
 
 /**
  * Stamped onto every completed deletion receipt (owner ruling 3, 2026-08-23).
@@ -52,7 +76,7 @@ export const POST_MEDIA_BUCKET = "post-media";
  * the STEPS change; bump the policy version when the RULES do.
  */
 export const DELETION_POLICY_VERSION = "d6-2026-08-23";
-export const DELETION_WORKER_VERSION = "2026-08-23.1";
+export const DELETION_WORKER_VERSION = "2026-08-31.1";
 
 /** Per-step outcome. Steps are independent so one failure cannot hide another. */
 export interface DeletionStepResult {
@@ -144,21 +168,28 @@ export async function executeAccountDeletion(
   // ── 1. Collect storage paths BEFORE the rows that hold them are deleted ────
   const storageTargets: Array<{ bucket: string; path: string }> = [];
 
-  await step(steps, "collect_post_media_paths", async () => {
+  const pmPathsOk = await step(steps, "collect_post_media_paths", async () => {
     const { data, error } = await sc
       .from("post_media")
-      .select("storage_bucket, storage_path, thumbnail_storage_path")
+      .select("storage_bucket, storage_path, thumbnail_storage_path, feed_storage_path")
       .eq("user_id", userId);
     if (error) throw new Error(error.message);
     for (const row of (data ?? []) as any[]) {
       const bucket = (row.storage_bucket as string) || POST_MEDIA_BUCKET;
       if (row.storage_path) storageTargets.push({ bucket, path: row.storage_path });
       if (row.thumbnail_storage_path) storageTargets.push({ bucket, path: row.thumbnail_storage_path });
+      // feed_storage_path is the 0208 1500px derivative — a THIRD object per
+      // upload, written by POST /media/upload alongside the original and the
+      // thumbnail. It was never collected here, so every feed variant a user
+      // ever generated survived their deletion in the private post-media
+      // bucket. Same table, same row, same query: one more column.
+      if (row.feed_storage_path) storageTargets.push({ bucket, path: row.feed_storage_path });
     }
     return (data ?? []).length;
   });
+  if (!pmPathsOk) warnings.push("post media objects may remain in storage — their paths could not be read");
 
-  await step(steps, "collect_media_asset_paths", async () => {
+  const maPathsOk = await step(steps, "collect_media_asset_paths", async () => {
     const { data, error } = await sc
       .from("media_assets")
       .select("storage_bucket, storage_path, thumbnail_path")
@@ -171,8 +202,9 @@ export async function executeAccountDeletion(
     }
     return (data ?? []).length;
   });
+  if (!maPathsOk) warnings.push("media_assets objects may remain in storage — their paths could not be read");
 
-  await step(steps, "collect_profile_media_paths", async () => {
+  const pfPathsOk = await step(steps, "collect_profile_media_paths", async () => {
     const { data, error } = await sc
       .from("profiles")
       .select("avatar_url, cover_photo_url")
@@ -189,6 +221,7 @@ export async function executeAccountDeletion(
     }
     return found;
   });
+  if (!pfPathsOk) warnings.push("profile media objects may remain in storage — their paths could not be read");
 
   // ── Memory UGC media (audit MEM·H2) ───────────────────────────────────────
   // Trip "Memories" and their photos/videos were entirely untouched by the
@@ -200,7 +233,7 @@ export async function executeAccountDeletion(
   // items, BEFORE section 3 deletes them. No state filter: soft-deleted
   // memories still hold media, so they must be swept too.
   const memoryIds: string[] = [];
-  await step(steps, "collect_memory_media_paths", async () => {
+  const memPathsOk = await step(steps, "collect_memory_media_paths", async () => {
     const { data: mems, error } = await sc
       .from("memories")
       .select("id")
@@ -231,6 +264,70 @@ export async function executeAccountDeletion(
     }
     return found;
   });
+  if (!memPathsOk) warnings.push("memory media objects may remain in storage — their paths could not be read");
+
+  // ── IG-02 evidence media (map contributions) ──────────────────────────────
+  // intel_evidence.reference holds a `<bucket>/<path>` STORAGE KEY for a photo
+  // or video a contributor attached to an observation (lib/intelEvidenceCapture).
+  // The ROWS were already erased — intel_evidence is in ERASED_BY_CASCADE and
+  // erase_intel_for_actor deletes the actor's rows — so check:deletion-coverage
+  // was green. The BYTES were not, and nothing checked them:
+  //
+  //   * POST /api/media/upload writes NO post_media row (the client persists
+  //     that later, when a post is created), so an object referenced only by
+  //     evidence is invisible to collect_post_media_paths;
+  //   * its media_assets row is written by recordMediaAsset only when the
+  //     `media_canonical_enabled` flag is on, and that flag ships OFF
+  //     (migration 0191), so collect_media_asset_paths does not see it either.
+  //
+  // The object therefore survived in the private post-media bucket. It was
+  // unreachable in practice (the uid no longer authenticates and mediaAccess
+  // denies orphans) — but unreachable is not deleted when a user has asked to
+  // be erased.
+  //
+  // ORDERING IS LOAD-BEARING. This must run here, in section 1, and not beside
+  // the intel steps in section 3: `erase_intel_contributions` calls
+  // erase_intel_for_actor, which deletes these very rows. Read them after that
+  // and there is nothing left to read, and the bytes would be orphaned for good.
+  const evPathsOk = await step(steps, "collect_intel_evidence_paths", async () => {
+    const { data, error } = await sc
+      .from("intel_evidence")
+      .select("reference")
+      .eq("actor_id", userId);
+    if (error) throw new Error(error.message);
+    let found = 0;
+    for (const row of (data ?? []) as any[]) {
+      // NULL by design for 'text_note' and 'sensor' evidence — those reference
+      // no stored object at all, so skipping is correct, not a miss.
+      const raw = typeof row?.reference === "string" ? row.reference.trim() : "";
+      if (!raw) continue;
+      for (const bucket of REFERENCE_BUCKETS) {
+        // resolveStoragePath is the repo's ONE reference parser (it is what the
+        // producer's header names as the module that resolves this column for
+        // deletion). It already understands `<bucket>/<path>` as well as the
+        // public/sign/authenticated URL forms, and returns a non-"path" kind for
+        // a reference that does not belong to this bucket — so trying each
+        // allowed bucket in turn cannot cross-match one bucket's key onto
+        // another's remove().
+        const ref = resolveStoragePath(raw, bucket);
+        if (ref.kind !== "path") continue;
+        // Defence in depth on a DELETE path. The producer validated all of this
+        // on write (appStorageUrlInfo + ownerFromPath), but a row is not a
+        // promise: re-checking here means a malformed, hand-written or
+        // future-producer reference cannot aim a remove() outside the object's
+        // own bucket, and cannot aim it at somebody else's object. Both break
+        // out of the bucket loop rather than falling through to the next
+        // bucket — the reference matched this one and was refused.
+        if (ref.path.includes("..")) break;
+        if (ownerFromPath(ref.path) !== userId) break;
+        storageTargets.push({ bucket, path: ref.path });
+        found += 1;
+        break;
+      }
+    }
+    return found;
+  });
+  if (!evPathsOk) warnings.push("intel evidence media objects may remain in storage — their references could not be read");
 
   // ── 2. Delete the storage objects ─────────────────────────────────────────
   if (storageTargets.length > 0) {
