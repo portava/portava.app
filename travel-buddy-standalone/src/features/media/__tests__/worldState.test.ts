@@ -13,6 +13,8 @@ import {
   isWorldProjectionEmpty,
   shouldRevalidate,
   lensStateFromResult,
+  lensStateWithSwr,
+  type LensLoadState,
 } from '../state/worldState.ts';
 import type { MediaWorldProjection } from '../types/mediaContext.ts';
 import type { ProjectionResult } from '../types/media.ts';
@@ -105,4 +107,32 @@ test('lensStateFromResult classifies empty/ready/error generically', () => {
   );
   assert.equal(err.status, 'error');
   assert.equal(err.errorKind, 'server');
+});
+
+test('lensStateWithSwr keeps stale data on a failed refresh, but errors cold (§39)', () => {
+  const isEmpty = (a: number[]) => a.length === 0;
+  const good: LensLoadState<number[]> = { status: 'ready', data: [1, 2], loadedAt: 100, errorKind: null };
+  const cold: LensLoadState<number[]> = { status: 'idle', data: null, loadedAt: null, errorKind: null };
+  const fail = { ok: false, data: null, errorKind: 'network', message: 'x' } as ProjectionResult<number[]>;
+
+  // Failed refresh over good data → keep the stale data, record the kind.
+  const swr = lensStateWithSwr(good, fail, isEmpty, 200);
+  assert.equal(swr.status, 'ready');
+  assert.deepEqual(swr.data, [1, 2]);
+  assert.equal(swr.loadedAt, 100); // stale load time retained
+  assert.equal(swr.errorKind, 'network');
+
+  // Cold failure (no prior good data) → surface the error.
+  const coldFail = lensStateWithSwr(cold, fail, isEmpty, 200);
+  assert.equal(coldFail.status, 'error');
+  assert.equal(coldFail.errorKind, 'network');
+
+  // A failed refresh over EMPTY (non-null but empty) data is not "good" → error.
+  const emptyPrev: LensLoadState<number[]> = { status: 'empty', data: [], loadedAt: 100, errorKind: null };
+  assert.equal(lensStateWithSwr(emptyPrev, fail, isEmpty, 200).status, 'error');
+
+  // Success still classifies normally through the SWR wrapper.
+  const ok = lensStateWithSwr(good, { ok: true, data: [9] } as ProjectionResult<number[]>, isEmpty, 200);
+  assert.equal(ok.status, 'ready');
+  assert.deepEqual(ok.data, [9]);
 });

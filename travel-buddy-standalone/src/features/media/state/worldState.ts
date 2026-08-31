@@ -123,6 +123,26 @@ export function lensStateFromResult<T>(
   return { status: 'error', data: null, loadedAt: null, errorKind: result.errorKind };
 }
 
+/**
+ * Stale-while-revalidate variant (§39): fold a fresh result into the previous
+ * lens state. A FAILED refresh over previously-good (non-empty) data keeps that
+ * data on screen (status → 'ready', error kind recorded) instead of blanking it;
+ * a cold failure (no prior good data) surfaces the error state. Success and
+ * empty are classified exactly as `lensStateFromResult`.
+ */
+export function lensStateWithSwr<T>(
+  prev: LensLoadState<T>,
+  result: ProjectionResult<T>,
+  isEmpty: (data: T) => boolean,
+  at: number,
+): LensLoadState<T> {
+  const hadGoodData = prev.data != null && !isEmpty(prev.data);
+  if (!result.ok && hadGoodData) {
+    return { status: 'ready', data: prev.data, loadedAt: prev.loadedAt, errorKind: result.errorKind };
+  }
+  return lensStateFromResult(result, isEmpty, at);
+}
+
 /** A lens is described by its active mode too, so the shell can persist it. */
 export interface LensScreenKey {
   lens: MediaLens;

@@ -174,3 +174,28 @@ export {
   SEARCH_FIELD_CONTEXTS,
   type SearchFieldId,
 } from './search/searchFields.ts';
+
+// ── social identity (Phase 4) ─────────────────────────────────────────────────
+export {
+  mapRecipientSuggestions,
+  suggestionToRecipient,
+  type RecipientRow,
+} from './social/telegraphRecipients.ts';
+export {
+  registerSocialFields,
+  SOCIAL_FIELD_IDS,
+  SOCIAL_FIELD_CONTEXTS,
+  type SocialFieldId,
+} from './social/socialFields.ts';
+export {
+  sanitizeUsername,
+  usernameSyntaxError,
+  isUsernameCheckable,
+  interpretAvailability,
+  USERNAME_MIN_LENGTH,
+  USERNAME_MAX_LENGTH,
+  USERNAME_TOO_SHORT_MESSAGE,
+  USERNAME_UNAVAILABLE_MESSAGE,
+  type UsernameAvailabilityResult,
+  type InterpretedAvailability,
+} from './social/usernameValidation.ts';

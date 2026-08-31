@@ -17,7 +17,7 @@ import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
 import type { PlaceCurrentView } from '../types/perspective.ts';
 import type { MediaProjection } from '../types/media.ts';
-import { fetchPlaceView } from '../services/mediaProjection.ts';
+import { fetchPlaceView, isPlaceViewEmpty } from '../services/mediaProjection.ts';
 import { useLensProjection } from '../hooks/useLensProjection.ts';
 import { CurrentPictureBadge } from '../components/CurrentPictureBadge.tsx';
 import { IntelligenceStrip } from '../components/IntelligenceStrip.tsx';
@@ -26,6 +26,8 @@ import { MediaTimeRail, type TimeRailSegment } from '../components/MediaTimeRail
 import { LensStateView } from '../components/LensStateView.tsx';
 import { relativeAgeLabel } from '../state/freshness.ts';
 import { zoneStateLabel } from '../state/cityPulse.ts';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface MediaPlacesScreenProps {
   mode: PresentationMode;
@@ -75,7 +77,7 @@ export function MediaPlacesScreen({ mode, zones, onOpenMedia, onAskCompass }: Me
           <MapPin size={18} color={color.onInkMute} strokeWidth={2} />
           <View style={{ flex: 1 }}>
             <Text style={styles.placeName}>{z.name}</Text>
-            <Text style={styles.placeState}>{zoneStateLabel(z.state)}</Text>
+            <Text style={styles.placeState}>{zoneSubtitle(z)}</Text>
           </View>
           <ChevronRight size={18} color={color.faint} strokeWidth={2} />
         </Pressable>
@@ -100,12 +102,22 @@ function PlaceDetail({
   onAskCompass?: (placeId: string) => void;
 }) {
   const fetcher = useCallback(
-    (opts: { signal: AbortSignal }) => fetchPlaceView(placeId, { signal: opts.signal }),
+    (opts: { signal: AbortSignal }) => {
+      // The §43 place view is keyed by a canonical place UUID. A zone that is only
+      // label-resolved (no canonical place) cannot be opened — short-circuit to a
+      // clean empty state instead of a doomed 400 (§33/§39 degrade behavior).
+      if (!UUID_RE.test(placeId)) {
+        return Promise.resolve({ ok: true as const, data: null });
+      }
+      return fetchPlaceView(placeId, { signal: opts.signal });
+    },
     [placeId],
   );
+  // Empty when the projection is absent OR carries zero perspectives — a real
+  // place with no media yet renders the honest "No current picture" state.
   const { state, reload } = useLensProjection<PlaceCurrentView | null>(
     fetcher,
-    (data) => data === null,
+    isPlaceViewEmpty,
     [placeId],
   );
 
@@ -144,13 +156,16 @@ function PlaceDetail({
         <ScrollView contentContainerStyle={styles.detailContent} showsVerticalScrollIndicator={false}>
           <View style={styles.pictureBlock}>
             {view.stateLabel ? <Text style={styles.stateLabel}>{view.stateLabel}</Text> : null}
+            {view.areaName ? <Text style={styles.areaLabel}>{view.areaName}</Text> : null}
             <CurrentPictureBadge
               strength={view.currentPicture.strength}
               sourceCount={view.currentPicture.sourceCount}
             />
             <Text style={styles.coverage}>
-              {view.currentPicture.perspectiveCount} fresh perspectives ·{' '}
-              {view.currentPicture.contributorCount} contributors
+              {view.currentPicture.perspectiveCount}{' '}
+              {view.currentPicture.perspectiveCount === 1 ? 'perspective' : 'perspectives'} ·{' '}
+              {view.currentPicture.contributorCount}{' '}
+              {view.currentPicture.contributorCount === 1 ? 'contributor' : 'contributors'}
               {relativeAgeLabel(view.currentPicture.ageMinutes)
                 ? ` · updated ${relativeAgeLabel(view.currentPicture.ageMinutes)}`
                 : ''}
@@ -189,12 +204,25 @@ function PlaceDetail({
   );
 }
 
+/** Zone list sub-line: the live state when present, else honest coverage copy. */
+function zoneSubtitle(z: CityVisualZone): string {
+  if (z.state != null) return zoneStateLabel(z.state);
+  if (z.perspectiveCount != null && z.perspectiveCount > 0) {
+    return `${z.perspectiveCount} ${z.perspectiveCount === 1 ? 'perspective' : 'perspectives'}`;
+  }
+  return 'Tap to see its current picture';
+}
+
 function buildPlaceRail(view: PlaceCurrentView): TimeRailSegment[] {
-  const rising = view.currentPicture.trend === 'rising';
+  // 'Later' is a forecast (§17) — labeled predicted and never asserted as fact.
+  // With no observed trend the honest forecast is "Likely similar", not a
+  // fabricated direction.
+  const trend = view.currentPicture.trend;
+  const laterNote = trend === 'rising' ? 'Busier' : trend === 'falling' ? 'Easing' : 'Likely similar';
   return [
-    { key: 'earlier', label: 'EARLIER', observationClass: 'observed', note: 'Quieter' },
-    { key: 'now', label: 'NOW', observationClass: 'observed', isNow: true, note: view.stateLabel ?? 'Steady' },
-    { key: 'later', label: 'LATER', observationClass: 'predicted', note: rising ? 'Busier' : 'Easing' },
+    { key: 'earlier', label: 'EARLIER', observationClass: 'observed', note: 'Earlier' },
+    { key: 'now', label: 'NOW', observationClass: 'observed', isNow: true, note: view.stateLabel ?? 'Now' },
+    { key: 'later', label: 'LATER', observationClass: 'predicted', note: laterNote },
   ];
 }
 
@@ -226,6 +254,7 @@ const styles = StyleSheet.create({
   detailContent: { gap: space.lg, paddingBottom: space.xxxl },
   pictureBlock: { paddingHorizontal: space.lg, gap: space.sm },
   stateLabel: { color: color.onInk, fontSize: 22, fontWeight: '800', letterSpacing: -0.6 },
+  areaLabel: { color: color.onInkMute, fontSize: 13, fontWeight: '700', marginTop: -2 },
   coverage: { color: color.onInkMute, fontSize: 13, fontWeight: '600' },
   heroStripBlock: { paddingHorizontal: space.lg },
   timeBlock: { paddingVertical: space.sm },

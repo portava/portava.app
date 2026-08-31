@@ -10,9 +10,12 @@
  */
 import React, { useRef, useState } from 'react';
 import {
-  View, Text, Modal, Pressable, StyleSheet, TextInput,
+  View, Text, Modal, Pressable, StyleSheet,
   ActivityIndicator, Alert, Image, ScrollView, PanResponder,
 } from 'react-native';
+import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
+import { MentionSuggestionList } from './MentionSuggestionList.tsx';
+import type { AnyMentionSuggestion } from '../services/tagging.ts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { X, Camera, ImageIcon, PlayCircle, ChevronDown, MapPin, Minus, Plus, Stamp as StampIcon } from 'lucide-react-native';
@@ -80,6 +83,12 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   const [phase, setPhase] = useState<Phase>('pick');
   const [asset, setAsset] = useState<PickedAsset | null>(null);
   const [caption, setCaption] = useState('');
+  // @mention / #hashtag tokenization in the caption (§26) — parity with the
+  // Pulse/Comment composers, which the audit flagged this field lacked.
+  const mentionRef = useRef<MentionInputHandle>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionVisible, setMentionVisible] = useState(false);
   // Canonical location from the universal picker (replaces the old free-text
   // city field). Null = no location tagged; the postcard still posts.
   const [place, setPlace] = useState<Place | null>(null);
@@ -462,7 +471,14 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
               <View style={s.form}>
                 {/* Caption */}
                 <Text style={s.label}>Caption</Text>
-                <TextInput
+                <MentionSuggestionList
+                  suggestions={mentionSuggestions}
+                  loading={mentionLoading}
+                  visible={mentionVisible}
+                  onSelect={(sug) => mentionRef.current?.insertTag(sug)}
+                />
+                <MentionInput
+                  ref={mentionRef}
                   style={s.captionInput}
                   value={caption}
                   onChangeText={setCaption}
@@ -470,6 +486,12 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
                   placeholderTextColor={color.faint}
                   multiline
                   maxLength={2000}
+                  surface="post"
+                  onSuggestionsChange={(items, isLoading, trigger) => {
+                    setMentionSuggestions(items);
+                    setMentionLoading(isLoading);
+                    setMentionVisible(!!trigger && (items.length > 0 || isLoading));
+                  }}
                 />
 
                 {/* City — universal canonical location picker */}

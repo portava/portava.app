@@ -46,6 +46,9 @@ export interface MediaWorldShellProps {
   lng?: number | null;
 }
 
+/** Stable empty id list so the Experiences lens fetcher identity is stable. */
+const EMPTY_EXPERIENCE_IDS: string[] = [];
+
 function openMediaViewer(media: MediaProjection) {
   if (!media.id) return;
   router.push(`/media-viewer/${encodeURIComponent(media.id)}` as never);
@@ -111,7 +114,12 @@ function MediaWorldShellInner({ cityId, lat, lng }: MediaWorldShellProps) {
         )}
 
         {nav.lens === 'experiences' && (
-          <MediaExperiencesScreen mode={nav.mode} cityId={cityId} />
+          // §43 resolves an experience per canonical Event/Trip id; there is no
+          // "list experiences" endpoint in this phase, so the lens resolves the
+          // specific ids it is handed (deep-link / trip / event context) and
+          // degrades to a clean empty state with none. Experience discovery is a
+          // later phase; passing [] keeps the wiring real without a fake list call.
+          <MediaExperiencesScreen mode={nav.mode} experienceIds={EMPTY_EXPERIENCE_IDS} />
         )}
 
         {nav.lens === 'gems' && (
