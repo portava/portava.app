@@ -117,6 +117,12 @@ const ALLOWLIST = new Set<string>([
   // Add entries here only for columns that are intentionally written
   // pre-migration and have not yet been applied to the live schema.
   // Remove each entry immediately after the corresponding migration is verified.
+  //
+  // memory_feedback.corrected_value — added by 2213_memory_passport_controls.sql
+  // for the §12 "Correct" control (records the value the user says is right
+  // alongside a kind='incorrect' signal). Written by the passport/remembers
+  // correct route; remove this entry once 2213 is applied to the live schema.
+  "memory_feedback.corrected_value",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
