@@ -8,11 +8,64 @@ import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
+import { loadTravelerIdentity } from "../lib/travelerVerification.js";
+import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
 
 const router = Router();
 
 function sc(fallback?: any) {
   return getServiceClient() ?? fallback;
+}
+
+// ── Launch-control resolution (A1) ─────────────────────────────────────────────
+// Mirrors getLaunchControl() in rentABuddy.ts (which is not exported, so it is
+// reproduced here rather than imported — the other file is owned elsewhere).
+//
+// The canonical helper runs a cascade of `.eq/.is` probes, most-specific first.
+// This version fetches every control once and resolves the same precedence in
+// JS: identical result, and it avoids the `.is("col", null)` builder call that
+// several route paths' fakes do not implement.
+interface ResolvedLaunchControl {
+  enabled: boolean;
+  waitlistOnly: boolean;
+  minAge: number;
+  nightlifeMinAge: number;
+  requireIdVerification: boolean;
+  requirePhoneVerification: boolean;
+  fullPaymentRequired: boolean;
+}
+
+function pickLaunchControl(
+  rows: any[],
+  { countryCode, city, category }: { countryCode?: string | null; city?: string | null; category?: string | null },
+): ResolvedLaunchControl | null {
+  // Precedence order matches rentABuddy.ts getLaunchControl() exactly.
+  const specs: Array<{ country_code: string | null; city: string | null; category: string | null }> = [];
+  if (category && city && countryCode) specs.push({ country_code: countryCode, city, category });
+  if (category && countryCode)         specs.push({ country_code: countryCode, city: null, category });
+  if (city && countryCode)             specs.push({ country_code: countryCode, city, category: null });
+  if (countryCode)                     specs.push({ country_code: countryCode, city: null, category: null });
+  if (category)                        specs.push({ country_code: null, city: null, category });
+  specs.push({ country_code: null, city: null, category: null });
+
+  for (const s of specs) {
+    const m = (rows ?? []).find((c: any) =>
+      ((c.country_code ?? null) === s.country_code) &&
+      ((c.city ?? null) === s.city) &&
+      ((c.category ?? null) === s.category));
+    if (m) {
+      return {
+        enabled: (m as any).enabled,
+        waitlistOnly: (m as any).waitlist_only,
+        minAge: (m as any).min_age ?? 18,
+        nightlifeMinAge: (m as any).nightlife_min_age ?? 21,
+        requireIdVerification: (m as any).require_id_verification ?? true,
+        requirePhoneVerification: (m as any).require_phone_verification ?? true,
+        fullPaymentRequired: (m as any).full_payment_required ?? false,
+      };
+    }
+  }
+  return null;
 }
 
 async function requireAdminCtx(req: any, res: any) {
@@ -434,7 +487,10 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   }
 
   const { buddyId } = req.params;
-  const { bookingDate, durationH, city, category, notes, groupSize } = req.body ?? {};
+  const {
+    bookingDate, durationH, city, category, notes, groupSize,
+    countryCode, paymentMode = "full_in_app", meetupType, meetupLocation,
+  } = req.body ?? {};
 
   const rolloutAccess = await checkRentBuddyAccess({
     sc: serviceClient, userId: user.id,
@@ -517,6 +573,74 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   const buddyCategories: string[] = (bp as any).categories ?? [];
   if (buddyCategories.length > 0 && !buddyCategories.includes(category)) {
     return res.status(422).json({ error: "category_not_offered", message: `This buddy does not offer the '${category}' category.` });
+  }
+
+  // ── A1: Launch-control gate (age / ID / phone / full-payment) ───────────────
+  // This shorthand alias INSERTs a booking but never enforced launch controls,
+  // so a traveler blocked on the canonical POST /rent-a-buddy/bookings by the
+  // age gate (min_age / nightlife_min_age), require_id_verification,
+  // require_phone_verification or full_payment_required could still book here.
+  // Mirror of rentABuddy.ts:1079-1116. Additive: when no launch control matches
+  // (pickLaunchControl → null) nothing changes for a compliant traveler.
+  {
+    const { data: launchRows } = await serviceClient
+      .from("rent_buddy_launch_controls")
+      .select("*");
+    const launchCtrl = pickLaunchControl(launchRows ?? [], {
+      city, countryCode: countryCode ?? undefined, category,
+    });
+    if (launchCtrl) {
+      if (!launchCtrl.enabled) {
+        return launchCtrl.waitlistOnly
+          ? res.status(403).json({ error: "waitlist_only", message: "Rent a Buddy bookings for this location are currently waitlist-only. Join the waitlist to be notified when it opens." })
+          : res.status(403).json({ error: "location_unavailable", message: "Rent a Buddy is not yet available in this location or category." });
+      }
+      // Traveller identity comes from `profiles`, NOT rent_buddy_profiles.
+      const travIdentity = await loadTravelerIdentity(serviceClient, auth.user.id);
+      if (launchCtrl.requireIdVerification && !travIdentity.idVerified) {
+        return res.status(403).json({ error: "verification_required", message: "ID verification is required to book in this location. Please verify your ID to continue." });
+      }
+      if (launchCtrl.requirePhoneVerification && !travIdentity.phoneVerified) {
+        return res.status(403).json({ error: "verification_required", message: "Phone verification is required to book in this location. Please verify your phone number to continue." });
+      }
+      // Missing DOB is an explicit block — age cannot be verified without it.
+      if (travIdentity.age === null) {
+        return res.status(403).json({ error: "age_verification_required", message: "Date of birth verification is required to make a booking in this location." });
+      }
+      const minAge = category === "nightlife" ? launchCtrl.nightlifeMinAge : launchCtrl.minAge;
+      if (travIdentity.age < minAge) {
+        return res.status(403).json({
+          error: "age_requirement",
+          message: category === "nightlife"
+            ? `Nightlife bookings require you to be at least ${minAge} years old.`
+            : `You must be at least ${minAge} years old to book in this location.`,
+        });
+      }
+      if (launchCtrl.fullPaymentRequired && paymentMode !== "full_in_app") {
+        return res.status(403).json({ error: "payment_mode_required", message: "Full in-app payment is required for this location." });
+      }
+    }
+
+    // ── C1: per-user forced public meetup ─────────────────────────────────────
+    // rent_buddy_user_limits.public_meetup_required is written by the auto-
+    // restriction / admin-PATCH / force-public-meetup paths but no booking path
+    // read it, so a user restricted to public meetups could still book a private
+    // one here. Fail closed: a restricted user must affirmatively declare a
+    // public meetup (the public-meetup form), or the booking is refused.
+    if (limits?.public_meetup_required) {
+      const declaredType: string | null =
+        (typeof meetupType === "string" ? meetupType : null) ??
+        (meetupLocation && typeof meetupLocation === "object" ? ((meetupLocation as any).type ?? null) : null);
+      const meetupText: string | null = typeof meetupLocation === "string" ? meetupLocation : null;
+      const declaresPublicMeetup =
+        declaredType === "public" && !(meetupText != null && isPrivateLocation(meetupText));
+      if (!declaresPublicMeetup) {
+        return res.status(403).json({
+          error: "public_meetup_required",
+          message: "Your account requires all Rent a Buddy meetups to start at a public location. Please book using the public-meetup option.",
+        });
+      }
+    }
   }
 
   // Blocked/vacation date enforcement
@@ -1674,6 +1798,28 @@ router.post("/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHand
     .update({ status: newBookingStatus, updated_at: new Date().toISOString() })
     .eq("id", bookingId);
 
+  // ── B2: completed_count compensation ────────────────────────────────────────
+  // completed_count is incremented once, at buddy-mark-complete time
+  // (rentABuddy.ts), which moves the booking to
+  // completed_pending_traveler_confirmation. If the traveler then disputes and
+  // this resolution favours them, the booking becomes "cancelled" and that
+  // earlier +1 is now wrong. Decrement to compensate — but ONLY when the booking
+  // actually passed through mark-complete, evidenced by the buddy_marked_complete
+  // booking event. A dispute raised from in_progress, or an end-early transition,
+  // never incremented completed_count, so those must NOT be decremented.
+  // (Query uses only select/eq so every route fake can resolve it; adjustBuddyCounter
+  //  clamps at >= 0, so a double-resolve cannot drive the counter negative.)
+  if (newBookingStatus === "cancelled") {
+    const { data: completeEvents } = await serviceClient
+      .from("buddy_booking_events")
+      .select("id")
+      .eq("booking_id", bookingId)
+      .eq("event", "buddy_marked_complete");
+    if (Array.isArray(completeEvents) && completeEvents.length > 0) {
+      await adjustBuddyCounter(serviceClient, (booking as any).buddy_id, "completed_count", -1);
+    }
+  }
+
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
     target_type: "dispute",
@@ -1749,7 +1895,14 @@ router.get("/me/buddy-requests", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
-  const { status } = req.query;
+  const { status, page = "1", limit = "20" } = req.query as Record<string, string | undefined>;
+
+  // Pagination — this route previously did select("*")+order with no bound, so
+  // a busy buddy's whole booking history streamed in a single response. Cap the
+  // page size and window with .range() (same shape as GET /me/buddy-bookings).
+  const pageNum = Math.max(1, parseInt(page ?? "1", 10));
+  const pageSize = Math.min(50, Math.max(1, parseInt(limit ?? "20", 10)));
+  const offset = (pageNum - 1) * pageSize;
 
   // Resolve the caller's buddy profile id
   const { data: profile } = await serviceClient
@@ -1761,15 +1914,16 @@ router.get("/me/buddy-requests", asyncHandler(async (req, res) => {
 
   let query = serviceClient
     .from("rent_buddy_bookings")
-    .select("*")
+    .select("*", { count: "exact" })
     .eq("buddy_id", profile.id)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(offset, offset + pageSize - 1);
 
   if (status) query = query.eq("status", status as string);
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
   if (error) return sendError(res, "db_error", error.message);
-  return res.json({ requests: data ?? [] });
+  return res.json({ requests: data ?? [], total: count ?? 0, page: pageNum, pageSize });
 }));
 
 // ── me/buddy-availability — update my availability schedule ───────────────────
