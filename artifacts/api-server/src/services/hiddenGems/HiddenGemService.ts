@@ -4,6 +4,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { recordEntityMedia } from "../../lib/mediaAssets.js";
 
 const logger = rootLogger.child({ service: "HiddenGemService" });
 
@@ -143,6 +144,20 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
       .then(({ error: planError }) => {
         if (planError) logger.warn({ err: planError, gemId: (data as any).id, tripId: input.tripId }, "submitGem: failed to attach gem to trip plan");
       });
+  }
+
+  // Canonical dual-write (flag-gated OFF; fail-soft — legacy image_url path
+  // unaffected). Records media_assets + media_attachments(entityType=hidden_gem)
+  // so the gem photo joins the §6.1 canonical model once the flag is lit.
+  if (input.imageUrl) {
+    void recordEntityMedia(db, {
+      ownerUserId: input.submittedBy,
+      publicUrl: input.imageUrl,
+      entityType: "hidden_gem",
+      entityId: (data as any).id as string,
+      isCover: true,
+      sourceType: "community",
+    });
   }
 
   return data;

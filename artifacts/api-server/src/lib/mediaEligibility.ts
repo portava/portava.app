@@ -23,6 +23,25 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type FeedType = "for_you" | "following";
 
+/**
+ * Moderation states that count as DISTRIBUTABLE.
+ *
+ *   'approved' — the legacy shipped state on posts / post_media / media_assets.
+ *   'active'   — the canonical §36 MediaModerationStatus promoted state.
+ *
+ * Media v2 Phase 1 reconciles media_assets.moderation_status onto the §36
+ * vocabulary (migration 2250), where the promoted/distributable state is
+ * 'active' rather than 'approved'. Both are admitted here so that neither
+ * legacy rows (moderation_status='approved') NOR canonical rows
+ * (moderation_status='active') can be silently dropped by the distribution
+ * gate when the canonical read path is eventually lit — the failure mode the
+ * media audits called out. Every OTHER moderation value
+ * (pending / processing / flagged / limited / rejected / removed /
+ * owner_deleted) stays excluded, and a null/absent value is unmoderated and
+ * passes, exactly as before.
+ */
+export const DISTRIBUTABLE_MODERATION_STATES: ReadonlySet<string> = new Set(["approved", "active"]);
+
 export interface ViewerCtx {
   viewerUserId: string;
   feedType: FeedType;
@@ -217,11 +236,12 @@ export async function filterEligibleMediaCandidates(
       if (visibility !== "public") return false;
     }
 
-    // Moderation gate: must be explicitly 'approved', or unmoderated (null/absent).
-    // Items with any other moderation status (pending, flagged, rejected, removed, etc.)
-    // are excluded. This is stricter than the previous allow-all-except-rejected logic.
+    // Moderation gate: must be a DISTRIBUTABLE state ('approved' legacy OR
+    // 'active' canonical §36), or unmoderated (null/absent). Items with any
+    // other moderation status (pending, processing, flagged, limited, rejected,
+    // removed, owner_deleted, …) are excluded.
     const modStatus = c.moderation_status;
-    if (modStatus && modStatus !== "approved") return false;
+    if (modStatus && !DISTRIBUTABLE_MODERATION_STATES.has(modStatus)) return false;
 
     // Expiration gate (for stories)
     if (c.expires_at) {
