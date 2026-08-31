@@ -153,6 +153,31 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/adminGeocode.ts|update|dynamic table name", 2],
   ["src/routes/adminGeocode.ts|upsert|dynamic table name", 2],
 
+  // ── select(BUDDY_PUBLIC_COLUMNS) — one constant, verified at its definition ─
+  //
+  // These sites pass the imported BUDDY_PUBLIC_COLUMNS constant rather than a
+  // literal, and resolveSelectString follows an identifier only to a SAME-FILE
+  // initializer, so it cannot see through the import.
+  //
+  // They are a weaker blind spot than most entries here. The risk this check
+  // exists to catch is a select list naming a column that does not exist —
+  // PostgREST then fails the WHOLE read with PGRST100 (exactly the
+  // places.country bug). That risk is already covered for this string:
+  // lib/buddyMapRead.ts defines BUDDY_PUBLIC_COLUMNS and calls
+  // .select(BUDDY_PUBLIC_COLUMNS) in the same file, so it IS statically
+  // resolved and column-checked there, on every run. These seven sites pass
+  // the identical constant.
+  //
+  // The alternative was inlining the literal at each site, which would put
+  // seven copies of the public-column allow-list back in the tree — the exact
+  // drift that consolidating onto one constant removed, and a privacy drift
+  // rather than a schema one. A verified-elsewhere blind spot beats that.
+  //
+  // If these ever stop passing that constant, the counts change and this
+  // fails, which is the intended tripwire.
+  ["src/routes/rentABuddy.ts|select|select list not statically resolvable", 4],
+  ["src/routes/rentABuddyMarketplace.ts|select|select list not statically resolvable", 3],
+
   // ── Insert/upsert payloads built at runtime ───────────────────────────────
   ["src/routes/circle.ts|upsert|payload not statically resolvable", 1],
   // 3 sites: feed-section registration + the two /compass/ask uiBlock
@@ -235,7 +260,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/posts.ts|select|payload partially resolvable", 7],
   ["src/routes/pulse.ts|select|payload partially resolvable", 1],
   // rentABuddy: select lists that mix static columns with awaited sub-selects.
-  ["src/routes/rentABuddy.ts|select|payload partially resolvable", 4],
   // stamps: OWNER_STAMP_COLS / PUBLIC_STAMP_COLS prefix is now audited; the
   // stamp_definitions embedded resource + artCol suffix are skipped/dynamic.
   ["src/routes/stamps.ts|select|payload partially resolvable", 9],
