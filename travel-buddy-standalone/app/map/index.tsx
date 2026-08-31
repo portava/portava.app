@@ -53,6 +53,8 @@ import { LivePlaceSheet } from '../../src/components/map/LivePlaceSheet.tsx';
 import { WhyShownSheet } from '../../src/components/map/WhyShownSheet.tsx';
 import { MapContributionSheet } from '../../src/components/map/MapContributionSheet.tsx';
 import { MapBottomActions } from '../../src/components/map/MapBottomActions.tsx';
+import { LivePulseCard } from '../../src/components/map/LivePulseCard.tsx';
+import { getLivePulseItems, type LivePulseItem } from '../../src/services/livePulse.ts';
 import { TimeMachineControl } from '../../src/components/map/TimeMachineControl.tsx';
 import {
   EMPTY_LAYER_PREFERENCES,
@@ -76,6 +78,11 @@ import {
 } from '../../src/features/map/render/collision.ts';
 import { filterByLayers } from '../../src/features/map/layers/layerModel.ts';
 import { isZoneKind } from '../../src/features/map/render/zoneStyle.ts';
+import {
+  selectCompassPicks,
+  toMapObjects as compassPicksToMapObjects,
+  type CompassMapCandidate,
+} from '../../src/features/map/compass/compassMapModel.ts';
 import { toTemporalObjects } from '../../src/features/map/time/timeMachine.ts';
 import type { DiscoveryMapViewProps } from '../../src/components/discovery/DiscoveryMapView.tsx';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
@@ -566,6 +573,22 @@ function FullScreenMapScreenInner() {
     zoom: cameraZoom ?? paramZoom,
   });
 
+  // ── §3 / §26 Live Pulse ─────────────────────────────────────────────────────
+  // "Bottom Live Pulse card summarizes the most important nearby change." The
+  // card itself decides WHICH item is most important, via the pure
+  // selectHeadlinePulseItem, so that choice is deterministic and testable rather
+  // than baked into this screen.
+  const [pulseItems, setPulseItems] = useState<LivePulseItem[]>([]);
+  useEffect(() => {
+    if (mode === 'passport') return;
+    let cancelled = false;
+    void (async () => {
+      const res = await getLivePulseItems({}).catch(() => null);
+      if (!cancelled && res && res.ok) setPulseItems(res.items);
+    })();
+    return () => { cancelled = true; };
+  }, [mode]);
+
   // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
   const [layerPrefs, setLayerPrefs] = useState<LayerPreferences>(EMPTY_LAYER_PREFERENCES);
   useEffect(() => {
@@ -615,6 +638,12 @@ function FullScreenMapScreenInner() {
   // for both the marker layers and the carousel.  Cleared via the ✕ dismiss button.
   const [compassOverrideEntities, setCompassOverrideEntities] = useState<MapEntity[] | null>(null);
   const [compassQuery, setCompassQuery] = useState<string | null>(null);
+  /**
+   * §14: Compass Map Mode "reduces visual noise and highlights approximately
+   * three to five best next moves". These are the picks as MapObjects, carrying
+   * RENDERING_PRIORITY.compass_recommendation and the §6 star treatment.
+   */
+  const [compassPickObjects, setCompassPickObjects] = useState<MapObject[] | null>(null);
 
   // ── Geocode-and-fly ──────────────────────────────────────────────────────────
   // Converts a free-text query to coordinates via Nominatim (free, no API key)
@@ -657,6 +686,45 @@ function FullScreenMapScreenInner() {
   function handleCompassResults(entities: MapEntity[], query: string) {
     setCompassOverrideEntities(entities);
     setCompassQuery(query);
+
+    // §14 — run the results through the Compass map model rather than rendering
+    // them raw. It enforces the 3-5 bound, builds the "WHY THIS OPTION" lines,
+    // and (the part that matters) is structurally unable to upgrade a
+    // recommendation's confidence or freshness beyond its source: a Compass pick
+    // over a stale place stays stale. §37: "Do not let Compass invent live
+    // conditions."
+    const candidates: CompassMapCandidate[] = entities.map((e) => {
+      const obj = (e.payload as MapObject | undefined) ?? undefined;
+      return {
+        id: e.id.includes(':') ? e.id.slice(e.id.indexOf(':') + 1) : e.id,
+        title: obj?.title ?? String((e.payload as any)?.title ?? 'Suggestion'),
+        subtitle: obj?.subtitle,
+        lat: e.lat,
+        lng: e.lng,
+        kind: obj?.kind,
+        // Carry-through only — never a value this screen invented.
+        source: obj
+          ? { confidence: obj.confidence, freshness: obj.freshness, activity: obj.activity }
+          : undefined,
+        // matchesIntent is deliberately absent: whether a candidate matches the
+        // §13 intent is a RANKING judgement, and §14 says Compass "reasons over
+        // structured state produced elsewhere". The screen cannot know it, and
+        // guessing would put a "Matches current intent" line under something
+        // nothing verified. buildWhyLines omits the line when the input is absent.
+        privacyClass: obj?.privacyClass,
+        provenance: obj?.provenance,
+        sourceRefs: obj?.sourceRefs,
+        detailRoute: obj?.interaction?.detailRoute ?? e.detailRoute,
+        distanceKm: obj?.distanceKm ?? null,
+        raw: e.payload,
+      };
+    });
+    const picked = selectCompassPicks(candidates);
+    // `ok:false` means fewer than the §14 minimum survived. Render what there
+    // is rather than nothing — but do not pad the list to reach three.
+    setCompassPickObjects(
+      picked.picks.length > 0 ? (compassPicksToMapObjects(picked.picks) as MapObject[]) : null,
+    );
     // Fly the camera to the queried location regardless of entity coordinates.
     // toMapEntity (AskCompassBar) now skips results without real lat/lng, so for
     // city/region queries the camera would otherwise stay unless we geocode here.
@@ -666,6 +734,7 @@ function FullScreenMapScreenInner() {
   function handleCompassClear() {
     setCompassOverrideEntities(null);
     setCompassQuery(null);
+    setCompassPickObjects(null);
   }
 
   // ── Place entities ──────────────────────────────────────────────────────────
@@ -849,14 +918,18 @@ function FullScreenMapScreenInner() {
   const zoomBand = zoomRenderBand(activeZoom);
 
   const objects: MapObject[] = useMemo(() => {
+    // §14 — while a Compass query is active the map shows the picks and nothing
+    // else. That IS the mode: "reduces visual noise and highlights approximately
+    // three to five best next moves".
+    const base = compassPickObjects ?? defaultObjects;
     // 1. §16 — the user's layer preferences plus automatic relevance.
-    const permitted = filterByLayers(defaultObjects, layerPrefs, layerContext);
+    const permitted = filterByLayers(base, layerPrefs, layerContext);
     // 2. §17 — no POI pins at world zoom; individual places only from district in.
     const legible = permitted.filter((o) => isKindVisibleAtBand(o.kind, zoomBand));
     // 3. §15 — a forecast becomes kind 'prediction' and loses any live
     //    freshness, so zoneStyle gives it the dashed treatment (§37).
     return toTemporalObjects(legible, timeOffset) as unknown as MapObject[];
-  }, [defaultObjects, layerPrefs, layerContext, zoomBand, timeOffset]);
+  }, [defaultObjects, compassPickObjects, layerPrefs, layerContext, zoomBand, timeOffset]);
 
   // §5 levels 2-3: zones render beneath everything and skip collision.
   const zoneObjects = useMemo(() => objects.filter((o) => isZoneKind(o.kind)), [objects]);
@@ -1169,6 +1242,39 @@ function FullScreenMapScreenInner() {
           />
         </View>
       )}
+
+      {/* ── §3 / §26 Live Pulse card ────────────────────────────────────────
+          Pulse and Map are two presentations of the SAME intelligence (§26), so
+          the tap goes through pulseItemToMapState — the one translation both
+          surfaces use — rather than this screen inventing its own routing.
+          Hidden while a Compass query or a selection already owns the bottom
+          of the screen; §3 says cards must not permanently consume the viewport. */}
+      {pulseItems.length > 0 && !compassQuery && !selectedObject ? (
+        <LivePulseCard
+          items={pulseItems}
+          bottomInset={insets.bottom + 96}
+          onDeepLink={(deepLink) => {
+            if (deepLink.mode) dispatchMapEvent({ type: 'ENTER_MODE', mode: deepLink.mode });
+            if (deepLink.selectedObjectId) {
+              dispatchMapEvent({
+                type: 'SELECT_OBJECT',
+                objectId: deepLink.selectedObjectId,
+                objectKind: 'place',
+              });
+            }
+            const target = deepLink.cameraTarget;
+            const cam = cameraRef.current;
+            if (target?.center && cam && typeof cam.easeTo === 'function') {
+              cam.easeTo({
+                center: [target.center.lng, target.center.lat],
+                zoom: target.zoom ?? 14,
+                duration: 600,
+              });
+            }
+          }}
+          onDismiss={(item) => setPulseItems((prev) => prev.filter((i) => i.id !== item.id))}
+        />
+      ) : null}
 
       {/* ── §28 cached-intelligence banner ──────────────────────────────────
           "Clearly label stale cached intelligence with last-updated time."
