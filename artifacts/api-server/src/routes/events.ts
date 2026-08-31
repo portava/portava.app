@@ -2752,6 +2752,38 @@ router.post("/events/:id/leave", async (req, res) => {
 
 // ── POST /api/events/:id/waitlist ─────────────────────────────────────────────
 
+/**
+ * Private-event join gate, mirroring POST /rsvp: a private event may only be
+ * joined by an invited/member user. The waitlist join AND accept paths skipped
+ * this entirely, so an uninvited user who knew a private event's id could be
+ * waitlisted and then seated as a going attendee (and added to its group chat)
+ * of an invite_only / circle / trip event (audit EVENTS WL-1). The event row
+ * must carry visibility, circle_id and trip_id.
+ */
+async function checkEventJoinVisibility(
+  sc: any, ev: any, eventId: string, userId: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if ((ev as any).visibility === "invite_only") {
+    const { data: req_ } = await sc
+      .from("event_join_requests")
+      .select("status").eq("event_id", eventId).eq("user_id", userId).maybeSingle();
+    if (!(req_ as any) || (req_ as any).status !== "approved") {
+      return { ok: false, message: "This event requires host approval to join" };
+    }
+  }
+  if ((ev as any).visibility === "circle") {
+    if (!(ev as any).circle_id || !await isCircleMember(sc, (ev as any).circle_id, userId)) {
+      return { ok: false, message: "This event is only open to circle members" };
+    }
+  }
+  if ((ev as any).visibility === "trip") {
+    if (!(ev as any).trip_id || !await isTripEventMember(sc, (ev as any).trip_id, userId)) {
+      return { ok: false, message: "This event is only open to trip members" };
+    }
+  }
+  return { ok: true };
+}
+
 router.post("/events/:id/waitlist", async (req, res) => {
   const ctx = await requireUser(req, res);
   if (!ctx) return;
@@ -2766,10 +2798,14 @@ router.post("/events/:id/waitlist", async (req, res) => {
 
   const { data: ev } = await sc
     .from("events")
-    .select("state, waitlist_enabled, host_id, age_min, age_max, trust_score_min, verified_only")
+    .select("state, waitlist_enabled, host_id, visibility, circle_id, trip_id, age_min, age_max, trust_score_min, verified_only")
     .eq("id", id)
     .maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+
+  // Private-event join gate (same as /rsvp) — closes the waitlist bypass.
+  const wlVis = await checkEventJoinVisibility(sc, ev, id, user.id);
+  if (!wlVis.ok) { sendError(res, "forbidden", wlVis.message); return; }
 
   if (!["full", "waitlist"].includes((ev as any).state)) {
     sendError(res, "forbidden", "Waitlist is not available for this event"); return;
@@ -2884,13 +2920,22 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   }
 
   // Verify capacity hasn't been filled since the offer was issued (overbooking guard)
-  const { data: evCapCheck } = await sc.from("events").select("max_attendees, state").eq("id", id).maybeSingle();
+  const { data: evCapCheck } = await sc.from("events").select("max_attendees, state, visibility, circle_id, trip_id").eq("id", id).maybeSingle();
   if (!evCapCheck) { sendError(res, "not_found", "Event not found"); return; }
   // State guard: never seat a 'going' RSVP on an event that is no longer live.
   // Without this, accepting an offer on a cancelled/archived/draft event would
   // add the user as attending (and the sweeper would keep promoting onto it).
   if (!["open", "full", "waitlist"].includes((evCapCheck as any).state)) {
     sendError(res, "forbidden", "This event is no longer accepting attendees"); return;
+  }
+  // Re-check the private-event join gate at accept time too — an invite could
+  // have been revoked, or the offer reached an uninvited user (audit EVENTS WL-1).
+  const acceptVis = await checkEventJoinVisibility(sc, evCapCheck, id, user.id);
+  if (!acceptVis.ok) {
+    // Remove them from the queue so the seat can go to an eligible member.
+    await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
+    await promoteNextWaitlisted(sc, id);
+    sendError(res, "forbidden", acceptVis.message); return;
   }
   const maxAtt = (evCapCheck as any)?.max_attendees ?? null;
   if (maxAtt != null) {

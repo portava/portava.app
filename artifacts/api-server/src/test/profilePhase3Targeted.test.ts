@@ -561,4 +561,50 @@ describe("Profile Phase 3 — targeted QA", () => {
       assert.equal(card.followerCount, null, "private card follower count must also be null");
     });
   });
+
+  describe("GET /users/:userId — location opt-out (LOC-1)", () => {
+    const cityProfile = (id) => ({
+      id, handle: "h_" + id.slice(0, 4), name: "Nomad", is_private: false,
+      passport_visibility: "public", current_city: "Da Nang", home_country: "Vietnam",
+      home_city: "Hanoi", created_at: "2026-01-01T00:00:00Z",
+    });
+
+    it("nulls currentCity + homeCountry for a non-owner when the subject opted out", async () => {
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }],
+        profiles: [cityProfile(OPTED_OUT_ID)],
+        profile_privacy_settings: [{ user_id: OPTED_OUT_ID, show_current_city: false, show_home_country: false }],
+      });
+      _setTestClient(client, true); _setTestServiceClient(client);
+      const { status, body } = await req("GET", "/users/" + OPTED_OUT_ID);
+      assert.equal(status, 200, JSON.stringify(body));
+      assert.equal(body.currentCity, null, "current city must be hidden after opt-out");
+      assert.equal(body.homeCountry, null, "home country must be hidden after opt-out");
+    });
+
+    it("still returns them when the subject did NOT opt out (positive control)", async () => {
+      const client = makeFakeClient({
+        users: [{ id: CALLER_ID }],
+        profiles: [cityProfile(NORMAL_ID)],
+        profile_privacy_settings: [{ user_id: NORMAL_ID, show_current_city: true, show_home_country: true }],
+      });
+      _setTestClient(client, true); _setTestServiceClient(client);
+      const { body } = await req("GET", "/users/" + NORMAL_ID);
+      assert.equal(body.currentCity, "Da Nang");
+      assert.equal(body.homeCountry, "Vietnam");
+    });
+
+    it("shows the owner their own location even when opted out", async () => {
+      const client = makeFakeClient({
+        users: [{ id: OPTED_OUT_ID }],
+        profiles: [cityProfile(OPTED_OUT_ID)],
+        profile_privacy_settings: [{ user_id: OPTED_OUT_ID, show_current_city: false, show_home_country: false }],
+      });
+      _setTestClient(client, true); _setTestServiceClient(client);
+      const { body } = await req("GET", "/users/" + OPTED_OUT_ID);
+      assert.equal(body.currentCity, "Da Nang", "owner sees own current city");
+      assert.equal(body.homeCountry, "Vietnam", "owner sees own home country");
+    });
+  });
+
 });
