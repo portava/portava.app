@@ -193,7 +193,9 @@ function makeReqClient() {
 function resetReqState(): void {
   rstate = {
     buddyProfiles: [
-      { id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active", verified: true, categories: ["city", "food"] },
+      // `country` is the server-side source of the service country: the shorthand
+      // now derives it from the buddy (not the request body) to drive the A1 gate.
+      { id: BUDDY_PROF, user_id: BUDDY_USER, status: "active", admin_status: "active", verified: true, categories: ["city", "food"], country: "KR" },
     ],
     launchControls: [],
     travelerProfiles: [],
