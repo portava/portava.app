@@ -114,6 +114,7 @@ import mapObservationsRouter from "./mapObservations";
 import locateFriendsRouter from "./locateFriends";
 import mediaFileRouter from "./mediaFile";
 import mediaWorldRouter from "./mediaWorld";
+import mediaActionsRouter from "./mediaActions";
 import mediaFeedRouter from "./mediaFeed";
 import adminMediaRouter from "./adminMedia.js";
 import mediaAnalyticsBatchRouter from "./mediaAnalyticsBatch.js";
@@ -260,6 +261,10 @@ router.use(mediaFileRouter);
 // mediaFeedRouter so specific paths (/media/world, /media/people, /media/me,
 // /media/timeline, /media/map) are not swallowed by mediaFeed's `/media/:id`.
 router.use(mediaWorldRouter);
+// Media v2 action rail + intent + experience-plan (§15/§43). Registered BEFORE
+// mediaFeedRouter so the specific /media/:id/actions and /media/:id/intent paths
+// are matched here, not shadowed by mediaFeed's generic /media/:id handlers.
+router.use(mediaActionsRouter);
 router.use(mediaFeedRouter);
 router.use(adminMediaRouter);
 router.use(mediaAnalyticsBatchRouter);
