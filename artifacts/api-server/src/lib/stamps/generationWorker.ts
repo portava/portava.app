@@ -415,6 +415,101 @@ export async function requeueStaleFailedJobs(scOverride?: any): Promise<number> 
   return requeued;
 }
 
+// ── Reclaim of stuck `generating` jobs ────────────────────────────────────────
+
+/**
+ * Message stamped on `last_error` when a stuck `generating` job is reclaimed by
+ * the timeout sweep below. Exported so tests/admin tooling can recognise it.
+ */
+export const STUCK_GENERATING_RECLAIM_ERROR =
+  "reclaimed: worker lock expired while generating (worker likely crashed)";
+
+/**
+ * Requeue `generating` jobs whose pessimistic lock has expired — the worker that
+ * claimed them is presumed dead (crash / OOM / redeploy mid-run).
+ *
+ * Why this is needed (audit STAMP·H4): `runGenerationCycle` only ever claims
+ * rows in status `queued`, so a row left in `generating` is never re-processed.
+ * The partial unique index `uix_queue_catalog_active` treats `generating` as an
+ * active row, so it also keeps the catalog entry's only active-job slot — every
+ * later enqueue for that catalog (award pipeline, admin regenerate) hits 23505
+ * and is swallowed as success. The entry can then never produce artwork. The
+ * health monitor already *detects* these rows (see `queryStampWorkerHealth` /
+ * `evaluateWorkerHealth`) but only warns; this sweep actually heals them.
+ *
+ * A reclaim counts as a failed attempt: a job that keeps crashing the worker is
+ * bounded by `max_attempts` and lands in `retryable_failed` instead of looping
+ * forever, where `requeueStaleFailedJobs` then governs it under the auto-requeue
+ * cap. Returns the number of rows moved out of `generating`. Accepts an
+ * injectable client for tests.
+ */
+export async function requeueStuckGeneratingJobs(scOverride?: any): Promise<number> {
+  const sc = scOverride ?? getServiceClient();
+  if (!sc) return 0;
+
+  // Single clock read — the expiry probe (WHERE) and the new updated_at stamp
+  // derive from the same instant so they can never disagree (split-clock risk).
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+
+  const { data: stuck, error } = await sc
+    .from("stamp_generation_queue")
+    .select("id, attempts, max_attempts")
+    .eq("status", "generating")
+    .lt("locked_until", nowIso)
+    .limit(200);
+
+  if (error) {
+    console.error(JSON.stringify({ event: "stamp.queue.stuck_reclaim_error", error: error.message }));
+    return 0;
+  }
+
+  const rows = (stuck ?? []) as Array<{ id: string; attempts: number | null; max_attempts: number | null }>;
+  if (rows.length === 0) return 0;
+
+  let reclaimed = 0;
+  for (const r of rows) {
+    const newAttempts = (r.attempts ?? 0) + 1;
+    const maxAttempts = r.max_attempts ?? 3;
+    // A crash that used up all attempts is terminal-retryable, not re-queued,
+    // so a job that reliably kills the worker cannot livelock the sweep.
+    const newStatus = newAttempts >= maxAttempts ? "retryable_failed" : "queued";
+
+    const { data: updated, error: updErr } = await sc
+      .from("stamp_generation_queue")
+      .update({
+        status:       newStatus,
+        attempts:     newAttempts,
+        last_error:   STUCK_GENERATING_RECLAIM_ERROR,
+        locked_until: null,
+        locked_by:    null,
+        updated_at:   new Date(nowMs).toISOString(),
+      })
+      .eq("id", r.id)
+      // Guard on BOTH the status and the still-expired lock so we never clobber
+      // a row a live worker just re-claimed (queued → generating, fresh lock)
+      // between our SELECT and this UPDATE — its lock is in the future so the
+      // `.lt` fails and the update touches 0 rows.
+      .eq("status", "generating")
+      .lt("locked_until", nowIso)
+      .select("id");
+
+    if (updErr) {
+      console.error(JSON.stringify({ event: "stamp.queue.stuck_reclaim_error", error: updErr.message, job_id: r.id }));
+      continue;
+    }
+    reclaimed += ((updated ?? []) as any[]).length;
+  }
+
+  if (reclaimed > 0) {
+    console.log(JSON.stringify({
+      event: "stamp.queue.stuck_generating_reclaimed",
+      count: reclaimed,
+    }));
+  }
+  return reclaimed;
+}
+
 // ── Permanent-error classification ────────────────────────────────────────────
 
 // Error-message prefixes that can never succeed on retry — retrying only burns
@@ -769,13 +864,20 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
   // lock expiry all derive from nowMs so they can never disagree (split-clock risk).
   const nowMs = Date.now();
 
-  // Periodically sweep stale retryable_failed jobs back into the queue
+  // Periodically sweep stale retryable_failed jobs back into the queue, and
+  // reclaim `generating` rows whose lock has expired (crashed worker) so they
+  // don't wedge the catalog's active-job slot forever (audit STAMP·H4).
   if (nowMs - _lastAutoRequeueAt > AUTO_REQUEUE_CHECK_INTERVAL_MS) {
     _lastAutoRequeueAt = nowMs;
     try {
       await requeueStaleFailedJobs(sc);
     } catch (e: any) {
       console.error(JSON.stringify({ event: "stamp.queue.auto_requeue_error", error: e?.message }));
+    }
+    try {
+      await requeueStuckGeneratingJobs(sc);
+    } catch (e: any) {
+      console.error(JSON.stringify({ event: "stamp.queue.stuck_reclaim_error", error: e?.message }));
     }
   }
 
