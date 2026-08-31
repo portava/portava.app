@@ -87,7 +87,7 @@ import { fetchBlockedSet } from "./blocks.js";
 // ── The flag ──────────────────────────────────────────────────────────────────
 
 /**
- * OFF by default (migration 2215 seeds it false). Reads and writes fail SOFT —
+ * OFF by default (migration 2219 seeds it false). Reads and writes fail SOFT —
  * an explicitly-disabled envelope, never an error — because a location feature
  * that errors loudly invites a client retry loop against a feature nobody
  * turned on.
@@ -103,7 +103,7 @@ export const LOCATE_FRIENDS_FLAG = "locate_friends_enabled";
 /**
  * The scopes a session may be attached to. There is no `global`, no `nearby`
  * and no `public` member, and adding one would be the §37 non-goal in a single
- * commit. The set is closed here AND by a CHECK constraint in 2215.
+ * commit. The set is closed here AND by a CHECK constraint in 2219.
  */
 export const GROUP_SCOPE_KINDS = ["trip", "circle", "event", "plan"] as const;
 export type GroupScopeKind = (typeof GROUP_SCOPE_KINDS)[number];

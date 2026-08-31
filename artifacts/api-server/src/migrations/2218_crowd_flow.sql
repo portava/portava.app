@@ -1,4 +1,4 @@
--- Migration 2214: feature flag for Map spec §10 Crowd Flow
+-- Migration 2218: feature flag for Map spec §10 Crowd Flow
 --
 -- NO TABLES, NO COLUMNS, NO DATA MODEL. Crowd flow aggregates are DERIVED at
 -- read time from signals that already exist (lib/crowdFlowProducer +

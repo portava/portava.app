@@ -1,4 +1,4 @@
--- 2212_map_observations.sql
+-- 2216_map_observations.sql
 --
 -- Map Contributions (Map spec §22) — the FLAG, and nothing else.
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band).

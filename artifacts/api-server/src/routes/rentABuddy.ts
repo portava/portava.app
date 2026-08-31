@@ -1331,9 +1331,12 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
 
   const {
     buddyId, packageId, tripId, bookingDate, startTime,
-    durationH, groupSize = 1, city, countryCode, meetupLocation, category, notes,
+    durationH, groupSize = 1, city, meetupLocation, category, notes,
     paymentMode = "full_in_app",
   } = req.body ?? {};
+  // NOTE: `countryCode` is intentionally NOT read from the request body. The
+  // service country is derived server-side from the buddy being booked (below),
+  // so a client cannot assert a false country to dodge that country's controls.
 
   if (!buddyId || !bookingDate || !durationH || !city || !category) {
     return res.status(400).json({ error: "invalid_payload", message: "buddyId, bookingDate, durationH, city, category are required." });
@@ -1370,6 +1373,13 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
 
   const buddyUserId = (buddyProfile as any).user_id;
 
+  // Service country is derived from the buddy's registered location — the buddy
+  // IS the selected service, so their profile is the authoritative source. This
+  // value (never the client body) both drives the gate and is snapshotted onto
+  // the booking below so later buddy-location edits can't change the rules that
+  // applied at creation time.
+  const serviceCountry = deriveServiceCountry(buddyProfile);
+
   // Launch controls (age/DOB/ID/phone), blocks, self-booking, nightlife
   // category-approval + admin-approval + public-meetup, and high-risk two-sided
   // verification — the shared creation-gate stack. Kill-switch, rollout and
@@ -1377,7 +1387,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   // re-applied here (applyKillSwitch/applyRollout/applyLimits = false).
   if (!await enforceBookingCreationGates({
     sc: serviceClient, res, userId: user.id, buddyProfile,
-    city, countryCode, category, meetupLocation, paymentMode, groupSize,
+    city, countryCode: serviceCountry, category, meetupLocation, paymentMode, groupSize,
   })) return;
 
   // New Buddy restrictions
@@ -1437,6 +1447,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
       duration_h: durationH,
       group_size: groupSize,
       city,
+      country_code: serviceCountry,
       category,
       notes: notes ?? null,
       payment_mode: paymentMode,
@@ -4925,10 +4936,8 @@ function stripBuddyPrivateFields(buddyRow: any, confirmed: boolean): any {
 
 // ── Launch control helpers ─────────────────────────────────────────────────────
 
-async function getLaunchControl(
-  client: any,
-  { countryCode, city, category }: { countryCode?: string; city?: string; category?: string },
-): Promise<{
+/** Resolved launch-control policy for one (country, city, category) selector. */
+export interface ResolvedLaunchControl {
   enabled: boolean;
   waitlistOnly: boolean;
   minAge: number;
@@ -4936,40 +4945,94 @@ async function getLaunchControl(
   requireIdVerification: boolean;
   requirePhoneVerification: boolean;
   fullPaymentRequired: boolean;
-} | null> {
-  const queries: Array<{ country_code: string | null; city: string | null; category: string | null }> = [];
+}
 
-  if (category && city && countryCode) queries.push({ country_code: countryCode, city, category });
-  if (category && countryCode) queries.push({ country_code: countryCode, city: null, category });
-  if (city && countryCode) queries.push({ country_code: countryCode, city, category: null });
+/**
+ * The SINGLE precedence order for "which launch control applies", most-specific
+ * first. Every path that resolves a launch control — getLaunchControl() (DB) and
+ * resolveLaunchControlFromRows() (in-memory, used by the /request shorthand) —
+ * builds its match order from THIS function so the two cannot drift. Mirrors the
+ * `country → city → category` fallthrough the product owner specified.
+ */
+export function launchControlPrecedence(
+  { countryCode, city, category }: { countryCode?: string | null; city?: string | null; category?: string | null },
+): Array<{ country_code: string | null; city: string | null; category: string | null }> {
+  const specs: Array<{ country_code: string | null; city: string | null; category: string | null }> = [];
+  if (category && city && countryCode) specs.push({ country_code: countryCode, city, category });
+  if (category && countryCode)         specs.push({ country_code: countryCode, city: null, category });
+  if (city && countryCode)             specs.push({ country_code: countryCode, city, category: null });
   // Country-wide catch-all (country-level gating without city/category specificity)
-  if (countryCode) queries.push({ country_code: countryCode, city: null, category: null });
-  if (category) queries.push({ country_code: null, city: null, category });
-  queries.push({ country_code: null, city: null, category: null });
+  if (countryCode)                     specs.push({ country_code: countryCode, city: null, category: null });
+  if (category)                        specs.push({ country_code: null, city: null, category });
+  specs.push({ country_code: null, city: null, category: null });
+  return specs;
+}
 
-  for (const q of queries) {
+/** Map a raw rent_buddy_launch_controls row to the resolved policy shape. */
+export function mapLaunchControlRow(data: any): ResolvedLaunchControl {
+  return {
+    enabled: data.enabled,
+    waitlistOnly: data.waitlist_only,
+    minAge: data.min_age ?? 18,
+    nightlifeMinAge: data.nightlife_min_age ?? 21,
+    requireIdVerification: data.require_id_verification ?? true,
+    requirePhoneVerification: data.require_phone_verification ?? true,
+    fullPaymentRequired: data.full_payment_required ?? false,
+  };
+}
+
+/**
+ * Pure resolver over an already-loaded set of launch-control rows. Used by paths
+ * that load all controls once (the /request shorthand) so the precedence + row
+ * mapping are IDENTICAL to the DB-backed getLaunchControl() below.
+ */
+export function resolveLaunchControlFromRows(
+  rows: any[],
+  sel: { countryCode?: string | null; city?: string | null; category?: string | null },
+): ResolvedLaunchControl | null {
+  for (const s of launchControlPrecedence(sel)) {
+    const m = (rows ?? []).find((c: any) =>
+      ((c.country_code ?? null) === s.country_code) &&
+      ((c.city ?? null) === s.city) &&
+      ((c.category ?? null) === s.category));
+    if (m) return mapLaunchControlRow(m);
+  }
+  return null;
+}
+
+/**
+ * Server-authoritative service country for a booking, derived from the buddy
+ * being booked (their registered `country`) — NEVER from untrusted client input.
+ *
+ * Derivation rule (deliberate): return the buddy's `country` as-is (whitespace
+ * trimmed; empty/whitespace → null). We do NOT translate names to ISO codes.
+ * Throughout Rent-a-Buddy, launch controls and the buddy profile use the SAME
+ * free-text country convention and are matched by exact string equality
+ * (getLaunchControl's `.eq("country_code", …)`, the admin control-create path,
+ * and rentABuddySpec's verification-policy matcher all compare `country_code`
+ * directly against `buddy.country`). Introducing a name→code mapping here would
+ * silently break that existing equality-based matching, so we mirror it instead.
+ * Normalising empty/whitespace to null only makes the fail-closed path fire MORE
+ * often, never less — it cannot weaken the gate.
+ */
+export function deriveServiceCountry(buddyProfile: any): string | null {
+  const raw = (buddyProfile as any)?.country;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+async function getLaunchControl(
+  client: any,
+  { countryCode, city, category }: { countryCode?: string; city?: string; category?: string },
+): Promise<ResolvedLaunchControl | null> {
+  for (const q of launchControlPrecedence({ countryCode, city, category })) {
     let query = client.from("rent_buddy_launch_controls").select("*");
-    if (q.country_code !== undefined) {
-      query = q.country_code === null ? query.is("country_code", null) : query.eq("country_code", q.country_code);
-    }
-    if (q.city !== undefined) {
-      query = q.city === null ? query.is("city", null) : query.eq("city", q.city);
-    }
-    if (q.category !== undefined) {
-      query = q.category === null ? query.is("category", null) : query.eq("category", q.category);
-    }
+    query = q.country_code === null ? query.is("country_code", null) : query.eq("country_code", q.country_code);
+    query = q.city === null ? query.is("city", null) : query.eq("city", q.city);
+    query = q.category === null ? query.is("category", null) : query.eq("category", q.category);
     const { data } = await query.maybeSingle();
-    if (data) {
-      return {
-        enabled: (data as any).enabled,
-        waitlistOnly: (data as any).waitlist_only,
-        minAge: (data as any).min_age ?? 18,
-        nightlifeMinAge: (data as any).nightlife_min_age ?? 21,
-        requireIdVerification: (data as any).require_id_verification ?? true,
-        requirePhoneVerification: (data as any).require_phone_verification ?? true,
-        fullPaymentRequired: (data as any).full_payment_required ?? false,
-      };
-    }
+    if (data) return mapLaunchControlRow(data);
   }
   return null;
 }
@@ -6424,6 +6487,11 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
     return res.status(409).json({ error: "buddy_unavailable", message: "This Buddy is no longer accepting bookings." });
   }
 
+  // Service country: the rebook creates a NEW booking now, so derive from the
+  // buddy's CURRENT registered country (authoritative), falling back to the
+  // original booking's snapshot only for legacy rows where the buddy has none.
+  const rebookCountry = deriveServiceCountry(buddyProfile) ?? ((original as any).country_code ?? null);
+
   // Rebook INSERTs a new booking row, so it must pass the SAME creation-gate
   // stack as POST /rent-a-buddy/bookings — kill switches, rollout (incl. the MVP
   // unverified-user block via action:"book"), account limits, launch controls
@@ -6434,7 +6502,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   if (!await enforceBookingCreationGates({
     sc: serviceClient, res, userId: auth.user.id, buddyProfile,
     city: (original as any).city,
-    countryCode: (original as any).country_code ?? null,
+    countryCode: rebookCountry,
     category: (original as any).category,
     groupSize: groupSize ?? (original as any).group_size,
     applyKillSwitch: true, applyRollout: true, applyLimits: true,
@@ -6482,7 +6550,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
       duration_h: newDurationH,
       group_size: newGroupSize,
       city: (original as any).city,
-      country_code: (original as any).country_code ?? null,
+      country_code: rebookCountry,
       category: (original as any).category,
       notes: (original as any).notes ?? null,
       total_usd: totalUsd,

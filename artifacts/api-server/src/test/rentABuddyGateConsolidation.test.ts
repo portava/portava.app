@@ -93,7 +93,10 @@ function freshState(): State {
     },
     buddyProfiles: {
       [BUDDY_PROF]: {
-        id: BUDDY_PROF, user_id: BUDDY_USER, city: "Miami", country_code: "US",
+        // `country` is the real rent_buddy_profiles column and the server-side
+        // source of the service country (deriveServiceCountry). `country_code`
+        // is kept only as a harmless legacy alias some fixtures still reference.
+        id: BUDDY_PROF, user_id: BUDDY_USER, city: "Miami", country: "US", country_code: "US",
         status: "active", admin_status: "active", group_approved: true,
         category_approvals: { nightlife: true, group: true },
         nightlife_admin_approved: true,
