@@ -42,6 +42,11 @@ import {
 } from './socialIdentity';
 import { POLICY_VERSION } from './policyRegistry';
 import {
+  isCreationContext,
+  buildCreationAssistance,
+  buildUnresolvedAddress,
+} from './creation';
+import {
   projectSearchResult,
   projectCanonicalCity,
   projectAirportDisambiguation,
@@ -58,6 +63,7 @@ import type {
   InputFieldPolicy,
   InputSuggestion,
   SuggestSessionContext,
+  CreationDraft,
 } from './types';
 
 // §13: the "SEARCH FOR" query-completion row is a first-class part of a global-
@@ -109,6 +115,8 @@ export interface GenerateParams {
   lat: number | null;
   lng: number | null;
   city: string | null;
+  /** §23/§55 creation draft — read only by creation contexts. */
+  draft?: CreationDraft;
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -123,7 +131,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft } = params;
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
@@ -209,9 +217,35 @@ export async function generateSuggestions(
     return dropDeadRows(orderSuggestions(refs, Math.min(limit, policy.maxSuggestions)));
   }
 
+  // ── Phase-5 creation assistance (§20/§23/§55) ───────────────────────────────
+  // Duplicate detection + the §23 validation suite for creation contexts. Driven
+  // by the typed NAME *and* the creation draft (dates / city / country), so the
+  // draft-only validators (trip date conflict, city-country mismatch) run even
+  // below minChars where there is no typed text yet. Fail-soft to [].
+  const creationRows: InputSuggestion[] = isCreationContext(context)
+    ? await buildCreationAssistance(sc, {
+        context,
+        policy,
+        text: trimmed,
+        userId,
+        draft: draft ?? {},
+        viewerCity: city,
+        lat,
+        lng,
+        sessionContext,
+        policyVersion: POLICY_VERSION,
+        max: policy.maxSuggestions,
+      }).catch(() => [] as InputSuggestion[])
+    : [];
+
   // Honor minChars (§33). compass_prompt has minChars:0 so it still yields
-  // starter prompts on an empty field (§14 zero-character assistance).
-  if (q.length < policy.minChars) return [];
+  // starter prompts on an empty field (§14 zero-character assistance). Creation
+  // validators are draft-driven, so surface them even below minChars.
+  if (q.length < policy.minChars) {
+    return creationRows.length > 0
+      ? dropDeadRows(orderSuggestions(creationRows, Math.min(limit, policy.maxSuggestions)))
+      : [];
+  }
 
   const suggestions: InputSuggestion[] = [];
 
@@ -327,6 +361,32 @@ export async function generateSuggestions(
     suggestions.push(
       ...buildCompassStarters(context, POLICY_VERSION, q, policy.maxSuggestions),
     );
+  }
+
+  // ── Phase-5: merge creation assistance + unresolved-address fallback ─────────
+  // §20/§23: the duplicate + validation rows are ranked ALONGSIDE the entity
+  // candidates (disambiguation/correction/validation sort after entities per §9).
+  // §37: only when NOTHING canonical resolved do we offer context-appropriate
+  // fallback actions — policy-gated so a canonical city picker never offers them.
+  if (isCreationContext(context)) {
+    const hasEntity = suggestions.some((s) => s.type === 'entity');
+    const hasDuplicate = creationRows.some((s) => s.type === 'disambiguation');
+    if (!hasEntity && !hasDuplicate && q.length >= 2) {
+      creationRows.push(...buildUnresolvedAddress(context, policy, POLICY_VERSION, trimmed));
+    }
+    // §20 "resolve existing records first": when a duplicate disambiguation was
+    // surfaced for an entity, drop the redundant plain entity row for the SAME
+    // id so the creation flow sees a single, unambiguous "did you mean" choice.
+    const dupIds = new Set(
+      creationRows.filter((s) => s.type === 'disambiguation' && s.entityId).map((s) => s.entityId),
+    );
+    // NB: build a fresh array — `suggestions.filter(...)` returns a new array, and
+    // the no-dedup branch copies, so clearing `suggestions` below never aliases it.
+    const kept = dupIds.size > 0
+      ? suggestions.filter((s) => !(s.type === 'entity' && s.entityId && dupIds.has(s.entityId)))
+      : [...suggestions];
+    suggestions.length = 0;
+    suggestions.push(...kept, ...creationRows);
   }
 
   // ── §16 context carryover (bounded, session-scoped) ─────────────────────────
