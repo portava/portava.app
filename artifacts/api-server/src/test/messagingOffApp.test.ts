@@ -236,7 +236,7 @@ const sendTravelerMessage = (body: string) => sendMessageWith(TRAVELER_TOKEN, bo
 
 function sendMediaWith(token: string, senderId: string): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
-    // Bare app-storage path (accepted by appStorageUrlInfo without SUPABASE_URL).
+    // Bare app-storage path (accepted by appStorageUrlInfo even when no storage base is configured).
     const payload = JSON.stringify({ mediaUrl: `post-media/${senderId}/photo.webp`, mediaType: "image" });
     const r = http.request(
       { hostname: "127.0.0.1", port: Number(new URL(base).port),
