@@ -56,7 +56,7 @@ import {
 } from "../routes/mapObservations.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIGRATION_2220 = readFileSync(join(HERE, "../migrations/2220_map_contribution_claim_types.sql"), "utf8");
+const MIGRATION_2253 = readFileSync(join(HERE, "../migrations/2253_map_contribution_claim_types.sql"), "utf8");
 const MIGRATION_2128 = readFileSync(join(HERE, "../migrations/2128_intel_contracts_seed.sql"), "utf8");
 /**
  * The CLIENT's vocabulary, read as TEXT. The server cannot import the React
@@ -158,12 +158,12 @@ describe("migration 2220 mirrors the module, and owns only its own rows", () => 
       const row = new RegExp(
         `\\('${c.claimType.replace(".", "\\.")}',\\s*${c.ttlSeconds},\\s*${c.hardExpirySeconds},`,
       );
-      assert.match(MIGRATION_2220, row, `2220 does not seed ${c.claimType} at ${c.ttlSeconds}/${c.hardExpirySeconds}`);
+      assert.match(MIGRATION_2253, row, `2220 does not seed ${c.claimType} at ${c.ttlSeconds}/${c.hardExpirySeconds}`);
     }
   });
 
   it("seeds nothing else — every quoted claim type in the INSERT is declared", () => {
-    const insert = MIGRATION_2220.slice(MIGRATION_2220.indexOf("INSERT INTO"));
+    const insert = MIGRATION_2253.slice(MIGRATION_2253.indexOf("INSERT INTO"));
     const body = insert.slice(0, insert.indexOf("ON CONFLICT"));
     const quoted = [...body.matchAll(/\('([a-z_.]+)',/g)].map((m) => m[1]);
     assert.ok(quoted.length > 0, "no rows found — the assertion would be vacuous");
@@ -176,11 +176,11 @@ describe("migration 2220 mirrors the module, and owns only its own rows", () => 
     // Three seed sites, deliberately disjoint. A merge here would make it
     // impossible to say which migration owed which row.
     for (const c of PHASE1_CLAIM_TYPES) {
-      assert.equal(MIGRATION_2220.includes(`('${c.claimType}',`), false,
+      assert.equal(MIGRATION_2253.includes(`('${c.claimType}',`), false,
         `2220 re-seeds 2128's ${c.claimType}`);
     }
     for (const flat of LEGACY_CLAIM_TYPES) {
-      assert.equal(MIGRATION_2220.includes(`('${flat}',`), false, `2220 re-seeds 2122's flat '${flat}'`);
+      assert.equal(MIGRATION_2253.includes(`('${flat}',`), false, `2220 re-seeds 2122's flat '${flat}'`);
     }
     for (const c of MAP_CONTRIBUTION_CLAIM_TYPES) {
       assert.equal(MIGRATION_2128.includes(`'${c.claimType}'`), false,
@@ -189,20 +189,20 @@ describe("migration 2220 mirrors the module, and owns only its own rows", () => 
   });
 
   it("cannot clobber an owner-tuned TTL on re-apply", () => {
-    const insert = MIGRATION_2220.slice(MIGRATION_2220.indexOf("INSERT INTO"));
+    const insert = MIGRATION_2253.slice(MIGRATION_2253.indexOf("INSERT INTO"));
     assert.match(insert, /ON CONFLICT[\s\S]*DO NOTHING/);
     assert.doesNotMatch(insert, /DO UPDATE/, "DO UPDATE reintroduces the 2122 clobber defect");
   });
 
   it("is additive — it drops no table and deletes no rows", () => {
-    const body = MIGRATION_2220.split("-- REVERSAL")[0];
+    const body = MIGRATION_2253.split("-- REVERSAL")[0];
     assert.doesNotMatch(body, /\bDROP TABLE\b/i);
     assert.doesNotMatch(body, /\bDELETE FROM\b/i);
     assert.doesNotMatch(body, /\bTRUNCATE\b/i);
   });
 
   it("seeds no feature-flag row (a flag with no reader is dead config)", () => {
-    assert.doesNotMatch(MIGRATION_2220, /INSERT INTO public\.feature_flags/);
+    assert.doesNotMatch(MIGRATION_2253, /INSERT INTO public\.feature_flags/);
   });
 });
 

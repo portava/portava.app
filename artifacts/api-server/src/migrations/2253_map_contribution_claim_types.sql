@@ -1,4 +1,17 @@
--- 2220_map_contribution_claim_types.sql
+-- 2253_map_contribution_claim_types.sql
+--
+-- RENUMBERED from 2220. main landed 2220_canonical_locations_search_key.sql
+-- while this branch was open — the fourth prefix collision on this branch.
+-- checkMigrationPrefixes says to renumber whichever file is UNAPPLIED, because
+-- with no schema_migrations table the filename is the only record that a
+-- migration ran. Verified against both live databases before choosing: prod has
+-- NEITHER file's objects, and CI has this one's but not main's. So neither has a
+-- production record to preserve, and the tiebreak is disruption — main's file is
+-- already merged and may be referenced elsewhere, so this one moved.
+--
+-- CI already holds these four rows under the old number. That is harmless: the
+-- INSERT is ON CONFLICT DO NOTHING, so a replay under the new name is a no-op
+-- rather than a conflict.
 -- Freshness policies for the four §22 map-contribution claim types.
 --
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION
