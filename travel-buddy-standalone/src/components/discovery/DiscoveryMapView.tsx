@@ -21,7 +21,13 @@ const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'
 const { Map, Camera, Marker } = _ml as typeof import('@maplibre/maplibre-react-native');
 import { Layers, MapPin, Navigation, Star, Users } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { MAP_STYLE_URL, FALLBACK_MAP_STYLE_URL } from '../../constants/mapStyle.ts';
+import {
+  MAP_STYLE_URL,
+  FALLBACK_MAP_STYLE_URL,
+  DARK_MAP_STYLE_URL,
+  PORTAVA_DARK_MAP_STYLE,
+} from '../../constants/mapStyle.ts';
+import type { StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { EntityMapLayers } from '../map/EntityMarkers.tsx';
 import { ActivityZoneLayer } from '../map/ActivityZone.tsx';
 import { CrowdFlowLayer } from '../map/CrowdFlowLine.tsx';
@@ -216,7 +222,16 @@ export function DiscoveryMapView({
   // fallback exactly as MapTab, RouteMinimapView, RouteFullMapModal and
   // itinerary/MapView already do. This component had no failure handler at all,
   // so a style-load failure had nothing to recover to.
-  const [mapStyle, setMapStyle] = useState<string>(MAP_STYLE_URL);
+  // §4 dark-mode-first. The primary is our own style OBJECT, not a third
+  // party's URL, because §4's real requirement is a relationship — the base must
+  // recede BEHIND the Portava overlays — and that can only be tuned against the
+  // chrome palette if we own the paint.
+  //
+  // The failure ladder stays DARK for as long as possible: dropping straight to
+  // demotiles would put a light grey basemap under dark chrome, which reads as a
+  // broken screen rather than a degraded one. Each step is taken at most once,
+  // so a failing style cannot re-trigger itself forever.
+  const [mapStyle, setMapStyle] = useState<string | StyleSpecification>(PORTAVA_DARK_MAP_STYLE);
   const [filter, setFilterRaw] = useState<MapFilter>(() => getCachedFilter() ?? 'all');
   const [legendOpen, setLegendOpen] = useState(false);
   const [resetToast, setResetToast] = useState(false);
@@ -362,7 +377,9 @@ export function DiscoveryMapView({
         style={StyleSheet.absoluteFill}
         mapStyle={mapStyle}
         onDidFailLoadingMap={() => {
-          if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL);
+          // dark object -> verified keyless dark URL -> demotiles (last resort).
+          if (mapStyle === PORTAVA_DARK_MAP_STYLE) setMapStyle(DARK_MAP_STYLE_URL);
+          else if (mapStyle !== FALLBACK_MAP_STYLE_URL) setMapStyle(FALLBACK_MAP_STYLE_URL);
         }}
         logo={false}
         attribution={false}

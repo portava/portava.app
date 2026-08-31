@@ -46,6 +46,9 @@ import type {
   MapObjectKind,
   TrendState,
 } from '../../../types/mapObjects.ts';
+import { MAP_MODES, type MapMode } from '../vocabulary.ts';
+import { CAMERA_STATES as MAP_CAMERA_STATES, type CameraState as MapCameraState } from '../state/mapMachine.ts';
+import { CORE_LAYER_IDS as MAP_LAYERS, type CoreLayerId as MapLayer } from '../layers/layerModel.ts';
 import { centroidOf } from '../../../types/mapObjects.ts';
 
 // ── Geometry primitives ────────────────────────────────────────────────────────
@@ -101,45 +104,14 @@ export function padBounds(b: MapBounds, fraction = 0.15): MapBounds {
 // ── §30 state machine vocabulary ───────────────────────────────────────────────
 
 /** Spec §30 primary modes. */
-export const MAP_MODES = [
-  'LIVE',
-  'PLACE_SELECTED',
-  'COMPASS',
-  'TRIP',
-  'CROWD_FLOW',
-  'LOCATE_FRIENDS',
-  'TIME_MACHINE',
-] as const;
-export type MapMode = (typeof MAP_MODES)[number];
-
-/** Spec §30 explicit camera states. */
-export const MAP_CAMERA_STATES = [
-  'FOLLOW_USER',
-  'FREE_EXPLORE',
-  'FOCUS_PLACE',
-  'FOCUS_AREA',
-  'FOCUS_ROUTE',
-  'FOCUS_TRIP',
-  'FOCUS_GROUP',
-  'COMPASS_RECOMMENDATIONS',
-] as const;
-export type MapCameraState = (typeof MAP_CAMERA_STATES)[number];
-
-/** Spec §16 core layers, in the spec's own order. */
-export const MAP_LAYERS = [
-  'live_activity',
-  'people',
-  'events',
-  'trip',
-  'buddies',
-  'saved',
-  'crowd_flow',
-  'hidden_gems',
-  'safety',
-  'transport',
-  'memories',
-] as const;
-export type MapLayer = (typeof MAP_LAYERS)[number];
+// §26's whole point is that Pulse and Map cannot disagree, so this module must
+// not hold its own copy of the map's vocabulary — a private enum here is
+// precisely the "separately implemented truth logic" the section forbids.
+// Modes come from the leaf vocabulary, camera states from the state machine
+// that owns them, and layers from the layer model. All three already matched
+// character-for-character; this makes that structural instead of coincidental.
+export { MAP_MODES, MAP_CAMERA_STATES, MAP_LAYERS };
+export type { MapMode, MapCameraState, MapLayer };
 
 /**
  * Spec §16 suggested defaults: "Live Activity on, Events on, Relevant Places
