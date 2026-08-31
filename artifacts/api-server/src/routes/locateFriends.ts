@@ -394,9 +394,31 @@ export async function publishPosition(
     sessionCeiling,
   );
 
+  // The payload is spelled out rather than spread. check:write-path-columns
+  // resolves the written column set STATICALLY so it can prove every column
+  // exists live; a `{ ...row }` spread makes the site only "partially
+  // resolvable" — a blind spot, not an error, which is exactly what that guard
+  // exists to eliminate. positionRowFor still decides every VALUE, including
+  // the stored precision and the coordinate-or-null rule; this only names the
+  // columns at the call site.
   const { error: writeError } = await sc
     .from("locate_friends_positions")
-    .upsert({ ...row, written_at: new Date(nowMs).toISOString() }, { onConflict: "session_id,user_id" });
+    .upsert(
+      {
+        session_id: row.session_id,
+        user_id: row.user_id,
+        rung: row.rung,
+        precision: row.precision,
+        lat: row.lat,
+        lng: row.lng,
+        proximity_bucket: row.proximity_bucket,
+        checkpoint_label: row.checkpoint_label,
+        observed_at: row.observed_at,
+        expires_at: row.expires_at,
+        written_at: new Date(nowMs).toISOString(),
+      },
+      { onConflict: "session_id,user_id" },
+    );
   if (writeError) return { ok: false, code: "db_error", detail: "Could not store position." };
 
   const audit = await writeAudit(sc, {
