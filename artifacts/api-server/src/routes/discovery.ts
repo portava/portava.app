@@ -59,6 +59,10 @@ import {
   fetchEventPostsForDiscovery,
   type DiscoveryEventPost,
 } from "../lib/eventPostsDiscovery";
+// New-to-Me (§7) + the Discovery memory-consumer (§13): map the served id space
+// to the discovery_places.id space place memory keys on, then annotate the served
+// page. Additive + fail-safe + flag-gated (memory_projection) — see placeIdBridge.
+import { annotateNewToMe, recordDiscoveryAlreadyKnown } from "../lib/placeIdBridge.js";
 
 const router = Router();
 
@@ -143,6 +147,13 @@ export interface DiscoveryPlace {
   disclaimerRequired?: boolean | null;
   /** Disclaimer copy to display when disclaimerRequired is true. */
   disclaimerText?: string | null;
+  /**
+   * Personalized novelty (§7 New-to-Me). Present ONLY when the `memory_projection`
+   * flag is on and the annotation succeeded; absent otherwise (fail-safe). true =
+   * the viewer has no active memory of this place and has not marked it
+   * already_known / not_interested. Additive: it never affects serve order.
+   */
+  newToMe?: boolean;
 }
 
 /** Public shape returned in all API responses. */
@@ -1592,8 +1603,10 @@ router.get("/discovery", async (req, res) => {
     const slice    = servedFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
     const totalMs  = Date.now() - t0;
     req.log.info({ cacheLevel, destination, category, totalMs, pdeServed: pdeScoredById !== null }, "discovery: cache hit");
+    // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
+    const annotatedSlice = await annotateNewToMe(getServiceClient(), callerUserId, slice);
     res.json({
-      places: slice, total: servedFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+      places: annotatedSlice, total: servedFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: { cacheLevel, timings: { totalMs } },
     });
@@ -1810,7 +1823,8 @@ router.get("/discovery", async (req, res) => {
               const cFiltered = applyFilters(cCacheHit.places);
               const cSlice = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
-              res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+              const cAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
+              res.json({ places: cAnnotated, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
                 sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
               // Stage 0 — serve point 4. Replays a stored Compass order; no
               // ranker ran in this request, so rankedInRequest is false.
@@ -1868,7 +1882,8 @@ router.get("/discovery", async (req, res) => {
             const merged = compassRanked;
             const cFiltered  = applyFilters(merged);
             const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
-            res.json({ places: cSlice, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+            const cFreshAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
+            res.json({ places: cFreshAnnotated, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
               sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
             // Stage 0 — serve point 5. The Compass ranker DID run here, but
             // this path has never written a rank_events row: it returns before
@@ -1945,7 +1960,8 @@ router.get("/discovery", async (req, res) => {
         osmCount: osmPlaces.length, dbCount: dbPlaces.length },
       "discovery: cold fetch",
     );
-    res.json({ places: slice, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+    const coldAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, slice);
+    res.json({ places: coldAnnotated, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: { cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs } },
     });
@@ -1955,6 +1971,48 @@ router.get("/discovery", async (req, res) => {
       sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
       meta: { cacheLevel: "error", timings: { totalMs: Date.now() - t0 } },
     });
+  }
+});
+
+// ── POST /api/discovery/already-known ──────────────────────────────────────────
+// The EMIT side of New-to-Me: the discovery surface tells memory "I already know
+// this place" about a served card. Until now the suppression signal existed
+// (memory_retrieve's discovery filter consumes already_known — 2185/2196) but NO
+// surface emitted it, because the served id (db/<uuid>, node/<id>) is not the
+// discovery_places.id place memory keys on. This bridges the served id to that
+// canonical id and reuses the existing memory_feedback write path (the same
+// mechanism as POST /compass/me/memory/feedback) — no new table.
+//
+// Ownership is enforced by writing user_id from auth, never client input.
+// Idempotent, and fail-safe: an id that maps to no discovery_places row is a 404
+// rather than a silently-misfiled feedback row.
+const discoveryAlreadyKnownSchema = z.object({
+  placeId: z.string().min(1).max(200),
+});
+router.post("/discovery/already-known", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+  const parsed = discoveryAlreadyKnownSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+    return;
+  }
+  try {
+    const result = await recordDiscoveryAlreadyKnown(sc, auth.user.id, parsed.data.placeId);
+    if (result === "not_found") {
+      sendError(res, "not_found", "Place not found for feedback");
+      return;
+    }
+    if (result === "error") {
+      sendError(res, "db_error", "Could not record feedback", { exposeDetail: true });
+      return;
+    }
+    res.status(201).json({ recorded: true });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "discovery/already-known failed");
+    sendError(res, "db_error", "Could not record feedback", { exposeDetail: true });
   }
 });
 
@@ -2189,8 +2247,10 @@ router.get("/discovery/feed", async (req, res) => {
     const nextOff   = offset + limit;
     const nextCursor = nextOff < total ? encodeOffset(nextOff) : null;
 
+    // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
+    const feedAnnotated = await annotateNewToMe(getServiceClient(), viewerId, slice);
     res.json({
-      places: slice,
+      places: feedAnnotated,
       events:   [],
       posts:    eventPosts,
       memories: [],
