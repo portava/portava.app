@@ -19,6 +19,19 @@
 import React, { createContext, useContext, useReducer, useCallback, useMemo } from 'react';
 import { TOGGLEABLE_LAYERS } from '../types/mapTypes.ts';
 import type { ToggleableEntityType, MapActionCapability } from '../types/mapTypes.ts';
+import type { MapObjectKind } from '../types/mapObjects.ts';
+import {
+  createInitialMapMachineState,
+  mapMachineReducer,
+  withCapabilities,
+  DEFAULT_MAP_CAPABILITIES,
+  type MapCapabilities,
+  type MapMachineEvent,
+  type MapMachineState,
+} from '../features/map/state/mapMachine.ts';
+import { activeIntent, type TemporaryIntent } from '../features/map/intent/intentModel.ts';
+import { NOW_OFFSET, type TimeOffset } from '../features/map/time/timeMachine.ts';
+import { DEFAULT_HOME_FILTER, type HomeFilterId } from '../features/map/home/homeFilters.ts';
 
 // ── State shape ───────────────────────────────────────────────────────────────
 
@@ -46,6 +59,28 @@ export interface MapStoreState {
    * round-trip completes.
    */
   entityFollowState: Record<string, boolean>;
+  /**
+   * The §30 state machine — mode, overlays, camera, selection, navigation.
+   * Nested as its OWN slice so every identity bailout above stays untouched and
+   * the machine's bailouts compose: when mapMachineReducer returns the same
+   * reference, this reducer returns `state` unchanged too.
+   */
+  machine: MapMachineState;
+  /**
+   * §13 temporary intent. TEMPORARY is the whole point: it carries a TTL and is
+   * never merged into stored user preferences. Read it through `activeIntent`
+   * (the `intent` field below is already gated) so an expired intent can never
+   * reach ranking.
+   */
+  intent: TemporaryIntent | null;
+  /** §15 Time Machine offset. NOW unless the user scrubbed. */
+  timeOffset: TimeOffset;
+  /**
+   * §3's filter chip. Deliberately NOT persisted: a chip is "what am I looking
+   * for right now", while §16's layers are the durable preference. Persisting
+   * it would quietly turn a transient lens into a setting.
+   */
+  homeFilter: HomeFilterId;
 }
 
 const initialState: MapStoreState = {
@@ -57,6 +92,10 @@ const initialState: MapStoreState = {
   carouselIndex: 0,
   entityCapabilityPatches: {},
   entityFollowState: {},
+  machine: createInitialMapMachineState(),
+  intent: null,
+  timeOffset: NOW_OFFSET,
+  homeFilter: DEFAULT_HOME_FILTER,
 };
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -69,7 +108,14 @@ type Action =
   | { type: 'SET_ENABLED_LAYERS'; payload: ToggleableEntityType[] }
   | { type: 'SET_CAROUSEL_INDEX'; payload: number }
   | { type: 'UPDATE_ENTITY_CAPABILITIES'; payload: { entityId: string; caps: MapActionCapability[] } }
-  | { type: 'SET_ENTITY_FOLLOW_STATE'; payload: { entityId: string; isFollowing: boolean } };
+  | { type: 'SET_ENTITY_FOLLOW_STATE'; payload: { entityId: string; isFollowing: boolean } }
+  // ONE action forwards to the machine. Adding a second entry point is how a
+  // state machine stops being one.
+  | { type: 'MAP_EVENT'; payload: MapMachineEvent }
+  | { type: 'SET_MAP_CAPABILITIES'; payload: MapCapabilities }
+  | { type: 'SET_INTENT'; payload: TemporaryIntent | null }
+  | { type: 'SET_TIME_OFFSET'; payload: TimeOffset }
+  | { type: 'SET_HOME_FILTER'; payload: HomeFilterId };
 
 function reducer(state: MapStoreState, action: Action): MapStoreState {
   switch (action.type) {
@@ -130,6 +176,26 @@ function reducer(state: MapStoreState, action: Action): MapStoreState {
         entityFollowState: { ...state.entityFollowState, [entityId]: isFollowing },
       };
     }
+    case 'MAP_EVENT': {
+      const next = mapMachineReducer(state.machine, action.payload);
+      // The machine already bails out on no-ops; propagate that upward so a
+      // pan that changes nothing does not re-render the whole map.
+      return next === state.machine ? state : { ...state, machine: next };
+    }
+    case 'SET_MAP_CAPABILITIES': {
+      const next = withCapabilities(state.machine, action.payload);
+      return next === state.machine ? state : { ...state, machine: next };
+    }
+    case 'SET_INTENT':
+      return state.intent === action.payload ? state : { ...state, intent: action.payload };
+    case 'SET_TIME_OFFSET':
+      return state.timeOffset === action.payload
+        ? state
+        : { ...state, timeOffset: action.payload };
+    case 'SET_HOME_FILTER':
+      return state.homeFilter === action.payload
+        ? state
+        : { ...state, homeFilter: action.payload };
     default:
       return state;
   }
@@ -156,6 +222,26 @@ export interface MapStoreContextValue extends MapStoreState {
    * Called by MapEntityActionRow after a successful follow/unfollow toggle.
    */
   setEntityFollowState: (entityId: string, isFollowing: boolean) => void;
+
+  // ── §30 state machine ──────────────────────────────────────────────────────
+  /** Dispatch a machine event. The ONLY way mode/camera/selection change. */
+  dispatchMapEvent: (event: MapMachineEvent) => void;
+  /** Feature flags gating the surfaces that are not built yet. Fails closed. */
+  setMapCapabilities: (capabilities: MapCapabilities) => void;
+
+  // ── §13 intent ─────────────────────────────────────────────────────────────
+  /**
+   * Set the temporary intent. Persisting it is the CALLER's job, and it must
+   * use its own storage key — never the user's preference record (§13).
+   */
+  setIntent: (intent: TemporaryIntent | null) => void;
+  clearIntent: () => void;
+
+  // ── §15 time machine ───────────────────────────────────────────────────────
+  setTimeOffset: (offset: TimeOffset) => void;
+
+  // ── §3 filter chips ────────────────────────────────────────────────────────
+  setHomeFilter: (filter: HomeFilterId) => void;
 }
 
 const MapStoreContext = createContext<MapStoreContextValue | null>(null);
@@ -165,18 +251,40 @@ const MapStoreContext = createContext<MapStoreContextValue | null>(null);
 export function MapStoreProvider({
   children,
   initialEnabledLayers,
+  capabilities,
 }: {
   children: React.ReactNode;
   /** Override the default enabled layers (e.g. circle mode pre-selects friends). */
   initialEnabledLayers?: ToggleableEntityType[];
+  /**
+   * Which §30 surfaces are built/flagged on. Omitted means
+   * DEFAULT_MAP_CAPABILITIES, which fails CLOSED — an unbuilt surface cannot be
+   * routed into.
+   */
+  capabilities?: MapCapabilities;
 }) {
   const [state, dispatch] = useReducer(reducer, {
     ...initialState,
     enabledLayers: initialEnabledLayers ?? [...TOGGLEABLE_LAYERS],
+    machine: createInitialMapMachineState(capabilities ?? DEFAULT_MAP_CAPABILITIES),
   });
 
+  /**
+   * Selection has ONE writer: the machine. `selectedEntityId` below is derived
+   * from `machine.selection`, so this adapter dispatches a machine event rather
+   * than writing a second copy of the same fact — two writers for one fact is
+   * how a selection and a camera end up disagreeing.
+   *
+   * `kind` defaults to 'place', which the machine maps to FOCUS_PLACE — the
+   * behaviour every existing caller already expected.
+   */
   const setSelectedEntityId = useCallback(
-    (id: string | null) => dispatch({ type: 'SET_SELECTED_ENTITY_ID', payload: id }),
+    (id: string | null, kind: MapObjectKind = 'place') =>
+      dispatch(
+        id === null
+          ? { type: 'MAP_EVENT', payload: { type: 'CLEAR_SELECTION' } }
+          : { type: 'MAP_EVENT', payload: { type: 'SELECT_OBJECT', objectId: id, objectKind: kind } },
+      ),
     [],
   );
   const setPreviewDetent = useCallback(
@@ -211,10 +319,36 @@ export function MapStoreProvider({
       dispatch({ type: 'SET_ENTITY_FOLLOW_STATE', payload: { entityId, isFollowing } }),
     [],
   );
+  const dispatchMapEvent = useCallback(
+    (event: MapMachineEvent) => dispatch({ type: 'MAP_EVENT', payload: event }),
+    [],
+  );
+  const setMapCapabilities = useCallback(
+    (capabilities: MapCapabilities) =>
+      dispatch({ type: 'SET_MAP_CAPABILITIES', payload: capabilities }),
+    [],
+  );
+  const setIntent = useCallback(
+    (intent: TemporaryIntent | null) => dispatch({ type: 'SET_INTENT', payload: intent }),
+    [],
+  );
+  const clearIntent = useCallback(() => dispatch({ type: 'SET_INTENT', payload: null }), []);
+  const setTimeOffset = useCallback(
+    (offset: TimeOffset) => dispatch({ type: 'SET_TIME_OFFSET', payload: offset }),
+    [],
+  );
+  const setHomeFilter = useCallback(
+    (filter: HomeFilterId) => dispatch({ type: 'SET_HOME_FILTER', payload: filter }),
+    [],
+  );
 
   const value = useMemo(
     (): MapStoreContextValue => ({
       ...state,
+      // Derived, not stored: the machine owns selection.
+      selectedEntityId: state.machine.selection?.objectId ?? null,
+      // Gated on read, so an expired intent is indistinguishable from none.
+      intent: activeIntent(state.intent),
       setSelectedEntityId,
       setPreviewDetent,
       setCameraCenter,
@@ -223,6 +357,12 @@ export function MapStoreProvider({
       setCarouselIndex,
       updateEntityCapabilities,
       setEntityFollowState,
+      dispatchMapEvent,
+      setMapCapabilities,
+      setIntent,
+      clearIntent,
+      setTimeOffset,
+      setHomeFilter,
     }),
     [
       state,
@@ -234,6 +374,12 @@ export function MapStoreProvider({
       setCarouselIndex,
       updateEntityCapabilities,
       setEntityFollowState,
+      dispatchMapEvent,
+      setMapCapabilities,
+      setIntent,
+      clearIntent,
+      setTimeOffset,
+      setHomeFilter,
     ],
   );
 

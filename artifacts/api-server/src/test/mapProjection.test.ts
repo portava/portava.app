@@ -1,0 +1,485 @@
+/**
+ * mapProjection — the Map Intelligence Gateway's shaping layer.
+ *
+ * These tests exist mainly to hold three invariants that a projection layer is
+ * uniquely positioned to break, and which no downstream test would catch:
+ *
+ *   1. It never SHARPENS a coordinate or a privacy rung (spec §19, §23).
+ *   2. It never INVENTS freshness or confidence (spec §37).
+ *   3. It never SILENTLY truncates (a capped live enrichment must be reported,
+ *      or "we only looked at 25 of them" reads as "there is nothing here").
+ */
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  applyLiveClaims,
+  bboxToCenterRadius,
+  crowdValueToActivity,
+  decodeCursor,
+  enrichWithLiveClaims,
+  filterKinds,
+  gemPrivacyClass,
+  liveSubjectIdFor,
+  paginate,
+  parseBbox,
+  parseKinds,
+  projectEvent,
+  projectGem,
+  projectTraveler,
+  rankObjects,
+  servableOnly,
+  travelerPrivacyClass,
+  type LiveClaimLike,
+} from "../lib/mapProjection.js";
+import {
+  KIND_DEFAULT_PRIORITY,
+  RENDERING_PRIORITY,
+  isServable,
+  type MapObject,
+} from "../lib/mapObjects.js";
+
+// ── fixtures ──────────────────────────────────────────────────────────────────
+
+const AREA_TRAVELER = {
+  id: "u1",
+  handle: "nomad",
+  displayName: "Ada",
+  avatarUrl: "https://cdn.example/a.jpg",
+  verified: true,
+  openToMeet: true,
+  city: "Da Nang",
+  country: "VN",
+  freshness: "live",
+  precision: "area",
+  lat: 16.05,
+  lng: 108.2,
+};
+
+const CITY_TRAVELER = { ...AREA_TRAVELER, id: "u2", precision: "city" };
+
+const GEM = {
+  id: "g1",
+  name: "Rooftop stairwell",
+  category: "viewpoint",
+  city: "Da Nang",
+  status: "active",
+  thumbnail_url: null,
+  verification_level: "community",
+  coordsPrecision: "exact",
+  lat: 16.06,
+  lng: 108.21,
+};
+
+const EVENT = {
+  id: "e1",
+  title: "Night market",
+  location_name: "Han River",
+  location_lat: 16.07,
+  location_lng: 108.22,
+  starts_at: "2026-08-31T12:00:00.000Z",
+  cover_url: null,
+  visibility: "public",
+};
+
+function claim(over: Partial<LiveClaimLike> = {}): LiveClaimLike {
+  return {
+    id: "snap-1",
+    claimType: "crowd",
+    value: "busy",
+    confidence: 0.8,
+    band: "live",
+    sourceCountBucket: "several",
+    observedAt: "2026-08-31T11:58:00.000Z",
+    validUntil: "2026-08-31T12:13:00.000Z",
+    state: "live",
+    ...over,
+  };
+}
+
+const NOW = Date.parse("2026-08-31T12:00:00.000Z");
+
+// ── privacy: the rung is recorded, never widened ──────────────────────────────
+
+describe("privacy class mapping", () => {
+  test("traveler precision maps onto the §23 ladder, unknown fails closed", () => {
+    assert.equal(travelerPrivacyClass("area"), "approximate");
+    assert.equal(travelerPrivacyClass("city"), "aggregate_only");
+    // The fail-closed direction is the whole point: an unrecognised precision
+    // must never be treated as more precise than we can justify.
+    assert.equal(travelerPrivacyClass("exact"), "aggregate_only");
+    assert.equal(travelerPrivacyClass(null), "aggregate_only");
+    assert.equal(travelerPrivacyClass(undefined), "aggregate_only");
+  });
+
+  test("gem coordsPrecision only yields place_level for an explicit 'exact'", () => {
+    assert.equal(gemPrivacyClass("exact"), "place_level");
+    assert.equal(gemPrivacyClass("approximate"), "approximate");
+    assert.equal(gemPrivacyClass(null), "approximate");
+    assert.equal(gemPrivacyClass("something-new"), "approximate");
+  });
+});
+
+describe("identity suppression (spec §23, §37)", () => {
+  test("a city-precision traveler carries NO identifying field", () => {
+    const obj = projectTraveler(CITY_TRAVELER)!;
+    assert.equal(obj.privacyClass, "aggregate_only");
+    assert.equal(obj.title, "Traveler nearby");
+
+    const serialized = JSON.stringify(obj);
+    for (const leaked of ["Ada", "nomad", "cdn.example"]) {
+      assert.ok(
+        !serialized.includes(leaked),
+        `aggregate-rung traveler must not carry "${leaked}" — the client cannot leak what it never received`,
+      );
+    }
+    assert.deepEqual(Object.keys(obj.payload as object).sort(), ["openToMeet", "precision"]);
+  });
+
+  test("an area-precision traveler may carry identity", () => {
+    const obj = projectTraveler(AREA_TRAVELER)!;
+    assert.equal(obj.privacyClass, "approximate");
+    assert.equal(obj.title, "Ada");
+    assert.equal((obj.payload as any).avatarUrl, "https://cdn.example/a.jpg");
+  });
+
+  test("aggregate travelers get no interaction beyond 'view'", () => {
+    assert.deepEqual(projectTraveler(CITY_TRAVELER)!.interaction!.actions, ["view"]);
+    assert.ok(projectTraveler(AREA_TRAVELER)!.interaction!.actions.includes("message"));
+  });
+
+  test("a traveler is a social_zone, never an identified person kind", () => {
+    assert.equal(projectTraveler(AREA_TRAVELER)!.kind, "social_zone");
+  });
+});
+
+// ── coordinates are passed through, never sharpened ───────────────────────────
+
+describe("coordinate contract", () => {
+  test("projection echoes the source coordinates exactly", () => {
+    const obj = projectTraveler(AREA_TRAVELER)!;
+    assert.deepEqual(obj.geometry, { type: "Point", coordinates: [108.2, 16.05] });
+  });
+
+  test("an event whose coordinates the source redacted produces no object", () => {
+    // loadNearbyEvents NULLs coords when show_exact_location is false and the
+    // viewer is not the host. No coordinates must mean no pin — never a
+    // fallback to a city centroid, which would re-expose a hidden venue.
+    assert.equal(projectEvent({ ...EVENT, location_lat: null, location_lng: null }, NOW), null);
+  });
+
+  test("a coordinate-less traveler or gem produces no object", () => {
+    assert.equal(projectTraveler({ ...AREA_TRAVELER, lat: null }), null);
+    assert.equal(projectGem({ ...GEM, lng: null }), null);
+  });
+
+  test("a non-active gem is dropped", () => {
+    assert.equal(projectGem({ ...GEM, status: "pending" }), null);
+  });
+});
+
+// ── confidence and freshness are never invented ───────────────────────────────
+
+describe("no invented intelligence (spec §37)", () => {
+  test("a gem carries no confidence band despite having a verification level", () => {
+    const obj = projectGem(GEM)!;
+    assert.equal(obj.confidence, undefined);
+    assert.equal(obj.freshness, undefined);
+    // The verification level still travels — as a payload fact, not as evidence
+    // about current conditions.
+    assert.equal((obj.payload as any).verificationLevel, "community");
+  });
+
+  test("an event carries no confidence or freshness from its schedule", () => {
+    const obj = projectEvent(EVENT, NOW)!;
+    assert.equal(obj.confidence, undefined);
+    assert.equal(obj.freshness, undefined);
+  });
+
+  test("an unrecognised traveler freshness becomes 'unknown', not a guess", () => {
+    assert.equal(projectTraveler({ ...AREA_TRAVELER, freshness: "stale-ish" })!.freshness, "unknown");
+    assert.equal(projectTraveler({ ...AREA_TRAVELER, freshness: undefined })!.freshness, "unknown");
+  });
+
+  test("an unmapped crowd value does not become 'moderate'", () => {
+    assert.equal(crowdValueToActivity(claim({ value: "rammed" })), undefined);
+    assert.equal(crowdValueToActivity(claim({ claimType: "vibe", value: "busy" })), undefined);
+    assert.equal(crowdValueToActivity(claim({ value: "busy" })), "busy");
+    assert.equal(crowdValueToActivity(claim({ value: { level: "peak" } })), "peak");
+  });
+});
+
+// ── live claim merge ──────────────────────────────────────────────────────────
+
+describe("applyLiveClaims", () => {
+  test("no claims leaves the object untouched", () => {
+    const obj = projectGem(GEM)!;
+    assert.equal(applyLiveClaims(obj, [], NOW), obj);
+  });
+
+  test("a live claim attaches freshness, band, activity and provenance refs", () => {
+    const merged = applyLiveClaims(projectGem(GEM)!, [claim()], NOW);
+    assert.equal(merged.freshness, "live");
+    assert.equal(merged.confidence, "live");
+    assert.equal(merged.activity, "busy");
+    assert.deepEqual(merged.sourceRefs, ["snap-1"]);
+    assert.equal(merged.provenance!.confidence, "live");
+    assert.equal(merged.provenance!.lines.length, 1);
+  });
+
+  test("provenance never carries a raw contributor count", () => {
+    // The exact distinct-actor count IS the privacy parameter — only the coarse
+    // bucket may cross the wire.
+    const merged = applyLiveClaims(
+      projectGem(GEM)!,
+      [claim({ sourceCountBucket: "many" })],
+      NOW,
+    );
+    const text = merged.provenance!.lines[0].text;
+    assert.match(text, /Many recent traveler reports/);
+    assert.ok(!/\d/.test(text), `provenance line must not contain a count: ${text}`);
+  });
+
+  test("an EXPIRED claim yields 'historical' and does not win the live-zone tier", () => {
+    const expired = claim({
+      observedAt: "2026-08-31T10:00:00.000Z",
+      validUntil: "2026-08-31T10:15:00.000Z",
+    });
+    const merged = applyLiveClaims(projectGem(GEM)!, [expired], NOW);
+    assert.equal(merged.freshness, "historical");
+    assert.equal(
+      merged.renderingPriority,
+      KIND_DEFAULT_PRIORITY.hidden_gem,
+      "a stale claim must not promote an object to the high-confidence live tier",
+    );
+  });
+
+  test("a fresh, live-band claim promotes to the high-confidence live-zone tier", () => {
+    const merged = applyLiveClaims(projectGem(GEM)!, [claim()], NOW);
+    assert.equal(merged.renderingPriority, RENDERING_PRIORITY.high_confidence_live_zone);
+  });
+
+  test("a fresh but only likely_current claim does NOT promote", () => {
+    const merged = applyLiveClaims(projectGem(GEM)!, [claim({ band: "likely_current" })], NOW);
+    assert.equal(merged.renderingPriority, KIND_DEFAULT_PRIORITY.hidden_gem);
+  });
+
+  test("promotion never LOWERS an existing priority", () => {
+    const safety: MapObject = {
+      ...projectGem(GEM)!,
+      renderingPriority: RENDERING_PRIORITY.safety,
+    };
+    const merged = applyLiveClaims(safety, [claim()], NOW);
+    assert.equal(merged.renderingPriority, RENDERING_PRIORITY.safety);
+  });
+});
+
+// ── enrichment is bounded AND reported ────────────────────────────────────────
+
+describe("enrichWithLiveClaims", () => {
+  const gems = (n: number) =>
+    Array.from({ length: n }, (_, i) => projectGem({ ...GEM, id: `g${i}` })!);
+
+  test("only place-like objects are eligible", () => {
+    assert.equal(liveSubjectIdFor(projectGem(GEM)!), "g1");
+    assert.equal(liveSubjectIdFor(projectTraveler(AREA_TRAVELER)!), null);
+    assert.equal(liveSubjectIdFor(projectEvent(EVENT, NOW)!), null);
+  });
+
+  test("a cap is REPORTED, never silent", async () => {
+    const objects = [...gems(40), projectTraveler(AREA_TRAVELER)!];
+    const res = await enrichWithLiveClaims(objects, async () => [claim()], { max: 25, now: NOW });
+
+    assert.equal(res.considered, 40, "the traveler is not eligible and must not be counted");
+    assert.equal(res.enriched, 25);
+    assert.equal(
+      res.skipped,
+      15,
+      "a truncated enrichment must be visible, or 'we stopped looking' reads as 'nothing is here'",
+    );
+    assert.equal(res.objects.length, objects.length, "capping must not drop objects");
+  });
+
+  test("a throwing read fails closed to no claim, not a stale one", async () => {
+    const res = await enrichWithLiveClaims(
+      gems(3),
+      async () => {
+        throw new Error("db down");
+      },
+      { now: NOW },
+    );
+    assert.equal(res.enriched, 0);
+    for (const o of res.objects) assert.equal(o.confidence, undefined);
+  });
+
+  test("objects with no claims come back byte-identical", async () => {
+    const input = gems(3);
+    const res = await enrichWithLiveClaims(input, async () => [], { now: NOW });
+    assert.deepEqual(res.objects, input);
+  });
+
+  test("max of 0 enriches nothing and reports everything skipped", async () => {
+    const res = await enrichWithLiveClaims(gems(4), async () => [claim()], { max: 0, now: NOW });
+    assert.equal(res.enriched, 0);
+    assert.equal(res.skipped, 4);
+  });
+});
+
+// ── ranking: priority beats proximity ─────────────────────────────────────────
+
+describe("rankObjects (spec §5, §31)", () => {
+  const at = (id: string, priority: number, lat: number, lng: number): MapObject => ({
+    id,
+    kind: "place",
+    geometry: { type: "Point", coordinates: [lng, lat] },
+    title: id,
+    privacyClass: "place_level",
+    renderingPriority: priority,
+  });
+
+  test("a distant safety notice outranks a place at the viewport centre", () => {
+    const center = { lat: 16.05, lng: 108.2 };
+    const ranked = rankObjects(
+      [at("near-place", RENDERING_PRIORITY.relevant_place, 16.05, 108.2),
+       at("far-safety", RENDERING_PRIORITY.safety, 16.5, 108.9)],
+      center,
+    );
+    assert.equal(ranked[0].id, "far-safety");
+  });
+
+  test("within a tier, nearer wins", () => {
+    const center = { lat: 0, lng: 0 };
+    const ranked = rankObjects(
+      [at("far", RENDERING_PRIORITY.relevant_place, 1, 1),
+       at("near", RENDERING_PRIORITY.relevant_place, 0.01, 0.01)],
+      center,
+    );
+    assert.equal(ranked[0].id, "near");
+    assert.ok(ranked[0].distanceKm! < ranked[1].distanceKm!);
+  });
+
+  test("ordering is total and deterministic for identical priority and distance", () => {
+    const center = { lat: 0, lng: 0 };
+    const objs = [at("b", 40, 1, 1), at("a", 40, 1, 1), at("c", 40, 1, 1)];
+    assert.deepEqual(rankObjects(objs, center).map((o) => o.id), ["a", "b", "c"]);
+    assert.deepEqual(rankObjects(objs.slice().reverse(), center).map((o) => o.id), ["a", "b", "c"]);
+  });
+});
+
+// ── the serialization gate ────────────────────────────────────────────────────
+
+describe("servableOnly", () => {
+  test("drops nulls, the 'none' rung, empty titles and broken geometry", () => {
+    const ok = projectGem(GEM)!;
+    const objs = [
+      ok,
+      null,
+      undefined,
+      { ...ok, id: "x1", privacyClass: "none" as const },
+      { ...ok, id: "x2", title: "   " },
+      { ...ok, id: "x3", geometry: { type: "Point", coordinates: [NaN, NaN] } as any },
+    ];
+    const out = servableOnly(objs);
+    assert.deepEqual(out.map((o) => o.id), ["gem:g1"]);
+    assert.ok(out.every(isServable));
+  });
+});
+
+describe("filterKinds", () => {
+  test("an empty or absent kind list means all", () => {
+    const objs = [projectGem(GEM)!, projectEvent(EVENT, NOW)!];
+    assert.equal(filterKinds(objs, null).length, 2);
+    assert.equal(filterKinds(objs, []).length, 2);
+  });
+
+  test("filters to the requested kinds", () => {
+    const objs = [projectGem(GEM)!, projectEvent(EVENT, NOW)!, projectTraveler(AREA_TRAVELER)!];
+    assert.deepEqual(filterKinds(objs, ["event"]).map((o) => o.kind), ["event"]);
+  });
+});
+
+// ── viewport parsing ──────────────────────────────────────────────────────────
+
+describe("parseBbox", () => {
+  test("accepts a well-formed bbox", () => {
+    assert.deepEqual(parseBbox("108.1,16.0,108.3,16.1"), { west: 108.1, south: 16.0, east: 108.3, north: 16.1 });
+  });
+
+  test("rejects malformed, out-of-range, inverted and antimeridian-crossing input", () => {
+    for (const bad of [
+      undefined, null, 42, "", "1,2,3", "1,2,3,4,5", "a,b,c,d",
+      "0,0,0,0",              // zero area
+      "108.3,16.0,108.1,16.1", // inverted longitude (also the antimeridian shape)
+      "108.1,16.1,108.3,16.0", // inverted latitude
+      "-200,0,10,10",          // longitude out of range
+      "0,-100,10,10",          // latitude out of range
+      "0,0,NaN,10",
+    ]) {
+      assert.equal(parseBbox(bad as unknown), null, `expected null for ${JSON.stringify(bad)}`);
+    }
+  });
+});
+
+describe("bboxToCenterRadius", () => {
+  test("centres the box and clamps the radius into the sources' accepted range", () => {
+    const { lat, lng, radiusKm } = bboxToCenterRadius({ west: 108.1, south: 16.0, east: 108.3, north: 16.2 });
+    assert.ok(Math.abs(lat - 16.1) < 1e-9);
+    assert.ok(Math.abs(lng - 108.2) < 1e-9);
+    assert.ok(radiusKm >= 1 && radiusKm <= 200);
+  });
+
+  test("a tiny viewport still yields at least the 1 km floor", () => {
+    const { radiusKm } = bboxToCenterRadius({ west: 0, south: 0, east: 0.0001, north: 0.0001 });
+    assert.equal(radiusKm, 1);
+  });
+
+  test("a hemisphere-wide viewport is clamped to the 200 km ceiling", () => {
+    const { radiusKm } = bboxToCenterRadius({ west: -170, south: -80, east: 170, north: 80 });
+    assert.equal(radiusKm, 200);
+  });
+
+  test("the radius covers the corner, not just the edge", () => {
+    // Half-diagonal must exceed half-height, or corner objects fall outside.
+    const b = { west: 0, south: 0, east: 2, north: 2 };
+    const { radiusKm } = bboxToCenterRadius(b);
+    assert.ok(radiusKm > 1 * 111, "radius must reach the corner of the viewport");
+  });
+});
+
+describe("parseKinds", () => {
+  test("keeps only kinds in the contract's closed set", () => {
+    assert.deepEqual(parseKinds("event,hidden_gem"), ["event", "hidden_gem"]);
+    assert.deepEqual(parseKinds(" event , not_a_kind "), ["event"]);
+  });
+
+  test("returns null (meaning 'all') for empty or fully-unknown input", () => {
+    assert.equal(parseKinds(""), null);
+    assert.equal(parseKinds("   "), null);
+    assert.equal(parseKinds("nope,also_nope"), null);
+    assert.equal(parseKinds(undefined), null);
+    assert.equal(parseKinds(123), null);
+  });
+});
+
+// ── pagination ────────────────────────────────────────────────────────────────
+
+describe("paginate", () => {
+  const objs = Array.from({ length: 10 }, (_, i) => projectGem({ ...GEM, id: `g${i}` })!);
+
+  test("pages and reports the next cursor", () => {
+    const { page, nextCursor } = paginate(objs, null, 4);
+    assert.equal(page.length, 4);
+    assert.equal(nextCursor, "4");
+  });
+
+  test("the last page reports no next cursor", () => {
+    assert.equal(paginate(objs, "8", 4).nextCursor, null);
+    assert.equal(paginate(objs, "8", 4).page.length, 2);
+  });
+
+  test("a malformed cursor restarts from 0 rather than throwing", () => {
+    assert.equal(decodeCursor("nonsense"), 0);
+    assert.equal(decodeCursor("-5"), 0);
+    assert.equal(paginate(objs, "nonsense", 3).page[0].id, "gem:g0");
+  });
+});

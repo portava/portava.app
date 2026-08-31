@@ -120,3 +120,103 @@ export interface MapEntity<T = unknown> {
    */
   permissions?: MapEntityPermissions;
 }
+
+// ── MapObject → MapEntity view (Map spec §18, §19) ────────────────────────────
+//
+// `MapObject` (src/types/mapObjects.ts) is the canonical contract the Map
+// Intelligence Gateway produces. `MapEntity` predates it and is what the
+// existing renderer chain — EntityMarkers, MapCarousel, MapEntityPreviewCard,
+// MapEntityActionRow — consumes today.
+//
+// Rather than rewrite four components in the same change that introduces the
+// contract, `MapEntity` becomes a VIEW over `MapObject`: one lossy-but-honest
+// downcast, in one place. New surfaces read `MapObject` directly and get
+// freshness, confidence, privacy class and rendering priority; old surfaces keep
+// working unchanged. When the last consumer is migrated, this section and the
+// `MapEntity` type go together.
+
+import {
+  centroidOf,
+  type MapObject,
+  type MapAction,
+  type MapObjectKind,
+} from './mapObjects.ts';
+
+/**
+ * Which legacy layer a contract kind belongs to. Total over `MapObjectKind` so
+ * a kind added to the contract is a compile error here rather than a silent
+ * fallback to the wrong layer.
+ */
+export const KIND_TO_ENTITY_TYPE: Record<MapObjectKind, MapEntityType> = {
+  place: 'places',
+  hidden_gem: 'gems',
+  event: 'events',
+  trip_stop: 'trips',
+  crew_member: 'friends',
+  buddy_zone: 'buddies',
+  // Travelers are projected as aggregate social presence (spec §23), and the
+  // legacy 'travelers' layer is where the renderer already draws them.
+  social_zone: 'travelers',
+  meeting_point: 'trips',
+  // Zone-like and forecast kinds have no legacy layer of their own. They map to
+  // 'places' only so the old renderer does not crash on them; the NEW zone
+  // renderer reads MapObject directly and never goes through this view.
+  activity_zone: 'places',
+  crowd_flow: 'places',
+  prediction: 'places',
+  safety_notice: 'places',
+  memory: 'places',
+};
+
+/** The legacy action slugs, keyed by contract action. Unmapped actions drop. */
+const ACTION_TO_CAPABILITY: Partial<Record<MapAction, MapActionCapability>> = {
+  save: 'save',
+  share: 'share',
+  navigate: 'directions',
+  add_to_trip: 'add_to_trip',
+  join: 'join',
+  follow: 'follow',
+  book: 'book',
+  message: 'message',
+  report: 'report',
+  block: 'block',
+};
+
+/**
+ * Downcast one `MapObject` to the legacy envelope. Returns null when the object
+ * has no renderable centroid — the old envelope requires a single lat/lng, so a
+ * geometry it cannot represent must be dropped here rather than rendered at
+ * coordinates nobody chose.
+ *
+ * The full object is kept on `payload`, so a migrated component can recover
+ * everything this view drops (freshness, confidence, privacyClass, provenance,
+ * renderingPriority) without a second fetch.
+ */
+export function mapObjectToEntity(obj: MapObject): MapEntity<MapObject> | null {
+  const c = centroidOf(obj.geometry);
+  if (!c) return null;
+
+  const capabilities = (obj.interaction?.actions ?? [])
+    .map((a) => ACTION_TO_CAPABILITY[a])
+    .filter((a): a is MapActionCapability => a != null);
+
+  return {
+    id: obj.id,
+    type: KIND_TO_ENTITY_TYPE[obj.kind],
+    lat: c.lat,
+    lng: c.lng,
+    payload: obj,
+    actionCapabilities: capabilities.length > 0 ? capabilities : undefined,
+    detailRoute: obj.interaction?.detailRoute,
+  };
+}
+
+/** Map a list, dropping anything without a renderable centroid. */
+export function mapObjectsToEntities(objects: readonly MapObject[]): MapEntity<MapObject>[] {
+  const out: MapEntity<MapObject>[] = [];
+  for (const o of objects) {
+    const e = mapObjectToEntity(o);
+    if (e) out.push(e);
+  }
+  return out;
+}
