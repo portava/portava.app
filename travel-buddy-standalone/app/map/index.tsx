@@ -58,6 +58,24 @@ import { MapHeader, mapHeaderStackOffset } from '../../src/components/map/MapHea
 import { MapFilterChips, MAP_FILTER_CHIPS_HEIGHT } from '../../src/components/map/MapFilterChips.tsx';
 import { homeVisibleObjects, homeChipCounts } from '../../src/features/map/home/homeFilters.ts';
 import { getLivePulseItems, type LivePulseItem } from '../../src/services/livePulse.ts';
+import { OptimizeTodaySheet } from '../../src/components/map/OptimizeTodaySheet.tsx';
+import {
+  tripToMapObjects,
+  optimizeToday,
+  acceptProposal,
+  dismissProposal,
+  type TripStop,
+  type OptimizeProposal,
+} from '../../src/features/map/trip/tripMapModel.ts';
+import { fetchTripPlanMap } from '../../src/services/tripPlan.ts';
+import { submitMapObservation } from '../../src/services/mapObservations.ts';
+import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
+import {
+  coordinateTarget,
+  objectTarget,
+  coordinateOf,
+  type LongPressTarget,
+} from '../../src/features/map/interaction/longPress.ts';
 import { TimeMachineControl } from '../../src/components/map/TimeMachineControl.tsx';
 import {
   EMPTY_LAYER_PREFERENCES,
@@ -374,6 +392,8 @@ function FullScreenMapScreenInner() {
     category?: string;
     focusId?: string;
     mode?: string;
+    /** §11: render ONE trip's itinerary rather than every trip's destination. */
+    tripId?: string;
   }>();
 
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
@@ -577,6 +597,60 @@ function FullScreenMapScreenInner() {
     lng: fallbackLng,
     zoom: cameraZoom ?? paramZoom,
   });
+
+  // ── §11 Trip Map ────────────────────────────────────────────────────────────
+  // "Trip Map renders the current Trip geographically without duplicating or
+  // replacing Trip ownership." The itinerary is read, never written: the plan
+  // stays canonical in Trips (§20), and Optimize Today produces a PROPOSAL the
+  // user must accept.
+  //
+  // WHAT IS DELIBERATELY ABSENT. §11 also names crew, meeting points, routes,
+  // saved ideas and Safe Return context. Crew cannot be projected: getCrewMap
+  // returns CrewMemberCard, which carries an AREA LABEL and no coordinates —
+  // the server declines to give the client crew positions, and inventing them
+  // from the area label would be exactly the §23 violation that design prevents.
+  // The others have no reachable source on this screen today. They are left out
+  // rather than faked; tripToMapObjects omits any section it is not given.
+  const tripId = Array.isArray(params.tripId) ? params.tripId[0] : (params.tripId ?? null);
+  const [tripStops, setTripStops] = useState<TripStop[]>([]);
+  const [proposal, setProposal] = useState<OptimizeProposal | null>(null);
+
+  useEffect(() => {
+    if (!tripId) return;
+    let cancelled = false;
+    void (async () => {
+      const items = await fetchTripPlanMap(tripId).catch(() => []);
+      if (cancelled) return;
+      const stops: TripStop[] = items
+        .filter((i) => i.lat != null && i.lng != null && !i.locationIsPrivate)
+        .map((i) => ({
+          id: i.id,
+          title: i.title,
+          subtitle: i.locationName ?? undefined,
+          lat: i.lat as number,
+          lng: i.lng as number,
+          // The CANONICAL ordering. tripMapModel never renumbers it — a
+          // proposal reorders the array, not these values.
+          orderIndex: i.sortOrder,
+          // 'fixed' is the hard anchor the optimizer may not move; 'flexible'
+          // and 'optional' are both revisable, so neither becomes a reservation.
+          reservationAt: i.lockType === 'fixed' ? i.startsAt : null,
+          eventStartsAt: i.startsAt,
+          eventEndsAt: i.endsAt,
+          plannedArrivalTime: i.startsAt,
+        }));
+      setTripStops(stops);
+    })();
+    return () => { cancelled = true; };
+  }, [tripId]);
+
+  const tripObjects = useMemo(
+    () =>
+      tripId && tripStops.length > 0
+        ? (tripToMapObjects({ tripId, stops: tripStops }, { now: new Date().toISOString() }) as MapObject[])
+        : null,
+    [tripId, tripStops],
+  );
 
   // ── §3 / §26 Live Pulse ─────────────────────────────────────────────────────
   // "Bottom Live Pulse card summarizes the most important nearby change." The
@@ -926,7 +1000,7 @@ function FullScreenMapScreenInner() {
     // §14 — while a Compass query is active the map shows the picks and nothing
     // else. That IS the mode: "reduces visual noise and highlights approximately
     // three to five best next moves".
-    const base = compassPickObjects ?? defaultObjects;
+    const base = compassPickObjects ?? (tripObjects ?? defaultObjects);
     // 1. §16 layers, then §3's chip. homeVisibleObjects composes them in that
     //    order so a chip can only ever narrow what the layers already permit —
     //    a chip must never switch a layer back on.
@@ -936,7 +1010,16 @@ function FullScreenMapScreenInner() {
     // 3. §15 — a forecast becomes kind 'prediction' and loses any live
     //    freshness, so zoneStyle gives it the dashed treatment (§37).
     return toTemporalObjects(legible, timeOffset) as unknown as MapObject[];
-  }, [defaultObjects, compassPickObjects, homeFilter, layerPrefs, layerContext, zoomBand, timeOffset]);
+  }, [
+    defaultObjects,
+    compassPickObjects,
+    tripObjects,
+    homeFilter,
+    layerPrefs,
+    layerContext,
+    zoomBand,
+    timeOffset,
+  ]);
 
   // Badge counts must use the same layer-aware path as the objects themselves,
   // or a chip can advertise results the map will not draw.
@@ -991,6 +1074,12 @@ function FullScreenMapScreenInner() {
     [objects, machine.selection?.objectId],
   );
   const [whyObject, setWhyObject] = useState<MapObject | null>(null);
+  // §25 long-press. A press always has a point under it, so the target is a
+  // union: an object when one is under the finger, a bare coordinate otherwise.
+  const [longPress, setLongPress] = useState<{
+    target: LongPressTarget;
+    anchor?: { x: number; y: number };
+  } | null>(null);
   const [contributeObject, setContributeObject] = useState<MapObject | null>(null);
 
   const overlayOpen = (o: 'INTENT' | 'LAYERS' | 'FILTERS' | 'SEARCH') =>
@@ -1410,12 +1499,81 @@ function FullScreenMapScreenInner() {
         onClose={() => setContributeObject(null)}
         onSubmit={(contribution) => {
           if (!contributeObject) return;
+          const obj = contributeObject;
           emitMapEvent('contribution_submitted', {
-            ref: describeMapObject(contributeObject),
+            ref: describeMapObject(obj),
             contributionKind: contribution.kind,
             prompt: 'sheet',
           });
+          // Fire-and-forget: §22 is a LOW-FRICTION capture surface, so the tap
+          // must not wait on the network. The server owns consent, validation
+          // and idempotency, and dedupes a double tap on its own.
+          void submitMapObservation(obj.id, obj.kind, contribution);
           setContributeObject(null);
+        }}
+      />
+
+      {/* ── §11 Optimize Today ──────────────────────────────────────────────
+          A PROPOSAL, never a rewrite: acceptProposal/dismissProposal return
+          data, and persisting it is the caller's job. §11: "the map should not
+          silently rewrite the canonical Trip." */}
+      {tripId && tripStops.length > 1 ? (
+        <Pressable
+          style={[s2.optimizeChip, { bottom: insets.bottom + 240 }]}
+          onPress={() =>
+            setProposal(
+              optimizeToday(tripStops, { now: new Date().toISOString() }),
+            )
+          }
+          accessibilityRole="button"
+          accessibilityLabel="Optimize today's plan"
+        >
+          <Text style={s2.optimizeChipText}>Optimize today</Text>
+        </Pressable>
+      ) : null}
+
+      <OptimizeTodaySheet
+        proposal={proposal}
+        onClose={() => setProposal(null)}
+        onDismiss={(p) => {
+          // Returns the CURRENT ordering — the canonical plan stands.
+          dismissProposal(p, new Date().toISOString());
+          setProposal(null);
+        }}
+        onAccept={(p) => {
+          const change = acceptProposal(p, new Date().toISOString());
+          // `persisted: false` — the write is a Trips concern (§20), and this
+          // screen does not own the itinerary. Reorder locally so the map
+          // reflects the accepted plan; the durable write belongs to TripPage.
+          const byId = new Map(tripStops.map((st) => [st.id, st]));
+          setTripStops(
+            change.orderedStopIds
+              .map((id) => byId.get(id))
+              .filter((st): st is TripStop => st != null),
+          );
+          setProposal(null);
+        }}
+      />
+
+      {/* ── §25 long-press menu ─────────────────────────────────────────────
+          Seven actions, always all seven, disabled-with-reason rather than
+          hidden so the menu cannot reflow between targets. */}
+      <MapLongPressMenu
+        target={longPress?.target ?? null}
+        visible={longPress != null}
+        anchor={longPress?.anchor}
+        context={{ checkpointScopeId: null, now: Date.now() }}
+        onClose={() => setLongPress(null)}
+        onSelect={(action, target) => {
+          setLongPress(null);
+          if (action === 'report' && target.kind === 'object') {
+            setContributeObject(target.object);
+            return;
+          }
+          if (action === 'ask_compass') {
+            const pt = coordinateOf(target);
+            if (pt) void geocodeAndFly(`${pt.lat.toFixed(3)},${pt.lng.toFixed(3)}`);
+          }
         }}
       />
 
@@ -1488,6 +1646,19 @@ const s2 = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 999,
     backgroundColor: 'rgba(14,18,22,0.88)',
+  },
+  optimizeChip: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: 'rgba(10,61,74,0.94)',
+  },
+  optimizeChipText: {
+    color: '#FAF9F6',
+    fontSize: 13,
+    fontWeight: '700',
   },
   cacheBannerText: {
     color: 'rgba(250,249,246,0.72)',

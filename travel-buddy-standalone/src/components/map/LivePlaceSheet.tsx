@@ -36,7 +36,21 @@ import {
 import { HelpCircle, Image as ImageIcon, Plus, X } from 'lucide-react-native';
 import { avatar, dot, radius, space, type as t } from '../../theme/tokens.ts';
 import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
-import type { MapAction, MapObject } from '../../types/mapObjects.ts';
+import {
+  isForecastKind,
+  type MapAction,
+  type MapObject,
+  type MapObjectKind,
+} from '../../types/mapObjects.ts';
+import {
+  clearActiveDecision,
+  currentDecisionId,
+  describeMapObject,
+  distanceBucket,
+  durationBucketMs,
+  emitMapEvent,
+  type PlaceOpenSource,
+} from '../../features/map/telemetry/mapTelemetry.ts';
 import {
   LIVE_PLACE_ACTION_LABELS,
   buildLivePlaceView,
@@ -64,6 +78,14 @@ export type LivePlaceSnapPoint = keyof typeof LIVE_PLACE_SNAP_FRACTIONS;
 
 /** Ordered smallest to largest, so a drag can step to the neighbouring snap. */
 export const SNAP_ORDER: readonly LivePlaceSnapPoint[] = ['peek', 'half', 'full'];
+
+/** §18 kinds that are zones/forecasts rather than places (§35 `zone_selected`). */
+const TELEMETRY_ZONE_KINDS: readonly MapObjectKind[] = [
+  'activity_zone',
+  'crowd_flow',
+  'social_zone',
+  'prediction',
+];
 
 /** The snap point whose height is nearest a dragged height. */
 export function nearestSnap(fraction: number): LivePlaceSnapPoint {
@@ -140,6 +162,15 @@ export interface LivePlaceSheetProps {
   whyContext?: Omit<LivePlaceContext, 'now'>;
   /** Which snap point to open at. Defaults to Peek, per §8's "bottom sheet". */
   initialSnap?: LivePlaceSnapPoint;
+  /**
+   * §35 `place_opened.source` — how the object under this sheet was reached.
+   * Only the caller knows; it defaults to 'marker' because that is how the map
+   * screen opens the sheet today. Pass 'compass_pick' when the object came from
+   * a Compass recommendation: that is ALSO what arms `recommendation_declined`
+   * on dismissal, so a pick abandoned without action is recorded as the
+   * negative arm of the decision instead of silently vanishing.
+   */
+  openSource?: PlaceOpenSource;
   onClose: () => void;
   /** §9 Why? — opens the provenance surface, which another module owns. */
   onWhyPress?: (object: MapObject) => void;
@@ -155,6 +186,7 @@ export function LivePlaceSheet({
   detail,
   whyContext,
   initialSnap = 'peek',
+  openSource = 'marker',
   onClose,
   onWhyPress,
   onAction,
@@ -239,7 +271,9 @@ export function LivePlaceSheet({
         const shownFraction = (sheetH - settled) / screenH;
         // A firm flick past the Peek floor is a dismissal, not a snap.
         if (gesture.vy > 1.2 && snapRef.current === 'peek') {
-          onClose();
+          // Ref indirection: the PanResponder is created once, so it must not
+          // capture the first render's close handler.
+          handleCloseRef.current();
           return;
         }
         animateTo(nearestSnap(shownFraction));
@@ -252,7 +286,165 @@ export function LivePlaceSheet({
     return buildLivePlaceView(object, detail ?? null, { now, ...(whyContext ?? {}) });
   }, [object, detail, whyContext, now]);
 
+  // ── §35 telemetry ─────────────────────────────────────────────────────────
+  //
+  // Everything below is fire-and-forget: it never blocks, reorders or gates a
+  // user action, and every object reaches a payload through describeMapObject.
+
+  // The live object, held in a ref so the effects below can key on `object.id`
+  // (a re-fetch of the same place must not re-fire an "opened") and still read
+  // the current object, and so an unmount cleanup can still describe the object
+  // that was on screen.
+  const objectRef = useRef<MapObject | null>(object);
+  objectRef.current = object;
+
+  const isRecommendation = openSource === 'compass_pick';
+  /** Set when this sheet emitted an acceptance, so dismissal is not a decline. */
+  const acceptedRef = useRef(false);
+
+  // `place_opened` / `zone_selected` — once per object that opens the sheet.
+  useEffect(() => {
+    const obj = objectRef.current;
+    if (!obj) return;
+    acceptedRef.current = false;
+    try {
+      if (TELEMETRY_ZONE_KINDS.includes(obj.kind)) {
+        emitMapEvent('zone_selected', {
+          ref: describeMapObject(obj),
+          source: isRecommendation ? 'compass_pick' : 'marker',
+          forecast: isForecastKind(obj.kind),
+        });
+      } else {
+        emitMapEvent('place_opened', {
+          ref: describeMapObject(obj),
+          source: openSource,
+        });
+      }
+    } catch {
+      // Deliberately swallowed.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [object?.id, openSource]);
+
+  // `live_state_viewed` — only when the LIVE STATE block is genuinely on
+  // screen. At Peek the sheet shows ~18% of the screen: the block is mounted
+  // inside the ScrollView but clipped away, and reporting that as "viewed"
+  // would measure mounting rather than reading. Detent changes re-report,
+  // which is what makes "did they actually open it to read this" answerable.
+  const hasLiveState = vm?.liveState != null;
+  const visibleDetent: 'half' | 'full' | null =
+    snap === 'peek' ? null : snap === 'half' ? 'half' : 'full';
+  const liveAxesRef = useRef<{ activity?: string; trend?: string }>({});
+  liveAxesRef.current = {
+    activity: vm?.crowd?.crowdLabel ?? undefined,
+    trend: vm?.crowd?.trendLabel ?? undefined,
+  };
+  const lastDetentRef = useRef<LivePlaceSnapPoint | null>(null);
+  const liveStateShownAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const obj = objectRef.current;
+    if (!obj || !hasLiveState || !visibleDetent) return;
+    if (liveStateShownAtRef.current == null) liveStateShownAtRef.current = Date.now();
+    lastDetentRef.current = visibleDetent;
+    const axes = liveAxesRef.current;
+    try {
+      emitMapEvent('live_state_viewed', {
+        ref: describeMapObject(obj),
+        // The §7 axes AS DISPLAYED — the sheet's own claim, not a re-derivation.
+        ...(axes.activity ? { activity: axes.activity } : {}),
+        ...(axes.trend ? { trend: axes.trend } : {}),
+        detent: visibleDetent,
+      });
+    } catch {
+      // Deliberately swallowed.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [object?.id, hasLiveState, visibleDetent]);
+
+  // Dwell, banded, when the live state leaves the screen (object swapped or
+  // sheet unmounted). Emitted only if it was ever actually shown.
+  useEffect(() => {
+    const obj = objectRef.current;
+    return () => {
+      const shownAt = liveStateShownAtRef.current;
+      liveStateShownAtRef.current = null;
+      const detent = lastDetentRef.current;
+      lastDetentRef.current = null;
+      if (!obj || shownAt == null) return;
+      try {
+        emitMapEvent('live_state_viewed', {
+          ref: describeMapObject(obj),
+          ...(detent ? { detent } : {}),
+          dwell: durationBucketMs(Date.now() - shownAt),
+        });
+      } catch {
+        // Deliberately swallowed.
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [object?.id]);
+
+  /**
+   * Dismissal. A Compass pick closed without any acceptance is §35's negative
+   * arm: `recommendation_declined` with `explicit: false` (the user never said
+   * why — they just left), followed by `clearActiveDecision()` so a later,
+   * unrelated route or contribution is not attributed to this recommendation.
+   */
+  const handleClose = useCallback(() => {
+    try {
+      const obj = objectRef.current;
+      if (isRecommendation && !acceptedRef.current && obj && currentDecisionId() !== null) {
+        emitMapEvent('recommendation_declined', {
+          ref: describeMapObject(obj),
+          reason: 'unspecified',
+          explicit: false,
+        });
+        clearActiveDecision();
+      }
+    } catch {
+      // Deliberately swallowed.
+    }
+    onClose();
+  }, [isRecommendation, onClose]);
+  const handleCloseRef = useRef(handleClose);
+  handleCloseRef.current = handleClose;
+
   if (!object || !vm) return null;
+
+  /**
+   * §8 ACTIONS. The sheet does not perform them — it hands off to `onAction`.
+   * So an event is emitted only when there IS a handler: with none, the button
+   * is inert and reporting `route_started` would record a route nothing started.
+   *
+   * Only 'navigate' is instrumented here. 'add_to_trip', 'meet_here', 'save'
+   * and 'join' all COMPLETE somewhere else (a picker, a create call), and this
+   * seam cannot see whether they succeeded — see the report notes.
+   */
+  function handleAction(action: MapAction, obj: MapObject): void {
+    if (!onAction) return;
+    try {
+      if (action === 'navigate') {
+        if (isRecommendation && currentDecisionId() !== null) {
+          emitMapEvent('recommendation_accepted', {
+            ref: describeMapObject(obj),
+            via: 'route',
+          });
+          acceptedRef.current = true;
+        }
+        emitMapEvent('route_started', {
+          ref: describeMapObject(obj),
+          // The travel mode and ETA belong to whatever the caller routes with;
+          // `external` is likewise unknown at this seam, so none are invented.
+          travelMode: 'unknown',
+          distance: distanceBucket(obj.distanceKm ?? null),
+        });
+      }
+    } catch {
+      // Deliberately swallowed.
+    }
+    onAction(action, obj);
+  }
 
   const metaLine = placeMetaLine(vm);
   const headline = liveStateHeadline(vm.liveState);
@@ -286,7 +478,7 @@ export function LivePlaceSheet({
           <View style={s.handle} />
         </View>
 
-        <Pressable style={s.closeBtn} onPress={onClose} hitSlop={8} accessibilityLabel="Close">
+        <Pressable style={s.closeBtn} onPress={handleClose} hitSlop={8} accessibilityLabel="Close">
           <X size={16} color={dark.textMute} />
         </Pressable>
 
@@ -443,7 +635,7 @@ export function LivePlaceSheet({
                     <Pressable
                       key={action}
                       style={s.actionBtn}
-                      onPress={() => onAction?.(action, object)}
+                      onPress={() => handleAction(action, object)}
                       accessibilityRole="button"
                       accessibilityLabel={LIVE_PLACE_ACTION_LABELS[action]}
                     >

@@ -36,7 +36,19 @@ import {
 import { color, space, radius, type as t, shadow, avatar, icon } from '../../theme/tokens.ts';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import { AvatarImage, DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
-import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
+import type { MapEntity, MapEntityType, PassportCountryPayload } from '../../types/mapTypes.ts';
+import {
+  MAP_OBJECT_KINDS,
+  isForecastKind,
+  type MapObject,
+  type MapObjectKind,
+  type PrivacyClass,
+} from '../../types/mapObjects.ts';
+import {
+  describeMapObject,
+  emitMapEvent,
+  type MapObjectRef,
+} from '../../features/map/telemetry/mapTelemetry.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
@@ -46,6 +58,103 @@ import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { openDirectThread } from '../../services/messaging.ts';
 import type { TripRow } from '../../services/trips.ts';
 import type { CircleMemberLocation } from '../../services/map.ts';
+
+// ── §35 telemetry ─────────────────────────────────────────────────────────────
+//
+// `describeMapObject` is the only sanctioned way to put an object into a §35
+// payload; it takes a contract `MapObject`, so one is recovered from the legacy
+// envelope first. See the fuller note in MapEntityActionRow.tsx — this copy
+// exists because every candidate shared host (MapEntityActionRow included) is
+// wholesale `jest.mock`ed by one of the existing component tests, and this lane
+// may not add files.
+
+const TELEMETRY_KIND_BY_TYPE: Record<MapEntityType, MapObjectKind> = {
+  places: 'place',
+  events: 'event',
+  gems: 'hidden_gem',
+  trips: 'trip_stop',
+  friends: 'crew_member',
+  buddies: 'buddy_zone',
+  travelers: 'social_zone',
+  stamps: 'memory',
+};
+
+/** DERIVED §23 rung — legacy envelopes record none. See MapEntityActionRow.tsx. */
+const TELEMETRY_PRIVACY_BY_TYPE: Record<MapEntityType, PrivacyClass> = {
+  places: 'place_level',
+  events: 'place_level',
+  gems: 'place_level',
+  trips: 'place_level',
+  friends: 'approximate',
+  buddies: 'approximate',
+  travelers: 'aggregate_only',
+  stamps: 'aggregate_only',
+};
+
+const TELEMETRY_ZONE_KINDS: readonly MapObjectKind[] = [
+  'activity_zone',
+  'crowd_flow',
+  'social_zone',
+  'prediction',
+];
+
+function isMapObjectPayload(value: unknown): value is MapObject {
+  if (value == null || typeof value !== 'object') return false;
+  const o = value as { kind?: unknown; geometry?: unknown; privacyClass?: unknown };
+  return (
+    typeof o.kind === 'string' &&
+    (MAP_OBJECT_KINDS as readonly string[]).includes(o.kind) &&
+    typeof o.geometry === 'object' &&
+    o.geometry !== null &&
+    typeof o.privacyClass === 'string'
+  );
+}
+
+function entityTelemetryRef(entity: MapEntity): MapObjectRef {
+  if (isMapObjectPayload(entity.payload)) return describeMapObject(entity.payload);
+  return describeMapObject({
+    id: entity.id,
+    kind: TELEMETRY_KIND_BY_TYPE[entity.type],
+    geometry: { type: 'Point', coordinates: [entity.lng, entity.lat] },
+    title: '',
+    privacyClass: TELEMETRY_PRIVACY_BY_TYPE[entity.type],
+    renderingPriority: 0,
+  });
+}
+
+function entityKind(entity: MapEntity): MapObjectKind {
+  return isMapObjectPayload(entity.payload)
+    ? entity.payload.kind
+    : TELEMETRY_KIND_BY_TYPE[entity.type];
+}
+
+/**
+ * The card's "View →" CTA: §35 `place_opened` (or `zone_selected` when the
+ * object is a zone/forecast kind), then the existing navigation, unchanged.
+ * Telemetry is fire-and-forget — it may never block or break the push.
+ */
+function openEntityDetail(entity: MapEntity, onClose: () => void, route: string): void {
+  try {
+    const kind = entityKind(entity);
+    if (TELEMETRY_ZONE_KINDS.includes(kind)) {
+      emitMapEvent('zone_selected', {
+        ref: entityTelemetryRef(entity),
+        source: 'marker',
+        forecast: isForecastKind(kind),
+      });
+    } else {
+      emitMapEvent('place_opened', {
+        ref: entityTelemetryRef(entity),
+        // This component IS the §35 'preview_card' surface — the card shown for
+        // a tapped marker. There is no list position here, so `rank` is omitted.
+        source: 'preview_card',
+      });
+    }
+  } catch {
+    // Deliberately swallowed.
+  }
+  closeThenNavigate(onClose, route);
+}
 
 // ── Per-type card bodies ───────────────────────────────────────────────────────
 
@@ -87,7 +196,7 @@ function BuddyCard({ entity, onClose }: { entity: MapEntity<BuddyProfile>; onClo
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => closeThenNavigate(onClose, `/(rent-a-buddy)/buddy/${buddy.id}`)}
+        onPress={() => openEntityDetail(entity, onClose, `/(rent-a-buddy)/buddy/${buddy.id}`)}
       >
         <Text style={s.ctaText}>View Buddy Profile</Text>
         <ArrowRight size={15} color="#fff" />
@@ -150,7 +259,7 @@ function EventCard({ entity, onClose }: { entity: MapEntity<EventListItem>; onCl
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => closeThenNavigate(onClose, `/event/${ev.id}`)}
+        onPress={() => openEntityDetail(entity, onClose, `/event/${ev.id}`)}
       >
         <Text style={s.ctaText}>View Event</Text>
         <ArrowRight size={15} color="#fff" />
@@ -194,7 +303,7 @@ function GemCard({ entity, onClose }: { entity: MapEntity<HiddenGem>; onClose: (
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => closeThenNavigate(onClose, `/gems/${gem.id}`)}
+        onPress={() => openEntityDetail(entity, onClose, `/gems/${gem.id}`)}
       >
         <Text style={s.ctaText}>View Hidden Gem</Text>
         <ArrowRight size={15} color="#fff" />
@@ -239,7 +348,7 @@ function TripCard({ entity, onClose }: { entity: MapEntity<TripRow>; onClose: ()
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => closeThenNavigate(onClose, `/trip/${trip.id}`)}
+        onPress={() => openEntityDetail(entity, onClose, `/trip/${trip.id}`)}
       >
         <Text style={s.ctaText}>View Trip</Text>
         <ArrowRight size={15} color="#fff" />
@@ -421,7 +530,7 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
       ) : null}
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => closeThenNavigate(onClose, detailRoute)}
+        onPress={() => openEntityDetail(entity, onClose, detailRoute)}
       >
         <Text style={s.ctaText}>View details</Text>
         <ArrowRight size={15} color="#fff" />
@@ -473,7 +582,7 @@ function StampCountryCardBody({
       </View>
       <Pressable
         style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => closeThenNavigate(onClose, `/passport/country/${encodeURIComponent(country)}`)}
+        onPress={() => openEntityDetail(entity, onClose, `/passport/country/${encodeURIComponent(country)}`)}
       >
         <Text style={s.ctaText}>View Stamps</Text>
         <ArrowRight size={15} color="#fff" />

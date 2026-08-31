@@ -65,7 +65,21 @@ import { useMapStore } from '../../stores/mapStore.tsx';
 import type { PreviewDetent } from '../../stores/mapStore.tsx';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
-import type { MapEntity, PassportCountryPayload } from '../../types/mapTypes.ts';
+import type { MapEntity, MapEntityType, PassportCountryPayload } from '../../types/mapTypes.ts';
+import {
+  MAP_OBJECT_KINDS,
+  isForecastKind,
+  type MapObject,
+  type MapObjectKind,
+  type PrivacyClass,
+} from '../../types/mapObjects.ts';
+import {
+  currentDecisionId,
+  describeMapObject,
+  distanceBucket,
+  emitMapEvent,
+  type MapObjectRef,
+} from '../../features/map/telemetry/mapTelemetry.ts';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import type { BuddyProfile } from '../../services/rentABuddy.ts';
@@ -80,6 +94,80 @@ import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
 import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
 import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
+
+// ── §35 telemetry ─────────────────────────────────────────────────────────────
+//
+// `describeMapObject` is the only sanctioned way to put an object into a §35
+// payload; it takes a contract `MapObject`, so one is recovered from the legacy
+// envelope first. See the fuller note in MapEntityActionRow.tsx — this copy
+// exists because every candidate shared host is wholesale `jest.mock`ed by one
+// of the existing component tests, and this lane may not add files.
+
+const TELEMETRY_KIND_BY_TYPE: Record<MapEntityType, MapObjectKind> = {
+  places: 'place',
+  events: 'event',
+  gems: 'hidden_gem',
+  trips: 'trip_stop',
+  friends: 'crew_member',
+  buddies: 'buddy_zone',
+  travelers: 'social_zone',
+  stamps: 'memory',
+};
+
+/** DERIVED §23 rung — legacy envelopes record none. See MapEntityActionRow.tsx. */
+const TELEMETRY_PRIVACY_BY_TYPE: Record<MapEntityType, PrivacyClass> = {
+  places: 'place_level',
+  events: 'place_level',
+  gems: 'place_level',
+  trips: 'place_level',
+  friends: 'approximate',
+  buddies: 'approximate',
+  travelers: 'aggregate_only',
+  stamps: 'aggregate_only',
+};
+
+const TELEMETRY_ZONE_KINDS: readonly MapObjectKind[] = [
+  'activity_zone',
+  'crowd_flow',
+  'social_zone',
+  'prediction',
+];
+
+function isMapObjectPayload(value: unknown): value is MapObject {
+  if (value == null || typeof value !== 'object') return false;
+  const o = value as { kind?: unknown; geometry?: unknown; privacyClass?: unknown };
+  return (
+    typeof o.kind === 'string' &&
+    (MAP_OBJECT_KINDS as readonly string[]).includes(o.kind) &&
+    typeof o.geometry === 'object' &&
+    o.geometry !== null &&
+    typeof o.privacyClass === 'string'
+  );
+}
+
+function entityTelemetryRef(entity: MapEntity): MapObjectRef {
+  if (isMapObjectPayload(entity.payload)) return describeMapObject(entity.payload);
+  return describeMapObject({
+    id: entity.id,
+    kind: TELEMETRY_KIND_BY_TYPE[entity.type],
+    geometry: { type: 'Point', coordinates: [entity.lng, entity.lat] },
+    title: '',
+    privacyClass: TELEMETRY_PRIVACY_BY_TYPE[entity.type],
+    renderingPriority: 0,
+  });
+}
+
+function entityKind(entity: MapEntity): MapObjectKind {
+  return isMapObjectPayload(entity.payload)
+    ? entity.payload.kind
+    : TELEMETRY_KIND_BY_TYPE[entity.type];
+}
+
+function entityDistanceKm(entity: MapEntity): number | null {
+  if (!isMapObjectPayload(entity.payload)) return null;
+  const d = entity.payload.distanceKm;
+  return typeof d === 'number' ? d : null;
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -718,9 +806,12 @@ function PlacesEmptyCard({ onRetry }: { onRetry?: () => void }) {
 function EntityFullDetail({
   entity,
   onBeforeNavigate,
+  isRecommendation,
 }: {
   entity: MapEntity;
   onBeforeNavigate?: () => void;
+  /** §35: this card is an option of the active Compass decision. */
+  isRecommendation?: boolean;
 }) {
   // Build type-specific extended content (description, stats, etc.).
   const typeContent = (() => {
@@ -824,7 +915,11 @@ function EntityFullDetail({
       {typeContent}
       {/* Primary action buttons — reuse MapEntityActionRow so handlers and
           visibility rules (permissions, caps) are consistent with the card row. */}
-      <MapEntityActionRow entity={entity} onBeforeNavigate={onBeforeNavigate} />
+      <MapEntityActionRow
+        entity={entity}
+        onBeforeNavigate={onBeforeNavigate}
+        isRecommendation={isRecommendation}
+      />
     </View>
   );
 }
@@ -837,6 +932,7 @@ export function MapEntityCard({
   scrollX,
   onBeforeNavigate,
   onPress,
+  isRecommendation,
 }: {
   entity: MapEntity;
   index: number;
@@ -844,6 +940,8 @@ export function MapEntityCard({
   /** Called before any detail push so the map screen can record the nav origin. */
   onBeforeNavigate?: () => void;
   onPress: () => void;
+  /** §35: this card is an option of the active Compass decision. */
+  isRecommendation?: boolean;
 }) {
   const { setSelectedEntityId, previewDetent } = useMapStore();
   const isExpanded = previewDetent !== 'collapsed';
@@ -967,7 +1065,13 @@ export function MapEntityCard({
           <Text style={[cs.typeLabel, { color: cfg.color }]}>{typeLabel}</Text>
         </View>
         {renderBody()}
-        {isExpanded && <MapEntityActionRow entity={entity} onBeforeNavigate={onBeforeNavigate} />}
+        {isExpanded && (
+          <MapEntityActionRow
+            entity={entity}
+            onBeforeNavigate={onBeforeNavigate}
+            isRecommendation={isRecommendation}
+          />
+        )}
       </Pressable>
     </Animated.View>
   );
@@ -1012,6 +1116,18 @@ interface MapCarouselProps {
    * re-focus so it can decide whether to restore or clear selectedEntityId.
    */
   onBeforeNavigate?: () => void;
+  /**
+   * §35: true when `entities` is the result list of an active Compass ask.
+   *
+   * The map screen is the only place that knows this (it swaps
+   * `compassOverrideEntities` in for the default entity list), and the carousel
+   * cannot infer it: a decisionId stays active across the whole
+   * accept → route → arrive → contribute loop, so "a decision is open" is NOT
+   * the same claim as "these cards are that decision's options". Without this
+   * flag `compass_option_selected` and `recommendation_accepted` are not
+   * sourceable honestly, so they are simply not emitted.
+   */
+  compassResults?: boolean;
   style?: any;
 }
 
@@ -1030,6 +1146,7 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
       placesEmpty,
       onPlacesRetry,
       onBeforeNavigate,
+      compassResults,
       style,
     },
     ref,
@@ -1125,16 +1242,72 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
       },
     });
 
+    // ── §35 selection telemetry ──────────────────────────────────────────────
+    //
+    // Fire-and-forget: this never blocks, reorders or gates the selection it
+    // reports. `opened` distinguishes a TAP (which pushes the detail screen)
+    // from a swipe that merely moves the selection — only a tap is treated as
+    // choosing a Compass option or accepting a recommendation.
+    const emitSelection = useCallback(
+      (index: number, opened: boolean) => {
+        const entity = entities[index];
+        if (!entity) return;
+        try {
+          const kind = entityKind(entity);
+          const isCompassOption = compassResults === true;
+
+          if (TELEMETRY_ZONE_KINDS.includes(kind)) {
+            emitMapEvent('zone_selected', {
+              ref: entityTelemetryRef(entity),
+              source: isCompassOption ? 'compass_pick' : 'marker',
+              forecast: isForecastKind(kind),
+            });
+          } else {
+            emitMapEvent('place_opened', {
+              ref: entityTelemetryRef(entity),
+              source: isCompassOption ? 'compass_pick' : 'marker',
+              rank: index,
+            });
+          }
+
+          if (!opened || !isCompassOption) return;
+
+          const distanceKm = entityDistanceKm(entity);
+          emitMapEvent('compass_option_selected', {
+            ref: entityTelemetryRef(entity),
+            optionIndex: index,
+            optionCount: entities.length,
+            ...(distanceKm != null ? { distance: distanceBucket(distanceKm) } : {}),
+          });
+
+          // Opening a pick is one of §35's acceptance routes. Gated on an
+          // actually-live decision so a stale flag can never manufacture one.
+          if (currentDecisionId() !== null) {
+            emitMapEvent('recommendation_accepted', {
+              ref: entityTelemetryRef(entity),
+              via: 'open',
+              optionIndex: index,
+              optionCount: entities.length,
+            });
+          }
+        } catch {
+          // Deliberately swallowed.
+        }
+      },
+      [entities, compassResults],
+    );
+
     const handleMomentumScrollEnd = useCallback(
       (e: NativeSyntheticEvent<NativeScrollEvent>) => {
         const offsetX = e.nativeEvent.contentOffset.x;
         const index = Math.round(offsetX / SNAP_INTERVAL);
         const clamped = Math.max(0, Math.min(index, entities.length - 1));
         if (clamped !== activeIndex) {
+          emitSelection(clamped, false);
           onIndexChange(clamped);
         }
       },
-      [entities.length, activeIndex, onIndexChange],
+      [entities.length, activeIndex, onIndexChange, emitSelection],
     );
 
     // Active entity for the peek strip label (falls back to first entity when
@@ -1180,7 +1353,9 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
               index={index}
               scrollX={scrollX}
               onBeforeNavigate={onBeforeNavigate}
+              isRecommendation={compassResults}
               onPress={() => {
+                emitSelection(index, true);
                 if (index !== activeIndex) onIndexChange(index);
               }}
             />
@@ -1205,7 +1380,11 @@ export const MapCarousel = forwardRef<MapCarouselRef, MapCarouselProps>(
         {renderCardArea()}
         {/* Full-detent extended detail — only rendered in the full state */}
         {previewDetent === 'full' && peekEntity ? (
-          <EntityFullDetail entity={peekEntity} onBeforeNavigate={onBeforeNavigate} />
+          <EntityFullDetail
+            entity={peekEntity}
+            onBeforeNavigate={onBeforeNavigate}
+            isRecommendation={compassResults}
+          />
         ) : null}
       </Animated.View>
     );
