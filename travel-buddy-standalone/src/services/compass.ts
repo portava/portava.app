@@ -1823,3 +1823,178 @@ export async function fetchCompassHome(): Promise<{
     return { ok: false, error: 'network_error' };
   }
 }
+
+// ── Memory + Experience Intelligence (derived memory, migrations 2183-2197) ─────
+// The projected-memory contract: Rediscovery (§8), plus view / feedback / export
+// / reset (§17). Everything here is empty until the server's `memory_projection`
+// flag is on and the projector has populated memory_projections — so the client
+// surfaces render graceful empty states, never errors, when nothing comes back.
+
+/** Why a rediscovered memory is being resurfaced now. */
+export type RediscoverReason = 'been_here_before' | 'you_saved' | 'you_know' | 'relevant';
+
+/** A memory resurfaced on returning to a city (GET /memory/rediscover). */
+export interface RediscoverMemory {
+  id: string;
+  memory_type: string;
+  subject_type: string;
+  subject_id: string;
+  content: string;
+  confidence: number;
+  reason: RediscoverReason;
+}
+
+/** A currently-served projected memory (GET /memory). */
+export interface ProjectedMemory {
+  id: string;
+  memory_type: string;
+  subject_type: string;
+  subject_id: string;
+  content: string;
+  confidence: number;
+  last_supported_at: string | null;
+  valid_from: string | null;
+}
+
+/** A row from the full export (GET /memory/export) — includes suppressed/decayed. */
+export interface ExportedMemory {
+  memory_type: string;
+  subject_type: string;
+  subject_id: string;
+  content: string;
+  confidence: number;
+  state: string;
+  sensitivity?: string;
+  visibility?: string;
+  retention_class?: string;
+  valid_from: string | null;
+  valid_to: string | null;
+  last_supported_at: string | null;
+  suppressed_by?: unknown;
+}
+
+/** Feedback the user can give on a single derived memory. */
+export type MemoryFeedbackKind = 'hide' | 'forget' | 'incorrect' | 'not_interested' | 'already_known';
+
+/** Memory classes that a reset can be scoped to (omit for a full reset). */
+export type MemoryClass = 'episodic' | 'semantic' | 'social' | 'place' | 'intent';
+
+export interface MemoryResetResult {
+  reset: boolean;
+  projectionsCleared: number;
+  eventsCleared: number;
+  feedbackKept: number;
+}
+
+/**
+ * Rediscovery (§8) — on returning to a city, the user's prior memory that
+ * matters now, each tagged with a `reason`. Empty array (not an error) when
+ * there is nothing to resurface.
+ */
+export async function fetchRediscover(
+  city: string,
+  limit = 20,
+): Promise<{ ok: boolean; data?: RediscoverMemory[]; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  if (!city.trim()) return { ok: false, error: 'no_city' };
+  try {
+    const r = await authedFetch(
+      `/api/compass/me/memory/rediscover?city=${encodeURIComponent(city.trim())}&limit=${limit}`,
+    );
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, data: (body.rediscover ?? []) as RediscoverMemory[] };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+/**
+ * View (§17/§10) — the ranked projected memories currently served on a surface.
+ */
+export async function fetchProjectedMemories(
+  surface: 'compass' | 'discovery' | 'passport' = 'compass',
+  limit = 50,
+): Promise<{ ok: boolean; data?: ProjectedMemory[]; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch(
+      `/api/compass/me/memory?surface=${encodeURIComponent(surface)}&limit=${limit}`,
+    );
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, data: (body.memories ?? []) as ProjectedMemory[] };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+/**
+ * Feedback (§17) — hide / forget / incorrect / not_interested / already_known
+ * on one memory. Pass `projectionId` (preferred — ownership is enforced server
+ * side) or a durable `subjectType`+`subjectId` pair.
+ */
+export async function postMemoryFeedback(body: {
+  kind: MemoryFeedbackKind;
+  projectionId?: string;
+  subjectType?: string;
+  subjectId?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/me/memory/feedback', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+/**
+ * Export (§17) — everything derived about the user, including suppressed and
+ * decayed rows and what suppresses them.
+ */
+export async function fetchMemoryExport(): Promise<{ ok: boolean; data?: ExportedMemory[]; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/me/memory/export');
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return { ok: true, data: (body.memories ?? []) as ExportedMemory[] };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
+
+/**
+ * Reset (§17) — clear the derived picture (all classes, or only the ones given).
+ * Destructive: rebuilds personalization from scratch. Previous "forget" choices
+ * survive (feedbackKept), so suppressed memory is never resurrected.
+ */
+export async function postMemoryReset(
+  memoryTypes?: MemoryClass[],
+): Promise<{ ok: boolean; data?: MemoryResetResult; error?: string }> {
+  if (!isSupabaseConfigured || !apiBase()) return notConfigured();
+  try {
+    const r = await authedFetch('/api/compass/me/memory/reset', {
+      method: 'POST',
+      body: JSON.stringify(memoryTypes && memoryTypes.length ? { memoryTypes } : {}),
+    });
+    if (!r.ok) return { ok: false, error: `http_${r.status}` };
+    const body = await r.json();
+    return {
+      ok: true,
+      data: {
+        reset: Boolean(body.reset),
+        projectionsCleared: Number(body.projectionsCleared ?? 0),
+        eventsCleared: Number(body.eventsCleared ?? 0),
+        feedbackKept: Number(body.feedbackKept ?? 0),
+      },
+    };
+  } catch {
+    return { ok: false, error: 'network_error' };
+  }
+}
