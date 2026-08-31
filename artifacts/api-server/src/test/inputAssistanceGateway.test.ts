@@ -360,16 +360,23 @@ describe("POST /input-assistance/suggest — AI lane gate (§56)", () => {
 // ── 6. PRIVACY fail-closed (§29) ───────────────────────────────────────────────
 
 describe("POST /input-assistance/suggest — privacy fail-closed (§29)", () => {
-  // Positive control: with a readable (empty) block set, the traveler appears.
-  it("telegraph_recipient surfaces a matching person when block state is known", async () => {
+  // Positive control: with a readable block set, an ELIGIBLE recipient appears.
+  // Phase 4 (§47) scoped telegraph_recipient to the viewer's own relationship
+  // graph (recent conversations + trip crew + follows + friends) so it can no
+  // longer be a prefix oracle for arbitrary private accounts — the person must
+  // be someone the viewer already has an edge to (here: ME follows ALICE).
+  it("telegraph_recipient surfaces a matching ELIGIBLE person when block state is known", async () => {
     setup({
       profiles: [traveler(ALICE, "paris_guide", "Paris Person")],
       profile_privacy_settings: [{ user_id: ALICE, show_real_name: true, allow_profile_discovery: true }],
-      blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [], user_friendships: [],
+      blocks: [], user_privacy_settings: [],
+      user_follows: [{ follower_id: ME, following_id: ALICE }], // ME follows ALICE ⇒ eligible recipient
+      friend_requests: [], user_friendships: [], trip_members: [], message_thread_members: [],
+      user_message_settings: [], circle_memberships: [],
     });
     const r = await post({ context: "telegraph_recipient", text: "paris" });
     const body = await r.json() as any;
-    assert.ok(body.suggestions.some((s: any) => s.entityId === ALICE), "person should appear");
+    assert.ok(body.suggestions.some((s: any) => s.entityId === ALICE), "eligible person should appear");
   });
 
   // Mutation-proof: coalescing a null block-set to an empty Set() (fail-open)

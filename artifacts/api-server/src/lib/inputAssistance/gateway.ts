@@ -33,6 +33,13 @@ import {
 } from '../../routes/discoverySearch';
 import { resolveGeoCandidates, zeroCharGeoDefaults, type GeoResolution } from './geoResolver';
 import { entityToSearchType, type DispatchSearchType } from './entityMap';
+import {
+  resolveRecipientSuggestions,
+  resolveMentionSuggestions,
+  resolveHashtagRefSuggestions,
+  checkUsernameAvailability,
+  buildUsernameValidation,
+} from './socialIdentity';
 import { POLICY_VERSION } from './policyRegistry';
 import {
   projectSearchResult,
@@ -82,6 +89,16 @@ const GEO_PICKER_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
 
 const EMPTY_GEO: GeoResolution = { rows: [], ambiguous: false, airport: null };
 
+// §26: free-text writing fields where an @mention / #hashtag is INSERTED as a
+// structured reference (not searched-for as an entity page). When one of these
+// carries a sigil, the gateway resolves the reference rather than running the
+// mixed-entity search. Without a sigil the field keeps its normal assist.
+const WRITING_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
+  'caption',
+  'comment',
+  'telegraph_message',
+]);
+
 export interface GenerateParams {
   context: InputContext;
   policy: InputFieldPolicy;
@@ -116,7 +133,9 @@ export async function generateSuggestions(
   // (typo tolerance) and apply the shared PostgREST-injection sanitizer.
   const trimmed = (text ?? '').trim();
   const isHandle = trimmed.startsWith('@');
-  const aliased = applyAliases(isHandle ? trimmed.slice(1) : trimmed);
+  const isHashSigil = trimmed.startsWith('#');
+  const sigilStripped = isHandle || isHashSigil ? trimmed.slice(1) : trimmed;
+  const aliased = applyAliases(sigilStripped);
   const q = sanitizeQuery(aliased).slice(0, 80);
   // normalizeLocationName is the canonical diacritic/case fold — kept for the
   // §16 session-bias comparison below (the stroke/alias-aware geographic fold
@@ -144,6 +163,50 @@ export async function generateSuggestions(
         Math.min(limit, policy.maxSuggestions),
       ),
     );
+  }
+
+  // ── Social identity contexts (Phase 4, §26/§47/§54) ─────────────────────────
+  // These run BEFORE the generic minChars gate so a 1-char @mention and a
+  // zero-char recipient recents list both work. Each is a full takeover that
+  // returns its own projected, ranked list.
+  const socialCtx: SearchQueryContext = { lat, lng, userCity: city, nearbyIntent: false };
+
+  // Recipient search (§54): eligibility-scoped, enumeration-safe (§47). Replaces
+  // the generic traveler dispatch that would otherwise leak private accounts.
+  if (context === 'telegraph_recipient') {
+    const recips = await resolveRecipientSuggestions(sc, context, POLICY_VERSION, {
+      userId,
+      q,
+      max: policy.maxSuggestions,
+    }).catch(() => [] as InputSuggestion[]);
+    return dropDeadRows(
+      orderSuggestions(
+        applySessionBias(recips, sessionContext, normalized),
+        Math.min(limit, policy.maxSuggestions),
+      ),
+    );
+  }
+
+  // Mention/hashtag structured references inside writing fields (§26). Only when
+  // a sigil is present — otherwise the field keeps its normal mixed-entity assist.
+  if (WRITING_CONTEXTS.has(context) && (isHandle || isHashSigil)) {
+    const allowsUser = (policy.entityTypes ?? []).includes('user');
+    const allowsHashtag = (policy.entityTypes ?? []).includes('hashtag');
+    let refs: InputSuggestion[] = [];
+    if (isHandle && allowsUser) {
+      refs = await resolveMentionSuggestions(sc, context, POLICY_VERSION, {
+        userId,
+        q,
+        max: policy.maxSuggestions,
+        ctx: socialCtx,
+      }).catch(() => [] as InputSuggestion[]);
+    } else if (isHashSigil && allowsHashtag) {
+      refs = await resolveHashtagRefSuggestions(sc, context, POLICY_VERSION, {
+        raw: trimmed,
+        max: policy.maxSuggestions,
+      }).catch(() => [] as InputSuggestion[]);
+    }
+    return dropDeadRows(orderSuggestions(refs, Math.min(limit, policy.maxSuggestions)));
   }
 
   // Honor minChars (§33). compass_prompt has minChars:0 so it still yields
@@ -230,6 +293,20 @@ export async function generateSuggestions(
       }
       // else: fail-closed — no entity suggestions when eligibility is unknown.
     }
+  }
+
+  // ── §23 username validation (username context) ──────────────────────────────
+  // Surface availability/uniqueness + reserved-name/normalization as a
+  // `validation` assistance row, reusing the SAME rules + availability query as
+  // GET /users/check-username. Additive to (not a replacement for) the user
+  // entity search this context also runs.
+  if (
+    context === 'username' &&
+    policy.allowedSuggestionTypes.includes('validation') &&
+    trimmed.length >= 1
+  ) {
+    const avail = await checkUsernameAvailability(sc, trimmed, userId).catch(() => null);
+    if (avail) suggestions.push(buildUsernameValidation(context, POLICY_VERSION, trimmed, avail));
   }
 
   // ── Query completion (§13 "SEARCH FOR") ─────────────────────────────────────

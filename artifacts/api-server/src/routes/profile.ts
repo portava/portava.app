@@ -15,6 +15,7 @@ import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../lib/tripCounts.js";
+import { validateUsername } from "../lib/usernameRules.js";
 
 /**
  * Sniff + strip-EXIF/auto-orient an avatar/cover image. Returns the processed
@@ -62,29 +63,9 @@ const SUPPORTED_LANGUAGE_CODES = new Set([
   'sv', 'nl', 'pl', 'tr', 'hi',
 ]);
 
-const RESERVED_USERNAMES = new Set([
-  "admin", "support", "travelbuddy", "official", "root", "system",
-  "null", "undefined", "help", "security", "moderator", "owner",
-  "passport", "api", "settings", "login", "signup", "me", "user",
-  "users", "about", "terms", "privacy",
-  // @Portava official publisher account — permanently reserved; cannot be
-  // claimed via normal registration. Only the service-role seed script may
-  // create this handle.
-  "portava", "portava_official",
-]);
-
-/** No periods: keeps usernames clean; max 30 chars (was 24). */
-const USERNAME_RE = /^[a-z0-9_]{3,30}$/;
-
-function validateUsername(u: string): { valid: boolean; reason?: string } {
-  if (!USERNAME_RE.test(u)) {
-    return { valid: false, reason: "Username must be 3-30 chars, lowercase letters, numbers, and underscores only" };
-  }
-  if (RESERVED_USERNAMES.has(u)) {
-    return { valid: false, reason: "That username is reserved" };
-  }
-  return { valid: true };
-}
+// Username validity/reserved rules live in one place (lib/usernameRules) so the
+// input-assistance gateway's §23 validation reuses the identical rules. Behavior
+// here is unchanged — this used to be an inline copy (see the import at the top).
 
 const PROFILE_COLUMNS =
   "id, handle, name, display_name, username, bio, avatar_url, home_city, home_country, current_city, travel_style, interests, verified, verification_status, verified_at, open_to_meet, is_private, passport_visibility, cover_photo_url, username_updated_at, created_at, spoken_languages, default_language, travel_styles, travel_pace, budget_style, travel_group_style, looking_for, comfort_level, availability_tags, planning_style, public_social_links, preferred_language, verification_level, id_verified_at, selfie_verified_at, home_country_verified_at, safety_flags_count, host_verified_at, buddy_verified_at, passport_section_order, passport_tab_order, passport_hidden_sections, date_of_birth, is_official, featured_count";
