@@ -23,9 +23,22 @@
  * replay and for an external cron), but it now delegates. Duplicating it would
  * guarantee the two drift.
  *
- * Fail-soft: each of the three phases is independently guarded, so one failing
- * phase never prevents the others. Counts are returned so the caller can log or
+ * Fail-soft: each phase is independently guarded (its own try/catch), so one
+ * failing phase never prevents the others — the header once promised this but
+ * only phase 1 delivered it; phases 2 and 3 called `await …from(…)` bare, so a
+ * thrown rejection in phase 2 skipped phase 3 and aborted the whole sweep. All
+ * phases now wrap their own work. Counts are returned so the caller can log or
  * assert on them.
+ *
+ * A fourth phase expires stale open marketplace rows — pending
+ * `rent_buddy_offers` and open `rent_buddy_requests` past their own `expires_at`
+ * — which nothing else swept (offer expiry was only ever applied lazily, at
+ * accept-time). It is idempotent (an expired row no longer matches the filter),
+ * bounded (one capped batch per table per pass; the backlog drains over
+ * successive passes), and gated behind the Rent-a-Buddy master flag
+ * (`rent_buddy_enabled`, read fail-closed) so it is a no-op while the feature is
+ * off — unlike phases 1–3, which govern already-created bookings and stay
+ * ungated as before.
  *
  * Configuration (env vars)
  * ────────────────────────
@@ -36,6 +49,16 @@
 import { getServiceClient } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { notifyBookingParty } from "./bookingNotify.js";
+import { isFlagEnabled } from "./featureFlags.js";
+
+/** Master feature flag that gates the whole Rent-a-Buddy surface. */
+const RAB_MASTER_FLAG = "rent_buddy_enabled";
+
+/**
+ * Rows expired per table per pass. Keeps each sweep bounded; because the phase
+ * is idempotent, any remaining backlog is drained on later passes.
+ */
+const OFFER_EXPIRY_BATCH_LIMIT = 500;
 
 const logger = rootLogger.child({ service: "RentBuddyRequestSweeper" });
 
@@ -58,6 +81,8 @@ export interface SweepStatus {
   lastExpired: number;
   lastAutoCompleted: number;
   lastNoShowEscalated: number;
+  lastOffersExpired: number;
+  lastRequestsExpired: number;
   consecutiveFailures: number;
 }
 
@@ -66,6 +91,8 @@ const _status: SweepStatus = {
   lastExpired: 0,
   lastAutoCompleted: 0,
   lastNoShowEscalated: 0,
+  lastOffersExpired: 0,
+  lastRequestsExpired: 0,
   consecutiveFailures: 0,
 };
 
@@ -77,6 +104,8 @@ export function _resetStatus(): void {
   _status.lastExpired = 0;
   _status.lastAutoCompleted = 0;
   _status.lastNoShowEscalated = 0;
+  _status.lastOffersExpired = 0;
+  _status.lastRequestsExpired = 0;
   _status.consecutiveFailures = 0;
 }
 
@@ -87,6 +116,8 @@ export interface BuddyRequestSweepResult {
   expired: number;
   autoCompleted: number;
   noShowEscalated: number;
+  offersExpired: number;
+  requestsExpired: number;
   unavailable?: boolean;
 }
 
@@ -99,7 +130,10 @@ export interface BuddyRequestSweepResult {
 export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSweepResult> {
   const serviceClient = client ?? getServiceClient();
   if (!serviceClient) {
-    return { ok: false, expired: 0, autoCompleted: 0, noShowEscalated: 0, unavailable: true };
+    return {
+      ok: false, expired: 0, autoCompleted: 0, noShowEscalated: 0,
+      offersExpired: 0, requestsExpired: 0, unavailable: true,
+    };
   }
 
   const now = new Date().toISOString();
@@ -142,13 +176,16 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
   }
 
   // ── 2. Auto-complete bookings whose dispute window closed without a dispute ─
+  // Independently guarded (its own try/catch): a thrown/rejected fetch here is
+  // logged and phases 3–4 still run, instead of aborting the whole sweep.
+  let autoCompletedCount = 0;
+  try {
   const { data: pendingConfirm } = await serviceClient
     .from("rent_buddy_bookings")
     .select("id, traveler_id, buddy_id")
     .eq("status", "completed_pending_traveler_confirmation")
     .lt("dispute_window_expires_at", now);
 
-  let autoCompletedCount = 0;
   if (pendingConfirm && pendingConfirm.length > 0) {
     const ids2 = pendingConfirm.map((r: any) => r.id as string);
     const { error: autoCompleteErr } = await serviceClient
@@ -194,15 +231,20 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
       autoCompletedCount = pendingConfirm.length;
     }
   }
+  } catch (err) {
+    logger.error({ err }, "auto-complete phase threw — later phases still run");
+  }
 
   // ── 3. Escalate no_show_pending bookings past grace period → disputed ──────
+  // Independently guarded (its own try/catch), same as phases 1, 2 and 4.
+  let noShowEscalatedCount = 0;
+  try {
   const { data: staleNoShows } = await serviceClient
     .from("rent_buddy_bookings")
     .select("id, traveler_id, buddy_id")
     .eq("status", "no_show_pending")
     .lt("no_show_grace_expires_at", now);
 
-  let noShowEscalatedCount = 0;
   if (staleNoShows && staleNoShows.length > 0) {
     for (const bk of staleNoShows) {
       // Derive the original reporter from the no_show_reported event —
@@ -270,13 +312,80 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
       }
     }
   }
+  } catch (err) {
+    logger.error({ err }, "no-show escalation phase threw — later phases still run");
+  }
+
+  // ── 4. Expire stale open marketplace rows (offers + requests) ──────────────
+  // Nothing else sweeps these: pending offers and open requests were only ever
+  // expired lazily at accept-time, so an offer/request nobody acted on lingered
+  // past its `expires_at` forever. Gated behind the RAB master flag (read
+  // fail-closed) so it is a no-op while the feature is off. Idempotent — an
+  // already-`expired` row no longer matches the filter — and bounded to one
+  // capped batch per table per pass. Independently guarded like phases 1–3.
+  let offersExpired = 0;
+  let requestsExpired = 0;
+  try {
+    if (await isFlagEnabled(serviceClient, RAB_MASTER_FLAG)) {
+      offersExpired   = await expireStaleOpenRows(serviceClient, "rent_buddy_offers",   "pending", now);
+      requestsExpired = await expireStaleOpenRows(serviceClient, "rent_buddy_requests", "open",    now);
+    }
+  } catch (err) {
+    logger.error({ err }, "marketplace-expiry phase threw — booking phases already ran");
+  }
 
   return {
     ok: true,
     expired: expiredCount,
     autoCompleted: autoCompletedCount,
     noShowEscalated: noShowEscalatedCount,
+    offersExpired,
+    requestsExpired,
   };
+}
+
+/**
+ * Expire one capped batch of stale open rows for a marketplace table.
+ *
+ * Selects up to OFFER_EXPIRY_BATCH_LIMIT ids still in `openStatus` whose own
+ * `expires_at` is in the past, then flips them to `expired`. Returns the count
+ * flipped (0 on any DB error — non-fatal, logged). Idempotent: expired rows
+ * drop out of the `openStatus` filter, so re-running never double-counts and a
+ * remaining backlog is drained on the next pass.
+ */
+async function expireStaleOpenRows(
+  serviceClient: any,
+  table: "rent_buddy_offers" | "rent_buddy_requests",
+  openStatus: string,
+  now: string,
+): Promise<number> {
+  const { data, error: selErr } = await serviceClient
+    .from(table)
+    .select("id")
+    .eq("status", openStatus)
+    .lt("expires_at", now)
+    .limit(OFFER_EXPIRY_BATCH_LIMIT);
+
+  if (selErr) {
+    logger.error({ err: selErr, table }, "stale open-row fetch failed");
+    return 0;
+  }
+
+  const rows = (data ?? []) as { id: string }[];
+  if (rows.length === 0) return 0;
+
+  const ids = rows.map((r) => r.id);
+  const { error: updErr } = await serviceClient
+    .from(table)
+    .update({ status: "expired", updated_at: now })
+    .in("id", ids);
+
+  if (updErr) {
+    logger.error({ err: updErr, table }, "stale open-row expire update failed");
+    return 0;
+  }
+
+  return ids.length;
 }
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
@@ -291,10 +400,18 @@ async function tickOnce(): Promise<void> {
     _status.lastExpired = r.expired;
     _status.lastAutoCompleted = r.autoCompleted;
     _status.lastNoShowEscalated = r.noShowEscalated;
+    _status.lastOffersExpired = r.offersExpired;
+    _status.lastRequestsExpired = r.requestsExpired;
     _status.consecutiveFailures = 0;
-    if (r.expired || r.autoCompleted || r.noShowEscalated) {
+    if (r.expired || r.autoCompleted || r.noShowEscalated || r.offersExpired || r.requestsExpired) {
       logger.info(
-        { expired: r.expired, autoCompleted: r.autoCompleted, noShowEscalated: r.noShowEscalated },
+        {
+          expired: r.expired,
+          autoCompleted: r.autoCompleted,
+          noShowEscalated: r.noShowEscalated,
+          offersExpired: r.offersExpired,
+          requestsExpired: r.requestsExpired,
+        },
         "buddy request sweep applied transitions",
       );
     }
