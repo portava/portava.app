@@ -22,21 +22,32 @@ export interface CityVisualPulseProps {
   onSelectZone?: (zone: CityVisualZone) => void;
 }
 
+const NEUTRAL_ACCENT = 'rgba(250,249,246,0.45)';
+
 export function CityVisualPulse({ zones, onSelectZone }: CityVisualPulseProps) {
   return (
     <View style={styles.card}>
       <Text style={styles.heading}>City visual state</Text>
       {zones.map((z) => {
-        const accent = ZONE_COLOR[z.state];
-        const glyph = zoneGlyph(z.state, z.trend);
-        const intensity = zoneIntensity(z.state);
+        // A qualitative state is present ONLY when a gated live claim resolved it.
+        // With no live claim we show a neutral row (name + coverage) and NEVER a
+        // fabricated "Building/Peak" pulse (§46 "no fake-live treatment").
+        const hasState = z.state != null;
+        const accent = hasState ? ZONE_COLOR[z.state as NonNullable<typeof z.state>] : NEUTRAL_ACCENT;
+        const glyph = hasState ? zoneGlyph(z.state as NonNullable<typeof z.state>, z.trend ?? 'steady') : 'dot';
+        const intensity = hasState ? zoneIntensity(z.state as NonNullable<typeof z.state>) : 0.28;
+        const stateText = hasState ? zoneStateLabel(z.state as NonNullable<typeof z.state>) : null;
+        const coverageText =
+          z.perspectiveCount != null && z.perspectiveCount > 0
+            ? `${z.perspectiveCount}`
+            : null;
         return (
           <Pressable
             key={z.id}
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
             onPress={onSelectZone ? () => onSelectZone(z) : undefined}
             accessibilityRole={onSelectZone ? 'button' : undefined}
-            accessibilityLabel={`${z.name}, ${zoneStateLabel(z.state)}`}
+            accessibilityLabel={stateText ? `${z.name}, ${stateText}` : z.name}
           >
             <Text style={styles.zoneName} numberOfLines={1}>
               {z.name}
@@ -48,14 +59,20 @@ export function CityVisualPulse({ zones, onSelectZone }: CityVisualPulseProps) {
               />
             </View>
             <View style={styles.stateWrap}>
-              <Text style={[styles.stateLabel, { color: accent }]}>{zoneStateLabel(z.state)}</Text>
-              {glyph === 'arrow-up' ? (
-                <TrendingUp size={13} color={accent} strokeWidth={2.4} />
-              ) : glyph === 'arrow-down' ? (
-                <TrendingDown size={13} color={accent} strokeWidth={2.4} />
-              ) : (
-                <View style={[styles.holdDot, { backgroundColor: accent }]} />
-              )}
+              {stateText ? (
+                <>
+                  <Text style={[styles.stateLabel, { color: accent }]}>{stateText}</Text>
+                  {glyph === 'arrow-up' ? (
+                    <TrendingUp size={13} color={accent} strokeWidth={2.4} />
+                  ) : glyph === 'arrow-down' ? (
+                    <TrendingDown size={13} color={accent} strokeWidth={2.4} />
+                  ) : (
+                    <View style={[styles.holdDot, { backgroundColor: accent }]} />
+                  )}
+                </>
+              ) : coverageText ? (
+                <Text style={styles.coverageLabel}>{coverageText}</Text>
+              ) : null}
             </View>
           </Pressable>
         );
@@ -108,5 +125,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   stateLabel: { fontSize: 13, fontWeight: '800', letterSpacing: -0.2 },
+  coverageLabel: { color: color.faint, fontSize: 12, fontWeight: '700' },
   holdDot: { width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2 },
 });
