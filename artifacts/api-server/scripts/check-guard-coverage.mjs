@@ -203,6 +203,15 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'prints a verdict for a human to act on; the D5 revisit clause is the action it feeds.',
   },
   {
+    file: 'src/scripts/reportDiscoveryDivergence.ts',
+    reason:
+      'One SELECT on discovery_shadow_serves (serve_point, sort_by, cohort_reason, page_size, ' +
+      'legacy_total, pde_total, overlap_count, displaced_count, top_changed, legacy_ms, pde_ms, ' +
+      'pde_suppressed_writes) filtered to an observed_at window, aggregated in memory. It answers the P1 ' +
+      'Stage-3 question — how differently would PDE order discovery, and at what cost — which is a question ' +
+      'about production. It writes nothing and prints numbers for a human to weigh before Stage 4 flips pde.',
+  },
+  {
     file: 'src/scripts/reportIntelFunnel.ts',
     reason:
       'FOUR SELECTs, all reads, each windowed by its own timestamp and tallied in memory: ' +
