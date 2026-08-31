@@ -51,8 +51,11 @@ export function projectBuddy(buddy: any): MapObject | null {
     id: `buddy:${buddy.id}`,
     kind: 'buddy_zone',
     geometry: point(Number(lat), Number(lng)),
-    title: buddy.displayName ?? buddy.handle ?? 'Buddy',
-    subtitle: joinParts([buddy.city, buddy.headline], ' · '),
+    // `tagline`, not `headline`: the buddy DTO has never carried a `headline`,
+    // so this subtitle silently collapsed to the city alone. There is no
+    // `handle` on the DTO either — the fallback must be generic.
+    title: buddy.displayName ?? 'Buddy',
+    subtitle: joinParts([buddy.city, buddy.tagline], ' · '),
     privacyClass: BUDDY_PRIVACY_CLASS,
     renderingPriority: KIND_DEFAULT_PRIORITY.buddy_zone,
     interaction: {
@@ -115,7 +118,14 @@ export function projectFriend(loc: any): MapObject | null {
     id: `friend:${loc.userId}`,
     kind: 'crew_member',
     geometry: point(Number(loc.lat), Number(loc.lng)),
-    title: loc.displayName ?? loc.handle ?? 'Friend',
+    // `name`, not `displayName`: the circle-locations reader emits `name`, so
+    // this read undefined and EVERY friend pin rendered the fallback. The
+    // reader has already gated `name` behind each member's name-visibility
+    // setting, so null means "has not opted into showing a real name" — the
+    // fallback must therefore be generic, and must never reach for a handle
+    // the server deliberately withheld. MapCarousel and MapEntityPreviewCard
+    // already read it this way; this projector was the outlier.
+    title: loc.name ?? 'Circle member',
     subtitle: loc.city ?? undefined,
     privacyClass: FRIEND_PRIVACY_CLASS,
     renderingPriority: KIND_DEFAULT_PRIORITY.crew_member,

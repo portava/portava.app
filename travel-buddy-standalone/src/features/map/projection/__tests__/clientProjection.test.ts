@@ -15,6 +15,11 @@
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dir = dirname(fileURLToPath(import.meta.url));
 
 import {
   BUDDY_PRIVACY_CLASS,
@@ -35,12 +40,21 @@ import {
 
 const NOW = Date.parse('2026-08-31T12:00:00.000Z');
 
+// These fixtures MUST mirror what the server actually puts on the wire.
+// They previously did not — BUDDY carried `handle` and `headline`, FRIEND
+// carried `displayName`, and none of the three exist in any server DTO. The
+// projectors read those invented fields, so every buddy subtitle collapsed to
+// the city and every friend pin rendered the generic fallback. The tests
+// passed throughout, because the fixtures had been written to match the
+// projectors rather than reality.
+//
+// `dtoFieldGuard` at the bottom of this file now pins these key sets against
+// the server source, so a fixture can no longer drift into fiction.
 const BUDDY = {
   id: 'b1',
   displayName: 'Mika',
-  handle: 'mika',
   city: 'Bangkok',
-  headline: 'Street food guide',
+  tagline: 'Street food guide',
   meetupBaseLat: 13.75,
   meetupBaseLng: 100.5,
 };
@@ -57,7 +71,7 @@ const TRIP = {
 
 const FRIEND = {
   userId: 'u9',
-  displayName: 'Rui',
+  name: 'Rui',
   city: 'Tokyo',
   lat: 35.68,
   lng: 139.76,
@@ -289,7 +303,7 @@ describe('identity of the object itself', () => {
   });
 
   test('subtitle is undefined rather than an empty or dangling separator', () => {
-    assert.equal(projectBuddy({ ...BUDDY, city: null, headline: null })!.subtitle, undefined);
+    assert.equal(projectBuddy({ ...BUDDY, city: null, tagline: null })!.subtitle, undefined);
     assert.equal(projectGemLocal({ ...GEM, category: null, city: null })!.subtitle, undefined);
     // One present part must not carry the separator.
     assert.equal(projectGemLocal({ ...GEM, category: null })!.subtitle, 'Da Nang');
@@ -297,5 +311,78 @@ describe('identity of the object itself', () => {
 
   test('a trip with only one date still renders a legible range', () => {
     assert.match(projectTrip({ ...TRIP, endDate: null })!.subtitle!, /2026-04-12 → \?/);
+  });
+});
+
+// ── The fixtures are pinned to the server's real DTOs ─────────────────────────
+//
+// The buddy and friend projectors both read fields that no server DTO has ever
+// emitted (`headline`, `handle`, `displayName` on a circle member). The bugs
+// were invisible for the same reason in both cases: the fixture supplied the
+// invented field, so the projector found it and the assertion passed. The test
+// was checking that the code agreed with itself.
+//
+// These guards read the SERVER SOURCE and fail when a fixture names a field the
+// server does not emit. That is the property that was actually missing — not
+// another example, which would have been written against the same wrong fixture.
+
+describe('the fixtures mirror the server DTOs', () => {
+  const SERVER = resolve(__dir, '../../../../../..', 'artifacts', 'api-server', 'src');
+
+  /** The object-literal keys of a mapper/interface, read from source. */
+  function emittedKeys(file: string, startMarker: string, endMarker: string): Set<string> {
+    const src = readFileSync(resolve(SERVER, file), 'utf8');
+    const from = src.indexOf(startMarker);
+    assert.ok(from >= 0, `marker "${startMarker}" not found in ${file} — did it get renamed?`);
+    const to = src.indexOf(endMarker, from);
+    assert.ok(to > from, `end marker "${endMarker}" not found after "${startMarker}" in ${file}`);
+    const body = src.slice(from, to);
+    const keys = new Set<string>();
+    for (const m of body.matchAll(/^\s{2,}([A-Za-z_][A-Za-z0-9_]*)\s*[:?]/gm)) keys.add(m[1]);
+    assert.ok(keys.size > 3, `parsed only ${keys.size} keys from ${file} — the parse broke, so this guard would be inert`);
+    return keys;
+  }
+
+  test('every BUDDY fixture field is one the server actually emits', () => {
+    const emitted = emittedKeys('lib/buddyMapRead.ts', 'export function mapBuddyPublicProfile', '\n}');
+    const invented = Object.keys(BUDDY).filter((k) => !emitted.has(k));
+    assert.deepEqual(
+      invented,
+      [],
+      'the fixture names fields no server DTO emits — a projector reading one of these gets undefined in production while this suite stays green',
+    );
+  });
+
+  test('every FRIEND fixture field is one the server actually emits', () => {
+    const emitted = emittedKeys('lib/circleLocationsRead.ts', 'export interface CircleLocationEntry', '\n}');
+    const invented = Object.keys(FRIEND).filter((k) => !emitted.has(k));
+    assert.deepEqual(invented, [], 'the fixture names fields no server DTO emits');
+  });
+
+  test('the buddy subtitle uses a field that survives the round trip', () => {
+    // The specific regression: `headline` produced a subtitle of the city alone,
+    // which looks like a buddy who simply has no tagline. Nothing about the
+    // rendered output said the field was missing.
+    const withTagline = projectBuddy(BUDDY)!;
+    const withoutTagline = projectBuddy({ ...BUDDY, tagline: null })!;
+    assert.notEqual(
+      withTagline.subtitle,
+      withoutTagline.subtitle,
+      'the subtitle ignores the tagline entirely — it is reading a field the DTO does not carry',
+    );
+    assert.ok(withTagline.subtitle?.includes('Street food guide'));
+  });
+
+  test('a named circle member renders their name, not the fallback', () => {
+    assert.equal(projectFriend(FRIEND)!.title, 'Rui');
+  });
+
+  test('an unnamed circle member falls back generically, never to a handle', () => {
+    // `name` is null when the member has NOT opted into showing a real name.
+    // Reaching past it for a handle would defeat that gate, so the projector
+    // must not accept one even if a caller supplies it.
+    const anon = projectFriend({ ...FRIEND, name: null, handle: 'rui_t' })!;
+    assert.equal(anon.title, 'Circle member');
+    assert.ok(!JSON.stringify(anon.title).includes('rui_t'));
   });
 });
