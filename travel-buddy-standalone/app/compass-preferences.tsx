@@ -541,6 +541,19 @@ export default function CompassPreferencesScreen() {
             </View>
             <ChevronDown size={16} color={color.mute} style={{ transform: [{ rotate: '-90deg' }] }} />
           </Pressable>
+          <Pressable
+            style={s.expandRow}
+            testID="compass-memory-link"
+            onPress={() => router.push('/compass-memory' as any)}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={s.fieldLabel}>Memory Intelligence</Text>
+              <Text style={{ ...t.small, color: color.mute }}>
+                Review, correct, export, or reset the memory Compass derives from your activity.
+              </Text>
+            </View>
+            <ChevronDown size={16} color={color.mute} style={{ transform: [{ rotate: '-90deg' }] }} />
+          </Pressable>
         </Section>
 
         {/* ── Data & Privacy ── */}
