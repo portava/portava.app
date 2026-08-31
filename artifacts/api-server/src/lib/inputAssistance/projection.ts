@@ -15,6 +15,10 @@
  */
 import type { SearchResult } from '../../routes/discoverySearch';
 import { matchTier } from '../../routes/discoverySearchHelpers';
+import type { CanonicalRow } from '../canonicalLocations';
+import type { CanonicalCityBinding, GeoDefault } from './geoResolver';
+import { cityBinding, airportCityBinding } from './geoResolver';
+import type { StaticAirport } from '../../services/airport/StaticAirportData';
 import { searchTypeToEntity, type DispatchSearchType } from './entityMap';
 import type {
   InputContext,
@@ -83,6 +87,122 @@ export function projectSearchResult(
     suggestion.canonicalUri = `portava:${r.destinationRoute}`;
   }
 
+  return suggestion;
+}
+
+// ── Geographic core projection (§12/§17/§19/§53) ──────────────────────────────
+
+function citySlug(name: string): string {
+  return `/city/${encodeURIComponent((name || '').toLowerCase())}`;
+}
+
+/**
+ * Project a canonical city row for a geographic PICKER context. Selecting it
+ * sets the §17/§53 structured binding (city_id + country + coordinates +
+ * timezone) so dependent fields prefill — visibly and editably (§17). When
+ * `disambiguation` is set (§19) the row is a ranked CHOICE, not an auto-pick,
+ * and its confidence is capped in the MEDIUM band so the client never
+ * auto-replaces on it.
+ */
+export function projectCanonicalCity(
+  row: CanonicalRow,
+  context: InputContext,
+  policyVersion: string,
+  q: string,
+  opts: { disambiguation?: boolean } = {},
+): InputSuggestion {
+  const label = row.name || row.display_name;
+  const subtitle = [row.region, row.country].filter(Boolean).join(', ') || null;
+  const binding: CanonicalCityBinding = cityBinding(row);
+  const disambiguation = opts.disambiguation === true;
+  const confidence = disambiguation
+    ? 0.55 // MEDIUM (§19): a ranked choice, never an auto-replace
+    : tierConfidence(matchTier(label, q, subtitle));
+
+  const suggestion: InputSuggestion = {
+    id: `${context}:city:${row.id}`,
+    type: disambiguation ? 'disambiguation' : 'entity',
+    context,
+    label,
+    entityType: 'city',
+    entityId: row.id,
+    // Selecting a picker city BINDS the field to the canonical value (§17/§53).
+    action: { type: 'set_structured_value', value: binding },
+    structuredValue: binding,
+    confidence,
+    source: 'canonical',
+    destination: { route: citySlug(label), entityType: 'city', entityId: row.id },
+    canonicalUri: `portava:${citySlug(label)}`,
+    policyVersion,
+  };
+  if (subtitle) suggestion.subtitle = subtitle;
+  if (disambiguation && row.country) suggestion.reason = row.country;
+  return suggestion;
+}
+
+/**
+ * Project an airport-code match as a DISAMBIGUATION choice pointing at the
+ * airport's CITY (§12 airport/city ambiguity). A bare code ("DAD") is never
+ * silently resolved to a city; the user is offered the city explicitly.
+ */
+export function projectAirportDisambiguation(
+  airport: StaticAirport,
+  context: InputContext,
+  policyVersion: string,
+): InputSuggestion {
+  const binding = airportCityBinding(airport);
+  return {
+    id: `${context}:airport:${airport.iataCode}`,
+    type: 'disambiguation',
+    context,
+    label: airport.city,
+    subtitle: `${airport.iataCode} · ${airport.country}`,
+    entityType: 'city',
+    action: { type: 'set_structured_value', value: binding },
+    structuredValue: binding,
+    confidence: 0.5, // MEDIUM — a clarification choice, not an auto-pick (§19)
+    source: 'canonical',
+    reason: `${airport.iataCode} airport`,
+    destination: { route: citySlug(airport.city), entityType: 'city' },
+    policyVersion,
+  };
+}
+
+/**
+ * Project a zero-character default (§14/§53): the viewer's current city or an
+ * active/upcoming Trip destination. Bindable when it resolved to a canonical
+ * city; otherwise it drops the raw name into the field (editable, never a
+ * silent commit).
+ */
+export function projectGeoDefault(
+  def: GeoDefault,
+  context: InputContext,
+  policyVersion: string,
+  index: number,
+): InputSuggestion {
+  const action: SuggestionAction = def.binding
+    ? { type: 'set_structured_value', value: def.binding }
+    : { type: 'replace_text', text: def.label };
+  const suggestion: InputSuggestion = {
+    id: `${context}:default:${def.kind}:${index}`,
+    type: 'recent',
+    context,
+    label: def.label,
+    action,
+    confidence: 0.7,
+    source: def.kind === 'current' ? 'local' : 'recent',
+    reason: def.reason,
+    policyVersion,
+  };
+  if (def.subtitle) suggestion.subtitle = def.subtitle;
+  if (def.binding) {
+    suggestion.structuredValue = def.binding;
+    suggestion.entityType = 'city';
+    if (def.binding.cityId) suggestion.entityId = def.binding.cityId;
+    suggestion.destination = { route: citySlug(def.label), entityType: 'city' };
+  } else {
+    suggestion.replacementText = def.label;
+  }
   return suggestion;
 }
 
