@@ -82,7 +82,7 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { invalidateSuggestedCityCache, checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
-import { getUserLimits, enforceBookingCreationGates } from "./rentABuddy.js";
+import { getUserLimits, enforceBookingCreationGates, deriveServiceCountry } from "./rentABuddy.js";
 import {
   calculateCompatibilityScore,
   rankBuddies,
@@ -724,11 +724,30 @@ router.post("/rent-a-buddy/requests", async (req, res) => {
 
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
+  // Snapshot the service country onto the request so the policy that applies is
+  // frozen at request-creation time (offer-accept reads this as authoritative).
+  // An open request targets no specific buddy yet, so the service location IS the
+  // requested city; derive the country server-side from the admin-curated
+  // rent_buddy_city_rollouts mapping (same free-text country convention as the
+  // rest of Rent-a-Buddy). Best-effort: a city with no rollout row leaves the
+  // snapshot null, and offer-accept then re-derives from the offering buddy.
+  let requestCountry: string | null = null;
+  {
+    const { data: rollout } = await svc
+      .from("rent_buddy_city_rollouts")
+      .select("country")
+      .eq("city", city)
+      .maybeSingle();
+    const rc = (rollout as any)?.country;
+    if (typeof rc === "string" && rc.trim().length > 0) requestCountry = rc.trim();
+  }
+
   const { data, error } = await svc
     .from("rent_buddy_requests")
     .insert({
       traveler_id: user.id,
       city,
+      country_code: requestCountry,
       lat: typeof lat === "number" && Number.isFinite(lat) ? lat : null,
       lng: typeof lng === "number" && Number.isFinite(lng) ? lng : null,
       category,
@@ -1087,10 +1106,16 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
     .eq("id", o.buddy_profile_id)
     .maybeSingle();
   if (!offerBuddyProfile) return sendError(res, 'not_found', "Buddy not found.");
+  // Governing country: prefer the REQUEST's snapshot (authoritative — it froze
+  // the country at request-creation time, so later buddy-location edits can't
+  // move the goalposts). Only when the request has no snapshot (legacy rows) do
+  // we re-derive from the offering buddy. If still unresolved with launch
+  // controls present, enforceBookingCreationGates fails closed.
+  const acceptCountry = ((o.request as any).country_code ?? null) ?? deriveServiceCountry(offerBuddyProfile);
   if (!await enforceBookingCreationGates({
     sc: svc, res, userId: user.id, buddyProfile: offerBuddyProfile,
     city: o.request.city,
-    countryCode: (o.request as any).country_code ?? null,
+    countryCode: acceptCountry,
     category: o.request.category,
     groupSize: o.request.group_size,
     paymentMode: o.payment_mode,
@@ -1133,6 +1158,7 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
         : 2,
       group_size: o.request.group_size ?? 1,
       city: o.request.city,
+      country_code: acceptCountry,
       category: o.request.category,
       notes: o.message,
       payment_mode: o.payment_mode,
@@ -1399,10 +1425,16 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
   // switch + limits already ran above; the rollout piece runs here with
   // action:"book" so the MVP unverified-user block fires (the action:"package-book"
   // call above only gates the RENT_BUDDY_PACKAGES_ENABLED flag).
+  // Service country derived from the package's buddy (authoritative). Previously
+  // this read `buddy.country_code`, a column that does NOT exist on
+  // rent_buddy_profiles (the column is `country`), so it was ALWAYS null and the
+  // country gate silently no-op'd for package bookings. deriveServiceCountry
+  // reads the correct column.
+  const packageCountry = deriveServiceCountry(buddy);
   if (!await enforceBookingCreationGates({
     sc: svc, res, userId: user.id, buddyProfile: buddy,
     city: buddy.city,
-    countryCode: (buddy as any).country_code ?? null,
+    countryCode: packageCountry,
     category: p.category,
     paymentMode,
     groupSize,
@@ -1445,6 +1477,7 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
       duration_h: p.duration_h,
       group_size: groupSize,
       city: buddy.city,
+      country_code: packageCountry,
       category: p.category,
       notes: notes ?? null,
       payment_mode: depositResult.paymentMode,
