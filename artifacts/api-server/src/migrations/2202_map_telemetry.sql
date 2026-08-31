@@ -71,20 +71,45 @@ ALTER TABLE public.map_telemetry_events
   ));
 
 -- The database-level privacy backstop. Checks only TOP-LEVEL payload keys —
--- a CHECK constraint must stay cheap and immutable, and the route already walks
--- the payload recursively. Defence in depth, not a replacement for that walk.
+-- a CHECK constraint must stay cheap, and the route already walks the payload
+-- recursively. Defence in depth, not a replacement for that walk.
+--
+-- The scan lives in a function because Postgres REFUSES a subquery inside a
+-- CHECK constraint (0A000: cannot use subquery in check constraint), and
+-- scanning an unknown set of jsonb keys needs one. A function is the supported
+-- way to express it: the constraint calls the function, and the subquery is
+-- legal inside the function body.
+--
+-- search_path is pinned so the constraint cannot be redirected at a shadowing
+-- object — the same hazard scripts/verify-search-path-hazard.mjs guards.
+CREATE OR REPLACE FUNCTION public.map_telemetry_payload_is_clean(p jsonb)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = pg_catalog, public
+AS $fn$
+  SELECT NOT EXISTS (
+    SELECT 1
+    FROM jsonb_object_keys(COALESCE(p, '{}'::jsonb)) AS k
+    WHERE lower(k) SIMILAR TO
+      '%(lat|lng|lon|coord|geometry|geohash|bbox|altitude|accuracy|heading|bearing|street|postcode|address|user_id|contributor|author|owner|profile_id|creator|host_id|invitee_id|actor|account_id|handle|email|phone|avatar|display_name|username|device_id|push_token)%'
+  );
+$fn$;
+
+COMMENT ON FUNCTION public.map_telemetry_payload_is_clean(jsonb) IS
+  'Map spec §35/§23: true when a telemetry payload carries no top-level coordinate- or identity-shaped key. Exists as a function because a CHECK constraint may not contain a subquery.';
+
+REVOKE ALL ON FUNCTION public.map_telemetry_payload_is_clean(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.map_telemetry_payload_is_clean(jsonb) FROM anon;
+REVOKE ALL ON FUNCTION public.map_telemetry_payload_is_clean(jsonb) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.map_telemetry_payload_is_clean(jsonb) TO service_role;
+
 ALTER TABLE public.map_telemetry_events
   DROP CONSTRAINT IF EXISTS map_telemetry_events_no_raw_location_check;
 ALTER TABLE public.map_telemetry_events
   ADD CONSTRAINT map_telemetry_events_no_raw_location_check
-  CHECK (
-    NOT EXISTS (
-      SELECT 1
-      FROM jsonb_object_keys(payload) AS k
-      WHERE lower(k) SIMILAR TO
-        '%(lat|lng|lon|coord|geometry|geohash|bbox|altitude|accuracy|heading|bearing|street|postcode|address|user_id|contributor|author|owner|profile_id|creator|host_id|invitee_id|actor|account_id|handle|email|phone|avatar|display_name|username|device_id|push_token)%'
-    )
-  );
+  CHECK (public.map_telemetry_payload_is_clean(payload));
 
 COMMENT ON TABLE public.map_telemetry_events IS
   'Map spec §35 product telemetry. Positions are coarsened to a ~4.9 km geohash cell client-side; raw coordinates and third-party identity are rejected by the route AND by map_telemetry_events_no_raw_location_check. viewer_id is stamped from the bearer token, never from the request body.';
