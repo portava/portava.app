@@ -865,6 +865,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     deepLink: '/messages/[id]',
   },
 
+  {
+    key: 'telegraph-new',
+    path: 'telegraph/new',
+    title: 'New Telegraph',
+    parent: 'tab-messages',
+    icon: null,
+    requiresAuth: true,
+    deepLink: '/telegraph/new',
+  },
+
   // ── Media viewer ──────────────────────────────────────────────────────────
 
   {
