@@ -128,7 +128,8 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
   }),
   place_picker: policy('place_picker', {
     mode: 'canonical_picker',
-    allowedSuggestionTypes: ['entity', 'recent'],
+    // §20/§23: canonical Place first (duplicate detection) + address fallback.
+    allowedSuggestionTypes: ['entity', 'recent', 'disambiguation', 'action', 'validation'],
     entityTypes: ['place', 'city'],
     allowPersonalization: true,
     allowLiveContext: true,
@@ -137,14 +138,16 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
   // Trips (§53).
   trip_destination: policy('trip_destination', {
     mode: 'canonical_picker',
-    allowedSuggestionTypes: ['entity', 'recent'],
+    // §23: city-country correction + trip date-conflict validation.
+    allowedSuggestionTypes: ['entity', 'recent', 'validation', 'correction'],
     entityTypes: ['city', 'country'],
     allowPersonalization: true,
     offlinePolicy: 'cached_local',
   }),
   trip_title: policy('trip_title', {
     mode: 'free_text_assisted',
-    allowedSuggestionTypes: ['ai_suggestion'],
+    // §23: a trip title field also surfaces trip date-conflict validation.
+    allowedSuggestionTypes: ['ai_suggestion', 'validation'],
     entityTypes: [],
     allowAI: true,
     minChars: 1,
@@ -152,7 +155,8 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
   }),
   trip_stop_place: policy('trip_stop_place', {
     mode: 'canonical_picker',
-    allowedSuggestionTypes: ['entity', 'recent'],
+    // §20/§55: surface an existing Place/Gem before duplicating it.
+    allowedSuggestionTypes: ['entity', 'recent', 'disambiguation'],
     entityTypes: ['place', 'city', 'hidden_gem'],
     allowPersonalization: true,
     allowLiveContext: true,
@@ -161,13 +165,16 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
   // Events.
   event_location: policy('event_location', {
     mode: 'canonical_picker',
-    allowedSuggestionTypes: ['entity', 'recent'],
+    // §20/§23: canonical-Place-first + unresolved-address fallback.
+    allowedSuggestionTypes: ['entity', 'recent', 'disambiguation', 'action', 'validation'],
     entityTypes: ['place', 'city'],
     allowLiveContext: true,
   }),
   event_title: policy('event_title', {
     mode: 'free_text_assisted',
-    allowedSuggestionTypes: ['ai_suggestion'],
+    // §20: surface a probable existing event before creating a duplicate.
+    allowedSuggestionTypes: ['ai_suggestion', 'disambiguation', 'correction'],
+    entityTypes: ['event'],
     allowAI: true,
     minChars: 1,
     offlinePolicy: 'unavailable',
@@ -190,13 +197,15 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
   // Hidden Gems (§55) — sensitive-location protection handled in the resolver.
   hidden_gem_name: policy('hidden_gem_name', {
     mode: 'free_text_assisted',
-    allowedSuggestionTypes: ['entity', 'validation', 'disambiguation'],
+    // §20/§23/§55: duplicate-gem disambiguation + validation + city-country.
+    allowedSuggestionTypes: ['entity', 'validation', 'disambiguation', 'correction'],
     entityTypes: ['hidden_gem', 'place'],
     privacyClass: 'sensitive_location',
   }),
   hidden_gem_location: policy('hidden_gem_location', {
     mode: 'canonical_picker',
-    allowedSuggestionTypes: ['entity', 'action'],
+    // §20/§23/§37: existing Place/Gem + address fallback + city-country.
+    allowedSuggestionTypes: ['entity', 'action', 'disambiguation', 'validation', 'correction'],
     entityTypes: ['place', 'city', 'hidden_gem'],
     privacyClass: 'sensitive_location',
   }),
@@ -303,7 +312,8 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
   // resolves to canonical places/cities only.
   address: policy('address', {
     mode: 'canonical_picker',
-    allowedSuggestionTypes: ['entity', 'action'],
+    // §23/§37: unresolved-address fallbacks (drop pin / nearby / raw).
+    allowedSuggestionTypes: ['entity', 'action', 'disambiguation', 'validation'],
     entityTypes: ['place', 'city'],
   }),
 

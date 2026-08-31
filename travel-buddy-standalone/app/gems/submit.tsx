@@ -23,6 +23,15 @@ import { canNext as wizardCanNext, buildSubmitPayload } from '../../src/lib/gems
 import { GemLocationPreview } from '../../src/components/gems/GemLocationPreview';
 import { uploadMedia } from '../../src/services/media';
 import { avatar, icon } from '../../src/theme/tokens';
+// Global Input Intelligence — Phase 5 (Creation). Inline, NON-BLOCKING duplicate
+// detection (§20/§55) + §23 validation on the gem name. Degrades to nothing when
+// the (parallel-PR) endpoint is absent; never blocks or changes submit.
+import { useCreationAssistance } from '../../src/hooks/useCreationAssistance.ts';
+import {
+  CreationAssist,
+  CREATION_FIELD_IDS,
+  type DuplicateCandidate,
+} from '../../src/platform/input-assistance';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -225,6 +234,27 @@ function LocationStep({ form, update }: { form: FormState; update: (k: keyof For
 }
 
 function DetailsStep({ form, update }: { form: FormState; update: (k: keyof FormState, v: any) => void }) {
+  const router = useRouter();
+
+  // §20/§55 — as the gem is named, surface likely-existing Gems/Places so the
+  // user can confirm the intended entity instead of minting a duplicate, plus any
+  // §23 validation. NON-BLOCKING: advisory + dismissible; submit is unchanged.
+  const assist = useCreationAssistance({
+    context: 'hidden_gem_name',
+    fieldId: CREATION_FIELD_IDS.gemName,
+    text: form.name,
+    sessionContext: { surface: 'gem_create' },
+  });
+
+  const handlePickExisting = useCallback(
+    (c: DuplicateCandidate) => {
+      // §55 "user confirms intended entity": route to the existing record so they
+      // can verify it. The half-filled form is theirs to return to — never blocks.
+      if (c.route) router.push(c.route as any);
+    },
+    [router],
+  );
+
   return (
     <KeyboardSafeView style={{ flex: 1 }} contentContainerStyle={styles.stepContent}>
       <Text style={styles.stepHeading}>Tell us about it</Text>
@@ -240,6 +270,12 @@ function DetailsStep({ form, update }: { form: FormState; update: (k: keyof Form
           maxLength={200}
         />
       </Field>
+
+      <CreationAssist
+        duplicates={assist.duplicates}
+        validation={assist.validation}
+        onPickExisting={handlePickExisting}
+      />
 
       <Field label="Category *">
         <View style={styles.categoryGrid}>
