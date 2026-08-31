@@ -23,6 +23,9 @@ import { Layers, MapPin, Navigation, Star, Users } from 'lucide-react-native';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { MAP_STYLE_URL, FALLBACK_MAP_STYLE_URL } from '../../constants/mapStyle.ts';
 import { EntityMapLayers } from '../map/EntityMarkers.tsx';
+import { ActivityZoneLayer } from '../map/ActivityZone.tsx';
+import { CrowdFlowLayer } from '../map/CrowdFlowLine.tsx';
+import type { MapObject } from '../../types/mapObjects.ts';
 import type { MapEntity, ToggleableEntityType } from '../../types/mapTypes.ts';
 import { color, space, radius, type as t, avatar, icon, dot } from '../../theme/tokens.ts';
 import {
@@ -98,6 +101,16 @@ export interface DiscoveryMapViewProps {
   enabledEntityLayers?: ToggleableEntityType[];
   /** Tapping an entity pin. Without it the layer renders nothing — see below. */
   onSelectEntity?: (entity: MapEntity) => void;
+  /**
+   * §6 zone-shaped objects — activity zones, social/buddy zones, crowd flow and
+   * predictions. Kept SEPARATE from `entities` because they are Level 2/3 of
+   * §5's hierarchy: they render beneath every marker, do not participate in
+   * §31 collision, and carry polygon/line geometry the MapEntity envelope
+   * cannot express.
+   */
+  zoneObjects?: readonly MapObject[];
+  /** Ids the projection flagged as §10 "Unusual movement". */
+  anomalousFlowIds?: readonly string[];
   /**
    * The entity whose card the carousel is showing, so its pin can be drawn as
    * selected. mapStore has held this value all along and nothing on the map
@@ -189,6 +202,8 @@ export function DiscoveryMapView({
   topInset = 0,
   externalCameraRef,
   entities,
+  zoneObjects,
+  anomalousFlowIds,
   enabledEntityLayers,
   onSelectEntity,
   selectedEntityId,
@@ -360,6 +375,17 @@ export function DiscoveryMapView({
             zoom: vp.zoom,
           }}
         />
+        {/* §6 zones and §10 flows — drawn BEFORE the markers so geography and
+            aggregate state recede behind the individual objects (§5's level
+            ordering, and §4's "base should visually recede"). Both components
+            fail closed on their own: a zone with no qualifying confidence and a
+            flow below the cohort floor render nothing. */}
+        {zoneObjects && zoneObjects.length > 0 ? (
+          <>
+            <ActivityZoneLayer objects={zoneObjects} />
+            <CrowdFlowLayer objects={zoneObjects} anomalousIds={anomalousFlowIds} />
+          </>
+        ) : null}
         {visiblePlaces.map((place) => {
           const db = isDbPlace(place.id);
           const pinBg = db ? DB_PIN_COLOR : (CAT_COLOR[place.category] ?? color.signal);

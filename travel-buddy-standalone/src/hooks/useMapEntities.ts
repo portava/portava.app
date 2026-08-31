@@ -65,6 +65,9 @@ import {
   projectTrip,
 } from '../features/map/projection/clientProjection.ts';
 import { coarsenForFriend, isMapVisibleEvent, isMapVisibleTrip } from './mapEntityFilters.ts';
+import { mapCache } from '../features/map/cache/mapCache.ts';
+import type { Staleness } from '../features/map/cache/mapCache.ts';
+import { advanceStage, type LoadingStage } from '../features/map/cache/loadingStrategy.ts';
 
 /** Which contract kinds the gateway is asked for, per legacy layer toggle. */
 const GATEWAY_KIND_FOR_LAYER: Partial<Record<ToggleableEntityType, MapObjectKind>> = {
@@ -194,6 +197,18 @@ export interface UseMapEntitiesResult {
    * incomplete — never present it as exhaustive.
    */
   liveEnrichment: { considered: number; enriched: number; skipped: number } | null;
+  /**
+   * §33's ladder position. The screen renders progressively off this rather
+   * than off `if (data)`, which is what stops the map blanking while live
+   * intelligence loads.
+   */
+  stage: LoadingStage;
+  /**
+   * Set while the objects on screen came from cache (§28). Carries
+   * "Last updated 14m ago" — a cached object must never be presented as
+   * current, and rehydrate() has already downgraded its freshness.
+   */
+  staleness: Staleness | null;
 }
 
 export function useMapEntities(opts: {
@@ -215,6 +230,8 @@ export function useMapEntities(opts: {
   const [source, setSource] = useState<MapEntitiesSource>('legacy');
   const [liveEnrichment, setLiveEnrichment] =
     useState<UseMapEntitiesResult['liveEnrichment']>(null);
+  const [stage, setStage] = useState<LoadingStage>('cached_geography');
+  const [staleness, setStaleness] = useState<Staleness | null>(null);
 
   const inFlight = useRef(false);
   const hasLoaded = useRef(false);
@@ -223,6 +240,29 @@ export function useMapEntities(opts: {
   // hook re-runs once the active fetch resolves rather than silently dropping
   // the update (e.g. when persisted layer prefs load mid-fetch). Unchanged.
   const pendingRefetch = useRef(false);
+
+  // ── §33 cache-first seed ────────────────────────────────────────────────────
+  // "The map should progressively improve; it should not blank while live
+  // intelligence is loading." Runs once per scope, before any network call, and
+  // never overwrites objects that have already arrived from the network.
+  const seededRef = useRef<string | null>(null);
+  useEffect(() => {
+    const scope = city ?? 'unknown';
+    if (seededRef.current === scope) return;
+    seededRef.current = scope;
+    let cancelled = false;
+    void (async () => {
+      const cached = await mapCache.read('place_intel', scope).catch(() => null);
+      if (cancelled || !cached || cached.objects.length === 0) return;
+      // A later network result always wins; a cache seed must never clobber it.
+      if (hasLoaded.current) return;
+      setObjects(cached.objects as MapObject[]);
+      setEntities(mapObjectsToEntities(cached.objects as MapObject[]));
+      setStaleness(cached.staleness);
+      setStage((prev) => advanceStage(prev, 'cached_geography'));
+    })();
+    return () => { cancelled = true; };
+  }, [city]);
 
   const doFetch = useCallback(async () => {
     if (inFlight.current) {
@@ -299,6 +339,24 @@ export function useMapEntities(opts: {
       setLiveEnrichment(enrichment);
       setError(null);
       hasLoaded.current = true;
+
+      // Network data is current, so the cache banner must go away.
+      setStaleness(null);
+      // §33 ladder: canonical objects have arrived, and live state too when the
+      // gateway actually enriched something. Never claim a stage the data does
+      // not support — advanceStage is monotonic so it cannot regress either.
+      setStage((prev) => {
+        const withCanonical = advanceStage(prev, 'canonical');
+        return (enrichment?.enriched ?? 0) > 0
+          ? advanceStage(withCanonical, 'live_state')
+          : withCanonical;
+      });
+
+      // §28 write-through. Fire-and-forget: a cache write must never delay or
+      // fail a render.
+      if (city && merged.length > 0) {
+        void mapCache.write('place_intel', city, merged).catch(() => {});
+      }
     } catch (err: any) {
       if (!hasLoaded.current) setError(err?.message ?? 'Failed to load map entities');
     } finally {
@@ -327,5 +385,7 @@ export function useMapEntities(opts: {
     refresh,
     source,
     liveEnrichment,
+    stage,
+    staleness,
   };
 }

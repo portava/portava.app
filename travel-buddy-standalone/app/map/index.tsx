@@ -18,6 +18,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CameraRef } from '@maplibre/maplibre-react-native';
 import {
   View, Text, Pressable, StyleSheet, Platform, ActivityIndicator, AppState, BackHandler,
+  useWindowDimensions,
 } from 'react-native';
 import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { router } from 'expo-router';
@@ -68,6 +69,14 @@ import {
 } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { freshToken } from '../../src/services/apiToken.ts';
 import type { MapObject } from '../../src/types/mapObjects.ts';
+import {
+  prepareForRender,
+  zoomRenderBand,
+  isKindVisibleAtBand,
+} from '../../src/features/map/render/collision.ts';
+import { filterByLayers } from '../../src/features/map/layers/layerModel.ts';
+import { isZoneKind } from '../../src/features/map/render/zoneStyle.ts';
+import { toTemporalObjects } from '../../src/features/map/time/timeMachine.ts';
 import type { DiscoveryMapViewProps } from '../../src/components/discovery/DiscoveryMapView.tsx';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
@@ -345,6 +354,7 @@ export default function FullScreenMapScreen() {
 /** Inner implementation — reads map state from the store via useMapStore(). */
 function FullScreenMapScreenInner() {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const params = useLocalSearchParams<{
     entityTypes?: string;
     lat?: string;
@@ -547,6 +557,7 @@ function FullScreenMapScreenInner() {
     entities: defaultEntities,
     objects: defaultObjects,
     liveEnrichment,
+    staleness,
   } = useMapEntities({
     enabledLayers: mode === 'passport' ? [] : enabledLayers,
     city: mode === 'passport' ? null : title,
@@ -824,19 +835,76 @@ function FullScreenMapScreenInner() {
     [entities, setCameraCenter, setCameraZoom, setActiveIndex, setSelectedEntityId],
   );
 
+  const layerContext = useMemo(
+    () => ({ ...DEFAULT_LAYER_CONTEXT, mode: machine.mode }),
+    [machine.mode],
+  );
+
+  // ── §17 / §31 render pipeline ───────────────────────────────────────────────
+  // Order matters and follows §19: layers decide what MAY be drawn, the zoom
+  // band decides what is legible at this scale, Time Machine coerces forecasts
+  // so they cannot look like observations, and only then does §31 collision
+  // decide what actually fits.
+  const activeZoom = cameraZoom ?? paramZoom;
+  const zoomBand = zoomRenderBand(activeZoom);
+
+  const objects: MapObject[] = useMemo(() => {
+    // 1. §16 — the user's layer preferences plus automatic relevance.
+    const permitted = filterByLayers(defaultObjects, layerPrefs, layerContext);
+    // 2. §17 — no POI pins at world zoom; individual places only from district in.
+    const legible = permitted.filter((o) => isKindVisibleAtBand(o.kind, zoomBand));
+    // 3. §15 — a forecast becomes kind 'prediction' and loses any live
+    //    freshness, so zoneStyle gives it the dashed treatment (§37).
+    return toTemporalObjects(legible, timeOffset) as unknown as MapObject[];
+  }, [defaultObjects, layerPrefs, layerContext, zoomBand, timeOffset]);
+
+  // §5 levels 2-3: zones render beneath everything and skip collision.
+  const zoneObjects = useMemo(() => objects.filter((o) => isZoneKind(o.kind)), [objects]);
+
+  // §31 — collision only among the point-shaped markers. `dropped` is surfaced
+  // rather than swallowed: a hidden object the user cannot reach is a silent
+  // truncation, and the count is what an "N more" affordance needs.
+  const renderResult = useMemo(
+    () =>
+      prepareForRender(
+        objects.filter((o) => !isZoneKind(o.kind)),
+        {
+          viewport: {
+            zoom: activeZoom,
+            center: {
+              lat: cameraCenter?.lat ?? fallbackLat ?? 0,
+              lng: cameraCenter?.lng ?? fallbackLng ?? 0,
+            },
+            width: windowWidth,
+            height: windowHeight,
+          },
+          promotion: {
+            selectedId: machine.selection?.objectId ?? null,
+            navigationTargetId: machine.navigation?.destinationObjectId ?? null,
+          },
+        },
+      ),
+    [
+      objects,
+      activeZoom,
+      cameraCenter,
+      fallbackLat,
+      fallbackLng,
+      machine.selection?.objectId,
+      machine.navigation,
+      windowWidth,
+      windowHeight,
+    ],
+  );
+  const hiddenByCollision = renderResult.collisionDroppedCount ?? 0;
+
   // ── §8 the selected MapObject, and its §30 overlays ─────────────────────────
-  const objects: MapObject[] = defaultObjects;
   const selectedObject = useMemo(
     () => objects.find((o) => o.id === machine.selection?.objectId) ?? null,
     [objects, machine.selection?.objectId],
   );
   const [whyObject, setWhyObject] = useState<MapObject | null>(null);
   const [contributeObject, setContributeObject] = useState<MapObject | null>(null);
-
-  const layerContext = useMemo(
-    () => ({ ...DEFAULT_LAYER_CONTEXT, mode: machine.mode }),
-    [machine.mode],
-  );
 
   const overlayOpen = (o: 'INTENT' | 'LAYERS' | 'FILTERS' | 'SEARCH') =>
     machine.overlays.includes(o);
@@ -984,6 +1052,7 @@ function FullScreenMapScreenInner() {
         userLng={userLng}
         externalCameraRef={cameraRef}
         entities={entities}
+        zoneObjects={zoneObjects}
         enabledEntityLayers={enabledLayers}
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
@@ -1100,6 +1169,44 @@ function FullScreenMapScreenInner() {
           />
         </View>
       )}
+
+      {/* ── §28 cached-intelligence banner ──────────────────────────────────
+          "Clearly label stale cached intelligence with last-updated time."
+          rehydrate() has already downgraded each object's freshness, so nothing
+          on screen is claiming to be live — this says WHY it looks quiet. */}
+      {staleness ? (
+        <View style={[s2.cacheBanner, { top: insets.top + 116 }]} pointerEvents="none">
+          <Text style={s2.cacheBannerText}>{staleness.label} · showing saved data</Text>
+        </View>
+      ) : null}
+
+      {/* ── §31 "N more" ────────────────────────────────────────────────────
+          Objects hidden by collision. Rendered because the alternative is a
+          silent truncation: the user sees a sparse map and has no way to know
+          anything was withheld, which reads as "there is nothing here". */}
+      {hiddenByCollision > 0 ? (
+        <Pressable
+          style={[s2.moreChip, { bottom: insets.bottom + 200 }]}
+          onPress={() => {
+            // easeTo is the v11 replacement for setCamera; guard its existence
+            // so a future API change fails soft rather than throwing.
+            const cam = cameraRef.current;
+            const lat = cameraCenter?.lat ?? fallbackLat;
+            const lng = cameraCenter?.lng ?? fallbackLng;
+            if (cam && typeof cam.easeTo === 'function' && lat != null && lng != null) {
+              cam.easeTo({
+                center: [lng, lat],
+                zoom: Math.min((cameraZoom ?? paramZoom) + 1.5, 18),
+                duration: 400,
+              });
+            }
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`${hiddenByCollision} more nearby — zoom in to see them`}
+        >
+          <Text style={s2.moreChipText}>+{hiddenByCollision} more nearby</Text>
+        </Pressable>
+      ) : null}
 
       {/* ── §15 Time Machine scrubber ──────────────────────────────────────
           Floating above the carousel. Rendered only when the surface is
@@ -1218,6 +1325,32 @@ const s2 = StyleSheet.create({
   intentChipText: {
     color: '#FAF9F6',
     fontSize: 13,
+    fontWeight: '600',
+  },
+  moreChip: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(14,18,22,0.92)',
+  },
+  moreChipText: {
+    color: '#FAF9F6',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  cacheBanner: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(14,18,22,0.88)',
+  },
+  cacheBannerText: {
+    color: 'rgba(250,249,246,0.72)',
+    fontSize: 11,
     fontWeight: '600',
   },
 });
