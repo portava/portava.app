@@ -329,7 +329,7 @@ router.post("/memories", async (req, res) => {
   const outcomeAnchorId = d.eventId ?? d.placeId ?? d.tripId ?? null;
   void linkOutcomeSignal(sc, user.id, outcomeAnchorId, "made_memory", "route:memory_create");
 
-  res.status(201).json({ memory: mapMemory(memory) });
+  res.status(201).json({ memory: mapMemory(memory, user.id) });
 });
 
 // ── GET /memories (discovery feed) ────────────────────────────────────────────
@@ -458,7 +458,7 @@ router.get("/memories/:id", async (req, res) => {
 
   res.json({
     memory: {
-      ...mapMemory(memory),
+      ...mapMemory(memory, user.id),
       items: (items.data ?? []).map(mapItem),
       tags: (tags.data ?? []).map((t: any) => ({ userId: t.tagged_user_id, status: t.status })),
       likeCount: likeCount.count ?? 0,
@@ -537,7 +537,7 @@ router.patch("/memories/:id", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "memories: patch failed"); sendError(res, "db_error", error.message); return; }
 
-  res.json({ memory: mapMemory(data) });
+  res.json({ memory: mapMemory(data, user.id) });
 });
 
 // ── DELETE /memories/:id ──────────────────────────────────────────────────────
@@ -981,7 +981,7 @@ router.post("/trips/:tripId/memory", async (req, res) => {
     }
   }
 
-  res.status(201).json({ memory: mapMemory(memory), taggedCount: crewIds.length });
+  res.status(201).json({ memory: mapMemory(memory, user.id), taggedCount: crewIds.length });
 });
 
 // ── GET /trips/:tripId/memory — fetch memory linked to a trip ─────────────────
@@ -1044,7 +1044,7 @@ router.get("/trips/:tripId/memory", async (req, res) => {
 
   res.json({
     memory: {
-      ...mapMemory(memory),
+      ...mapMemory(memory, user.id),
       likeCount: likeCount.count ?? 0,
       likedByMe: Boolean(likedByMe.data),
       cover: coverRow.data ? { mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type } : null,
@@ -1118,15 +1118,21 @@ router.get("/users/:userId/memories", async (req, res) => {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function mapMemory(r: any) {
+function mapMemory(r: any, viewerId?: string) {
+  // The allow/hide lists are the owner's private audience choices — literally the
+  // set of user ids they hid this memory FROM. They must never reach another
+  // viewer (audit MEM·M2). Fail-safe: only the owner sees them; any caller that
+  // does not pass a viewer gets them omitted.
+  const isOwner = viewerId != null && viewerId === r.owner_id;
   return {
     id: r.id,
     ownerId: r.owner_id,
     title: r.title ?? null,
     caption: r.caption ?? null,
     visibility: r.visibility,
-    allowedUserIds: r.allowed_user_ids ?? [],
-    hiddenUserIds: r.hidden_user_ids ?? [],
+    ...(isOwner
+      ? { allowedUserIds: r.allowed_user_ids ?? [], hiddenUserIds: r.hidden_user_ids ?? [] }
+      : {}),
     tripId: r.trip_id ?? null,
     eventId: r.event_id ?? null,
     placeId: r.place_id ?? null,
@@ -1191,7 +1197,7 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string) {
   }
 
   return rows.map((m) => ({
-    ...mapMemory(m),
+    ...mapMemory(m, viewerId),
     likeCount: likeCounts[m.id] ?? 0,
     likedByMe: likedByMeSet.has(m.id),
     savedByMe: savedSet.has(m.id),
