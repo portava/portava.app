@@ -115,6 +115,8 @@ import {
   type ToolExecution,
 } from "../compass/CompassTools.js";
 import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
+import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
+import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
 
 const router = Router();
 
@@ -1016,6 +1018,11 @@ const askBodySchema = z.object({
   circleOwnerId:       z.string().uuid().optional(),
   /** @deprecated accepted but ignored when conversationId is present */
   conversationContext: z.string().max(600).optional(),
+  /** §32: a media item the traveler is asking about. When set, structured media
+   *  context (entity refs + viewer-permitted intel) is packaged by
+   *  CompassMediaContext and appended to the context block — never a raw string.
+   *  Additive: absent ⇒ chat is unchanged. */
+  mediaId:             z.string().uuid().optional(),
   stream:              z.boolean().default(false),
 });
 
@@ -1315,7 +1322,7 @@ router.post("/compass/ask", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
     return;
   }
-  const { prompt, city, conversationId: incomingConvId, circleOwnerId, stream } = parsed.data;
+  const { prompt, city, conversationId: incomingConvId, circleOwnerId, mediaId, stream } = parsed.data;
 
   // ── Conversation resolve ──────────────────────────────────────────────────
   let conversationId: string;
@@ -1458,6 +1465,21 @@ router.post("/compass/ask", async (req, res) => {
 
   ctxLines.push(...structuredLines);
   ctxLines.push(...modeWeightingLines);
+
+  // ── §32: structured media context ─────────────────────────────────────────
+  // When the traveler is asking about a specific media item, package it into the
+  // §32 shape (entity refs + viewer-PERMITTED intel refs) and append it as
+  // structured lines — never a raw string. Eligibility-gated inside the adapter:
+  // a media item the viewer may not see yields null and nothing is appended.
+  // permittedIntelligenceRefs is privacy/IG-filtered; no precise location, no
+  // fabricated live. Additive and never fatal.
+  if (mediaId) {
+    try {
+      const mediaViewer = await resolveMediaViewer(sc, user.id, { needFollows: true });
+      const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());
+      if (mediaCtx) ctxLines.push(...formatMediaContextLines(mediaCtx));
+    } catch { /* non-fatal — proceed without media context */ }
+  }
 
   // ── Phase 15: Destination World Model + city-confidence honesty ───────────
   // Per-city time-sliced rhythm (Friday night ≠ Monday morning) and an honest
