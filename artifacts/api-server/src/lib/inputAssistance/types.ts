@@ -267,6 +267,25 @@ export interface SuggestSessionContext {
   cityId?: string;
 }
 
+// ── §23/§55 creation draft (Phase 5) ──────────────────────────────────────────
+//
+// Additive request context describing the entity the client is CREATING. Every
+// field is optional and only the creation contexts read it; all other contexts
+// ignore it, so the contract stays backward-compatible.
+export interface CreationDraft {
+  /** The entity NAME being created (when the typed field is not itself the name). */
+  name?: string;
+  city?: string | null;
+  country?: string | null;
+  category?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  /** ISO dates for Trip creation date-conflict checks (§23). */
+  startDate?: string | null;
+  endDate?: string | null;
+  address?: string | null;
+}
+
 export interface SuggestRequest {
   context: InputContext;
   fieldId?: string;
@@ -277,6 +296,8 @@ export interface SuggestRequest {
   lat?: number;
   lng?: number;
   city?: string;
+  /** §23/§55 creation draft — read only by creation contexts. */
+  draft?: CreationDraft;
 }
 
 export interface SuggestResponse {
