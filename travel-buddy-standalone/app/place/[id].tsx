@@ -37,6 +37,7 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
 import { useSession } from '../../src/context/SessionContext';
 import { LivingDestinationPage } from '../../src/components/place/living/LivingDestinationPage';
+import { RequestAViewPrompt } from '../../src/features/media/components/RequestAViewPrompt';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import type { MapEntity } from '../../src/types/mapTypes';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../src/services/discovery';
@@ -415,6 +416,10 @@ export default function PlaceDetailScreen() {
             <View style={ps.actionRowWrap}>
               <MapEntityActionRow entity={entity} />
             </View>
+            {/* Media v2 Phase 10 (§19): Request-a-View when visual coverage is
+                stale. ADDITIVE + flag-gated (media_request_a_view_enabled) —
+                renders nothing until the capability is enabled. */}
+            <RequestAViewPrompt placeId={canonicalPlace.id} city={city} />
             {/* Worth-It / Skip-It voting */}
             <View style={ps.socialCard}>
               <WorthItVoteRow entityId={canonicalPlace.id} entityType="place" />

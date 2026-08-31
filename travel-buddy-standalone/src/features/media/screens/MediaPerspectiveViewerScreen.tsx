@@ -42,6 +42,7 @@ import { Avatar } from '../../../components/ui/Avatar.tsx';
 import { StampButton } from '../../../components/stamps/StampButton.tsx';
 
 import { IntelligenceStrip } from '../components/IntelligenceStrip.tsx';
+import { ContributorTrustChips } from '../components/ContributorTrustChips.tsx';
 import type { MediaProjection } from '../types/media.ts';
 import type {
   BuildPerspectiveCollectionInput,
@@ -304,31 +305,36 @@ function PerspectiveContext({
 
       {/* Contributor + trust context — visible but secondary (§14/§46). */}
       {contributor ? (
-        <View style={styles.contributorRow}>
-          <Avatar
-            uri={contributor.avatarUrl}
-            name={contributor.displayName}
-            size={avatar.s40}
-            style={styles.avatarRing}
-          />
-          <View style={styles.contributorText}>
-            <View style={styles.contributorNameRow}>
-              <Text style={styles.contributorName} numberOfLines={1}>
-                {contributor.displayName}
-              </Text>
-              {contributor.verified ? (
-                <View style={styles.verifiedDot}>
-                  <Check size={10} color={color.ink} strokeWidth={3} />
-                </View>
+        <>
+          <View style={styles.contributorRow}>
+            <Avatar
+              uri={contributor.avatarUrl}
+              name={contributor.displayName}
+              size={avatar.s40}
+              style={styles.avatarRing}
+            />
+            <View style={styles.contributorText}>
+              <View style={styles.contributorNameRow}>
+                <Text style={styles.contributorName} numberOfLines={1}>
+                  {contributor.displayName}
+                </Text>
+                {contributor.verified ? (
+                  <View style={styles.verifiedDot}>
+                    <Check size={10} color={color.ink} strokeWidth={3} />
+                  </View>
+                ) : null}
+              </View>
+              {contributor.trustLabel ? (
+                <Text style={styles.trustLabel} numberOfLines={1}>
+                  {contributor.trustLabel}
+                </Text>
               ) : null}
             </View>
-            {contributor.trustLabel ? (
-              <Text style={styles.trustLabel} numberOfLines={1}>
-                {contributor.trustLabel}
-              </Text>
-            ) : null}
           </View>
-        </View>
+          {/* §25 intelligence-trust dimensions — calm trust CONTEXT, NOT
+              popularity. Flag-gated + self-hides when empty/off/error. */}
+          <ContributorTrustChips contributorId={contributor.id} subjectId={placeId} />
+        </>
       ) : null}
 
       {/* On-the-ground note — "It's filling up fast." (§14). */}
