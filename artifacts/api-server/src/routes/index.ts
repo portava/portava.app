@@ -86,6 +86,7 @@ import stampCatalogRouter from "./stampCatalog";
 import emergencyContactsRouter from "./emergencyContacts";
 import crashReportRouter from "./crashReport";
 import discoverySearchRouter from "./discoverySearch";
+import inputAssistanceRouter from "./inputAssistance";
 import searchHistoryRouter from "./searchHistory";
 import postcardsRouter from "./postcards";
 import engagementRouter from "./engagement";
@@ -112,6 +113,7 @@ import mapTelemetryRouter from "./mapTelemetry";
 import mapObservationsRouter from "./mapObservations";
 import locateFriendsRouter from "./locateFriends";
 import mediaFileRouter from "./mediaFile";
+import mediaWorldRouter from "./mediaWorld";
 import mediaFeedRouter from "./mediaFeed";
 import adminMediaRouter from "./adminMedia.js";
 import mediaAnalyticsBatchRouter from "./mediaAnalyticsBatch.js";
@@ -226,6 +228,7 @@ router.use(stampCatalogRouter);
 router.use(emergencyContactsRouter);
 router.use(crashReportRouter);
 router.use(discoverySearchRouter);
+router.use(inputAssistanceRouter);
 router.use(searchHistoryRouter);
 router.use(engagementRouter);
 router.use(circleRouter);
@@ -252,6 +255,10 @@ router.use(mapTelemetryRouter);
 router.use(mapObservationsRouter);
 router.use(locateFriendsRouter);
 router.use(mediaFileRouter);
+// Media v2 World-first projection endpoints (§43). Registered BEFORE
+// mediaFeedRouter so specific paths (/media/world, /media/people, /media/me,
+// /media/timeline, /media/map) are not swallowed by mediaFeed's `/media/:id`.
+router.use(mediaWorldRouter);
 router.use(mediaFeedRouter);
 router.use(adminMediaRouter);
 router.use(mediaAnalyticsBatchRouter);

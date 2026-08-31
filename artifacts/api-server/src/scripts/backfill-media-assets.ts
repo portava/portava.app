@@ -56,7 +56,12 @@ async function upsertAsset(owner: string, publicUrl: string, sourceType = "user"
         // to clients (feed filters out non-ready rows), which is the correct
         // safe default.
         processing_status: "processing",
-        moderation_status: "approved", // pre-existing, already-served content
+        // Canonical §36 MediaModerationStatus (migration 2250): the promoted /
+        // distributable state is 'active' (legacy 'approved' → 'active'). These
+        // rows back content that is ALREADY served on the per-object path, so
+        // they promote straight to 'active'. The distribution gate
+        // (lib/mediaEligibility) recognizes both 'active' and legacy 'approved'.
+        moderation_status: "active",
       },
       { onConflict: "storage_bucket,storage_path" },
     )
@@ -155,6 +160,18 @@ async function main() {
   for (const m of await pages("passport_memories", "id, user_id, photo_url", (q) => q.not("photo_url", "is", null))) {
     const id = await upsertAsset(m.user_id, m.photo_url);
     if (id) await attach(id, "memory", m.id, 0, true);
+  }
+
+  console.log("[7b] passport_postcards.media_url …");
+  for (const pc of await pages("passport_postcards", "id, user_id, media_url", (q) => q.not("media_url", "is", null))) {
+    const id = await upsertAsset(pc.user_id, pc.media_url);
+    if (id) await attach(id, "postcard", pc.id, 0, true);
+  }
+
+  console.log("[7c] hidden_gems.image_url …");
+  for (const g of await pages("hidden_gems", "id, submitted_by, image_url", (q) => q.not("image_url", "is", null))) {
+    const id = await upsertAsset(g.submitted_by, g.image_url, "community");
+    if (id) await attach(id, "hidden_gem", g.id, 0, true);
   }
 
   console.log("[8] rent_buddy_profiles cover + gallery …");

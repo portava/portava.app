@@ -4,6 +4,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { recordEntityMedia } from "../../lib/mediaAssets.js";
 
 const logger = rootLogger.child({ service: "HiddenGemService" });
 
@@ -145,6 +146,20 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
       });
   }
 
+  // Canonical dual-write (flag-gated OFF; fail-soft — legacy image_url path
+  // unaffected). Records media_assets + media_attachments(entityType=hidden_gem)
+  // so the gem photo joins the §6.1 canonical model once the flag is lit.
+  if (input.imageUrl) {
+    void recordEntityMedia(db, {
+      ownerUserId: input.submittedBy,
+      publicUrl: input.imageUrl,
+      entityType: "hidden_gem",
+      entityId: (data as any).id as string,
+      isCover: true,
+      sourceType: "community",
+    });
+  }
+
   return data;
 }
 
@@ -159,13 +174,24 @@ export async function getGem(db: SupabaseClient, gemId: string) {
   return data;
 }
 
-/** List gems with filters. */
+/**
+ * List gems with filters.
+ *
+ * Ordering is NOT popularity-first (§16.2). It was `save_count DESC`, which
+ * made the raw list rank by saves — the exact popularity-first behaviour the
+ * spec forbids for gems, and a path (layover-safe, trip-city) that does NOT go
+ * through the evidence-based discovery ranker. It now orders by the verification
+ * ladder then recency: `verification_level DESC` (the enum is defined
+ * unverified→…→admin, so DESC puts admin/guide/gps first) then `updated_at
+ * DESC`. Evidence and freshness, never save count.
+ */
 export async function listGems(db: SupabaseClient, opts: GemListOptions = {}) {
   let q = db
     .from("hidden_gems")
     .select(GEM_SELECT_COLS)
     .eq("status", opts.status ?? "active")
-    .order("save_count", { ascending: false })
+    .order("verification_level", { ascending: false })
+    .order("updated_at", { ascending: false })
     .limit(opts.limit ?? 40);
 
   if (opts.city) q = q.ilike("city", opts.city);

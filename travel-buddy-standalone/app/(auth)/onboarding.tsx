@@ -14,6 +14,11 @@ import { ManualCityPicker } from '../../src/components/ManualCityPicker';
 import { DatePickerField } from '../../src/components/DatePickerField';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import { bumpSocialVersion } from '../../src/hooks/useSocialVersion'; // for "Continue anyway" path
+import { useUsernameAvailability } from '../../src/hooks/useUsernameAvailability';
+import {
+  sanitizeUsername,
+  USERNAME_MAX_LENGTH,
+} from '../../src/platform/input-assistance/social/usernameValidation';
 
 const INTERESTS: Interest[] = ['nightlife','beach','food','luxury','backpacking','culture','adventure','shopping','photography','business','dating','wellness','events'];
 const STYLES: TravelStyle[] = ['solo','couple','group','business'];
@@ -39,6 +44,8 @@ export default function Onboarding() {
 
   const [displayName, setDisplayName] = useState('');
   const [handle, setHandle] = useState('');
+  // A username the profile already owns — never re-checked for availability.
+  const [loadedUsername, setLoadedUsername] = useState('');
   const [homeCity, setHomeCity] = useState('');
   const [homeCountry, setHomeCountry] = useState('');
   const [dateOfBirth, setDateOfBirth] = useState('');
@@ -50,6 +57,18 @@ export default function Onboarding() {
   const [showHomePicker, setShowHomePicker] = useState(false);
 
   const toggle = (i: Interest) => setPicked((p) => p.includes(i) ? p.filter((x) => x !== i) : [...p, i]);
+
+  // Same non-blocking availability + min-length validation the identity screen
+  // enforces (§23) — reuses the single shared rule set so a handle accepted here
+  // can no longer be rejected on the identity screen. Username is optional: an
+  // empty (or already-owned) handle is idle, never invalid.
+  const { status: usernameStatus, message: usernameMessage } = useUsernameAvailability(
+    handle,
+    { skipValue: loadedUsername },
+  );
+  const usernameBlocking =
+    handle.length > 0 &&
+    (usernameStatus === 'invalid' || usernameStatus === 'taken' || usernameStatus === 'checking');
 
   const fillHomeFromGps = useCallback(async () => {
     await runFillHomeFromGps(
@@ -95,7 +114,7 @@ export default function Onboarding() {
           return;
         }
         if (p.displayName) setDisplayName(p.displayName);
-        if (p.username) setHandle(p.username);
+        if (p.username) { setHandle(p.username); setLoadedUsername(p.username); }
         if ((p as any).homeCity) setHomeCity((p as any).homeCity);
         if ((p as any).homeCountry) setHomeCountry((p as any).homeCountry);
         if ((p as any).travelStyle) setStyle((p as any).travelStyle as TravelStyle);
@@ -137,6 +156,9 @@ export default function Onboarding() {
   }
 
   function handleNext() {
+    // Block advancing past the name/handle step while the (optional) username is
+    // too short, taken, or still being checked — matching the identity screen.
+    if (step === 0 && usernameBlocking) return;
     // Validate DOB step before advancing
     if (step === 1) {
       if (!dateOfBirth) {
@@ -172,6 +194,7 @@ export default function Onboarding() {
 
   const nextDisabled = saving
     || (step === 0 && !displayName.trim())
+    || (step === 0 && usernameBlocking)
     || (step === 1 && !dateOfBirth);
   const isLastStep = step === TOTAL_STEPS - 1;
 
@@ -220,14 +243,34 @@ export default function Onboarding() {
                 <TextInput
                   style={styles.input}
                   value={handle}
-                  onChangeText={(v) => setHandle(v.replace(/[^a-z0-9_.]/gi, '').toLowerCase())}
+                  onChangeText={(v) => setHandle(sanitizeUsername(v))}
                   placeholder="@yourhandle"
                   placeholderTextColor={color.faint}
                   autoCapitalize="none"
                   autoCorrect={false}
+                  maxLength={USERNAME_MAX_LENGTH}
                   returnKeyType="done"
+                  testID="onboarding-username-input"
                 />
-                <Text style={styles.hint}>Letters, numbers, . and _ only. Can be changed later.</Text>
+                {usernameStatus === 'checking' ? (
+                  <View style={styles.usernameStatusRow}>
+                    <ActivityIndicator size="small" color={color.signal} />
+                    <Text style={styles.hint}>Checking availability…</Text>
+                  </View>
+                ) : usernameMessage ? (
+                  <Text
+                    style={[
+                      styles.hint,
+                      usernameStatus === 'available' ? styles.hintSuccess : styles.hintError,
+                    ]}
+                  >
+                    {usernameMessage}
+                  </Text>
+                ) : usernameStatus === 'available' ? (
+                  <Text style={[styles.hint, styles.hintSuccess]}>Username available</Text>
+                ) : (
+                  <Text style={styles.hint}>Letters, numbers, . and _ only. Can be changed later.</Text>
+                )}
               </View>
             </View>
           </View>
@@ -392,6 +435,9 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   hint: { ...t.small, color: color.faint, marginTop: 4 },
+  hintSuccess: { color: color.success },
+  hintError: { color: color.signal },
+  usernameStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
   dobErrorText: { ...t.small, color: color.signal, marginTop: 4 },
   labelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
   charCount: { ...t.small, color: color.faint, fontWeight: '600' as const },

@@ -310,7 +310,7 @@ function EmptyState({ filter }: { filter: FilterKey }) {
           <Globe size={15} color={color.signal} />
           <Text style={s.emptyBtnText}>Explore Discovery</Text>
         </Pressable>
-        <Pressable style={s.emptyBtn} onPress={() => router.push('/discover' as any)}>
+        <Pressable style={s.emptyBtn} onPress={() => router.push('/telegraph/new' as any)}>
           <MessageCirclePlus size={15} color={color.signal} />
           <Text style={s.emptyBtnText}>Start Telegraph</Text>
         </Pressable>
@@ -402,11 +402,24 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   const listHeader = (
     <View style={{ paddingTop: pt }}>
       <View style={s.header}>
-        <View style={s.brandRow}>
-          <View style={s.brandIcon}>
-            <Zap size={14} color={color.onInk} fill={color.onInk} />
+        <View style={s.headerBar}>
+          <View style={s.brandRow}>
+            <View style={s.brandIcon}>
+              <Zap size={14} color={color.onInk} fill={color.onInk} />
+            </View>
+            <Text style={s.brandName}>Telegraph</Text>
           </View>
-          <Text style={s.brandName}>Telegraph</Text>
+          {isAuthed && (
+            <Pressable
+              style={s.composeBtn}
+              onPress={() => router.push('/telegraph/new' as any)}
+              accessibilityRole="button"
+              accessibilityLabel="New Telegraph"
+              hitSlop={8}
+            >
+              <MessageCirclePlus size={20} color={color.signal} />
+            </Pressable>
+          )}
         </View>
       </View>
 
@@ -922,6 +935,8 @@ const s = StyleSheet.create({
     paddingTop: space.md,
     paddingBottom: space.sm,
   },
+  headerBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  composeBtn: { padding: space.xs },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   brandIcon: {
     width: 28,

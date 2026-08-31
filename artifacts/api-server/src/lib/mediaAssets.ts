@@ -12,6 +12,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "./featureFlags.js";
+import { appStorageUrlInfo } from "./mediaUrl.js";
 
 // ── Canonical asset writes (dual-write, fail-soft) ────────────────────────────
 
@@ -88,6 +89,7 @@ export interface CompleteTranscodeInput {
   height: number;
   thumbnailPath?: string | null;
   thumbnailUrl?: string | null;
+  /** Transcoder-reported duration in seconds; stored as duration_ms (×1000). */
   durationSeconds?: number | null;
 }
 
@@ -128,7 +130,13 @@ export async function completeVideoTranscode(
         height: input.height,
         thumbnail_path: input.thumbnailPath ?? null,
         thumbnail_url: input.thumbnailUrl ?? null,
-        duration_seconds: input.durationSeconds ?? null,
+        // media_assets models duration as duration_ms (INTEGER, migration
+        // 0191) — there is no duration_seconds column here. The transcoder
+        // reports seconds (often fractional), so convert to whole ms.
+        duration_ms:
+          input.durationSeconds != null
+            ? Math.round(input.durationSeconds * 1000)
+            : null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", assetId);
@@ -163,6 +171,169 @@ export async function attachMediaAsset(
     return !error;
   } catch {
     return false;
+  }
+}
+
+// ── Canonical attachment writes (spec §6.1) ──────────────────────────────────
+
+/**
+ * The §6.1 MediaAttachment entityType union: one asset can participate in many
+ * product objects without duplicating the underlying file. This is the closed
+ * set the canonical attachment layer accepts.
+ */
+export const ATTACHMENT_ENTITY_TYPES = [
+  "post",
+  "postcard",
+  "memory",
+  "trip",
+  "place",
+  "event",
+  "hidden_gem",
+  "shared_moment",
+  "observation",
+] as const;
+export type AttachmentEntityType = (typeof ATTACHMENT_ENTITY_TYPES)[number];
+const ATTACHMENT_ENTITY_TYPE_SET: ReadonlySet<string> = new Set(ATTACHMENT_ENTITY_TYPES);
+
+export interface RecordAttachmentInput {
+  mediaAssetId: string;
+  /** Must be one of the §6.1 entityTypes; an unknown value is rejected. */
+  entityType: AttachmentEntityType;
+  entityId: string;
+  position?: number;
+  isCover?: boolean;
+  visibilityOverride?: string | null;
+}
+
+/**
+ * recordMediaAttachment — the canonical §6.1 attachment write path (the piece
+ * that did not exist: media_attachments had ZERO writer before this).
+ *
+ * Links one media_assets row to one product entity. Returns the attachment id,
+ * or null when:
+ *   - the entityType is not a known §6.1 type (REJECTED — no row written), or
+ *   - the flag `media_canonical_enabled` is off (dual-write stays dark), or
+ *   - the upsert fails (fail-soft — callers proceed on the legacy path).
+ *
+ * Idempotent on (media_asset_id, entity_type, entity_id): re-running attaches
+ * once. The entityType check runs BEFORE the flag read so an unknown type is
+ * rejected without any DB contact.
+ */
+export async function recordMediaAttachment(
+  sc: SupabaseClient,
+  input: RecordAttachmentInput,
+): Promise<string | null> {
+  try {
+    // Reject an unknown entityType up front — never write an untyped link.
+    if (!ATTACHMENT_ENTITY_TYPE_SET.has(input.entityType)) return null;
+    if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return null;
+
+    const row: Record<string, unknown> = {
+      media_asset_id: input.mediaAssetId,
+      entity_type: input.entityType,
+      entity_id: input.entityId,
+      position: input.position ?? 0,
+      is_cover: input.isCover ?? false,
+    };
+    if (input.visibilityOverride != null) row.visibility_override = input.visibilityOverride;
+
+    const { data, error } = await sc
+      .from("media_attachments")
+      .upsert(row, { onConflict: "media_asset_id,entity_type,entity_id" })
+      .select("id")
+      .single();
+    if (error) return null;
+    return (data as any)?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Dual-write fan-out for per-object media creation (spec §6/§6.1) ───────────
+
+export interface RecordEntityMediaInput {
+  ownerUserId: string;
+  /** A storage-backed URL (full public URL or bare `<bucket>/<path>`). */
+  publicUrl: string;
+  entityType: AttachmentEntityType;
+  entityId: string;
+  position?: number;
+  isCover?: boolean;
+  /** §6 sourceType; defaults to the legacy 'user' when omitted. */
+  sourceType?: string;
+}
+
+/**
+ * recordEntityMedia — the dual-write fan-out called where a per-object media
+ * (postcard / memory / hidden_gem / shared_moment / …) is created. It ensures a
+ * canonical media_assets row exists for `publicUrl` and links a
+ * media_attachments row of the given entityType — the "one asset, many entity
+ * types" model (§6.1) — mirroring how routes/posts.ts records the asset at
+ * upload time.
+ *
+ * GATED + fail-soft: when `media_canonical_enabled` is off (the current dark
+ * state) this returns {null,null} after a single flag read and performs NO
+ * media_assets / media_attachments write, so the per-object path is unchanged.
+ *
+ * It does NOT clobber richer upload-time metadata: if an asset already exists
+ * for (bucket, path) — the usual case, because the file was recorded by the
+ * upload path — it reuses that row and only adds the attachment. It creates a
+ * minimal asset only when none exists. URLs that are not our storage
+ * (external / injected) are ignored, never guessed at.
+ */
+export async function recordEntityMedia(
+  sc: SupabaseClient,
+  input: RecordEntityMediaInput,
+): Promise<{ assetId: string | null; attachmentId: string | null }> {
+  const NONE = { assetId: null as string | null, attachmentId: null as string | null };
+  try {
+    if (!ATTACHMENT_ENTITY_TYPE_SET.has(input.entityType)) return NONE;
+    // One flag read gates the whole fan-out: off ⇒ zero canonical writes.
+    if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return NONE;
+
+    const ref = appStorageUrlInfo(input.publicUrl);
+    if (!ref) return NONE; // external / unresolvable URL — never fabricated
+
+    let assetId: string | null = null;
+    const { data: existing } = await sc
+      .from("media_assets")
+      .select("id")
+      .eq("storage_bucket", ref.bucket)
+      .eq("storage_path", ref.path)
+      .maybeSingle();
+    if ((existing as any)?.id) {
+      assetId = (existing as any).id as string;
+    } else {
+      const mediaType: "image" | "video" = /\.(mp4|mov|m4v|webm)(\?|$)/i.test(input.publicUrl)
+        ? "video"
+        : "image";
+      assetId = await recordMediaAsset(sc, {
+        ownerUserId: input.ownerUserId,
+        storageBucket: ref.bucket,
+        storagePath: ref.path,
+        publicUrl: input.publicUrl,
+        mediaType,
+        mimeType: mediaType === "video" ? "video/mp4" : "image/jpeg",
+        // Size/dimensions are unknown at entity-creation time (the upload path
+        // measured them); honest zero, staged 'processing' so it is not served
+        // as ready until a dimension sweep fills it in.
+        sizeBytes: 0,
+        sourceType: input.sourceType,
+        processingStatus: "processing",
+      });
+    }
+    if (!assetId) return NONE;
+
+    const attachmentId = await recordMediaAttachment(sc, {
+      mediaAssetId: assetId,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      position: input.position,
+      isCover: input.isCover,
+    });
+    return { assetId, attachmentId };
+  } catch {
+    return NONE;
   }
 }
 

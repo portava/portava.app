@@ -83,14 +83,19 @@ const SEARCH_TYPES = [
   "interests", "vibes",
 ] as const;
 
-type SearchType = typeof SEARCH_TYPES[number];
+// Exported (additive, behavior-preserving) so the Global Input Intelligence
+// gateway (POST /input-assistance/suggest) can reuse this exact type when it
+// delegates candidate generation into dispatchSearch. No route behavior changes.
+export type SearchType = typeof SEARCH_TYPES[number];
 
 // ── PostgREST injection guard ──────────────────────────────────────────────────
 //
 // .or() expressions in PostgREST use commas and parentheses as metacharacters.
 // Strip them so user input cannot break filter syntax or bypass privacy controls.
 
-function sanitizeQuery(s: string): string {
+// Exported (additive) so the input-assistance gateway sanitizes typed input
+// with the exact same PostgREST-injection guard the search path uses.
+export function sanitizeQuery(s: string): string {
   return s.replace(/[(),]/g, " ").replace(/\s+/g, " ").trim();
 }
 
@@ -203,7 +208,9 @@ async function fetchBlockedSet(sc: any, userId: string): Promise<Set<string> | n
 // all such profiles are hidden from discovery (fail-closed).
 // Returns null on any DB error — callers MUST return [] in that case.
 
-async function fetchAgeRestrictedSet(sc: any): Promise<Set<string> | null> {
+// Exported (additive) so the input-assistance gateway can apply the identical
+// fail-closed age-restriction filter before projection. Behavior unchanged.
+export async function fetchAgeRestrictedSet(sc: any): Promise<Set<string> | null> {
   try {
     const { data, error } = await sc
       .from("user_privacy_settings")
@@ -1190,7 +1197,11 @@ function searchStatic<T extends Exclude<SearchType, "all">>(
 
 // ── Single-type dispatch ───────────────────────────────────────────────────────
 
-async function dispatchSearch(
+// Exported (additive) as the single per-type candidate generator. The
+// input-assistance gateway calls INTO this (same per-type query + privacy +
+// ranking code paths) rather than forking a parallel search implementation.
+// The existing /discovery/search and /discovery/suggest handlers are unchanged.
+export async function dispatchSearch(
   sc: any,
   q: string,
   userId: string,

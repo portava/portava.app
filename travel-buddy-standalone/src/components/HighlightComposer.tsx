@@ -7,9 +7,12 @@
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, TextInput, Pressable, Modal, ScrollView, StyleSheet,
+  View, Text, Pressable, Modal, ScrollView, StyleSheet,
   Image, ActivityIndicator,
 } from 'react-native';
+import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
+import { MentionSuggestionList } from './MentionSuggestionList.tsx';
+import type { AnyMentionSuggestion } from '../services/tagging.ts';
 import type * as ImagePickerTypes from 'expo-image-picker';
 import { Video, ResizeMode } from 'expo-av';
 import { X, Video as VideoIcon, MapPin } from 'lucide-react-native';
@@ -25,6 +28,10 @@ import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.t
 import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { VIDEO_MAX_DURATION_SECONDS } from '../constants/mediaLimits.ts';
+
+/** Bound the highlight caption — the audit flagged it as the one unbounded
+ *  caption composer. 2000 matches the Postcard composer's caption cap. */
+const CAPTION_MAX = 2000;
 
 const DURATIONS: { hours: number; label: string }[] = [
   { hours: 3,  label: '3h' },
@@ -63,6 +70,12 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   const [videoDuration, setVideoDuration] = useState<number | null>(null);
   const [fileSize, setFileSize] = useState<number | null>(null);
   const [caption, setCaption] = useState('');
+  // @mention / #hashtag tokenization in the caption (§26) — parity with Pulse/
+  // Comments, which the audit flagged this field lacked.
+  const mentionRef = useRef<MentionInputHandle>(null);
+  const [mentionSuggestions, setMentionSuggestions] = useState<AnyMentionSuggestion[]>([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionVisible, setMentionVisible] = useState(false);
   const [vis, setVis] = useState<HighlightVisibility>('public');
   const [expiresInHours, setExpiresInHours] = useState(24);
   const [loc, setLoc] = useState<LocState>({ source: 'none' });
@@ -285,7 +298,14 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
             {/* Caption */}
             <View style={s.field}>
               <Text style={s.fieldLabel}>Caption</Text>
-              <TextInput
+              <MentionSuggestionList
+                suggestions={mentionSuggestions}
+                loading={mentionLoading}
+                visible={mentionVisible}
+                onSelect={(sug) => mentionRef.current?.insertTag(sug)}
+              />
+              <MentionInput
+                ref={mentionRef}
                 style={[s.input, s.multiline]}
                 placeholder="Add a caption…"
                 placeholderTextColor={color.faint}
@@ -294,6 +314,13 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
                 onChangeText={setCaption}
                 editable={!submitting}
                 textAlignVertical="top"
+                maxLength={CAPTION_MAX}
+                surface="post"
+                onSuggestionsChange={(items, isLoading, trigger) => {
+                  setMentionSuggestions(items);
+                  setMentionLoading(isLoading);
+                  setMentionVisible(!!trigger && (items.length > 0 || isLoading));
+                }}
               />
             </View>
 
