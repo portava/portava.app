@@ -377,9 +377,13 @@ export async function buildPlaceProjection(
     // Logging it is what turns the next occurrence of this into a five-minute
     // fix instead of another silent emptiness.
     if (error) {
-      console.warn(
-        "[MediaProjectionService] place identity read failed; projection will carry nulls",
-        { placeId, code: (error as any)?.code, message: (error as any)?.message },
+      logger.warn(
+        {
+          placeId,
+          code: (error as any)?.code ?? null,
+          message: (error as any)?.message ?? null,
+        },
+        "mediaPlaceProjection: place identity read failed — projection will carry null place labels",
       );
     }
     if (data) {
