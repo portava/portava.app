@@ -47,8 +47,16 @@ export interface CurrentPicture {
 /** Place Current View projection (§13). */
 export interface PlaceCurrentView {
   placeId: string;
-  placeName: string;
-  /** Short human state, e.g. "Getting busier" (§13). */
+  /**
+   * Coarse place name. Nullable: the §43 place projection carries labels only,
+   * and a canonical place may not yet have a resolved name — the header then
+   * falls back to the label the caller navigated in with.
+   */
+  placeName: string | null;
+  /**
+   * Short human state, e.g. "Getting busier" (§13). ONLY set from a gated live
+   * crowd claim; null when there is no live state, so nothing is fabricated.
+   */
   stateLabel: string | null;
   currentPicture: CurrentPicture;
   groups: PerspectiveGroup[];

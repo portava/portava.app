@@ -92,6 +92,8 @@ export interface MediaProjection {
   freshnessLabel?: string | null;
   contributor?: MediaContributor | null;
   place?: { id: string | null; name: string | null } | null;
+  /** Resolved category / perspective context (§7), e.g. "nightlife" — for context copy. */
+  category?: string | null;
   /** Short caption / on-the-ground note (§14 "It's filling up fast."). */
   note?: string | null;
   /** Pre-computed "why you're seeing this" explanation (§47) for WhyThisSheet. */
