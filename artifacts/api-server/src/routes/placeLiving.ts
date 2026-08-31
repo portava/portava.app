@@ -19,7 +19,7 @@
  */
 
 import { Router } from "express";
-import { readLiveCrowdLevel, readLiveClaimEnvelopes } from "../lib/liveClaimRead.js";
+import { readLiveCrowdLevel, readLiveClaimEnvelopes, liveLabelsServable } from "../lib/liveClaimRead.js";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { optionalUser, sendError } from "../lib/http.js";
@@ -71,6 +71,30 @@ async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Strip the Live-intel portion of a cached living payload — `crowdLevel`,
+ * `liveClaims`, and the timeline's `crowdLevel` — leaving every other field intact.
+ *
+ * WHY THIS EXISTS. readLiveClaims bakes the Live label into the payload at COMPUTE
+ * time, and place_living_cache then serves that payload stale-while-revalidate for
+ * up to the 24h sparse TTL. The kill switch and the Live flags are consulted only
+ * at compute time, so without re-checking them at serve time a Live label written
+ * before the switch was thrown would keep serving for up to ~24h. The caller gates
+ * this on liveLabelsServable (the same global gate readLiveClaims uses), so the
+ * suppressed values match exactly what an un-gated read would now produce:
+ * crowdLevel null, liveClaims []. The cache row itself is NOT rewritten — the
+ * background revalidation recomputes a correctly-gated payload — this only cleans
+ * what is handed to this one response.
+ */
+function suppressStaleLiveIntel(payload: any): any {
+  if (!payload || typeof payload !== "object") return payload;
+  const out: any = { ...payload, crowdLevel: null, liveClaims: [] };
+  if (out.timeline && typeof out.timeline === "object") {
+    out.timeline = { ...out.timeline, crowdLevel: null };
+  }
+  return out;
 }
 
 // ── Shared place + refs loader ─────────────────────────────────────────────────
@@ -448,14 +472,25 @@ router.get("/places/:id/living", asyncHandler(async (req, res) => {
     const isSparse = (cached as any).sparse as boolean;
     const ttl = isSparse ? SPARSE_CACHE_TTL_MS : HOT_CACHE_TTL_MS;
 
+    // The Live label (crowdLevel / liveClaims / timeline.crowdLevel) was baked into
+    // this cached payload at compute time and is served below for up to the 24h
+    // sparse TTL. The kill switch and Live flags are only consulted at compute
+    // time, so re-check the shared serve-time gate here and strip the stale Live
+    // portion the moment Live is no longer servable — a thrown kill switch must not
+    // keep serving a Live label for hours. Everything else in the cache is served
+    // untouched.
+    const payload = (await liveLabelsServable(sc))
+      ? (cached as any).payload
+      : suppressStaleLiveIntel((cached as any).payload);
+
     if (ageMs < ttl) {
       res.setHeader("X-Cache", "HIT");
-      res.json((cached as any).payload);
+      res.json(payload);
       return;
     }
     // Stale — serve stale immediately, enqueue background revalidation
     res.setHeader("X-Cache", "STALE");
-    res.json((cached as any).payload);
+    res.json(payload);
     // Best-effort background revalidation (don't await)
     void (async () => {
       try {
