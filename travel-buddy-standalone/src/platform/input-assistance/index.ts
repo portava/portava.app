@@ -199,3 +199,31 @@ export {
   type UsernameAvailabilityResult,
   type InterpretedAvailability,
 } from './social/usernameValidation.ts';
+
+// ── creation (Phase 5) ────────────────────────────────────────────────────────
+export {
+  suggestionToDuplicate,
+  mapDuplicateCandidates,
+  hasLikelyDuplicate,
+  duplicateKindsForContext,
+  GEM_DUPLICATE_KINDS,
+  EVENT_DUPLICATE_KINDS,
+  PLACE_DUPLICATE_KINDS,
+  type CreationEntityKind,
+  type DuplicateCandidate,
+  type MapDuplicateOptions,
+} from './creation/duplicateDetection.ts';
+export {
+  suggestionToValidation,
+  mapCreationValidation,
+  kindFromRule,
+  type CreationValidationKind,
+  type CreationValidationView,
+} from './creation/creationValidation.ts';
+export {
+  registerCreationFields,
+  CREATION_FIELD_IDS,
+  CREATION_FIELD_CONTEXTS,
+  type CreationFieldId,
+} from './creation/creationFields.ts';
+export { CreationAssist, type CreationAssistProps } from './creation/CreationAssist.tsx';
