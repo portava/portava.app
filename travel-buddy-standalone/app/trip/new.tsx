@@ -24,7 +24,12 @@ import type { CanonicalPlaceBinding } from '../../src/platform/input-assistance/
 // deduped entity kind, so this surfaces validation only. Degrades to nothing when
 // the (parallel-PR) endpoint is absent; never blocks or changes submit.
 import { useCreationAssistance } from '../../src/hooks/useCreationAssistance.ts';
-import { CreationAssist, CREATION_FIELD_IDS } from '../../src/platform/input-assistance';
+import { CreationAssist, AiWritingAssist, CREATION_FIELD_IDS } from '../../src/platform/input-assistance';
+// Global Input Intelligence — Phase 7 (Compass + AI). OPT-IN, provenance-marked
+// AI title suggestions (§22): nothing is requested until the traveler taps
+// "Suggest with AI", nothing is auto-applied (tap-to-insert into the editable
+// field), and the whole surface degrades to nothing when the AI flag is off.
+import { useAiWritingAssist } from '../../src/hooks/useAiWritingAssist.ts';
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { uploadMedia, type PickedMedia } from '../../src/services/media.ts';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
@@ -67,6 +72,24 @@ export default function NewTrip() {
       startDate: startDate ?? undefined,
       endDate: endDate ?? undefined,
     },
+  });
+
+  // §22 — OPT-IN AI title suggestions. Off until the traveler taps the button;
+  // the coarse (city-level) draft feeds the model, never coordinates (§29).
+  const [titleAiOptIn, setTitleAiOptIn] = useState(false);
+  const titleAi = useAiWritingAssist({
+    context: 'trip_title',
+    fieldId: CREATION_FIELD_IDS.tripTitle,
+    text: title,
+    optedIn: titleAiOptIn,
+    city: destBinding?.city ?? null,
+    draft: {
+      city: destBinding?.city ?? undefined,
+      country: destBinding?.country ?? undefined,
+      startDate: startDate ?? undefined,
+      endDate: endDate ?? undefined,
+    },
+    sessionContext: { surface: 'trip_create' },
   });
 
   // ── Multi-city ────────────────────────────────────────────────────────────
@@ -311,6 +334,28 @@ export default function NewTrip() {
         {/* Trip name */}
         <Field label="Trip name" placeholder="Visayas, June" value={title} onChange={setTitle} />
         <CreationAssist duplicates={titleAssist.duplicates} validation={titleAssist.validation} />
+        {/* §22 — opt-in, tap-to-insert AI title suggestions (secondary to the
+            §23 validation above; nothing auto-applied, degrades to nothing when off). */}
+        {title.trim().length >= 1 ? (
+          titleAiOptIn ? (
+            <AiWritingAssist
+              proposals={titleAi.proposals}
+              loading={titleAi.loading}
+              heading="AI title ideas"
+              onInsert={(p) => setTitle(p.insertText)}
+            />
+          ) : (
+            <Pressable
+              onPress={() => setTitleAiOptIn(true)}
+              style={styles.aiTitleBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Suggest a trip title with AI"
+            >
+              <Sparkles size={13} color={color.signal} />
+              <Text style={styles.aiTitleBtnText}>Suggest with AI</Text>
+            </Pressable>
+          )
+        ) : null}
 
         {/* Destination — single or multi-city */}
         <View>
@@ -505,6 +550,13 @@ const styles = StyleSheet.create({
     backgroundColor: color.ink, paddingVertical: space.sm, borderRadius: radius.md,
   },
   nlBtnText: { ...t.small, fontWeight: '700', color: color.onInk },
+  aiTitleBtn: {
+    flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 5,
+    paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: color.haze, backgroundColor: color.paperRaised,
+    marginTop: space.xs,
+  },
+  aiTitleBtnText: { ...t.small, fontWeight: '700', color: color.signal },
   destinationHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.sm },
   multiCityRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   multiCityLabel: { ...t.small, color: color.mute, fontWeight: '600' },

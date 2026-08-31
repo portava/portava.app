@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 import { useNavBarScrollHandler, NavBarFiller } from '../../src/hooks/useNavBarCollapse';
-import { Sparkles, Send, Plane, MessageCircle, Map, PlusCircle } from 'lucide-react-native';
+import { Sparkles, Send, Plane, MessageCircle, Map, PlusCircle, Wand2 } from 'lucide-react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import {
   postCompassFrontloadEvent, postCompassAskStream,
@@ -19,6 +19,13 @@ import { usePlanPicker } from '../../src/components/PlanPickerController';
 import { CompassHome } from '../../src/components/compass/CompassHome';
 import { CompassLive } from '../../src/components/compass/CompassLive';
 import { useLocationContext } from '../../src/context/LocationContext';
+import { useAiWritingAssist } from '../../src/hooks/useAiWritingAssist.ts';
+import {
+  CompassStarters,
+  AiWritingAssist,
+  buildCompassStarters,
+  COMPASS_FIELD_IDS,
+} from '../../src/platform/input-assistance';
 import { color, space, radius, type as t, shadow, avatar } from '../../src/theme/tokens';
 
 type ChatEntry =
@@ -46,6 +53,18 @@ export default function AiChat() {
   const [input, setInput]           = useState('');
   const [loading, setLoading]       = useState(false);
   const [layoverOpen, setLayoverOpen] = useState(false);
+  // Phase 7 (§22/§56): opt-in AI continuation for the compass prompt. Until the
+  // user taps "Improve with AI" nothing is requested; the deterministic starters
+  // below are shown without any opt-in and are unaffected by the AI flag.
+  const [aiOptIn, setAiOptIn]       = useState(false);
+  const promptAssist = useAiWritingAssist({
+    context: 'compass_prompt',
+    fieldId: COMPASS_FIELD_IDS.compassPrompt,
+    text: input,
+    optedIn: aiOptIn,
+    city: currentCity ?? null,
+    sessionContext: { surface: 'compass' },
+  });
   const scroll = useRef<ScrollView>(null);
   const navScrollHandler = useNavBarScrollHandler();
 
@@ -366,6 +385,57 @@ export default function AiChat() {
         <NavBarFiller />
       </ScrollView>
 
+      {/* Phase 7 (§56): compass-prompt assistance above the input bar.
+          - deterministic starters when the field is empty mid-conversation
+            (the zero-state's starters are owned by CompassHome above);
+          - an OPT-IN AI continuation once the traveler has typed. Both degrade
+            to nothing when there is nothing to show, and nothing is ever sent
+            automatically — a tap only fills the editable input. */}
+      {(input.trim() === '' && entries.length > 0) || input.trim().length >= 1 ? (
+        <View style={styles.assistBar}>
+          {input.trim() === '' && entries.length > 0 ? (
+            <CompassStarters
+              starters={buildCompassStarters({ surface: 'compass', cityName: currentCity ?? null })}
+              onSelect={(prompt) => setInput(prompt)}
+            />
+          ) : null}
+
+          {input.trim().length >= 1 ? (
+            aiOptIn ? (
+              <View style={styles.aiZone}>
+                <AiWritingAssist
+                  proposals={promptAssist.proposals}
+                  loading={promptAssist.loading}
+                  heading="Improve this prompt"
+                  onInsert={(p) => setInput(p.insertText)}
+                />
+                {!promptAssist.loading && promptAssist.proposals.length === 0 ? (
+                  <Text style={styles.assistNote}>No AI suggestion right now.</Text>
+                ) : null}
+                <Pressable
+                  onPress={() => setAiOptIn(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Turn off AI prompt suggestions"
+                  hitSlop={6}
+                >
+                  <Text style={styles.assistToggleOff}>Turn off AI suggestions</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable
+                onPress={() => setAiOptIn(true)}
+                style={styles.aiOptInBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Improve this prompt with AI"
+              >
+                <Wand2 size={14} color={color.signal} />
+                <Text style={styles.aiOptInText}>Improve with AI</Text>
+              </Pressable>
+            )
+          ) : null}
+        </View>
+      ) : null}
+
       <View style={styles.inputBar}>
         <Pressable
           style={styles.layoverBtn}
@@ -557,6 +627,12 @@ const styles = StyleSheet.create({
   declineBtn:    { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
   declineText:   { ...t.small, fontWeight: '700', color: color.ink },
   actionText:    { ...t.small, fontWeight: '700', color: color.onInk },
+  assistBar:     { paddingHorizontal: space.md, paddingTop: space.sm, gap: space.sm, backgroundColor: color.paper },
+  aiZone:        { gap: space.xs },
+  assistNote:    { ...t.small, color: color.mute, paddingHorizontal: space.sm },
+  assistToggleOff: { ...t.small, color: color.faint, paddingHorizontal: space.sm },
+  aiOptInBtn:    { flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 5, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised },
+  aiOptInText:   { ...t.small, fontWeight: '700', color: color.signal },
   inputBar:      { flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md, borderTopWidth: 1, borderTopColor: color.haze, backgroundColor: color.paper },
   input:         { flex: 1, ...t.body, color: color.ink, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingHorizontal: space.lg, paddingVertical: space.md },
   sendBtn:       { width: avatar.s44, height: avatar.s44, borderRadius: avatar.s44 / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },

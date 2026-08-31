@@ -37,6 +37,7 @@ export type {
   SuggestResult,
   SearchDestination,
   InputSessionContext,
+  WritingDraft,
 } from './types/inputSuggestion.ts';
 export type { SuggestionAction, SuggestionActionType } from './types/suggestionAction.ts';
 
@@ -78,6 +79,7 @@ export {
 
 // ── services ─────────────────────────────────────────────────────────────────
 export { requestSuggestions } from './services/inputAssistance.ts';
+export { buildSuggestBody } from './services/suggestBody.ts';
 export { SuggestionCache, sharedSuggestionCache } from './services/suggestionCache.ts';
 export { createSequenceGuard, type SequenceGuard } from './services/raceGuard.ts';
 export {
@@ -123,6 +125,7 @@ export {
 export { SuggestionChip, type SuggestionChipProps } from './components/SuggestionChip.tsx';
 export { EntitySuggestionRow, type EntitySuggestionRowProps } from './components/EntitySuggestionRow.tsx';
 export { ActionSuggestionRow, type ActionSuggestionRowProps } from './components/ActionSuggestionRow.tsx';
+export { AiSuggestionRow, type AiSuggestionRowProps } from './components/AiSuggestionRow.tsx';
 export { CorrectionBanner, type CorrectionBannerProps } from './components/CorrectionBanner.tsx';
 export { DisambiguationSheet, type DisambiguationSheetProps } from './components/DisambiguationSheet.tsx';
 export { EntityIcon, AssistanceTypeIcon } from './components/entityIcon.tsx';
@@ -227,3 +230,34 @@ export {
   type CreationFieldId,
 } from './creation/creationFields.ts';
 export { CreationAssist, type CreationAssistProps } from './creation/CreationAssist.tsx';
+
+// ── compass + AI (Phase 7) ────────────────────────────────────────────────────
+export {
+  AI_WRITING_CONTEXTS,
+  isAiWritingContext,
+  isAiTextContext,
+  isAiSuggestion,
+  toAiWritingProposal,
+  mapAiWritingSuggestions,
+  partitionCanonicalAndAi,
+  orderCanonicalFirst,
+  type AiWritingProposal,
+} from './compass/aiWriting.ts';
+export {
+  COMPASS_STARTERS,
+  buildCompassStarters,
+  isCompassPromptContext,
+  type CompassStarter,
+  type BuildCompassStartersOptions,
+} from './compass/compassPrompt.ts';
+export {
+  registerCompassFields,
+  COMPASS_FIELD_IDS,
+  COMPASS_FIELD_CONTEXTS,
+  AI_WRITING_FIELD_IDS,
+  AI_WRITING_FIELD_CONTEXTS,
+  type CompassFieldId,
+  type AiWritingFieldId,
+} from './compass/compassFields.ts';
+export { AiWritingAssist, type AiWritingAssistProps } from './compass/AiWritingAssist.tsx';
+export { CompassStarters, type CompassStartersProps } from './compass/CompassStarters.tsx';

@@ -21,6 +21,7 @@ import type {
   SuggestResult,
 } from '../types/inputSuggestion.ts';
 import { INPUT_POLICY_VERSION } from '../contexts/inputContexts.ts';
+import { buildSuggestBody } from './suggestBody.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -68,13 +69,7 @@ export async function requestSuggestions(
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({
-        context: req.context,
-        fieldId: req.fieldId,
-        text: req.text,
-        limit: req.limit,
-        sessionContext: req.sessionContext,
-      } satisfies SuggestRequest),
+      body: JSON.stringify(buildSuggestBody(req)),
       signal,
     });
 
