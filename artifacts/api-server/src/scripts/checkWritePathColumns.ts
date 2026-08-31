@@ -173,6 +173,18 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // drift that consolidating onto one constant removed, and a privacy drift
   // rather than a schema one. A verified-elsewhere blind spot beats that.
   //
+  // THE EXCEPTION IS ONLY VALID WHILE THAT VERIFICATION EXISTS, and that is a
+  // load-bearing, invisible condition: move the constant to a shared module, or
+  // refactor buddyMapRead so it no longer selects through it in the same file,
+  // and the live column check silently stops covering this string — leaving
+  // these entries sitting here looking considered while the sites go genuinely
+  // blind. So the condition is pinned executably in
+  // src/test/buddyColumnsAllowlistJustification.test.ts, which fails if the
+  // definition moves, if the initializer stops being a literal, if the
+  // same-file select disappears, if these entries are removed, or if
+  // resolveSelectString learns to follow imports (in which case these sites
+  // resolve on their own and the entries should be DROPPED, not kept).
+  //
   // If these ever stop passing that constant, the counts change and this
   // fails, which is the intended tripwire.
   ["src/routes/rentABuddy.ts|select|select list not statically resolvable", 4],
