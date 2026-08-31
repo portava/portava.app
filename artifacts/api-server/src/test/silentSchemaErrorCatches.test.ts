@@ -279,12 +279,14 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
     file: "lib/mediaEligibility.ts",
     markers: [
       "mute gate is OFF for this request",
-      "suspended/banned gate is OFF for this request",
+      "suspended/banned gate could not be evaluated, failing closed to an empty feed",
     ],
     reason:
       "A rejected user_mutes / profiles.account_status read left the exclusion set empty, serving muted creators' and " +
-      "suspended-or-banned creators' media as if the check had passed. The sibling block read in the same function binds " +
-      "its error and fails closed; these two stay best-effort but must not stay silent.",
+      "suspended-or-banned creators' media as if the check had passed. The mute read stays best-effort — losing it costs a " +
+      "preference — but must not stay silent. The account_status read has since been made fail-closed to match the sibling " +
+      "block read at the top of the same function: both are integrity gates, and the marker now pins that posture, so a " +
+      "revert to best-effort changes the text and trips this rule.",
   },
   {
     file: "routes/posts.ts",
