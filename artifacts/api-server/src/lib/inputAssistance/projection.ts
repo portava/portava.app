@@ -305,3 +305,67 @@ export function orderSuggestions(
     .map((x) => x.s)
     .slice(0, Math.max(0, limit));
 }
+
+/**
+ * §13 requires the global-search result to keep its "SEARCH FOR" query-
+ * completion row(s) available: a mixed result must be able to show BOTH the
+ * matched entities AND a submittable-search row, and the completion must never
+ * be silently capped out by a long run of entity rows (which always sort ahead
+ * of it under §9 trust order).
+ *
+ * This orders exactly like `orderSuggestions` — so §9 order still holds
+ * (entities lead, completions trail) — but RESERVES up to `reserve` slots for
+ * suggestions whose type is in `reservedTypes` so at least one survives the cap
+ * whenever the field produced one. Primary (non-reserved) rows keep priority
+ * for the remaining slots, and when nothing else matched the reserved rows still
+ * show (never an empty result while a submittable search exists). The total is
+ * still capped at `limit`, so `maxSuggestions` is never exceeded.
+ */
+export function orderSuggestionsReserving(
+  suggestions: InputSuggestion[],
+  limit: number,
+  reservedTypes: ReadonlySet<AssistanceType>,
+  reserve: number,
+): InputSuggestion[] {
+  const cap = Math.max(0, limit);
+  if (cap === 0) return [];
+  const ordered = orderSuggestions(suggestions, Number.POSITIVE_INFINITY);
+  const reservedRows = ordered.filter((s) => reservedTypes.has(s.type));
+  if (reservedRows.length === 0) return ordered.slice(0, cap);
+  const primaryRows = ordered.filter((s) => !reservedTypes.has(s.type));
+
+  const wantReserved = Math.min(Math.max(0, reserve), reservedRows.length);
+  // Never starve the primary rows: when primary rows exist, keep the reservation
+  // strictly below the cap so entities still lead. With no primary rows the
+  // reserved rows are the only useful output, so they may fill the whole cap.
+  const protect = primaryRows.length > 0
+    ? Math.min(wantReserved, Math.max(0, cap - 1))
+    : Math.min(wantReserved, cap);
+  const keepPrimary = primaryRows.slice(0, Math.max(0, cap - protect));
+  const keepReserved = reservedRows.slice(0, Math.max(0, cap - keepPrimary.length));
+  return orderSuggestions([...keepPrimary, ...keepReserved], cap);
+}
+
+/**
+ * §13 "No dead suggestion rows": every returned suggestion must resolve to
+ * something the client can act on — an inline action, a canonical entity id, or
+ * a routable destination. Tapping an entity opens/resolves it; tapping a
+ * completion submits a search; there is never a row that does nothing.
+ */
+export function isResolvable(s: InputSuggestion): boolean {
+  return (
+    s.action != null ||
+    (typeof s.entityId === 'string' && s.entityId.length > 0) ||
+    (s.destination != null && typeof s.destination.route === 'string' && s.destination.route.length > 0)
+  );
+}
+
+/**
+ * Server-side safety net for §13: drop any non-resolvable row so a "dead" row
+ * can never reach the client even if a future projector forgets to attach an
+ * action/entity/destination. The real projections above always produce a
+ * resolvable row; this guarantees the invariant regardless.
+ */
+export function dropDeadRows(suggestions: InputSuggestion[]): InputSuggestion[] {
+  return suggestions.filter(isResolvable);
+}
