@@ -379,7 +379,10 @@ export async function evaluateNotification(
   if (db && senderId) {
     try {
       // Two separate queries so eq()-only fake DB in tests can exercise both paths.
-      const [{ data: senderBlockedRecipient }, { data: recipientBlockedSender }] =
+      const [
+        { data: senderBlockedRecipient, error: senderBlockErr },
+        { data: recipientBlockedSender, error: recipientBlockErr },
+      ] =
         await Promise.all([
           db
             .from("blocks")
@@ -394,10 +397,35 @@ export async function evaluateNotification(
             .eq("blocked_id", senderId)
             .maybeSingle(),
         ]);
+      // maybeSingle() returns `data: null` both when there is no block row and
+      // when the query was rejected — and this gate's whole contract is that a
+      // blocked sender "must never reach the recipient via push". PostgREST
+      // reports rejections in `error` rather than throwing, so the catch below
+      // never fires for them: without binding these, a schema/query error
+      // delivers the push and leaves no trace that the check did not run.
+      if (senderBlockErr || recipientBlockErr) {
+        console.warn(
+          "CompassNotificationEngine: blocked-sender check failed — push is being delivered WITHOUT block suppression",
+          {
+            userId,
+            senderId,
+            senderCode: (senderBlockErr as any)?.code,
+            recipientCode: (recipientBlockErr as any)?.code,
+            message:
+              (senderBlockErr as any)?.message ?? (recipientBlockErr as any)?.message,
+          },
+        );
+      }
       if (senderBlockedRecipient || recipientBlockedSender) {
         return decide("suppressed_blocked_sender", `blocked:${senderId}`);
       }
-    } catch { /* fail-open: a DB error should not block safety checking elsewhere */ }
+    } catch (err) {
+      // fail-open: a DB error should not block safety checking elsewhere
+      console.warn(
+        "CompassNotificationEngine: blocked-sender check rejected — push is being delivered WITHOUT block suppression",
+        { userId, senderId, err },
+      );
+    }
   }
 
   // ── Safety filter step 2: canonical CompassSafetyFilter on synthetic item ─────

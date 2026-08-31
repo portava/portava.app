@@ -156,12 +156,28 @@ export async function filterEligibleMediaCandidates(
   let muteSet = mutedCreatorIds ?? new Set<string>();
   if (mutedCreatorIds === null || mutedCreatorIds === undefined) {
     try {
-      const { data: muteRows } = await sc
+      const { data: muteRows, error: muteErr } = await sc
         .from("user_mutes")
         .select("muted_id")
         .eq("muter_id", viewerCtx.viewerUserId);
+      // "No mutes" and "the mute query was rejected" both leave muteSet empty,
+      // and the difference is the whole gate: on a schema/query error every
+      // muted creator's media becomes eligible again. PostgREST returns such
+      // errors in `error` rather than throwing, so the catch below never sees
+      // them — bind and log, or the failure is invisible.
+      if (muteErr) {
+        console.warn(
+          "filterEligibleMediaCandidates: user_mutes read failed — mute gate is OFF for this request",
+          { viewerUserId: viewerCtx.viewerUserId, code: (muteErr as any)?.code, message: (muteErr as any)?.message },
+        );
+      }
       for (const r of (muteRows as any[]) ?? []) muteSet.add(r.muted_id as string);
-    } catch { /* best-effort: mutes contribute empty set on failure */ }
+    } catch (err) {
+      console.warn(
+        "filterEligibleMediaCandidates: user_mutes read rejected — mute gate is OFF for this request",
+        { viewerUserId: viewerCtx.viewerUserId, err },
+      );
+    }
   }
 
   // ── Step 3: Collect unique creator ids to check account status ────────────
@@ -169,15 +185,32 @@ export async function filterEligibleMediaCandidates(
   const suspendedCreatorIds = new Set<string>();
   if (creatorIds.length > 0) {
     try {
-      const { data: profileRows } = await sc
+      const { data: profileRows, error: statusErr } = await sc
         .from("profiles")
         .select("id, account_status")
         .in("id", creatorIds)
         .in("account_status", ["suspended", "banned"]);
+      // Same shape as the mute read above, with a heavier consequence: an empty
+      // result means "nobody on this page is suspended", and a rejected query
+      // means "we do not know" — indistinguishable here, so a schema/query
+      // error silently serves suspended and banned creators' media. The sibling
+      // block read at the top of this function binds `error` and fails closed;
+      // this one deliberately stays best-effort, but must not stay silent.
+      if (statusErr) {
+        console.warn(
+          "filterEligibleMediaCandidates: profiles account_status read failed — suspended/banned gate is OFF for this request",
+          { creatorCount: creatorIds.length, code: (statusErr as any)?.code, message: (statusErr as any)?.message },
+        );
+      }
       for (const r of (profileRows as any[]) ?? []) {
         suspendedCreatorIds.add(r.id as string);
       }
-    } catch { /* best-effort: suspended set stays empty on failure */ }
+    } catch (err) {
+      console.warn(
+        "filterEligibleMediaCandidates: profiles account_status read rejected — suspended/banned gate is OFF for this request",
+        { creatorCount: creatorIds.length, err },
+      );
+    }
   }
 
   // ── Step 4: Per-item eligibility gates ────────────────────────────────────
