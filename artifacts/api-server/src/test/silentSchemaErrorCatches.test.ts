@@ -96,28 +96,11 @@ const PRIVACY_PREDICATE =
  * pre-authorise every future one in the same file.
  */
 const ALLOWED: Record<string, { sites: number; reason: string }> = {
-  // ── UNFIXED BY OWNERSHIP, NOT BY JUDGEMENT ──────────────────────────────────
-  //
-  // GET /discovery/feed loads both directions of the block relationship, and a
-  // rejected read leaves blockedIds empty — indistinguishable from "this viewer
-  // has blocked nobody", which silently unfilters the event-post pipeline. The
-  // enclosing catch is about an UNRESOLVED VIEWER and is not a verdict on this
-  // read; PostgREST reports the failure in `error` rather than throwing, so
-  // nothing else notices.
-  //
-  // This is a REAL finding of the same class and severity as the seven fixed
-  // above. It is unfixed only because routes/discovery.ts is owned by a
-  // concurrent workstream and must not be edited from here. A fix was written
-  // and reverted for that reason alone.
-  //
-  // ACTION: hand this to whoever owns discovery.ts. Do not silently drop the
-  // entry — that would convert an owed fix into an accepted blind spot.
-  "routes/discovery.ts::blocks": {
-    sites: 1,
-    reason:
-      "Fail-open block set on the discovery feed. Owned by a concurrent workstream, so it is reported rather than fixed. " +
-      "This is deferred work, not a judgement that the site is safe.",
-  },
+  // The `routes/discovery.ts::blocks` entry that stood here was the one deferred
+  // item of the 2026-08-31 audit — unfixed by ownership, not by judgement. The
+  // file's owner has since taken the fix, so the entry is gone and the site is
+  // pinned under FIXED_SITES instead. That is the intended exit for a deferral:
+  // it moves to Rule 2, it does not lapse.
   "routes/follows.ts::message_thread_members": {
     sites: 2,
     reason:
@@ -322,6 +305,16 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
     reason:
       "The Live rail's block set, fail-open, in the same file whose feed endpoint treats the identical unknown as fail-closed " +
       "and says so in the log.",
+  },
+  {
+    file: "routes/discovery.ts",
+    markers: ["blocked users are NOT being filtered from event posts"],
+    reason:
+      "GET /discovery/feed's block set, and the one site the audit deferred rather than fixed: a rejected read left " +
+      "blockedIds empty — indistinguishable from 'this viewer has blocked nobody' — and the event-post pipeline filters " +
+      "on exactly that set. The enclosing catch is about an unresolved viewer, not a verdict on this read, and PostgREST " +
+      "reports the failure in `error` rather than throwing, so it never fired. Fixed by the file's owner; the allowlist " +
+      "entry that recorded the deferral was dropped in the same change.",
   },
   {
     file: "routes/follows.ts",
