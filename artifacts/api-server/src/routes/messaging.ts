@@ -785,7 +785,17 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   // After response: if there is a preview message, insert it as a real message and translate.
   // Only run if the preview_text was not already inserted (new thread creation path or no messages yet).
   const previewBody = typeof req_.preview_text === 'string' ? req_.preview_text.trim() : '';
-  if (previewBody) {
+  // Never persist server-readable plaintext into an e2ee thread. A message
+  // request can be accepted into a reused existing direct thread that is e2ee;
+  // inserting the plaintext preview_text there would break the E2EE invariant
+  // (audit MSG-3). Skip the preview insert for e2ee threads.
+  const { data: acceptThreadMeta } = await sc
+    .from('message_threads')
+    .select('is_e2ee')
+    .eq('id', threadId)
+    .maybeSingle();
+  const threadIsE2ee = (acceptThreadMeta as any)?.is_e2ee === true;
+  if (previewBody && !threadIsE2ee) {
     const { data: senderProfile } = await sc
       .from('profiles')
       .select('preferred_language, preferred_message_language')

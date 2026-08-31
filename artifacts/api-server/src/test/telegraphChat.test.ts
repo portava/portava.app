@@ -597,6 +597,28 @@ describe("C. API endpoint permission + shape", () => {
     assert.ok(r.body.messageId);
   });
 
+  it("POST start-poll — refuses to write plaintext into an e2ee thread (audit MSG-3)", async () => {
+    const capturedMsgs: FakeRow[] = [];
+    const client = makeFakeClient({
+      users: { [TOKEN_A]: USER_A },
+      threadMembers: [activeMember(USER_A.id, THREAD_ID)],
+      suggestions: [suggestion(SUGG_ID, USER_A.id, THREAD_ID)],
+      threads: [{ id: THREAD_ID, is_e2ee: true }],
+      insertedMessages: capturedMsgs,
+    });
+    _setTestClient(client, true);
+    const r = await req(
+      server,
+      "POST",
+      `/api/threads/${THREAD_ID}/telegraph/suggestions/${SUGG_ID}/start-poll`,
+      TOKEN_A,
+      { options: ["Morning", "Afternoon", "Evening"] },
+    );
+    assert.notEqual(r.status, 200, "start-poll must not succeed on an e2ee thread");
+    assert.equal(r.body.error, "e2ee_thread", `expected e2ee_thread refusal, got ${JSON.stringify(r.body)}`);
+    assert.equal(capturedMsgs.length, 0, "no plaintext poll body may be inserted into an e2ee thread");
+  });
+
   it("GET suggestions — left member (left_at != null) gets 403", async () => {
     const client = makeFakeClient({
       users: { [TOKEN_B]: USER_B },
