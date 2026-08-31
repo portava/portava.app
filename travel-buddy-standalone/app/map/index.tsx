@@ -73,8 +73,14 @@ import { openInMaps } from '../../src/lib/openInMaps.ts';
 import { centroidOf } from '../../src/types/mapObjects.ts';
 import { MapSearchSheet } from '../../src/components/map/MapSearchSheet.tsx';
 import { MeetHereSheet } from '../../src/components/map/MeetHereSheet.tsx';
+import { LocateFriendsPanel } from '../../src/components/map/LocateFriendsPanel.tsx';
+import {
+  startLocateFriendsSession,
+  LOCATE_FRIENDS_PUBLISH_INTERVAL_MS,
+} from '../../src/services/locateFriends.ts';
+import { useSession } from '../../src/context/SessionContext.tsx';
 import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
-import { countBucket } from '../../src/features/map/telemetry/mapTelemetry.ts';
+import { countBucket, durationBucketMs } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
 import {
   coordinateTarget,
@@ -389,6 +395,7 @@ export default function FullScreenMapScreen() {
 function FullScreenMapScreenInner() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { userId } = useSession();
   const params = useLocalSearchParams<{
     entityTypes?: string;
     lat?: string;
@@ -1091,6 +1098,41 @@ function FullScreenMapScreenInner() {
   } | null>(null);
   const [contributeObject, setContributeObject] = useState<MapObject | null>(null);
   const [meetTarget, setMeetTarget] = useState<MeetTarget | null>(null);
+  const [meetSurface, setMeetSurface] =
+    useState<'action_rail' | 'long_press' | 'place_sheet'>('action_rail');
+
+  // ── §12 Locate My Friends ───────────────────────────────────────────────────
+  // The session id is the whole mount condition. It is NOT gated on a feature
+  // flag: the panel handles `enabled: false` itself, and its Leave control
+  // renders unconditionally — gating the mount would reintroduce exactly the
+  // stranding bug the un-gated DELETE route was written to prevent.
+  const [locateSessionId, setLocateSessionId] = useState<string | null>(null);
+  const [locateStarting, setLocateStarting] = useState(false);
+
+  const startLocateFriends = useCallback(
+    async (scope: { kind: 'trip' | 'circle' | 'event' | 'plan'; id: string }, ttlMinutes: number) => {
+      setLocateStarting(true);
+      const res = await startLocateFriendsSession({
+        groupScopeKind: scope.kind,
+        groupScopeId: scope.id,
+        // §12 "temporary and auto-expiring" — required, never defaulted here.
+        ttlMinutes,
+      }).catch(() => null);
+      setLocateStarting(false);
+      if (!res || !res.ok || !res.data.session) return;
+
+      setLocateSessionId(res.data.session.id);
+      // §35 crew_locate_started, with the rung ACTUALLY requested after the
+      // purpose ceiling was applied — not the one this screen asked for.
+      emitMapEvent('crew_locate_started', {
+        crewSize: countBucket(0),
+        requestedPrecision: res.data.requestedClass,
+        ttl: durationBucketMs(ttlMinutes * 60_000),
+        source: machine.mode === 'TRIP' ? 'trip_map' : 'action_rail',
+      });
+    },
+    [machine.mode],
+  );
   /** §35 alternative_requested: which round of "show me something else" this is. */
   const alternativeRoundRef = useRef(0);
 
@@ -1125,6 +1167,7 @@ function FullScreenMapScreenInner() {
           if (obj.interaction?.detailRoute) router.push(obj.interaction.detailRoute as never);
           return;
         case 'meet_here':
+          setMeetSurface('action_rail');
           setMeetTarget({ kind: 'object', object: obj });
           return;
         case 'add_to_trip':
@@ -1633,6 +1676,7 @@ function FullScreenMapScreenInner() {
           if (action === 'meet_here') {
             // A long-press can land on empty map, so the target is a union —
             // proposeMeetHere decides whether it can anchor a meeting at all.
+            setMeetSurface('long_press');
             setMeetTarget(
               target.kind === 'object'
                 ? { kind: 'object', object: target.object }
@@ -1647,13 +1691,51 @@ function FullScreenMapScreenInner() {
         }}
       />
 
+      {/* ── §12 Locate My Friends ───────────────────────────────────────────
+          Mounted on the session id alone. The panel owns its own read and
+          publish polls and tears both down with its effect, so a closed screen
+          cannot keep publishing someone's position. */}
+      {locateSessionId && userId ? (
+        <LocateFriendsPanel
+          live={{ sessionId: locateSessionId, viewerMemberId: userId }}
+          onLeave={() => setLocateSessionId(null)}
+          onEndSession={() => setLocateSessionId(null)}
+        />
+      ) : machine.mode === 'LOCATE_FRIENDS' && tripId ? (
+        <Pressable
+          style={[s2.optimizeChip, { bottom: insets.bottom + 200 }]}
+          disabled={locateStarting}
+          onPress={() => void startLocateFriends({ kind: 'trip', id: tripId }, 120)}
+          accessibilityRole="button"
+          accessibilityLabel="Start locating friends for two hours"
+        >
+          <Text style={s2.optimizeChipText}>
+            {locateStarting ? 'Starting…' : 'Locate my friends · 2h'}
+          </Text>
+        </Pressable>
+      ) : null}
+
       {/* ── §25 Meet Here ───────────────────────────────────────────────────
           The rung the meeting point publishes at is decided by the model from
           the subject, never requested here. An aggregate subject is refused
           with its reason shown rather than silently doing nothing. */}
       <MeetHereSheet
         target={meetTarget}
+        surface={meetSurface}
         onClose={() => setMeetTarget(null)}
+        onRefused={(info) => {
+          const subject =
+            meetTarget?.kind === 'object' ? describeMapObject(meetTarget.object) : null;
+          // Only an object can be refused — a user's own dropped pin always
+          // qualifies — so a null subject here would be a contradiction.
+          if (subject) {
+            emitMapEvent('meet_here_refused', {
+              ref: subject,
+              reason: info.reason,
+              surface: info.surface,
+            });
+          }
+        }}
         onCreated={(info) => {
           const subject =
             meetTarget?.kind === 'object' ? describeMapObject(meetTarget.object) : null;

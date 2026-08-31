@@ -60,6 +60,10 @@ export const MAP_EVENT_NAMES = [
   "alternative_requested",
   "recommendation_accepted",
   "recommendation_declined",
+  // Beyond §35's sixteen, deliberately: a refusal is not something the user
+  // did, so §35 has no event for it — and without one, a policy block is
+  // indistinguishable from a feature nobody used. See the client emitter.
+  "meet_here_refused",
 ] as const;
 
 export type MapEventName = (typeof MAP_EVENT_NAMES)[number];
@@ -189,6 +193,10 @@ router.post(
       }
       rows.push({
         viewer_id: user.id, // stamped from the token; never from the body
+        // The contract that produced this row. Stored so a breaking payload
+        // change is deliberate and visible, rather than silently averaged in
+        // with rows written under a different shape.
+        schema_version: parsed.data.meta?.schemaVersion ?? "1.0",
         event_name: evt.name,
         map_session_id: evt.mapSessionId,
         seq: evt.seq,

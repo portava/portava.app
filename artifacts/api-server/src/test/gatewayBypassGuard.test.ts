@@ -1,0 +1,156 @@
+/**
+ * Gateway bypass guard (Map spec §19).
+ *
+ * §19: "Never place raw database rows directly on the map… The mobile client
+ * should not independently reconstruct Portava intelligence rules."
+ *
+ * Once a layer moves into the projection, the OLD path does not disappear —
+ * `listMapTravelers`, `findNearbyGems` and `readCircleLocations` are all still
+ * exported and callable. Nothing structurally prevents a future surface from
+ * calling one directly and serving raw rows again, and that regression is
+ * invisible: the data looks right, it just skipped ranking, the §24 protection
+ * gate, viewport aggregation and the privacy-class stamping.
+ *
+ * This guard fails when a privacy-complete reader is called from anywhere
+ * except an APPROVED path. Approval is per (reader, caller) and each entry
+ * carries a reason, so adding a bypass is a deliberate, reviewable edit rather
+ * than something that happens by accident.
+ */
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dir = dirname(fileURLToPath(import.meta.url));
+const SRC = resolve(__dir, "..");
+
+/**
+ * The privacy-complete readers a layer must go through, and every file allowed
+ * to call each one. A caller absent from this list is a bypass.
+ */
+const READERS: Record<string, { approved: Record<string, string> }> = {
+  listMapTravelers: {
+    approved: {
+      "lib/mapTravelers.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+      "routes/mapSearch.ts": "the pre-gateway search endpoint, still in service",
+      "routes/mapTravelers.ts":
+        "the legacy /api/map/travelers endpoint the Discovery traveler layer still polls",
+    },
+  },
+  findNearbyGems: {
+    approved: {
+      "services/hiddenGems/HiddenGemDiscoveryService.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+      "routes/mapSearch.ts": "the pre-gateway search endpoint",
+      "routes/hiddenGems.ts": "the gems domain endpoint — not a map surface",
+    },
+  },
+  readCircleLocations: {
+    approved: {
+      "lib/circleLocationsRead.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+      "routes/location.ts": "GET /api/me/circle-locations, the endpoint it was extracted from",
+    },
+  },
+};
+
+/** Every .ts file under src/, excluding tests and scripts. */
+function sourceFiles(): string[] {
+  const out: string[] = [];
+  const skip = new Set(["test", "scripts", "migrations", "node_modules", "baseline"]);
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) {
+        if (!skip.has(name)) walk(full);
+        continue;
+      }
+      if (!name.endsWith(".ts") || name.endsWith(".test.ts")) continue;
+      out.push(full);
+    }
+  };
+  walk(SRC);
+  return out;
+}
+
+/** reader -> the files that call it (excluding import lines). */
+function callers(reader: string): string[] {
+  const hits: string[] = [];
+  for (const file of sourceFiles()) {
+    const src = readFileSync(file, "utf8");
+    if (!src.includes(reader)) continue;
+    const called = src
+      .split("\n")
+      .some((line) => {
+        const l = line.trim();
+        if (l.startsWith("import") || l.startsWith("//") || l.startsWith("*")) return false;
+        // A call, not a re-export or a mention in prose.
+        return new RegExp(`\\b${reader}\\s*\\(`).test(l);
+      });
+    if (called) hits.push(file.slice(SRC.length + 1));
+  }
+  return hits.sort();
+}
+
+describe("gateway bypass guard (§19)", () => {
+  test("the scan sees the source tree (the guard is not checking nothing)", () => {
+    const files = sourceFiles();
+    assert.ok(files.length > 200, `expected the api-server source tree, found ${files.length}`);
+    assert.ok(
+      files.some((f) => f.endsWith(join("routes", "mapProjection.ts"))),
+      "the gateway route must be in scope",
+    );
+  });
+
+  for (const [reader, { approved }] of Object.entries(READERS)) {
+    test(`${reader} is called only from approved paths`, () => {
+      const found = callers(reader);
+      // The guard must actually find the reader; a rename would otherwise make
+      // it pass by scanning nothing.
+      assert.ok(
+        found.length > 0,
+        `${reader} has no callers at all — was it renamed? This guard would then be inert.`,
+      );
+      const bypasses = found.filter((f) => !(f in approved));
+      assert.deepEqual(
+        bypasses,
+        [],
+        `${reader} is a privacy-complete reader. Calling it outside the gateway skips ranking, ` +
+          `the §24 protection gate, viewport aggregation and privacy-class stamping. ` +
+          `If a new caller is legitimate, add it to READERS with a reason.`,
+      );
+    });
+
+    test(`${reader}'s approval list has no stale entries`, () => {
+      // An approval that outlives its caller silently pre-authorises a future
+      // bypass in a file that no longer does what the reason claims.
+      const found = new Set(callers(reader));
+      const stale = Object.keys(approved).filter((f) => !found.has(f));
+      assert.deepEqual(stale, [], `these no longer call ${reader} — drop the approval`);
+    });
+
+    test(`every ${reader} approval carries a reason`, () => {
+      for (const [file, reason] of Object.entries(approved)) {
+        assert.ok(
+          typeof reason === "string" && reason.length > 5,
+          `${file} is approved for ${reader} without a stated reason`,
+        );
+      }
+    });
+  }
+
+  test("the gateway itself calls every reader it is meant to serve", () => {
+    // The inverse failure: a layer silently dropped OUT of the projection would
+    // leave the client fetching it per-layer again, which is the §19 violation
+    // this whole exercise removed.
+    const route = readFileSync(join(SRC, "routes", "mapProjection.ts"), "utf8");
+    for (const reader of Object.keys(READERS)) {
+      assert.ok(
+        new RegExp(`\\b${reader}\\s*\\(`).test(route),
+        `${reader} is no longer called by the gateway — that layer has fallen back to the client`,
+      );
+    }
+  });
+});

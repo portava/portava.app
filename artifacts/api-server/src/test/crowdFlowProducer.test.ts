@@ -14,6 +14,10 @@
  *     confidence can never exceed the observation's, nor `provisional`.
  *   * COHORT ARITHMETIC MATCHES lib/intelProjectionAggregator exactly.
  *   * THE PRODUCER REFUSES TO READ consent-scoped data it cannot publish.
+ *   * EVERY UNFED §10 FAMILY CARRIES A NAMED BLOCKER. `UNFED_FAMILY_BLOCKERS`
+ *     records that `arrival` and `navigation_start` are blocked by missing
+ *     CAPTURE (no source anywhere declares an ORIGIN), not by a missing
+ *     producer — so wiring one cannot be mistaken for closing the gap.
  *
  * Pure and offline except for the two fake-client cases.
  */
@@ -25,7 +29,9 @@ import {
   DECLARED_BUT_UNFED_FAMILIES,
   MAX_INFERRED_CAUSE_CONFIDENCE,
   OBSERVED_SIGNAL_FAMILIES,
+  SECOND_FAMILY_PRECONDITIONS,
   SIGNAL_MAX_AGE_MINUTES,
+  UNFED_FAMILY_BLOCKERS,
   WIRED_SIGNAL_SOURCES,
   attachCauseHypotheses,
   canProduceFlow,
@@ -73,8 +79,10 @@ function publishableCohort(
       actorId: ACTOR(i),
       groupKey: GROUP(i % 5),
       // Two families so MIN_SIGNAL_FAMILIES is satisfiable. `arrival` is
-      // SYNTHETIC here — see the module header: it has no producer in this
-      // repository today. The test exercises the derivation, not a live feed.
+      // SYNTHETIC here, and not merely unwired: UNFED_FAMILY_BLOCKERS records it
+      // as `no_declared_origin` — no source in this repository states an ORIGIN
+      // for an arrival, so no producer could supply this signal as written. The
+      // test exercises the derivation, not a live feed.
       family: i % 2 === 0 ? "next_stop_contribution" : "arrival",
       fromZoneId: from,
       toZoneId: to,
@@ -122,6 +130,90 @@ describe("§10 signal families — what this repository actually feeds", () => {
   it("canProduceFlow needs MIN_SIGNAL_FAMILIES *observed* families, not just any two", () => {
     assert.equal(canProduceFlow(["next_stop_contribution", "event_context"]), false);
     assert.equal(canProduceFlow(["next_stop_contribution", "arrival"]), true);
+  });
+});
+
+// ── WHY each family is unfed — the audit as data, not prose ───────────────────
+//
+// These pin the 2026-08-31 re-audit. The point is not bookkeeping: the register
+// records that `arrival` and `navigation_start` are blocked by MISSING CAPTURE
+// (no source row anywhere declares an ORIGIN) rather than by a missing producer.
+// Anyone who flips one into WIRED_SIGNAL_SOURCES must delete a specific named
+// finding here, which is exactly the friction that stops MIN_SIGNAL_FAMILIES
+// becoming a rubber stamp.
+
+describe("§10 unfed families carry a NAMED blocker, not a shrug", () => {
+  it("the register covers every unfed family and nothing else", () => {
+    assert.deepEqual(
+      Object.keys(UNFED_FAMILY_BLOCKERS).sort(),
+      [...DECLARED_BUT_UNFED_FAMILIES].sort(),
+      "UNFED_FAMILY_BLOCKERS must track DECLARED_BUT_UNFED_FAMILIES exactly — a family " +
+        "wired without deleting its finding, or a finding left behind, both fail here",
+    );
+  });
+
+  it("every finding names a recognized blocker and real evidence", () => {
+    const KNOWN: readonly string[] = [
+      "table_absent", "no_producer", "no_declared_origin", "purpose_mismatch", "party_scoped",
+    ];
+    for (const [family, finding] of Object.entries(UNFED_FAMILY_BLOCKERS)) {
+      assert.ok(KNOWN.includes(finding.blocker), `${family}: unrecognized blocker ${finding.blocker}`);
+      for (const b of finding.alsoBlockedBy) {
+        assert.ok(KNOWN.includes(b), `${family}: unrecognized secondary blocker ${b}`);
+        assert.notEqual(b, finding.blocker, `${family}: primary blocker repeated in alsoBlockedBy`);
+      }
+      assert.ok(finding.evidence.length > 0, `${family}: a blocker with no evidence is an assertion`);
+      for (const e of finding.evidence) {
+        assert.ok(e.trim().length > 20, `${family}: evidence '${e}' is too thin to review`);
+      }
+    }
+  });
+
+  it("arrival and navigation_start are blocked by MISSING CAPTURE, not a missing producer", () => {
+    // The load-bearing claim of the audit. Both sources are destination-only by
+    // construction: canonical_events carries ONE subject and its payload
+    // allow-list has no origin key. Wiring a producer onto either would not
+    // produce a hop — it would produce a destination, and the origin could then
+    // only come from the actor's last known position, which is the trajectory
+    // reconstruction §10 forbids.
+    for (const family of ["arrival", "navigation_start"] as const) {
+      assert.equal(
+        UNFED_FAMILY_BLOCKERS[family]?.blocker,
+        "no_declared_origin",
+        `${family}: if this is now feedable, the capture that supplies the ORIGIN must be named here`,
+      );
+    }
+    // Only the two infrastructure gaps are the kind effort alone closes.
+    const byBlocker = (b: string) =>
+      Object.entries(UNFED_FAMILY_BLOCKERS).filter(([, f]) => f.blocker === b).map(([k]) => k).sort();
+    assert.deepEqual(byBlocker("table_absent"), ["coarse_transition"]);
+    assert.deepEqual(byBlocker("purpose_mismatch"), ["accepted_plan"]);
+  });
+
+  it("the preconditions for a second family are stated, and none is 'add another claim type'", () => {
+    assert.ok(SECOND_FAMILY_PRECONDITIONS.length >= 4);
+    for (const p of SECOND_FAMILY_PRECONDITIONS) {
+      assert.ok(p.trim().length > 40, `precondition '${p}' is too thin to act on`);
+    }
+    // A second claim type on intel_observations would share the table, the
+    // consent record and the actor population — one family wearing two hats.
+    assert.ok(
+      SECOND_FAMILY_PRECONDITIONS.some((p) => /origin/i.test(p)),
+      "the origin requirement is the whole finding; it may not be dropped",
+    );
+  });
+
+  it("a destination-only signal cannot become a transition — the origin rule, in code", () => {
+    // The register's `no_declared_origin` is not merely a note: a signal with no
+    // fromZoneId is refused at intake rather than being completed from anywhere.
+    const { transitions, rejected } = derive([
+      {
+        actorId: ACTOR(1), groupKey: GROUP(0), family: "arrival",
+        fromZoneId: "", toZoneId: "zone-B", observedAt: OBSERVED,
+      },
+    ]);
+    assert.equal(transitions.length, 0);
+    assert.deepEqual(rejected.map((r) => r.reason), ["invalid_input"]);
   });
 });
 

@@ -74,51 +74,119 @@
  * with the service client injected — so the derivation is unit-testable without
  * a database.
  *
- * ── WHAT ACTUALLY FEEDS THIS TODAY: NOTHING. STATED, NOT IMPLIED. ────────────
- * §10 names seven input families. Audited against this repository:
+ * ── WHAT ACTUALLY FEEDS THIS TODAY: ONE FAMILY. STATED, NOT IMPLIED. ─────────
+ * §10 names seven input families. Re-audited 2026-08-31, independently of the
+ * first pass and against the schema rather than against the previous note; every
+ * claim below names where it was checked. `UNFED_FAMILY_BLOCKERS` (below) is the
+ * same audit as DATA, so a future wiring attempt has to confront it rather than
+ * skim past a comment.
  *
- *   coarse_transition       NOT FED. The only table declared for coarse journey
- *                           ingestion is `journey_observations`
- *                           (lib/locationPurposes, purpose `journey_observation`)
- *                           and it does not exist: no migration, absent from the
- *                           2026-08-19 baseline, no code. The precise table that
- *                           DOES exist, `location_snapshots`, belongs to the
- *                           `safety_anti_spoof` purpose — anti-spoof only,
- *                           legitimate_interest, 24h. Mining it for crowd flow
- *                           would be exactly the continuous-tracking engine §10
- *                           forbids and would break the purpose registry. Refused
- *                           on purpose, not overlooked.
- *   arrival                 NOT FED for a public flow. `canonical_events` verb
- *                           'arrival' exists (migration 2120) with ZERO
- *                           producers — nothing calls recordEvent/recordEvents.
- *                           `plan_attendance_events` is written, but under the
- *                           `geofence_checkin` purpose: trip-private, and
- *                           party-scoped by construction (one trip = one group),
- *                           so it could never certify independent groups.
- *   accepted_plan           NOT FED. `event_rsvps` has no server writer outside
- *                           the demo seeder, and an RSVP carries no ORIGIN zone,
- *                           so it cannot name a from→to hop at all.
- *   navigation_start        NOT FED. `canonical_events` verb 'direction' — same
- *                           unfed spine. `compass_user_navigation_patterns` is
+ * THE RULE THAT DECIDES ALL OF THIS — A HOP NEEDS BOTH ENDPOINTS, AND THE ONLY
+ * HONEST WAY TO GET BOTH IS FOR ONE TRAVELLER ACT TO DECLARE BOTH. Six of the
+ * seven families are DESTINATION-ONLY events: they record that a person is going
+ * to, or has reached, somewhere. Turning one into a hop means supplying the
+ * origin from that actor's last known position — `user_location_state`
+ * (purpose derived_traveler_state: "Current state only ... state, not history",
+ * own-row visibility), `location_snapshots` (safety_anti_spoof,
+ * legitimate_interest, 24h, "Never shown to any user") or the actor's own
+ * previous event. Each of those is BOTH the trajectory reconstruction §10
+ * forbids AND a use outside the source's declared purpose. That is why the
+ * register below records `no_declared_origin` rather than "not built yet": for
+ * most families this is not a wiring gap that effort closes.
+ *
+ *   coarse_transition       TABLE ABSENT. `journey_observations` — the only table
+ *                           lib/locationPurposes declares for coarse journey
+ *                           ingestion (purpose `journey_observation`, consent,
+ *                           24h) — has no CREATE TABLE in src/migrations, is
+ *                           absent from the 2026-08-19 baseline, and survives
+ *                           only as a comment (2130_intel_storage.sql:135). The
+ *                           precise table that DOES exist, `location_snapshots`,
+ *                           is anti-spoof-only; mining it would be exactly the
+ *                           continuous-tracking engine §10 forbids. Refused on
+ *                           purpose, not overlooked.
+ *   arrival                 NO DECLARED ORIGIN, and party-scoped where it exists.
+ *                           `canonical_events` verb 'arrival' (2120) has ZERO
+ *                           producers: the only callers of recordEvent /
+ *                           recordEvents in the repository are in
+ *                           test/canonicalEvents.test.ts. The arrival captures
+ *                           that ARE written name a destination and nothing else
+ *                           — plan_checkins / plan_attendance_events (purpose
+ *                           geofence_checkin, trip-private, one trip = one party,
+ *                           so it could never certify independent groups),
+ *                           circle_checkins.checkin_type='arrived' (purpose
+ *                           presence_in_context, consent, visible in "the trip or
+ *                           event context only"), route_stops.checkpoint_status.
+ *   accepted_plan           NOTHING IS EVER ACCEPTED. `route_legs` is the one
+ *                           table in this repository with a real from→to pair AND
+ *                           a real writer (routes/routePlan.ts:204) — but
+ *                           route_plans.status is written exactly once, as
+ *                           'draft' (routePlan.ts:135); no code path sets
+ *                           'active' or 'completed', so the enum's accepted states
+ *                           are unreachable. The legs are also OPTIMIZER OUTPUT
+ *                           (services/routeOptimizer), machine-chosen ordering
+ *                           rather than a traveller's declaration. And
+ *                           route_plans / route_stops / route_legs are claimed by
+ *                           NO purpose in lib/locationPurposes even though
+ *                           route_stops.structured_location holds {label, lat,
+ *                           lng} — unregistered private trip location, visible to
+ *                           owner + trip members, with no consent covering
+ *                           publication to a public map. `event_rsvps` has no
+ *                           server writer outside scripts/seed-demo-profile.ts,
+ *                           and an RSVP carries no origin either.
+ *   navigation_start        NO ORIGIN EXISTS, STRUCTURALLY — not merely unwired.
+ *                           `canonical_events` verb 'direction' (2120) is the only
+ *                           candidate, and its zero producers are the LESSER
+ *                           problem. The row shape carries ONE subject
+ *                           (subject_kind, subject_id): it can say where a person
+ *                           is going and has no column that could say where from.
+ *                           `payload` cannot carry one either — lib/canonicalEvents
+ *                           strips FORBIDDEN_PAYLOAD_KEYS (lat/lng/latitude/
+ *                           longitude/coords/accuracy) absolutely, then projects to
+ *                           ALLOWED_PAYLOAD_KEYS, which holds `destination` and
+ *                           nothing origin-shaped. canonical_events is also claimed
+ *                           by no purpose in lib/locationPurposes and is not in
+ *                           REFERENCE_LOCATION_TABLES; it passes
+ *                           check:location-purposes only because it holds no
+ *                           coordinate columns and the sanitizer guarantees it
+ *                           never will. Deriving a geographic zone→zone hop from it
+ *                           would turn it into a location table with no lawful
+ *                           basis, no retention decision and no consent.
+ *                           `compass_user_navigation_patterns`
+ *                           (0054_compass_cache.sql: from_screen/to_screen) is
  *                           screen-to-screen navigation, not geographic.
  *   event_context           REAL, and deliberately CAUSE-ONLY (see above).
- *   aggregate_presence      NOT FED. src/presence/domain/* is Phase-0 domain
- *                           types and a transport selector; there is no fusion
- *                           layer and no presence store. `circle_presence` is
- *                           circle-scoped and per-viewer, not an aggregate.
- *   next_stop_contribution  REAL SCHEMA + REAL CAPTURE PATH, zero rows.
- *                           `intel_observations` claim_type
- *                           'experience.next_move', captured through
+ *   aggregate_presence      NOT A TRANSITION. `circle_presence`
+ *                           (0108_circle_schema_tracked.sql:147) is one row per
+ *                           (user, context_type, context_id) holding a status and
+ *                           venue / approximate LABELS — presence, with no
+ *                           from-zone to be had, circle-scoped, consent-based and
+ *                           per-viewer. src/presence/domain/* is Phase-0 types and
+ *                           a transport selector: no store, no fusion layer.
+ *   next_stop_contribution  REAL SCHEMA + REAL CAPTURE PATH, zero rows. THE ONLY
+ *                           family whose source declares BOTH endpoints in one
+ *                           act: the contributor is standing at the origin
+ *                           (intel_observations.zone_id / subject_id,
+ *                           2130_intel_storage.sql:145) at the moment they name
+ *                           the destination (value.destinationArea,
+ *                           lib/trailFollowup). Captured through
  *                           IntelCaptureService's `trail` surface behind
  *                           `intel_trail_followup` (seeded OFF), carrying
  *                           `group_key` (2171) and D4 consent (2172). It is the
  *                           only family that can certify independent groups.
  *
- * ONE fed family, and §10 requires MIN_SIGNAL_FAMILIES (2). So this producer
- * emits nothing today, and `readCrowdFlowSignals` REFUSES TO READ AT ALL rather
- * than touching consent-scoped contribution data for a result that provably
- * cannot publish. `WIRED_SIGNAL_SOURCES` is the honest register; adding to it is
- * a deliberate edit, pinned by a test.
+ * CONCLUSION, AND IT IS NOT A TODO: one family is fed, §10 requires
+ * MIN_SIGNAL_FAMILIES (2), so this producer emits nothing. The second family
+ * cannot be reached by wiring — it needs CAPTURE THAT DOES NOT EXIST: a traveller
+ * act that declares an ORIGIN ZONE alongside the destination, under a consent
+ * scope covering publication into a public aggregate, carrying a group_key so the
+ * privacy gate's independent-group floor can clear. Adding a second CLAIM TYPE to
+ * intel_observations would NOT count: same table, same consent, same capture
+ * service, same actor population — MIN_SIGNAL_FAMILIES would then be measuring
+ * prompt variety rather than source independence, and become a rubber stamp.
+ * Meanwhile `readCrowdFlowSignals` REFUSES TO READ AT ALL rather than touching
+ * consent-scoped contribution data for a result that provably cannot publish.
+ * `WIRED_SIGNAL_SOURCES` is the honest register; adding to it is a deliberate
+ * edit, pinned by a test.
  *
  * RUNTIME EFFECT: NONE until `map_crowd_flow_enabled` (migration 2218) is on AND
  * a second observed family is wired.
@@ -167,6 +235,116 @@ export const DECLARED_BUT_UNFED_FAMILIES: readonly CrowdFlowSignalFamily[] =
   CROWD_FLOW_SIGNAL_FAMILIES.filter(
     (f) => !WIRED_SIGNAL_SOURCES.includes(f) && !CAUSE_ONLY_SIGNAL_FAMILIES.includes(f),
   );
+
+/**
+ * WHY a declared family is unfed. The distinction that matters is between
+ * `no_producer` (effort closes it) and everything else (effort does not).
+ */
+export type UnfedBlocker =
+  /** The source table lib/locationPurposes declares for it does not exist. */
+  | "table_absent"
+  /** The table exists and nothing in the repository ever writes a row. */
+  | "no_producer"
+  /**
+   * Rows name a DESTINATION only. An origin could come only from the actor's
+   * last known position — the trajectory reconstruction §10 forbids. This is the
+   * blocker that no amount of wiring removes.
+   */
+  | "no_declared_origin"
+  /** The source is written, but its declared lawful basis does not cover
+   *  publication into a public aggregate. */
+  | "purpose_mismatch"
+  /** One source row = one party, so it can never certify independent groups. */
+  | "party_scoped";
+
+export interface UnfedFamilyFinding {
+  /** The blocker that would still stand if every other one were removed. */
+  blocker: UnfedBlocker;
+  /** Everything else that independently blocks it. A family may fail several ways. */
+  alsoBlockedBy: readonly UnfedBlocker[];
+  /** Where this was checked. Files, not adjectives. */
+  evidence: readonly string[];
+}
+
+/**
+ * The header audit as DATA, so the gap is inspectable and a future attempt to
+ * flip a family into `WIRED_SIGNAL_SOURCES` has to delete a specific, named
+ * finding rather than quietly append a string. Pinned by
+ * src/test/crowdFlowProducer.test.ts: every DECLARED_BUT_UNFED_FAMILIES entry
+ * must appear here, and nothing else may.
+ *
+ * NOTE THE SHAPE OF THE ANSWER. Only `aggregate_presence` and `coarse_transition`
+ * are missing-infrastructure problems. `arrival` and `navigation_start` are
+ * missing-CAPTURE problems: their sources are destination-only by construction,
+ * and no producer wired onto them would change that.
+ */
+export const UNFED_FAMILY_BLOCKERS: Readonly<Record<string, UnfedFamilyFinding>> = {
+  coarse_transition: {
+    blocker: "table_absent",
+    alsoBlockedBy: [],
+    evidence: [
+      "lib/locationPurposes.ts — purpose 'journey_observation' claims journey_observations",
+      "src/migrations/** — no CREATE TABLE journey_observations; absent from the 2026-08-19 baseline",
+      "src/migrations/2130_intel_storage.sql:135 — named only in a comment",
+    ],
+  },
+  arrival: {
+    blocker: "no_declared_origin",
+    alsoBlockedBy: ["no_producer", "party_scoped", "purpose_mismatch"],
+    evidence: [
+      "src/migrations/2120_canonical_events.sql — verb 'arrival' carries ONE subject; no origin column",
+      "lib/canonicalEvents.ts — recordEvent/recordEvents called only from test/canonicalEvents.test.ts",
+      "src/migrations/0039_plan_geofence_full.sql:41 — plan_attendance_events is trip-scoped (purpose geofence_checkin)",
+      "src/migrations/0108_circle_schema_tracked.sql:206 — circle_checkins is circle-scoped (purpose presence_in_context)",
+    ],
+  },
+  accepted_plan: {
+    blocker: "purpose_mismatch",
+    alsoBlockedBy: ["no_producer"],
+    evidence: [
+      "src/routes/routePlan.ts:135 — route_plans.status is only ever written 'draft'; 'active'/'completed' are unreachable",
+      "src/routes/routePlan.ts:204 — route_legs comes from services/routeOptimizer, not from a traveller declaration",
+      "lib/locationPurposes.ts — route_plans/route_stops/route_legs are claimed by NO purpose, yet route_stops.structured_location holds {label,lat,lng}",
+      "src/scripts/seed-demo-profile.ts:706 — the only event_rsvps writer; an RSVP carries no origin",
+    ],
+  },
+  navigation_start: {
+    blocker: "no_declared_origin",
+    alsoBlockedBy: ["no_producer", "purpose_mismatch"],
+    evidence: [
+      "src/migrations/2120_canonical_events.sql — verb 'direction' carries ONE subject (subject_kind, subject_id); no origin column exists",
+      "lib/canonicalEvents.ts — FORBIDDEN_PAYLOAD_KEYS strips coordinates absolutely; ALLOWED_PAYLOAD_KEYS holds 'destination' and nothing origin-shaped",
+      "lib/locationPurposes.ts — canonical_events is claimed by no purpose and is not REFERENCE_LOCATION_TABLES",
+      "src/migrations/0054_compass_cache.sql:109 — compass_user_navigation_patterns is from_screen/to_screen, not geographic",
+    ],
+  },
+  aggregate_presence: {
+    blocker: "no_declared_origin",
+    alsoBlockedBy: ["party_scoped", "purpose_mismatch"],
+    evidence: [
+      "src/migrations/0108_circle_schema_tracked.sql:147 — circle_presence is one row per (user, context); a status and labels, no from-zone",
+      "src/presence/domain/** — Phase-0 types and a transport selector; no store, no fusion layer",
+    ],
+  },
+} as const;
+
+/**
+ * The capture that would have to exist before a SECOND family could be fed
+ * honestly. Stated as a checklist rather than prose because each line is a
+ * separate precondition and three of the four are non-engineering decisions.
+ *
+ * Deliberately NOT satisfiable by adding another claim type to
+ * `intel_observations`: that reuses the same table, the same consent record, the
+ * same capture service and the same actor population, so MIN_SIGNAL_FAMILIES
+ * would be counting prompts rather than independent sources.
+ */
+export const SECOND_FAMILY_PRECONDITIONS: readonly string[] = [
+  "A traveller act that declares an ORIGIN ZONE in the same act as the destination — never an origin joined in from a last-known position.",
+  "The origin at ZONE granularity (district/neighbourhood id), never a coordinate, so no coarsening step can be skipped later.",
+  "A consent scope covering publication of that hop into a PUBLIC aggregate, analogous to intel_contribution_consent (D4, migration 2172).",
+  "A group_key on the row (as intel_observations gained in 2171), or the family adds bodies but zero group credit and the privacy gate's independent-group floor never clears.",
+  "A lib/locationPurposes entry for wherever it lands, with a lawful basis, retention bound, visibility and deletion behaviour.",
+];
 
 /** True iff enough OBSERVED families are wired for a flow to be publishable at all. */
 export function canProduceFlow(wired: readonly CrowdFlowSignalFamily[] = WIRED_SIGNAL_SOURCES): boolean {

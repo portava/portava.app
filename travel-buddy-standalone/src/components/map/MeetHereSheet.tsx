@@ -18,7 +18,7 @@
  *
  * Dark-mode-first (§4) via the shared map-chrome palette.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, TextInput, ActivityIndicator, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, Users, X as XIcon } from 'lucide-react-native';
@@ -31,6 +31,7 @@ import {
   defaultAudienceFor,
   proposeMeetHere,
   type MeetAudience,
+  type MeetRefusalReason,
   type MeetTarget,
 } from '../../features/map/meet/meetHereModel.ts';
 import type { PrivacyClass } from '../../types/mapObjects.ts';
@@ -64,6 +65,8 @@ const RUNG_NOTE: Partial<Record<PrivacyClass, string>> = {
 export interface MeetHereSheetProps {
   /** What the user chose to meet at. `null` renders nothing. */
   target: MeetTarget | null;
+  /** Where the user asked from, so a refusal can say which surface hit it. */
+  surface?: 'action_rail' | 'long_press' | 'place_sheet';
   onClose: () => void;
   /**
    * Fired after a meeting point is actually created, with the rung it was
@@ -76,9 +79,21 @@ export interface MeetHereSheetProps {
     sharedAs: PrivacyClass;
     inviteeCount: number;
   }) => void;
+  /**
+   * Fired when POLICY refused the meeting point. Distinct from the user simply
+   * closing the sheet: without this, a §23 rule that fires constantly is
+   * indistinguishable from a feature nobody uses.
+   */
+  onRefused?: (info: { reason: MeetRefusalReason; surface: NonNullable<MeetHereSheetProps['surface']> }) => void;
 }
 
-export function MeetHereSheet({ target, onClose, onCreated }: MeetHereSheetProps) {
+export function MeetHereSheet({
+  target,
+  surface = 'action_rail',
+  onClose,
+  onCreated,
+  onRefused,
+}: MeetHereSheetProps) {
   const insets = useSafeAreaInsets();
   const decision = useMemo(() => (target ? proposeMeetHere(target) : null), [target]);
 
@@ -88,12 +103,19 @@ export function MeetHereSheet({ target, onClose, onCreated }: MeetHereSheetProps
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const reportedRefusalRef = useRef<MeetRefusalReason | null>(null);
 
   if (!target || !decision) return null;
 
   // The refusal is shown, not hidden — the user tapped something and deserves
   // to know why it cannot anchor a meeting.
   if (!decision.ok) {
+    // Reported once per refusal, keyed on the reason, so re-renders do not
+    // inflate the count.
+    if (reportedRefusalRef.current !== decision.reason) {
+      reportedRefusalRef.current = decision.reason;
+      onRefused?.({ reason: decision.reason, surface });
+    }
     return (
       <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
         <View style={styles.header}>

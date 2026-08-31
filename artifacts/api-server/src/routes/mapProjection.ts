@@ -20,23 +20,42 @@
  *   gems      → findNearbyGems + applyGemPrivacyBatch
  *   events    → loadNearbyEvents        (same gates as GET /api/events/nearby,
  *                                        incl. show_exact_location redaction)
+ *   circle    → readCircleLocations     (kill switch + membership + blocks +
+ *                                        affirmative consent + master switch +
+ *                                        SERVER-SIDE coarsening)
+ *   trips     → loadViewerTrips         (accepted-membership scope, then the
+ *                                        shared toAuthorizedTripView DTO)
  *
  * The block set is resolved ONCE, fail-closed: if it cannot be read, nobody is
- * returned. Objects are passed through `servableOnly` before serialization, so
- * anything at privacy rung 'none' or without renderable geometry is dropped at
- * the boundary whatever produced it.
+ * returned. That single set is handed to every people-bearing source —
+ * listMapTravelers and readCircleLocations both take it — so this request can
+ * never end up with two different answers to "who is blocked". Objects are
+ * passed through `servableOnly` before serialization, so anything at privacy
+ * rung 'none' or without renderable geometry is dropped at the boundary
+ * whatever produced it.
+ *
+ * WHY THE CIRCLE LAYER IS THE ONE THAT MATTERED
+ * =============================================
+ * Its coordinates are people. `readCircleLocations` coarsens every position
+ * with `coarsenPosition` BEFORE returning it, so the coarse coordinate is what
+ * this route shapes and serializes — the precise one never reaches the
+ * projection, let alone the wire. The client's post-fetch ±0.01° jitter
+ * (coarsenForFriend) sits on top of that and is cosmetic; a client-side
+ * coarsening step could never have protected anything, because the value it
+ * "protects" has already been delivered to the device.
  *
  * SCOPE — stated rather than implied
  * ==================================
- * The projection serves the three sources above because they are the three with
- * an extractable, privacy-complete server function. The buddies, trips and
- * friends/circle layers still fetch per-layer on the client: their privacy
- * logic lives inline inside route handlers (e.g. GET /api/me/circle-locations)
- * and lifting it out is a separate, carefully-tested change — not something to
- * do in passing. The client normalizes those three into the SAME MapObject
- * contract, so the renderer already sees one uniform stream; only their
- * transport is still per-layer. `sources` in the response says which arrived
- * through the gateway, so nobody has to guess.
+ * Buddies are still fetched per-layer by the client, deliberately. Their source
+ * is POST /api/rent-a-buddy/search, whose visibility rules
+ * (status/admin_status), public column allow-list (BUDDY_PUBLIC_COLUMNS) and
+ * private-field strip (stripBuddyPrivateFields) are all module-private to
+ * routes/rentABuddy.ts, interleaved with marketplace ranking, pagination and an
+ * outbound Nominatim geocode. There is no privacy-complete function to call, and
+ * restating "which buddy fields are public" here would create exactly the second
+ * implementation this route exists to avoid. Serving that layer needs an
+ * extraction inside rentABuddy.ts first. `sources` names what actually arrived
+ * through the gateway, so nobody has to guess which path a layer took.
  */
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -46,6 +65,8 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { listMapTravelers } from "../lib/mapTravelers.js";
+import { readCircleLocations } from "../lib/circleLocationsRead.js";
+import { toAuthorizedTripView } from "../lib/privacy/tripSerializers.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
@@ -60,12 +81,15 @@ import {
   paginate,
   parseBbox,
   parseKinds,
+  projectCircleMember,
   projectEvent,
   projectGem,
   projectTraveler,
+  projectTrip,
   rankObjects,
   servableOnly,
   type LiveClaimLike,
+  type TripViewLike,
 } from "../lib/mapProjection.js";
 
 const router = Router();
@@ -122,6 +146,45 @@ async function loadProtectedZones(sc: any): Promise<ProtectedZone[] | null> {
   }
   _zoneCache = { zones, at: Date.now() };
   return zones;
+}
+
+/**
+ * The viewer's own trips, scoped exactly as GET /api/trips/me scopes them.
+ *
+ * WHY THIS READ IS HERE AND NOT EXTRACTED
+ * =======================================
+ * The trips layer has no leftover privacy logic to extract: its FIELD-level
+ * discipline — which trip columns an authorized viewer may see — already lives
+ * in the shared `toAuthorizedTripView` DTO, and that is what this calls. The
+ * only thing restated is the SCOPE predicate: "rows in trip_members for this
+ * user whose role is not 'invited'". An invited-but-not-accepted member must
+ * NOT get the authorized view, so that `.neq("role", "invited")` is the whole
+ * privacy decision, and src/test/mapProjectionLayers.test.ts pins it against
+ * GET /api/trips/me's own output over the same data rather than trusting that
+ * two copies of one predicate will stay in step.
+ *
+ * Failure returns null (not []) so the caller can leave the layer OUT of
+ * `sources` rather than claim an empty trips layer it never successfully read.
+ */
+async function loadViewerTrips(sc: any, viewerId: string): Promise<TripViewLike[] | null> {
+  const { data: memberRows, error: memErr } = await sc
+    .from("trip_members")
+    .select("trip_id, role")
+    .eq("user_id", viewerId)
+    .neq("role", "invited");
+  if (memErr) return null;
+
+  const tripIds = ((memberRows ?? []) as any[]).map((r) => r.trip_id as string);
+  if (tripIds.length === 0) return [];
+
+  const { data: trips, error: tripsErr } = await sc
+    .from("trips")
+    .select("*")
+    .in("id", tripIds)
+    .not("status", "is", null);
+  if (tripsErr) return null;
+
+  return ((trips ?? []) as any[]).map(toAuthorizedTripView) as unknown as TripViewLike[];
 }
 
 router.get(
@@ -261,6 +324,34 @@ router.get(
           );
           for (const ev of events) collected.push(projectEvent(ev, nowMs));
           sources.push("events");
+        })(),
+      );
+    }
+
+    if (wantKind("crew_member")) {
+      tasks.push(
+        (async () => {
+          // The SAME fail-closed block set every other people-bearing source
+          // got. Passing it in also means this request cannot see two different
+          // answers to "who is blocked" between the traveler and circle layers.
+          const read = await readCircleLocations(sc, user.id, { blockedSet }).catch(() => null);
+          // A read failure is NOT an empty circle: leaving the layer out of
+          // `sources` is how the client learns the difference between "nobody
+          // is sharing" and "we could not tell".
+          if (!read || !read.ok) return;
+          for (const m of read.locations) collected.push(projectCircleMember(m));
+          sources.push("circle");
+        })(),
+      );
+    }
+
+    if (wantKind("trip_stop")) {
+      tasks.push(
+        (async () => {
+          const trips = await loadViewerTrips(sc, user.id).catch(() => null);
+          if (trips === null) return;
+          for (const t of trips) collected.push(projectTrip(t));
+          sources.push("trips");
         })(),
       );
     }

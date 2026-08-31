@@ -17,10 +17,17 @@
  * ===================================================
  * It does NOT decide privacy and it does NOT query. Exactly like lib/mapSearch,
  * the route calls each entity type's EXISTING privacy-complete source
- * (listMapTravelers, findNearbyGems + applyGemPrivacyBatch, loadNearbyEvents)
- * and hands the already-safe rows here to be shaped. Keeping the shaping pure
- * means this layer can never widen what a source exposed, and it makes ranking
- * and aggregation unit-testable without a database.
+ * (listMapTravelers, findNearbyGems + applyGemPrivacyBatch, loadNearbyEvents,
+ * readCircleLocations) and hands the already-safe rows here to be shaped.
+ * Keeping the shaping pure means this layer can never widen what a source
+ * exposed, and it makes ranking and aggregation unit-testable without a
+ * database.
+ *
+ * The circle layer is the sharpest illustration of why the split matters: a
+ * circle member's coordinate is coarsened by `coarsenPosition` INSIDE
+ * lib/circleLocationsRead, before it is ever handed here — so the coarse
+ * coordinate is what crosses the wire, and `projectCircleMember` has no raw
+ * position it could accidentally serialize.
  *
  * COORDINATE CONTRACT (inherited from lib/mapSearch, restated because it is the
  * one invariant a projection layer is most likely to break)
@@ -208,6 +215,154 @@ export function projectEvent(ev: any, now: number = Date.now()): MapObject | nul
       hasStarted: active,
     },
   };
+}
+
+// ── Circle member / friend (spec §23 "Locate My Friends", §6) ────────────────
+
+/**
+ * A consented circle member is ALWAYS `approximate` — never `place_level`.
+ *
+ * The rung is a statement about the coordinate in `geometry`, and every
+ * coordinate that reaches here has already been through `coarsenPosition`
+ * inside lib/circleLocationsRead: an ~11 km (city_only) or ~2.2 km grid cell
+ * with a deterministic per-user offset inside it. That is not a place, so
+ * calling it `place_level` would be a lie the renderer would then draw as a
+ * precise pin. It is also not `aggregate_only`: this IS an individual, named,
+ * consented person — §23 puts Trip Crew / Locate My Friends at "approximate",
+ * which is exactly this rung, and §6 says the honest treatment is a ring
+ * rather than a pin.
+ *
+ * `precise_temporary` is the rung a Safe-Return / temporary-precise share would
+ * occupy. Nothing on this path can produce it, so nothing here may claim it.
+ */
+export const CIRCLE_PRIVACY_CLASS: PrivacyClass = "approximate";
+
+/**
+ * Project one already-authorized, already-coarsened circle member.
+ *
+ * The input MUST come from `readCircleLocations` — the single privacy-complete
+ * source. This function decides nothing: it cannot tell a consented member from
+ * a non-consented one, and it must never be handed a raw user_location_state
+ * row. That is the same contract projectTraveler has with listMapTravelers.
+ *
+ * No freshness: `updatedAt` is when the member's position was last written, not
+ * an observation of conditions at a place, and the circle payload has no
+ * evidence band. Manufacturing "live" from a recent write would make a stale
+ * pin read as a confirmed one (spec §37).
+ */
+export function projectCircleMember(m: CircleMemberLike): MapObject | null {
+  if (m?.lat == null || m?.lng == null) return null;
+  if (!m.userId) return null;
+
+  return {
+    id: `friend:${m.userId}`,
+    kind: "crew_member",
+    geometry: point(Number(m.lat), Number(m.lng)),
+    // `name` is already gated by nameVisibilitySet inside the reader: null here
+    // means "this member has not opted into showing a real name", so the
+    // fallback must be generic rather than a handle we were not given.
+    title: m.name ?? "Circle member",
+    subtitle: joinParts([m.city, m.country], ", ") ?? undefined,
+    privacyClass: CIRCLE_PRIVACY_CLASS,
+    renderingPriority: KIND_DEFAULT_PRIORITY.crew_member,
+    interaction: {
+      // No detailRoute: circle members are reached through thread resolution,
+      // not a static route.
+      actions: ["message", "follow", "report", "block"],
+      opensSheet: true,
+    },
+    payload: {
+      userId: m.userId,
+      name: m.name ?? null,
+      avatarUrl: m.avatarUrl ?? null,
+      city: m.city ?? null,
+      country: m.country ?? null,
+      updatedAt: m.updatedAt ?? null,
+    },
+  };
+}
+
+/** Structural shape of `readCircleLocations`' entry — see lib/circleLocationsRead. */
+export type CircleMemberLike = {
+  userId: string;
+  name?: string | null;
+  avatarUrl?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  city?: string | null;
+  country?: string | null;
+  updatedAt?: string | null;
+};
+
+// ── Trip (spec §18 trip_stop) ────────────────────────────────────────────────
+
+/**
+ * A trip pin sits on a destination the viewer themselves recorded — a city or
+ * venue, not a live position — so `place_level` is the honest rung. It is the
+ * viewer's OWN trip in every case: the source is scoped to trips they are an
+ * accepted member of.
+ */
+export const TRIP_PRIVACY_CLASS: PrivacyClass = "place_level";
+
+/** Structural shape of `toAuthorizedTripView` (lib/privacy/tripSerializers). */
+export type TripViewLike = {
+  id: string;
+  title?: string | null;
+  visibility?: string | null;
+  destinationCity?: string | null;
+  destinationCountry?: string | null;
+  destinationLat?: number | null;
+  destinationLng?: number | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  status?: string | null;
+};
+
+/**
+ * Project one authorized trip view.
+ *
+ * The `visibility === 'private'` drop is NOT a new rule: it is the client's
+ * `isMapVisibleTrip` moved server-side, which is the whole point of §19. A
+ * private trip is one the owner asked not to be shown as a map pin, and the
+ * server is the only place that decision can actually be enforced.
+ *
+ * No freshness or confidence: a trip's dates are a plan, not an observation.
+ */
+export function projectTrip(t: TripViewLike): MapObject | null {
+  if (t?.destinationLat == null || t?.destinationLng == null) return null;
+  if (!t.id) return null;
+  if (t.visibility === "private") return null;
+
+  return {
+    id: `trip:${t.id}`,
+    kind: "trip_stop",
+    geometry: point(Number(t.destinationLat), Number(t.destinationLng)),
+    title: t.title ?? t.destinationCity ?? "Trip",
+    subtitle:
+      joinParts([t.destinationCity, tripDateRange(t.startDate, t.endDate)], " · ") ?? undefined,
+    privacyClass: TRIP_PRIVACY_CLASS,
+    renderingPriority: KIND_DEFAULT_PRIORITY.trip_stop,
+    interaction: {
+      actions: ["view", "share", "navigate"],
+      detailRoute: `/trip/${t.id}`,
+      opensSheet: true,
+    },
+    payload: {
+      destinationCity: t.destinationCity ?? null,
+      destinationCountry: t.destinationCountry ?? null,
+      startDate: t.startDate ?? null,
+      endDate: t.endDate ?? null,
+      status: t.status ?? null,
+      visibility: t.visibility ?? null,
+    },
+  };
+}
+
+function tripDateRange(from: string | null | undefined, to: string | null | undefined): string | null {
+  if (!from && !to) return null;
+  const a = from ? String(from).slice(0, 10) : "?";
+  const b = to ? String(to).slice(0, 10) : "?";
+  return `${a} → ${b}`;
 }
 
 // ── Live-claim enrichment (spec §7, §9, §21) ──────────────────────────────────

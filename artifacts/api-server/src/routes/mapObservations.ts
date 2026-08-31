@@ -87,9 +87,17 @@ import {
   type MapObjectKind,
 } from "../lib/mapObjects.js";
 import {
+  CLOSURE_STATES,
+  CROWD_DIRECTIONS,
+  EVENT_STATUS_STATES,
   IDEMPOTENCY_KEY_MAX_LENGTH,
+  VIBE_STATES,
   isValidIdempotencyKey,
+  type ClosureState,
+  type CrowdDirection,
   type CrowdLevel,
+  type EventStatusState,
+  type VibeState,
 } from "../lib/intelContracts.js";
 import { writeObservation, type CaptureInput } from "../services/intel/IntelCaptureService.js";
 
@@ -123,22 +131,21 @@ export const ENTRY_ACCESS_STATES = [
   "at_capacity",
   "entry_closed",
 ] as const;
-export const VIBE_STATES = ["dead", "chill", "social", "high_energy", "going_off"] as const;
-export const EVENT_STATUS_STATES = [
-  "not_started",
-  "starting_soon",
-  "under_way",
-  "winding_down",
-  "ended",
-  "cancelled",
-] as const;
-export const CLOSURE_STATES = [
-  "open",
-  "temporarily_closed",
-  "closed_for_private_event",
-  "permanently_closed",
-] as const;
-export const CROWD_DIRECTIONS = ["arriving", "dispersing", "passing_through", "holding"] as const;
+// The four vocabularies whose option IS the claim value are now canonical and
+// live in lib/intelContracts next to the TTL that governs them; they are
+// re-exported here so the client-facing names still resolve from one module and
+// lib/quickSignal's validators and this route's schema cannot drift apart —
+// they are literally the same array.
+export {
+  VIBE_STATES,
+  EVENT_STATUS_STATES,
+  CLOSURE_STATES,
+  CROWD_DIRECTIONS,
+} from "../lib/intelContracts.js";
+
+// MEDIA_KINDS stays here, and its staying here is the ruling: it is a
+// vocabulary of ASSET TYPES, not of claim values, so it has no home in the
+// claim contracts. See the media note below.
 export const MEDIA_KINDS = ["photo", "video"] as const;
 
 // ── Which prompts a map object may legally take ───────────────────────────────
@@ -188,39 +195,85 @@ export function isPromptAllowed(objectKind: MapObjectKind, kind: MapContribution
 // LOST. The map prompts were written for a person holding a phone; the claim
 // system's vocabulary (lib/intelContracts CLAIM_TYPES + lib/quickSignal
 // validators) is what the projection, the freshness policy and the confidence
-// formula are all defined over. Three prompts have an exact canonical claim.
-// Five do not, and this route REFUSES those rather than inventing vocabulary.
+// formula are all defined over.
 //
-// Why refusing is right, and not laziness. Adding `vibe`, `closure`,
-// `event_status` or `crowd_direction` means adding CLAIM_TYPES rows (with TTL
-// and hard-expiry), value validators, and a freshness policy — decisions that
-// belong to lib/intelContracts and lib/quickSignal, not to a route. Mapping
-// them onto a claim type that already exists would be worse than refusing:
+// SEVEN of the eight prompts now have an exact canonical claim. The eighth —
+// media — is still REFUSED, and that refusal is a ruling, not a gap.
+//
+// HOW THE FOUR NEW ONES WERE ADDED, AND WHAT WAS NOT DONE
+// ======================================================
+// The earlier cut of this file refused vibe, event_status, closure and
+// crowd_direction because adding them meant adding CLAIM_TYPES rows (TTL and
+// hard expiry), value validators and freshness_policies rows — decisions that
+// belong to lib/intelContracts and lib/quickSignal, not to a route. That was
+// right: the work was owed elsewhere. It has now been done there, and this
+// route still invents nothing — every arrow below lands on a claim type that
+// lib/intelContracts declares, lib/quickSignal validates and migration 2220
+// seeds a TTL for.
+//
+// The refusal that was NOT overturned, because it was never about missing
+// plumbing:
 //
 //   • crowd_direction ≠ crowd.trajectory. Direction of FLOW ("people arriving")
 //     is not the same fact as trajectory of INTENSITY ("the crowd is
-//     building"), and 'passing_through' is neither. Storing one as the other
-//     would publish an inference the contributor never made.
-//   • closure / event_status have no claim type at all; the nearest,
-//     inventory.status, is about items and services.
-//   • media is an asset, not an enumerated state. A media contribution belongs
-//     to the moment/highlight capture surfaces and the media pipeline; routing
-//     one through here would open a second, ungated media path.
+//     building"), and 'passing_through' is neither. So crowd_direction did NOT
+//     get mapped onto crowd.trajectory; it got its OWN claim type,
+//     `crowd.direction`, with its own value shape (`{ direction }`, never
+//     `{ trajectory }`) and its own — shorter — TTL. The two claims cannot be
+//     confused by a reader or a query because they do not share a key.
 //
 // A refusal is visible (`unsupported_kind`, with the reason). A wrong mapping
 // is invisible and ends up on the map as truth.
 
-/** The prompts that have an exact canonical claim today. */
-export const SUPPORTED_CONTRIBUTION_KINDS = ["crowd_level", "queue", "entry_access"] as const;
+/** The prompts that have an exact canonical claim. */
+export const SUPPORTED_CONTRIBUTION_KINDS = [
+  "crowd_level",
+  "queue",
+  "entry_access",
+  "vibe",
+  "event_status",
+  "closure",
+  "crowd_direction",
+] as const;
 
-/** The prompts refused, each with the reason, so the hole is documented not silent. */
+/**
+ * The prompts refused, each with the reason, so the hole is documented not
+ * silent.
+ *
+ * MEDIA: THE RULING, NOT A TODO
+ * =============================
+ * A photo is EVIDENCE, not a claim, and §21's own pipeline says so by putting
+ * them at different stations:
+ *
+ *     Observation → Evidence → Claim → Confidence → Freshness → Correction
+ *
+ * A claim is a proposition. It can be true, confirmed, contradicted, corrected
+ * and expired — every station downstream of "Claim" is an operation on a
+ * proposition. A photograph asserts none. Ask which claim a photo of a bar
+ * makes and there is no answer: "it is busy"? "it is open"? "the vibe is going
+ * off"? A contributor who tapped "Show what it looks like" made none of those
+ * statements, and picking one for them is exactly the failure the
+ * crowd_direction rule above exists to prevent — except worse, because a photo
+ * would be forced to carry a claim invented wholesale rather than merely
+ * approximated. It also cannot expire into "wrong": the picture stays an
+ * accurate picture of a moment forever, so any TTL chosen for it would be a
+ * statement about the WORLD, not about the artifact, and would therefore
+ * belong to whatever claim the photo is evidence FOR.
+ *
+ * The right home already exists and is not this route. `intel_evidence`
+ * (migration 2130) is the append-only table for "artifacts supporting an
+ * observation" — media attaches to an observation by observation_id. Wiring
+ * that is a real piece of work (upload, moderation_state, retention, the
+ * storage-object privacy rules) and none of it is claim-mapping. Accepting a
+ * `mediaUri` here would open a second, ungated media path around all of it.
+ *
+ * So media stays refused, and the schema below still REQUIRES `mediaUri` on a
+ * media contribution: the payload contract stays honest about what the client
+ * sends, and the refusal is loud rather than a silently dropped field.
+ */
 export const UNSUPPORTED_CONTRIBUTION_KINDS: Readonly<Record<string, string>> = {
-  vibe: "no canonical claim type for venue vibe in the Phase-1 cut",
-  event_status: "no canonical claim type for event lifecycle in the Phase-1 cut",
-  closure: "no canonical claim type for open/closed state in the Phase-1 cut",
-  crowd_direction:
-    "crowd flow direction is not crowd.trajectory (intensity); mapping it would publish an inference the contributor did not make",
-  media: "a media asset is not an enumerated state; media capture belongs to the moment/highlight surface",
+  media:
+    "a photo is evidence, not a claim — it asserts no proposition to confirm, contradict or expire, so it has no claim type; media attaches to an observation via intel_evidence, which no route wires yet",
 };
 
 /**
@@ -264,6 +317,26 @@ const ENTRY_TO_WALK_IN: Readonly<Record<string, boolean>> = {
   entry_closed: false,
 };
 
+// ── What "supported" does NOT mean ────────────────────────────────────────────
+//
+// Being mappable is not being publishable. Two of the four new prompts carry a
+// standing bar on ever reaching a LIVE label, recorded as data in
+// lib/intelContracts (CLAIM_TYPE_LIVE_LABEL_RULING / NEVER_LIVE_CLAIM_VALUES,
+// read via claimTypeLiveLabelRuling):
+//
+//   closure.state          never live, at any value
+//   event.status'cancelled' never live
+//
+// The reason is subject matter, not source: a stranger's single unverified tap
+// saying a business is shut, rendered as "Live: closed", takes a living
+// business off the map, and nothing self-corrects it the way a stream of crowd
+// taps self-corrects a crowd level. Those claims are still captured, still
+// scored and still shown as what they are — a count of travellers reporting it.
+//
+// This route enforces none of that, and could not: it publishes nothing. The
+// ruling is recorded where the live-label reader will find it, in the same
+// spirit as PRIVACY_THRESHOLD_V1.
+
 export interface MappedClaim {
   claimType: string;
   value: Record<string, unknown>;
@@ -288,6 +361,29 @@ export function mapContributionToClaim(kind: string, value: string): MappedClaim
       const accepted = ENTRY_TO_WALK_IN[value];
       return accepted === undefined ? null : { claimType: "access.walk_in", value: { accepted } };
     }
+    // The four identity mappings. The prompt option IS the claim value, so
+    // these do not translate anything — they only assert that the option is in
+    // the canonical vocabulary before wrapping it under the key that names the
+    // fact. The membership check is not redundant with the zod schema: this
+    // function is exported and called directly by tests and could be called
+    // with an unparsed value, so it fails closed on its own.
+    case "vibe":
+      return (VIBE_STATES as readonly string[]).includes(value)
+        ? { claimType: "vibe.state", value: { state: value as VibeState } }
+        : null;
+    case "event_status":
+      return (EVENT_STATUS_STATES as readonly string[]).includes(value)
+        ? { claimType: "event.status", value: { status: value as EventStatusState } }
+        : null;
+    case "closure":
+      return (CLOSURE_STATES as readonly string[]).includes(value)
+        ? { claimType: "closure.state", value: { state: value as ClosureState } }
+        : null;
+    case "crowd_direction":
+      // NOT crowd.trajectory, and not `{ trajectory }`. See the section header.
+      return (CROWD_DIRECTIONS as readonly string[]).includes(value)
+        ? { claimType: "crowd.direction", value: { direction: value as CrowdDirection } }
+        : null;
     default:
       return null;
   }
