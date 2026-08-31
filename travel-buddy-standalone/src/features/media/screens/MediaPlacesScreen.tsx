@@ -41,10 +41,22 @@ export interface MediaPlacesScreenProps {
   /** Neighbourhood/place entry points, from the World projection. */
   zones: CityVisualZone[];
   onOpenMedia?: (media: MediaProjection) => void;
+  /**
+   * §14 contextual open: tapping a perspective hands the whole Place Current
+   * View so the viewer can navigate the place's OTHER perspectives (the entry-
+   * context collection), not a global feed. Preferred over onOpenMedia when set.
+   */
+  onOpenPerspective?: (args: { media: MediaProjection; view: PlaceCurrentView }) => void;
   onAskCompass?: (placeId: string) => void;
 }
 
-export function MediaPlacesScreen({ mode, zones, onOpenMedia, onAskCompass }: MediaPlacesScreenProps) {
+export function MediaPlacesScreen({
+  mode,
+  zones,
+  onOpenMedia,
+  onOpenPerspective,
+  onAskCompass,
+}: MediaPlacesScreenProps) {
   const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
 
   if (selected) {
@@ -55,6 +67,7 @@ export function MediaPlacesScreen({ mode, zones, onOpenMedia, onAskCompass }: Me
         mode={mode}
         onBack={() => setSelected(null)}
         onOpenMedia={onOpenMedia}
+        onOpenPerspective={onOpenPerspective}
         onAskCompass={onAskCompass}
       />
     );
@@ -99,6 +112,7 @@ function PlaceDetail({
   mode,
   onBack,
   onOpenMedia,
+  onOpenPerspective,
   onAskCompass,
 }: {
   placeId: string;
@@ -106,6 +120,7 @@ function PlaceDetail({
   mode: PresentationMode;
   onBack: () => void;
   onOpenMedia?: (media: MediaProjection) => void;
+  onOpenPerspective?: (args: { media: MediaProjection; view: PlaceCurrentView }) => void;
   onAskCompass?: (placeId: string) => void;
 }) {
   const fetcher = useCallback(
@@ -203,7 +218,14 @@ function PlaceDetail({
             <PerspectiveMosaic
               media={view.heroMedia}
               groups={view.groups}
-              onOpen={onOpenMedia}
+              // §14: prefer the contextual open (hands the whole current view so the
+              // viewer can navigate this place's OTHER perspectives), else the
+              // generic per-item open.
+              onOpen={
+                onOpenPerspective
+                  ? (media) => onOpenPerspective({ media, view })
+                  : onOpenMedia
+              }
             />
           )}
         </ScrollView>
