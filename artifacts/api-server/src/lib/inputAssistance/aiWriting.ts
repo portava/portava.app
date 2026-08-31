@@ -8,7 +8,7 @@
  *   - The model call is `getOpenAI().chat.completions.create` with gpt-5-mini —
  *     the exact client + model the /compass/ask LLM path uses (lib/openai).
  *   - The capability is gated behind the EXISTING compass AI flag
- *     `compass_ai_enabled` (read fail-closed via the shared isFlagEnabled), which
+ *     `compass_ai_writing_enabled` (read fail-closed via the shared isFlagEnabled), which
  *     Phase 7 seeds OFF (migration 2221) so the safety-sensitive path is opt-in.
  *   - The permitted context is assembled with the SAME privacy primitives as the
  *     Compass structured context (wrapUgc data-not-instructions + coordinate
@@ -47,13 +47,15 @@ import type {
 } from './types';
 
 /**
- * The EXISTING compass AI flag (grep compass_ai_enabled). Phase 7 wires it as the
- * opt-in capability gate for AI-assisted writing and seeds it OFF (migration
- * 2221). Lower-case *_enabled ⇒ a CAPABILITY gate, read fail-closed through the
- * shared isFlagEnabled: an unreadable flag leaves AI writing OFF, which is the
- * safe direction for a safety-sensitive feature.
+ * DEDICATED opt-in capability gate for AI-assisted writing (§22) + Compass-prompt
+ * AI continuation (§56), seeded OFF (migration 2221). It is intentionally SEPARATE
+ * from `compass_ai_enabled` (the recommendation-engine capability, left untouched)
+ * so the two AI capabilities gate independently — an admin can enable AI writing
+ * without enabling the recommendation engine, and vice-versa. Lower-case *_enabled
+ * ⇒ a CAPABILITY gate, read fail-closed through the shared isFlagEnabled: an
+ * unreadable flag leaves AI writing OFF, the safe direction for a sensitive feature.
  */
-export const COMPASS_AI_WRITING_FLAG = 'compass_ai_enabled';
+export const COMPASS_AI_WRITING_FLAG = 'compass_ai_writing_enabled';
 
 // §22 allowed-use writing contexts: caption variants, event/trip title +
 // description, plan title. `compass_prompt` is handled here too (continuation /

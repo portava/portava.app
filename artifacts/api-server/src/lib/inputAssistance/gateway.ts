@@ -403,7 +403,7 @@ export async function generateSuggestions(
   // Proposes editable caption/description/title/prompt text via the EXISTING
   // Compass AI (getOpenAI → gpt-5-mini). Requires ALL of: the per-request opt-in
   // (§22), the field policy's allowAI + ai_suggestion allowance (§6), and — inside
-  // buildAiAssistedWriting — the reused `compass_ai_enabled` flag AND an available
+  // buildAiAssistedWriting — the dedicated `compass_ai_writing_enabled` flag AND an available
   // model. Any of those missing ⇒ no ai_suggestion is added, and the field's
   // deterministic assistance above is unaffected (degrade-to-no-AI). Every row is
   // `type:'ai_suggestion'` / `source:'ai'` with an editable `replace_text` action,

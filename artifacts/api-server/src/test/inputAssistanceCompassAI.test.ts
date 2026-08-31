@@ -5,7 +5,7 @@
  * Run: node --import tsx/esm --test src/test/inputAssistanceCompassAI.test.ts
  *
  * Style: direct calls into the gateway + the aiWriting module with an injected
- * fake Supabase client (for the reused `compass_ai_enabled` flag) and an injected
+ * fake Supabase client (for the dedicated `compass_ai_writing_enabled` flag) and an injected
  * fake Compass AI client (_setTestOpenAI — the EXISTING LLM path, no new
  * provider). Proves:
  *   - §56 compass_prompt returns CONTEXTUAL (surface/Trip-aware) deterministic

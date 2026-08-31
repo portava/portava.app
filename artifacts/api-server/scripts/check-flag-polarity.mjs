@@ -697,13 +697,12 @@ const INERT_SEEDED_FLAGS = [
     reason:
       'Seeded true by 0053, no reader. Same COMPASS_% loader situation. OWNER DECISION: wire or drop.',
   },
-  // NOTE: compass_ai_enabled was here with disposition owner-decision ("wire or
-  // drop"). Phase 7 WIRED it: lib/inputAssistance/aiWriting.ts reads it via the
-  // shared isFlagEnabled as the opt-in capability gate for AI-assisted writing
-  // (§22) + the Compass prompt AI continuation (§56). It is therefore in the read
-  // inventory now, so an INERT entry would fail R7 (RESOLVED INERT); entry
-  // removed. It is classified CAPABILITY by the lowercase *_enabled convention,
-  // and 2221_compass_ai_writing_default_off.sql re-seeds it FALSE (safe default).
+  {
+    flag: 'compass_ai_enabled', seededIn: '0117_beta_feature_flags.sql:27', kind: 'CAPABILITY',
+    disposition: 'owner-decision',
+    reason:
+      'Seeded true by the beta flag block. Lower-case, so it is NOT reachable through the COMPASS_% loader either (compass/flags.ts filters on the upper-case prefix) — it could only ever be read through isFlagEnabled, and nothing does. OWNER DECISION: wire or drop. (AI-assisted writing uses its own dedicated compass_ai_writing_enabled flag, migration 2221, NOT this one.)',
+  },
   {
     flag: 'ai_event_auto_suggest_enabled', seededIn: '0194_generated_visuals.sql:89', kind: 'CAPABILITY',
     disposition: 'owner-decision',
