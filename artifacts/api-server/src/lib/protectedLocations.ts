@@ -29,7 +29,7 @@
  * The policy rows are PASSED IN. This module performs no I/O, reads no clock,
  * and holds no cache, so the route (or the lead) decides how protected_zones is
  * loaded and cached, and every rule below is unit-testable against a literal
- * array. Migration 2204 defines the table; nothing here talks to it.
+ * array. Migration 2213 defines the table; nothing here talks to it.
  *
  * WHAT ALREADY EXISTED, AND WHAT DID NOT.
  * A search of the server found NO protected-place concept to extend. The
@@ -254,7 +254,7 @@ interface ProtectedZoneBase {
    * Optional per-row override. For every category except `policy_defined` this
    * may only TIGHTEN the category default; `policy_defined` takes it as written
    * because there the row is the policy. `'allow'` on a known category is
-   * therefore inert, and migration 2204 refuses to store it at all.
+   * therefore inert, and migration 2213 refuses to store it at all.
    */
   action?: ProtectionAction;
   /** Optional extra tightening of the coarsening floor. Never loosens it. */

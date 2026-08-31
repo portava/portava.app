@@ -322,6 +322,63 @@ describe("toLiveClaimEnvelope — pure mapping", () => {
   });
 });
 
+// ── Source-class truth boundary (intelContracts guards, wired in the read path) ─
+
+describe("liveClaimRead — mayRenderAsLive is enforced in the read path", () => {
+  // A class that is a statement about the past or a likelihood must NEVER surface
+  // as a current observation. deriveSourceClass reads the row's source_class (the
+  // enrichment seam), so these prove the guard bites the instant a real class flows.
+  it("drops a snapshot whose class is a prediction (portava_prediction) — never rendered live", async () => {
+    const predicted = { ...liveRow, source_class: "portava_prediction" };
+    assert.deepEqual(
+      await readLiveClaims(client({ flag: true, rows: [predicted] }), "p1", { now: NOW }),
+      [],
+    );
+  });
+
+  it("drops a snapshot whose class is a historical pattern — never rendered live", async () => {
+    const historical = { ...liveRow, source_class: "historical_pattern" };
+    assert.deepEqual(
+      await readLiveClaims(client({ flag: true, rows: [historical] }), "p1", { now: NOW }),
+      [],
+    );
+  });
+
+  it("serves an observation class, carrying its real source class through", async () => {
+    // verified_firsthand is an observation → may render live. Also proves
+    // deriveSourceClass reads the row rather than always returning the constant.
+    const verified = { ...liveRow, source_class: "verified_firsthand" };
+    const r = await readLiveClaims(client({ flag: true, rows: [verified] }), "p1", { now: NOW });
+    assert.equal(r.length, 1);
+    assert.equal(r[0].sourceClass, "verified_firsthand");
+  });
+});
+
+describe("liveClaimRead — mayCountAsConsensus gates the cohort/consensus badge", () => {
+  // A class that is one party talking about itself may still be LIVE (an official
+  // update is a valid live label) but must NOT present a crowd-size badge that
+  // implies many independent reporters.
+  it("an official_signed claim is live but carries NO consensus bucket (null)", async () => {
+    const official = { ...idRow, source_class: "official_signed" };
+    const [env] = await readLiveClaimEnvelopes(client({ flag: true, rows: [official] }), "p1", { now: NOW });
+    assert.ok(env, "an official update may still render live");
+    assert.equal(env.sourceClass, "official_signed");
+    assert.equal(env.state, "live"); // confidence 0.8 → band live → qualifies
+    assert.equal(
+      env.sourceCountBucket, null,
+      "a single non-independent party must not present a community-consensus badge",
+    );
+  });
+
+  it("a firsthand_unverified claim (independent) KEEPS its cohort bucket", async () => {
+    // Positive control: the consensus-eligible class still gets the badge, so the
+    // null above is the guard firing, not a blanket suppression.
+    const [env] = await readLiveClaimEnvelopes(client({ flag: true, rows: [idRow] }), "p1", { now: NOW });
+    assert.equal(env.sourceClass, "firsthand_unverified");
+    assert.equal(env.sourceCountBucket, "few"); // source_count 20 → few
+  });
+});
+
 describe("liveClaims ↔ crowdLevel compatibility (one projection, two reads)", () => {
   it("crowdLevel and liveClaims agree, and both come from the same snapshot", async () => {
     const c1 = client({ flag: true, rows: [idRow] });

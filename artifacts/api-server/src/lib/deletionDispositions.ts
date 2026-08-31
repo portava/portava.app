@@ -59,6 +59,21 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "intel_evidence",
   "intel_confirmations",
   "intel_state_snapshots",
+  // IG-02 contribution consent (migration 2172, user_id-keyed). Its ON DELETE
+  // CASCADE to profiles never fires because the deletion keeps an anonymised
+  // tombstone profile — the same mistake 2187 made for derived memory. Erased
+  // explicitly by AccountDeletionService's `delete_intel_consent` step (a direct
+  // scoped delete; the table is not append-only), with service_role DELETE
+  // granted by migration 2203.
+  "intel_contribution_consent",
+  // IG-10 non-cash reward ledger (migration 2170, actor_id-keyed). Its ON DELETE
+  // CASCADE to profiles never fires under the tombstone (same as consent above),
+  // so a departed contributor's earning rows would survive while the observations
+  // that earned them are erased by erase_intel_for_actor. Erased explicitly by
+  // AccountDeletionService's `delete_intel_reward_ledger` step (a direct scoped
+  // delete; the ledger has no DELETE-blocking trigger), with service_role DELETE
+  // granted by migration 2204. Non-cash, so no financial-retention reason to keep it.
+  "intel_reward_ledger",
   "comment_likes",
   "devices",
   "event_saves",
@@ -106,6 +121,27 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "memory_projections",
   "memory_events",
   "memory_feedback",
+];
+
+/**
+ * Tables the service does NOT delete, but where it NULLs a user-identifying
+ * column on deletion — the 'anonymised / FK nulled' fate. The ROW is retained
+ * (it is an operational record, not the user's content) and only the identifier
+ * is removed. Distinct from ERASED_BY_CASCADE, whose rows are gone entirely.
+ *
+ * These carry a column declared `REFERENCES profiles(id) ON DELETE SET NULL`,
+ * whose SET NULL never fires because the deletion keeps an anonymised TOMBSTONE
+ * profile rather than deleting profiles(id) — so the service performs the SET
+ * NULL by hand, restoring the FK's own declared intent.
+ */
+export const ANONYMISED_FK_NULLED: readonly string[] = [
+  // intel_mission_candidates.accepted_by (migration 2167) names the contributor
+  // who accepted a dispatched mission. The row is a city-scoped ops record with
+  // no other user-identifying column, so it is kept while accepted_by is NULLed by
+  // AccountDeletionService's `null_intel_mission_accepted_by` step — exactly what
+  // the column's ON DELETE SET NULL declared, which the tombstone otherwise
+  // silently defeats. UPDATE granted to service_role by 2167 and reaffirmed by 2211.
+  "intel_mission_candidates",
 ];
 
 /**
@@ -380,6 +416,12 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "intel_evidence",
   "intel_confirmations",
   "intel_state_snapshots",
+  "intel_contribution_consent",
+  // IG-10 non-cash reward ledger, added by migration 2170 (post-baseline).
+  "intel_reward_ledger",
+  // IG mission candidates, added by migration 2167 (post-baseline). Classified
+  // in ANONYMISED_FK_NULLED (accepted_by is NULLed, the row is kept).
+  "intel_mission_candidates",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",
@@ -391,6 +433,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */
 export const USER_IDENTIFYING_COLUMNS: readonly string[] = [
+  "accepted_by",
   "actor_id",
   "author_id",
   "buddy_id",

@@ -1,4 +1,4 @@
--- 2206_locate_friends_sessions.sql
+-- 2215_locate_friends_sessions.sql
 --
 -- Locate My Friends (Map spec §12) — storage + flag.
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band).

@@ -12,9 +12,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   writeObservation, proposeClaim, approveClaim, confirmClaim, correctClaim,
+  resolvePresenceAttestation,
 } from "../services/intel/IntelCaptureService.js";
 import { mapQuickSignal, validateClaimValue } from "../lib/quickSignal.js";
 import { shouldPrompt } from "../lib/intelThrottle.js";
+import { PRESENCE_LEVELS, MIN_PRESENCE_FOR_LIVE_CLAIM } from "../lib/intelContracts.js";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
 const PLACE = "22222222-2222-4222-8222-222222222222";
@@ -141,6 +143,64 @@ describe("IG-03 capture — flag gate + validation fail closed", () => {
     const r = await writeObservation(db as any, ACTOR, baseInput() as any);
     assert.equal((r as any).reason, "unknown_subject");
     assert.equal(db._tables.intel_observations.length, 0);
+  });
+});
+
+describe("IG-03 capture — presence attestation gate (H2)", () => {
+  const rank = (lvl: string) => PRESENCE_LEVELS.indexOf(lvl as (typeof PRESENCE_LEVELS)[number]);
+  const liveFloor = rank(MIN_PRESENCE_FOR_LIVE_CLAIM);
+
+  it("a forged live-grade presence (P4) with no attestation is NOT stored/weighted as live-grade", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
+    const r = await writeObservation(db as any, ACTOR, baseInput({ presenceLevel: "P4" }) as any);
+    assert.equal(r.ok, true);
+    const obs = (r as any).observation;
+    // The stored level is the one the projection layer WEIGHTS (PRESENCE_STRENGTH).
+    // It must sit below the live floor, so a forged P4 can never buy live-grade
+    // confidence. (Removing the gate stores P4 and this assertion fails — the mutant.)
+    assert.ok(rank(obs.presence_level) < liveFloor,
+      `forged P4 must be clamped below ${MIN_PRESENCE_FOR_LIVE_CLAIM}, got ${obs.presence_level}`);
+    // Nothing is silently dropped: the attestation record keeps claimed vs stored.
+    assert.equal(obs.presence_attestation.claimed, "P4");
+    assert.equal(obs.presence_attestation.stored, obs.presence_level);
+    assert.equal(obs.presence_attestation.attested, false);
+    assert.equal(obs.presence_attestation.clamped, true);
+    assert.equal(obs.presence_attestation.reason, "clamped_unattested");
+  });
+
+  it("also clamps a transaction-grade (P3) presence when unattested", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
+    const r = await writeObservation(db as any, ACTOR, baseInput({ presenceLevel: "P3", idempotencyKey: "obs-p3" }) as any);
+    assert.equal(r.ok, true);
+    assert.ok(rank((r as any).observation.presence_level) < liveFloor);
+  });
+
+  it("a below-floor presence (P1 coarse) passes through unchanged, recorded as unattested", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
+    const r = await writeObservation(db as any, ACTOR, baseInput({ presenceLevel: "P1", idempotencyKey: "obs-p1" }) as any);
+    const obs = (r as any).observation;
+    assert.equal(obs.presence_level, "P1");
+    assert.equal(obs.presence_attestation.clamped, false);
+    assert.equal(obs.presence_attestation.reason, "below_live_floor");
+  });
+
+  it("honours a live-grade claim ONLY when a server verifier attests it (extension seam)", () => {
+    // Default path: no verifier is wired, so the live floor itself is clamped.
+    const clamped = resolvePresenceAttestation(MIN_PRESENCE_FOR_LIVE_CLAIM, null);
+    assert.ok(rank(clamped.presenceLevel) < liveFloor);
+    assert.equal(clamped.attestation.attested, false);
+    assert.equal(clamped.attestation.reason, "clamped_unattested");
+    // With a real attestation verifier returning true, the claimed level stands.
+    const attested = resolvePresenceAttestation(MIN_PRESENCE_FOR_LIVE_CLAIM, { geofence: true }, () => true);
+    assert.equal(attested.presenceLevel, MIN_PRESENCE_FOR_LIVE_CLAIM);
+    assert.equal(attested.attestation.attested, true);
+    assert.equal(attested.attestation.clamped, false);
+  });
+
+  it("normalises a malformed/forged presence string to P0 (fail-closed)", () => {
+    const res = resolvePresenceAttestation("P9-forged", null);
+    assert.equal(res.presenceLevel, "P0");
+    assert.equal(res.attestation.claimed, "P0");
   });
 });
 

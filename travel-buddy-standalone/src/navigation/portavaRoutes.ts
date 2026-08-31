@@ -253,6 +253,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
   {
+    key: 'compass-memory',
+    path: 'compass-memory',
+    title: 'Memory Intelligence',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
     key: 'safety-number',
     path: 'safety-number',
     title: 'Safety Number',

@@ -482,6 +482,24 @@ export async function executeAccountDeletion(
       // Derived claims/snapshots are intentionally not deleted; they are
       // aggregate beliefs about a place and are recomputed.
       { name: "erase_intel_contributions", run: () => sc.rpc("erase_intel_for_actor", { p_actor_id: userId }) },
+      // IG-02 contribution consent (migration 2172). NOT append-only, so cleared
+      // with a direct scoped delete rather than the erasure RPC. Its ON DELETE
+      // CASCADE to profiles never fires — the deletion keeps an anonymised
+      // tombstone profile rather than deleting the row (migration 2172's header
+      // assumed the cascade would erase it; it cannot, the same mistake 2187 made
+      // for derived memory and 2190 corrected). 2203 grants service_role DELETE on
+      // the table so this step actually removes the row. Keyed by user_id (the PK).
+      { name: "delete_intel_consent", run: () => sc.from("intel_contribution_consent").delete().eq("user_id", userId) },
+      // IG-10 non-cash reward ledger (migration 2170). Keyed by actor_id →
+      // profiles(id) ON DELETE CASCADE, but that cascade never fires under the
+      // tombstone (same as consent above), so a departed contributor's earning
+      // rows — actor_id + qiu + earned_units + source + timestamps — would survive
+      // as orphaned personal data while the observations that earned them were
+      // erased by erase_intel_for_actor. The ledger is append-only by grant (no
+      // DELETE-blocking trigger), so a direct scoped delete clears it; migration
+      // 2204 grants service_role the DELETE this needs. Non-cash (cash_amount = 0
+      // enforced), so no financial-retention reason to keep it.
+      { name: "delete_intel_reward_ledger", run: () => sc.from("intel_reward_ledger").delete().eq("actor_id", userId) },
     { name: "delete_search_history",      run: () => sc.from("search_history").delete().eq("user_id", userId) },
   ];
   for (const d of tailDeletes) {
@@ -490,6 +508,31 @@ export async function executeAccountDeletion(
     });
     if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
   }
+
+  // ── IG mission-candidate acceptance (migration 2167) ──────────────────────
+  // intel_mission_candidates.accepted_by names the contributor who accepted a
+  // dispatched mission. The column is `uuid REFERENCES profiles(id) ON DELETE
+  // SET NULL`, so the FK's declared intent is: when the profile goes away, NULL
+  // the identifier and keep the ops row. That SET NULL never fires — the deletion
+  // keeps an anonymised TOMBSTONE profile rather than deleting profiles(id), so no
+  // profiles-keyed cascade or SET-NULL ever runs (the same mistake 2172/2170/2187
+  // made for consent/reward-ledger/derived-memory, corrected by 2203/2204/2190).
+  // The departed user's uuid would otherwise survive here as a residual identifier
+  // in an operational record, still joinable to that uuid across tables, while the
+  // contributions the mission produced were already erased by erase_intel_for_actor.
+  //
+  // This is a SET NULL, NOT a delete: the row is a city-scoped ops record with no
+  // other user-identifying column, so it is retained and only the identifier is
+  // removed — exactly what the FK declared. UPDATE was already granted to
+  // service_role by 2167; migration 2211 reaffirms it so this step's authority is
+  // explicit and drift-tolerant. Non-fatal, matching the surrounding intel steps.
+  const missionOk = await step(steps, "null_intel_mission_accepted_by", async () => {
+    must(
+      await sc.from("intel_mission_candidates").update({ accepted_by: null }).eq("accepted_by", userId),
+      "null intel_mission_candidates.accepted_by",
+    );
+  });
+  if (!missionOk) warnings.push("intel_mission_candidates.accepted_by may still name the deleted user");
 
   // ── Derived memory (FATAL on failure) ─────────────────────────────────────
   // memory_projections / memory_events / memory_feedback hold derived facts about

@@ -23,10 +23,13 @@ import {
   CLAIM_TYPES,
   MODERATION_STATES,
   VISIBILITIES,
+  PRESENCE_LEVELS,
+  MIN_PRESENCE_FOR_LIVE_CLAIM,
   clampObservedAt,
   isValidIdempotencyKey,
   isPilotClaimable,
   type Visibility,
+  type PresenceLevel,
   type PartySizeBucket,
 } from "../../lib/intelContracts.js";
 import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickSignal.js";
@@ -110,6 +113,85 @@ function ttlFor(claimType: string): { ttlSeconds: number; hardExpirySeconds: num
   return spec ? { ttlSeconds: spec.ttlSeconds, hardExpirySeconds: spec.hardExpirySeconds } : null;
 }
 
+// ── Presence attestation gate (finding H2) ───────────────────────────────────
+// presence_level arrives from the client request body and is later weighted as
+// CONFIDENCE downstream (lib/intelProjectionAggregator PRESENCE_STRENGTH, where
+// P4 == 1.0 — "Live from verified visitor" strength). So a client that simply
+// asserts a high presence — with no proximity proof at all — was being treated
+// as a strongly-attested live visitor.
+//
+// A "live-grade" presence (>= MIN_PRESENCE_FOR_LIVE_CLAIM, i.e. P2 and up) is by
+// the ladder's own definition a claim that the contributor was verifiably
+// present: geofence + dwell (P2), receipt/entry evidence (P3) or a mission nonce
+// (P4). It may therefore only stand when a server-side attestation actually
+// backs it. No such verifier exists in the capture path today (there is no
+// geofence / proximity / dwell check available here, and the HTTP route forwards
+// no attestation payload), so, per the fail-closed rule, an unattested
+// live-grade claim is CLAMPED down to the highest level BELOW the live floor
+// (the "unverified ceiling"). Below-floor presence (P0/P1 — no proof / coarse
+// neighborhood) needs no attestation and passes through unchanged.
+//
+// `verifyAttestation` is the seam a real proximity/geofence/receipt verifier
+// plugs into later; until one exists it defaults to "unverifiable" so every
+// live-grade claim clamps. The attestation record stores claimed-vs-stored so
+// nothing is silently dropped and the projection layer can tell attested from
+// unattested.
+const MIN_LIVE_PRESENCE_INDEX = PRESENCE_LEVELS.indexOf(MIN_PRESENCE_FOR_LIVE_CLAIM);
+const UNVERIFIED_PRESENCE_CEILING: PresenceLevel =
+  PRESENCE_LEVELS[Math.max(0, MIN_LIVE_PRESENCE_INDEX - 1)];
+
+/** A client presence level, normalised onto the ladder; anything malformed → P0 (fail-closed). */
+function normalisePresenceLevel(level: unknown): PresenceLevel {
+  return typeof level === "string" && (PRESENCE_LEVELS as readonly string[]).includes(level)
+    ? (level as PresenceLevel)
+    : "P0";
+}
+
+const presenceRank = (level: PresenceLevel): number => PRESENCE_LEVELS.indexOf(level);
+
+export interface ResolvedPresence {
+  /** What is stored in presence_level and weighted downstream. */
+  presenceLevel: PresenceLevel;
+  /** Provenance stored in presence_attestation — claimed vs stored, never dropped. */
+  attestation: Record<string, unknown>;
+}
+
+/**
+ * Resolve the presence level that may actually be STORED for an observation.
+ *
+ * A live-grade claim (>= MIN_PRESENCE_FOR_LIVE_CLAIM) survives only if
+ * `verifyAttestation` confirms a server-side attestation; otherwise it is clamped
+ * to UNVERIFIED_PRESENCE_CEILING. Below-floor claims pass through. The returned
+ * attestation record always records both the claimed and the stored level.
+ */
+export function resolvePresenceAttestation(
+  claimedLevelRaw: unknown,
+  claimedAttestation: Record<string, unknown> | null | undefined,
+  verifyAttestation: (
+    level: PresenceLevel,
+    attestation: Record<string, unknown> | null | undefined,
+  ) => boolean = () => false,
+): ResolvedPresence {
+  const claimed = normalisePresenceLevel(claimedLevelRaw);
+  const isLiveGrade = presenceRank(claimed) >= MIN_LIVE_PRESENCE_INDEX;
+  const attested = isLiveGrade && verifyAttestation(claimed, claimedAttestation) === true;
+  const presenceLevel: PresenceLevel =
+    isLiveGrade && !attested ? UNVERIFIED_PRESENCE_CEILING : claimed;
+  return {
+    presenceLevel,
+    attestation: {
+      claimed,
+      stored: presenceLevel,
+      attested,
+      clamped: presenceLevel !== claimed,
+      liveGradeFloor: MIN_PRESENCE_FOR_LIVE_CLAIM,
+      reason: !isLiveGrade ? "below_live_floor" : attested ? "attested" : "clamped_unattested",
+      // The raw client-supplied attestation, recorded but never trusted or dropped.
+      client: claimedAttestation ?? null,
+    },
+  };
+}
+
 /**
  * Write one observation. Fail-closed no-op when the flag is off. Idempotent: a
  * replay of the same (actor_id, idempotency_key) returns the stored row.
@@ -134,7 +216,10 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   if (!validateForSurface(surface, input.claimType, input.value)) return { ok: false, reason: "invalid_value", detail: input.claimType };
 
   const visibility: Visibility = input.visibility && VISIBILITIES.includes(input.visibility) ? input.visibility : "private";
-  const presenceLevel = input.presenceLevel ?? "P0";
+  // Presence attestation gate (H2): a client-asserted live-grade presence is not
+  // trusted without a server-verified attestation. No verifier exists at capture
+  // today, so any unattested live-grade claim is clamped to the unverified ceiling.
+  const presence = resolvePresenceAttestation(input.presenceLevel, input.presenceAttestation);
 
   // Fail-closed subject resolution — never let the places FK throw a 500.
   const { data: subj, error: subjErr } = await sc.from("places").select("id").eq("id", input.subjectId).maybeSingle();
@@ -183,8 +268,8 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     visibility,
     moderation_state: "pending",
     commercial_disclosure: "none",
-    presence_level: presenceLevel,
-    presence_attestation: input.presenceAttestation ?? null,
+    presence_level: presence.presenceLevel,
+    presence_attestation: presence.attestation,
     observed_at: clamped.observedAt,
     captured_at: input.capturedAt ?? null,
     expires_at: expiresAt,

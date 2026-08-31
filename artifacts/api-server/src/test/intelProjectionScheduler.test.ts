@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { deriveComponents, derivePenalties, assembleClaimInput, type ClaimEvidence, type ClaimRow } from "../lib/intelProjectionAggregator.js";
 import { runIntelProjectionPass } from "../lib/intelProjectionScheduler.js";
 import { invalidateFreshnessPolicyCache } from "../lib/freshnessPolicy.js";
+import { CLAIM_TYPES } from "../lib/intelContracts.js";
 
 const NOW = new Date("2026-08-26T12:00:00.000Z");
 const OBSERVED = new Date(NOW.getTime() - 15 * 60_000).toISOString(); // 15 min ago
@@ -243,6 +244,121 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     assert.equal(input.distinctActors, 15);
     assert.equal(input.distinctGroups, 6, "6 overlapping crews");
     assert.equal(input.maxGroupShare, 1, "union share 1.0, NOT the diluted 15/90");
+  });
+
+  // ── H1: the SERVED value is the live cohort's plurality, not a frozen anchor ──
+  it("serves the cohort PLURALITY value, not the frozen single-anchor claim.value (H1)", async () => {
+    // The promoted anchor froze claim.value to one contributor's stale answer
+    // ('dead'); the live cohort overwhelmingly says 'busy'. The served value must
+    // reflect the cohort, not the anchor.
+    const anchored: ClaimRow = { ...claim, value: { level: "dead" } };
+    const obs = [
+      { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } },
+      { actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } },
+      { actor_id: "a3", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } },
+      { actor_id: "a4", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "quiet" } },
+    ];
+    const db = makeDb({ flags: {}, observations: obs, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] });
+    const input = await assembleClaimInput(db as any, anchored, NOW);
+    assert.deepEqual(input.value, { level: "busy" }, "plurality 'busy' (3/4), not the anchor 'dead' nor the minority 'quiet'");
+  });
+
+  it("falls back to the anchor value when the cohort has no value (never invents one)", async () => {
+    const anchored: ClaimRow = { ...claim, value: { level: "moderate" } };
+    // Observations carry no value at all → nothing to tally → serve the anchor.
+    const obs = [
+      { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null },
+      { actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null },
+    ];
+    const db = makeDb({ flags: {}, observations: obs, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] });
+    const input = await assembleClaimInput(db as any, anchored, NOW);
+    assert.deepEqual(input.value, { level: "moderate" }, "no cohort value → anchor value stands");
+  });
+
+  // ── H4: a WITHDRAWN contributor's value stops being served ────────────────────
+  it("a withdrawn contributor's value stops being served even when it was the anchor (H4)", async () => {
+    // The frozen anchor value ('packed') was one of three actors who have since
+    // withdrawn consent. Counting them, 'packed' (3) would beat 'busy' (2); with
+    // the consent filter the live cohort is only the two 'busy' reporters, so the
+    // served value must be 'busy' and 'packed' must disappear.
+    const anchored: ClaimRow = { ...claim, value: { level: "packed" } };
+    const obs = [
+      { actor_id: "pk1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "packed" } },
+      { actor_id: "pk2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "packed" } },
+      { actor_id: "pk3", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "packed" } },
+      { actor_id: "b1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } },
+      { actor_id: "b2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } },
+    ];
+    const db = makeDb({ flags: {}, observations: obs, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], withdrawnActors: ["pk1", "pk2", "pk3"] });
+    const input = await assembleClaimInput(db as any, anchored, NOW);
+    assert.equal(input.distinctActors, 2, "only the two consenting actors count");
+    assert.deepEqual(input.value, { level: "busy" }, "the withdrawn 'packed' anchor no longer serves");
+  });
+
+  // ── Finding 3: the 'conflicting' penalty path is now REACHABLE ─────────────────
+  it("marks a genuinely disagreeing cohort as conflicting (value tie OR confirmation split)", async () => {
+    // (a) Value tie: 2 say 'busy', 2 say 'quiet' → no plurality → conflict.
+    const tie = [
+      { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } },
+      { actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } },
+      { actor_id: "a3", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "quiet" } },
+      { actor_id: "a4", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "quiet" } },
+    ];
+    const tieInput = await assembleClaimInput(
+      makeDb({ flags: {}, observations: tie, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] }) as any,
+      claim, NOW,
+    );
+    assert.deepEqual(tieInput.penalties, { materialConflict: 0.2 }, "a value tie is genuine disagreement");
+
+    // (b) Confirmation split: 4 confirmations, 3 disagree (≥ half) → conflict.
+    const confInput = await assembleClaimInput(
+      makeDb({
+        flags: {},
+        observations: [{ actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } }],
+        confirmations: [{ stance: "agree", claim_id: "c1" }, { stance: "disagree", claim_id: "c1" }, { stance: "disagree", claim_id: "c1" }, { stance: "disagree", claim_id: "c1" }],
+        policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }],
+      }) as any,
+      claim, NOW,
+    );
+    assert.deepEqual(confInput.penalties, { materialConflict: 0.2 }, "a majority-disagree confirmation split is conflict");
+
+    // (c) Control: a clear plurality with agreeing confirmations is NOT conflict.
+    const agree = [
+      { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } },
+      { actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "busy" } },
+      { actor_id: "a3", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, value: { level: "quiet" } },
+    ];
+    const okInput = await assembleClaimInput(
+      makeDb({ flags: {}, observations: agree, confirmations: [{ stance: "agree", claim_id: "c1" }, { stance: "agree", claim_id: "c1" }], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] }) as any,
+      claim, NOW,
+    );
+    assert.deepEqual(okInput.penalties, {}, "clear plurality + agreement → no conflict penalty");
+  });
+
+  // ── H3: the publication-delay anchor is the EARLIEST observation, not the newest ─
+  it("keys the publication-delay anchor to the EARLIEST observation while freshness tracks the newest (H3)", async () => {
+    const earliest = new Date(NOW.getTime() - 40 * 60_000).toISOString(); // 40 min ago
+    const newest = new Date(NOW.getTime() - 2 * 60_000).toISOString();    // 2 min ago
+    const obs = [
+      { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: earliest, value: { level: "busy" } },
+      { actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: newest, value: { level: "busy" } },
+    ];
+    const db = makeDb({ flags: {}, observations: obs, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] });
+    const input = await assembleClaimInput(db as any, claim, NOW);
+    assert.equal(input.observedAt, newest, "freshness/serving clock follows the newest observation");
+    assert.equal(input.publicationAnchorAt, earliest, "the publication-delay clock is anchored to the earliest");
+  });
+
+  // ── Finding 5: the code-side absolute hard-expiry ceiling is derived ──────────
+  it("derives an absolute hard-expiry ceiling from the claim's frozen observed_at (finding 5)", async () => {
+    const t0 = new Date(NOW.getTime() - 30 * 60_000).toISOString(); // claim anchored 30 min ago
+    const anchored: ClaimRow = { ...claim, observed_at: t0 };
+    const obs = [{ actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: new Date(NOW.getTime() - 60_000).toISOString(), value: { level: "busy" } }];
+    const db = makeDb({ flags: {}, observations: obs, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] });
+    const input = await assembleClaimInput(db as any, anchored, NOW);
+    const hardSeconds = CLAIM_TYPES.find((c) => c.claimType === "crowd.level")!.hardExpirySeconds;
+    assert.equal(input.hardExpiresAt, new Date(Date.parse(t0) + hardSeconds * 1000).toISOString(),
+      "ceiling = frozen anchor observed_at + claim-type hard-expiry, never the moving newest observation");
   });
 });
 

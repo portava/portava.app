@@ -30,7 +30,16 @@
  * SOURCE_CLASSES and mayRenderAsLive() exist to protect.
  */
 import { isFlagEnabled, isKillSwitchEngaged } from "./featureFlags.js";
-import { confidenceBand, MIN_BAND_FOR_LIVE_STATE, CONFIDENCE_BAND_FLOOR, type ConfidenceBand, type SourceClass } from "./intelContracts.js";
+import {
+  confidenceBand,
+  mayRenderAsLive,
+  mayCountAsConsensus,
+  SOURCE_CLASSES,
+  MIN_BAND_FOR_LIVE_STATE,
+  CONFIDENCE_BAND_FLOOR,
+  type ConfidenceBand,
+  type SourceClass,
+} from "./intelContracts.js";
 import { logger } from "./logger.js";
 
 export interface LiveClaim {
@@ -88,8 +97,13 @@ export interface LiveClaimEnvelope {
   confidence: number | null;
   band: ConfidenceBand;
   sourceClass: SourceClass;
-  /** Coarse cohort-size bucket (few/several/many) — the exact count is withheld. */
-  sourceCountBucket: SourceCountBucket;
+  /** Coarse cohort-size bucket (few/several/many) — the exact count is withheld.
+   *  NULL when the source class may not be counted as independent community
+   *  consensus (mayCountAsConsensus false): a single official / sponsored /
+   *  imported party talking about itself must not present a crowd-size badge that
+   *  implies many independent reporters. Clients render null as "no consensus
+   *  badge", showing only the source-class label. */
+  sourceCountBucket: SourceCountBucket | null;
   observedAt: string;
   /** expires_at — the freshness horizon the client uses to degrade to unknown. */
   validUntil: string;
@@ -97,12 +111,27 @@ export interface LiveClaimEnvelope {
 }
 
 /**
- * The source class of a Phase-1 live snapshot. Constant today because the only
- * producer (IntelCaptureService) writes firsthand_unverified and the snapshot
- * carries no source_class column. Enrichment seam: when the projection records
- * a source class (verified presence, official, imported), read it here instead.
+ * The source class of a Phase-1 live snapshot.
+ *
+ * Enrichment seam. The projection output (intel_state_snapshots, migration 2130)
+ * carries NO source_class column today, and readLiveClaims does not SELECT one, so
+ * `row.source_class` is undefined here and this returns the honest Phase-1 default
+ * (IntelCaptureService only ever emits firsthand_unverified). When the projection
+ * begins recording a source class — verified presence, official, imported — this
+ * reads it, but only a KNOWN canonical value; an unrecognised label falls back to
+ * the default rather than being trusted or mislabelled.
+ *
+ * Wiring the read now (rather than hard-coding the constant) is what lets
+ * mayRenderAsLive / mayCountAsConsensus in the callers actually bite the instant a
+ * real class flows: a historical_pattern or portava_prediction is dropped before
+ * it can reach a Live label, and a single official/sponsored party gets no
+ * community-consensus badge.
  */
-function deriveSourceClass(_row: Record<string, unknown>): SourceClass {
+function deriveSourceClass(row: Record<string, unknown>): SourceClass {
+  const raw = row?.source_class;
+  if (typeof raw === "string" && (SOURCE_CLASSES as readonly string[]).includes(raw)) {
+    return raw as SourceClass;
+  }
   return "firsthand_unverified";
 }
 
@@ -127,7 +156,11 @@ export function toLiveClaimEnvelope(c: LiveClaim): LiveClaimEnvelope {
     confidence: c.confidence,
     band: c.band,
     sourceClass: c.sourceClass,
-    sourceCountBucket: sourceCountBucket(c.sourceCount),
+    // A consensus / cohort badge is only honest for a class that CAN be
+    // independent community consensus. For official_signed / sponsored /
+    // imported_owned — one party talking about itself — withhold the bucket (null)
+    // rather than imply a crowd. mayCountAsConsensus is the single rule.
+    sourceCountBucket: mayCountAsConsensus(c.sourceClass) ? sourceCountBucket(c.sourceCount) : null,
     observedAt: c.observedAt,
     validUntil: c.expiresAt,
     // 'live' ONLY when the evidence qualifies (band live/strong); a claim that
@@ -168,31 +201,54 @@ async function loadPromotedScopes(sc: any, now: Date): Promise<Set<string>> {
 /** Test hook — clears the promoted-scope allowlist cache. */
 export function _clearPromotedScopeCache(): void { _promotedScopeCache = null; }
 
+/**
+ * The GLOBAL Live-label gates: the flag dependency chain, the emergency kill
+ * switch, and the IG-09 pilot master switch. True only when Live intelligence may
+ * be served AT ALL right now — independent of any particular subject, scope or
+ * snapshot. Fail-closed: a missing/unreadable flag, or an engaged kill switch,
+ * returns false.
+ *
+ * ONE gate, TWO readers. `readLiveClaims` consults it before touching a snapshot,
+ * and `routes/placeLiving.ts` consults it again at cache-SERVE time. That second
+ * reader is the whole point: place_living_cache bakes the Live label in at compute
+ * time and serves it stale-while-revalidate for up to the 24h sparse TTL, so a
+ * label written before the kill switch was thrown would keep serving until its TTL
+ * unless the serve path re-checks these gates. Sharing this one function is what
+ * stops the compute path and the serve path from disagreeing about whether Live is
+ * live.
+ *
+ * The flag args are LITERAL so scripts/check-flag-polarity.mjs resolves each stop:
+ *   • intel_live_label_crowd depends on intel_claim_projection_crowd, which depends
+ *     on intel_capture_quick_signal (INTEL_FLAG_DEPENDENCIES) — serving a Live
+ *     label while projection is OFF keeps re-serving already-written snapshots
+ *     until their TTL, the exact unsafe combination the chain forbids;
+ *   • disable_intel_live_labels is the global emergency stop, read as a kill switch
+ *     so a DB error ENGAGES it (suppresses without deleting records);
+ *   • intel_limited_live is the IG-09 pilot master switch. Per-scope promotion (a
+ *     scope clearing the §26 density gate) is enforced separately, per snapshot, in
+ *     readLiveClaims — this only answers the global question.
+ */
+export async function liveLabelsServable(sc: any): Promise<boolean> {
+  if (!sc) return false;
+  if (!(await isFlagEnabled(sc, "intel_live_label_crowd"))) return false;
+  if (!(await isFlagEnabled(sc, "intel_claim_projection_crowd"))) return false;
+  if (!(await isFlagEnabled(sc, "intel_capture_quick_signal"))) return false;
+  if (await isKillSwitchEngaged(sc, "disable_intel_live_labels")) return false;
+  if (!(await isFlagEnabled(sc, "intel_limited_live"))) return false;
+  return true;
+}
+
 export async function readLiveClaims(
   sc: any,
   subjectId: string | null | undefined,
   opts: { claimTypes?: readonly string[]; now?: Date } = {},
 ): Promise<LiveClaim[]> {
   if (!sc || !subjectId) return [];
-  if (!(await isFlagEnabled(sc, "intel_live_label_crowd"))) return [];
 
-  // Enforce the flag DEPENDENCY CHAIN (intelContracts.INTEL_FLAG_DEPENDENCIES):
-  // intel_live_label_crowd depends on intel_claim_projection_crowd, which depends on
-  // intel_capture_quick_signal. Serving a Live label while projection is OFF would
-  // keep re-serving already-written snapshots until their TTL — the exact unsafe
-  // combination the chain forbids. These are LITERAL flag args (so check-flag-polarity
-  // resolves each stop), and fail-closed: any missing upstream returns [].
-  if (!(await isFlagEnabled(sc, "intel_claim_projection_crowd"))) return [];
-  if (!(await isFlagEnabled(sc, "intel_capture_quick_signal"))) return [];
-
-  // IG-09 Limited-Live gating, both fail-closed and ahead of any snapshot read:
-  //   • the global emergency stop suppresses every Live label without deleting
-  //     records — read as a kill switch, so a DB error ENGAGES it;
-  //   • Live is exposed only for a promoted pilot scope (intel_limited_live).
-  // Until a scope clears the §26 density gate (a human-review promotion), the
-  // pilot flag stays off and this returns [] — the correct pre-density default.
-  if (await isKillSwitchEngaged(sc, "disable_intel_live_labels")) return [];
-  if (!(await isFlagEnabled(sc, "intel_limited_live"))) return [];
+  // The global Live-label gates (flag chain + kill switch + pilot master switch),
+  // in ONE place so this compute path and the cache-serve path in placeLiving.ts
+  // cannot drift. Fail-closed: any missing flag or an engaged kill switch → [].
+  if (!(await liveLabelsServable(sc))) return [];
 
   const now = opts.now ?? new Date();
 
@@ -230,13 +286,21 @@ export async function readLiveClaims(
       const band = confidenceBand(confidence);
       // Below the live floor a claim is not shown as live at all.
       if (CONFIDENCE_BAND_FLOOR[band] < CONFIDENCE_BAND_FLOOR[MIN_BAND_FOR_LIVE_STATE]) continue;
+      // Truth boundary (intelContracts.mayRenderAsLive): a class that is a
+      // statement about the past or a likelihood — historical_pattern,
+      // portava_prediction — must NEVER be presented as a current observation.
+      // Drop it here rather than let it reach a Live label. Today deriveSourceClass
+      // yields firsthand_unverified (which passes), so this is inert; it becomes
+      // load-bearing the instant the enrichment seam supplies a real class.
+      const sourceClass = deriveSourceClass(row);
+      if (!mayRenderAsLive(sourceClass)) continue;
       out.push({
         id: String(row.id),
         claimType: String(row.claim_type),
         value: row.value,
         confidence,
         band,
-        sourceClass: deriveSourceClass(row),
+        sourceClass,
         sourceCount: typeof row.source_count === "number" ? row.source_count : 0,
         observedAt: String(row.observed_at),
         expiresAt: String(row.expires_at),

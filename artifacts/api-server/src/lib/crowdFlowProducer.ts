@@ -120,7 +120,7 @@
  * cannot publish. `WIRED_SIGNAL_SOURCES` is the honest register; adding to it is
  * a deliberate edit, pinned by a test.
  *
- * RUNTIME EFFECT: NONE until `map_crowd_flow_enabled` (migration 2205) is on AND
+ * RUNTIME EFFECT: NONE until `map_crowd_flow_enabled` (migration 2214) is on AND
  * a second observed family is wired.
  */
 import {
@@ -135,7 +135,7 @@ import { CLAIM_TYPES, PILOT_CLAIMABLE_MODERATION_STATES } from "./intelContracts
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
 
-// ── Feature flag (migration 2205) ─────────────────────────────────────────────
+// ── Feature flag (migration 2214) ─────────────────────────────────────────────
 export const CROWD_FLOW_FLAG = "map_crowd_flow_enabled";
 
 // ── Observed vs cause-only families ───────────────────────────────────────────

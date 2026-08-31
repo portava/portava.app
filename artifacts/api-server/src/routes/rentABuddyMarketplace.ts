@@ -82,7 +82,7 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { invalidateSuggestedCityCache, checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
-import { getUserLimits } from "./rentABuddy.js";
+import { getUserLimits, enforceBookingCreationGates } from "./rentABuddy.js";
 import {
   calculateCompatibilityScore,
   rankBuddies,
@@ -1073,6 +1073,30 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
     });
   }
 
+  // Shared booking-CREATION safety gates (audit RAB-2). Accepting an offer INSERTs
+  // a booking, so it must clear the same launch-control (age/DOB/ID/phone), block
+  // table, self-booking, nightlife category/admin approval + public-meetup, and
+  // high-risk two-sided verification gates as POST /rent-a-buddy/bookings. Run
+  // BEFORE the offer is claimed so a blocked/under-age/unverified traveler cannot
+  // mutate offer state. Kill switch + limits already ran above; the rollout piece
+  // runs here with action:"book" so the MVP unverified-user block fires (the
+  // action:"offer-accept" call above only gates the RENT_BUDDY_OFFERS_ENABLED flag).
+  const { data: offerBuddyProfile } = await svc
+    .from("rent_buddy_profiles")
+    .select("*")
+    .eq("id", o.buddy_profile_id)
+    .maybeSingle();
+  if (!offerBuddyProfile) return sendError(res, 'not_found', "Buddy not found.");
+  if (!await enforceBookingCreationGates({
+    sc: svc, res, userId: user.id, buddyProfile: offerBuddyProfile,
+    city: o.request.city,
+    countryCode: (o.request as any).country_code ?? null,
+    category: o.request.category,
+    groupSize: o.request.group_size,
+    paymentMode: o.payment_mode,
+    applyRollout: true,
+  })) return;
+
   const now = new Date().toISOString();
   if (o.expires_at && new Date(o.expires_at) < new Date()) {
     const { error: expireErr } = await svc.from("rent_buddy_offers").update({ status: "expired" }).eq("id", offerId);
@@ -1367,6 +1391,23 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
   const { data: limits } = await svc.from("rent_buddy_user_limits").select("*").eq("user_id", user.id).maybeSingle();
   const l = limits as any;
   if (l?.rent_buddy_disabled || l?.traveler_booking_disabled) return sendError(res, 'forbidden', "Booking is currently disabled for your account.");
+
+  // Shared booking-CREATION safety gates (audit RAB-2). Booking a package INSERTs
+  // a booking, so it must clear the same launch-control (age/DOB/ID/phone), block
+  // table, self-booking, nightlife category/admin approval + public-meetup, and
+  // high-risk two-sided verification gates as POST /rent-a-buddy/bookings. Kill
+  // switch + limits already ran above; the rollout piece runs here with
+  // action:"book" so the MVP unverified-user block fires (the action:"package-book"
+  // call above only gates the RENT_BUDDY_PACKAGES_ENABLED flag).
+  if (!await enforceBookingCreationGates({
+    sc: svc, res, userId: user.id, buddyProfile: buddy,
+    city: buddy.city,
+    countryCode: (buddy as any).country_code ?? null,
+    category: p.category,
+    paymentMode,
+    groupSize,
+    applyRollout: true,
+  })) return;
 
   // Calculate deposit
   const { data: travellerHistory } = await svc

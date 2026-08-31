@@ -1,4 +1,4 @@
--- 2204_protected_locations.sql
+-- 2213_protected_locations.sql
 --
 -- Protected location policy (Map spec §24) — storage for the zones that
 -- lib/protectedLocations.ts evaluates.

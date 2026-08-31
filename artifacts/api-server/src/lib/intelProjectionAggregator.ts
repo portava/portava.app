@@ -22,10 +22,24 @@
  */
 import type { ProjectionInput } from "./intelProjection.js";
 import type { ConfidenceComponents, ConfidencePenalties } from "./confidenceScore.js";
-import { PRIVACY_THRESHOLD_V1, PILOT_CLAIMABLE_MODERATION_STATES } from "./intelContracts.js";
+import { PRIVACY_THRESHOLD_V1, PILOT_CLAIMABLE_MODERATION_STATES, CLAIM_TYPES } from "./intelContracts.js";
 import { getPolicy } from "./freshnessPolicy.js";
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
+
+/**
+ * A stable, order-independent key for a claim value so equal values (including
+ * equal objects whose keys were serialized in a different order) tally together.
+ * Object keys are sorted recursively; primitives and arrays serialize as-is.
+ */
+function stableValueKey(v: unknown): string {
+  return JSON.stringify(v, (_k, val) =>
+    val && typeof val === "object" && !Array.isArray(val)
+      ? Object.keys(val as Record<string, unknown>).sort().reduce<Record<string, unknown>>(
+          (acc, k) => { acc[k] = (val as Record<string, unknown>)[k]; return acc; }, {})
+      : val,
+  );
+}
 
 /** Presence attestation strength → [0,1]. Phase-1 capture is P0 (unverified). */
 const PRESENCE_STRENGTH: Record<string, number> = { P0: 0, P1: 0.25, P2: 0.5, P3: 0.75, P4: 1 };
@@ -119,7 +133,7 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
   // invalidated after a snapshot was written drops out at the next pass.
   const { data: obs } = await sc
     .from("intel_observations")
-    .select("actor_id, presence_level, source_class, expires_at, group_key, observed_at")
+    .select("actor_id, presence_level, source_class, expires_at, group_key, observed_at, value")
     .eq("subject_id", claim.subject_id)
     .eq("claim_type", claim.claim_type)
     .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[]);
@@ -187,6 +201,80 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
     else if (c.stance === "disagree") disagrees++;
   }
 
+  // Served value from the LIVE COHORT, not one frozen anchor (H1/H4). System
+  // promotion freezes claim.value to a single DISTINCT-ON anchor observation, so
+  // serving claim.value publishes one contributor's verbatim answer under a
+  // cohort-sized source_count — and if that anchor's actor later withdrew, the
+  // count already dropped them (above) but their value would keep serving (H4).
+  // Instead take each consented actor's MOST RECENT value (one person, one vote),
+  // tally by value, and serve the plurality. Because the tally runs over freshObs
+  // (already consent-filtered), a withdrawn contributor's value cannot win. Fall
+  // back to the anchor's value when the cohort supplies no value or has no clear
+  // winner (a tie for the lead) — never invent a value the cohort did not give.
+  const latestValueByActor = new Map<string, { value: unknown; at: number }>();
+  for (const o of freshObs) {
+    if (o.value === undefined || o.actor_id == null) continue;
+    const at = o.observed_at ? new Date(o.observed_at).getTime() : 0;
+    const prev = latestValueByActor.get(o.actor_id);
+    if (!prev || at >= prev.at) latestValueByActor.set(o.actor_id, { value: o.value, at });
+  }
+  const valueVotes = new Map<string, { value: unknown; count: number }>();
+  for (const { value } of latestValueByActor.values()) {
+    const key = stableValueKey(value);
+    const cur = valueVotes.get(key);
+    if (cur) cur.count++;
+    else valueVotes.set(key, { value, count: 1 });
+  }
+  let topCount = 0;
+  let topValue: unknown;
+  let tieAtTop = false;
+  for (const v of valueVotes.values()) {
+    if (v.count > topCount) { topCount = v.count; topValue = v.value; tieAtTop = false; }
+    else if (v.count === topCount) { tieAtTop = true; }
+  }
+  const hasPlurality = topCount > 0 && !tieAtTop;
+  const derivedValue = hasPlurality ? topValue : claim.value;
+
+  // Reachable 'conflicting' path (the disagreement penalty derivePenalties/the
+  // gate already handle but nothing ever produced). The cohort genuinely disagrees
+  // when either its most-recent values TIE for the lead (no plurality across two
+  // or more distinct answers) OR its confirmations are at least half disagree
+  // (with a floor of two confirmations, so a single dissent is not "conflict").
+  const totalConfirmations = agrees + disagrees;
+  const valueConflict = valueVotes.size >= 2 && tieAtTop;
+  const confirmationConflict = totalConfirmations >= 2 && disagrees / totalConfirmations >= 0.5;
+  const cohortConflicting = valueConflict || confirmationConflict;
+
+  // Publication-delay anchor (H3): a STABLE timestamp — the EARLIEST fresh,
+  // consented observation — not the newest. The privacy gate suppresses while
+  // (now − anchor) < publicationDelayMinutes; keying that clock to the newest
+  // observation (as observedAt does, for freshness) means a venue getting fresh
+  // signals faster than the delay NEVER clears it, and a quiet-then-active venue
+  // flaps. The earliest fresh observation only moves forward as old ones expire,
+  // so a sustained cohort spanning the delay stays published. Falls back to the
+  // claim's frozen observed_at when no observation carries a timestamp.
+  const earliestObservedAtMs = freshObs.reduce(
+    (min, o) => (o.observed_at ? Math.min(min, new Date(o.observed_at).getTime()) : min),
+    Number.POSITIVE_INFINITY,
+  );
+  const publicationAnchorAt = Number.isFinite(earliestObservedAtMs)
+    ? new Date(earliestObservedAtMs).toISOString()
+    : claim.observed_at;
+
+  // Absolute hard-expiry ceiling (finding 5): system promotion inserts
+  // hard_expires_at = NULL and nothing in serving reads it, so a claim kept fresh
+  // by a continuous drip of new observations could serve indefinitely with no
+  // absolute age cap. Compute the ceiling in code from the claim-type registry,
+  // anchored to the claim's frozen (first-anchor) observed_at — the one timestamp
+  // that never re-anchors, so the ceiling can never be pushed out. projectClaim
+  // caps the servable expires_at at this. Unknown claim types (no spec) get no
+  // code ceiling, matching today's behaviour rather than inventing one.
+  const hardSpec = CLAIM_TYPES.find((c) => c.claimType === claim.claim_type);
+  const anchorMs = new Date(claim.observed_at).getTime();
+  const hardExpiresAt = hardSpec && Number.isFinite(anchorMs)
+    ? new Date(anchorMs + hardSpec.hardExpirySeconds * 1000).toISOString()
+    : null;
+
   // Evidence quality: intel_evidence links to an observation (observation_id) and
   // its contributor, not to a claim/subject directly, and Phase-1 quick signals
   // attach none. v1 treats a claim as evidence-thin (conservative) until the
@@ -223,15 +311,24 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
     hasEvidence,
     sourceClass,
     ageRatio,
-    conflicting: claim.status === "conflicting",
+    // Reachable now: either the frozen claim status (still honoured) OR a
+    // genuinely disagreeing live cohort. Before this the flag was dead, because
+    // nothing ever writes status='conflicting'.
+    conflicting: claim.status === "conflicting" || cohortConflicting,
   };
 
   return {
     claimType: claim.claim_type,
-    value: claim.value,
+    // Cohort plurality, not the frozen single-anchor value (H1/H4).
+    value: derivedValue,
     // Snapshot observed_at + expires_at derive from the freshest observation so a
     // key stays live while fresh reports arrive (see effectiveObservedAt above).
     observedAt: effectiveObservedAt,
+    // Publication-delay clock keyed to the EARLIEST observation (H3), separate
+    // from the newest-observation freshness clock above.
+    publicationAnchorAt,
+    // Absolute serving ceiling anchored to the claim's frozen observed_at (finding 5).
+    hardExpiresAt,
     distinctActors,
     distinctGroups,
     maxGroupShare,

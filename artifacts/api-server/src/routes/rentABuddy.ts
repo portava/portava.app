@@ -979,6 +979,297 @@ router.get("/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
   return res.json({ reviews: data ?? [], total: count ?? 0 });
 });
 
+// ── City/category restriction loader ────────────────────────────────────────────
+
+/**
+ * Load the applicable rent_buddy_city_restrictions row for a booking's city +
+ * category, most-specific first: an exact (city, category) row wins over a
+ * city-wide (city, category = NULL) row. Returns `{ error: true }` when a lookup
+ * FAILS — the caller must fail closed (reject the booking) on that, because a
+ * restriction we cannot read might be one that should block this booking.
+ *
+ * This table was write-only until now: POST /admin/restrictions/city-category
+ * upserts it, but no booking path read it, so `require_public_meetup`,
+ * `disable_deposit_cash` and `require_full_in_app` were unenforced. Reading it
+ * here — inside the single shared creation gate — enforces it uniformly on every
+ * creation path with no way for an ordinary user to bypass.
+ */
+async function loadCityRestriction(
+  sc: any,
+  city: string | null | undefined,
+  category: string | null | undefined,
+): Promise<{ row: any | null; error: boolean }> {
+  if (!city) return { row: null, error: false };
+  const lookups: Array<{ category: string | null }> = [];
+  if (category) lookups.push({ category });
+  lookups.push({ category: null });
+
+  for (const q of lookups) {
+    let query = sc.from("rent_buddy_city_restrictions").select("*").eq("city", city);
+    query = q.category === null ? query.is("category", null) : query.eq("category", q.category);
+    const { data, error } = await query.maybeSingle();
+    if (error) return { row: null, error: true };
+    if (data) return { row: data, error: false };
+  }
+  return { row: null, error: false };
+}
+
+// ── Shared booking-CREATION safety gate ────────────────────────────────────────
+
+/**
+ * The SINGLE implementation of the gate stack that POST /rent-a-buddy/bookings
+ * runs once the buddy, city and category are known. Extracted (audit RAB-1 /
+ * RAB-2) so every other creation path — rebook, package-book, offer-accept —
+ * enforces EXACTLY the same launch-control (age / DOB / ID / phone), block-table,
+ * self-booking, nightlife category-approval + admin-approval + public-meetup, and
+ * high-risk two-sided verification gates, and so those paths cannot drift from the
+ * canonical one. Invariant: no creation path may seat a booking that
+ * POST /rent-a-buddy/bookings would refuse.
+ *
+ * Follows the requireBookingKyc(...) convention — sends the matching error
+ * response and returns false when a gate blocks, returns true when every gate
+ * passes:  `if (!await enforceBookingCreationGates(...)) return;`
+ *
+ * `applyKillSwitch` / `applyRollout` / `applyLimits` cover the kill-switch,
+ * rollout and account-limit pieces a caller has NOT already run inline (rebook
+ * lacks all three; the marketplace paths run kill-switch + limits + their own
+ * action-specific checkRentBuddyAccess themselves). The rollout check here always
+ * uses action:"book" so the MVP unverified-user block (rentABuddyRollout.ts) —
+ * which only fires for action:"book" — is enforced on every creation path.
+ */
+export async function enforceBookingCreationGates(opts: {
+  sc: any;
+  res: any;
+  userId: string;
+  /** Already-loaded rent_buddy_profiles row for the buddy being booked. */
+  buddyProfile: any;
+  city: string;
+  countryCode?: string | null;
+  category: string;
+  meetupLocation?: any;
+  paymentMode?: string | null;
+  groupSize?: number | null;
+  meetupType?: string | null;
+  applyKillSwitch?: boolean;
+  applyRollout?: boolean;
+  applyLimits?: boolean;
+}): Promise<boolean> {
+  const {
+    sc: serviceClient, res, userId, buddyProfile,
+    city, countryCode, category, meetupLocation,
+    paymentMode = "full_in_app", groupSize, meetupType,
+    applyKillSwitch = false, applyRollout = false, applyLimits = false,
+  } = opts;
+
+  // ── Kill switches (only where the caller has not already checked them) ──────
+  if (applyKillSwitch) {
+    if (await isKillSwitchEngaged(serviceClient, 'disable_rent_buddy_booking')
+        || await isKillSwitchEngaged(serviceClient, 'disable_rab_bookings')) {
+      res.status(404).json({ error: 'feature_disabled', message: 'Rent-a-Buddy bookings are temporarily disabled' });
+      return false;
+    }
+  }
+
+  // ── Rollout / launch-phase access — always action:"book" (see doc above) ────
+  if (applyRollout) {
+    const rolloutAccess = await checkRentBuddyAccess({
+      sc: serviceClient, userId,
+      city, category, action: "book",
+      groupSize: groupSize ?? undefined,
+      paymentMode: paymentMode ?? "full_in_app",
+      meetupType: meetupType ?? (meetupLocation?.type),
+    });
+    if (!rolloutAccess.allowed) {
+      res.status(rolloutAccess.httpStatus).json({ error: rolloutAccess.code, message: rolloutAccess.message });
+      return false;
+    }
+  }
+
+  // ── Account-level limits (only where the caller has not already checked) ────
+  if (applyLimits) {
+    const limits = await getUserLimits(serviceClient, userId);
+    if (limits?.rent_buddy_disabled || limits?.traveler_booking_disabled) {
+      res.status(403).json({ error: "access_limited", message: "Rent a Buddy access is limited while your account is under review." });
+      return false;
+    }
+  }
+
+  // ── Launch control gating (age / DOB / ID / phone) ──────────────────────────
+  // countryCode must be provided whenever launch controls are configured —
+  // without it we cannot enforce country-level policy, so fail closed.
+  if (!countryCode) {
+    const { count: ctrlCount } = await serviceClient
+      .from("rent_buddy_launch_controls")
+      .select("id", { count: "exact" })
+      .limit(1);
+    if ((ctrlCount ?? 0) > 0) {
+      res.status(400).json({
+        error: "invalid_payload",
+        message: "countryCode is required when booking in a region with active launch controls.",
+      });
+      return false;
+    }
+  }
+
+  const launchCtrl = await getLaunchControl(serviceClient, {
+    city, countryCode: countryCode ?? undefined, category,
+  });
+  if (launchCtrl) {
+    if (!launchCtrl.enabled) {
+      if (launchCtrl.waitlistOnly) {
+        res.status(403).json({ error: "waitlist_only", message: "Rent a Buddy bookings for this location are currently waitlist-only. Join the waitlist to be notified when it opens." });
+      } else {
+        res.status(403).json({ error: "location_unavailable", message: "Rent a Buddy is not yet available in this location or category." });
+      }
+      return false;
+    }
+    // Traveller identity comes from `profiles`, NOT from rent_buddy_profiles.
+    const travIdentity = await loadTravelerIdentity(serviceClient, userId);
+    if (launchCtrl.requireIdVerification && !travIdentity.idVerified) {
+      res.status(403).json({ error: "verification_required", message: "ID verification is required to book in this location. Please verify your ID to continue." });
+      return false;
+    }
+    if (launchCtrl.requirePhoneVerification && !travIdentity.phoneVerified) {
+      res.status(403).json({ error: "verification_required", message: "Phone verification is required to book in this location. Please verify your phone number to continue." });
+      return false;
+    }
+    // Missing DOB is an explicit block — age cannot be verified without it
+    if (travIdentity.age === null) {
+      res.status(403).json({ error: "age_verification_required", message: "Date of birth verification is required to make a booking in this location." });
+      return false;
+    }
+    const minAge = category === "nightlife" ? launchCtrl.nightlifeMinAge : launchCtrl.minAge;
+    if (travIdentity.age < minAge) {
+      res.status(403).json({
+        error: "age_requirement",
+        message: category === "nightlife"
+          ? `Nightlife bookings require you to be at least ${minAge} years old.`
+          : `You must be at least ${minAge} years old to book in this location.`,
+      });
+      return false;
+    }
+    if (launchCtrl.fullPaymentRequired && (paymentMode ?? "full_in_app") !== "full_in_app") {
+      res.status(403).json({ error: "payment_mode_required", message: "Full in-app payment is required for this location." });
+      return false;
+    }
+  } else {
+    // Deny-by-default: launch controls configured but none match this booking
+    const { count: ctrlCount } = await serviceClient
+      .from("rent_buddy_launch_controls")
+      .select("id", { count: "exact" })
+      .limit(1);
+    if ((ctrlCount ?? 0) > 0) {
+      res.status(403).json({
+        error: "location_unavailable",
+        message: "Rent a Buddy is not yet available in this location or category.",
+      });
+      return false;
+    }
+  }
+
+  // ── City/category restrictions (admin policy — fail CLOSED) ─────────────────
+  // Enforced here so every creation path honours it uniformly and no ordinary
+  // user can bypass. A load error rejects THIS booking rather than allowing it.
+  const restriction = await loadCityRestriction(serviceClient, city, category);
+  if (restriction.error) {
+    res.status(503).json({ error: "restrictions_unavailable", message: "Booking restrictions for this location could not be verified right now. Please try again shortly." });
+    return false;
+  }
+  if (restriction.row) {
+    const r = restriction.row as any;
+    const meetupIsPrivate =
+      (meetupLocation != null && isPrivateLocation(meetupLocation)) ||
+      (meetupType === "private");
+    if (r.require_public_meetup && meetupIsPrivate) {
+      res.status(400).json({ error: "public_meetup_required", message: "Bookings in this location must start at a public meeting place (venue entrance, hotel lobby, landmark, etc.). Private rooms and homes are not allowed." });
+      return false;
+    }
+    const effectivePaymentMode = paymentMode ?? "full_in_app";
+    if (r.disable_deposit_cash && effectivePaymentMode === "deposit_plus_cash") {
+      res.status(403).json({ error: "cash_payment_unavailable", message: "Cash / off-platform payment is not available for bookings in this location. Full in-app payment is required." });
+      return false;
+    }
+    if (r.require_full_in_app && effectivePaymentMode !== "full_in_app") {
+      res.status(403).json({ error: "full_payment_required", message: "Full in-app payment is required for bookings in this location." });
+      return false;
+    }
+  }
+
+  // ── Self-booking block — a buddy cannot book themselves ─────────────────────
+  const buddyUserId = (buddyProfile as any)?.user_id;
+  if (buddyUserId && buddyUserId === userId) {
+    res.status(409).json({ error: "self_booking", message: "You cannot book yourself as a Buddy." });
+    return false;
+  }
+
+  // ── Block-table enforcement ─────────────────────────────────────────────────
+  // Traveler must not be blocked by, or have blocked, the buddy's user.
+  if (buddyUserId) {
+    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
+      serviceClient.from("blocks").select("id").eq("blocker_id", buddyUserId).eq("blocked_id", userId).maybeSingle(),
+      serviceClient.from("blocks").select("id").eq("blocker_id", userId).eq("blocked_id", buddyUserId).maybeSingle(),
+    ]);
+    if (blockedByBuddy.data || blockedByTraveler.data) {
+      res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
+      return false;
+    }
+  }
+
+  // ── Nightlife / group category approvals ────────────────────────────────────
+  if (category === "nightlife" || category === "group") {
+    const approvals: Record<string, boolean> = (buddyProfile as any)?.category_approvals ?? {};
+    if (!approvals[category]) {
+      res.status(403).json({ error: "category_not_approved", message: `This Buddy is not approved for ${category} bookings yet.` });
+      return false;
+    }
+  }
+
+  // ── Nightlife bookings additionally require explicit admin sign-off ──────────
+  if (category === "nightlife" && !(buddyProfile as any)?.nightlife_admin_approved) {
+    res.status(403).json({ error: "nightlife_not_approved", message: "This Buddy has not received admin approval for nightlife bookings." });
+    return false;
+  }
+
+  // ── Nightlife bookings require a public meetup location ──────────────────────
+  if (category === "nightlife" && meetupLocation && isPrivateLocation(meetupLocation)) {
+    res.status(400).json({
+      error: "invalid_location",
+      message: "Nightlife meetups must start at a public location (venue entrance, hotel lobby, landmark, etc.). Private rooms and homes are not allowed.",
+    });
+    return false;
+  }
+
+  // ── High-risk category verification gate ────────────────────────────────────
+  // arrival and nightlife require BOTH sides to be verified.
+  if (getCategoryRiskLevel(category) === 'high') {
+    const buddyVerified = (buddyProfile as any)?.verification_status === 'verified'
+      || ((buddyProfile as any)?.id_verified && (buddyProfile as any)?.phone_verified);
+
+    const { data: travProf } = await serviceClient
+      .from("rent_buddy_profiles")
+      .select("verification_status, id_verified, phone_verified")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const travelerVerified = (travProf as any)?.verification_status === 'verified'
+      || ((travProf as any)?.id_verified && (travProf as any)?.phone_verified);
+
+    if (!buddyVerified && !travelerVerified) {
+      res.status(403).json({ error: "verification_required", side: "both", message: `${category} bookings require both you and the Buddy to be verified. Please complete identity verification.` });
+      return false;
+    }
+    if (!buddyVerified) {
+      res.status(403).json({ error: "verification_required", side: "buddy", message: `${category} bookings require the Buddy to be verified. This Buddy has not completed identity verification.` });
+      return false;
+    }
+    if (!travelerVerified) {
+      res.status(403).json({ error: "verification_required", side: "traveler", message: `${category} bookings require your account to be verified. Please complete identity verification to continue.` });
+      return false;
+    }
+  }
+
+  return true;
+}
+
 // ── Bookings — Create ──────────────────────────────────────────────────────────
 
 router.post("/rent-a-buddy/bookings", async (req, res) => {
@@ -1060,74 +1351,6 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
     return res.status(403).json({ error: "access_limited", message: "Nightlife bookings are not available for your account." });
   }
 
-  // ── Launch control gating ─────────────────────────────────────────────────
-  // countryCode must be provided whenever launch controls are configured —
-  // without it we cannot enforce country-level policy, so fail closed.
-  if (!countryCode) {
-    const { count: ctrlCount } = await serviceClient
-      .from("rent_buddy_launch_controls")
-      .select("id", { count: "exact" })
-      .limit(1);
-    if ((ctrlCount ?? 0) > 0) {
-      return res.status(400).json({
-        error: "invalid_payload",
-        message: "countryCode is required when booking in a region with active launch controls.",
-      });
-    }
-  }
-
-  const launchCtrl = await getLaunchControl(serviceClient, {
-    city, countryCode: countryCode ?? undefined, category,
-  });
-  if (launchCtrl) {
-    if (!launchCtrl.enabled) {
-      return launchCtrl.waitlistOnly
-        ? res.status(403).json({ error: "waitlist_only", message: "Rent a Buddy bookings for this location are currently waitlist-only. Join the waitlist to be notified when it opens." })
-        : res.status(403).json({ error: "location_unavailable", message: "Rent a Buddy is not yet available in this location or category." });
-    }
-    // Traveller identity comes from `profiles`, NOT from rent_buddy_profiles.
-    // This block used to read the BUDDY table, where a row exists only for users
-    // who applied to become a buddy — so an ordinary traveller had no row and
-    // was hard-403'd with age_verification_required no matter what they did.
-    // See lib/travelerVerification.ts for where each signal actually lives.
-    const travIdentity = await loadTravelerIdentity(serviceClient, user.id);
-    if (launchCtrl.requireIdVerification && !travIdentity.idVerified) {
-      return res.status(403).json({ error: "verification_required", message: "ID verification is required to book in this location. Please verify your ID to continue." });
-    }
-    if (launchCtrl.requirePhoneVerification && !travIdentity.phoneVerified) {
-      return res.status(403).json({ error: "verification_required", message: "Phone verification is required to book in this location. Please verify your phone number to continue." });
-    }
-    // Missing DOB is an explicit block — age cannot be verified without it
-    if (travIdentity.age === null) {
-      return res.status(403).json({ error: "age_verification_required", message: "Date of birth verification is required to make a booking in this location." });
-    }
-    const calcAge = travIdentity.age;
-    const minAge = category === "nightlife" ? launchCtrl.nightlifeMinAge : launchCtrl.minAge;
-    if (calcAge < minAge) {
-      return res.status(403).json({
-        error: "age_requirement",
-        message: category === "nightlife"
-          ? `Nightlife bookings require you to be at least ${minAge} years old.`
-          : `You must be at least ${minAge} years old to book in this location.`,
-      });
-    }
-    if (launchCtrl.fullPaymentRequired && paymentMode !== "full_in_app") {
-      return res.status(403).json({ error: "payment_mode_required", message: "Full in-app payment is required for this location." });
-    }
-  } else {
-    // Deny-by-default: if launch controls are configured but none match this booking, block it
-    const { count: ctrlCount } = await serviceClient
-      .from("rent_buddy_launch_controls")
-      .select("id", { count: "exact" })
-      .limit(1);
-    if ((ctrlCount ?? 0) > 0) {
-      return res.status(403).json({
-        error: "location_unavailable",
-        message: "Rent a Buddy is not yet available in this location or category.",
-      });
-    }
-  }
-
   const maxDurMin = limits?.max_booking_duration_minutes;
   if (maxDurMin && durationH * 60 > maxDurMin) {
     return res.status(403).json({ error: "access_limited", message: `Max booking duration for your account is ${maxDurMin} minutes.` });
@@ -1141,107 +1364,21 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
 
   if (!buddyProfile) return res.status(404).json({ error: "not_found", message: "Buddy not found." });
 
-  // Self-booking block — a buddy cannot book themselves
-  if ((buddyProfile as any).user_id === user.id) {
-    return res.status(409).json({ error: "self_booking", message: "You cannot book yourself as a Buddy." });
-  }
-
-  // Block-table enforcement — traveler must not be blocked by, or have blocked, the buddy's user
-  const buddyUserId = (buddyProfile as any).user_id;
-  if (buddyUserId) {
-    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
-      serviceClient
-        .from("blocks")
-        .select("id")
-        .eq("blocker_id", buddyUserId)
-        .eq("blocked_id", user.id)
-        .maybeSingle(),
-      serviceClient
-        .from("blocks")
-        .select("id")
-        .eq("blocker_id", user.id)
-        .eq("blocked_id", buddyUserId)
-        .maybeSingle(),
-    ]);
-    if (blockedByBuddy.data || blockedByTraveler.data) {
-      return res.status(403).json({
-        error: "blocked",
-        message: "You cannot book this Buddy.",
-      });
-    }
-  }
-
   if (buddyProfile.status !== "active" || buddyProfile.admin_status !== "active") {
     return res.status(400).json({ error: "buddy_unavailable", message: "This Buddy is not accepting bookings." });
   }
 
-  // Nightlife and group category approvals are required for ALL bookings, not just new buddies
-  if (category === "nightlife" || category === "group") {
-    const approvals: Record<string, boolean> = (buddyProfile as any).category_approvals ?? {};
-    if (!approvals[category]) {
-      return res.status(403).json({
-        error: "category_not_approved",
-        message: `This Buddy is not approved for ${category} bookings yet.`,
-      });
-    }
-  }
+  const buddyUserId = (buddyProfile as any).user_id;
 
-  // Nightlife bookings additionally require explicit admin sign-off on the buddy
-  if (category === "nightlife" && !(buddyProfile as any).nightlife_admin_approved) {
-    return res.status(403).json({
-      error: "nightlife_not_approved",
-      message: "This Buddy has not received admin approval for nightlife bookings.",
-    });
-  }
-
-  // Nightlife bookings require a public meetup location — checked against the
-  // explicit meetupLocation when provided; city is the buddy's operating city,
-  // not the meetup spot, so we only enforce if a meetup location was given.
-  if (category === "nightlife" && meetupLocation && isPrivateLocation(meetupLocation)) {
-    return res.status(400).json({
-      error: "invalid_location",
-      message: "Nightlife meetups must start at a public location (venue entrance, hotel lobby, landmark, etc.). Private rooms and homes are not allowed.",
-    });
-  }
-
-  // High-risk category verification gate ─────────────────────────────────────
-  // arrival and nightlife require both sides to be verified; medium-risk
-  // categories are advisory only (not a hard block at this time).
-  if (getCategoryRiskLevel(category) === 'high') {
-    const buddyVerified = (buddyProfile as any).verification_status === 'verified'
-      || ((buddyProfile as any).id_verified && (buddyProfile as any).phone_verified);
-
-    // Fetch traveler's rent_buddy_profile (may not exist for brand-new users)
-    const { data: travProf } = await serviceClient
-      .from("rent_buddy_profiles")
-      .select("verification_status, id_verified, phone_verified")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    const travelerVerified = (travProf as any)?.verification_status === 'verified'
-      || ((travProf as any)?.id_verified && (travProf as any)?.phone_verified);
-
-    if (!buddyVerified && !travelerVerified) {
-      return res.status(403).json({
-        error: "verification_required",
-        side: "both",
-        message: `${category} bookings require both you and the Buddy to be verified. Please complete identity verification.`,
-      });
-    }
-    if (!buddyVerified) {
-      return res.status(403).json({
-        error: "verification_required",
-        side: "buddy",
-        message: `${category} bookings require the Buddy to be verified. This Buddy has not completed identity verification.`,
-      });
-    }
-    if (!travelerVerified) {
-      return res.status(403).json({
-        error: "verification_required",
-        side: "traveler",
-        message: `${category} bookings require your account to be verified. Please complete identity verification to continue.`,
-      });
-    }
-  }
+  // Launch controls (age/DOB/ID/phone), blocks, self-booking, nightlife
+  // category-approval + admin-approval + public-meetup, and high-risk two-sided
+  // verification — the shared creation-gate stack. Kill-switch, rollout and
+  // account-limits were already run at the top of this handler, so they are not
+  // re-applied here (applyKillSwitch/applyRollout/applyLimits = false).
+  if (!await enforceBookingCreationGates({
+    sc: serviceClient, res, userId: user.id, buddyProfile,
+    city, countryCode, category, meetupLocation, paymentMode, groupSize,
+  })) return;
 
   // New Buddy restrictions
   if (buddyProfile.new_buddy_public_only) {
@@ -6286,6 +6423,22 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   if (!buddyProfile || (buddyProfile as any).status !== "active" || (buddyProfile as any).admin_status !== "active") {
     return res.status(409).json({ error: "buddy_unavailable", message: "This Buddy is no longer accepting bookings." });
   }
+
+  // Rebook INSERTs a new booking row, so it must pass the SAME creation-gate
+  // stack as POST /rent-a-buddy/bookings — kill switches, rollout (incl. the MVP
+  // unverified-user block via action:"book"), account limits, launch controls
+  // (age/DOB/ID/phone), block table, self-booking, and the nightlife / high-risk
+  // gates. Category/city are carried verbatim from the original booking, so a
+  // 'nightlife' original must clear the nightlife gates on the rebook too.
+  // (audit RAB-1: this path previously ran none of these.)
+  if (!await enforceBookingCreationGates({
+    sc: serviceClient, res, userId: auth.user.id, buddyProfile,
+    city: (original as any).city,
+    countryCode: (original as any).country_code ?? null,
+    category: (original as any).category,
+    groupSize: groupSize ?? (original as any).group_size,
+    applyKillSwitch: true, applyRollout: true, applyLimits: true,
+  })) return;
 
   // Enforce buddy availability on the requested date
   const { data: avRow } = await serviceClient
