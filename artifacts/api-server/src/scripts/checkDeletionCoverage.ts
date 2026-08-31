@@ -27,6 +27,7 @@ import { readFileSync } from "node:fs";
 import { BASELINE_PATH } from "./parseBaselineSchema.js";
 import {
   ERASED_BY_CASCADE,
+  ANONYMISED_FK_NULLED,
   DELETION_FLOW_TABLES,
   RETAINED_WITH_REASON,
   UNCLASSIFIED_BACKLOG,
@@ -54,6 +55,7 @@ export interface CoverageProblem { kind: string; table: string; detail: string }
 export function computeProblems(tables: Map<string, string[]>): CoverageProblem[] {
   const problems: CoverageProblem[] = [];
   const erased = new Set(ERASED_BY_CASCADE);
+  const nulled = new Set(ANONYMISED_FK_NULLED);
   const flow = new Set(DELETION_FLOW_TABLES);
   const retained = new Set(RETAINED_WITH_REASON.map((r) => r.table));
   const backlog = new Set(UNCLASSIFIED_BACKLOG);
@@ -61,6 +63,7 @@ export function computeProblems(tables: Map<string, string[]>): CoverageProblem[
   for (const [t] of tables) {
     const buckets = [
       erased.has(t) && "ERASED_BY_CASCADE",
+      nulled.has(t) && "ANONYMISED_FK_NULLED",
       flow.has(t) && "DELETION_FLOW_TABLES",
       retained.has(t) && "RETAINED_WITH_REASON",
       backlog.has(t) && "UNCLASSIFIED_BACKLOG",
@@ -84,6 +87,7 @@ export function computeProblems(tables: Map<string, string[]>): CoverageProblem[
   // Stale entries keep the manifest honest over time.
   for (const list of [
     { name: "ERASED_BY_CASCADE", items: ERASED_BY_CASCADE },
+    { name: "ANONYMISED_FK_NULLED", items: ANONYMISED_FK_NULLED },
     { name: "DELETION_FLOW_TABLES", items: DELETION_FLOW_TABLES },
     { name: "UNCLASSIFIED_BACKLOG", items: UNCLASSIFIED_BACKLOG },
   ]) {
@@ -119,6 +123,7 @@ function main(): void {
   console.log(
     `\ncheck-deletion-coverage: ${tables.size} user-keyed table(s) in the baseline\n` +
       `   ${ERASED_BY_CASCADE.length} erased by the cascade\n` +
+      `   ${ANONYMISED_FK_NULLED.length} anonymised in place (FK identifier NULLed, row kept)\n` +
       `   ${DELETION_FLOW_TABLES.length} deletion-flow tables (not user content)\n` +
       `   ${RETAINED_WITH_REASON.length} retained with a written reason\n` +
       `   ${UNCLASSIFIED_BACKLOG.length} UNCLASSIFIED — survive deletion, undecided (owner decision D6)\n`,
