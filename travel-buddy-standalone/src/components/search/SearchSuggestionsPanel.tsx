@@ -23,6 +23,8 @@ import type { UnifiedSearchResult, SearchHistoryEntry } from '../../services/dis
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { PlainBottomFiller } from '../../hooks/useBottomInset.ts';
 import { DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
+import { ActionSuggestionRow } from '../../platform/input-assistance/components/ActionSuggestionRow.tsx';
+import type { InputSuggestion } from '../../platform/input-assistance/types/inputSuggestion.ts';
 
 interface Props {
   query: string;
@@ -32,6 +34,10 @@ interface Props {
   onSubmit: (q: string) => void;
   onPickRecent: (entry: SearchHistoryEntry) => void;
   onPickResult: (result: UnifiedSearchResult) => void;
+  /** §21 smart-action chips (e.g. "Add Bangkok to your trip"). Rendered above the
+   *  entity groups and dispatched via `onPickAction` (NOT a search submit). */
+  actionSuggestions?: InputSuggestion[];
+  onPickAction?: (suggestion: InputSuggestion) => void;
   /** @deprecated Panel no longer owns a ScrollView; scroll is handled by the outer FlatList. */
   onScroll?: never;
 }
@@ -67,6 +73,7 @@ function SuggestionAvatar({ item }: { item: UnifiedSearchResult }) {
 export function SearchSuggestionsPanel({
   query, groups, loading, recentSearches,
   onSubmit, onPickRecent, onPickResult,
+  actionSuggestions, onPickAction,
 }: Props) {
   const trimmed = query.trim();
   const qLower = trimmed.toLowerCase();
@@ -94,6 +101,17 @@ export function SearchSuggestionsPanel({
         </Text>
         {loading && <ActivityIndicator size="small" color={color.mute} />}
       </Pressable>
+
+      {/* §21 smart-action chips (e.g. "Add Bangkok to your trip") — high intent,
+          shown just under the always-first search row and dispatched (not a
+          search submit). Only present when the gateway recognised an action. */}
+      {actionSuggestions && actionSuggestions.length > 0 && onPickAction ? (
+        <View style={styles.actionSection}>
+          {actionSuggestions.map((s) => (
+            <ActionSuggestionRow key={s.id} suggestion={s} onAction={onPickAction} />
+          ))}
+        </View>
+      ) : null}
 
       {/* Matching recent searches */}
       {matchingRecent.map((entry) => (
@@ -165,6 +183,10 @@ const styles = StyleSheet.create({
   },
   searchForText: { flex: 1, ...t.body, color: color.ink },
   searchForQuery: { fontWeight: '700' },
+  actionSection: {
+    paddingHorizontal: space.sm,
+    paddingBottom: space.xs,
+  },
   groupHeader: {
     flexDirection: 'row',
     alignItems: 'center',
