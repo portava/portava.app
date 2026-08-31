@@ -125,6 +125,12 @@ router.post(
       typeof body.city === 'string' && body.city.trim().length > 0
         ? body.city.trim().slice(0, 100)
         : null;
+    // §18 optional IANA timezone for temporal-window normalization. Bounded;
+    // invalid/oversized values degrade to null (windows then computed in UTC).
+    const tz =
+      typeof body.tz === 'string' && body.tz.trim().length > 0 && body.tz.length <= 64
+        ? body.tz.trim()
+        : null;
 
     // limit: honor the request but never exceed the policy's maxSuggestions.
     const rawLimit = typeof body.limit === 'number' ? body.limit : parseInt(String(body.limit), 10);
@@ -159,6 +165,7 @@ router.post(
         lng,
         city,
         draft,
+        tz,
       });
 
       const payload: SuggestResponse = {
