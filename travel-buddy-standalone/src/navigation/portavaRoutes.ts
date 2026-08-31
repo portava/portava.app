@@ -875,6 +875,14 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: false,
   },
+  {
+    key: 'media-world',
+    path: 'media-world/index',
+    title: 'Media World',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+  },
 
   // ── Posts ─────────────────────────────────────────────────────────────────
 
