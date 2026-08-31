@@ -13,6 +13,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { appStorageUrlInfo } from "./mediaUrl.js";
+import {
+  initProvenance,
+  appendEdit,
+  normalizeProvenance,
+  computeIntelligenceEligibility,
+  type AppendEditOptions,
+} from "./media/mediaEvidenceEligibility.js";
 
 // ── Canonical asset writes (dual-write, fail-soft) ────────────────────────────
 
@@ -31,6 +38,10 @@ export interface RecordAssetInput {
   /** provenance: 'user' | 'official' | 'provider' | 'community' | ... */
   sourceType?: string;
   processingStatus?: string;
+  /** §6 capturedAt (may precede uploadedAt); feeds provenance + eligibility. */
+  capturedAt?: string | null;
+  /** True when the asset carries a trustworthy location binding (§10). */
+  hasLocation?: boolean;
 }
 
 /**
@@ -44,6 +55,23 @@ export async function recordMediaAsset(
 ): Promise<string | null> {
   try {
     if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return null;
+
+    // §35/§10: record provenance (source + empty edit lineage) and compute the
+    // evidence-eligibility verdict at write time. Fresh uploads have no edits,
+    // so eligibility is driven purely by source + capture. This is a PURE
+    // computation; it runs only on the flag-on write path (dark today).
+    const provenance = initProvenance({
+      sourceType: input.sourceType ?? "user",
+      capturedAt: input.capturedAt ?? null,
+      hasLocation: input.hasLocation ?? false,
+    });
+    const intelligenceEligibility = computeIntelligenceEligibility({
+      sourceType: provenance.sourceType,
+      capturedAt: provenance.capturedAt,
+      editHistory: provenance.editHistory,
+      hasLocation: provenance.hasLocation,
+    });
+
     const { data, error } = await sc
       .from("media_assets")
       .upsert(
@@ -61,6 +89,9 @@ export async function recordMediaAsset(
           thumbnail_path: input.thumbnailPath ?? null,
           thumbnail_url: input.thumbnailUrl ?? null,
           source_type: input.sourceType ?? "user",
+          captured_at: input.capturedAt ?? null,
+          provenance,
+          intelligence_eligibility: intelligenceEligibility,
           // Default to 'processing' (not 'ready') when dimensions are absent —
           // a video upload has null width/height at upload time, and the DB
           // constraint (2089) rejects ready rows with null dimensions. Callers
@@ -143,6 +174,98 @@ export async function completeVideoTranscode(
     return !error;
   } catch {
     return false;
+  }
+}
+
+// ── §35 evidence contract re-export (canonical entry point) ──────────────────
+// The media→intel evidence seam (later phase) calls isEvidenceEligible as the
+// single gate. Re-exported here so the canonical media layer is its home; the
+// pure classifier lives in ./media/mediaEvidenceEligibility.ts.
+export {
+  isEvidenceEligible,
+  evaluateEvidenceEligibility,
+  computeIntelligenceEligibility,
+  classifyEdit,
+  appendEdit,
+  initProvenance,
+  type IntelligenceEligibility,
+  type MediaProvenance,
+  type EditLineageEntry,
+  type EditClass,
+} from "./media/mediaEvidenceEligibility.js";
+
+// ── §35 Evidence-safe edit lineage (write-side hook) ─────────────────────────
+
+export interface RecordMediaEditResult {
+  /** Whether the lineage/eligibility update was persisted. */
+  recorded: boolean;
+  /** The recomputed live-evidence verdict after this edit. */
+  evidenceEligible: boolean;
+}
+
+/**
+ * recordMediaEdit — append one §35 edit to an asset's provenance lineage and
+ * recompute its §10 intelligence_eligibility.
+ *
+ * This is the write-side hook for a media edit flow. There is NO media
+ * crop/edit endpoint today, so nothing calls this yet — it is built additively
+ * so that ANY future edit (crop, brightness, generative fill, …) records its
+ * lineage through one choke-point that keeps the evidence gate honest:
+ *   - a crop/brightness/rotate edit keeps the asset evidence-eligible;
+ *   - a generative alteration (or an unclassified edit) flips it to
+ *     social-only, NOT live evidence — fail-closed.
+ *
+ * Lineage is APPENDED, never overwritten: the prior history is read and the new
+ * entry is added to the end. GATED + fail-soft: returns null when the flag is
+ * off (dark) or the asset can't be read; returns {recorded:false,...} when the
+ * update itself errors (the eligibility was still computed).
+ */
+export async function recordMediaEdit(
+  sc: SupabaseClient,
+  assetId: string,
+  op: string,
+  opts: AppendEditOptions = {},
+): Promise<RecordMediaEditResult | null> {
+  try {
+    if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return null;
+
+    const { data, error } = await sc
+      .from("media_assets")
+      .select("source_type, provenance, captured_at")
+      .eq("id", assetId)
+      .maybeSingle();
+    if (error || !data) return null;
+
+    const row = data as {
+      source_type?: string | null;
+      provenance?: unknown;
+      captured_at?: string | null;
+    };
+    const current =
+      normalizeProvenance(row.provenance) ??
+      initProvenance({ sourceType: row.source_type ?? "user", capturedAt: row.captured_at ?? null });
+
+    // Append the edit (pure; prior lineage preserved) and recompute eligibility.
+    const nextProvenance = appendEdit(current, op, opts);
+    const eligibility = computeIntelligenceEligibility({
+      sourceType: nextProvenance.sourceType,
+      capturedAt: nextProvenance.capturedAt,
+      editHistory: nextProvenance.editHistory,
+      hasLocation: nextProvenance.hasLocation,
+    });
+
+    const { error: upErr } = await sc
+      .from("media_assets")
+      .update({
+        provenance: nextProvenance,
+        intelligence_eligibility: eligibility,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", assetId);
+    if (upErr) return { recorded: false, evidenceEligible: eligibility.eligible };
+    return { recorded: true, evidenceEligible: eligibility.eligible };
+  } catch {
+    return null;
   }
 }
 
