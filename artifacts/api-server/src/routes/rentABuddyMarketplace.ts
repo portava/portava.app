@@ -97,6 +97,11 @@ import {
   calculateDeposit,
   getBookingExpiresAt,
 } from "../services/rentBuddy/PricingService.js";
+import {
+  BUDDY_PUBLIC_COLUMNS,
+  mapBuddyPublicProfile,
+  stripBuddyPrivateFields,
+} from "../lib/buddyMapRead.js";
 
 const router = Router();
 
@@ -229,6 +234,29 @@ function mapRequest(row: any) {
     expiresAt: row.expires_at,
     createdAt: row.created_at,
   };
+}
+
+/**
+ * The discovery-sections buddy card.
+ *
+ * It is the CANONICAL public buddy DTO (lib/buddyMapRead: BUDDY_PUBLIC_COLUMNS
+ * on the select → stripBuddyPrivateFields → mapBuddyPublicProfile), so a private
+ * column is actively STRIPPED here rather than merely never mapped. The local
+ * `mapProfile` below emitted no private field either, but only by omission: a
+ * field added to it later would have leaked silently.
+ *
+ * MINUS the meetup base. `mapBuddyPublicProfile` emits meetupBaseLat/Lng, and
+ * this endpoint has never emitted them. They are a person's real (if
+ * area-rounded) location, so adding them because "the canonical DTO has them"
+ * would be a NEW disclosure on a browsable list of people — a widening dressed
+ * up as consolidation. Consolidating a DTO may narrow exposure; it may not
+ * widen it. No client reads them from this endpoint.
+ */
+function mapSectionProfile(row: any) {
+  const dto = mapBuddyPublicProfile(stripBuddyPrivateFields(row, false));
+  if (!dto) return null;
+  const { meetupBaseLat, meetupBaseLng, ...withoutMeetupBase } = dto;
+  return withoutMeetupBase;
 }
 
 function mapProfile(row: any) {
@@ -456,11 +484,16 @@ router.get("/rent-a-buddy/sections", async (req, res) => {
   const svc = sc() ?? auth.client;
 
   const city = (req.query.city as string) ?? null;
-  const queryBase = svc.from("rent_buddy_profiles").select("*").eq("status", "active").eq("admin_status", "active");
 
-  // Helper to run a filtered query
+  // Helper to run a filtered query.
+  //
+  // BUDDY_PUBLIC_COLUMNS, not `*`: the section filters below narrow on columns
+  // that are deliberately NOT public (female_only_service, nightlife_approved,
+  // arrival_approved, group_approved, city_ambassador…), and PostgREST filters
+  // on columns whether or not they are selected — so the filters keep working
+  // while the rows that come back carry only public columns.
   async function section(filter: (q: any) => any, limit: number): Promise<any[]> {
-    const q = svc.from("rent_buddy_profiles").select("*").eq("status", "active").eq("admin_status", "active");
+    const q = svc.from("rent_buddy_profiles").select(BUDDY_PUBLIC_COLUMNS).eq("status", "active").eq("admin_status", "active");
     return (await filter(q).limit(limit)).data ?? [];
   }
 
@@ -500,19 +533,19 @@ router.get("/rent-a-buddy/sections", async (req, res) => {
 
   res.json({
     sections: [
-      { key: "available_now",       title: "Available Now",              buddies: availableNowRows.map(mapProfile) },
-      { key: "top_in_city",         title: "Top Buddies in This City",   buddies: topCityRows.map(mapProfile) },
-      { key: "female_favorites",    title: "Female Traveler Favorites",  buddies: femaleRows.map(mapProfile) },
-      { key: "nightlife",           title: "Nightlife Guides",           buddies: nightlifeRows.map(mapProfile) },
-      { key: "language_help",       title: "Language Help",              buddies: languageRows.map(mapProfile) },
-      { key: "arrival_help",        title: "Arrival Support",            buddies: arrivalRows.map(mapProfile) },
-      { key: "content_photo",       title: "Content & Photo",            buddies: contentRows.map(mapProfile) },
-      { key: "budget_friendly",     title: "Budget-Friendly Picks",      buddies: budgetRows.map(mapProfile) },
-      { key: "luxury",              title: "Luxury Experiences",         buddies: luxuryRows.map(mapProfile) },
-      { key: "group",               title: "Group Experiences",          buddies: groupRows.map(mapProfile) },
-      { key: "new_verified",        title: "New Verified Buddies",       buddies: newVerifiedRows.map(mapProfile) },
-      { key: "city_ambassadors",    title: "City Ambassadors",           buddies: ambassadorRows.map(mapProfile) },
-      { key: "request_a_buddy",     title: "Request a Buddy",            buddies: requestRows.map(mapProfile), isCtaSection: true },
+      { key: "available_now",       title: "Available Now",              buddies: availableNowRows.map(mapSectionProfile) },
+      { key: "top_in_city",         title: "Top Buddies in This City",   buddies: topCityRows.map(mapSectionProfile) },
+      { key: "female_favorites",    title: "Female Traveler Favorites",  buddies: femaleRows.map(mapSectionProfile) },
+      { key: "nightlife",           title: "Nightlife Guides",           buddies: nightlifeRows.map(mapSectionProfile) },
+      { key: "language_help",       title: "Language Help",              buddies: languageRows.map(mapSectionProfile) },
+      { key: "arrival_help",        title: "Arrival Support",            buddies: arrivalRows.map(mapSectionProfile) },
+      { key: "content_photo",       title: "Content & Photo",            buddies: contentRows.map(mapSectionProfile) },
+      { key: "budget_friendly",     title: "Budget-Friendly Picks",      buddies: budgetRows.map(mapSectionProfile) },
+      { key: "luxury",              title: "Luxury Experiences",         buddies: luxuryRows.map(mapSectionProfile) },
+      { key: "group",               title: "Group Experiences",          buddies: groupRows.map(mapSectionProfile) },
+      { key: "new_verified",        title: "New Verified Buddies",       buddies: newVerifiedRows.map(mapSectionProfile) },
+      { key: "city_ambassadors",    title: "City Ambassadors",           buddies: ambassadorRows.map(mapSectionProfile) },
+      { key: "request_a_buddy",     title: "Request a Buddy",            buddies: requestRows.map(mapSectionProfile), isCtaSection: true },
     ],
     city,
   });

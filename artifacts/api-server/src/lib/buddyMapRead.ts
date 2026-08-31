@@ -266,14 +266,24 @@ export async function readBuddyMapPins(
 }
 
 /**
- * NOTE ON THE MARKETPLACE'S MISSING BLOCK FILTER — reported, NOT fixed here.
+ * NOTE ON THE MARKETPLACE'S BLOCK FILTER — reported here, since fixed.
  *
- * POST /api/rent-a-buddy/search applies no block filter, so a buddy the viewer
- * blocked (or who blocked the viewer) still appears in marketplace results.
- * That is a pre-existing behaviour of that endpoint, and changing it inside an
- * extraction is exactly how a behaviour change ships disguised as a refactor.
- * The map layer adds the filter for its own pins because every other
- * people-bearing gateway layer has one and a blocked person's position is a
- * stronger disclosure than a marketplace listing; the marketplace endpoint is
- * left exactly as it was, for a separate, deliberate change.
+ * When this reader was extracted, POST /api/rent-a-buddy/search applied no
+ * block filter at all: a buddy the viewer had blocked, or who had blocked the
+ * viewer, still appeared in marketplace results. The map layer added the
+ * filter for its own pins and deliberately left the endpoint alone, because
+ * changing behaviour inside an extraction is how a behaviour change ships
+ * disguised as a refactor.
+ *
+ * That separate change has since happened. Search now resolves the same
+ * fetchBlockedSet this reader consumes, so the two share one definition of who
+ * is hidden rather than two that can drift.
+ *
+ * The narrowing recorded below is therefore no longer that the map filters and
+ * the marketplace does not. It is that search resolves the viewer through
+ * optionalUser and stays public, while this reader is always called with a
+ * viewer in hand.
+ *
+ * STILL OPEN, and not this module's to fix: GET /api/rent-a-buddy/sections has
+ * no block filter either — the same defect class on a different endpoint.
  */

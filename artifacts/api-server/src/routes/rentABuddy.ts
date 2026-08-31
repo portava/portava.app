@@ -35,6 +35,9 @@ import {
   isOneOf,
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
+// The ONE bidirectional, fail-closed block resolver. Marketplace search filters
+// against the same set the map layer does.
+import { fetchBlockedSet } from "../lib/blocks.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
@@ -487,6 +490,35 @@ router.post("/rent-a-buddy/search", async (req, res) => {
 
   const origin = latPresent && lngPresent ? { lat: lat as number, lng: lng as number } : null;
 
+  // ── Block filter ────────────────────────────────────────────────────────────
+  // Blocking is a safety feature: a viewer who blocked someone must not then be
+  // offered them in a browsable list of people to hire, and neither must the
+  // person who blocked the viewer.
+  //
+  // This is the SAME path the map layer applies to buddy pins (lib/buddyMapRead
+  // step 2): lib/blocks.fetchBlockedSet, the one bidirectional block resolver in
+  // the server. It ORs `blocker_id.eq.<viewer>` with `blocked_id.eq.<viewer>`
+  // and adds the COUNTER-PARTY of each row, so "I blocked them" and "they
+  // blocked me" both land in the set.
+  //
+  // FAIL-CLOSED, on the same contract: fetchBlockedSet returns null when the
+  // block state could not be read, and null means expose NOBODY — never "no
+  // blocks". A block filter that fails open is worse than no filter, because it
+  // looks like it works.
+  //
+  // Auth stays OPTIONAL (optionalUser, not requireUser) so this endpoint remains
+  // public exactly as it is today. An anonymous caller has no block
+  // relationships to resolve, so there is nothing that could be unknown and
+  // nothing to fail closed about.
+  const viewerId = (await optionalUser(req))?.user.id ?? null;
+  let blockedSet: Set<string> | null = null;
+  if (viewerId) {
+    blockedSet = await fetchBlockedSet(serviceClient as any, viewerId);
+    if (blockedSet === null) {
+      return res.json({ buddies: [], total: 0, page, perPage });
+    }
+  }
+
   let query = serviceClient
     .from("rent_buddy_profiles")
     .select(BUDDY_PUBLIC_COLUMNS, { count: "exact" })
@@ -512,6 +544,18 @@ router.post("/rent-a-buddy/search", async (req, res) => {
   if (error) return sendError(res, "db_error", error.message);
 
   let rows: Record<string, unknown>[] = data ?? [];
+
+  // Drop blocked people BEFORE ranking and before the city geocode below, so a
+  // blocked buddy never costs an outbound Nominatim lookup and cannot reach the
+  // response shaping at the bottom of this handler.
+  let blockedRemoved = 0;
+  if (blockedSet !== null && blockedSet.size > 0) {
+    const blocked = blockedSet;
+    const before = rows.length;
+    rows = rows.filter((r) => !(r.user_id != null && blocked.has(String(r.user_id))));
+    blockedRemoved = before - rows.length;
+  }
+
   const distanceById = new Map<string, number | null>();
 
   if (origin) {
@@ -563,7 +607,11 @@ router.post("/rent-a-buddy/search", async (req, res) => {
       ...mapProfile(stripBuddyPrivateFields(p, false)),
       distanceKm: distanceById.get(String(p.id)) ?? null,
     })),
-    total: count ?? 0,
+    // `count` is the DB's pre-block total, so it is reduced by the blocked rows
+    // we actually saw. It can still over-report when a blocked buddy sits
+    // outside the fetched window — the number is a pagination hint, and erring
+    // high there never exposes anybody.
+    total: Math.max(0, (count ?? 0) - blockedRemoved),
     page,
     perPage,
   });
