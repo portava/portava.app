@@ -1005,16 +1005,37 @@ router.patch("/admin/safe-return/config", async (req, res) => {
     return;
   }
 
+  // Route each toggle through the audited RPC (FLAG-1: writes
+  // feature_flag_audit_log so the dashboard's last-change is accurate) and
+  // check the result (FLAG-2: the raw .update() swallowed { error } and matched
+  // zero rows silently, yet the handler still returned ok:true — an operator
+  // could flip a safety switch and get a 200 while nothing changed).
   const results: Record<string, boolean> = {};
-  await Promise.all(
-    updates.map(async ([key, enabled]) => {
-      const { error } = await sc
-        .from("feature_flags")
-        .update({ enabled, updated_at: new Date().toISOString() })
-        .eq("flag", key);
-      if (!error) results[key] = enabled;
-    }),
-  );
+  const failed: string[] = [];
+  for (const [key, enabled] of updates) {
+    const { data: rows, error: rpcErr } = await sc.rpc("toggle_feature_flag_with_audit", {
+      p_flag:          key,
+      p_new_enabled:   enabled,
+      p_changed_by_id: admin.userId,
+    });
+    if (rpcErr && rpcErr.code === "42883") {
+      req.log.error({ flag: key, pgCode: rpcErr.code }, "toggle_feature_flag_with_audit missing — apply migration 0119");
+      res.status(503).json({
+        error: "server_not_configured",
+        message: "toggle_feature_flag_with_audit function is missing — apply migration 0119 to the database",
+      });
+      return;
+    }
+    const row = rpcErr ? null : (Array.isArray(rows) ? rows[0] : rows);
+    if (rpcErr || !row) { failed.push(key); continue; }
+    results[key] = enabled;
+  }
+
+  if (failed.length > 0) {
+    // At least one toggle did not persist — do not report success for the batch.
+    sendError(res, "db_error", `Failed to update flag(s): ${failed.join(", ")}`, { exposeDetail: true });
+    return;
+  }
 
   res.json({ ok: true, updated: results });
 });

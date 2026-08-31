@@ -693,10 +693,37 @@ router.put('/admin/notification-defaults', async (req, res) => {
   const updated: Record<string, boolean> = {};
   for (const [key, flagName] of Object.entries(flagMap)) {
     const val = (parsed.data as any)[key];
-    if (val !== undefined) {
-      await admin.sc.from('feature_flags').update({ enabled: val, updated_at: new Date().toISOString() }).eq('flag', flagName);
-      updated[key] = val;
+    if (val === undefined) continue;
+    // Route through the audited RPC rather than a raw .update():
+    //  - FLAG-1: this writes feature_flag_audit_log so the dashboard's
+    //    last-change is accurate; a raw update left the audit trail stale.
+    //  - FLAG-2: the raw update discarded { error } and matched zero rows
+    //    silently, so toggling the push kill switch OFF could return ok:true
+    //    while nothing changed. We now check the RPC result and rowcount.
+    const { data: rows, error: rpcErr } = await admin.sc.rpc('toggle_feature_flag_with_audit', {
+      p_flag:          flagName,
+      p_new_enabled:   val,
+      p_changed_by_id: admin.userId,
+    });
+    if (rpcErr) {
+      if (rpcErr.code === '42883') {
+        req.log.error({ flag: flagName, pgCode: rpcErr.code }, 'toggle_feature_flag_with_audit missing — apply migration 0119');
+        res.status(503).json({
+          error: 'server_not_configured',
+          message: 'toggle_feature_flag_with_audit function is missing — apply migration 0119 to the database',
+        });
+        return;
+      }
+      if (rpcErr.message?.includes('Flag not found') || rpcErr.code === 'P0002') {
+        sendError(res, 'not_found', `Flag '${flagName}' not found`);
+      } else {
+        sendError(res, 'db_error', rpcErr.message);
+      }
+      return;
     }
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    if (!row) { sendError(res, 'not_found', `Flag '${flagName}' not found`); return; }
+    updated[key] = val;
   }
 
   res.json({ ok: true, updated });

@@ -543,3 +543,33 @@ The `memory_projection` flag remains **false** in production. Deployment of the 
     (`mtm.thread_id = mtm.thread_id`). The correct policy already exists; production never
     received it. That divergence is why the guard running green on CI is not evidence about
     production, and why the sweep was also run directly against prod by hand.
+- `2200_memory_projection_exclude_deleted_profiles.sql` — audit **MEM·C1 (critical):** a
+  GDPR-erased account's derived memory RESURRECTED within ~6h. `erase_memory_for_user` (2190)
+  deletes what exists but does not stop re-derivation; the 6-hourly `project_all_memory` fan-out
+  re-derives from source rows that account deletion does not scrub. Deletion keeps an anonymised
+  TOMBSTONE profile (`account_status='deleted'`), and the graph branch's only guard was
+  `EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = e.src_key::uuid)` — a tombstone SATISFIES
+  it, because the tombstone *is* a profile row. Existence was never the right question. This
+  `CREATE OR REPLACE`s `project_all_memory` so its enumeration filters **every** fan-out branch
+  (compass_graph_edges / user_follows / saved_places / compass_user_preferences) through one outer
+  guard `EXISTS (… p.id = c.uid AND p.account_status <> 'deleted')`. `account_status` is
+  `text NOT NULL` with a CHECK domain of `active|deactivated|pending_deletion|deleted`, so `<>`
+  has no NULL pitfall and still projects the three live states — only a completed tombstone is
+  excluded. Nothing else in the function changes (flag gate, per-user retraction call, tally are
+  the 2190 §6 body). A migration-level postcondition asserts the guard is present in
+  `pg_get_functiondef`, so a future edit that drops it fails this migration rather than silently
+  reopening MEM·C1.
+  - **Mutation-proven test:** `memoryLifecycleLive.test.ts` (already wired into live-db as
+    `test:memory-lifecycle`) gains a case that projects a live account, tombstones + erases it,
+    runs the real `project_all_memory` fan-out, and asserts zero resurrection — with a live,
+    identically-sourced control that the same pass DOES project, so the exclusion is by
+    `account_status`, not a dead pass. Remove the guard and the assertion goes red.
+  - **Applied to CI (`hwokxgbmezheskbzskfr`) 2026-08-31** via the Supabase MCP `apply_migration`
+    (BEGIN/COMMIT stripped; the tool wraps its own transaction). Pre-apply proof: `fanout_exists`
+    and `retraction_exists` true, `guard_already_present` false, anon/authenticated `EXECUTE` both
+    false. Post-apply proof via `pg_get_functiondef`: the guard is present with the exact predicate
+    `p.account_status <> 'deleted'`; anon/authenticated `EXECUTE` false; `service_role` `EXECUTE`
+    true. `test:memory-lifecycle` (live-db) then exercises the behavioural proof against this.
+    **Prod (`ajrurzioarfkagpuxfnb`) press pending owner**, staged byte-identical at
+    `_incoming/2200_prod_memory_projection_exclude_deleted_profiles.sql`; prerequisite is the 2190
+    memory stack being present on prod (the migration's precondition block RAISEs cleanly if not).
