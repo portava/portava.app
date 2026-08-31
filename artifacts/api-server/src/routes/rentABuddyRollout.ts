@@ -46,6 +46,15 @@ const KNOWN_CITY_STATUSES = new Set<string>([
   "beta_testing", "public_mvp", "paused", "suspended",
 ]);
 
+// All booking statuses that represent a cancellation, for cancel-rate metrics.
+// User-initiated cancellations write `cancelled_by_traveler` / `cancelled_by_buddy`
+// (see the cancel route in rentABuddy.ts); bare `cancelled` is produced only by
+// admin dispute-resolution. Counting only bare `cancelled` undercounted the real
+// cancel rate to ~zero, making the graduation gate falsely lenient.
+const CANCELLED_BOOKING_STATUSES = new Set<string>([
+  "cancelled", "cancelled_by_traveler", "cancelled_by_buddy",
+]);
+
 // ── Global controls cache (30s TTL) ───────────────────────────────────────────
 
 let _gcCache: any = null;
@@ -90,7 +99,6 @@ async function getGlobalControls(sc: any): Promise<any> {
     nightlife_paused: false,
     force_full_in_app: false,
     force_public_meetup: false,
-    force_delayed_posting: false,
   };
   _gcCacheTs = now;
   return _gcCache;
@@ -158,7 +166,6 @@ export async function checkRentBuddyAccess(opts: {
   groupSize?: number;
   paymentMode?: string | null;
   meetupType?: string | null;
-  idVerified?: boolean;
 }): Promise<AccessDecision> {
   const { sc, userId, city, category, action = "read", isTestUser = false } = opts;
 
@@ -793,7 +800,7 @@ router.get("/admin/rent-buddy/rollout/cities/:id/metrics", asyncHandler(async (r
   const realBookings = bookings.filter((b: any) => !b.is_test_booking);
   const testBookings = bookings.filter((b: any) => b.is_test_booking);
   const completedReal = realBookings.filter((b: any) => b.status === "completed");
-  const cancelledReal = realBookings.filter((b: any) => b.status === "cancelled");
+  const cancelledReal = realBookings.filter((b: any) => CANCELLED_BOOKING_STATUSES.has(b.status));
   const revenueTotal  = completedReal.reduce((s: number, b: any) => s + Number(b.total_usd ?? 0), 0);
 
   const avgRating = reviews.length
@@ -1115,7 +1122,7 @@ router.patch("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) 
 
   const allowed = [
     "all_bookings_paused", "applications_paused", "cash_balance_paused",
-    "nightlife_paused", "force_full_in_app", "force_public_meetup", "force_delayed_posting",
+    "nightlife_paused", "force_full_in_app", "force_public_meetup",
   ] as const;
 
   const patch: Record<string, unknown> = {

@@ -954,6 +954,37 @@ describe("Flow: MVP graduation checklist in metrics", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 16b. Cancel-metrics count user-initiated cancellations (B1)
+// ─────────────────────────────────────────────────────────────────────────────
+// The cancel route writes `cancelled_by_traveler` / `cancelled_by_buddy` (never
+// bare "cancelled", which only admin dispute-resolution produces). The metrics
+// used to filter on `status === "cancelled"` only, so user-initiated cancels were
+// invisible and `cancelRateUnder20` was effectively always true.
+describe("Flow: Cancel metrics count user-initiated cancellations (B1)", () => {
+  it("cancelled_by_traveler and cancelled_by_buddy count toward cancel metrics", async () => {
+    // 1 completed + 2 user-initiated cancels, all real → cancel rate = 2/3 (>= 20%).
+    state.bookings["b1-completed"] = { id: "b1-completed", city: "Bangkok", status: "completed", total_usd: 100, traveler_id: USER_ID, is_test_booking: false };
+    state.bookings["b1-trav-cancel"] = { id: "b1-trav-cancel", city: "Bangkok", status: "cancelled_by_traveler", total_usd: 0, traveler_id: USER_ID, is_test_booking: false };
+    state.bookings["b1-buddy-cancel"] = { id: "b1-buddy-cancel", city: "Bangkok", status: "cancelled_by_buddy", total_usd: 0, traveler_id: "t-b1", is_test_booking: false };
+    setupClient(ADMIN_ID, "admin");
+    const r = await req("GET", `/api/admin/rent-buddy/rollout/cities/${CITY_ID}/metrics`, undefined, ADMIN_TOKEN);
+    assert.equal(r.status, 200);
+    // RED under the old bare-"cancelled" filter (it counted 0 of these two).
+    assert.equal(r.body.bookings.cancelled, 2);
+    // 2 cancels / 3 real bookings = 0.67 → NOT under 20%. Old filter saw 0/3 → falsely "under 20%".
+    assert.equal(r.body.graduationChecklist.cancelRateUnder20, false);
+  });
+
+  it("admin dispute-resolution bare 'cancelled' status is still counted", async () => {
+    state.bookings["b1-admin-cancel"] = { id: "b1-admin-cancel", city: "Bangkok", status: "cancelled", total_usd: 0, traveler_id: USER_ID, is_test_booking: false };
+    setupClient(ADMIN_ID, "admin");
+    const r = await req("GET", `/api/admin/rent-buddy/rollout/cities/${CITY_ID}/metrics`, undefined, ADMIN_TOKEN);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.bookings.cancelled, 1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 17. Audit log endpoint
 // ─────────────────────────────────────────────────────────────────────────────
 describe("Flow: Audit log", () => {
