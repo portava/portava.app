@@ -41,8 +41,15 @@ export type CityZoneState =
 export interface CityVisualZone {
   id: string;
   name: string;
-  state: CityZoneState;
-  trend: ActivityTrend;
+  /**
+   * Qualitative activity state. OPTIONAL / nullable on purpose: the §43 world
+   * projection only carries a state when a gated Live Intelligence claim exists
+   * for the zone. With no live claim the server emits none, and the client must
+   * NOT fabricate one (§46 "no fake-live treatment", §46.2). A null state renders
+   * as a neutral row (name + perspective count + freshness) with no pulse chip.
+   */
+  state?: CityZoneState | null;
+  trend?: ActivityTrend | null;
   /** Fresh perspective count in this zone (drives no vanity counter — optional). */
   perspectiveCount?: number | null;
   freshness?: FreshnessClass | null;
@@ -71,8 +78,13 @@ export interface ChangingNowItem {
   id: string;
   title: string;
   subtitle?: string | null;
-  state: CityZoneState;
-  trend: ActivityTrend;
+  /**
+   * Nullable for the same reason as CityVisualZone.state — a "changing now" card
+   * only carries a qualitative state when the gated live path served a crowd
+   * claim. Absent → the card shows no fabricated state chip (§46/§46.2).
+   */
+  state?: CityZoneState | null;
+  trend?: ActivityTrend | null;
   freshness: FreshnessClass;
   /** Short human freshness label, e.g. "Updated 4m ago" — never fake-live. */
   freshnessLabel?: string | null;

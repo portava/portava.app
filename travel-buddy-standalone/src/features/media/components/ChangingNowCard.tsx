@@ -26,15 +26,20 @@ export interface ChangingNowCardProps {
 }
 
 export function ChangingNowCard({ item, onPress, onWhyThis }: ChangingNowCardProps) {
-  const accent = ZONE_COLOR[item.state];
-  const glyph = zoneGlyph(item.state, item.trend);
+  // The state chip appears ONLY when a gated live claim resolved a state; with
+  // none, the card carries just its title/subtitle/freshness — never a
+  // fabricated "Peak/Building" badge (§46/§46.2).
+  const hasState = item.state != null;
+  const accent = hasState ? ZONE_COLOR[item.state as NonNullable<typeof item.state>] : null;
+  const glyph = hasState ? zoneGlyph(item.state as NonNullable<typeof item.state>, item.trend ?? 'steady') : 'dot';
+  const stateText = hasState ? zoneStateLabel(item.state as NonNullable<typeof item.state>) : null;
   const hero = item.heroMedia?.[0] ?? null;
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
       onPress={onPress ? () => onPress(item) : undefined}
       accessibilityRole="button"
-      accessibilityLabel={`${item.title}, ${zoneStateLabel(item.state)}`}
+      accessibilityLabel={stateText ? `${item.title}, ${stateText}` : item.title}
     >
       <View style={styles.hero}>
         {hero?.thumbnailUrl ? (
@@ -42,17 +47,19 @@ export function ChangingNowCard({ item, onPress, onWhyThis }: ChangingNowCardPro
         ) : (
           <View style={[styles.heroImg, styles.heroFallback]} />
         )}
-        {/* subtle top-right state chip */}
-        <View style={[styles.stateChip, { borderColor: accent }]}>
-          <Text style={[styles.stateChipText, { color: accent }]}>{zoneStateLabel(item.state)}</Text>
-          {glyph === 'arrow-up' ? (
-            <TrendingUp size={12} color={accent} strokeWidth={2.6} />
-          ) : glyph === 'arrow-down' ? (
-            <TrendingDown size={12} color={accent} strokeWidth={2.6} />
-          ) : (
-            <View style={[styles.holdDot, { backgroundColor: accent }]} />
-          )}
-        </View>
+        {/* subtle top-right state chip — only with a real live state */}
+        {stateText && accent ? (
+          <View style={[styles.stateChip, { borderColor: accent }]}>
+            <Text style={[styles.stateChipText, { color: accent }]}>{stateText}</Text>
+            {glyph === 'arrow-up' ? (
+              <TrendingUp size={12} color={accent} strokeWidth={2.6} />
+            ) : glyph === 'arrow-down' ? (
+              <TrendingDown size={12} color={accent} strokeWidth={2.6} />
+            ) : (
+              <View style={[styles.holdDot, { backgroundColor: accent }]} />
+            )}
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.body}>
