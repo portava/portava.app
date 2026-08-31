@@ -15,7 +15,7 @@
 import React, { useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { BadgeCheck } from 'lucide-react-native';
-import { color, radius, space } from '../../../theme/tokens.ts';
+import { avatar, color, radius, space } from '../../../theme/tokens.ts';
 import { CachedImage } from '../../../components/CachedImage.tsx';
 import type { MediaProjection } from '../types/media.ts';
 import type { PeopleLensGroup, PeopleLensProjection } from '../types/peopleLens.ts';
@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
     gap: space.sm,
     paddingHorizontal: space.lg,
   },
-  avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#22221E' },
+  avatar: { width: avatar.s34, height: avatar.s34, borderRadius: avatar.s34 / 2, backgroundColor: '#22221E' },
   avatarFallback: { backgroundColor: '#2C2C27' },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   name: { color: color.onInk, fontSize: 15, fontWeight: '800', letterSpacing: -0.3 },
