@@ -53,6 +53,24 @@ const MEM_B = "member-b-id";
 /** A deliberately distinctive raw position, so a leak is greppable. */
 const RAW = { lat: 16.054412, lng: 108.202233 };
 
+/**
+ * Position-fix timestamps must be RELATIVE now that lib/circleLocationsRead
+ * drops positions older than the map-wide 60-minute bound. The absolute
+ * literals these fixtures used to carry ("2026-08-31T11:00:00.000Z") were fresh
+ * on the day they were written and would have silently turned every
+ * "1 location" expectation below into "0 locations" the following morning —
+ * the fixtures would rot into vacuous passes of the empty case.
+ *
+ * `updated_at` and `last_known_at` are BOTH set: the reader serves the former
+ * and gates on the latter (only `last_known_at` tracks an actual position fix —
+ * routes/location.ts bumps `updated_at` on settings-only upserts too).
+ */
+const FRESH_AGO_MS = 60_000;
+function freshFix(): { updated_at: string; last_known_at: string } {
+  const iso = new Date(Date.now() - FRESH_AGO_MS).toISOString();
+  return { updated_at: iso, last_known_at: iso };
+}
+
 // ── fake Supabase client ──────────────────────────────────────────────────────
 
 interface TableSpec {
@@ -200,7 +218,7 @@ function circleState(over: FakeState = {}): FakeState {
     ],
     user_privacy_settings: [],
     user_location_state: [
-      { user_id: MEM_A, lat: RAW.lat, lng: RAW.lng, city: "Da Nang", country: "VN", updated_at: "2026-08-31T11:00:00.000Z" },
+      { user_id: MEM_A, lat: RAW.lat, lng: RAW.lng, city: "Da Nang", country: "VN", ...freshFix() },
     ],
     blocks: [],
     profile_privacy_settings: [],
@@ -340,8 +358,8 @@ describe("circle-locations extraction is behaviour-preserving", () => {
           { user_id: MEM_B, trusted_circle_share: false, location_mode: "nearby" },
         ],
         user_location_state: [
-          { user_id: MEM_A, lat: RAW.lat, lng: RAW.lng, city: "Da Nang", country: "VN", updated_at: "2026-08-31T11:00:00.000Z" },
-          { user_id: MEM_B, lat: 13.75, lng: 100.5, city: "Bangkok", country: "TH", updated_at: "2026-08-31T11:00:00.000Z" },
+          { user_id: MEM_A, lat: RAW.lat, lng: RAW.lng, city: "Da Nang", country: "VN", ...freshFix() },
+          { user_id: MEM_B, lat: 13.75, lng: 100.5, city: "Bangkok", country: "TH", ...freshFix() },
         ],
       }),
     );
@@ -355,7 +373,7 @@ describe("circle-locations extraction is behaviour-preserving", () => {
         circle_memberships: [{ user_id: USER, other_id: USER }],
         location_preferences: [],
         user_location_state: [
-          { user_id: USER, lat: RAW.lat, lng: RAW.lng, city: "Da Nang", country: "VN", updated_at: "2026-08-31T11:00:00.000Z" },
+          { user_id: USER, lat: RAW.lat, lng: RAW.lng, city: "Da Nang", country: "VN", ...freshFix() },
         ],
       }),
     );
@@ -380,11 +398,44 @@ describe("circle-locations extraction is behaviour-preserving", () => {
     assert.ok(withOptIn.ok && withOptIn.locations[0].name === "Ada");
   });
 
+  // Both surfaces gained the freshness and account-standing gates at once,
+  // because they share the reader. These two scenarios are here (rather than
+  // only in circleLocationsRead.test.ts) to prove the LEGACY ENDPOINT drops the
+  // rows too — the endpoint returning fewer rows than it used to IS the fix.
+  it("agrees that a stale position is dropped by BOTH the route and the reader", async () => {
+    const old = new Date(Date.now() - 90 * 60 * 1000).toISOString();
+    const d = await assertEquivalent(
+      "stale position",
+      circleState({
+        user_location_state: [
+          { user_id: MEM_A, lat: RAW.lat, lng: RAW.lng, city: "Da Nang", country: "VN", updated_at: old, last_known_at: old },
+        ],
+      }),
+    );
+    assert.ok(d.ok && d.locations.length === 0, "a 90-minute-old pin must not be served");
+  });
+
+  it("agrees that a suspended member is dropped by BOTH the route and the reader", async () => {
+    const d = await assertEquivalent(
+      "suspended member",
+      circleState({
+        profiles: [
+          { id: USER, account_status: "active", name: "Viewer", avatar_url: null },
+          { id: MEM_A, account_status: "suspended", name: "Ada", avatar_url: "https://cdn/a.jpg" },
+        ],
+      }),
+    );
+    assert.ok(d.ok && d.locations.length === 0, "a suspended member must leak no field at all");
+  });
+
   for (const [stage, table] of [
     ["circle", "circle_memberships"],
     ["prefs", "location_preferences"],
     ["privacy_settings", "user_privacy_settings"],
     ["location_state", "user_location_state"],
+    // profiles carries account_status now, so its failure is fail-closed
+    // (db_error) rather than the old silent degradation to nameless rows.
+    ["profiles", "profiles"],
   ] as const) {
     it(`agrees on a ${table} read failure (db_error, not an empty list)`, async () => {
       const d = await assertEquivalent(
