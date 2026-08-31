@@ -31,6 +31,7 @@ import {
 } from '../features/map/state/mapMachine.ts';
 import { activeIntent, type TemporaryIntent } from '../features/map/intent/intentModel.ts';
 import { NOW_OFFSET, type TimeOffset } from '../features/map/time/timeMachine.ts';
+import { DEFAULT_HOME_FILTER, type HomeFilterId } from '../features/map/home/homeFilters.ts';
 
 // ── State shape ───────────────────────────────────────────────────────────────
 
@@ -74,6 +75,12 @@ export interface MapStoreState {
   intent: TemporaryIntent | null;
   /** §15 Time Machine offset. NOW unless the user scrubbed. */
   timeOffset: TimeOffset;
+  /**
+   * §3's filter chip. Deliberately NOT persisted: a chip is "what am I looking
+   * for right now", while §16's layers are the durable preference. Persisting
+   * it would quietly turn a transient lens into a setting.
+   */
+  homeFilter: HomeFilterId;
 }
 
 const initialState: MapStoreState = {
@@ -88,6 +95,7 @@ const initialState: MapStoreState = {
   machine: createInitialMapMachineState(),
   intent: null,
   timeOffset: NOW_OFFSET,
+  homeFilter: DEFAULT_HOME_FILTER,
 };
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -106,7 +114,8 @@ type Action =
   | { type: 'MAP_EVENT'; payload: MapMachineEvent }
   | { type: 'SET_MAP_CAPABILITIES'; payload: MapCapabilities }
   | { type: 'SET_INTENT'; payload: TemporaryIntent | null }
-  | { type: 'SET_TIME_OFFSET'; payload: TimeOffset };
+  | { type: 'SET_TIME_OFFSET'; payload: TimeOffset }
+  | { type: 'SET_HOME_FILTER'; payload: HomeFilterId };
 
 function reducer(state: MapStoreState, action: Action): MapStoreState {
   switch (action.type) {
@@ -183,6 +192,10 @@ function reducer(state: MapStoreState, action: Action): MapStoreState {
       return state.timeOffset === action.payload
         ? state
         : { ...state, timeOffset: action.payload };
+    case 'SET_HOME_FILTER':
+      return state.homeFilter === action.payload
+        ? state
+        : { ...state, homeFilter: action.payload };
     default:
       return state;
   }
@@ -226,6 +239,9 @@ export interface MapStoreContextValue extends MapStoreState {
 
   // ── §15 time machine ───────────────────────────────────────────────────────
   setTimeOffset: (offset: TimeOffset) => void;
+
+  // ── §3 filter chips ────────────────────────────────────────────────────────
+  setHomeFilter: (filter: HomeFilterId) => void;
 }
 
 const MapStoreContext = createContext<MapStoreContextValue | null>(null);
@@ -321,6 +337,10 @@ export function MapStoreProvider({
     (offset: TimeOffset) => dispatch({ type: 'SET_TIME_OFFSET', payload: offset }),
     [],
   );
+  const setHomeFilter = useCallback(
+    (filter: HomeFilterId) => dispatch({ type: 'SET_HOME_FILTER', payload: filter }),
+    [],
+  );
 
   const value = useMemo(
     (): MapStoreContextValue => ({
@@ -342,6 +362,7 @@ export function MapStoreProvider({
       setIntent,
       clearIntent,
       setTimeOffset,
+      setHomeFilter,
     }),
     [
       state,
@@ -358,6 +379,7 @@ export function MapStoreProvider({
       setIntent,
       clearIntent,
       setTimeOffset,
+      setHomeFilter,
     ],
   );
 

@@ -54,6 +54,9 @@ import { WhyShownSheet } from '../../src/components/map/WhyShownSheet.tsx';
 import { MapContributionSheet } from '../../src/components/map/MapContributionSheet.tsx';
 import { MapBottomActions } from '../../src/components/map/MapBottomActions.tsx';
 import { LivePulseCard } from '../../src/components/map/LivePulseCard.tsx';
+import { MapHeader, mapHeaderStackOffset } from '../../src/components/map/MapHeader.tsx';
+import { MapFilterChips, MAP_FILTER_CHIPS_HEIGHT } from '../../src/components/map/MapFilterChips.tsx';
+import { homeVisibleObjects, homeChipCounts } from '../../src/features/map/home/homeFilters.ts';
 import { getLivePulseItems, type LivePulseItem } from '../../src/services/livePulse.ts';
 import { TimeMachineControl } from '../../src/components/map/TimeMachineControl.tsx';
 import {
@@ -393,6 +396,8 @@ function FullScreenMapScreenInner() {
     clearIntent,
     timeOffset,
     setTimeOffset,
+    homeFilter,
+    setHomeFilter,
   } = useMapStore();
 
   // Shared camera ref — forwarded into DiscoveryMapView so the Camera element
@@ -922,14 +927,23 @@ function FullScreenMapScreenInner() {
     // else. That IS the mode: "reduces visual noise and highlights approximately
     // three to five best next moves".
     const base = compassPickObjects ?? defaultObjects;
-    // 1. §16 — the user's layer preferences plus automatic relevance.
-    const permitted = filterByLayers(base, layerPrefs, layerContext);
+    // 1. §16 layers, then §3's chip. homeVisibleObjects composes them in that
+    //    order so a chip can only ever narrow what the layers already permit —
+    //    a chip must never switch a layer back on.
+    const permitted = homeVisibleObjects(base, homeFilter, layerPrefs, layerContext);
     // 2. §17 — no POI pins at world zoom; individual places only from district in.
     const legible = permitted.filter((o) => isKindVisibleAtBand(o.kind, zoomBand));
     // 3. §15 — a forecast becomes kind 'prediction' and loses any live
     //    freshness, so zoneStyle gives it the dashed treatment (§37).
     return toTemporalObjects(legible, timeOffset) as unknown as MapObject[];
-  }, [defaultObjects, compassPickObjects, layerPrefs, layerContext, zoomBand, timeOffset]);
+  }, [defaultObjects, compassPickObjects, homeFilter, layerPrefs, layerContext, zoomBand, timeOffset]);
+
+  // Badge counts must use the same layer-aware path as the objects themselves,
+  // or a chip can advertise results the map will not draw.
+  const chipCounts = useMemo(
+    () => homeChipCounts(compassPickObjects ?? defaultObjects, layerPrefs, layerContext),
+    [compassPickObjects, defaultObjects, layerPrefs, layerContext],
+  );
 
   // §5 levels 2-3: zones render beneath everything and skip collision.
   const zoneObjects = useMemo(() => objects.filter((o) => isZoneKind(o.kind)), [objects]);
@@ -1129,7 +1143,27 @@ function FullScreenMapScreenInner() {
         enabledEntityLayers={enabledLayers}
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
-        filterRowOffset={insets.top + 68}
+        filterRowOffset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT + 8}
+      />
+
+      {/* ── §3 header: menu · city/area · search · layers ─────────────────── */}
+      <MapHeader
+        topInset={insets.top}
+        city={title}
+        onMenuPress={() => router.back()}
+        onCityPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'SEARCH' })}
+        onSearchPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'SEARCH' })}
+        onLayersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'LAYERS' })}
+      />
+
+      {/* ── §3 filter chips: For You · Live · People · Events · Gems ────────
+          A transient lens over what the layers already permit — never a way to
+          switch a layer back on. */}
+      <MapFilterChips
+        topInset={mapHeaderStackOffset(insets.top)}
+        active={homeFilter}
+        counts={chipCounts}
+        onSelect={setHomeFilter}
       />
 
       {/* Floating top controls: Back, Recenter, Filters */}
@@ -1139,8 +1173,9 @@ function FullScreenMapScreenInner() {
         userLng={userLng != null && Number.isFinite(userLng) ? userLng : null}
         fallbackLat={fallbackLat}
         fallbackLng={fallbackLng}
-        title={title}
-        topInset={insets.top}
+        // The header owns the city name now; showing it twice is noise.
+        title={null}
+        topInset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT}
         onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'LAYERS' })}
       />
 
