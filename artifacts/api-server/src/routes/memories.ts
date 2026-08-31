@@ -66,14 +66,20 @@ async function canViewMemory(
   const vis: MemoryVisibility = memory.visibility ?? "only_me";
 
   if (vis === "only_me") return false;
-  if (vis === "public") return true;
 
-  if (!viewerId) return false;
+  if (!viewerId) return vis === "public";
+
+  // A hidden viewer is denied for EVERY visibility mode. The hide list used to be
+  // consulted only in the 'custom' branch, so a user the owner hid could still
+  // read the memory when it was public / friends_only / trip_crew / circle_only
+  // (audit MEM·M1). Owner already returned true above, so this never self-hides.
+  const hidden: string[] = memory.hidden_user_ids ?? [];
+  if (hidden.includes(viewerId)) return false;
+
+  if (vis === "public") return true;
 
   if (vis === "custom") {
     const allowed: string[] = memory.allowed_user_ids ?? [];
-    const hidden: string[] = memory.hidden_user_ids ?? [];
-    if (hidden.includes(viewerId)) return false;
     if (allowed.includes(viewerId)) return true;
     return false;
   }
@@ -126,6 +132,11 @@ async function isBlocked(sc: any, a: string, b: string): Promise<boolean> {
     sc.from("blocks").select("blocked_id").eq("blocker_id", a).eq("blocked_id", b).maybeSingle(),
     sc.from("blocks").select("blocker_id").eq("blocker_id", b).eq("blocked_id", a).maybeSingle(),
   ]);
+  // Fail CLOSED: if either block lookup errors we cannot prove the two users are
+  // unblocked, so treat them as blocked. supabase-js resolves (does not throw)
+  // on a DB error, so an unchecked error here would silently read as "not
+  // blocked" and leak the owner's memory content to a blocked viewer.
+  if (r1.error || r2.error) return true;
   return Boolean(r1.data) || Boolean(r2.data);
 }
 
@@ -366,11 +377,22 @@ router.get("/memories", async (req, res) => {
 
   const rows = (data ?? []) as any[];
 
-  // Filter blocks
+  // Filter blocks. Fail CLOSED: if either block lookup errors we cannot build a
+  // trustworthy block set, so we must not serve a feed that could include
+  // blocked owners' memories. (data ?? [] on an errored query yields an empty
+  // set → nothing filtered → blocked content leaks; guard the error explicitly.)
   const [blockedByMe, blockingMe] = await Promise.all([
     sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
     sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
   ]);
+  if (blockedByMe.error || blockingMe.error) {
+    req.log.error(
+      { err: blockedByMe.error ?? blockingMe.error },
+      "memories: block lookup failed — failing closed",
+    );
+    sendError(res, "db_error", "Could not resolve block state");
+    return;
+  }
   const blockedSet = new Set<string>([
     ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
     ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
@@ -563,6 +585,13 @@ router.delete("/memories/:id", async (req, res) => {
   if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
   if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
+  // Soft-delete by design: the memory becomes invisible everywhere (every read
+  // path filters `state != 'deleted'`) but the row, its items and their media
+  // are retained, e.g. so support can recover an accidental deletion. This is
+  // NOT a privacy hole on account deletion: executeAccountDeletion sweeps
+  // memories by owner_id with no state filter and removes the items' storage
+  // objects, so soft-deleted memories are hard-erased when the account goes
+  // (audit MEM·H2).
   await sc
     .from("memories")
     .update({ state: "deleted", updated_at: new Date().toISOString() })

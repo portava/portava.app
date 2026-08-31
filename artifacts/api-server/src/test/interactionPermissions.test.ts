@@ -37,6 +37,7 @@ interface FakeState {
   message_requests?: Array<Record<string, any>>;
   user_account_states?: Array<Record<string, any>>;
   user_privacy_settings?: Array<Record<string, any>>;
+  profile_privacy_settings?: Array<Record<string, any>>;
   user_mutes?: Array<Record<string, any>>;
   user_restrictions?: Array<Record<string, any>>;
   trust_restrictions?: Array<Record<string, any>>;
@@ -59,6 +60,7 @@ function makeClient(state: FakeState = {}) {
     message_requests:            state.message_requests ?? [],
     user_account_states:         state.user_account_states ?? [],
     user_privacy_settings:       state.user_privacy_settings ?? [],
+    profile_privacy_settings:    state.profile_privacy_settings ?? [],
     user_mutes:                  state.user_mutes ?? [],
     user_restrictions:           state.user_restrictions ?? [],
     trust_restrictions:          state.trust_restrictions ?? [],
@@ -911,5 +913,51 @@ describe("Admin moderation action audited", () => {
       body.safetyWarnings.includes("target_under_moderation"),
       "safetyWarnings must include target_under_moderation when moderation_actions row exists",
     );
+  });
+});
+
+// =============================================================================
+// PRIV-3: profile_privacy_settings interaction opt-outs are enforced
+// (allow_follow / allow_friend_requests / allow_tagging were advisory-only —
+//  written by PATCH /me/privacy but never read by the permission resolver.)
+// =============================================================================
+
+describe("PRIV-3: interaction opt-outs are enforced by resolveInteractionPermissions", () => {
+  async function ctxForTargetSettings(seed: Record<string, any>) {
+    const { default: router } = await import("../routes/interactionContext.js");
+    const client = makeClient(baseState({
+      profile_privacy_settings: [{ user_id: ALICE_ID, ...seed }],
+    }));
+    _setTestClient(client, true);
+    const srv = await startServer(makeApp(router));
+    try {
+      // Bob asks whether he can interact with Alice.
+      const res = await fetch(`${srv.url}/api/users/${ALICE_ID}/interaction-context`, {
+        headers: bearer("bob-tok"),
+      });
+      return (await res.json()) as any;
+    } finally {
+      await srv.close();
+    }
+  }
+
+  it("allow_follow=false blocks canFollow", async () => {
+    const body = await ctxForTargetSettings({ allow_follow: false });
+    assert.equal(body.canFollow, false, "target opted out of follows → canFollow must be false");
+  });
+
+  it("with no follow opt-out, canFollow stays available (default allowed)", async () => {
+    const body = await ctxForTargetSettings({ allow_friend_requests: true });
+    assert.equal(body.canFollow, true, "no follow opt-out → follow allowed");
+  });
+
+  it("allow_friend_requests=false blocks canAddFriend", async () => {
+    const body = await ctxForTargetSettings({ allow_friend_requests: false });
+    assert.equal(body.canAddFriend, false, "target opted out of friend requests → canAddFriend must be false");
+  });
+
+  it("allow_tagging=false blocks canTag (overrides who_can_tag=everyone)", async () => {
+    const body = await ctxForTargetSettings({ allow_tagging: false });
+    assert.equal(body.canTag, false, "target opted out of tagging → canTag must be false");
   });
 });

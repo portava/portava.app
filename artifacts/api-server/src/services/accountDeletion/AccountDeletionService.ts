@@ -190,6 +190,48 @@ export async function executeAccountDeletion(
     return found;
   });
 
+  // ── Memory UGC media (audit MEM·H2) ───────────────────────────────────────
+  // Trip "Memories" and their photos/videos were entirely untouched by the
+  // cascade: DELETE /memories/:id is a soft-delete (state='deleted', the rows
+  // and their memory_items survive), and no step here ever read them. The media
+  // lives in the post-media bucket at memories/{userId}/… and stayed PUBLICLY
+  // served under the "Deleted User" tombstone. Collect the owner's memory ids
+  // now — reused below to delete the rows — and the storage paths of their
+  // items, BEFORE section 3 deletes them. No state filter: soft-deleted
+  // memories still hold media, so they must be swept too.
+  const memoryIds: string[] = [];
+  await step(steps, "collect_memory_media_paths", async () => {
+    const { data: mems, error } = await sc
+      .from("memories")
+      .select("id")
+      .eq("owner_id", userId);
+    if (error) throw new Error(error.message);
+    for (const m of (mems ?? []) as any[]) {
+      if (m?.id) memoryIds.push(m.id as string);
+    }
+    if (memoryIds.length === 0) return 0;
+
+    const { data: items, error: itemErr } = await sc
+      .from("memory_items")
+      .select("media_url")
+      .in("memory_id", memoryIds);
+    if (itemErr) throw new Error(itemErr.message);
+    let found = 0;
+    for (const it of (items ?? []) as any[]) {
+      const path = storagePathFromPublicUrl(it?.media_url, POST_MEDIA_BUCKET);
+      // media_url is client-supplied at insert time (addItemSchema only checks
+      // it is a URL), so an owner could point an item at another user's object.
+      // Removing only paths under this user's own memories/{userId}/ prefix means
+      // account deletion can never be weaponised to delete someone else's media —
+      // the exact guard DELETE /memories/:id/items already enforces.
+      if (path && path.startsWith(`memories/${userId}/`)) {
+        storageTargets.push({ bucket: POST_MEDIA_BUCKET, path });
+        found += 1;
+      }
+    }
+    return found;
+  });
+
   // ── 2. Delete the storage objects ─────────────────────────────────────────
   if (storageTargets.length > 0) {
     const byBucket = new Map<string, string[]>();
@@ -314,6 +356,43 @@ export async function executeAccountDeletion(
   });
   if (!maOk) warnings.push("media_assets rows may remain");
 
+  // ── Memory UGC rows (audit MEM·H2) ────────────────────────────────────────
+  // The user's trip Memories and everything hanging off them. memory_items,
+  // memory_tags, memory_likes and memory_saves all FK memories(id) ON DELETE
+  // CASCADE, but — like every other table here — they are cleared explicitly so
+  // the erasure is provable in the cascade test and independent of any one FK
+  // staying ON DELETE CASCADE. Owned children first (keyed by the memory ids
+  // collected above), then SEPARATELY the footprint this user left on OTHER
+  // people's memories (likes/saves they made, tags OF them), which no
+  // memory-scoped delete would reach, and finally the memories rows themselves.
+  // memories is swept by owner_id with NO state filter, so soft-deleted
+  // (state='deleted') memories left behind by DELETE /memories/:id go too.
+  if (memoryIds.length > 0) {
+    const ownedMemoryDeletes: Array<{ name: string; run: () => PromiseLike<{ error?: any }> }> = [
+      { name: "delete_memory_items",       run: () => sc.from("memory_items").delete().in("memory_id", memoryIds) },
+      { name: "delete_memory_tags_owned",  run: () => sc.from("memory_tags").delete().in("memory_id", memoryIds) },
+      { name: "delete_memory_likes_owned", run: () => sc.from("memory_likes").delete().in("memory_id", memoryIds) },
+      { name: "delete_memory_saves_owned", run: () => sc.from("memory_saves").delete().in("memory_id", memoryIds) },
+    ];
+    for (const d of ownedMemoryDeletes) {
+      const ok = await step(steps, d.name, async () => { must(await d.run(), d.name); });
+      if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
+    }
+  }
+  const memoryFootprintDeletes: Array<{ name: string; run: () => PromiseLike<{ error?: any }> }> = [
+    { name: "delete_memory_likes_by_user", run: () => sc.from("memory_likes").delete().eq("user_id", userId) },
+    { name: "delete_memory_saves_by_user", run: () => sc.from("memory_saves").delete().eq("user_id", userId) },
+    { name: "delete_memory_tags_of_user",  run: () => sc.from("memory_tags").delete().eq("tagged_user_id", userId) },
+  ];
+  for (const d of memoryFootprintDeletes) {
+    const ok = await step(steps, d.name, async () => { must(await d.run(), d.name); });
+    if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
+  }
+  const memOwnOk = await step(steps, "delete_memories", async () => {
+    must(await sc.from("memories").delete().eq("owner_id", userId), "delete memories");
+  });
+  if (!memOwnOk) warnings.push("memories rows may remain");
+
   // ── 3b. Content the posts/messages cascades do not reach ──────────────────
   // Because the profile row survives as a tombstone, none of the FK cascades
   // hanging off profiles(id) ever fire — every one of these tables has to be
@@ -344,6 +423,9 @@ export async function executeAccountDeletion(
     // Hidden gems: saves first (FK), then authored submissions.
     { name: "delete_hidden_gem_saves", run: () => sc.from("hidden_gem_saves").delete().eq("user_id", userId) },
     { name: "delete_hidden_gems",      run: () => sc.from("hidden_gems").delete().eq("submitted_by", userId) },
+    // Gem-visit check-ins store raw lat/lng; the FK to the tombstoned profile
+    // never cascades, so clear them by hand (audit TRAIL·F3).
+    { name: "delete_hidden_gem_visits", run: () => sc.from("hidden_gem_visits").delete().eq("user_id", userId) },
     // Saved items across the various save surfaces.
     { name: "delete_saved_places",    run: () => sc.from("saved_places").delete().eq("user_id", userId) },
     { name: "delete_user_saves",      run: () => sc.from("user_saves").delete().eq("saver_id", userId) },
@@ -352,6 +434,17 @@ export async function executeAccountDeletion(
     // Follow graph, both directions.
     { name: "delete_follows_outgoing", run: () => sc.from("user_follows").delete().eq("follower_id", userId) },
     { name: "delete_follows_incoming", run: () => sc.from("user_follows").delete().eq("following_id", userId) },
+    // Compass personal content + a projection source. compass_memories ("Teach My
+    // Compass" statements) and compass_conversations (full chat history) are the
+    // most literally personal text in the product and survived deletion (audit
+    // MEM·H1). compass_user_preferences is one of the two sources the memory
+    // projector re-enumerates a deleted user from (audit MEM·C1) — clearing it
+    // removes that branch (the graph-edge branch is closed separately by the
+    // project_all_memory deleted-account filter). erase_memory_for_user below
+    // covers only the 2183 memory_* contract tables, not these.
+    { name: "delete_compass_memories",      run: () => sc.from("compass_memories").delete().eq("user_id", userId) },
+    { name: "delete_compass_conversations", run: () => sc.from("compass_conversations").delete().eq("user_id", userId) },
+    { name: "delete_compass_user_preferences", run: () => sc.from("compass_user_preferences").delete().eq("user_id", userId) },
   ];
   for (const d of contentDeletes) {
     const ok = await step(steps, d.name, async () => {

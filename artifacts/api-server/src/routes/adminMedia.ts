@@ -32,6 +32,7 @@ import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwner } from "../lib/contentOwner.js";
+import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
 
 const router = Router();
 
@@ -633,6 +634,15 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
   const { action, target, reason } = parsed.data;
   const now = new Date().toISOString();
 
+  // Moderating content off the audit trail is how it goes unaccountable. Every
+  // status-flip branch below writes the SAME owner-scoped moderation_actions row
+  // the routes/admin.ts report paths write, via the shared helper, fail-closed.
+  // A content status flip maps to a content-level action_type.
+  const contentActionType =
+    action === "approve" ? "content_approved" :
+    action === "reject"  ? "content_removed" :
+    "content_flagged";
+
   // Each branch selects the updated row (count) to detect zero-match (false positive).
   if (target === "post") {
     const newStatus =
@@ -650,6 +660,17 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     if (!updated || (updated as any[]).length === 0) {
       res.status(404).json({ error: "not_found", message: "Post not found" });
       return;
+    }
+
+    // Audit against the post OWNER (fail-closed). Skip the user-scoped row only
+    // when no accountable owner resolves — never fabricate one.
+    const ownerId = await resolveContentOwner(sc, "post", id);
+    if (ownerId) {
+      const audit = await logModerationAction(
+        sc, ownerId, userId, contentActionType, reason ?? null,
+        { target: "post", target_type: "post", target_id: id },
+      );
+      if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
     }
 
   } else if (target === "post_media" && action === "delete") {
@@ -746,6 +767,16 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       return;
     }
 
+    // Audit against the media OWNER (fail-closed), same as the delete branch.
+    const ownerId = await resolveContentOwner(sc, "post_media", id);
+    if (ownerId) {
+      const audit = await logModerationAction(
+        sc, ownerId, userId, contentActionType, reason ?? null,
+        { target: "post_media", target_type: "post_media", target_id: id },
+      );
+      if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
+    }
+
   } else if (target === "hidden_gem") {
     // hidden_gems status enum: pending | active | hidden | merged
     const newStatus =
@@ -764,12 +795,58 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       return;
     }
 
+    // Audit against the Gem SUBMITTER (fail-closed).
+    const ownerId = await resolveContentOwner(sc, "hidden_gem", id);
+    if (ownerId) {
+      const audit = await logModerationAction(
+        sc, ownerId, userId, contentActionType, reason ?? null,
+        { target: "hidden_gem", target_type: "hidden_gem", target_id: id },
+      );
+      if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
+    }
+
   } else if (target === "report") {
     // reports status: open | reviewed | resolved | dismissed
     const newStatus =
       action === "approve" ? "resolved" :
       action === "reject"  ? "dismissed" :
       "reviewed";
+
+    // Fetch first: the audit row names the reported content's OWNER (which needs
+    // target_type/target_id), and a status guard needs the current status.
+    const { data: reportRow, error: fetchErr } = await sc
+      .from("reports")
+      .select("id, target_type, target_id, status")
+      .eq("id", id)
+      .maybeSingle();
+
+    if (fetchErr) { sendError(res, "db_error", fetchErr.message); return; }
+    if (!reportRow) { res.status(404).json({ error: "not_found", message: "Report not found" }); return; }
+
+    // Status guard: resolved/dismissed are terminal. Without this a resolved
+    // report could be flipped back to 'reviewed' (or re-resolved), rewriting a
+    // closed decision with no trace.
+    const currentStatus = (reportRow as any).status as string;
+    if (currentStatus === "resolved" || currentStatus === "dismissed") {
+      sendError(res, "conflict", `Report is already ${currentStatus}; it cannot be re-moderated`);
+      return;
+    }
+
+    // Audit against the reported content's OWNER (fail-closed), exactly as the
+    // routes/admin.ts report resolve/dismiss paths do.
+    const reportActionType =
+      action === "approve" ? "report_resolved" :
+      action === "reject"  ? "report_dismissed" :
+      "report_reviewed";
+    const auditR = await auditReportAction(sc, req, {
+      reportId:   id,
+      targetType: (reportRow as any).target_type as string,
+      targetId:   (reportRow as any).target_id as string,
+      adminUserId: userId,
+      actionType: reportActionType,
+      reason:     reason ?? null,
+    });
+    if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
     const { data: updated, error } = await sc
       .from("reports")

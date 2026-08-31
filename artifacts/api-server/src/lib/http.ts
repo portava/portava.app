@@ -66,6 +66,7 @@ export type ApiErrorCode =
   | "duplicate_report"
   | "appeal_already_active"
   | "invalid_state_transition"
+  | "reversal_failed"
   | "collection_create_failed"
   | "duplicate_event"
   | "conflict"
@@ -94,6 +95,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   duplicate_report: 409,
   appeal_already_active: 409,
   invalid_state_transition: 409,
+  reversal_failed: 422,
   collection_create_failed: 503,
   duplicate_event: 409,
   conflict: 409,

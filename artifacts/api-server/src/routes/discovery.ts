@@ -2670,16 +2670,34 @@ router.post("/discovery/community/:placeId/save", async (req, res) => {
       .maybeSingle();
     if (fetchErr) { res.json({ ok: false, reason: "unavailable" }); return; }
     if (!place) { sendError(res, "not_found", "Place not found"); return; }
-    const { error: updateErr } = await sc
-      .from("discovery_places")
-      .update({ saved_count: ((place as any).saved_count ?? 0) + 1 })
-      .eq("id", placeId);
-    if (updateErr) { res.json({ ok: false, reason: "unavailable" }); return; }
+    // Only a first-time save by this user may bump saved_count. Repeated POSTs
+    // upsert the same idempotent (user_id, place_id) row, so incrementing
+    // unconditionally let one account inflate saved_count without limit and
+    // promote any place to the top of the popular/discovery feeds
+    // (saved_count drives sortBy=popular here and in pulse). Check for an
+    // existing save first and only increment when none exists.
+    const { data: existingSave, error: existErr } = await sc
+      .from("discovery_place_saves")
+      .select("place_id")
+      .eq("user_id", user.id)
+      .eq("place_id", placeId)
+      .maybeSingle();
+    if (existErr) { res.json({ ok: false, reason: "unavailable" }); return; }
     // Record the per-user save so saved-ids endpoint can return it later.
     const { error: upsertErr } = await sc
       .from("discovery_place_saves")
       .upsert({ user_id: user.id, place_id: placeId }, { onConflict: "user_id,place_id" });
     if (upsertErr) { res.json({ ok: false, reason: "unavailable" }); return; }
+    if (!existingSave) {
+      // First save by this user — bump the aggregate. (Two truly-concurrent
+      // first saves can still race to +1 each, a bounded, benign over-count
+      // versus the previous unbounded self-inflation.)
+      const { error: updateErr } = await sc
+        .from("discovery_places")
+        .update({ saved_count: ((place as any).saved_count ?? 0) + 1 })
+        .eq("id", placeId);
+      if (updateErr) { res.json({ ok: false, reason: "unavailable" }); return; }
+    }
     res.json({ ok: true, placeId });
   } catch {
     res.json({ ok: false, reason: "unavailable" });
