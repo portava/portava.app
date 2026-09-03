@@ -46,6 +46,7 @@ import {
 import {
   PRIVACY_CLASSES,
   RENDERING_PRIORITY,
+  SOURCE_CLASSES,
   point,
   precisionRank,
   type MapObject,
@@ -512,6 +513,7 @@ describe("coarsening only ever reduces precision", () => {
     const before = obj({
       activity: "busy",
       trend: "getting_busier",
+      sourceClass: "verified_firsthand",
       count: 12,
       freshness: "live",
       observedAt: "2026-08-31T00:00:00.000Z",
@@ -524,6 +526,7 @@ describe("coarsening only ever reduces precision", () => {
     for (const k of [
       "activity",
       "trend",
+      "sourceClass",
       "count",
       "freshness",
       "observedAt",
@@ -534,6 +537,68 @@ describe("coarsening only ever reduces precision", () => {
       assert.equal((after as Record<string, unknown>)[k], undefined, `${k} must be dropped`);
     }
     assert.equal(after.distanceKm, null);
+  });
+
+  /**
+   * THE LOAD-BEARING ONE.
+   *
+   * `sourceClass` is an epistemic label, so it is tempting to file it with the
+   * harmless metadata. It is not harmless. `verified_firsthand` means "a
+   * presence-verified person observed this place", and that survives the removal
+   * of the coordinate, every timestamp, the freshness, the provenance and every
+   * back-reference. A coarsened medical-facility pin that still carried it would
+   * publish exactly the §24 fact — someone is here right now — with all the
+   * supporting detail stripped and the disclosure intact.
+   *
+   * The assertion is on the SERIALIZED BYTES rather than on a property read,
+   * because a property read of `undefined` cannot distinguish "deleted" from
+   * "present and undefined", and only the former is actually absent from the
+   * wire in every serializer. The sentinel is a string that cannot occur
+   * anywhere else in this object, so a hit is unambiguous.
+   *
+   * MUTATION PROOF: deleting the `delete out.sourceClass` line in
+   * lib/protectedLocations must fail this test.
+   */
+  it("§24: a coarsened object carries NO sourceClass — proven on the serialized bytes", () => {
+    const SENTINEL = "SENTINEL_SOURCE_CLASS_7f3a";
+    const before = obj({
+      sourceClass: SENTINEL as unknown as MapObject["sourceClass"],
+      activity: "busy",
+      freshness: "live",
+      observedAt: "2026-08-31T00:00:00.000Z",
+    });
+    const after = coarsenForZone(
+      before,
+      "approximate",
+      circleZone({ category: "medical_facility" } as Partial<ProtectedZone>),
+    );
+
+    const wire = JSON.stringify(after);
+    assert.ok(
+      !wire.includes(SENTINEL),
+      `the source class survived coarsening and reached the wire: ${wire}`,
+    );
+    assert.ok(
+      !wire.includes("sourceClass"),
+      `the attribution key survived coarsening: ${wire}`,
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(after, "sourceClass"),
+      false,
+      "the key must be deleted, not merely set to undefined",
+    );
+
+    // The input is a caller's object and must come back untouched, or the gate
+    // would be corrupting the very list it is filtering.
+    assert.equal(before.sourceClass as unknown as string, SENTINEL);
+  });
+
+  it("§24: a real class is stripped for every source class the wire declares", () => {
+    for (const cls of SOURCE_CLASSES) {
+      const after = coarsenForZone(obj({ sourceClass: cls }), "approximate", circleZone());
+      assert.equal(after.sourceClass, undefined, `${cls} survived coarsening`);
+      assert.ok(!JSON.stringify(after).includes(cls), `${cls} appeared in the serialized object`);
+    }
   });
 
   it("never mutates the input object", () => {

@@ -36,6 +36,7 @@ import assert from "node:assert/strict";
 
 import {
   applyLiveClaims,
+  attributedSourceClass,
   crowdValueToActivity,
   crowdValueToTrend,
   type LiveClaimLike,
@@ -43,9 +44,11 @@ import {
 import {
   ACTIVITY_LEVELS,
   KIND_DEFAULT_PRIORITY,
+  SOURCE_CLASSES as MAP_SOURCE_CLASSES,
   TREND_STATES,
   type MapObject,
 } from "../lib/mapObjects.js";
+import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import {
   CLAIM_TYPES,
   CROWD_LEVELS,
@@ -430,5 +433,253 @@ describe("§37 'Do not let paid businesses buy factual confidence'", () => {
     };
     const merged = applyLiveClaims(PLACE, [rogue], NOW);
     assert.equal(merged.provenance!.lines[0].text, "Source not attributed · crowd.level");
+  });
+});
+
+// ── §8 badge: the attribution is a VALUE, not a sentence ──────────────────────
+
+/**
+ * `describeClaim` closed the misattribution — a sponsored claim renders as
+ * "Sponsored · crowd.level" instead of "A few recent traveler reports". But it
+ * closed it in PROSE, and a §8 badge cannot switch on a sentence. These tests
+ * pin the machine-readable half: `MapObject.sourceClass`.
+ *
+ * The interesting case is not the single sponsored claim — it is the MIXED one.
+ * §7 keeps Activity and Trend as separate axes fed by two different claim types,
+ * so one object routinely carries two speakers, and a naive `claims[0]` would
+ * re-open §37 by a new route the moment a traveler claim sorted first.
+ */
+describe("§8/§37 sourceClass — a paid claim is distinguishable without parsing English", () => {
+  test("the map's wire vocabulary IS the intel vocabulary, not a retyped copy", () => {
+    assert.deepEqual([...MAP_SOURCE_CLASSES], [...SOURCE_CLASSES]);
+  });
+
+  test("every class reaches the object as a value", () => {
+    for (const cls of SOURCE_CLASSES) {
+      const merged = applyLiveClaims(PLACE, [levelClaim("busy", { sourceClass: cls })], NOW);
+      assert.equal(merged.sourceClass, cls, `${cls} did not reach the object`);
+    }
+  });
+
+  test("a sponsored claim's object carries the sponsored class", () => {
+    const merged = applyLiveClaims(
+      PLACE,
+      [levelClaim("busy", { sourceClass: "sponsored", sourceCount: 400 })],
+      NOW,
+    );
+    assert.equal(merged.sourceClass, "sponsored");
+    // The badge and the §9 line must name the same speaker.
+    assert.equal(merged.provenance!.lines[0].text, "Sponsored · crowd.level");
+    assert.equal(SOURCE_CLASS_LABELS[merged.sourceClass!], "Sponsored");
+  });
+
+  test("a traveler claim carries its own class and never a non-independent one", () => {
+    const merged = applyLiveClaims(
+      PLACE,
+      [levelClaim("busy", { sourceClass: "firsthand_unverified" })],
+      NOW,
+    );
+    assert.equal(merged.sourceClass, "firsthand_unverified");
+    assert.ok(mayCountAsConsensus(merged.sourceClass!));
+    assert.ok(
+      !NON_INDEPENDENT_SOURCE_CLASSES.includes(merged.sourceClass!),
+      "a traveler report must not be labelled as one party talking about itself",
+    );
+  });
+
+  test("a forecast class reaches the object, so §37 can keep it from looking observed", () => {
+    // "Do not make predictions look like observations." The client cannot make
+    // that distinction from freshness alone — a prediction stamped 2 minutes ago
+    // is 'live' by age. The class is the only thing that says it is a forecast.
+    for (const cls of ["portava_prediction", "historical_pattern"] as const) {
+      const merged = applyLiveClaims(PLACE, [levelClaim("busy", { sourceClass: cls })], NOW);
+      assert.equal(merged.sourceClass, cls);
+    }
+  });
+
+  test("no live claim ⇒ no sourceClass key at all, not a default", () => {
+    const merged = applyLiveClaims(PLACE, [], NOW);
+    assert.equal(merged, PLACE, "an empty claim list must return the object untouched");
+    assert.ok(
+      !Object.prototype.hasOwnProperty.call(merged, "sourceClass"),
+      "an object with no claim must carry no attribution key",
+    );
+    assert.ok(!JSON.stringify(merged).includes("sourceClass"));
+  });
+
+  test("MIXED: a paid claim cannot hide behind a traveler primary", () => {
+    // The realistic shape: a traveler reports the level, the business publishes
+    // the trajectory. Both axes populate, so the object really is fed by both.
+    const claims = [
+      levelClaim("busy", { sourceClass: "firsthand_unverified", id: "snap-t" }),
+      trajectoryClaim("building", { sourceClass: "sponsored", sourceCount: 400 }),
+    ];
+    const merged = applyLiveClaims(PLACE, claims, NOW);
+    assert.equal(merged.activity, "busy", "fixture is wrong: the level axis must be populated");
+    assert.equal(merged.trend, "getting_busier", "fixture is wrong: the trend axis must be populated");
+    assert.equal(
+      merged.sourceClass,
+      "sponsored",
+      "a non-independent contributor must win the fold — understating attribution is the §37 failure",
+    );
+    // §9 stays lossless: every claim keeps its OWN line.
+    assert.equal(merged.provenance!.lines.length, 2);
+    assert.match(merged.provenance!.lines[0].text, /traveler reports/);
+    assert.equal(merged.provenance!.lines[1].text, "Sponsored · crowd.trajectory");
+  });
+
+  test("MIXED: the same answer whichever claim sorts first", () => {
+    const sponsoredFirst = applyLiveClaims(
+      PLACE,
+      [
+        levelClaim("busy", { sourceClass: "sponsored", sourceCount: 400 }),
+        trajectoryClaim("building", { sourceClass: "firsthand_unverified" }),
+      ],
+      NOW,
+    );
+    assert.equal(sponsoredFirst.sourceClass, "sponsored");
+  });
+
+  test("every non-independent class wins the fold, from either position", () => {
+    for (const cls of NON_INDEPENDENT_SOURCE_CLASSES) {
+      const traveler = levelClaim("busy", { sourceClass: "firsthand_unverified", id: "snap-t" });
+      const paid = trajectoryClaim("building", { sourceClass: cls, sourceCount: 400 });
+      assert.equal(attributedSourceClass([traveler, paid]), cls, `${cls} lost from second place`);
+      assert.equal(attributedSourceClass([paid, traveler]), cls, `${cls} lost from first place`);
+    }
+  });
+
+  test("with no non-independent claim, the badge describes the SAME claim as the headline state", () => {
+    // observedAt / expiresAt / freshness / confidence all come from claims[0];
+    // so must the attribution, or the badge describes a different claim than the
+    // state next to it.
+    const primary = levelClaim("busy", { sourceClass: "verified_firsthand", id: "snap-a" });
+    const merged = applyLiveClaims(
+      PLACE,
+      [primary, trajectoryClaim("building", { sourceClass: "hearsay" })],
+      NOW,
+    );
+    assert.equal(merged.sourceClass, "verified_firsthand");
+    assert.equal(merged.observedAt, primary.observedAt);
+    assert.equal(merged.confidence, primary.band);
+  });
+
+  test("an unrecognised class is never published as a class", () => {
+    // LiveClaimLike is structural, so a foreign value can arrive. Emitting it
+    // would put a string on the wire that neither mirror declares, and a client
+    // doing `LABELS[cls] ?? friendlyDefault` would fail OPEN.
+    const rogue: LiveClaimLike = {
+      ...levelClaim("busy"),
+      sourceClass: "brand_new_class" as SourceClass,
+      sourceCountBucket: null,
+    };
+    const merged = applyLiveClaims(PLACE, [rogue], NOW);
+    assert.equal(merged.sourceClass, undefined);
+    assert.ok(!JSON.stringify(merged).includes("brand_new_class"));
+    // Same ruling the prose already makes: never toward traveler.
+    assert.equal(merged.provenance!.lines[0].text, "Source not attributed · crowd.level");
+  });
+
+  test("an unrecognised PRIMARY is not papered over by a recognised secondary", () => {
+    const rogue: LiveClaimLike = {
+      ...levelClaim("busy"),
+      sourceClass: "brand_new_class" as SourceClass,
+      sourceCountBucket: null,
+    };
+    const merged = applyLiveClaims(
+      PLACE,
+      [rogue, trajectoryClaim("building", { sourceClass: "firsthand_unverified" })],
+      NOW,
+    );
+    assert.equal(
+      merged.sourceClass,
+      undefined,
+      "borrowing the second claim's class would attribute the headline state to a claim that did not make it",
+    );
+  });
+
+  test("a rogue class alongside a paid one still reports the paid one", () => {
+    const rogue: LiveClaimLike = {
+      ...levelClaim("busy"),
+      sourceClass: "brand_new_class" as SourceClass,
+      sourceCountBucket: null,
+    };
+    const paid = trajectoryClaim("building", { sourceClass: "sponsored", sourceCount: 400 });
+    assert.equal(attributedSourceClass([rogue, paid]), "sponsored");
+  });
+
+  test("the fold is empty-safe", () => {
+    assert.equal(attributedSourceClass([]), undefined);
+  });
+
+  test("every published class has a canonical label — no badge can be unlabelable", () => {
+    for (const cls of SOURCE_CLASSES) {
+      const merged = applyLiveClaims(PLACE, [levelClaim("busy", { sourceClass: cls })], NOW);
+      assert.equal(typeof SOURCE_CLASS_LABELS[merged.sourceClass!], "string");
+      assert.notEqual(SOURCE_CLASS_LABELS[merged.sourceClass!], "");
+    }
+  });
+});
+
+// ── §24: the attribution must not survive coarsening ──────────────────────────
+
+/**
+ * The composition test. `applyLiveClaims` stamps `sourceClass` and
+ * `applyProtection` runs AFTER it in the route (see routes/mapProjection: "It
+ * runs AFTER enrichment … and BEFORE aggregation"), so an enriched object that
+ * happens to stand inside a protected zone reaches the gate WITH an attribution
+ * already attached. If coarsening does not remove it, a coarse pin on a medical
+ * facility still publishes "a presence-verified person observed this place" —
+ * the §24 disclosure, with the coordinate removed and the fact intact.
+ */
+describe("§24 — an enriched object inside a protected zone publishes no attribution", () => {
+  const ZONE: ProtectedZone = {
+    id: "zone-med-1",
+    category: "medical_facility",
+    shape: "circle",
+    center: { lat: 16.06, lng: 108.21 },
+    radiusMeters: 500,
+    policyRef: "policy-test",
+  } as ProtectedZone;
+
+  test("the attribution a live claim attached is gone after protection", () => {
+    const enriched = applyLiveClaims(
+      PLACE,
+      [levelClaim("busy", { sourceClass: "verified_firsthand" })],
+      NOW,
+    );
+    assert.equal(enriched.sourceClass, "verified_firsthand", "precondition: it was attached");
+
+    const { objects, report } = applyProtection([enriched], [ZONE]);
+    assert.equal(report.coarsened, 1, "precondition: the object took the coarsen path");
+    assert.equal(objects[0].sourceClass, undefined);
+    assert.ok(
+      !JSON.stringify(objects[0]).includes("verified_firsthand"),
+      "the class must not survive anywhere in the serialized object",
+    );
+    assert.ok(!JSON.stringify(objects[0]).includes("sourceClass"));
+  });
+
+  test("a sponsored attribution is stripped too — §24 does not care who spoke", () => {
+    const enriched = applyLiveClaims(
+      PLACE,
+      [levelClaim("busy", { sourceClass: "sponsored", sourceCount: 400 })],
+      NOW,
+    );
+    const { objects } = applyProtection([enriched], [ZONE]);
+    assert.equal(objects[0].sourceClass, undefined);
+  });
+
+  test("outside the zone the same object keeps its attribution", () => {
+    // Proof the strip above is the ZONE biting, not the field failing to attach.
+    const enriched = applyLiveClaims(
+      PLACE,
+      [levelClaim("busy", { sourceClass: "verified_firsthand" })],
+      NOW,
+    );
+    const far = { ...ZONE, center: { lat: -40, lng: -80 } } as ProtectedZone;
+    const { objects, report } = applyProtection([enriched], [far]);
+    assert.equal(report.allowed, 1);
+    assert.equal(objects[0].sourceClass, "verified_firsthand");
   });
 });

@@ -86,7 +86,9 @@ import { haversineKm } from "./mapSearch.js";
 import { KM_PER_DEGREE_LAT, type BBox } from "./mapAggregation.js";
 import {
   LEGACY_CLAIM_TYPES,
+  SOURCE_CLASSES,
   SOURCE_CLASS_LABELS,
+  mayCountAsConsensus,
   type CrowdLevel,
   type SourceClass,
   type Trajectory,
@@ -578,6 +580,7 @@ export function applyLiveClaims(
     confidence: primary.band,
     activity,
     trend,
+    sourceClass: attributedSourceClass(claims),
     sourceRefs: claims.map((c) => c.id),
     provenance: {
       lines,
@@ -591,6 +594,56 @@ export function applyLiveClaims(
         ? Math.max(obj.renderingPriority, RENDERING_PRIORITY.high_confidence_live_zone)
         : obj.renderingPriority,
   };
+}
+
+/** The classes the wire vocabulary declares. Membership is checked, not assumed. */
+const RECOGNISED_SOURCE_CLASSES: ReadonlySet<string> = new Set(SOURCE_CLASSES);
+
+/**
+ * The ONE class the object is attributed to, folded from the claims that fed it.
+ *
+ * §9's panel is per-claim and therefore lossless — each line is attributed
+ * individually. `MapObject.sourceClass` is a single value, so folding several
+ * claims into it is lossy, and the fold has to fail in a chosen direction.
+ *
+ * THE MIXED CASE IS THE WHOLE PROBLEM. §7 keeps Activity and Trend as separate
+ * axes and they come from two different claim types, so one object routinely
+ * carries claims from two different speakers — a sponsored `crowd.level` and a
+ * traveler `crowd.trajectory`. Attributing that object to `claims[0]` alone
+ * would let a paid claim ride under a traveler badge whenever the traveler
+ * claim happened to sort first: §37's failure, reintroduced by a new route
+ * within one release of being closed.
+ *
+ * So NON-INDEPENDENT WINS, wherever it sits in the list. The error is
+ * deliberately one-directional: understating attribution ("that was a traveler
+ * report") is the §37 failure, while overstating it ("some of this came from
+ * the business") only ever claims LESS credibility than the evidence supports,
+ * and §9's itemised panel still shows the reader every individual line. The
+ * partition is intelContracts' own `mayCountAsConsensus` — the same predicate
+ * lib/liveClaimRead uses to withhold the cohort bucket — so this invents no
+ * credibility ladder of its own. With no non-independent claim present the
+ * answer is `claims[0]`, the same claim that supplies `observedAt`,
+ * `expiresAt`, `freshness` and `confidence`; the badge and the headline state
+ * then describe one claim.
+ *
+ * UNRECOGNISED ⇒ NO FIELD. `LiveClaimLike` is structural, so a future or
+ * foreign class can arrive at runtime. Publishing it verbatim would put a value
+ * on the wire that is outside the contract both mirrors declare, and a client
+ * doing `LABELS[cls] ?? somethingFriendly` would then fail open. Omitting the
+ * field leaves the reader with `describeClaim`'s "Source not attributed", which
+ * is the same ruling that function already makes: never toward traveler.
+ */
+export function attributedSourceClass(
+  claims: readonly LiveClaimLike[],
+): SourceClass | undefined {
+  if (!claims || claims.length === 0) return undefined;
+  for (const c of claims) {
+    if (RECOGNISED_SOURCE_CLASSES.has(c.sourceClass) && !mayCountAsConsensus(c.sourceClass)) {
+      return c.sourceClass;
+    }
+  }
+  const primary = claims[0].sourceClass;
+  return RECOGNISED_SOURCE_CLASSES.has(primary) ? primary : undefined;
 }
 
 /**

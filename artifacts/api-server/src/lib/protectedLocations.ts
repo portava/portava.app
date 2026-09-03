@@ -594,10 +594,24 @@ export function classifyAgainstProtected(
  *     the secret is on the SUPPRESS path and never reaches here. Polygons and
  *     linestrings are left alone — they are already area-shaped, and rewriting
  *     them to a point would change the object's render shape.
- *  2. LIVE SIGNALS. `activity`, `trend`, `count`, `freshness` and the
- *     observation timestamps are dropped. "How busy is the clinic right now" is
- *     the disclosure, not the coordinate; a live crowd reading on a medical
- *     facility publishes that people are there now.
+ *  2. LIVE SIGNALS. `activity`, `trend`, `count`, `freshness`, `sourceClass`
+ *     and the observation timestamps are dropped. "How busy is the clinic right
+ *     now" is the disclosure, not the coordinate; a live crowd reading on a
+ *     medical facility publishes that people are there now.
+ *
+ *     `sourceClass` belongs in THIS bullet rather than the back-reference one
+ *     below, and the distinction is the reason it must go. It points at nobody
+ *     — it is an epistemic label, not a handle — but it is a standalone
+ *     assertion about presence: `verified_firsthand` says "a presence-verified
+ *     person observed this place", which survives the removal of every
+ *     timestamp and every reference and still publishes the one fact §24
+ *     exists to withhold. Stripping the axes and leaving the attribution would
+ *     be a coarse pin that still says someone was here.
+ *
+ *     (`confidence` deliberately stays: with activity, trend, freshness,
+ *     provenance and the timestamps all gone there is no remaining claim for it
+ *     to be confident ABOUT, so it asserts nothing on its own. `sourceClass`
+ *     does assert something on its own. That is the whole test for this list.)
  *  3. BACK-REFERENCES. `provenance` and `sourceRefs` are dropped because they
  *     point back at the observations — a coarse pin plus a source handle is not
  *     coarse. `distanceKm` goes too: distance-from-viewer plus a coarse point
@@ -625,6 +639,7 @@ export function coarsenForZone(
 
   delete out.activity;
   delete out.trend;
+  delete out.sourceClass;
   delete out.count;
   delete out.provenance;
   delete out.sourceRefs;
