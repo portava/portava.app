@@ -95,7 +95,10 @@ const KNOWN_DEAD_QUERIES: Record<string, { count: number; effect: string }> = {
   },
   "src/compass/CompassFallbackFeedBuilder.ts": {
     count: 1,
-    effect: 'trips "in_progress" — the fallback feed never sees an in-progress trip.',
+    effect: 'trips .in("status", ["in_progress", "upcoming"]) — "upcoming" is real and ' +
+      '"in_progress" is not, and Postgres casts every element before matching any, so the ' +
+      "fallback feed loses ALL of the user's owned trips, not just in-progress ones. The " +
+      "clearest example of why one bad literal in a list kills the whole query.",
   },
   "src/compass/CompassItemHydrator.ts": {
     count: 1,
