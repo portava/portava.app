@@ -92,6 +92,7 @@ import {
   describeTarget,
   type LongPressTarget,
 } from '../../src/features/map/interaction/longPress.ts';
+import { longPressTargetAt } from '../../src/features/map/interaction/pressTarget.ts';
 import { TimeMachineControl } from '../../src/components/map/TimeMachineControl.tsx';
 import {
   EMPTY_LAYER_PREFERENCES,
@@ -119,6 +120,11 @@ import {
 } from '../../src/types/mapObjects.ts';
 import { canonicalUrl } from '../../src/constants/canonicalUrl.ts';
 import { rsvpEvent } from '../../src/services/events.ts';
+import { openDirectThread } from '../../src/services/messaging.ts';
+import { followUser } from '../../src/services/follows.ts';
+import { blockUser } from '../../src/services/blocks.ts';
+import type { ModerationSubjectType } from '../../src/services/moderation.ts';
+import { ReportSheet } from '../../src/components/ReportSheet.tsx';
 import { TripWishlistPicker } from '../../src/components/discovery/TripWishlistPicker.tsx';
 import type { AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker.tsx';
 import {
@@ -362,6 +368,116 @@ async function joinMapObject(
   });
   Alert.alert("You're going!", 'Your RSVP has been confirmed.');
 }
+
+// ── §25 person-subject actions ────────────────────────────────────────
+//
+// `message`, `follow` and `block` act on a PERSON, not on a location. Only two
+// kinds carry one, and an object with no user id is not a person with a missing
+// field — it is a place. So each of these resolves the subject FIRST and does
+// nothing without it, rather than falling back to the object's own id and
+// mutating the wrong row.
+
+/** Kinds standing for a real person. `MapEntityActionRow`'s PERSON_TYPES, in MapObject vocabulary. */
+const PERSON_KINDS: readonly MapObject['kind'][] = ['crew_member', 'buddy_zone'];
+
+/** The user behind a person-bearing object; null for everything else. */
+function personUserId(obj: MapObject): string | null {
+  if (!PERSON_KINDS.includes(obj.kind)) return null;
+  const raw = (obj.payload as { userId?: unknown } | undefined)?.userId;
+  return typeof raw === 'string' && raw !== '' ? raw : null;
+}
+
+/**
+ * What a report about this object is filed against. The same mapping
+ * `MapEntityActionRow` uses: a buddy pin is a LISTING and a circle member is a
+ * USER, and moderation treats those differently — filing one as the other sends
+ * a harassment report to a marketplace queue.
+ */
+function moderationSubjectOf(obj: MapObject): ModerationSubjectType {
+  switch (obj.kind) {
+    case 'event':
+      return 'event';
+    case 'buddy_zone':
+      return 'buddy_listing';
+    case 'crew_member':
+      return 'user';
+    default:
+      return 'post';
+  }
+}
+
+/** Display name for a confirmation prompt. Never an id — the user did not pick an id. */
+function displayNameOf(obj: MapObject): string {
+  return obj.title && obj.title !== '' ? obj.title : 'this person';
+}
+
+/**
+ * §25 `message`. Opens (or reuses) the direct thread, then navigates — the same
+ * two steps, with the same query params, that `MapEntityActionRow` performs, so
+ * both surfaces land on one thread screen rather than two drifting routes.
+ */
+async function messageMapObject(obj: MapObject): Promise<void> {
+  const userId = personUserId(obj);
+  if (!userId) return;
+  const res = await openDirectThread(userId);
+  if (!res.ok || !res.data?.threadId) {
+    Alert.alert('Could not open conversation', 'Please try again.');
+    return;
+  }
+  router.push(
+    `/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(userId)}` as never,
+  );
+}
+
+/**
+ * §25 `follow`.
+ *
+ * The §8 sheet's button is a STATIC "Follow" — unlike the carousel row it
+ * carries no follow state — so this follows rather than toggles. Following
+ * someone already followed is idempotent; a toggle against a state this surface
+ * has never read is the version that could silently UNfollow.
+ */
+async function followMapObject(obj: MapObject): Promise<void> {
+  const userId = personUserId(obj);
+  if (!userId) return;
+  const res = await followUser(userId);
+  if (!res.ok) {
+    Alert.alert('Could not follow', res.message ?? 'Please try again.');
+    return;
+  }
+  // A private account answers a follow with a REQUEST, not a follow. Saying
+  // "Following" there would claim access the user does not have yet.
+  Alert.alert(
+    res.data?.following ? 'Following' : 'Request sent',
+    res.data?.following
+      ? `You now follow ${displayNameOf(obj)}.`
+      : 'They will see your request and can approve it.',
+  );
+}
+
+/**
+ * §25 `block`. Destructive and not self-evidently reversible from here, so it
+ * confirms first — the same prompt shape `MapEntityActionRow` and
+ * `CircleMemberRow` both use.
+ */
+function blockMapObject(obj: MapObject): void {
+  const userId = personUserId(obj);
+  if (!userId) return;
+  Alert.alert(`Block ${displayNameOf(obj)}?`, 'They will no longer be able to contact you.', [
+    { text: 'Cancel', style: 'cancel' },
+    {
+      text: 'Block',
+      style: 'destructive',
+      onPress: () => {
+        void (async () => {
+          const res = await blockUser(userId);
+          if (!res.ok) Alert.alert('Could not block', res.error ?? 'Please try again.');
+        })();
+      },
+    },
+  ]);
+}
+
 
 // ── Web placeholder ───────────────────────────────────────────────────────────
 
@@ -774,6 +890,20 @@ function FullScreenMapScreenInner() {
   // ── Entity data fetch ───────────────────────────────────────────────────────
   // `title` is used as the city name — passed in from Discovery / Trips entry points.
   // In passport mode the hook still runs but its output is discarded in favour of
+  // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
+  //
+  // Declared HERE, above useMapEntities, and that position is load-bearing.
+  // §16 gives crowd_flow a `contextual` default whose two automatic triggers
+  // are both circular — `density` is measured by the projection layer (a
+  // property of the response) and CROWD_FLOW mode is gated on a capability
+  // derived from flows having already arrived. §16's EXPLICIT user choice is
+  // the only non-circular trigger, and it lives in this state, so the hook
+  // cannot ask for the kind unless this is resolved before it runs.
+  const [layerPrefs, setLayerPrefs] = useState<LayerPreferences>(EMPTY_LAYER_PREFERENCES);
+  useEffect(() => {
+    loadLayerPreferences().then(setLayerPrefs).catch(() => {});
+  }, []);
+
   // passportEntities — React hooks cannot be called conditionally.
   const {
     entities: defaultEntities,
@@ -786,6 +916,9 @@ function FullScreenMapScreenInner() {
     lat: fallbackLat,
     lng: fallbackLng,
     zoom: cameraZoom ?? paramZoom,
+    // §16 explicit choice only. Passport mode asks for nothing at all, so it
+    // must not smuggle a flow request past that intent.
+    crowdFlow: mode !== 'passport' && layerPrefs.crowd_flow === 'on',
   });
 
   // ── §11 Trip Map ────────────────────────────────────────────────────────────
@@ -889,12 +1022,6 @@ function FullScreenMapScreenInner() {
     })();
     return () => { cancelled = true; };
   }, [mode]);
-
-  // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
-  const [layerPrefs, setLayerPrefs] = useState<LayerPreferences>(EMPTY_LAYER_PREFERENCES);
-  useEffect(() => {
-    loadLayerPreferences().then(setLayerPrefs).catch(() => {});
-  }, []);
 
   // ── §35 telemetry ───────────────────────────────────────────────────────────
   // Transport is installed once per map session. Without one the emitter keeps
@@ -1402,6 +1529,12 @@ function FullScreenMapScreenInner() {
     anchor?: { x: number; y: number };
   } | null>(null);
   const [contributeObject, setContributeObject] = useState<MapObject | null>(null);
+  /**
+   * §25 `report` on a person or a listing. Held as the OBJECT rather than a
+   * boolean so the sheet's subject cannot drift from the thing that was
+   * reported when the selection changes underneath it.
+   */
+  const [reportTarget, setReportTarget] = useState<MapObject | null>(null);
   /** §25 `save` — the subject of the wishlist picker, null when it is closed. */
   const [saveTarget, setSaveTarget] = useState<AddToTripPayload | null>(null);
   const [meetTarget, setMeetTarget] = useState<MeetTarget | null>(null);
@@ -1480,9 +1613,18 @@ function FullScreenMapScreenInner() {
     machine.overlays.includes(o);
 
   /**
-   * §25 action dispatch, shared by the persistent rail and the Live Place
-   * sheet. Both were previously inert for everything except 'contribute',
-   * which meant the rail rendered four buttons and three of them did nothing.
+   * §25 action dispatch, shared by the persistent rail and the §8 Live Place
+   * sheet.
+   *
+   * EVERY value in `MAP_ACTIONS` is handled here. That is a deliberate
+   * invariant, not a coincidence: the rail draws four fixed slots, but the
+   * sheet renders `orderedActions(obj)` — whatever the projection declared —
+   * so any action a projection offers and this switch omits becomes a rendered
+   * button that silently does nothing when pressed. `default` therefore exists
+   * only for a null-ish slug at runtime, never as a resting place for an
+   * action someone still has to wire. `mapActionDispatch.component.test.tsx`
+   * pins the completeness so the next action added to the union cannot land
+   * offered-but-inert.
    *
    * Routes to the SAME flows MapEntityActionRow already uses, rather than
    * reimplementing them — two navigate paths would drift.
@@ -1528,11 +1670,83 @@ function FullScreenMapScreenInner() {
         case 'join':
           void joinMapObject(obj, compassPickObjects !== null ? 'compass' : 'map');
           return;
+        case 'message':
+          void messageMapObject(obj);
+          return;
+        case 'follow':
+          void followMapObject(obj);
+          return;
+        case 'block':
+          blockMapObject(obj);
+          return;
+        case 'book':
+          // A buddy pin's booking surface IS its detail route — the same push
+          // `MapEntityActionRow`'s Book button makes. Reading it off the object
+          // rather than rebuilding `/(rent-a-buddy)/buddy/:id` here keeps one
+          // definition of where a buddy lives.
+          if (obj.interaction?.detailRoute) router.push(obj.interaction.detailRoute as never);
+          return;
+        case 'report':
+          // TWO different things are called `report`, and routing one into the
+          // other's flow is the failure that matters. A CONTRIBUTABLE object
+          // means "report what is here" — an observation about a place, which is
+          // the contribution sheet, exactly as the long-press menu routes it.
+          // Anything else is a MODERATION report about a person or a listing,
+          // which is the ReportSheet. A harassment report must never land in a
+          // place-observation flow.
+          if (obj.interaction?.contributable) {
+            setContributeObject(obj);
+          } else {
+            setReportTarget(obj);
+          }
+          return;
+        case 'create_checkpoint':
+          // §12: a checkpoint is a manual position report INTO a group or event
+          // map. With no session there is nobody to tell — the long-press menu
+          // disables the row with this reason, and the sheet has no disabled
+          // state, so it is said here rather than failing silently.
+          if (!locateSessionId) {
+            Alert.alert('No group map active', 'Join a group or event map to drop a checkpoint.');
+            return;
+          }
+          void dropCheckpoint(objectTarget(obj));
+          return;
         default:
           return;
       }
     },
-    [dispatchMapEvent, compassPickObjects],
+    [dispatchMapEvent, compassPickObjects, locateSessionId, dropCheckpoint],
+  );
+
+  /**
+   * §25 long-press — the gesture that opens the menu.
+   *
+   * Until this existed, `longPress` was state with no producer: the menu was
+   * mounted, its seven rows resolved correctly, and nothing on the map could
+   * ever set a target. The native map is the only thing that can report where a
+   * press landed on the ground, so the gesture starts there and `pressTarget`
+   * turns the point into §25's union.
+   *
+   * WHAT IS PRESSABLE IS WHAT §31 SAYS IS DRAWN. `renderResult.kept` is the
+   * collision-resolved marker set — the same list this screen already counts
+   * `hiddenByCollision` against — and `zoneObjects` is Levels 2-3. Testing the
+   * press against anything wider would let a finger land on an object the map
+   * decided not to show, which is the §31 truncation problem in reverse.
+   *
+   * The anchor is the press point in the map view's own pixels. The map fills
+   * this screen, so that is the window point the menu opens under; the menu
+   * clamps it to the viewport itself, and falls back to centred if it is
+   * missing.
+   */
+  const handleMapLongPress = useCallback(
+    (press: { lat: number; lng: number; screenX: number; screenY: number }) => {
+      const target = longPressTargetAt(
+        { markers: renderResult.kept, areas: zoneObjects },
+        { lat: press.lat, lng: press.lng, zoom: activeZoom },
+      );
+      setLongPress({ target, anchor: { x: press.screenX, y: press.screenY } });
+    },
+    [renderResult.kept, zoneObjects, activeZoom],
   );
 
   /** Called when the user taps a marker on the map. */
@@ -1683,6 +1897,7 @@ function FullScreenMapScreenInner() {
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
         filterRowOffset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT + 8}
+        onLongPressMap={handleMapLongPress}
       />
 
       {/* ── §3 header: menu · city/area · search · layers ─────────────────── */}
@@ -1966,6 +2181,20 @@ function FullScreenMapScreenInner() {
             prompt: 'sheet',
           });
         }}
+      />
+
+      {/* ── §25 Report ──────────────────────────────────────────────────────
+          The moderation sheet MapEntityActionRow already opens, reached from
+          the §8 sheet as well as the carousel card. `subjectType` decides which
+          queue it lands in, so it is derived from the object's kind rather than
+          defaulted — a circle member is a USER and a buddy pin is a LISTING. */}
+      <ReportSheet
+        visible={reportTarget !== null}
+        subjectType={reportTarget ? moderationSubjectOf(reportTarget) : 'post'}
+        subjectId={reportTarget ? rawObjectId(reportTarget.id) : ''}
+        subjectUserId={reportTarget ? personUserId(reportTarget) : null}
+        subjectName={reportTarget ? reportTarget.title : null}
+        onClose={() => setReportTarget(null)}
       />
 
       {/* ── §25 Save ────────────────────────────────────────────────────────

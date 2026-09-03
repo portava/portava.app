@@ -18,7 +18,12 @@
  * lib/intelContracts.ts; freshness TTLs come from lib/freshnessPolicy.ts;
  * each entity's own guard decides visibility. This module only shapes.
  */
-import { CONFIDENCE_BANDS, type ConfidenceBand } from "./intelContracts.js";
+import {
+  CONFIDENCE_BANDS,
+  SOURCE_CLASSES as INTEL_SOURCE_CLASSES,
+  type ConfidenceBand,
+  type SourceClass as IntelSourceClass,
+} from "./intelContracts.js";
 
 // ── Geometry ───────────────────────────────────────────────────────────────────
 
@@ -149,6 +154,38 @@ function toMs(t: string | number | Date | null | undefined): number | null {
  */
 export const CONFIDENCE_STATES = CONFIDENCE_BANDS;
 export type ConfidenceState = ConfidenceBand;
+
+// ── Source class (spec §9, §37) ────────────────────────────────────────────────
+
+/**
+ * WHO IS SPEAKING, as a value rather than as a sentence.
+ *
+ * §9 already reaches the client as PROSE: `MapProvenance.lines[].text` says
+ * "Sponsored · crowd.level" or "A few recent traveler reports · crowd.level".
+ * That closes the misattribution, but it leaves the §8 Live Place sheet with no
+ * way to draw a badge except by re-parsing English — and a client that has to
+ * regex a sentence to find out whether a claim was paid for will eventually get
+ * it wrong in the one direction §37 forbids ("Do not let paid businesses buy
+ * factual confidence"). So the class is published as a value the renderer can
+ * switch on, alongside the line that explains it.
+ *
+ * DERIVED, NOT RETYPED — same reason as CONFIDENCE_STATES above. A class added
+ * to intelContracts becomes a valid map source class automatically, and
+ * src/test/mapObjectsContract.test.ts then fails until the app mirror is
+ * updated. That failure IS the review gate: a new epistemic class is exactly
+ * the kind of value a human should have to look at before it reaches the wire.
+ *
+ * ALL EIGHT ARE SAFE TO SERIALIZE, but only because §24 strips this field:
+ * `verified_firsthand` asserts that a presence-verified person observed this
+ * place, which on a protected location is precisely the disclosure coarsening
+ * exists to prevent. See protectedLocations.coarsenForZone — the field is
+ * deleted there, and it is deleted for the LIVE-SIGNAL reason (it publishes
+ * that someone was here), not the back-reference one. None of the eight names a
+ * person, a supplier or a cohort size: this axis is orthogonal to
+ * `sources.origin` (which supplier) and carries no count.
+ */
+export const SOURCE_CLASSES = INTEL_SOURCE_CLASSES;
+export type SourceClass = IntelSourceClass;
 
 // ── Trend + activity (spec §7) ─────────────────────────────────────────────────
 
@@ -288,6 +325,22 @@ export interface MapObject<T = unknown> {
   confidence?: ConfidenceState;
   activity?: ActivityLevel;
   trend?: TrendState;
+  /**
+   * OPTIONAL, and the optionality is load-bearing twice over.
+   *
+   *  1. An object with no live claim has no source class, because there is no
+   *     speaker. Every candidate default is a lie: `firsthand_unverified`
+   *     fabricates a traveler report on a plain place pin, `hearsay` slanders
+   *     one. Absent is the only honest value, so absent must be expressible.
+   *  2. `coarsenForZone` has to be able to REMOVE it, and TypeScript refuses
+   *     `delete` on a required property (ts2790). Declaring this field required
+   *     would make the §24 strip un-writable.
+   *
+   * Set only by `mapProjection.applyLiveClaims`, and only to a class the
+   * vocabulary above declares — see `attributedSourceClass` for the fold rule
+   * when several claims of different classes feed one object.
+   */
+  sourceClass?: SourceClass;
   sourceRefs?: string[];
   provenance?: MapProvenance;
   privacyClass: PrivacyClass;

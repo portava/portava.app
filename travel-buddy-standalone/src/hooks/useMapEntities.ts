@@ -120,6 +120,28 @@ export const GATEWAY_KIND_FOR_LAYER: Record<ToggleableEntityType, MapObjectKind>
  * asymmetry guard checks every value against the `sources.push(...)` calls in
  * the route itself rather than trusting this copy.
  */
+/**
+ * Gateway kinds that are NOT keyed by a legacy pin toggle.
+ *
+ * `crowd_flow` is a §16 layer, not a `ToggleableEntityType`: that union is the
+ * five legacy PIN toggles, every member seeded ON, and a flow is a LineString
+ * aggregate. Requesting it from there would contradict §16's `contextual`
+ * default and its rule "do not turn every layer on simultaneously".
+ *
+ * It lives in its own map rather than in an inline push so the asymmetry guard
+ * can still PARSE what this hook requests. A request buried in a conditional
+ * would be invisible to it, and that guard is the only thing standing between
+ * us and a third repeat of "the server serves it and nobody asks".
+ */
+export const GATEWAY_KIND_FOR_OPTIONAL_LAYER: Record<string, MapObjectKind> = {
+  crowd_flow: 'crowd_flow',
+};
+
+/** The `sources` name the route pushes for each optional kind. */
+export const GATEWAY_SOURCE_FOR_OPTIONAL_LAYER: Record<string, string> = {
+  crowd_flow: 'crowd_flow',
+};
+
 export const GATEWAY_SOURCE_FOR_LAYER: Record<ToggleableEntityType, string> = {
   events: 'events',
   gems: 'gems',
@@ -284,8 +306,28 @@ export function useMapEntities(opts: {
   zoom?: number;
   /** Viewport radius the gateway should cover; defaults to 50 km. */
   radiusKm?: number;
+  /**
+   * §16 Crowd Flow, requested on the viewer's EXPLICIT choice only.
+   *
+   * It is not a member of `enabledLayers`: that union is the legacy pin-entity
+   * set, every member of which is seeded ON, so putting a people-derived
+   * aggregate there would request it on every map load — contradicting §16's
+   * `contextual` default for this layer and its rule "do not turn every layer
+   * on simultaneously".
+   *
+   * §16's two AUTOMATIC triggers for a contextual layer are both circular here:
+   * `density` is measured by the projection layer, i.e. a property of the
+   * response; and `mode === 'CROWD_FLOW'` is gated on a capability derived from
+   * flows having already arrived. Explicit choice is the only non-circular
+   * trigger, and §16 says it outranks automatic resolution.
+   */
+  crowdFlow?: boolean;
 }): UseMapEntitiesResult {
-  const { enabledLayers, city, lat, lng, zoom = 12, radiusKm = DEFAULT_VIEWPORT_RADIUS_KM } = opts;
+  const {
+    enabledLayers, city, lat, lng, zoom = 12,
+    radiusKm = DEFAULT_VIEWPORT_RADIUS_KM,
+    crowdFlow = false,
+  } = opts;
 
   const [objects, setObjects] = useState<MapObject[]>([]);
   const [entities, setEntities] = useState<MapEntity[]>([]);
@@ -334,7 +376,12 @@ export function useMapEntities(opts: {
       pendingRefetch.current = true;
       return;
     }
-    if (enabledLayers.length === 0) {
+    // Crowd Flow is requested independently of `enabledLayers`, so this guard
+    // must consider it. A viewer who switches every legacy pin layer OFF but
+    // Crowd Flow ON would otherwise be swallowed here and see nothing —
+    // and the early return cannot simply be deleted, because passport mode
+    // passes [] deliberately to mean "fetch nothing".
+    if (enabledLayers.length === 0 && !crowdFlow) {
       setObjects([]);
       setEntities([]);
       // No layer is enabled, so no layer went unread. Leaving a stale list here
@@ -353,6 +400,10 @@ export function useMapEntities(opts: {
     // contributes none, so a disabled layer is never requested and never
     // arrives to be filtered out on the device.
     const wantedKinds: MapObjectKind[] = enabledLayers.map((l) => GATEWAY_KIND_FOR_LAYER[l]);
+    // §16 crowd_flow rides beside them rather than inside enabledLayers — see
+    // the `crowdFlow` option. kindsForLayer is the §16 model's own mapping, so
+    // this cannot drift from the layer definition.
+    if (crowdFlow) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.crowd_flow);
 
     try {
       // ── 1. Try the gateway ────────────────────────────────────────────────

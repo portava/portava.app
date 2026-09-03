@@ -609,6 +609,37 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: false,
     deepLink: '/passport/country/[country]',
   },
+  {
+    key: 'passport-my-world',
+    path: 'passport/my-world',
+    title: 'My World',
+    parent: 'tab-passport',
+    icon: 'Globe2',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/my-world',
+  },
+  {
+    key: 'passport-trust',
+    path: 'passport/trust',
+    title: 'Trust & Credentials',
+    parent: 'tab-passport',
+    icon: 'ShieldCheck',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/trust',
+  },
+  {
+    key: 'passport-shared-context',
+    path: 'passport/shared-context',
+    title: 'Shared Context',
+    // Reached while viewing ANOTHER traveler's passport — the other user's id
+    // arrives as a query param (?userId=…), so this is NOT ownerOnly.
+    parent: 'passport-viewer',
+    icon: 'Users',
+    requiresAuth: true,
+    deepLink: '/passport/shared-context',
+  },
 
   // ── Stamps ────────────────────────────────────────────────────────────────
 

@@ -430,17 +430,42 @@ describe("2254_schema_migration_ledger.sql", () => {
     );
   });
 
-  it("seeds every migration file that existed when it was written, including itself", () => {
+  it("seeds only files that exist, and itself — the list is HISTORICAL, not live", () => {
     const listed = [...sql.matchAll(/^ {2}'([0-9][^']*\.sql)',?$/gm)].map((m) => m[1]);
-    const onDisk = listMigrationFiles(MIGRATIONS_DIR);
-    assert.deepEqual(
-      listed,
-      onDisk,
-      "the backfill list must match src/migrations/ exactly — a file added after 2254 was " +
-        "authored has no row and will be reported as unapplied, which is correct only if it " +
-        "genuinely is",
-    );
+    const onDisk = new Set(listMigrationFiles(MIGRATIONS_DIR));
+
+    // NOT deepEqual against the current tree, and the difference matters.
+    //
+    // An earlier version of this test required listed === onDisk. That looks
+    // tidy and is actively harmful: it forces every NEW migration to be added
+    // to 2254's list, which (a) edits a migration that has already run, so the
+    // file stops describing what it did, and (b) hands the new file a BACKFILL
+    // row — a row whose stated meaning is "this existed when 2254 ran", which
+    // for a file authored afterwards is simply false.
+    //
+    // Worse, it defeats the gate. A migration merged and never applied is
+    // exactly what check:migration-ledger exists to report; giving it a
+    // backfill row on sight makes it look accounted for. The list is a
+    // historical record of one moment. Files added after it get their rows from
+    // the APPLIER, as ci/manual with a real checksum.
+    assert.ok(listed.length > 300, `parsed only ${listed.length} entries — the parse broke`);
     assert.ok(listed.includes(LEDGER_MIGRATION), "2254 must seed its own row");
+
+    // What DOES still have to hold: nothing listed may have since vanished. A
+    // listed file that no longer exists is a rename or a delete, which orphans
+    // a ledger row — the drift the gate reports as "the database ran something
+    // this branch cannot show you".
+    const vanished = listed.filter((f) => !onDisk.has(f));
+    assert.deepEqual(
+      vanished,
+      [],
+      "2254 seeds a row for a file that is no longer in src/migrations/. Renaming or " +
+        "deleting an applied migration orphans its ledger row; UPDATE the row's filename " +
+        "rather than leaving the seed pointing at nothing.",
+    );
+
+    // And no duplicates — a repeated filename would double-count on a replay.
+    assert.equal(new Set(listed).size, listed.length, "duplicate filename in the backfill list");
   });
 
   it("backfilled rows claim file EXISTENCE and never that the file was applied", () => {

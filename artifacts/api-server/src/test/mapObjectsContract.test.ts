@@ -29,7 +29,12 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CONFIDENCE_BANDS } from "../lib/intelContracts.js";
+import {
+  CONFIDENCE_BANDS,
+  NON_INDEPENDENT_SOURCE_CLASSES,
+  SOURCE_CLASSES as INTEL_SOURCE_CLASSES,
+  SOURCE_CLASS_LABELS,
+} from "../lib/intelContracts.js";
 import {
   ACTIVITY_LEVELS,
   CONFIDENCE_STATES,
@@ -40,6 +45,7 @@ import {
   MAP_OBJECT_KINDS,
   PRIVACY_CLASSES,
   RENDERING_PRIORITY,
+  SOURCE_CLASSES,
   TREND_STATES,
 } from "../lib/mapObjects.js";
 
@@ -48,8 +54,10 @@ const APP_CONTRACT = resolve(
   __dir,
   "../../../../travel-buddy-standalone/src/types/mapObjects.ts",
 );
+const SERVER_CONTRACT = resolve(__dir, "../lib/mapObjects.ts");
 
 const appSource = readFileSync(APP_CONTRACT, "utf8");
+const serverSource = readFileSync(SERVER_CONTRACT, "utf8");
 
 /** Extract the string members of `export const NAME = [ ... ] as const;`. */
 function appStringArray(name: string): string[] {
@@ -70,6 +78,46 @@ function appNumericRecord(name: string): Record<string, number> {
     if (kv) out[kv[1]] = Number(kv[2]);
   }
   return out;
+}
+
+/** Extract `export const NAME: Record<...> = { key: 'text', ... };` as key → text. */
+function appStringRecord(name: string): Record<string, string> {
+  const re = new RegExp(`export const ${name}\\s*:[^=]*=\\s*\\{([\\s\\S]*?)\\n\\};`, "m");
+  const m = re.exec(appSource);
+  assert.ok(m, `app contract is missing "export const ${name}: ... = {...};"`);
+  const out: Record<string, string> = {};
+  for (const line of m![1].split("\n")) {
+    const kv = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*['"]([^'"]*)['"]\s*,?\s*$/.exec(line);
+    if (kv) out[kv[1]] = kv[2];
+  }
+  return out;
+}
+
+/**
+ * The declared property names of `interface MapObject<...> { ... }`, from either
+ * mirror. Comments and nested blocks are stripped first so a `{` inside a doc
+ * comment cannot truncate the body.
+ */
+function mapObjectFields(source: string, which: string): string[] {
+  const start = source.indexOf("export interface MapObject<");
+  assert.ok(start >= 0, `${which} contract has no "export interface MapObject<"`);
+  const open = source.indexOf("{", start);
+  assert.ok(open >= 0, `${which} MapObject has no body`);
+  let depth = 0;
+  let end = -1;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === "{") depth += 1;
+    else if (source[i] === "}") {
+      depth -= 1;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  assert.ok(end > open, `${which} MapObject body is unbalanced`);
+  const body = source
+    .slice(open + 1, end)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  return Array.from(body.matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\??\s*:/gm)).map((m) => m[1]);
 }
 
 /** Extract `export const NAME: Record<...> = { key: EXPR, ... };` as key → expression. */
@@ -113,6 +161,48 @@ describe("Map Object contract — server and app mirrors agree", () => {
     // Server side is derived, so this is really a check on the app mirror.
     assert.deepEqual([...CONFIDENCE_STATES], [...CONFIDENCE_BANDS]);
     assert.deepEqual(appStringArray("CONFIDENCE_STATES"), [...CONFIDENCE_BANDS]);
+  });
+
+  test("SOURCE_CLASSES matches the intel pipeline's own classes", () => {
+    // Server side is derived from intelContracts, so — like CONFIDENCE_STATES —
+    // this is really a check on the app mirror. It is also the review gate: a
+    // NEW epistemic class does not silently become wire-visible on the map, it
+    // turns this red until a human copies it across and, in doing so, decides
+    // whether that class is safe to serialize at all.
+    assert.deepEqual([...SOURCE_CLASSES], [...INTEL_SOURCE_CLASSES]);
+    assert.deepEqual(appStringArray("SOURCE_CLASSES"), [...INTEL_SOURCE_CLASSES]);
+  });
+
+  test("NON_INDEPENDENT_SOURCE_CLASSES is identical — §37 depends on this set", () => {
+    // If the app's copy loses a member, a paid claim renders as independent
+    // community consensus on that surface only. Same failure as the one that
+    // produced "A few recent traveler reports" for a sponsored claim, one layer
+    // further out.
+    assert.deepEqual(
+      appStringArray("NON_INDEPENDENT_SOURCE_CLASSES"),
+      [...NON_INDEPENDENT_SOURCE_CLASSES],
+    );
+  });
+
+  test("SOURCE_CLASS_LABELS is the server's copy, word for word", () => {
+    // lib/mapProjection builds the §9 provenance line from these exact strings.
+    // A badge that said "Ad" next to a line that said "Sponsored" would be two
+    // vocabularies for one claim — the thing intelContracts exists to prevent.
+    assert.deepEqual(appStringRecord("SOURCE_CLASS_LABELS"), { ...SOURCE_CLASS_LABELS });
+  });
+
+  test("MapObject declares the same fields on both sides", () => {
+    // The vocabulary checks above compare VALUES; this compares SHAPE. Adding a
+    // field to one mirror and not the other is the drift that made this file
+    // necessary, and until now nothing checked for it.
+    const app = mapObjectFields(appSource, "app");
+    const server = mapObjectFields(serverSource, "server");
+    assert.ok(app.length > 10, "app MapObject parsed to too few fields — check the extractor");
+    assert.deepEqual([...app].sort(), [...server].sort());
+    for (const required of ["sourceClass", "privacyClass", "renderingPriority"]) {
+      assert.ok(app.includes(required), `app MapObject is missing "${required}"`);
+      assert.ok(server.includes(required), `server MapObject is missing "${required}"`);
+    }
   });
 
   test("FRESHNESS_THRESHOLDS_SECONDS is identical", () => {
