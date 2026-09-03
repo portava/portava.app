@@ -660,6 +660,51 @@ export async function publishLocateFriendsPosition(
   };
 }
 
+/** What a §25 "Create checkpoint" needs to name the point it is dropping. */
+export interface ManualCheckpointInput {
+  sessionId: string;
+  /** The human name of the spot — "Food Court". Trimmed and capped by the ladder. */
+  label: string;
+  /** Clock, epoch ms. Defaults to now; the observation IS the moment of the press. */
+  now?: number;
+}
+
+/**
+ * §25 "Create checkpoint" — §12's rung 6, `manual_checkpoint`.
+ *
+ * A checkpoint is not a sensor reading, it is a DECLARATION: the member says
+ * which named spot they are at, and the group's map attaches them to it. That
+ * is why this is the last and weakest rung of §12's chain and why its ceiling
+ * is `approximate` — "the pin is the checkpoint, not the person".
+ *
+ * THE LABEL IS THE PIN, AND THE PRESSED POINT IS NEVER SENT. No `position` is
+ * passed below, deliberately, and it is not an oversight `precisionToPublish`
+ * would have covered anyway (it drops coordinates below `precise_temporary`):
+ * a long-press can land anywhere on the map, so the point under the finger is
+ * not evidence of where the DEVICE is. Sending it as this member's position
+ * would be an assertion the gesture never made. The label is what the user
+ * actually asserted, so the label is what travels.
+ *
+ * Returns the same `PublishOutcome` as any other publish, so a ladder refusal
+ * stays `ok: true` with `stored: false` and only transport failure is `ok: false`.
+ */
+export async function publishManualCheckpoint(
+  input: ManualCheckpointInput,
+  transport?: Partial<LocateFriendsTransport> | null,
+): Promise<LocateFriendsResult<PublishOutcome>> {
+  const now = input.now ?? Date.now();
+  return publishLocateFriendsPosition(
+    {
+      sessionId: input.sessionId,
+      rung: 'manual_checkpoint',
+      observedAt: now,
+      checkpointLabel: input.label,
+      now,
+    },
+    transport,
+  );
+}
+
 /**
  * Read the group.
  *

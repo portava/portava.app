@@ -25,6 +25,7 @@ import {
   memberSnapshotToState,
   precisionToPublish,
   publishLocateFriendsPosition,
+  publishManualCheckpoint,
   readLocateFriendsSession,
   startLocateFriendsSession,
   toLocateSession,
@@ -421,6 +422,71 @@ describe('§23: the client never ASKS above the purpose ceiling', () => {
     assert.equal(res.data.requestedClass, 'approximate');
     assert.equal(calls[0].body.ceiling, 'approximate');
     assert.equal(calls[0].body.ttlMinutes, 90);
+  });
+});
+
+// ── §25 "Create checkpoint" — §12's rung 6 ────────────────────────────────────
+
+describe('a manual checkpoint publishes the label and never the pressed point', () => {
+  test('it goes out at rung 6, carrying the name and nothing that locates a device', () => {
+    const { impl, calls } = stubFetch([
+      { body: { enabled: true, stored: true, storedPrecision: 'venue', rung: 'manual_checkpoint' } },
+    ]);
+    return publishManualCheckpoint(
+      { sessionId: SESSION_ID, label: 'Food Court', now: NOW },
+      transportFor(impl),
+    ).then((res) => {
+      assert.ok(res.ok);
+      if (!res.ok) return;
+      assert.equal(res.data.stored, true);
+      const sent = calls[0].body;
+      assert.equal(calls[0].method, 'POST');
+      assert.match(calls[0].url, /\/sessions\/[^/]+\/position$/);
+      assert.equal(sent.rung, 'manual_checkpoint');
+      assert.equal(sent.checkpointLabel, 'Food Court');
+      // The whole point: a long-press can land anywhere, so the point under the
+      // finger is not evidence of where this device is and never travels as one.
+      assert.equal(sent.lat, null);
+      assert.equal(sent.lng, null);
+      assert.equal(sent.proximityBucket, null);
+      assert.equal(sent.observedAt, NOW);
+    });
+  });
+
+  test('the rung is available on this stack — it needs no radio', () => {
+    // `manual_checkpoint` requires nothing (RUNG_POLICY), unlike rungs 3 and 4.
+    // If that ever changed, the action would silently stop publishing.
+    assert.equal(RUNG_POLICY.manual_checkpoint.requires, null);
+    const decision = precisionToPublish({
+      rung: 'manual_checkpoint',
+      observedAt: NOW,
+      checkpointLabel: 'Food Court',
+      capabilities: CURRENT_STACK_CAPABILITIES,
+      now: NOW,
+    });
+    assert.equal(decision.publish, true);
+  });
+
+  test('a ladder or server refusal is reported, never reported as a drop', () => {
+    const { impl } = stubFetch([{ body: { enabled: false, stored: false } }]);
+    return publishManualCheckpoint(
+      { sessionId: SESSION_ID, label: 'Food Court', now: NOW },
+      transportFor(impl),
+    ).then((res) => {
+      assert.ok(res.ok);
+      if (!res.ok) return;
+      assert.equal(res.data.stored, false);
+    });
+  });
+
+  test('an empty label is dropped rather than sent as a nameless checkpoint', () => {
+    const { impl, calls } = stubFetch([{ body: { enabled: true, stored: true } }]);
+    return publishManualCheckpoint(
+      { sessionId: SESSION_ID, label: '   ', now: NOW },
+      transportFor(impl),
+    ).then(() => {
+      assert.equal(calls[0].body.checkpointLabel, null);
+    });
   });
 });
 
