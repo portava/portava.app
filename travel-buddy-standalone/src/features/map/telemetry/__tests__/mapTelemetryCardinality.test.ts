@@ -135,6 +135,8 @@ describe('producer cardinality', () => {
       'a decision can be abandoned from the Compass bar or by dismissing the Live Place sheet',
     route_started:
       'navigation starts from both the action row and the Live Place sheet',
+    plan_joined:
+      'one join, two surfaces — the carousel action row, and the map rail / Live Place sheet — the same pair `route_started` is exempted for. A user joins ONCE, from whichever is in front of them; `discovery` records how they found the plan at each surface.',
     live_state_viewed:
       'ONE viewing emits TWICE — on show (carrying the §7 axes) and on close (carrying dwell). Emitting only on close would lose the view entirely if the app is killed. ANALYSIS MUST FILTER: rows WITH `dwell` are closes, rows WITHOUT are shows; counting both doubles the metric.',
   };
