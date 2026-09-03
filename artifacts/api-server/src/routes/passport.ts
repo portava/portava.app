@@ -15,6 +15,12 @@ import {
 import { computeTrustScore } from "../lib/trustScore.js";
 import { countStampsReceived } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../lib/tripCounts.js";
+import {
+  buildPassportProjection,
+  resolvePassportViewerContext,
+} from "../services/passport/PassportProjectionService.js";
+import { buildSharedContext } from "../services/passport/SharedContextService.js";
+import { buildJourneys } from "../services/passport/PassportJourneyService.js";
 
 const router = Router();
 
@@ -1417,6 +1423,103 @@ router.get("/me/stamps", async (req, res) => {
   }
 
   res.status(200).json({ stamps });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Passport Projection endpoints (§4/§29/§30) — ADDITIVE, read-only.
+//
+// One privacy-aware, context-aware projection surface. `:userId` accepts either
+// a profile UUID or an @handle. The viewer is resolved from the optional bearer
+// token; all privacy filtering happens server-side inside the services.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Resolve a `:userId` route param (UUID or @handle) to a profile id, or null. */
+async function resolveProjectionUserId(sc: any, param: string): Promise<string | null> {
+  const raw = String(param ?? "").trim();
+  if (!raw) return null;
+  if (UUID_RE.test(raw)) {
+    const { data } = await sc.from("profiles").select("id").eq("id", raw).maybeSingle();
+    return data ? (data as any).id : null;
+  }
+  const handle = raw.replace(/^@/, "").toLowerCase().replace(/[^a-z0-9_]/g, "");
+  if (!handle) return null;
+  const { data } = await sc.from("profiles").select("id").eq("handle", handle).maybeSingle();
+  return data ? (data as any).id : null;
+}
+
+// GET /api/passport/:userId/projection — the full §29 aggregate for a viewer.
+router.get("/passport/:userId/projection", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  try {
+    const targetId = await resolveProjectionUserId(sc, req.params.userId);
+    if (!targetId) { sendError(res, "not_found", "User not found"); return; }
+    const viewerId = await getOptionalViewerId(sc, req);
+    const projection = await buildPassportProjection(sc, targetId, viewerId);
+    if (!projection) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ projection });
+  } catch (e: any) {
+    req.log.error({ err: e }, "passport projection failed");
+    sendError(res, "db_error", e?.message ?? "Projection failed");
+  }
+});
+
+// GET /api/passport/:userId/shared-context — viewer↔owner overlap (§17/§18).
+router.get("/passport/:userId/shared-context", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  try {
+    const targetId = await resolveProjectionUserId(sc, req.params.userId);
+    if (!targetId) { sendError(res, "not_found", "User not found"); return; }
+    const viewerId = await getOptionalViewerId(sc, req);
+    if (!viewerId) { sendError(res, "unauthenticated", "Sign in to view shared context"); return; }
+    if (viewerId === targetId) {
+      res.status(200).json({ sharedContext: null, reason: "self" });
+      return;
+    }
+    const resolution = await resolvePassportViewerContext(sc, targetId, viewerId);
+    const sharedContext = await buildSharedContext(sc, targetId, viewerId, {
+      canSeeAvailability: resolution.permissions.canSeeAvailability,
+      canSeeMutuals: resolution.permissions.canSeeMutuals,
+      canSeeTrips: resolution.permissions.canSeeTrips,
+      canMakePlan: resolution.permissions.canInviteToTripCrew,
+    });
+    res.status(200).json({ sharedContext, viewerContext: resolution.context });
+  } catch (e: any) {
+    req.log.error({ err: e }, "passport shared-context failed");
+    sendError(res, "db_error", e?.message ?? "Shared context failed");
+  }
+});
+
+// GET /api/passport/:userId/journeys — grouped chronological journeys (§14).
+router.get("/passport/:userId/journeys", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  try {
+    const targetId = await resolveProjectionUserId(sc, req.params.userId);
+    if (!targetId) { sendError(res, "not_found", "User not found"); return; }
+    const viewerId = await getOptionalViewerId(sc, req);
+    const resolution = await resolvePassportViewerContext(sc, targetId, viewerId);
+    if (resolution.permissions.isBlocked || resolution.permissions.isUnavailable) {
+      res.status(200).json({ journeys: { userId: targetId, years: [], featured: null, totalJourneys: 0 }, restricted: true });
+      return;
+    }
+    const isSelf = resolution.context === "self";
+    const journeys = await buildJourneys(sc, targetId, {
+      isSelf,
+      canSeeTrips: resolution.permissions.canSeeTrips,
+      canSeeRestricted:
+        resolution.permissions.canViewFullProfile ||
+        resolution.context === "trip_crew" ||
+        resolution.context === "trip_host",
+    });
+    res.status(200).json({ journeys, viewerContext: resolution.context });
+  } catch (e: any) {
+    req.log.error({ err: e }, "passport journeys failed");
+    sendError(res, "db_error", e?.message ?? "Journeys failed");
+  }
 });
 
 export default router;
