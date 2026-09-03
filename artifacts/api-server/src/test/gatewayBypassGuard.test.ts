@@ -54,6 +54,23 @@ const READERS: Record<string, { approved: Record<string, string> }> = {
       "routes/location.ts": "GET /api/me/circle-locations, the endpoint it was extracted from",
     },
   },
+  produceZoneTransitions: {
+    approved: {
+      "lib/crowdFlowProducer.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+      // NOTE ON WHAT THIS ONE PROTECTS, because it is not the usual thing.
+      // The other readers here return rows that are already safe to serve. This
+      // one returns ZoneTransitions that are NOT: they carry raw cohort
+      // arithmetic (distinctActors, distinctGroups, maxGroupShare) which
+      // lib/mapAggregation.deriveCrowdFlow then measures against §10's four
+      // gates — k-anonymity, freshness, multiple signal families and cohort
+      // density. A surface that called this and rendered the transitions
+      // directly would publish sub-threshold movement, which is the disclosure
+      // the whole of §10 is built to prevent. It also skips §31 ranking, the
+      // §24 protection gate and viewport aggregation, like every other bypass
+      // on this list.
+    },
+  },
   readBuddyMapPins: {
     approved: {
       "lib/buddyMapRead.ts": "defines it",

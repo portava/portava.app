@@ -65,15 +65,22 @@ import {
   type MapObject,
   type MapObjectKind,
   type MapProvenanceLine,
+  type Position,
   type PrivacyClass,
   KIND_DEFAULT_PRIORITY,
   RENDERING_PRIORITY,
+  centroidOf,
   compareByRenderingPriority,
   deriveFreshness,
   isServable,
   mayRenderIdentity,
   point,
 } from "./mapObjects.js";
+import {
+  classifyAgainstProtected,
+  zoneCovers,
+  type ProtectedZone,
+} from "./protectedLocations.js";
 import { haversineKm } from "./mapSearch.js";
 import { KM_PER_DEGREE_LAT, type BBox } from "./mapAggregation.js";
 
@@ -743,6 +750,326 @@ export function paginate(
   const page = objects.slice(off, off + lim);
   const next = off + lim;
   return { page, nextCursor: next < objects.length ? String(next) : null };
+}
+
+// ── §10 Crowd Flow: the zone model the producer refuses to invent ─────────────
+
+/**
+ * lib/crowdFlowProducer takes its zone identity from the CALLER
+ * (`resolveZoneId`, `resolveZoneForPoint`, `zoneCentroids`) and, without them,
+ * produces nothing rather than falling back to a coordinate. This section is
+ * that model, built from `geo_zones` — the repository's only curated,
+ * server-owned table of named areas with real geometry (migration 0034;
+ * migration 2159 revoked every client write grant, so a row here is
+ * server-curated by construction and a user cannot plant one).
+ *
+ * WHAT A ZONE ID IS HERE, STATED ONCE
+ * ===================================
+ * `geo_zones.id`. Every endpoint of every hop resolves into that ONE id space,
+ * by one of three doors, so two families can meet on the same edge:
+ *
+ *   route stop coordinate  → the zone that CONTAINS it   (accepted_plan)
+ *   origin place id        → the zone containing the PLACE (next_stop_contribution)
+ *   destination area label → the zone whose NAME it is    (next_stop_contribution)
+ *
+ * A coordinate is used only to ASK which zone contains it; what comes back is
+ * an id, and `FlowZone` has no field that could carry the point onward. An
+ * endpoint that resolves to no zone is dropped by the producer — there is no
+ * "approximate it to the point" branch anywhere in this file.
+ *
+ * THREE RULES THAT ARE TIGHTENINGS, NOT GATES
+ * ===========================================
+ * None of §10's four gates lives here (MIN_SIGNAL_FAMILIES, the k floor,
+ * maxGroupShare and the freshness bound are all in lib/mapAggregation and
+ * lib/privacyGate, unchanged). These three only ever shrink what resolves:
+ *
+ *   1. COARSE TYPES ONLY. `zone_type` must be one of FLOW_ZONE_TYPES. A `venue`
+ *      zone is a building; publishing "people are moving from THAT building" is
+ *      the place-level precision §10 forbids for origins.
+ *   2. AN EXTENT FLOOR. A zone smaller than MIN_FLOW_ZONE_EXTENT_METERS across
+ *      is refused however it is labelled, so a mis-typed 20 m "neighborhood"
+ *      cannot make a flow endpoint as sharp as a coordinate.
+ *   3. AMBIGUOUS NAMES RESOLVE TO NOTHING. Two zones sharing a name (a
+ *      "Downtown" in two cities) would merge two geographies into one edge and
+ *      publish one of their centroids for both. A name held by more than one
+ *      zone therefore resolves to null rather than to a guess.
+ *
+ * WHEN A POINT FALLS IN SEVERAL ZONES the SMALLEST wins — a neighbourhood
+ * inside a city resolves to the neighbourhood. Taking the largest would be the
+ * "safer-looking" choice and is in fact the useless one: every intra-city hop
+ * would collapse to a self-transition and the layer would publish nothing
+ * forever. Rule 2 is what makes the smallest-wins choice safe, because it
+ * bounds how sharp the smallest can be.
+ */
+export const FLOW_ZONE_TYPES: readonly string[] = ["city", "neighborhood"];
+
+/** Narrowest a flow zone may be, across its widest axis. See rule 2 above. */
+export const MIN_FLOW_ZONE_EXTENT_METERS = 250;
+
+export type FlowZoneShape =
+  | { kind: "circle"; center: { lat: number; lng: number }; radiusMeters: number }
+  | { kind: "polygon"; ring: Position[] };
+
+/**
+ * One resolvable area. Note what is NOT here: no address, no member list, and —
+ * for a polygon — no way to recover any point that was tested against it. The
+ * only coordinate a `FlowZone` carries is its own published centroid.
+ */
+export interface FlowZone {
+  id: string;
+  /** Normalized name, for `destination_area` matching. */
+  nameKey: string;
+  /** The point a flow endpoint is drawn at. Never a person, never a place. */
+  centroid: { lat: number; lng: number };
+  /** Widest axis, in metres. Used for the floor and for smallest-wins. */
+  extentMeters: number;
+  shape: FlowZoneShape;
+}
+
+/** Case- and whitespace-insensitive area name key. Null when unusable. */
+export function normalizeAreaName(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const k = raw.trim().replace(/\s+/g, " ").toLowerCase();
+  return k === "" ? null : k;
+}
+
+function ringOf(polygonGeojson: unknown): Position[] | null {
+  const raw = Array.isArray(polygonGeojson)
+    ? polygonGeojson
+    : polygonGeojson && typeof polygonGeojson === "object"
+      ? (polygonGeojson as any).coordinates
+      : null;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  // Either a GeoJSON Polygon (array of rings) or a bare ring.
+  const ring = Array.isArray(raw[0]) && Array.isArray((raw as any)[0][0]) ? (raw as any)[0] : raw;
+  if (!Array.isArray(ring) || ring.length < 3) return null;
+  const out: Position[] = [];
+  for (const pos of ring) {
+    if (!Array.isArray(pos) || pos.length < 2) return null;
+    const [lng, lat] = pos as [unknown, unknown];
+    if (typeof lng !== "number" || typeof lat !== "number") return null;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+    out.push([lng, lat]);
+  }
+  return out;
+}
+
+/** Widest axis of a ring's bounding box, in metres. */
+function ringExtentMeters(ring: readonly Position[]): number {
+  let minLat = ring[0][1], maxLat = ring[0][1], minLng = ring[0][0], maxLng = ring[0][0];
+  for (const [lng, lat] of ring) {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+  }
+  return haversineKm(minLat, minLng, maxLat, maxLng) * 1000;
+}
+
+/**
+ * `geo_zones` rows → resolvable zones. Anything that fails a rule above is
+ * DROPPED, not repaired: a zone we cannot describe honestly must not be able to
+ * anchor a published flow.
+ */
+export function parseFlowZones(rows: readonly any[] | null | undefined): FlowZone[] {
+  if (!Array.isArray(rows)) return [];
+  const out: FlowZone[] = [];
+  for (const row of rows) {
+    if (!row || typeof row.id !== "string" || row.id === "") continue;
+    if (!FLOW_ZONE_TYPES.includes(String(row.zone_type))) continue;
+    const nameKey = normalizeAreaName(row.name);
+    if (!nameKey) continue;
+
+    const ring = ringOf(row.polygon_geojson);
+    if (ring) {
+      const centroid = centroidOf({ type: "Polygon", coordinates: [ring] });
+      if (!centroid) continue;
+      const extentMeters = ringExtentMeters(ring);
+      if (!(extentMeters >= MIN_FLOW_ZONE_EXTENT_METERS)) continue;
+      out.push({ id: row.id, nameKey, centroid, extentMeters, shape: { kind: "polygon", ring } });
+      continue;
+    }
+
+    const lat = Number(row.center_lat);
+    const lng = Number(row.center_lng);
+    const radiusMeters = Number(row.radius_meters);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusMeters)) continue;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+    // Diameter, so the floor means the same thing for both shapes.
+    const extentMeters = radiusMeters * 2;
+    if (!(extentMeters >= MIN_FLOW_ZONE_EXTENT_METERS)) continue;
+    out.push({
+      id: row.id,
+      nameKey,
+      centroid: { lat, lng },
+      extentMeters,
+      shape: { kind: "circle", center: { lat, lng }, radiusMeters },
+    });
+  }
+  return out;
+}
+
+/**
+ * Containment, delegated to lib/protectedLocations.zoneCovers — the ONE
+ * point-in-zone implementation this repository has. Reusing it is not tidiness:
+ * it means a flow zone and a §24 protection zone can never disagree about
+ * whether a point is inside a shape, which is exactly the kind of divergence
+ * that would let a flow anchor somewhere the protection gate thought it had
+ * covered. Only the geometry fields are read; `category` is required by that
+ * module's type, is inert for `zoneCovers`, and carries no protection meaning
+ * here. A zone whose geometry it calls unusable covers nothing — the endpoint
+ * is then unresolvable and the hop is dropped.
+ */
+export function flowZoneContains(zone: FlowZone, lat: number, lng: number): boolean {
+  const shaped: ProtectedZone =
+    zone.shape.kind === "circle"
+      ? {
+          id: zone.id,
+          category: "flow_zone_geometry_only",
+          shape: "circle",
+          center: zone.shape.center,
+          radiusMeters: zone.shape.radiusMeters,
+        }
+      : { id: zone.id, category: "flow_zone_geometry_only", shape: "polygon", ring: zone.shape.ring };
+  return zoneCovers(shaped, [[lng, lat]]) === true;
+}
+
+/** Smallest containing zone, or null. Ties broken by id so the answer is stable. */
+function zoneForPoint(zones: readonly FlowZone[], lat: number, lng: number): string | null {
+  let best: FlowZone | null = null;
+  for (const z of zones) {
+    if (!flowZoneContains(z, lat, lng)) continue;
+    if (
+      !best ||
+      z.extentMeters < best.extentMeters ||
+      (z.extentMeters === best.extentMeters && z.id < best.id)
+    ) {
+      best = z;
+    }
+  }
+  return best ? best.id : null;
+}
+
+/**
+ * places → the zone each one sits in.
+ *
+ * This is how a `next_stop_contribution` gets an ORIGIN. The producer reads
+ * `intel_observations.subject_id` (a PLACE, chosen by the contributor when they
+ * answered the prompt) and hands it here as `origin_place`; what it gets back is
+ * a zone id. A place's coordinate is public geography, not a person's position,
+ * and it does not survive this call: the returned map holds ids only.
+ */
+export function indexPlaceZones(
+  rows: readonly any[] | null | undefined,
+  zones: readonly FlowZone[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!Array.isArray(rows) || zones.length === 0) return out;
+  for (const row of rows) {
+    if (!row || typeof row.id !== "string" || row.id === "") continue;
+    const lat = Number(row.latitude);
+    const lng = Number(row.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    const zoneId = zoneForPoint(zones, lat, lng);
+    if (zoneId) out.set(row.id, zoneId);
+  }
+  return out;
+}
+
+export interface FlowZoneModel {
+  zones: readonly FlowZone[];
+  /** What `deriveZoneTransitions` needs: zone id → the centroid it draws. */
+  centroids: Map<string, { lat: number; lng: number }>;
+  resolveZoneForPoint: (p: { lat: number; lng: number }) => string | null;
+  resolveZoneId: (kind: "origin_place" | "destination_area", key: string) => string | null;
+  /** Names dropped for being held by more than one zone. COUNT only. */
+  ambiguousNames: number;
+  /** Places that resolved into a zone. */
+  indexedPlaces: number;
+}
+
+/**
+ * Assemble the resolvers the producer requires. Pure: rows have already been
+ * read and parsed, nothing here queries.
+ *
+ * Every door fails closed. An unknown name, an unindexed place, a point in no
+ * zone and an empty model all return null, and null means the producer drops
+ * the hop.
+ */
+export function buildFlowZoneModel(
+  zones: readonly FlowZone[],
+  placeZones: ReadonlyMap<string, string> = new Map(),
+): FlowZoneModel {
+  const centroids = new Map<string, { lat: number; lng: number }>();
+  for (const z of zones) centroids.set(z.id, z.centroid);
+
+  // Ambiguity is resolved by REFUSAL, not by preference. See rule 3.
+  const byName = new Map<string, string | null>();
+  for (const z of zones) {
+    byName.set(z.nameKey, byName.has(z.nameKey) ? null : z.id);
+  }
+  let ambiguousNames = 0;
+  for (const v of byName.values()) if (v === null) ambiguousNames += 1;
+
+  return {
+    zones,
+    centroids,
+    resolveZoneForPoint: (p) => {
+      if (!p || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) return null;
+      return zoneForPoint(zones, p.lat, p.lng);
+    },
+    resolveZoneId: (kind, key) => {
+      if (typeof key !== "string" || key === "") return null;
+      if (kind === "origin_place") return placeZones.get(key) ?? null;
+      const nameKey = normalizeAreaName(key);
+      if (!nameKey) return null;
+      return byName.get(nameKey) ?? null;
+    },
+    ambiguousNames,
+    indexedPlaces: placeZones.size,
+  };
+}
+
+/**
+ * §24 for crowd flow: inside a protected zone a flow is WITHHELD, never
+ * coarsened.
+ *
+ * `applyProtection` still runs over these objects afterwards and is still the
+ * gate; this only removes the one outcome that would be wrong for this kind.
+ * `coarsenForZone` strips an object's `count`, `observedAt` and `freshness`
+ * because "how busy is the clinic right now" is the disclosure — but a
+ * `crowd_flow` restates exactly those three inside `payload.observed`
+ * (cohortSize, observedAt), which coarsening does not touch, and its geometry
+ * is a LineString, which coarsening deliberately leaves alone. A coarsened flow
+ * would therefore keep everything coarsening exists to remove. There is also no
+ * honest coarser version of it to fall back to: the geometry is already zone
+ * centroids. So the answer for this kind is to withhold, which is a tightening
+ * of the existing decision and changes no policy, category or constant.
+ *
+ * Returns the surviving objects and a COUNT — never which zone, never which
+ * flow, for the reason `ProtectionReport` gives.
+ */
+export function withholdCoarsenableFlows(
+  objects: readonly MapObject[],
+  zones: readonly ProtectedZone[] | null | undefined,
+): { objects: MapObject[]; withheld: number } {
+  if (!Array.isArray(objects) || objects.length === 0) return { objects: [], withheld: 0 };
+  if (!Array.isArray(zones) || zones.length === 0) return { objects: [...objects], withheld: 0 };
+  const kept: MapObject[] = [];
+  let withheld = 0;
+  for (const obj of objects) {
+    if (obj.kind !== "crowd_flow") {
+      kept.push(obj);
+      continue;
+    }
+    if (classifyAgainstProtected(obj, zones).action === "allow") {
+      kept.push(obj);
+      continue;
+    }
+    withheld += 1;
+  }
+  return { objects: kept, withheld };
 }
 
 // ── shared ────────────────────────────────────────────────────────────────────
