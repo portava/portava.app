@@ -225,20 +225,17 @@ export const GEM_SEARCHABLE_STATUSES = ["active"] as const;
 // more emitters were in that state — searchTrips, searchPlans' trips sub-query
 // and searchPosts — each filtering on a label its enum has never had.
 //
-// The rule for both constants below: name only real labels, and adopt the
+// The rule for the constants below: name only real labels, and adopt the
 // predicate an existing surface already uses for the same question rather than
 // inventing one. `trip_plan_items.status` is deliberately absent — it is a
 // `text` column, not an enum, so a wrong literal there is a harmless non-match
 // rather than a 400. Enum-typed is what makes this class fatal.
-
-// `trip_status` labels: draft | planning | upcoming | active | completed |
-// cancelled | archived. "deleted" and "banned" — what these emitters used to
-// filter on — are not among them, and trips carry no moderation column at all,
-// so no real label means "banned".
 //
-// Two predicates, because search asks two different questions and the repo
-// already answers each of them somewhere. Adopting both rather than flattening
-// them into one is the difference between a fix and a behaviour change.
+// `trip_status` gets TWO of them, because search asks two different questions
+// about a trip — "may the public see this?" and "is this the caller's own?" —
+// and the repo already answers each somewhere. Adopting both rather than
+// flattening them into one is the difference between a fix and a behaviour
+// change; see searchPlans.
 
 /**
  * Statuses nobody searches — the trip is abandoned or put away. This is
