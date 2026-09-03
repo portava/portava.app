@@ -68,6 +68,7 @@ import {
   isServable,
   narrowestPrivacyClass,
   precisionRank,
+  KIND_DEFAULT_PRIORITY,
   type MapGeometry,
   type MapObject,
   type MapObjectKind,
@@ -645,6 +646,20 @@ export function coarsenForZone(
   delete out.sourceRefs;
   delete out.observedAt;
   delete out.expiresAt;
+
+  // renderingPriority is RESET, not deleted — it is required on a MapObject.
+  //
+  // applyLiveClaims promotes a place with qualifying live evidence to
+  // RENDERING_PRIORITY.high_confidence_live_zone. Coarsening strips the axes,
+  // the count, the provenance and the timestamps precisely because they betray
+  // that someone is there right now — and then left the object ranking as a
+  // high-confidence live zone, which says the same thing through §31 instead of
+  // through a field. A protected location that outranks its neighbours IS the
+  // disclosure, whatever its payload says.
+  //
+  // So it falls back to the kind's default: the object still renders, in the
+  // position an uncorroborated object of its kind would occupy.
+  out.renderingPriority = KIND_DEFAULT_PRIORITY[out.kind];
   delete out.freshness;
   out.distanceKm = null;
 

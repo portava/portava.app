@@ -45,6 +45,7 @@ import {
 } from "../lib/protectedLocations.js";
 import {
   PRIVACY_CLASSES,
+  KIND_DEFAULT_PRIORITY,
   RENDERING_PRIORITY,
   SOURCE_CLASSES,
   point,
@@ -805,3 +806,45 @@ describe("kind policy is disjoint and deliberate", () => {
     }
   });
 });
+
+// ── Coarsening must reset the rank it never touched ──────────────────────────
+//
+// coarsenForZone deletes activity, trend, sourceClass, count, provenance,
+// sourceRefs and the timestamps — precisely because each of them betrays that
+// someone is there right now. It did not touch renderingPriority.
+//
+// applyLiveClaims promotes a place with qualifying live evidence to
+// RENDERING_PRIORITY.high_confidence_live_zone, so a coarsened protected place
+// kept OUTRANKING its neighbours. A protected location that sorts above
+// everything around it IS the disclosure, whatever its payload says — the same
+// signal, delivered through §31 instead of through a field.
+//
+// It is RESET rather than deleted: renderingPriority is required on a
+// MapObject, so the object still renders, in the position an uncorroborated
+// object of its kind would occupy.
+describe("§24 — a coarsened object does not keep a live rank", () => {
+  it("loses a high-confidence-live promotion", () => {
+    const promoted = { ...obj({ id: "promoted" }), renderingPriority: RENDERING_PRIORITY.high_confidence_live_zone };
+    assert.ok(
+      promoted.renderingPriority > KIND_DEFAULT_PRIORITY[promoted.kind],
+      "precondition: it must actually be promoted, or this test proves nothing",
+    );
+    const { objects } = applyProtection([promoted], [circleZone({ category: "medical_facility" })]);
+    const out = objects.find((o) => o.id === "promoted");
+    assert.ok(out, "the object should be coarsened, not suppressed");
+    assert.equal(
+      out.renderingPriority,
+      KIND_DEFAULT_PRIORITY[out.kind],
+      "a coarsened protected object must rank as an ordinary one of its kind",
+    );
+  });
+
+  it("still renders — the rank is reset, not removed", () => {
+    const promoted = { ...obj({ id: "p2" }), renderingPriority: RENDERING_PRIORITY.high_confidence_live_zone };
+    const { objects } = applyProtection([promoted], [circleZone({ category: "medical_facility" })]);
+    const out = objects.find((o) => o.id === "p2");
+    assert.equal(typeof out.renderingPriority, "number");
+    assert.ok(out.renderingPriority > 0);
+  });
+});
+

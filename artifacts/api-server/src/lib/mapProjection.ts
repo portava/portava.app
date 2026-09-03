@@ -89,6 +89,7 @@ import {
   SOURCE_CLASSES,
   SOURCE_CLASS_LABELS,
   mayCountAsConsensus,
+  mayRenderAsLive,
   type CrowdLevel,
   type SourceClass,
   type Trajectory,
@@ -550,7 +551,22 @@ export function applyLiveClaims(
 
   // readLiveClaims already orders best/current first.
   const primary = claims[0];
-  const freshness = deriveFreshness(primary.observedAt, primary.validUntil, now);
+
+  // FRESHNESS IS GATED ON THE SOURCE CLASS, not on the timestamp alone.
+  // deriveFreshness answers "how recently was this observed"; it cannot answer
+  // "was this observed at all". A portava_prediction or a historical_pattern
+  // carries a timestamp like any other claim, so a two-minute-old FORECAST read
+  // as `live` — §37's "do not make predictions look like observations", by a
+  // route the timestamp maths could never catch.
+  //
+  // mayRenderAsLive is intelContracts' own answer to exactly this question and
+  // was simply not consulted here. A non-observation is capped at `recent`: it
+  // is genuinely current information, it is just not a sighting.
+  const observedFreshness = deriveFreshness(primary.observedAt, primary.validUntil, now);
+  const freshness =
+    mayRenderAsLive(primary.sourceClass) || observedFreshness !== "live"
+      ? observedFreshness
+      : "recent";
 
   const lines: MapProvenanceLine[] = claims.map((c) => ({
     text: describeClaim(c),

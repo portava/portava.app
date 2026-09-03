@@ -683,3 +683,42 @@ describe("§24 — an enriched object inside a protected zone publishes no attri
     assert.equal(objects[0].sourceClass, "verified_firsthand");
   });
 });
+
+// ── A forecast is not a sighting, however recent ──────────────────────────────
+//
+// deriveFreshness answers "how recently was this observed". It cannot answer
+// "was this observed at all" — and a portava_prediction carries a timestamp
+// like any other claim, so a two-minute-old FORECAST read as `live`.
+//
+// That is §37's "do not make predictions look like observations", reached by a
+// route the timestamp arithmetic could never catch. mayRenderAsLive is
+// intelContracts' own answer to exactly this question and was not consulted.
+//
+// Fixtures reuse the real levelClaim/envelope factories rather than restating a
+// claim shape by hand — the trap this repo has hit six times.
+describe("freshness is gated on the source class, not the clock alone", () => {
+  test("a two-minute-old OBSERVATION is live", () => {
+    const out = applyLiveClaims(PLACE, [levelClaim("busy")], NOW);
+    assert.equal(out.freshness, "live");
+  });
+
+  test("a two-minute-old PREDICTION is not", () => {
+    const out = applyLiveClaims(PLACE, [levelClaim("busy", { sourceClass: "portava_prediction" })], NOW);
+    assert.notEqual(out.freshness, "live", "a forecast must never read as a live sighting");
+    assert.equal(out.freshness, "recent", "it is still current information, just not a sighting");
+  });
+
+  test("a historical pattern is not live either", () => {
+    const out = applyLiveClaims(PLACE, [levelClaim("busy", { sourceClass: "historical_pattern" })], NOW);
+    assert.notEqual(out.freshness, "live");
+  });
+
+  test("and a forecast does not outrank a real sighting of the same age", () => {
+    // The §31 rank bump is gated on freshness === 'live', so this follows —
+    // but the rank is what actually reaches the map, so it is asserted rather
+    // than assumed.
+    const forecast = applyLiveClaims(PLACE, [levelClaim("busy", { sourceClass: "portava_prediction" })], NOW);
+    const observed = applyLiveClaims(PLACE, [levelClaim("busy")], NOW);
+    assert.ok(observed.renderingPriority > forecast.renderingPriority);
+  });
+});
