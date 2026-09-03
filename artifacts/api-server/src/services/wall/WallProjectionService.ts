@@ -34,7 +34,14 @@ import type {
   WallProjection,
 } from "../../lib/wallProjection.js";
 import { decidePostReadable } from "../../lib/postVisibility.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { logger } from "../../lib/logger.js";
+import {
+  gatherContextThread,
+  DEFAULT_CONTEXT_THREAD_POLICY,
+  type ContextThreadPolicy,
+  type ContextThreadViewerContext,
+} from "./ContextThreadService.js";
 
 /**
  * A canonical candidate the route has fetched and normalized. Post-like objects
@@ -307,6 +314,82 @@ export async function projectObjects(
     if (blockedAuthorIds.has(c.authorId)) continue; // block gate (either direction)
     if (!passesVisibility(c, viewer)) continue; // visibility gate
     out.push(projectOne(c, viewer));
+  }
+  return out;
+}
+
+// ── Context Thread attachment (spec §8/§9) ───────────────────────────────────
+
+export interface AttachContextThreadsOptions {
+  /** The §9 policy (confidence / freshness / utility floors). */
+  policy?: ContextThreadPolicy;
+  /** Per-window context-thread cap (spec §15 maxContextThreadsInWindow). */
+  maxContextThreadsInWindow?: number;
+  /** The sliding window the cap is measured over. */
+  windowSize?: number;
+  /** Live For You strip subjects — a thread that repeats one is suppressed (§4). */
+  liveStripSubjectIds?: Set<string>;
+  /** wall_rab_integration_enabled — enables the buddy candidate reader. */
+  rabEnabled?: boolean;
+  now?: Date;
+}
+
+/**
+ * Attach an OPTIONAL Context Thread beneath each projection where the §9 gate
+ * says one earns its place (spec §8/§9). This is the wiring point of the gate:
+ * WallProjectionService owns projection, so it owns whether a projection carries
+ * a `contextThread`.
+ *
+ * Behind wall_context_threads_enabled (read ONCE here, fail-closed). Walks the
+ * items in order, enforcing the per-window annotation cap
+ * (maxContextThreadsInWindow / spec §15 visualOverload) as it goes: once a
+ * window is saturated, further objects in that window get no thread. Live-strip
+ * duplication is suppressed inside ContextThreadService's §9 gate. Never throws —
+ * a Context Thread failure returns the items unannotated, never an error.
+ */
+export async function attachContextThreads(
+  sc: any,
+  items: WallProjection[],
+  viewer: ProjectViewerContext,
+  opts: AttachContextThreadsOptions = {},
+): Promise<WallProjection[]> {
+  if (!sc || items.length === 0) return items;
+  try {
+    if (!(await isFlagEnabled(sc, "wall_context_threads_enabled"))) return items;
+  } catch {
+    return items; // fail-closed
+  }
+
+  const policy = opts.policy ?? DEFAULT_CONTEXT_THREAD_POLICY;
+  const maxThreads = Math.max(0, opts.maxContextThreadsInWindow ?? 2);
+  const windowSize = Math.max(2, opts.windowSize ?? 6);
+  const liveStripSubjectIds = opts.liveStripSubjectIds ?? new Set<string>();
+
+  const out: WallProjection[] = [];
+  for (const item of items) {
+    // Count threads already placed in the trailing window.
+    const window = out.slice(Math.max(0, out.length - (windowSize - 1)));
+    const threadsInWindow = window.filter((w) => !!w.contextThread).length;
+    const windowSaturated = threadsInWindow >= maxThreads;
+
+    const ctViewer: ContextThreadViewerContext = {
+      viewerId: viewer.viewerId,
+      followedCreatorIds: viewer.followedCreatorIds,
+      viewerTripIds: viewer.viewerTripIds,
+      liveStripSubjectIds,
+      windowSaturated,
+      rabEnabled: opts.rabEnabled === true,
+      now: opts.now,
+    };
+
+    let thread;
+    try {
+      thread = await gatherContextThread(sc, item, ctViewer, policy);
+    } catch (err) {
+      logger.warn({ err }, "wallProjection: context thread build failed — no thread");
+      thread = undefined;
+    }
+    out.push(thread ? ({ ...item, contextThread: thread } as WallProjection) : item);
   }
   return out;
 }
