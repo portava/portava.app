@@ -57,11 +57,21 @@ const GPS_CITY = 'Sydney';
 // useActiveLocation) when permissionStatus === 'granted' — there is no
 // resolvedLocation cascade. A source switch therefore lands in locationState,
 // which we swap between renders to model manual_city → gps.
-let resolvedLocationOverride = {
+// `source` is widened to the union deliberately: this variable is REASSIGNED to
+// a 'gps' value below, which is the switch the whole file exists to model. With
+// `'manual_city' as const` the initialiser pinned the field to that one literal
+// and the reassignment was a type error nobody saw, because tsconfig excludes
+// test files from the typecheck.
+let resolvedLocationOverride: {
+  place: { city: string; country: string; lat: number; lng: number };
+  coords: { lat: number; lng: number; accuracyMeters: number | null };
+  source: 'manual_city' | 'gps';
+  freshness: 'live';
+} = {
   place:   { city: MANUAL_CITY, country: 'JP', lat: MANUAL_LAT, lng: MANUAL_LNG },
-  coords:  { lat: MANUAL_LAT, lng: MANUAL_LNG, accuracyMeters: null as number | null },
-  source:  'manual_city' as const,
-  freshness: 'live' as const,
+  coords:  { lat: MANUAL_LAT, lng: MANUAL_LNG, accuracyMeters: null },
+  source:  'manual_city',
+  freshness: 'live',
 };
 
 // ── Module mocks ───────────────────────────────────────────────────────────────

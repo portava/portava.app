@@ -32,6 +32,15 @@
  *   TS2352  a cast between insufficiently-overlapping types — but ONLY when the
  *           SOURCE is an anonymous object literal. `x as Record<string, unknown>`
  *           on a named interface is a normal test idiom, not a bad fixture.
+ *   TS2322  a value assigned to a declared type it does not satisfy. In a test
+ *           file this is overwhelmingly a fixture claiming a type it is not —
+ *           an object literal missing/mistyping fields, or a string literal
+ *           outside a union (`mediaType: 'photo'` where the type is
+ *           'image' | 'video'). A fixture that DELIBERATELY supplies an invalid
+ *           value, to prove the code rejects it, should say so with an explicit
+ *           `as unknown as T` and a comment — which is more honest than a
+ *           silently-wrong literal, and is why this is gated rather than
+ *           baselined.
  *
  * WHAT IT DELIBERATELY DOES NOT CHECK
  * -----------------------------------
@@ -70,7 +79,7 @@ const BASELINE_PATH = join(ROOT, 'scripts', 'TEST_FIXTURE_SHAPE_BASELINE.json');
 const TSCONFIG = 'tsconfig.tests.json';
 
 /** The object-literal shape family. See the header for why each is here. */
-const SHAPE_CODES = new Set(['2353', '2561', '2739', '2741']);
+const SHAPE_CODES = new Set(['2353', '2561', '2739', '2741', '2322']);
 /** TS2352 qualifies only when the source is an anonymous object literal. */
 const CAST_CODE = '2352';
 

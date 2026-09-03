@@ -26,7 +26,16 @@ export type Interest =
   | 'business'
   | 'dating'
   | 'wellness'
-  | 'events';
+  | 'events'
+  /**
+   * The fallback category cityPulseUtils.mapApiEvent assigns to an event the
+   * API sent with none. It was missing from this union, and an
+   * `(e.category as Interest)` cast was hiding it — so the app produced an
+   * Interest value the type said could not exist. Added rather than changed,
+   * because the value is real: changing the fallback would silently re-bucket
+   * every uncategorised event.
+   */
+  | 'social';
 
 export type PostCategory =
   | 'hotel'

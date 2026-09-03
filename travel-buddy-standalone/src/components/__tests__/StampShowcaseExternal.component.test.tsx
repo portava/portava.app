@@ -114,7 +114,9 @@ function makeStamp(id: string, name = `Stamp ${id}`) {
     stampType: 'location',
     city: 'Lisbon',
     country: 'Portugal',
-    visibility: 'public',
+    // `as const` so the literal narrows to StampVisibility rather than widening
+    // to `string`, which PassportStampNew does not accept.
+    visibility: 'public' as const,
     isRevoked: false,
     earnedAt: '2026-07-01T00:00:00Z',
     activeArtworkUrl: null,

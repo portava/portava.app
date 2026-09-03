@@ -82,6 +82,9 @@ function makeTrip(overrides: Partial<TripRow> = {}): TripRow {
     delayedPostingDefault: false,
     preciseLocationVisible: false,
     planEditPermission: null,
+    // Required by TripRow; absent from these defaults, so the factory's return
+    // type had it as `boolean | undefined` and could not satisfy TripRow.
+    showHeaderPublicly: false,
     ...overrides,
   };
 }

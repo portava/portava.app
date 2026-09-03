@@ -16,6 +16,7 @@ import React from 'react';
 import { Text } from 'react-native';
 import TestRenderer, { act } from 'react-test-renderer';
 import { BuddyPreview, BuddyRow } from '../PassportSections.tsx';
+import type { User } from '../../types/models.ts';
 
 // NOTE: intentionally exhaustive — expo-router re-exports many internal hooks
 // that call native modules which don't exist in the Jest environment. Spreading
@@ -143,17 +144,25 @@ function textContent(root: TestRenderer.ReactTestInstance): string[] {
 }
 
 // Minimal User fixture.
-function makeUser(overrides: {
-  id?: string;
-  handle?: string;
-  name?: string;
-  avatarUrl?: string;
-}) {
+// Returns a real `User`. It used to return a four-field object literal, so every
+// call site passing the result as `User[]` was a type error nobody saw — the
+// nine remaining required fields were simply absent at runtime, and any code
+// path reaching for one of them would have read undefined.
+function makeUser(overrides: Partial<User> = {}): User {
   return {
     id: 'u1',
     handle: 'alice',
     name: 'Alice Nomad',
     avatarUrl: 'https://example.com/avatar.jpg',
+    homeCity: 'Lisbon',
+    homeCountry: 'Portugal',
+    travelStyle: 'solo',
+    interests: [],
+    verified: false,
+    openToMeet: true,
+    isPrivate: false,
+    followers: 0,
+    following: 0,
     ...overrides,
   };
 }
