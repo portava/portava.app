@@ -620,6 +620,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     deepLink: '/passport/my-world',
   },
   {
+    key: 'passport-trust',
+    path: 'passport/trust',
+    title: 'Trust & Credentials',
+    parent: 'tab-passport',
+    icon: 'ShieldCheck',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/trust',
+  },
+  {
     key: 'passport-shared-context',
     path: 'passport/shared-context',
     title: 'Shared Context',
