@@ -34,10 +34,19 @@ import { fileURLToPath } from 'node:url';
 
 import { MAP_OBJECT_KINDS, type MapObjectKind } from '../../types/mapObjects.ts';
 import { TOGGLEABLE_LAYERS } from '../../types/mapTypes.ts';
+import {
+  DEFAULT_LAYER_CONTEXT,
+  EMPTY_LAYER_PREFERENCES,
+  kindsForLayer,
+  resolveLayers,
+  setLayerChoice,
+  type LayerContext,
+} from '../../features/map/layers/layerModel.ts';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const ROUTE = resolve(__dir, '../../..', '..', 'artifacts/api-server/src/routes/mapProjection.ts');
 const HOOK = resolve(__dir, '..', 'useMapEntities.ts');
+const STORE = resolve(__dir, '../..', 'stores/mapStore.tsx');
 
 /**
  * Kinds the gateway can serve, read from the route's own `wantKind("…")` gates
@@ -91,12 +100,19 @@ const NOT_REQUESTED_BY_THIS_CLIENT: Record<string, string> = {
   // that screen's, not this hook's. Asking here would double-draw them.
   social_zone:
     'rendered by useMapTravelers/TravelerMapLayer on the Discovery map; not a ToggleableEntityType',
-  // A real gap, recorded rather than hidden: §10 crowd flow reached the gateway
-  // server-side and no client file changed with it. Nothing can request it, so
-  // no viewer can see a flow however many gates it clears. It needs a layer
-  // toggle and a LineString renderer, which is its own change.
+  // A real gap, recorded rather than hidden — but NOT the gap the first version
+  // of this entry described, and the difference is the whole point of keeping
+  // the reason honest. Both things it named as missing now exist:
+  //   - the toggle: `crowd_flow` is a §16 CORE_LAYER_ID, a `ToggleableLayerId`,
+  //     and `LayersSheet` renders a row for it (it maps over MAP_LAYER_IDS);
+  //   - the renderer: `CrowdFlowLine`/`CrowdFlowLayer` draw the LineString, and
+  //     both DiscoveryMapView and the map shell already pass objects to it.
+  // What is still missing is the one wire between them: `useMapEntities` is
+  // keyed by `ToggleableEntityType` (the five legacy PIN toggles) and is never
+  // handed the §16 layer decision, so it cannot ask for the kind. See the
+  // suite below for why only ONE of §16's triggers can close this.
   crowd_flow:
-    'GAP — server-only since the §10 wiring commit; no client toggle or LineString renderer yet',
+    'GAP — §16 toggle and LineString renderer both exist; the hook is never handed the §16 layer decision, so nothing can request the kind',
 };
 
 describe('the client asks for every kind the gateway serves', () => {
@@ -180,5 +196,100 @@ describe('the source names the client watches for are the ones the server report
 
   test('the source map covers all of TOGGLEABLE_LAYERS', () => {
     assert.deepEqual([...hookMap('GATEWAY_SOURCE_FOR_LAYER').keys()].sort(), [...TOGGLEABLE_LAYERS].sort());
+  });
+});
+
+/**
+ * WHY `crowd_flow` IS STILL ALLOWLISTED, AND WHICH FIX IS THE ONLY ONE THAT WORKS
+ * ==============================================================================
+ * The obvious fix — add `crowd_flow` to `ToggleableEntityType` so it gets a
+ * `GATEWAY_KIND_FOR_LAYER` entry like every other layer — is WRONG, and the
+ * second-most obvious one — request the kind when §16's automatic relevance
+ * turns the layer on — cannot start.
+ *
+ * §16 assigns Crowd Flow the `contextual` default. `TOGGLEABLE_LAYERS` has no
+ * contextual state: every member is seeded ON (`mapStore`'s `enabledLayers`
+ * default and `MapFilterSheet`'s `DEFAULT_ENABLED` are both
+ * `[...TOGGLEABLE_LAYERS]`), so a member added there is requested on every map
+ * load. That contradicts §16's own assignment and its governing rule, "Do not
+ * turn every layer on simultaneously" — and it is the worst possible default
+ * for a people-derived layer.
+ *
+ * Crowd Flow does not need that entry anyway: it is ALREADY a toggleable §16
+ * layer in `layerModel`. The tests below pin the three facts that leave exactly
+ * one viable trigger.
+ */
+describe('the §16 trigger that can request crowd_flow', () => {
+  /** The context the map shell actually builds (app/map/index.tsx). */
+  function shellContext(mode: LayerContext['mode']): LayerContext {
+    // The shell spreads DEFAULT_LAYER_CONTEXT and overrides only mode, zoomBand
+    // and tripActive — it never supplies `density`, so density is always the
+    // default 'moderate' on that screen.
+    return { ...DEFAULT_LAYER_CONTEXT, mode, zoomBand: 'city', tripActive: false };
+  }
+
+  test('the §16 layer already carries the kind — it is not the saved/transport trap', () => {
+    // `saved` and `transport` are toggleable layers that can carry nothing, so
+    // "it is already a layer" would be worthless if crowd_flow were one too.
+    assert.deepEqual(kindsForLayer('crowd_flow'), ['crowd_flow']);
+    assert.deepEqual(kindsForLayer('saved'), [], 'guard assumption changed');
+    assert.deepEqual(kindsForLayer('transport'), [], 'guard assumption changed');
+  });
+
+  test('automatic relevance cannot trigger the request — both inputs are post-fetch', () => {
+    // §16's contextual rule for crowd_flow has exactly two ways to say yes:
+    // heavy density, or CROWD_FLOW mode. Neither is knowable before the fetch.
+    //
+    //   density — LayerContext calls it "as measured by the projection/
+    //             aggregation layer", i.e. a property of the RESPONSE; and the
+    //             shell never sets it, so it is permanently 'moderate' there.
+    const auto = resolveLayers(EMPTY_LAYER_PREFERENCES, shellContext('LIVE')).crowd_flow;
+    assert.equal(auto.visible, false);
+    assert.equal(auto.source, 'context');
+
+    //   mode   — CROWD_FLOW mode turns the layer on, but the mode is only
+    //            REACHABLE once flows have already arrived (see below), so
+    //            conditioning the request on it is a closed loop.
+    const viaMode = resolveLayers(EMPTY_LAYER_PREFERENCES, shellContext('CROWD_FLOW')).crowd_flow;
+    assert.equal(viaMode.visible, true);
+    assert.equal(viaMode.source, 'context');
+  });
+
+  test('CROWD_FLOW mode is gated on flows having already arrived — the loop is real', () => {
+    // Source-read for the same reason the route is read: mapStore is a .tsx
+    // that pulls in React and cannot be imported from a node:test here.
+    const src = readFileSync(STORE, 'utf8');
+    assert.match(
+      src,
+      /CROWD_FLOW:\s*inputs\.crowdFlowObjectCount\s*>\s*0/,
+      'the CROWD_FLOW capability is no longer presence-derived — re-check whether ' +
+        'mode can now gate the gateway request without deadlocking',
+    );
+    // ...and the count it reads is taken from the very objects this hook fetches.
+    assert.match(
+      src,
+      /crowdFlowObjectCount/,
+      'mapStore no longer names crowdFlowObjectCount — the parse broke',
+    );
+  });
+
+  test('an explicit user choice is the only non-circular trigger', () => {
+    // §16: "The moment the user makes an explicit choice that choice is stored
+    // and OUTRANKS the automatic resolution." It is evaluated BEFORE the
+    // contextual rule, needs no response to exist first, and never fires for a
+    // user who left the layer alone or switched it off — which is exactly the
+    // consent property a people-derived layer needs.
+    const on = resolveLayers(
+      setLayerChoice(EMPTY_LAYER_PREFERENCES, 'crowd_flow', 'on'),
+      shellContext('LIVE'),
+    ).crowd_flow;
+    assert.equal(on.visible, true);
+    assert.equal(on.source, 'user', 'the user choice must outrank the contextual rule');
+
+    const off = resolveLayers(
+      setLayerChoice(EMPTY_LAYER_PREFERENCES, 'crowd_flow', 'off'),
+      shellContext('CROWD_FLOW'),
+    ).crowd_flow;
+    assert.equal(off.visible, false, 'an explicit off must survive even CROWD_FLOW mode');
   });
 });
