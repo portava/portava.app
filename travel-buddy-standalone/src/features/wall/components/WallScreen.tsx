@@ -118,6 +118,7 @@ export function WallScreen({
         caughtUp={feed.caughtUp}
         onEndReached={feed.loadMore}
         onRefresh={feed.refresh}
+        onHide={feed.hide}
         ListHeaderComponent={header}
       />
     </View>

@@ -25,8 +25,10 @@ import {
 import { color, space, radius, type as t, icon } from '../../../theme/tokens.ts';
 import {
   trackContextThreadActed,
+  trackContextThreadIgnored,
   trackContextThreadShown,
 } from '../services/wallAnalytics.ts';
+import { askCompassFromWall } from '../services/wallCompass.ts';
 import { runWallAction } from './objects/wallItemShared.tsx';
 import type { ContextThread, ContextThreadKind } from '../types/contextThread.ts';
 import type { FreshnessState, WallProjection } from '../types/wallProjection.ts';
@@ -66,17 +68,34 @@ export function ContextThreadView({
   thread: ContextThread;
   projection: WallProjection;
 }) {
+  // A Context Thread earns its space or it does not: track "shown" on mount, and
+  // "ignored" on unmount when it was scrolled past without being acted on (§32).
+  const actedRef = React.useRef(false);
   React.useEffect(() => {
     trackContextThreadShown(thread.kind);
+    return () => {
+      if (!actedRef.current) trackContextThreadIgnored(thread.kind);
+    };
   }, [thread.kind]);
 
   const Icon = KIND_ICON[thread.kind] ?? Compass;
   const fresh = freshnessLabel(thread.freshness);
 
+  // A compass-kind thread is actionable even without an explicit action: it
+  // hands the object to Compass (spec §21). Every other kind needs an action.
+  const isCompass = thread.kind === 'compass';
+  const actionable = !!thread.action || isCompass;
+
   const onAct = () => {
-    if (!thread.action) return;
+    if (!actionable) return;
+    actedRef.current = true;
     trackContextThreadActed(thread.kind);
-    runWallAction(thread.action, projection);
+    if (isCompass) {
+      // Hand the canonical object to the Compass ask surface (spec §21).
+      askCompassFromWall(projection);
+      return;
+    }
+    if (thread.action) runWallAction(thread.action, projection);
   };
 
   const body = (
@@ -95,19 +114,25 @@ export function ContextThreadView({
           </Text>
         ) : null}
       </View>
-      {thread.action ? <ChevronRight size={icon.s16} color={color.faint} /> : null}
+      {actionable ? <ChevronRight size={icon.s16} color={color.faint} /> : null}
     </View>
   );
 
-  if (!thread.action) {
-    return <View style={s.container}>{body}</View>;
+  if (!actionable) {
+    return (
+      <View style={s.container} testID={`wall-context-${thread.kind}`}>
+        {body}
+      </View>
+    );
   }
+  const actionLabel = thread.action?.label ?? (isCompass ? 'Ask Compass' : '');
   return (
     <Pressable
       style={s.container}
       onPress={onAct}
       accessibilityRole="button"
-      accessibilityLabel={`${thread.label}${thread.action ? `, ${thread.action.label}` : ''}`}
+      accessibilityLabel={`${thread.label}${actionLabel ? `, ${actionLabel}` : ''}`}
+      testID={`wall-context-${thread.kind}`}
     >
       {body}
     </Pressable>

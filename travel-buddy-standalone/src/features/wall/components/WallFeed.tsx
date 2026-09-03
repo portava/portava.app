@@ -25,7 +25,8 @@ import {
 import { color, space } from '../../../theme/tokens.ts';
 import { WallObjectRenderer } from './WallObjectRenderer.tsx';
 import { CaughtUpState } from './CaughtUpState.tsx';
-import { trackImpression } from '../services/wallAnalytics.ts';
+import { NotInterestedControl } from './objects/wallItemShared.tsx';
+import { trackCaughtUp, trackImpression } from '../services/wallAnalytics.ts';
 import type { WallMode, WallProjection } from '../types/wallProjection.ts';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 55 };
@@ -39,6 +40,7 @@ export function WallFeed({
   caughtUp,
   onEndReached,
   onRefresh,
+  onHide,
   ListHeaderComponent,
 }: {
   items: WallProjection[];
@@ -49,6 +51,8 @@ export function WallFeed({
   caughtUp: boolean;
   onEndReached: () => void;
   onRefresh: () => void;
+  /** Drop an object the viewer marked "not interested" (spec §7/§32). */
+  onHide?: (projectionId: string) => void;
   ListHeaderComponent?: React.ReactElement | null;
 }) {
   // De-dup impressions across the session — record each projection once.
@@ -65,13 +69,27 @@ export function WallFeed({
     },
   );
 
+  // Caught-up rate (spec §32) — record once when the viewer reaches the end of
+  // eligible Following content. Re-arms if new content pushes them off the end.
+  const caughtUpLogged = React.useRef(false);
+  React.useEffect(() => {
+    const atEnd = caughtUp && mode === 'following' && items.length > 0;
+    if (atEnd && !caughtUpLogged.current) {
+      caughtUpLogged.current = true;
+      trackCaughtUp(mode);
+    } else if (!atEnd) {
+      caughtUpLogged.current = false;
+    }
+  }, [caughtUp, mode, items.length]);
+
   const renderItem = React.useCallback(
     ({ item }: { item: WallProjection }) => (
       <View style={s.itemWrap}>
         <WallObjectRenderer projection={item} />
+        <NotInterestedControl projection={item} onHide={onHide} />
       </View>
     ),
-    [],
+    [onHide],
   );
 
   return (
