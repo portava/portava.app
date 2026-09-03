@@ -652,12 +652,73 @@ describe("nothing reads intel_evidence", () => {
     assert.match(readFileSync(producer, "utf8"), /from\("intel_evidence"\)/,
       "the pattern this scan uses must actually match the one file that IS allowed to touch the table");
 
-    const offenders = scanned
+    // WHAT THIS ACTUALLY FORBIDS, narrowed 2026-09-03.
+    //
+    // The rule was written as "nothing touches the table", because at the time
+    // nothing did. main then added lib/media/mediaEvidenceLink.ts, which reads
+    // it — and reading the assertion literally would have called that a
+    // violation. It is not, and the difference is worth stating precisely.
+    //
+    // The hazard is SERVING unmoderated contributor media: `reference` is a
+    // storage key pointing at bytes a person uploaded, and there is no
+    // moderation state on this table to gate them by. So `reference` may not
+    // leave the table, and no ROUTE may read it at all.
+    //
+    // An internal boolean — "does this observation have eligible evidence?" —
+    // exposes nothing to anyone and is a different act. mediaEvidenceLink
+    // selects only media_asset_id, fails closed, and the aggregator still
+    // hardcodes hasEvidence = false, so no confidence score moves either.
+    //
+    // The narrowing is deliberate and bounded: a route reading the table, or
+    // ANY file selecting `reference`, still fails.
+    const READ_ALLOWED: Record<string, string> = {
+      "lib/media/mediaEvidenceLink.ts":
+        "Boolean existence check feeding the aggregator's hasEvidence input. Selects media_asset_id only — never " +
+        "`reference`, so no storage key and no contributor bytes leave the table. Fail-closed on error.",
+    };
+
+    const touching = scanned
       .filter((f) => f !== producer)
       .filter((f) => /from\(["']intel_evidence["']\)/.test(readFileSync(f, "utf8")))
       .map((f) => f.slice(SRC_ROOT.length + 1));
-    assert.deepEqual(offenders, [],
-      "evidence has no moderation state; a read path may not be added before one is ruled on",
+
+    // 1. No ROUTE may read it, allowlist or not. A route is a serving path.
+    assert.deepEqual(
+      touching.filter((f) => f.startsWith("routes/")),
+      [],
+      "evidence has no moderation state, so it may not be served: a route reading intel_evidence is a serving path",
+    );
+
+    // 2. Any other reader must be allowlisted with a stated reason.
+    assert.deepEqual(
+      touching.filter((f) => !(f in READ_ALLOWED)),
+      [],
+      "a new reader of intel_evidence. If it only needs an internal boolean, add it to READ_ALLOWED with a reason " +
+        "and confirm it never selects `reference`. If it needs the evidence itself, moderation must be ruled on first.",
+    );
+
+    // 3. The allowlist has no stale entries — one that outlives its file would
+    //    silently pre-authorise a future reader at that path.
+    assert.deepEqual(
+      Object.keys(READ_ALLOWED).filter((f) => !touching.includes(f)),
+      [],
+      "this no longer reads intel_evidence — drop the entry rather than leaving a standing permission",
+    );
+
+    // 4. THE PROPERTY THAT MATTERS: nobody selects `reference`. This is what
+    //    keeps unmoderated contributor media inside the table, and it applies
+    //    to allowlisted readers too.
+    const leaking = scanned
+      .filter((f) => f !== producer)
+      .filter((f) => {
+        const src = readFileSync(f, "utf8");
+        if (!/from\(["']intel_evidence["']\)/.test(src)) return false;
+        return /\.select\([^)]*\breference\b/.test(src);
+      })
+      .map((f) => f.slice(SRC_ROOT.length + 1));
+    assert.deepEqual(leaking, [],
+      "`reference` is a storage key for unmoderated contributor media; selecting it outside the producer is the " +
+        "serving path this rule exists to prevent",
     );
   });
 });

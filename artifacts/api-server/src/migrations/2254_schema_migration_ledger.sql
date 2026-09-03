@@ -583,6 +583,7 @@ FROM unnest(ARRAY[
   '2218_crowd_flow.sql',
   '2219_locate_friends_sessions.sql',
   '2220_canonical_locations_search_key.sql',
+  '2221_compass_ai_writing_default_off.sql',
   '2222_map_telemetry_refusal_event.sql',
   '2223_map_media_evidence.sql',
   '2224_route_hop_signal.sql',
@@ -590,7 +591,11 @@ FROM unnest(ARRAY[
   '2251_hidden_gem_place_protection_index.sql',
   '2252_hidden_gem_contributions.sql',
   '2253_map_contribution_claim_types.sql',
-  '2254_schema_migration_ledger.sql'
+  '2254_schema_migration_ledger.sql',
+  '2255_media_evidence_seam.sql',
+  '2256_media_intent_signals.sql',
+  '2257_media_view_requests.sql',
+  '2258_input_selection_history.sql'
 ]::text[]) AS f
 ON CONFLICT (filename) DO NOTHING;
 
