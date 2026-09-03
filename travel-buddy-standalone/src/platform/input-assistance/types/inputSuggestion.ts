@@ -70,6 +70,24 @@ export interface InputSuggestion {
 }
 
 /**
+ * §22/§29 — the coarse, non-private creation draft a writing field may hand the
+ * gateway so AI-assisted writing (§22) and the compass structured refs (§56) get
+ * city-level context. DELIBERATELY coordinate-free and address-free: only the
+ * coarse fields the backend's `buildPermittedWritingContext` reads. Precise
+ * location (lat/lng, street address) is NEVER carried here (§29) — the client
+ * simply does not include it.
+ */
+export interface WritingDraft {
+  name?: string;
+  city?: string;
+  country?: string;
+  category?: string;
+  /** Coarse ISO dates (not a precise location) — permitted (§29). */
+  startDate?: string;
+  endDate?: string;
+}
+
+/**
  * §41 — request body for the canonical suggest endpoint. `sessionContext`
  * carries the bounded, permitted task context (§16) — never persistent prefs.
  */
@@ -79,6 +97,19 @@ export interface SuggestRequest {
   text: string;
   limit?: number;
   sessionContext?: InputSessionContext;
+  /**
+   * §22 — per-request OPT-IN for AI-assisted writing / compass-prompt
+   * continuation. Absent/false ⇒ the gateway never runs the (separately
+   * flag-gated) AI writer, so the field behaves exactly as it does with no AI.
+   * Only the user's explicit gesture sets this true.
+   */
+  aiAssist?: boolean;
+  /** §29 coarse city-level context for AI writing / compass refs (no coordinates). */
+  city?: string | null;
+  /** §29 coarse creation draft for AI writing / compass refs (no coordinates). */
+  draft?: WritingDraft;
+  /** §18 IANA timezone for temporal phrasing (optional, coarse). */
+  tz?: string | null;
 }
 
 /**

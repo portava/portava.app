@@ -228,10 +228,11 @@ export function buildQueryCompletion(
   };
 }
 
-// Static Compass prompt starters (§56). These are canned, opt-in prompt
-// suggestions — NOT AI-generated text. Real AI writing assistance (§22) is
-// deferred. They resolve to an editable replace_text action so nothing is ever
-// silently inserted (§22), and to open_compass context carryover on submit.
+// Compass prompt starters (§56). DETERMINISTIC canned prompts — NOT model
+// output — so they always work (offline, or when the Compass AI is unavailable).
+// Real model-generated AI writing/continuation (§22) is produced separately in
+// aiWriting.ts and is opt-in + flag-gated. Starters resolve to an editable
+// replace_text action so nothing is ever silently inserted (§22).
 const COMPASS_STARTERS = [
   'Where should I go tonight?',
   'Where should I eat nearby?',
@@ -239,20 +240,52 @@ const COMPASS_STARTERS = [
   'Find a hidden gem.',
 ];
 
+/** Context Compass starters can tailor to (surface / Trip), coarse only (§56). */
+export interface CompassStarterContext {
+  city?: string | null;
+  cityId?: string | null;
+  tripId?: string | null;
+}
+
 /**
- * Build Compass prompt starters filtered to the typed prefix. Only called when
- * the policy has allowAI=true AND allows the `ai_suggestion` type.
+ * Build CONTEXTUAL Compass prompt starters filtered to the typed prefix (§56).
+ * When the current surface/Trip carries a city, a couple of starters are tailored
+ * to it; a Trip in context adds a planning starter. Every row also carries a
+ * coarse `structuredValue` ({surface, city, cityId, tripId}) so Compass receives
+ * structured intent + permitted entities, not a raw string. Only called when the
+ * policy has allowAI=true AND allows the `ai_suggestion` type.
  */
 export function buildCompassStarters(
   context: InputContext,
   policyVersion: string,
   q: string,
   max: number,
+  ctx: CompassStarterContext = {},
 ): InputSuggestion[] {
+  const city = ctx.city && ctx.city.trim().length > 0 ? ctx.city.trim() : null;
+  // Contextual starters first (surface/Trip-aware), then the generic fallbacks.
+  const contextual: string[] = [];
+  if (city) {
+    contextual.push(`Where should I go in ${city} tonight?`);
+    contextual.push(`Where should I eat in ${city}?`);
+  }
+  if (ctx.tripId) contextual.push('What should I plan next for my trip?');
+  const pool = [...contextual, ...COMPASS_STARTERS];
+  // De-dupe while preserving order (contextual variants can echo a generic one).
+  const seen = new Set<string>();
+  const ordered = pool.filter((s) => (seen.has(s) ? false : (seen.add(s), true)));
+
   const needle = q.trim().toLowerCase();
   const matched = needle.length === 0
-    ? COMPASS_STARTERS
-    : COMPASS_STARTERS.filter((s) => s.toLowerCase().includes(needle) || needle.length < 3);
+    ? ordered
+    : ordered.filter((s) => s.toLowerCase().includes(needle) || needle.length < 3);
+
+  // Coarse structured refs (§56) — no coordinates, only opaque ids + city label.
+  const structured: Record<string, unknown> = { kind: 'compass_prompt', surface: 'compass' };
+  if (city) structured.city = city;
+  if (ctx.cityId) structured.cityId = ctx.cityId;
+  if (ctx.tripId) structured.tripId = ctx.tripId;
+
   return matched.slice(0, Math.max(0, max)).map((text, i): InputSuggestion => ({
     id: `${context}:ai:${i}`,
     type: 'ai_suggestion',
@@ -260,6 +293,9 @@ export function buildCompassStarters(
     label: text,
     replacementText: text,
     action: { type: 'replace_text', text },
+    // Structured refs travel with the suggestion so Compass is handed intent +
+    // permitted entities, not just the prompt string.
+    structuredValue: structured,
     confidence: 0.5,
     source: 'ai',
     reason: 'Suggested prompt',

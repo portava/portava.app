@@ -701,7 +701,7 @@ const INERT_SEEDED_FLAGS = [
     flag: 'compass_ai_enabled', seededIn: '0117_beta_feature_flags.sql:27', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Seeded true by the beta flag block. Lower-case, so it is NOT reachable through the COMPASS_% loader either (compass/flags.ts filters on the upper-case prefix) — it could only ever be read through isFlagEnabled, and nothing does. OWNER DECISION: wire or drop.',
+      'Seeded true by the beta flag block. Lower-case, so it is NOT reachable through the COMPASS_% loader either (compass/flags.ts filters on the upper-case prefix) — it could only ever be read through isFlagEnabled, and nothing does. OWNER DECISION: wire or drop. (AI-assisted writing uses its own dedicated compass_ai_writing_enabled flag, migration 2221, NOT this one.)',
   },
   {
     flag: 'ai_event_auto_suggest_enabled', seededIn: '0194_generated_visuals.sql:89', kind: 'CAPABILITY',

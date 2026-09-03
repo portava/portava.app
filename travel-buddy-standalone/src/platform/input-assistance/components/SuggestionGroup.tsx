@@ -8,13 +8,13 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import { SuggestionList } from './SuggestionList.tsx';
+import type { SuggestionSection } from './suggestionGrouping.ts';
 import { color, space, type as t } from '../../../theme/tokens.ts';
 
-export interface SuggestionSection {
-  /** Section label, e.g. "Cities", "People". */
-  label: string;
-  suggestions: InputSuggestion[];
-}
+// Re-export the pure grouping logic (moved to suggestionGrouping.ts so it is
+// node:test-safe) so every existing import site — the barrel, SuggestionOverlay —
+// keeps importing it from here unchanged.
+export { groupSuggestions, defaultLabelFor, type SuggestionSection } from './suggestionGrouping.ts';
 
 export interface SuggestionGroupProps {
   section: SuggestionSection;
@@ -42,50 +42,6 @@ export function SuggestionGroup({ section, onSelect, activeId, renderLeading }: 
       />
     </View>
   );
-}
-
-/**
- * Group a flat suggestion list into sections by entity type (falling back to
- * assistance type). Preserves the server's ordering within each section and the
- * order in which section keys first appear — so the server's ranking survives.
- */
-export function groupSuggestions(
-  suggestions: InputSuggestion[],
-  labelFor: (key: string) => string = defaultLabelFor,
-): SuggestionSection[] {
-  const order: string[] = [];
-  const byKey = new Map<string, InputSuggestion[]>();
-  for (const s of suggestions) {
-    const key = s.entityType ?? s.type;
-    if (!byKey.has(key)) {
-      byKey.set(key, []);
-      order.push(key);
-    }
-    byKey.get(key)!.push(s);
-  }
-  return order.map((key) => ({ label: labelFor(key), suggestions: byKey.get(key)! }));
-}
-
-function defaultLabelFor(key: string): string {
-  const map: Record<string, string> = {
-    city: 'Cities',
-    country: 'Countries',
-    neighborhood: 'Neighborhoods',
-    place: 'Places',
-    hidden_gem: 'Hidden Gems',
-    user: 'People',
-    buddy: 'Buddies',
-    trip: 'Trips',
-    event: 'Events',
-    plan: 'Plans',
-    hashtag: 'Hashtags',
-    language: 'Languages',
-    interest: 'Interests',
-    action: 'Actions',
-    completion: 'Search',
-    recent: 'Recent',
-  };
-  return map[key] ?? key.replace(/_/g, ' ');
 }
 
 const styles = StyleSheet.create({

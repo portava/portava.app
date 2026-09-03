@@ -47,6 +47,7 @@ import {
   type CategoryBucket,
   type PerspectiveSummary,
 } from "./MediaPerspectiveService.js";
+import { buildMyWorldMemory, type MyWorldMemory } from "./MyWorldMemoryService.js";
 
 const DEFAULT_CANDIDATE_LIMIT = 200;
 
@@ -484,6 +485,12 @@ export interface MyWorldBucket {
 export interface MyWorldProjection {
   generatedAt: string;
   buckets: MyWorldBucket[];
+  /**
+   * §31 / §31.1 Memory Integration — the owner's derived My-World memory
+   * groupings and Hidden Gem Memory lines. OWNER-ONLY, SESSION-SCOPED,
+   * READ-ONLY over the existing Memory system (never a second memory store).
+   */
+  memory: MyWorldMemory;
 }
 
 /**
@@ -570,6 +577,20 @@ export async function buildMyWorldProjection(
     if ((row as any).trip_id) trips.push(p);
   }
 
+  // Cross-domain bucket counts (§30) — read from each domain's OWN owner-scoped
+  // table (reusing the existing per-object shape), best-effort. These carry a
+  // COUNT only: the media items belong to their own domains' projections, and are
+  // not re-projected here. Every read degrades to 0. The §31 memory build runs
+  // in parallel with these.
+  const [postcardsCount, memoriesCount, gemsCount, uploadsCount, memory] = await Promise.all([
+    countOwned(sc, "passport_postcards", "user_id", viewer.viewerId, (r) => (r as any).status === "active" && (r as any).deleted_at == null),
+    countOwned(sc, "memories", "owner_id", viewer.viewerId, (r) => !["deleted", "removed", "hidden"].includes(String((r as any).state ?? ""))),
+    countOwned(sc, "hidden_gems", "submitted_by", viewer.viewerId, (r) => ["active", "pending"].includes(String((r as any).status ?? "active"))),
+    countOwned(sc, "media_assets", "owner_user_id", viewer.viewerId),
+    // §31 memory is scoped to the SESSION viewer id — never a query param.
+    buildMyWorldMemory(sc, viewer.viewerId).catch(() => undefined),
+  ]);
+
   const buckets: MyWorldBucket[] = [
     { key: "all", label: "All", ownerOnly: false, count: published.length, media: published.slice(0, 60) },
     { key: "posts", label: "Posts", ownerOnly: false, count: published.length, media: published.slice(0, 60) },
@@ -577,16 +598,49 @@ export async function buildMyWorldProjection(
     // Owner-only operational buckets (§30).
     { key: "drafts", label: "Drafts", ownerOnly: true, count: drafts.length, media: drafts.slice(0, 60) },
     { key: "archived", label: "Archived", ownerOnly: true, count: archived.length, media: archived.slice(0, 60) },
+    { key: "uploads", label: "Uploads", ownerOnly: true, count: uploadsCount, media: [] },
     { key: "processing", label: "Processing", ownerOnly: true, count: processing.length, media: processing.slice(0, 60) },
-    // Declared cross-domain buckets — populated by their own domains in a later
-    // slice; well-formed empty here rather than absent.
-    { key: "postcards", label: "Postcards", ownerOnly: false, count: 0, media: [] },
-    { key: "memories", label: "Memories", ownerOnly: false, count: 0, media: [] },
+    // Cross-domain buckets — counted from each domain's owner-scoped table.
+    { key: "postcards", label: "Postcards", ownerOnly: false, count: postcardsCount, media: [] },
+    { key: "memories", label: "Memories", ownerOnly: false, count: memoriesCount, media: [] },
+    // Tagged has no backing people-tag table yet (pre-launch) — well-formed empty.
     { key: "tagged", label: "Tagged", ownerOnly: false, count: 0, media: [] },
-    { key: "gems", label: "Hidden Gems", ownerOnly: false, count: 0, media: [] },
+    { key: "gems", label: "Hidden Gems", ownerOnly: false, count: gemsCount, media: [] },
   ];
 
-  return { generatedAt, buckets };
+  return {
+    generatedAt,
+    buckets,
+    memory: memory ?? {
+      ownerId: viewer.viewerId,
+      visibility: "owner_only",
+      groups: [],
+      hiddenGemMemory: [],
+      totals: { surfaced: 0, suppressed: 0 },
+      notes: [],
+    },
+  };
+}
+
+/**
+ * Count an owner's rows in a table, owner-scoped and best-effort. An optional
+ * predicate applies a client-side status/tombstone filter (the source domains'
+ * own deny rules). Any read failure or missing table degrades to 0.
+ */
+async function countOwned(
+  sc: SupabaseClient,
+  table: string,
+  ownerCol: string,
+  ownerId: string,
+  keep?: (row: Record<string, unknown>) => boolean,
+): Promise<number> {
+  try {
+    const { data } = await (sc as any).from(table).select("*").eq(ownerCol, ownerId).limit(1000);
+    const rows = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
+    return keep ? rows.filter(keep).length : rows.length;
+  } catch {
+    return 0;
+  }
 }
 
 // ── Timeline (§17) ───────────────────────────────────────────────────────────

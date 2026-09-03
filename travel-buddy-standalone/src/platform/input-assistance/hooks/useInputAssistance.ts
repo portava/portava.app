@@ -24,7 +24,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { InputContext } from '../types/inputContext.ts';
 import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
-import type { InputSuggestion, InputSessionContext } from '../types/inputSuggestion.ts';
+import type { InputSuggestion, InputSessionContext, WritingDraft } from '../types/inputSuggestion.ts';
 import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
 import { requestSuggestions } from '../services/inputAssistance.ts';
 import { sharedSuggestionCache, SuggestionCache } from '../services/suggestionCache.ts';
@@ -41,6 +41,18 @@ export interface UseInputAssistanceOptions {
   context?: InputContext;
   /** Bounded task/session context forwarded to the server (§16, §41). */
   sessionContext?: InputSessionContext;
+  /**
+   * §22 — per-request OPT-IN for AI-assisted writing / compass continuation.
+   * Only a literal `true` opts in; the gateway keeps its own flag gate on top,
+   * so this is the client half of a double gate. Default: off.
+   */
+  aiAssist?: boolean;
+  /** §29 coarse city-level context for AI writing / compass refs (no coordinates). */
+  city?: string | null;
+  /** §29 coarse creation draft for AI writing / compass refs (no coordinates). */
+  draft?: WritingDraft;
+  /** §18 IANA timezone for temporal phrasing (optional, coarse). */
+  tz?: string | null;
   /** Master switch — false clears results and stops all fetching. */
   enabled?: boolean;
 }
@@ -58,7 +70,7 @@ export interface UseInputAssistanceResult {
 export function useInputAssistance(
   opts: UseInputAssistanceOptions,
 ): UseInputAssistanceResult {
-  const { fieldId, text, context, sessionContext, enabled = true } = opts;
+  const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, enabled = true } = opts;
 
   const policy = useMemo(
     () => resolveFieldPolicy(fieldId, context),
@@ -89,6 +101,15 @@ export function useInputAssistance(
     return JSON.stringify(rest);
   }, [sessionContext]);
 
+  // §22 — the AI opt-in + coarse writing context participate in the cache key
+  // and effect deps ONLY when opted in, so an aiAssist request can never serve a
+  // non-AI cached list (or vice-versa) and a non-AI field's behavior/key is
+  // byte-for-byte unchanged from before Phase 7.
+  const aiKey = useMemo(() => {
+    if (aiAssist !== true) return '';
+    return JSON.stringify({ city: city ?? '', tz: tz ?? '', draft: draft ?? null });
+  }, [aiAssist, city, tz, draft]);
+
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
@@ -114,8 +135,11 @@ export function useInputAssistance(
       return;
     }
 
-    // Cache hit → serve instantly, no network (§33 SWR).
-    const cacheKey = SuggestionCache.key(fieldId, trimmed, latKey, lngKey);
+    // Cache hit → serve instantly, no network (§33 SWR). An opted-in AI request
+    // keys separately (via the effective fieldId) so it never collides with the
+    // field's non-AI cache entry for the same text.
+    const cacheFieldId = aiAssist === true ? `${fieldId}::ai:${aiKey}` : fieldId;
+    const cacheKey = SuggestionCache.key(cacheFieldId, trimmed, latKey, lngKey);
     const cached = sharedSuggestionCache.get(cacheKey);
     if (cached) {
       guardRef.current.invalidate();
@@ -143,6 +167,11 @@ export function useInputAssistance(
           text: trimmed,
           limit: policy.maxSuggestions,
           sessionContext,
+          // §22 opt-in + §29 coarse context — only forwarded when opted in.
+          aiAssist: aiAssist === true ? true : undefined,
+          city: aiAssist === true ? city : undefined,
+          draft: aiAssist === true ? draft : undefined,
+          tz: aiAssist === true ? tz : undefined,
         },
         ctrl.signal,
       ).then((res) => {
@@ -176,7 +205,7 @@ export function useInputAssistance(
     // sessionContext is intentionally referenced via sessionKey/latKey/lngKey
     // to avoid re-running on unstable object identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey]);
+  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey]);
 
   // Abort any in-flight request on unmount.
   useEffect(() => () => { abortRef.current?.abort(); }, []);

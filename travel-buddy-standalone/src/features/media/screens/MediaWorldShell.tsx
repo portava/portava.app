@@ -27,6 +27,8 @@ import { lensNavReducer, INITIAL_LENS_NAV, modesForLens } from '../state/lens.ts
 import { cachedAsOfLabel } from '../state/freshness.ts';
 import type { MediaLens, PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
 import type { MediaProjection } from '../types/media.ts';
+import type { PlaceCurrentView } from '../types/perspective.ts';
+import { setPerspectiveViewerContext } from '../state/perspectiveViewerContext.ts';
 import { useMediaWorld } from '../hooks/useMediaWorld.ts';
 
 import { MediaWorldHeader } from '../components/MediaWorldHeader.tsx';
@@ -52,6 +54,27 @@ const EMPTY_EXPERIENCE_IDS: string[] = [];
 function openMediaViewer(media: MediaProjection) {
   if (!media.id) return;
   router.push(`/media-viewer/${encodeURIComponent(media.id)}` as never);
+}
+
+/**
+ * §14 contextual open — stage the Place's current view as the entry-context
+ * collection and route to the contextual perspective viewer so the user can
+ * navigate this place's OTHER perspectives (never a global stranger feed,
+ * §46.2). Falls back to the generic viewer when the media carries no id.
+ */
+function openPlacePerspectiveViewer({ media, view }: { media: MediaProjection; view: PlaceCurrentView }) {
+  if (!media.id) return;
+  setPerspectiveViewerContext({
+    input: {
+      kind: 'place',
+      entityId: view.placeId,
+      entityLabel: view.placeName,
+      groups: view.groups,
+      media: view.heroMedia,
+    },
+    initialMediaId: media.id,
+  });
+  router.push(`/media-perspective/${encodeURIComponent(media.id)}` as never);
 }
 
 function MediaWorldShellInner({ cityId, lat, lng }: MediaWorldShellProps) {
@@ -109,6 +132,7 @@ function MediaWorldShellInner({ cityId, lat, lng }: MediaWorldShellProps) {
             mode={nav.mode}
             zones={zones}
             onOpenMedia={openMediaViewer}
+            onOpenPerspective={openPlacePerspectiveViewer}
             onAskCompass={() => router.push('/(tabs)/ai' as never)}
           />
         )}

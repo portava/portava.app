@@ -886,6 +886,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: false,
   },
   {
+    key: 'media-perspective-viewer',
+    path: 'media-perspective/[id]',
+    title: 'Media Viewer',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §14 contextual perspective viewer for the World-first Media shell.
+    // Additive; reached from the shell's place/experience perspective mosaics.
+  },
+  {
     key: 'media-world',
     path: 'media-world/index',
     title: 'Media World',

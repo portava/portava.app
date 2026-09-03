@@ -44,7 +44,23 @@ import type {
 import type { HiddenGemMediaProjection, HiddenGemState, GemLocationPrecision } from '../types/hiddenGemMedia.ts';
 import type { ConfidenceState } from '../types/media.ts';
 import type { PeopleLensGroup, PeopleLensProjection } from '../types/peopleLens.ts';
-import type { MyWorldBucket, MyWorldLibrary } from '../types/myWorld.ts';
+import type {
+  MyWorldBucket,
+  MyWorldLibrary,
+  MyWorldMemory,
+  MyWorldMemoryEntry,
+  MyWorldMemoryGroup,
+  HiddenGemMemoryLine,
+} from '../types/myWorld.ts';
+import type {
+  MediaTimelineProjection,
+  TimeBandKind,
+  TimeBandRenderClass,
+  TimeConfidenceBand,
+  TimelineBand,
+  TimelineBandItem,
+  TimelineBands,
+} from '../types/mediaTimeline.ts';
 
 // ── Token seam (mirrors services/mediaFeed.ts) ────────────────────────────────
 let _testToken: string | null = null;
@@ -79,6 +95,10 @@ function asNumber(v: unknown): number | null {
 }
 function asBool(v: unknown, fallback = false): boolean {
   return typeof v === 'boolean' ? v : fallback;
+}
+/** A finite number clamped to the [0,1] confidence domain, else null. */
+function asUnitInterval(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 }
 function asArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
@@ -133,6 +153,30 @@ const GEM_STATES: readonly HiddenGemState[] = [
   'no_longer_hidden',
 ];
 const GEM_PRECISIONS: readonly GemLocationPrecision[] = ['hidden', 'approximate', 'area', 'open'];
+
+// ── §17 Time Architecture vocab (Earlier / Now / Typical / Likely-Next) ───────
+const TIME_RENDER_CLASSES: readonly TimeBandRenderClass[] = ['observed', 'typical', 'predicted'];
+const TIME_ITEM_KINDS = ['media', 'liveClaim', 'pattern', 'prediction'] as const;
+const TIME_CONFIDENCE_BANDS: readonly TimeConfidenceBand[] = [
+  'unverified',
+  'provisional',
+  'likely_current',
+  'live',
+  'strong',
+];
+/** Honest per-band defaults, used when the server omits label / render class. */
+const TIME_BAND_LABEL: Record<TimeBandKind, string> = {
+  earlier: 'Earlier',
+  now: 'Now',
+  typical: 'Typically',
+  likelyNext: 'Likely next',
+};
+const TIME_BAND_RENDER_CLASS: Record<TimeBandKind, TimeBandRenderClass> = {
+  earlier: 'observed',
+  now: 'observed',
+  typical: 'typical',
+  likelyNext: 'predicted',
+};
 
 // ── Server-shape helpers (§43 reconciliation) ─────────────────────────────────
 //
@@ -715,10 +759,111 @@ function mapMyWorldBucket(raw: unknown): MyWorldBucket | null {
   };
 }
 
+// ── §31 / §31.1 Memory Integration (owner-only) ──────────────────────────────
+
 /**
- * Map GET /media/me (§30). Server shape: `{ generatedAt, buckets:[…] }`. The
- * buckets are always well-formed (even when empty) so the lens can render its
- * filter chips from real data.
+ * Map one §31 derived-memory entry. OWNER-ONLY: `visibility` is pinned to
+ * 'owner_only' here so a mutated / hand-rolled payload can never downgrade the
+ * privacy of an entry rendered in the owner's private memory section. An entry
+ * with no id is dropped (nothing to key it by).
+ */
+function mapMyWorldMemoryEntry(raw: unknown): MyWorldMemoryEntry | null {
+  if (!isObj(raw)) return null;
+  const id = asString(raw.id);
+  if (!id) return null;
+  return {
+    id,
+    group: asString(raw.group) ?? '',
+    title: asString(raw.title) ?? '',
+    detail: asString(raw.detail),
+    occurredAt: asString(raw.occurredAt),
+    visibility: 'owner_only',
+  };
+}
+
+/** Map one §31 group block; requires a group key + label to be renderable. */
+function mapMyWorldMemoryGroup(raw: unknown): MyWorldMemoryGroup | null {
+  if (!isObj(raw)) return null;
+  const group = asString(raw.group);
+  const label = asString(raw.label);
+  if (!group || !label) return null;
+  return {
+    group,
+    label,
+    description: asString(raw.description) ?? '',
+    entries: asArray(raw.entries)
+      .map(mapMyWorldMemoryEntry)
+      .filter((e): e is MyWorldMemoryEntry => e !== null),
+  };
+}
+
+/**
+ * Map one §31.1 Hidden Gem Memory line. OWNER-ONLY (see above). Requires a gem
+ * id + label; the gem name may be absent (an unreadable / protected gem still
+ * carries the owner's own private line).
+ */
+function mapHiddenGemMemoryLine(raw: unknown): HiddenGemMemoryLine | null {
+  if (!isObj(raw)) return null;
+  const gemId = asString(raw.gemId);
+  const label = asString(raw.label);
+  if (!gemId || !label) return null;
+  return {
+    gemId,
+    gemName: asString(raw.gemName),
+    kind: asString(raw.kind) ?? '',
+    label,
+    occurredAt: asString(raw.occurredAt),
+    visibility: 'owner_only',
+  };
+}
+
+/**
+ * Map the §31 / §31.1 memory surface. Always returns a well-formed, OWNER-ONLY
+ * MyWorldMemory — an absent / partial / garbage payload degrades to an empty
+ * surface (empty groups + no gem lines), never a throw. `visibility` is pinned
+ * to 'owner_only' regardless of the payload.
+ */
+export function mapMyWorldMemory(raw: unknown): MyWorldMemory {
+  const o = isObj(raw) ? raw : {};
+  const totals = isObj(o.totals) ? o.totals : {};
+  return {
+    visibility: 'owner_only',
+    groups: asArray(o.groups)
+      .map(mapMyWorldMemoryGroup)
+      .filter((g): g is MyWorldMemoryGroup => g !== null),
+    hiddenGemMemory: asArray(o.hiddenGemMemory)
+      .map(mapHiddenGemMemoryLine)
+      .filter((l): l is HiddenGemMemoryLine => l !== null),
+    totals: {
+      surfaced: asNumber(totals.surfaced) ?? 0,
+      suppressed: asNumber(totals.suppressed) ?? 0,
+    },
+    notes: asArray(o.notes)
+      .map(asString)
+      .filter((s): s is string => s !== null),
+  };
+}
+
+/** True when the owner-only memory surface carries nothing to show (§31/§31.1). */
+export function isMyWorldMemoryEmpty(mem: MyWorldMemory): boolean {
+  return mem.groups.every((g) => g.entries.length === 0) && mem.hiddenGemMemory.length === 0;
+}
+
+/**
+ * The §31 groups that actually have entries — the section renders these (and its
+ * §31.1 gem lines) and hides an all-empty group. Pure selector so the private
+ * memory section's render decision is unit-testable without React Native.
+ */
+export function visibleMemoryGroups(mem: MyWorldMemory): MyWorldMemoryGroup[] {
+  return mem.groups.filter((g) => g.entries.length > 0);
+}
+
+/**
+ * Map GET /media/me (§30/§31). Server shape:
+ * `{ generatedAt, buckets:[…], memory:{ groups, hiddenGemMemory, … } }`.
+ * The buckets and the memory surface are always well-formed (even when empty) so
+ * the lens can render its filter chips and its private memory section from real
+ * data, and a route not yet deployed / partial payload degrades cleanly.
  */
 export function mapMyWorldLibrary(raw: unknown): MyWorldLibrary {
   const o = isObj(raw) ? raw : {};
@@ -726,13 +871,118 @@ export function mapMyWorldLibrary(raw: unknown): MyWorldLibrary {
     buckets: asArray(o.buckets)
       .map(mapMyWorldBucket)
       .filter((b): b is MyWorldBucket => b !== null),
+    memory: mapMyWorldMemory(o.memory),
     generatedAt: asString(o.generatedAt),
   };
 }
 
-/** True when a My World library carries no media in any bucket. */
+/**
+ * True when a My World library has nothing to show at all: no media sample in
+ * any bucket, no bucket count, and no owner-only memory. A bucket that carries a
+ * COUNT only (Postcards / Memories / Gems / Uploads live in their own domains'
+ * surfaces) still means the world is not empty, and so does any private memory.
+ */
 export function isMyWorldEmpty(lib: MyWorldLibrary): boolean {
-  return lib.buckets.every((b) => b.media.length === 0);
+  const noMedia = lib.buckets.every((b) => b.media.length === 0);
+  const noCounts = lib.buckets.every((b) => b.count === 0);
+  return noMedia && noCounts && isMyWorldMemoryEmpty(lib.memory);
+}
+
+// ── §17 Time Architecture (Earlier / Now / Typical / Likely-Next) ─────────────
+//
+// Maps GET /media/timeline `bands` into the sanitised rail view-model. The
+// backend already enforces the truth boundary (mediaTimeBands.ts), but the
+// mapper RE-ENFORCES it defensively so a mutated / stale / hand-rolled payload
+// can never make the rail render a prediction or a historical pattern as live:
+//   • an item keeps `live: true` ONLY if it is an observed item in the Now band;
+//   • a band is `live` ONLY when it is Now and still holds a live item;
+//   • a forecast (predicted) without a finite confidence is DROPPED (§17), so
+//     every surviving Likely-Next item carries its confidence.
+
+/** A confidence band literal, or null (nullable — `oneOf` needs a real fallback). */
+function timeConfidenceBand(v: unknown): TimeConfidenceBand | null {
+  return typeof v === 'string' && (TIME_CONFIDENCE_BANDS as readonly string[]).includes(v)
+    ? (v as TimeConfidenceBand)
+    : null;
+}
+
+/**
+ * Map one band item, given the band it belongs to (so `live` can be pinned to
+ * an observed Now item). Returns null when the item must be dropped — a
+ * confidence-less forecast (§17) or a non-object.
+ */
+function mapTimelineItem(raw: unknown, bandKind: TimeBandKind): TimelineBandItem | null {
+  if (!isObj(raw)) return null;
+  const renderClass = oneOf<TimeBandRenderClass>(raw.renderClass, TIME_RENDER_CLASSES, 'observed');
+  const itemKind = oneOf(raw.itemKind, TIME_ITEM_KINDS, 'media');
+  const confidence = asUnitInterval(raw.confidence);
+
+  // A forecast MUST carry confidence; a bare prediction is omitted, never shown.
+  if (renderClass === 'predicted' && confidence === null) return null;
+
+  // Truth boundary: only an observed item in the Now band may render as live.
+  const live = asBool(raw.live) && renderClass === 'observed' && bandKind === 'now';
+
+  return {
+    itemKind,
+    renderClass,
+    observedAt: asString(raw.observedAt),
+    label: asString(raw.label),
+    claimType: asString(raw.claimType),
+    confidence,
+    confidenceBand: timeConfidenceBand(raw.confidenceBand),
+    live,
+    media: isObj(raw.media) ? mapMediaProjection(raw.media) : null,
+  };
+}
+
+/** Map one band. Count and live flag are recomputed from the sanitised items. */
+function mapTimelineBand(raw: unknown, key: TimeBandKind): TimelineBand {
+  const o = isObj(raw) ? raw : {};
+  const items = asArray(o.items)
+    .map((it) => mapTimelineItem(it, key))
+    .filter((it): it is TimelineBandItem => it !== null);
+  // Only Now may be live, and only when it still holds a live item after scrub.
+  const live = key === 'now' && asBool(o.live) && items.some((it) => it.live);
+  return {
+    key,
+    label: asString(o.label) ?? TIME_BAND_LABEL[key],
+    renderClass: oneOf<TimeBandRenderClass>(o.renderClass, TIME_RENDER_CLASSES, TIME_BAND_RENDER_CLASS[key]),
+    live,
+    // Likely-Next is the only forecast band; never invent one elsewhere.
+    forecast: key === 'likelyNext',
+    count: items.length,
+    items,
+  };
+}
+
+/**
+ * Map the GET /media/timeline payload → the four-band rail model. Safe on `{}` /
+ * null / garbage (every band degrades to a well-formed empty band), so
+ * isTimelineEmpty can classify it as an empty — not error — state.
+ */
+export function mapTimeline(raw: unknown): MediaTimelineProjection {
+  const o = isObj(raw) ? raw : {};
+  const b = isObj(o.bands) ? o.bands : {};
+  const bands: TimelineBands = {
+    earlier: mapTimelineBand(b.earlier, 'earlier'),
+    now: mapTimelineBand(b.now, 'now'),
+    typical: mapTimelineBand(b.typical, 'typical'),
+    likelyNext: mapTimelineBand(b.likelyNext, 'likelyNext'),
+  };
+  return { generatedAt: asString(o.generatedAt), bands };
+}
+
+/** True when the timeline carries no items in any of the four bands. */
+export function isTimelineEmpty(p: MediaTimelineProjection | null | undefined): boolean {
+  if (!p) return true;
+  const { earlier, now, typical, likelyNext } = p.bands;
+  return (
+    earlier.items.length === 0 &&
+    now.items.length === 0 &&
+    typical.items.length === 0 &&
+    likelyNext.items.length === 0
+  );
 }
 
 // ── Transport ─────────────────────────────────────────────────────────────────
@@ -926,6 +1176,30 @@ export function fetchMyWorld(opts?: {
 }): Promise<ProjectionResult<MyWorldLibrary>> {
   // Bare body ({ generatedAt, buckets }); the mapper reads `.buckets`.
   return getJson(`/api/media/me`, mapMyWorldLibrary, opts);
+}
+
+export interface TimelineParams {
+  /** Canonical place UUID to scope Now / Typical / Likely-Next to (§17). */
+  placeId?: string | null;
+  signal?: AbortSignal;
+}
+
+/**
+ * GET /media/timeline — the §17 four-band Time Architecture (Earlier / Now /
+ * Typical / Likely-Next).
+ *
+ * With a `placeId`, Now (gated live), Typical (historical pattern) and
+ * Likely-Next (forecast, carries confidence) populate for that place; without
+ * one the server returns only the observed Earlier band (the world timeline is
+ * observed-only). A 404 / non-JSON / empty body degrades to an empty result
+ * (well-formed empty bands), never an error — so the rail shows a clean empty
+ * state while the endpoint is still landing (§33/§39).
+ */
+export function fetchTimeline(
+  params: TimelineParams = {},
+): Promise<ProjectionResult<MediaTimelineProjection>> {
+  const qs = params.placeId ? `?placeId=${encodeURIComponent(params.placeId)}` : '';
+  return getJson(`/api/media/timeline${qs}`, mapTimeline, { signal: params.signal });
 }
 
 /** GET /media/:mediaId — a single projected media object. */

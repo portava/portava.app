@@ -296,8 +296,17 @@ export interface SuggestRequest {
   lat?: number;
   lng?: number;
   city?: string;
+  /** §18 optional IANA timezone for semantic temporal-window normalization. */
+  tz?: string;
   /** §23/§55 creation draft — read only by creation contexts. */
   draft?: CreationDraft;
+  /**
+   * §22 per-request OPT-IN for AI-assisted writing. The client sets this only
+   * when the user explicitly invokes AI assistance (e.g. taps "AI assist").
+   * When absent/false the field still returns its deterministic assistance but
+   * NO model-generated `ai_suggestion` — AI writing is never on by default.
+   */
+  aiAssist?: boolean;
 }
 
 export interface SuggestResponse {

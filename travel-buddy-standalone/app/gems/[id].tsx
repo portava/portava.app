@@ -19,7 +19,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getCurrentGps } from '../../src/services/location';
 import { useGemDetail, useGemCheckin, useGemReport } from '../../src/hooks/useHiddenGems';
-import { verificationBadge, sensitivityLabel, shareGemToTelegraph } from '../../src/services/hiddenGems';
+import { verificationBadge, sensitivityLabel, shareGemToTelegraph, type GemState, type GemConfidence } from '../../src/services/hiddenGems';
+import { GemStateBadge } from '../../src/components/gems/GemStateBadge';
+import { GemContributeSection } from '../../src/components/gems/GemContributeSection';
 import { TripWishlistPicker, type AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
@@ -246,6 +248,21 @@ export default function GemDetailScreen() {
   const [pickerVisible,   setPickerVisible]   = useState(false);
   const [canonicalPlace,  setCanonicalPlace]  = useState<CanonicalPlace | null>(null);
 
+  // §16.3 — after a structured contribution the backend re-derives the gem's
+  // (still community-derived, not flipped) state + confidence. Hold an optional
+  // override so the visible status updates in place; falls back to the gem's own
+  // projection. Degrades cleanly when the payload never carried a gemState.
+  const [stateOverride, setStateOverride] = useState<{
+    gemState: GemState | null;
+    gemConfidence: GemConfidence | null;
+  } | null>(null);
+  const handleContributed = useCallback(
+    (gemState: GemState | null, gemConfidence: GemConfidence | null) => {
+      setStateOverride({ gemState, gemConfidence });
+    },
+    [],
+  );
+
   // Fetch the canonical place (FSQ-enriched phone, hours, address) whenever the
   // gem carries a canonicalPlaceId.  Failures are silent — falls back to
   // user-entered description/category only.
@@ -380,6 +397,18 @@ export default function GemDetailScreen() {
             <Text style={styles.categoryPillText}>{gem.category}</Text>
           </View>
           <Text style={styles.detailName}>{gem.name}</Text>
+
+          {/* §16 / §46.1 — calm gem-state status + confidence + protective note.
+              Prefers a fresh contribution-derived projection when present;
+              renders nothing when the payload has no gemState (degrade). */}
+          <GemStateBadge
+            state={stateOverride ? stateOverride.gemState : gem.gemState}
+            confidence={stateOverride ? stateOverride.gemConfidence : gem.gemConfidence}
+            showConfidence
+            showNote
+            size="full"
+            style={styles.gemStateBadge}
+          />
 
           <View style={styles.locationRow}>
             <Ionicons name="location-outline" size={16} color="#8A9BB5" />
@@ -522,6 +551,14 @@ export default function GemDetailScreen() {
           </View>
         )}
 
+        {/* §16.3 — structured contributions (observations). Additive to the
+            existing verify-visit + report UI below. */}
+        <GemContributeSection
+          gemId={gem.id}
+          isAuthed={isAuthed}
+          onContributed={handleContributed}
+        />
+
         {/* Worth-It / Skip-It voting */}
         <View style={[styles.section, { backgroundColor: '#13213A', borderRadius: 16, marginHorizontal: 16, marginBottom: 12, padding: 16 }]}>
           <WorthItVoteRow entityId={gem.id} entityType="gem" />
@@ -655,6 +692,7 @@ const styles = StyleSheet.create({
   categoryPillText: { color: '#8A9BB5', fontSize: 12, textTransform: 'uppercase', fontWeight: '700' },
 
   detailName: { fontSize: 26, fontWeight: '800', color: '#E8F0FE', marginBottom: 8 },
+  gemStateBadge: { marginBottom: 12 },
 
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 12 },
   locationText: { color: '#8A9BB5', fontSize: 14 },

@@ -46,6 +46,18 @@ import {
   buildCreationAssistance,
   buildUnresolvedAddress,
 } from './creation';
+import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
+import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
+import { enrichSuggestionsWithLive } from './liveSuggestions';
+import {
+  fetchSelectionMemory,
+  applyPriorSelectionBoost,
+  buildLearnedGeoInjections,
+  buildSelectionRecents,
+  selectionQueryKey,
+  emptyMemory,
+  type SelectionMemory,
+} from './personalization';
 import {
   projectSearchResult,
   projectCanonicalCity,
@@ -117,6 +129,10 @@ export interface GenerateParams {
   city: string | null;
   /** §23/§55 creation draft — read only by creation contexts. */
   draft?: CreationDraft;
+  /** §18 IANA timezone for temporal-window normalization (optional). */
+  tz?: string | null;
+  /** §22 per-request opt-in for AI-assisted writing (default false). */
+  aiAssist?: boolean;
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -131,7 +147,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist } = params;
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
@@ -153,11 +169,28 @@ export async function generateSuggestions(
   const isGeoPicker = GEO_PICKER_CONTEXTS.has(context);
   const wantsRecent = policy.allowedSuggestionTypes.includes('recent');
   const wantsEntities = policy.allowedSuggestionTypes.includes('entity');
+  const wantsPersonalized = policy.allowedSuggestionTypes.includes('personalized');
+
+  // ── §35 Selection Memory (Phase 8) ──────────────────────────────────────────
+  // Load the OWNER's per-context explicit-selection memory ONCE, gated by the
+  // field policy's allowPersonalization (so username / private-message / hidden-
+  // gem contexts never fetch or feed it). Fail-soft to an empty memory, which
+  // makes every personalization step below a no-op — a user with no history gets
+  // today's behaviour exactly (graceful cold-start). `personalQueryKey` is folded
+  // WITHOUT alias expansion, matching how the /select write path stores it, so a
+  // user's own abbreviation ("bkk") maps even when the global alias dictionary
+  // does not know it.
+  const personalizationOn = policy.allowPersonalization === true;
+  const memory: SelectionMemory = personalizationOn
+    ? await fetchSelectionMemory(sc, { userId, context, max: 200 }).catch(() => emptyMemory())
+    : emptyMemory();
+  const personalQueryKey = selectionQueryKey(trimmed);
 
   // ── §14 zero-character assistance (geographic pickers) ──────────────────────
   // When the field is EMPTY and the policy allows recents/entities, serve the
-  // viewer's current city + active/upcoming Trip destinations (§53). Sourced
-  // only from the viewer's OWN rows, so no person-privacy gate is required.
+  // viewer's current city + active/upcoming Trip destinations (§53), plus the
+  // user's own recent explicit selections (§35). Sourced only from the viewer's
+  // OWN rows / public geo entities, so no person-privacy gate is required.
   if (q.length === 0 && isGeoPicker && (wantsRecent || wantsEntities)) {
     const defaults = await zeroCharGeoDefaults(sc, {
       userId,
@@ -165,12 +198,53 @@ export async function generateSuggestions(
       max: policy.maxSuggestions,
     }).catch(() => []);
     const projected = defaults.map((d, i) => projectGeoDefault(d, context, POLICY_VERSION, i));
+    const existingIds = new Set(projected.map((s) => s.entityId).filter((x): x is string => !!x));
+    const recents = personalizationOn
+      ? await buildSelectionRecents(sc, {
+          memory,
+          context,
+          isGeoPicker: true,
+          policyVersion: POLICY_VERSION,
+          max: policy.maxSuggestions,
+          existingEntityIds: existingIds,
+        }).catch(() => [])
+      : [];
     return dropDeadRows(
       orderSuggestions(
-        applySessionBias(projected, sessionContext, normalized),
+        applySessionBias([...projected, ...recents], sessionContext, normalized),
         Math.min(limit, policy.maxSuggestions),
       ),
     );
+  }
+
+  // ── §14/§35 zero-character recents (non-geo personalization contexts) ────────
+  // For a search-like field that allows personalization (e.g. global_search),
+  // an empty query serves the user's own recent explicit GEO selections before
+  // the first keystroke. telegraph_recipient is excluded — it serves eligibility-
+  // scoped recipient recents through its own path below. Cold-start (no memory)
+  // returns nothing and falls through to today's behaviour.
+  if (
+    q.length === 0 &&
+    !isGeoPicker &&
+    personalizationOn &&
+    context !== 'telegraph_recipient' &&
+    (wantsRecent || wantsPersonalized)
+  ) {
+    const recents = await buildSelectionRecents(sc, {
+      memory,
+      context,
+      isGeoPicker: false,
+      policyVersion: POLICY_VERSION,
+      max: policy.maxSuggestions,
+    }).catch(() => []);
+    if (recents.length > 0) {
+      return dropDeadRows(
+        orderSuggestions(
+          applySessionBias(recents, sessionContext, normalized),
+          Math.min(limit, policy.maxSuggestions),
+        ),
+      );
+    }
   }
 
   // ── Social identity contexts (Phase 4, §26/§47/§54) ─────────────────────────
@@ -350,17 +424,100 @@ export async function generateSuggestions(
     suggestions.push(buildQueryCompletion(context, POLICY_VERSION, q));
   }
 
-  // ── Compass prompt starters (§56, AI lane) ──────────────────────────────────
-  // Static opt-in prompts, gated by the policy's AI allowance. Real AI writing
-  // (§22) is deferred; these are canned starters resolving to editable text.
+  // ── Compass prompt starters (§56) ───────────────────────────────────────────
+  // DETERMINISTIC, contextual (surface/Trip-aware) starter prompts, gated only by
+  // the policy's AI allowance — NOT by the AI flag or opt-in (they need no model,
+  // so they always work, incl. offline/AI-unavailable). Each carries structured
+  // refs (a coarse {surface, city, cityId, tripId} payload) so tapping one hands
+  // Compass structured context, not a raw string. The action is `replace_text`,
+  // so nothing is ever silently inserted (§22).
   if (
     context === 'compass_prompt' &&
     policy.allowAI &&
     policy.allowedSuggestionTypes.includes('ai_suggestion')
   ) {
     suggestions.push(
-      ...buildCompassStarters(context, POLICY_VERSION, q, policy.maxSuggestions),
+      ...buildCompassStarters(context, POLICY_VERSION, q, policy.maxSuggestions, {
+        city,
+        cityId: sessionContext?.cityId ?? null,
+        tripId: sessionContext?.tripId ?? null,
+      }),
     );
+  }
+
+  // ── Phase-6 semantic intent (§18/§21) ───────────────────────────────────────
+  // For the search-like contexts (global_search / compass_prompt) a
+  // sufficiently-confident deterministic parse ADDS structured suggestions/
+  // actions (a scoped search, a sequenced plan, an editable Compass prompt) and
+  // recognizes §21 smart actions ("add Bangkok to my trip"). It NEVER removes the
+  // raw query row: a LOW/VERY-LOW parse adds nothing (§2/§19 — raw preserved),
+  // and every semantic row is an `action`/`ai_suggestion` type, so it sorts AFTER
+  // entities under §9 trust order (a canonical entity always outranks the parse).
+  // The parser is fed the alias-expanded text so multi-word phrases survive.
+  if (isSemanticContext(context) && q.length >= 1) {
+    const semanticRows = await buildSemanticAssistance(sc, {
+      context,
+      policy,
+      text: aliased,
+      tz: tz ?? null,
+      sessionContext,
+      policyVersion: POLICY_VERSION,
+      max: policy.maxSuggestions,
+    }).catch(() => [] as InputSuggestion[]);
+    suggestions.push(...semanticRows);
+  }
+
+  // ── Phase-7 AI-assisted writing (§22) — OPT-IN, flag-gated, SECONDARY ────────
+  // Proposes editable caption/description/title/prompt text via the EXISTING
+  // Compass AI (getOpenAI → gpt-5-mini). Requires ALL of: the per-request opt-in
+  // (§22), the field policy's allowAI + ai_suggestion allowance (§6), and — inside
+  // buildAiAssistedWriting — the dedicated `compass_ai_writing_enabled` flag AND an available
+  // model. Any of those missing ⇒ no ai_suggestion is added, and the field's
+  // deterministic assistance above is unaffected (degrade-to-no-AI). Every row is
+  // `type:'ai_suggestion'` / `source:'ai'` with an editable `replace_text` action,
+  // so it is never silently inserted (§22) and — sorting LAST by type rank — never
+  // outranks a canonical entity (§9). It creates NO canonical fact.
+  if (
+    aiAssist === true &&
+    policy.allowAI &&
+    policy.allowedSuggestionTypes.includes('ai_suggestion') &&
+    isAiTextContext(context) &&
+    q.length >= 1
+  ) {
+    const aiRows = await buildAiAssistedWriting(sc, {
+      context,
+      policy,
+      text: trimmed,
+      draft: draft ?? {},
+      sessionContext,
+      city,
+      policyVersion: POLICY_VERSION,
+      max: 2,
+    }).catch(() => [] as InputSuggestion[]);
+    suggestions.push(...aiRows);
+  }
+
+  // ── §35 learned abbreviation → canonical geo mapping (Phase 8) ──────────────
+  // When the typed query is one the user has REPEATEDLY used to select a public
+  // canonical city/country ("bkk" → Bangkok, for THIS user), and that entity is
+  // not already a candidate, inject it as a `personalized` row. It resolves to
+  // the EXISTING canonical entity — changing no canonical data and affecting no
+  // other user. `personalized` sorts after `entity` (projection TYPE_RANK), so it
+  // never outranks a canonical match (§9). Only public geo entities are injected;
+  // a remembered person/place is re-surfaced only by re-ranking a candidate that
+  // already passed the privacy gate, never injected around it.
+  if (personalizationOn && (wantsEntities || wantsPersonalized) && q.length >= 1) {
+    const existingIds = new Set(suggestions.map((s) => s.entityId).filter((x): x is string => !!x));
+    const injected = await buildLearnedGeoInjections(sc, {
+      memory,
+      queryKey: personalQueryKey,
+      context,
+      isGeoPicker,
+      policyVersion: POLICY_VERSION,
+      max: 3,
+      existingEntityIds: existingIds,
+    }).catch(() => [] as InputSuggestion[]);
+    suggestions.push(...injected);
   }
 
   // ── Phase-5: merge creation assistance + unresolved-address fallback ─────────
@@ -396,14 +553,40 @@ export async function generateSuggestions(
   // deferred.
   const biased = applySessionBias(suggestions, sessionContext, normalized);
 
+  // ── §15 PriorSelection boost (Phase 8) ──────────────────────────────────────
+  // AUGMENT the ranking with the OWNER's repeated-selection history: raise the
+  // confidence of candidates this user has selected before in this context
+  // (stronger when the SAME query led to them — the abbreviation signal). It only
+  // nudges confidence, the SECONDARY sort key, and is clamped below the exact-
+  // match band, so it reorders WITHIN a type and never displaces a strong
+  // canonical match or a canonical entity above an AI guess (§9). Empty memory ⇒
+  // identity (cold-start unchanged).
+  const personalized = personalizationOn
+    ? applyPriorSelectionBoost(biased, memory, personalQueryKey)
+    : biased;
+
+  // ── Phase-9 Live Intelligence (§31/§15/§8) ──────────────────────────────────
+  // Attach a §8 `freshness` projection to place/gem suggestions that have a
+  // CURRENT live state, and add the §15 Freshness rank term (a small confidence
+  // nudge). It consumes ONLY the gated, fail-closed `readLiveClaimEnvelopes`, so
+  // a live label is NEVER fabricated: off/stale/unavailable/unpromoted ⇒ no
+  // label (§2/§31). Policy-gated by `allowLiveContext` and additive — with live
+  // off (the prod default, ~0 observations) it is a no-op after one flag read.
+  // Runs BEFORE the final rank so the Freshness term participates in ordering.
+  const withLive = await enrichSuggestionsWithLive(sc, personalized, {
+    policy,
+    context,
+    max: Math.min(limit, policy.maxSuggestions),
+  }).catch(() => personalized);
+
   // ── Rank + cap (§9 trust order, §15 tie-break by confidence) ────────────────
   // When the field carries query completions (§13 "SEARCH FOR" rows — global_
   // search, buddy_service, hashtag), reserve a slot so a submittable-search row
   // is never capped out by a full page of entity matches. Otherwise a plain cap.
   const cap = Math.min(limit, policy.maxSuggestions);
   const ranked = policy.allowedSuggestionTypes.includes('completion')
-    ? orderSuggestionsReserving(biased, cap, COMPLETION_RESERVED_TYPES, 1)
-    : orderSuggestions(biased, cap);
+    ? orderSuggestionsReserving(withLive, cap, COMPLETION_RESERVED_TYPES, 1)
+    : orderSuggestions(withLive, cap);
 
   // §13 "no dead rows": final safety net — every returned row must resolve to an
   // action, a canonical entity, or a routable destination.

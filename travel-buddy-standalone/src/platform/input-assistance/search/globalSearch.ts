@@ -32,6 +32,7 @@ import type { SuggestGroup, UnifiedSearchResult } from '../../../services/discov
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import type { EntityType } from '../types/inputContext.ts';
 import { foldForMatch } from '../services/queryNormalization.ts';
+import { isDispatchableActionSuggestion } from './smartActions.ts';
 
 /** The synthetic group/row type for query-completion ("SEARCH FOR …") rows. */
 export const QUERY_GROUP_TYPE = 'query';
@@ -246,6 +247,11 @@ export function mapSuggestionsToGroups(
   };
 
   for (const s of suggestions ?? []) {
+    // §21 smart actions ("add Bangkok to my trip") belong to the action-chip
+    // lane, not the search groups — even though an add_to_trip row carries a
+    // /city route it must dispatch, not navigate. Skip it here so it renders in
+    // exactly one lane (see smartActions.extractActionSuggestions).
+    if (isDispatchableActionSuggestion(s)) continue;
     // Entity first (§9 canonical-first). If it has no resolvable destination,
     // fall back to a submit row; if it can't submit either, it is dropped —
     // never rendered as a dead row (§13).

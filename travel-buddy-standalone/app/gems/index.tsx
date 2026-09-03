@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useGemList, useSavedGems, useLayoverGems } from '../../src/hooks/useHiddenGems';
 import { getCurrentGps } from '../../src/services/location';
 import { verificationBadge, sensitivityLabel, type HiddenGem, type GemCategory } from '../../src/services/hiddenGems';
+import { GemStateBadge } from '../../src/components/gems/GemStateBadge';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { NavBarFiller } from '../../src/hooks/useNavBarCollapse';
@@ -65,6 +66,15 @@ function GemCard({ gem, onPress }: { gem: HiddenGem; onPress: () => void }) {
         </View>
 
         <Text style={styles.gemName} numberOfLines={2}>{gem.name}</Text>
+
+        {/* §16 Hidden Gem Intelligence — calm gem-state pill + confidence.
+            Renders nothing when the payload has no gemState (degrade). */}
+        <GemStateBadge
+          state={gem.gemState}
+          confidence={gem.gemConfidence}
+          showConfidence
+          style={styles.gemStateBadge}
+        />
 
         <View style={styles.locationRow}>
           <Ionicons
@@ -546,6 +556,7 @@ const styles = StyleSheet.create({
   protectedText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
   gemName: { fontSize: 18, fontWeight: '700', color: '#E8F0FE', marginBottom: 6 },
+  gemStateBadge: { marginBottom: 8 },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 8 },
   locationText: { color: '#8A9BB5', fontSize: 13 },
   description: { color: '#B0C4DE', fontSize: 14, lineHeight: 20, marginBottom: 10 },

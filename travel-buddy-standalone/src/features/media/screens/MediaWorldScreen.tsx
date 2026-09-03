@@ -14,16 +14,19 @@
  * All content comes from a projection the parent loads; this screen only reads
  * it and renders empty/loading/error cleanly.
  */
-import React from 'react';
+import React, { useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { color, space } from '../../../theme/tokens.ts';
 import type { WorldViewState } from '../state/worldState.ts';
 import type { PresentationMode, CityVisualZone, ChangingNowItem, ForYouNowItem } from '../types/mediaContext.ts';
+import type { MediaTimelineProjection } from '../types/mediaTimeline.ts';
 import { CityVisualPulse } from '../components/CityVisualPulse.tsx';
 import { ForYouNowStrip } from '../components/ForYouNowStrip.tsx';
 import { ChangingNowCard } from '../components/ChangingNowCard.tsx';
-import { MediaTimeRail, type TimeRailSegment } from '../components/MediaTimeRail.tsx';
+import { MediaTimeRail } from '../components/MediaTimeRail.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
+import { useLensProjection } from '../hooks/useLensProjection.ts';
+import { fetchTimeline, isTimelineEmpty } from '../services/mediaProjection.ts';
 
 export interface MediaWorldScreenProps {
   state: WorldViewState;
@@ -44,6 +47,12 @@ export function MediaWorldScreen({
   onWhyThis,
   onSelectForYou,
 }: MediaWorldScreenProps) {
+  // Time mode is its own projection (GET /media/timeline), so it stands on its
+  // own regardless of the World dashboard load — render it first.
+  if (mode === 'time') {
+    return <WorldTimeRail />;
+  }
+
   const world = state.data;
   const showEmptyOrLoading =
     state.status === 'loading' || state.status === 'empty' || state.status === 'error' || !world;
@@ -72,19 +81,6 @@ export function MediaWorldScreen({
           It shows place-level perspective clusters — never precise locations.
         </Text>
       </View>
-    );
-  }
-
-  if (mode === 'time') {
-    return (
-      <ScrollView contentContainerStyle={styles.timeContent}>
-        <Text style={styles.sectionTitle}>Right now, and what&apos;s likely next</Text>
-        <MediaTimeRail segments={buildTimeRail(world.changingNow)} />
-        <Text style={styles.timeNote}>
-          Earlier and Now are observed. Later is a forecast — shown as &ldquo;Likely&rdquo; and never
-          presented as fact (§17).
-        </Text>
-      </ScrollView>
     );
   }
 
@@ -126,25 +122,41 @@ export function MediaWorldScreen({
   );
 }
 
-/** Derive a modest Earlier/Now/Later rail from the changing-now signal. */
-function buildTimeRail(changing: ChangingNowItem[]): TimeRailSegment[] {
-  const headline = changing[0];
-  return [
-    { key: 'earlier', label: 'EARLIER', observationClass: 'observed', note: 'Quieter' },
-    {
-      key: 'now',
-      label: 'NOW',
-      observationClass: 'observed',
-      isNow: true,
-      note: headline?.title ?? 'Steady',
-    },
-    {
-      key: 'later',
-      label: 'LATER',
-      observationClass: 'predicted',
-      note: headline?.trend === 'rising' ? 'Busier' : 'Winding down',
-    },
-  ];
+/**
+ * NOW → Time mode: the §17 rail, sourced from the real GET /media/timeline. The
+ * NOW dashboard is city-level (no single place), so it loads the world timeline
+ * (observed Earlier band; Now / Typical / Likely-Next are place-scoped and stay
+ * empty here). Degrades cleanly (§33/§39) and never shows retained data as live.
+ */
+function WorldTimeRail() {
+  const fetcher = useCallback(
+    (opts: { signal: AbortSignal }) => fetchTimeline({ signal: opts.signal }),
+    [],
+  );
+  const { state, reload } = useLensProjection<MediaTimelineProjection>(fetcher, isTimelineEmpty, []);
+  const timeline = state.data;
+  const stale = state.status === 'ready' && state.errorKind != null;
+
+  if (timeline && (state.status === 'ready' || state.status === 'empty' || state.status === 'revalidating')) {
+    return (
+      <ScrollView contentContainerStyle={styles.timeContent}>
+        <Text style={styles.sectionTitle}>Right now, and what&apos;s likely next</Text>
+        <MediaTimeRail bands={timeline.bands} stale={stale} />
+        <Text style={styles.timeNote}>
+          Earlier and Now are observed. Typical is a historical pattern; Likely next is a forecast —
+          shown as &ldquo;Likely&rdquo; with its confidence, never presented as fact (§17).
+        </Text>
+      </ScrollView>
+    );
+  }
+  return (
+    <LensStateView
+      status={state.status === 'idle' ? 'loading' : state.status}
+      title="No timeline yet"
+      message="As perspectives are shared around you, the Earlier / Now rail fills in here."
+      onRetry={reload}
+    />
+  );
 }
 
 const styles = StyleSheet.create({
