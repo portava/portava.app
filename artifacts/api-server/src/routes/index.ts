@@ -131,6 +131,7 @@ import placeDaysRouter from "./placeDays.js";
 import contentTranslationRouter from "./contentTranslation.js";
 import sharedMomentsRouter from "./sharedMoments.js";
 import placeRecapsRouter from "./placeRecaps.js";
+import wallRouter from "./wall.js";
 
 const router: IRouter = Router();
 
@@ -283,5 +284,6 @@ router.use(placeRecapsRouter);
 router.use(intelRouter);
 router.use(intelCoverageRouter);
 router.use(intelApiRouter);
+router.use(wallRouter);
 
 export default router;
