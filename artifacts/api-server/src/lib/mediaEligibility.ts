@@ -70,7 +70,21 @@ export interface ViewerCtx {
 
 export interface EligibilityResult {
   eligible: MediaCandidate[];
-  /** True if block fetch failed — caller should treat as empty feed. */
+  /**
+   * True when a HARD GATE could not be evaluated — blocks (step 1) or
+   * suspended/banned account status (step 3). Caller must treat as an empty
+   * feed: an unevaluated hard gate means we cannot prove the page is safe to
+   * serve, and both gates decide integrity outcomes rather than preferences.
+   *
+   * Mutes are deliberately NOT a hard gate. Losing the mute filter costs the
+   * viewer a preference; losing blocks or the suspended/banned filter serves
+   * content the platform has already decided must not be served.
+   *
+   * The name is narrower than the meaning and is kept only so that the four
+   * call sites — in files owned by a concurrent workstream — do not have to be
+   * touched to widen it. `gateFetchFailed` is the honest name; renaming it is
+   * follow-up work, not a behaviour question.
+   */
   blockFetchFailed: boolean;
 }
 
@@ -193,23 +207,31 @@ export async function filterEligibleMediaCandidates(
       // Same shape as the mute read above, with a heavier consequence: an empty
       // result means "nobody on this page is suspended", and a rejected query
       // means "we do not know" — indistinguishable here, so a schema/query
-      // error silently serves suspended and banned creators' media. The sibling
-      // block read at the top of this function binds `error` and fails closed;
-      // this one deliberately stays best-effort, but must not stay silent.
+      // error would silently serve suspended and banned creators' media.
+      //
+      // The 2026-08-31 audit made this failure visible but left it best-effort,
+      // and recorded the asymmetry it could not resolve from inside an audit:
+      // step 1 of THIS function treats an unknown block state as fail-closed and
+      // returns an empty feed, while this read served the page anyway. Both are
+      // integrity gates and serving a banned creator's media is the same
+      // category of harm, so the asymmetry was a gap rather than a decision.
+      // It is now closed in the direction step 1 already set.
       if (statusErr) {
         console.warn(
-          "filterEligibleMediaCandidates: profiles account_status read failed — suspended/banned gate is OFF for this request",
+          "filterEligibleMediaCandidates: profiles account_status read failed — suspended/banned gate could not be evaluated, failing closed to an empty feed",
           { creatorCount: creatorIds.length, code: (statusErr as any)?.code, message: (statusErr as any)?.message },
         );
+        return { eligible: [], blockFetchFailed: true };
       }
       for (const r of (profileRows as any[]) ?? []) {
         suspendedCreatorIds.add(r.id as string);
       }
     } catch (err) {
       console.warn(
-        "filterEligibleMediaCandidates: profiles account_status read rejected — suspended/banned gate is OFF for this request",
+        "filterEligibleMediaCandidates: profiles account_status read rejected — suspended/banned gate could not be evaluated, failing closed to an empty feed",
         { creatorCount: creatorIds.length, err },
       );
+      return { eligible: [], blockFetchFailed: true };
     }
   }
 

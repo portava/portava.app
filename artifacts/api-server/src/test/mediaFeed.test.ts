@@ -532,6 +532,74 @@ describe("filterEligibleMediaCandidates", () => {
     assert.equal(blockFetchFailed, true, "must report blockFetchFailed on DB error");
     assert.equal(eligible.length, 0, "must return empty on blockFetchFailed");
   });
+
+  // ── The two-tier gate posture ───────────────────────────────────────────────
+  //
+  // These two tests exist as a PAIR and only mean something together: they pin
+  // that this function treats its integrity gates and its preference gate
+  // differently, on purpose. Step 1 (blocks) and step 3 (suspended/banned) fail
+  // CLOSED when they cannot be evaluated, because serving content the platform
+  // has already decided must not be served is the harm. Step 2 (mutes) stays
+  // best-effort, because losing it costs the viewer a preference and nothing
+  // else. Each client below errors exactly ONE read so the tiers cannot pass by
+  // accident — an all-errors client would satisfy either expectation.
+
+  /** A client where every table reads clean except `errorTable`, which rejects. */
+  const clientErroringOnly = (errorTable: string): any => ({
+    from(table: string) {
+      const b: any = {
+        select() { return b; },
+        eq() { return b; },
+        in() { return b; },
+        then(onF: any) {
+          if (table === errorTable) {
+            return Promise.resolve({
+              data: null,
+              error: { code: "42703", message: `column does not exist on ${table}` },
+            }).then(onF);
+          }
+          return Promise.resolve({ data: [], error: null }).then(onF);
+        },
+        maybeSingle() { return Promise.resolve({ data: null, error: null }); },
+      };
+      return b;
+    },
+  });
+
+  it("fails CLOSED when only the suspended/banned read errors (blocks and mutes are fine)", async () => {
+    const post = makePost({ author_id: CREATOR_A });
+    const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
+      [post],
+      { viewerUserId: VIEWER_ID, feedType: "for_you", followedCreatorIds: new Set() },
+      clientErroringOnly("profiles"),
+      null,
+    );
+    // Before this was fixed the page was served: an unreadable account_status
+    // is indistinguishable from "nobody here is suspended", so a suspended or
+    // banned creator's media went out. The block read at the top of the same
+    // function already failed closed on the identical unknown.
+    assert.equal(
+      blockFetchFailed,
+      true,
+      "an unevaluated suspended/banned gate must be reported like any other unevaluated hard gate",
+    );
+    assert.equal(eligible.length, 0, "must serve nothing when the suspended/banned gate could not be evaluated");
+  });
+
+  it("stays OPEN when only the mute read errors — a preference gate is not an integrity gate", async () => {
+    const post = makePost({ author_id: CREATOR_A });
+    const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
+      [post],
+      { viewerUserId: VIEWER_ID, feedType: "for_you", followedCreatorIds: new Set() },
+      clientErroringOnly("user_mutes"),
+      null,
+    );
+    // Deliberately the other way from the test above. If this ever starts
+    // failing closed, the asymmetry stopped being a decision and became a
+    // copy-paste — an unreadable mute table would then empty the whole feed.
+    assert.equal(blockFetchFailed, false, "a failed mute read is not a hard-gate failure");
+    assert.equal(eligible.length, 1, "losing the mute filter must not empty the feed");
+  });
 });
 
 // ── loadViewerTripIds — read isolation ────────────────────────────────────────
