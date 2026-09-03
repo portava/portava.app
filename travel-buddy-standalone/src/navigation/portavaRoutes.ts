@@ -609,6 +609,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: false,
     deepLink: '/passport/country/[country]',
   },
+  {
+    key: 'passport-my-world',
+    path: 'passport/my-world',
+    title: 'My World',
+    parent: 'tab-passport',
+    icon: 'Globe2',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/my-world',
+  },
 
   // ── Stamps ────────────────────────────────────────────────────────────────
 

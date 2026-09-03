@@ -19,8 +19,28 @@ import { logger } from "../lib/logger.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import {
+  WINDOW_TYPES,
+  INTENT_TYPES,
+  GROUP_PREFERENCES,
+  VISIBILITY_POLICIES,
+  SOCIAL_AVAILABILITY,
+  createWindow,
+  listWindows,
+  updateWindow,
+  clearWindow,
+} from "../services/passport/OpenToPlansService.js";
 
 const router = Router();
+
+/**
+ * Passport spec §8 Open-to-Plans / Temporary Intent capability flag. Seeded OFF
+ * by migration 2260. With it off the window routes below answer an
+ * explicitly-disabled envelope and store nothing; the §6 grid / quick-status
+ * routes above are NOT gated by it.
+ */
+const OPEN_TO_PLANS_FLAG = "open_to_plans_windows_enabled";
 
 const WEEKDAYS = ["mon","tue","wed","thu","fri","sat","sun"] as const;
 const BLOCKS   = ["morning","afternoon","evening","late"] as const;
@@ -619,6 +639,156 @@ router.get("/circles/:circleId/availability", async (req, res) => {
   });
 
   res.json({ members: result, circleId });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Passport §8 — Open to Plans / Temporary Intent (AvailabilityWindow, TABLE 8)
+//
+// These are ADDITIVE. The §6 weekly grid and quick-status routes above are
+// untouched. Everything here is gated behind `open_to_plans_windows_enabled`
+// (seeded OFF); when the flag is off, reads return { windows: [], enabled:false }
+// and writes return { ok:true, enabled:false } and store nothing.
+//
+// §7 is enforced at THIS boundary too: the create endpoint never accepts a
+// `source` from the body — a window set through the API is, by construction, an
+// EXPLICIT answer. Inference lives server-side (OpenToPlansService.recordInferred-
+// Window) and produces private plan_derived windows that this endpoint cannot.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+
+const CreateWindowSchema = z.object({
+  type:               z.enum(WINDOW_TYPES),
+  startAt:            z.string().min(1),
+  endAt:              z.string().min(1),
+  tripId:             z.string().regex(UUID_RE).nullish(),
+  openToPlans:        z.boolean().optional(),
+  intents:            z.array(z.enum(INTENT_TYPES)).max(INTENT_TYPES.length).optional(),
+  groupPreference:    z.enum(GROUP_PREFERENCES).nullish(),
+  maxTravelMinutes:   z.number().int().positive().max(1440).nullish(),
+  visibility:         z.enum(VISIBILITY_POLICIES).optional(),
+  socialAvailability: z.enum(SOCIAL_AVAILABILITY).nullish(),
+  expiresAt:          z.string().nullish(),
+});
+
+const UpdateWindowSchema = z.object({
+  openToPlans:        z.boolean().optional(),
+  intents:            z.array(z.enum(INTENT_TYPES)).max(INTENT_TYPES.length).optional(),
+  groupPreference:    z.enum(GROUP_PREFERENCES).nullish(),
+  maxTravelMinutes:   z.number().int().positive().max(1440).nullish(),
+  visibility:         z.enum(VISIBILITY_POLICIES).optional(),
+  socialAvailability: z.enum(SOCIAL_AVAILABILITY).nullish(),
+  endAt:              z.string().min(1).optional(),
+  expiresAt:          z.string().nullish(),
+}).refine((b) => Object.keys(b).length > 0, { message: "empty patch" });
+
+// ── GET /api/me/availability-windows ─────────────────────────────────────────
+// Own windows. Non-expired only by default (§31); ?includeExpired=1 for history.
+
+router.get("/me/availability-windows", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  if (!(await isFlagEnabled(client, OPEN_TO_PLANS_FLAG))) {
+    res.json({ windows: [], enabled: false });
+    return;
+  }
+
+  const includeExpired = req.query.includeExpired === "1" || req.query.includeExpired === "true";
+  const windows = await listWindows(client, user.id, { includeExpired });
+  res.json({ windows, enabled: true });
+});
+
+// ── POST /api/me/availability-windows ────────────────────────────────────────
+// Set an EXPLICIT intent window with a TTL. source is always 'explicit' (§7).
+
+router.post("/me/availability-windows", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  if (!(await isFlagEnabled(client, OPEN_TO_PLANS_FLAG))) {
+    res.json({ ok: true, enabled: false });
+    return;
+  }
+
+  const parsed = CreateWindowSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const b = parsed.data;
+
+  const { window, error } = await createWindow(client, {
+    userId:             user.id, // §: user_id from JWT, never from body
+    type:               b.type,
+    startAt:            b.startAt,
+    endAt:              b.endAt,
+    tripId:             b.tripId ?? null,
+    openToPlans:        b.openToPlans,
+    intents:            b.intents,
+    groupPreference:    b.groupPreference ?? null,
+    maxTravelMinutes:   b.maxTravelMinutes ?? null,
+    visibility:         b.visibility,
+    source:             "explicit", // §7: an answer given through the API is explicit
+    socialAvailability: b.socialAvailability ?? null,
+    expiresAt:          b.expiresAt ?? null,
+  });
+
+  if (!window) {
+    if (error && error !== "db_error") { sendError(res, "invalid_payload", error); return; }
+    sendError(res, "db_error", "Could not create availability window");
+    return;
+  }
+  res.status(201).json({ window, enabled: true });
+});
+
+// ── PATCH /api/me/availability-windows/:id ───────────────────────────────────
+// Update intent/openToPlans/visibility/TTL on an owned window.
+
+router.patch("/me/availability-windows/:id", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid window id"); return; }
+
+  if (!(await isFlagEnabled(client, OPEN_TO_PLANS_FLAG))) {
+    res.json({ ok: true, enabled: false });
+    return;
+  }
+
+  const parsed = UpdateWindowSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const { window, error } = await updateWindow(client, id, user.id, parsed.data);
+  if (!window) {
+    if (error === "not_found") { sendError(res, "not_found", "Window not found"); return; }
+    if (error && error !== "db_error") { sendError(res, "invalid_payload", error); return; }
+    sendError(res, "db_error", "Could not update availability window");
+    return;
+  }
+  res.json({ window, enabled: true });
+});
+
+// ── DELETE /api/me/availability-windows/:id ──────────────────────────────────
+// Explicit clear (§8 "explicit clear action").
+
+router.delete("/me/availability-windows/:id", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid window id"); return; }
+
+  if (!(await isFlagEnabled(client, OPEN_TO_PLANS_FLAG))) {
+    res.json({ ok: true, enabled: false });
+    return;
+  }
+
+  const cleared = await clearWindow(client, id, user.id);
+  if (!cleared) { sendError(res, "not_found", "Window not found"); return; }
+  res.json({ ok: true, cleared: true, enabled: true });
 });
 
 export default router;
