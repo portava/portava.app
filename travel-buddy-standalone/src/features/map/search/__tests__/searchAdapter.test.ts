@@ -5,6 +5,19 @@
  * impossible to notice: a result with no usable coordinates must produce NO
  * frame. Both plausible fallbacks — the viewport centre, or the user's own
  * position — would move the camera somewhere confident and wrong.
+ *
+ * FIXTURE SPELLING
+ * ================
+ * Every `type` below is spelled the way the WIRE spells it — the plural
+ * `SearchType` values from artifacts/api-server/src/routes/discoverySearch.ts.
+ * This file used to say `place`, `user`, `trip`, `area`, `event`; the server
+ * has never sent any of those. The adapter was keyed on the same singular
+ * forms, so the tests and the bug agreed with each other and the suite stayed
+ * green while map search dropped four of §27's nine types.
+ *
+ * The type table's coverage of the wire is enforced in serverSearchTypes.test.ts,
+ * which reads the server's own SEARCH_TYPES rather than restating it. This file
+ * covers behaviour; that file covers vocabulary.
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,12 +27,17 @@ import {
   boundsFromMetadata,
   centerFromMetadata,
   mapSearchTypeFor,
+  setUnknownServerTypeSink,
   toMapSearchResult,
   toMapSearchResults,
 } from '../searchAdapter.ts';
 import { frameFor, MAP_SEARCH_RESULT_TYPES } from '../mapSearchModel.ts';
 
-const BASE = { id: 'r1', type: 'place', title: 'Rooftop Bar' };
+// The unknown-type fixtures below are deliberate; silence the diagnostic so the
+// suite's output stays readable. Behaviour is unchanged — the drop still happens.
+setUnknownServerTypeSink(() => {});
+
+const BASE = { id: 'r1', type: 'places', title: 'Rooftop Bar' };
 
 describe('server type mapping', () => {
   test('maps every known alias onto one of §27 nine types', () => {
@@ -32,8 +50,8 @@ describe('server type mapping', () => {
   });
 
   test('is case-insensitive', () => {
-    assert.equal(mapSearchTypeFor('PLACE'), 'place');
-    assert.equal(mapSearchTypeFor('Hidden_Gem'), 'hidden_gem');
+    assert.equal(mapSearchTypeFor('PLACES'), 'place');
+    assert.equal(mapSearchTypeFor('Hidden_Gems'), 'hidden_gem');
   });
 
   test('an unrecognised type is DROPPED, not coerced to place', () => {
@@ -100,13 +118,13 @@ describe('the no-coordinates rule (§27)', () => {
   test('a user/buddy with no coordinates survives but frames NOTHING', () => {
     // People are listable without being locatable — §23 means a person often
     // has no position to show at all.
-    const user = toMapSearchResult({ id: 'u1', type: 'user', title: 'Ada', metadata: null })!;
+    const user = toMapSearchResult({ id: 'u1', type: 'travelers', title: 'Ada', metadata: null })!;
     assert.equal(user.type, 'user');
     assert.deepEqual(frameFor(user), { kind: 'none', reason: 'no_geometry' });
   });
 
   test('a trip with neither centre nor bounds frames nothing', () => {
-    const trip = toMapSearchResult({ id: 't1', type: 'trip', title: 'Songkran', metadata: {} })!;
+    const trip = toMapSearchResult({ id: 't1', type: 'trips', title: 'Songkran', metadata: {} })!;
     assert.equal(frameFor(trip).kind, 'none');
   });
 });
@@ -115,7 +133,7 @@ describe('area results frame rather than centre', () => {
   test('an area with bounds produces a bounds frame', () => {
     const area = toMapSearchResult({
       id: 'a1',
-      type: 'area',
+      type: 'cities',
       title: 'An Thuong',
       metadata: { bounds: { north: 16.06, south: 16.03, east: 108.25, west: 108.21 } },
     })!;
@@ -127,7 +145,7 @@ describe('area results frame rather than centre', () => {
   test('an area WITHOUT bounds degrades to a point rather than faking a region', () => {
     const degraded = toMapSearchResult({
       id: 'a2',
-      type: 'area',
+      type: 'cities',
       title: 'Somewhere',
       metadata: { lat: 16.05, lng: 108.2 },
     })!;
@@ -136,17 +154,19 @@ describe('area results frame rather than centre', () => {
   });
 
   test('an area with neither is dropped', () => {
-    assert.equal(toMapSearchResult({ id: 'a3', type: 'area', title: 'Nowhere', metadata: {} }), null);
+    assert.equal(toMapSearchResult({ id: 'a3', type: 'cities', title: 'Nowhere', metadata: {} }), null);
   });
 });
 
 describe('toMapSearchResults', () => {
   test('preserves order and drops only what cannot be represented', () => {
     const out = toMapSearchResults([
-      { id: '1', type: 'place', title: 'A', metadata: { lat: 1, lng: 1 } },
+      { id: '1', type: 'places', title: 'A', metadata: { lat: 1, lng: 1 } },
       { id: '2', type: 'podcast', title: 'B' },
-      { id: '3', type: 'event', title: 'C', metadata: { lat: 2, lng: 2 } },
-      { id: '4', type: 'place', title: 'D', metadata: null },
+      { id: '3', type: 'events', title: 'C', metadata: { lat: 2, lng: 2 } },
+      { id: '4', type: 'places', title: 'D', metadata: null },
+      // A type ruled off the map on purpose drops too — silently, by decision.
+      { id: '5', type: 'stamps', title: 'E', metadata: { lat: 3, lng: 3 } },
     ]);
     assert.deepEqual(out.map((r) => r.id), ['1', '3']);
   });
@@ -158,7 +178,7 @@ describe('toMapSearchResults', () => {
 
   test('carries the detail route through so a non-geographic result stays actionable', () => {
     const [r] = toMapSearchResults([
-      { id: 'u9', type: 'user', title: 'Rui', destinationRoute: '/profile/u9' },
+      { id: 'u9', type: 'travelers', title: 'Rui', destinationRoute: '/profile/u9' },
     ]);
     assert.equal(r.detailRoute, '/profile/u9');
   });
