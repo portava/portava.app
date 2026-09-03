@@ -561,14 +561,18 @@ describe("projector reads only columns the query returns", () => {
   const projectionCode = stripComments(projectionSrc);
 
   /** snake_case property reads off `<v>.` inside one exported function. */
-  function snakeReads(fnName: string, varName: string): string[] {
-    const start = projectionCode.indexOf(`export function ${fnName}(`);
+  function snakeReadsIn(source: string, fnName: string, varName: string): string[] {
+    const code = stripComments(source);
+    const start = code.indexOf(`export function ${fnName}(`);
     assert.notEqual(start, -1, `${fnName} not found`);
-    const nextFn = projectionCode.indexOf("\nexport function ", start + 1);
-    const body = projectionCode.slice(start, nextFn === -1 ? undefined : nextFn);
+    const nextFn = code.indexOf("\nexport function ", start + 1);
+    const body = code.slice(start, nextFn === -1 ? undefined : nextFn);
     const re = new RegExp(`\\b${varName}[?]?\\.([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\\b`, "g");
     return [...new Set([...body.matchAll(re)].map((m) => m[1]))];
   }
+
+  const snakeReads = (fnName: string, varName: string) =>
+    snakeReadsIn(projectionSrc, fnName, varName);
 
   test("the guard is reading real data, not empty matches", () => {
     // Without this, every assertion below would pass vacuously on a parse miss.
@@ -614,6 +618,38 @@ describe("projector reads only columns the query returns", () => {
       selectedColumns(routeSrc, "export async function loadNearbyEvents").has("ends_at"),
       "loadNearbyEvents must select ends_at — projectEvent turns it into expiresAt",
     );
+  });
+
+  // lib/mapSearch.ts shapes the SAME two sources for the search surface. Its
+  // `normalizeGem` carried an identical `g.thumbnail_url` read, so the two
+  // consumers of findNearbyGems were wrong in exactly the same way — which is
+  // the argument for checking every consumer of a source, not just the one that
+  // happened to be under review.
+  test("mapSearch's normalizers read only columns their queries return", () => {
+    const searchLib = readFileSync(resolve(here, "../lib/mapSearch.ts"), "utf8");
+    const discoverySrc = readFileSync(
+      resolve(here, "../services/hiddenGems/HiddenGemDiscoveryService.ts"),
+      "utf8",
+    );
+    const routeSrc = readFileSync(resolve(here, "../routes/mapSearch.ts"), "utf8");
+
+    const gemSelected = selectedColumns(discoverySrc, 'from("hidden_gems")');
+    const gemColumns = tableColumns("hidden_gems");
+    for (const field of snakeReadsIn(searchLib, "normalizeGem", "g")) {
+      assert.ok(gemColumns.has(field), `normalizeGem reads g.${field}, not a hidden_gems column`);
+      assert.ok(gemSelected.has(field), `normalizeGem reads g.${field}, which findNearbyGems does not select`);
+    }
+
+    const evSelected = selectedColumns(routeSrc, "export async function loadNearbyEvents");
+    const evColumns = tableColumns("events");
+    for (const field of snakeReadsIn(searchLib, "normalizeEvent", "ev")) {
+      assert.ok(evColumns.has(field), `normalizeEvent reads ev.${field}, not an events column`);
+      assert.ok(evSelected.has(field), `normalizeEvent reads ev.${field}, which loadNearbyEvents does not select`);
+    }
+
+    // Self-check: an empty read set would make both loops vacuous.
+    assert.ok(snakeReadsIn(searchLib, "normalizeGem", "g").length > 0);
+    assert.ok(snakeReadsIn(searchLib, "normalizeEvent", "ev").length > 0);
   });
 
   test("a gem carries the image the query fetched", () => {

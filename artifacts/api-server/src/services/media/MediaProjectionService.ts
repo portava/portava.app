@@ -364,15 +364,22 @@ export async function buildPlaceProjection(
   let placeCountry: string | null = null;
   let placeNeighborhood: string | null = null;
   try {
+    // `country_code` is the column `places` actually has. This select asked for
+    // `country`, which does not exist — and PostgREST fails the WHOLE query on an
+    // unknown select column (PGRST100), so `data` was null every time and ALL
+    // FOUR labels (name, city, country, neighborhood) came back null on every
+    // place-scoped projection, not just the country. The surrounding try/catch
+    // did not hide it: PostgREST reports this in `error`, which was not
+    // destructured, so nothing was ever thrown or logged.
     const { data } = await (sc as any)
       .from("places")
-      .select("id, name, city, country, neighborhood")
+      .select("id, name, city, country_code, neighborhood")
       .eq("id", placeId)
       .maybeSingle();
     if (data) {
       placeName = (data as any).name ?? null;
       placeCity = (data as any).city ?? null;
-      placeCountry = (data as any).country ?? null;
+      placeCountry = (data as any).country_code ?? null;
       placeNeighborhood = (data as any).neighborhood ?? null;
     }
   } catch {

@@ -26,12 +26,14 @@ import {
   Stamp,
 } from 'lucide-react-native';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
+import type { MapObject } from '../../types/mapObjects.ts';
 import type { MapEntity, MapEntityType, ToggleableEntityType, PassportCountryPayload } from '../../types/mapTypes.ts';
-import type { BuddyProfile } from '../../services/rentABuddy.ts';
-import type { EventListItem } from '../../services/events.ts';
-import type { HiddenGem } from '../../services/hiddenGems.ts';
-import type { TripRow } from '../../services/trips.ts';
-import type { CircleMemberLocation } from '../../services/map.ts';
+import {
+  buddyCardPayload,
+  friendCardPayload,
+  objectOf,
+  passportCardPayload,
+} from '../../types/mapCardPayloads.ts';
 import { avatar, dot } from '../../theme/tokens.ts';
 
 // ── Clustering ─────────────────────────────────────────────────────────────────
@@ -139,16 +141,36 @@ const bubble = StyleSheet.create({
   },
 });
 
+/**
+ * A stand-in for "this entity was not projected". The payload accessors take a
+ * MapObject and return null for anything they do not recognise, so handing them
+ * this is equivalent to "no projected payload" without a null branch at every
+ * call site. `privacyClass: 'none'` is the rung that must never render, which is
+ * the honest label for an object that does not exist.
+ */
+const EMPTY_OBJECT = {
+  id: '',
+  kind: 'place',
+  geometry: { type: 'Point', coordinates: [0, 0] },
+  title: '',
+  privacyClass: 'none',
+  renderingPriority: 0,
+} as const satisfies MapObject;
+
 // ── Buddy marker ──────────────────────────────────────────────────────────────
 
-function BuddyMarker({ entity, onPress }: { entity: MapEntity<BuddyProfile>; onPress: (e: MapEntity) => void }) {
+function BuddyMarker({ entity, onPress }: { entity: MapEntity; onPress: (e: MapEntity) => void }) {
   const cfg = MAP_LAYER_CONFIG.buddies;
-  const buddy = entity.payload;
+  // `entity.payload` is the projected MapObject, not a BuddyProfile — the cover
+  // photo is one level deeper, on the payload the projector chose. This used to
+  // read `entity.payload.coverPhotoUrl` behind an `as MapEntity<BuddyProfile>`
+  // cast, so it was always undefined and every buddy pin drew the generic glyph.
+  const coverPhotoUrl = buddyCardPayload(objectOf(entity) ?? EMPTY_OBJECT)?.coverPhotoUrl ?? null;
   return (
     <Pressable onPress={() => onPress(entity)} hitSlop={6}>
       <View style={[pin.wrap, { backgroundColor: cfg.color }]}>
-        {buddy.coverPhotoUrl ? (
-          <CachedImage source={{ uri: buddy.coverPhotoUrl }} style={pin.avatarImg} fallbackLabel="" />
+        {coverPhotoUrl ? (
+          <CachedImage source={{ uri: coverPhotoUrl }} style={pin.avatarImg} fallbackLabel="" />
         ) : (
           <Users size={12} color="#fff" />
         )}
@@ -160,7 +182,7 @@ function BuddyMarker({ entity, onPress }: { entity: MapEntity<BuddyProfile>; onP
 
 // ── Event marker ──────────────────────────────────────────────────────────────
 
-function EventMarker({ entity, onPress }: { entity: MapEntity<EventListItem>; onPress: (e: MapEntity) => void }) {
+function EventMarker({ entity, onPress }: { entity: MapEntity; onPress: (e: MapEntity) => void }) {
   const cfg = MAP_LAYER_CONFIG.events;
   return (
     <Pressable onPress={() => onPress(entity)} hitSlop={6}>
@@ -174,7 +196,7 @@ function EventMarker({ entity, onPress }: { entity: MapEntity<EventListItem>; on
 
 // ── Gem marker ────────────────────────────────────────────────────────────────
 
-function GemMarker({ entity, onPress }: { entity: MapEntity<HiddenGem>; onPress: (e: MapEntity) => void }) {
+function GemMarker({ entity, onPress }: { entity: MapEntity; onPress: (e: MapEntity) => void }) {
   const cfg = MAP_LAYER_CONFIG.gems;
   return (
     <Pressable onPress={() => onPress(entity)} hitSlop={6}>
@@ -188,7 +210,7 @@ function GemMarker({ entity, onPress }: { entity: MapEntity<HiddenGem>; onPress:
 
 // ── Trip marker ───────────────────────────────────────────────────────────────
 
-function TripMarker({ entity, onPress }: { entity: MapEntity<TripRow>; onPress: (e: MapEntity) => void }) {
+function TripMarker({ entity, onPress }: { entity: MapEntity; onPress: (e: MapEntity) => void }) {
   const cfg = MAP_LAYER_CONFIG.trips;
   return (
     <Pressable onPress={() => onPress(entity)} hitSlop={6}>
@@ -202,14 +224,18 @@ function TripMarker({ entity, onPress }: { entity: MapEntity<TripRow>; onPress: 
 
 // ── Friend marker ─────────────────────────────────────────────────────────────
 
-function FriendMarker({ entity, onPress }: { entity: MapEntity<CircleMemberLocation>; onPress: (e: MapEntity) => void }) {
+function FriendMarker({ entity, onPress }: { entity: MapEntity; onPress: (e: MapEntity) => void }) {
   const cfg = MAP_LAYER_CONFIG.friends;
-  const loc = entity.payload;
+  // Same shape as BuddyMarker above: the avatar is on the projected payload, not
+  // on the envelope. An avatar is the whole point of a friend pin — §23 puts
+  // these at `approximate`, the rung where mayRenderIdentity() permits a face —
+  // so this read being silently undefined blanked exactly the thing that matters.
+  const avatarUrl = friendCardPayload(objectOf(entity) ?? EMPTY_OBJECT)?.avatarUrl ?? null;
   return (
     <Pressable onPress={() => onPress(entity)} hitSlop={6}>
       <View style={[pin.avatarWrap, { borderColor: cfg.color }]}>
-        {loc.avatarUrl ? (
-          <CachedImage source={{ uri: loc.avatarUrl }} style={pin.friendImg} fallbackLabel="" />
+        {avatarUrl ? (
+          <CachedImage source={{ uri: avatarUrl }} style={pin.friendImg} fallbackLabel="" />
         ) : (
           <View style={[pin.friendFallback, { backgroundColor: cfg.color }]}>
             <Heart size={11} color="#fff" />
@@ -299,9 +325,11 @@ const pin = StyleSheet.create({
 
 // ── Stamp marker (passport mode) ──────────────────────────────────────────────
 
-function StampMarker({ entity, onPress }: { entity: MapEntity<PassportCountryPayload>; onPress: (e: MapEntity) => void }) {
+function StampMarker({ entity, onPress }: { entity: MapEntity; onPress: (e: MapEntity) => void }) {
   const cfg = MAP_LAYER_CONFIG.stamps;
-  const { stampCount } = entity.payload;
+  // Passport pins are NOT projected — buildPassportEntities in app/map/index.tsx
+  // builds this payload directly — so this one is read through its own guard.
+  const stampCount = passportCardPayload(entity.payload)?.stampCount ?? 0;
   const isDouble = stampCount >= 10;
   return (
     <Pressable onPress={() => onPress(entity)} hitSlop={6}>
@@ -376,17 +404,17 @@ function SingleMarker({
 function renderMarkerBody(entity: MapEntity, onPress: (e: MapEntity) => void) {
   switch (entity.type) {
     case 'buddies':
-      return <BuddyMarker entity={entity as MapEntity<BuddyProfile>} onPress={onPress} />;
+      return <BuddyMarker entity={entity} onPress={onPress} />;
     case 'events':
-      return <EventMarker entity={entity as MapEntity<EventListItem>} onPress={onPress} />;
+      return <EventMarker entity={entity} onPress={onPress} />;
     case 'gems':
-      return <GemMarker entity={entity as MapEntity<HiddenGem>} onPress={onPress} />;
+      return <GemMarker entity={entity} onPress={onPress} />;
     case 'trips':
-      return <TripMarker entity={entity as MapEntity<TripRow>} onPress={onPress} />;
+      return <TripMarker entity={entity} onPress={onPress} />;
     case 'friends':
-      return <FriendMarker entity={entity as MapEntity<CircleMemberLocation>} onPress={onPress} />;
+      return <FriendMarker entity={entity} onPress={onPress} />;
     case 'stamps':
-      return <StampMarker entity={entity as MapEntity<PassportCountryPayload>} onPress={onPress} />;
+      return <StampMarker entity={entity} onPress={onPress} />;
     default:
       return null;
   }

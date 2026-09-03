@@ -257,7 +257,8 @@ interface PlaceRow {
   id: string;
   name: string | null;
   city: string | null;
-  country: string | null;
+  /** `places` stores an ISO code, not a country name — the column is `country_code`. */
+  country_code: string | null;
   primary_category: string | null;
   latitude: number | null;
   longitude: number | null;
@@ -286,9 +287,14 @@ export async function findDuplicatePlaces(
     const preds: string[] = [];
     if (nameVal) preds.push(`name.ilike.%${nameVal}%`);
     if (cityVal) preds.push(`city.ilike.%${cityVal}%`);
+    // `country_code`, not `country`: `places` has no `country` column, and
+    // PostgREST fails the WHOLE query on an unknown select column (PGRST100).
+    // With `error` short-circuiting to [] just below, that made this function
+    // return an EMPTY candidate pool every time — so canonical-place duplicate
+    // detection never matched anything and every submission looked unique.
     const { data, error } = await sc
       .from('places')
-      .select('id, name, city, country, primary_category, latitude, longitude')
+      .select('id, name, city, country_code, primary_category, latitude, longitude')
       .or(preds.join(','))
       .limit(opts.poolLimit ?? 50);
     if (error || !data) return [];
@@ -311,7 +317,7 @@ export async function findDuplicatePlaces(
       id: r.id,
       name: r.name ?? '',
       city: r.city,
-      country: r.country,
+      country: r.country_code,
       category: r.primary_category,
       lat: r.latitude ?? null,
       lng: r.longitude ?? null,

@@ -81,7 +81,11 @@ export function normalizeGem(g: any, distanceKm: number | null = null): MapSearc
     preview: {
       title: g.name ?? "Hidden gem",
       subtitle: joinParts([g.category, g.city], " · "),
-      thumbnailUrl: g.thumbnail_url ?? null,
+      // `image_url` is the column hidden_gems has and findNearbyGems selects;
+      // `thumbnail_url` is not a column on that table at all, so map-search gem
+      // results have never carried a thumbnail. Same defect as projectGem in
+      // lib/mapProjection.ts, fixed in the same change.
+      thumbnailUrl: g.image_url ?? null,
       badges: [g.verification_level, g.coordsPrecision === "approximate" ? "approx. location" : null]
         .filter(Boolean) as string[],
     },
