@@ -45,8 +45,10 @@ import { closeThenNavigate } from '../../../lib/deferredNavigate.ts';
 import { usePlanPicker } from '../../../components/PlanPickerController.tsx';
 import { saveMedia, reportMedia } from '../../../services/mediaInteractions.ts';
 import { fetchExperiencePlan, resolveMediaActionExecution } from '../services/mediaActions.ts';
-import type { MediaAction, MediaActionId } from '../types/mediaActions.ts';
+import type { MediaAction, MediaActionId, MediaEntityKind } from '../types/mediaActions.ts';
 import { useMediaActions } from '../hooks/useMediaActions.ts';
+import { useMediaAnalytics } from '../../../hooks/useMediaAnalytics.ts';
+import { emitMediaNorthStar } from '../telemetry/mediaTelemetry.ts';
 
 // ── Icon + tone per action ────────────────────────────────────────────────────
 
@@ -87,12 +89,33 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
     mediaId,
     visible,
   );
+  // §45 north-star outcome telemetry — reuses the EXISTING media analytics
+  // helper (batched, deduped, fire-and-forget, fail-soft).
+  const { record } = useMediaAnalytics();
   // Per-action async guard (Do This Experience fetches its plan before routing).
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const runAction = useCallback(
     (action: MediaAction) => {
       const exec = resolveMediaActionExecution(action, entityRefs);
+
+      // Fire the §45 outcome event at the media-originated action point: this is
+      // where a media object CAUSES a real-world action (Place Open / Compass /
+      // Trip Add / Plan / Correction). Coarse metadata only — never the caption,
+      // note, prompt, or a coordinate. Self-filters (no-op for non-outcome
+      // actions) and never throws, so it cannot affect the action below.
+      const entityIdOf = (kind: MediaEntityKind): string | undefined =>
+        entityRefs.find((r) => r.kind === kind)?.id;
+      emitMediaNorthStar(record, action.id, {
+        mediaId: mediaId ?? undefined,
+        entityKind: entityRefs.find((r) => r.kind === 'place')
+          ? 'place'
+          : entityRefs[0]?.kind,
+        placeId: entityIdOf('place'),
+        tripId: entityIdOf('trip'),
+        surface: 'action_rail',
+      });
+
       switch (exec.kind) {
         case 'navigate':
           closeThenNavigate(onClose, exec.route);
@@ -159,7 +182,7 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           return;
       }
     },
-    [busyId, entityRefs, mediaId, onClose, planPicker, toggleWant],
+    [busyId, entityRefs, mediaId, onClose, planPicker, toggleWant, record],
   );
 
   // Render only actions the client can actually execute (hides any future /
