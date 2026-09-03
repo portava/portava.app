@@ -669,6 +669,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     deepLink: '/passport/plans',
   },
+  {
+    key: 'passport-availability',
+    path: 'passport/availability',
+    title: 'My Availability',
+    parent: 'tab-passport',
+    icon: 'CalendarClock',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/availability',
+  },
 
   // ── Stamps ────────────────────────────────────────────────────────────────
 
