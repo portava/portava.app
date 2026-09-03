@@ -67,6 +67,7 @@ import {
   type MapProvenanceLine,
   type Position,
   type PrivacyClass,
+  type TrendState,
   KIND_DEFAULT_PRIORITY,
   RENDERING_PRIORITY,
   centroidOf,
@@ -83,6 +84,14 @@ import {
 } from "./protectedLocations.js";
 import { haversineKm } from "./mapSearch.js";
 import { KM_PER_DEGREE_LAT, type BBox } from "./mapAggregation.js";
+import {
+  LEGACY_CLAIM_TYPES,
+  SOURCE_CLASS_LABELS,
+  type CrowdLevel,
+  type SourceClass,
+  type Trajectory,
+} from "./intelContracts.js";
+import type { LiveClaimEnvelope, SourceCountBucket } from "./liveClaimRead.js";
 
 // ── Traveler (spec §23 aggregate social presence) ─────────────────────────────
 
@@ -476,26 +485,59 @@ export interface LiveEnrichmentResult {
   skipped: number;
 }
 
-/** The subset of `readLiveClaims`' envelope this module consumes. */
+/**
+ * The subset of `readLiveClaims`' envelope this module consumes.
+ *
+ * `sourceCountBucket` IS NULLABLE, and that is load-bearing (spec §37: "Do not
+ * let paid businesses buy factual confidence"). lib/liveClaimRead withholds the
+ * cohort bucket entirely — `mayCountAsConsensus(sourceClass) ? bucket : null` —
+ * for the three classes that are one party talking about themselves
+ * (official_signed / sponsored / imported_owned). This interface previously
+ * re-declared the field as non-nullable, and the route erased the mismatch with
+ * an `as unknown as` cast, so `describeClaim` fell through its ?: chain and
+ * rendered a SPONSORED claim as "A few recent traveler reports". Both halves are
+ * gone: the field is nullable here, and the cast is gone at the call site, so
+ * the compiler enforces the withholding instead of a comment describing it.
+ *
+ * `sourceClass` is carried for the same reason. Without it the object has no way
+ * to say WHO is speaking, so a client could not label a sponsored claim even if
+ * it wanted to — the only remaining choice would be "traveler report or say
+ * nothing", which is exactly the §37 failure.
+ */
 export interface LiveClaimLike {
   id: string;
   claimType: string;
   value: unknown;
   confidence: number | null;
   band: ConfidenceState;
-  sourceCountBucket: "few" | "several" | "many";
+  /** NULL when the class may not be counted as independent community consensus. */
+  sourceCountBucket: SourceCountBucket | null;
+  /** Who is speaking. Never inferred here — it comes from the read path. */
+  sourceClass: SourceClass;
   observedAt: string;
   validUntil: string;
   state: string;
 }
 
 /**
+ * COMPILE-TIME PIN, in the spirit of routes/mapProjection's CROWD_FLOW_FLAG_PIN.
+ *
+ * The whole defect above was two shapes for one payload drifting apart in
+ * silence. This assignment is the only thing that makes them one shape: if
+ * `LiveClaimEnvelope` ever loses a field, or re-widens `sourceCountBucket`, this
+ * line stops compiling HERE — at the consumer that would otherwise have to be
+ * re-taught the divergence by a production bug.
+ */
+const _envelopeIsLiveClaimLike: (e: LiveClaimEnvelope) => LiveClaimLike = (e) => e;
+void _envelopeIsLiveClaimLike;
+
+/**
  * Pure: fold one subject's live claims onto its object. Exported separately from
  * the I/O wrapper so the merge rules are testable without a database.
  *
  * Never upgrades: if the claims are empty the object is returned untouched, and
- * a claim can only ever ADD freshness/confidence/activity, never overwrite a
- * value the source already asserted with a weaker one.
+ * a claim can only ever ADD freshness/confidence/activity/trend, never overwrite
+ * a value the source already asserted with a weaker one.
  */
 export function applyLiveClaims(
   obj: MapObject,
@@ -513,13 +555,29 @@ export function applyLiveClaims(
     ref: c.id,
   }));
 
+  // §7 keeps Activity and Trend as SEPARATE axes, and §8's Live Place sheet
+  // shows both at once ("Crowd Busy / Trend ↑ Up"). They come from two different
+  // claim types (crowd.level and crowd.trajectory), so reading only `primary`
+  // could never populate both — whichever claim sorted first would silently
+  // suppress the other axis. Scan the whole list instead; `claims` is already in
+  // readLiveClaims' deterministic best/current-first order, so first-match is
+  // stable, and each axis still comes only from a claim that actually asserts it.
+  let activity: ActivityLevel | undefined;
+  let trend: TrendState | undefined;
+  for (const c of claims) {
+    if (activity === undefined) activity = crowdValueToActivity(c);
+    if (trend === undefined) trend = crowdValueToTrend(c);
+    if (activity !== undefined && trend !== undefined) break;
+  }
+
   return {
     ...obj,
     observedAt: primary.observedAt,
     expiresAt: primary.validUntil,
     freshness,
     confidence: primary.band,
-    activity: crowdValueToActivity(primary),
+    activity,
+    trend,
     sourceRefs: claims.map((c) => c.id),
     provenance: {
       lines,
@@ -539,8 +597,34 @@ export function applyLiveClaims(
  * A human evidence line for the §9 Why? panel. Uses only the coarse cohort
  * bucket — the exact contributor count is the privacy parameter itself and
  * never crosses the wire (see liveClaimRead's envelope contract).
+ *
+ * WHEN THE BUCKET IS NULL (§37: paid confidence is not for sale). A null bucket
+ * means the read path REFUSED to publish a cohort size because the class is one
+ * party talking about itself. Three things could go in the line, and only one is
+ * honest:
+ *
+ *   • "A few recent traveler reports" — a LIE. This is what the code did.
+ *   • the claim type alone — vague, and worse than vague: an unattributed
+ *     assertion reads as the map's own finding, which is the same borrowed
+ *     credibility by a quieter route.
+ *   • WHO said it — chosen. §9 exists to make a live claim replayable, so the
+ *     answer to "why does Portava say this?" for a sponsored claim is
+ *     "the business told us". Naming the class asserts no cohort and no
+ *     consensus, and it is the one line that lets the reader discount it.
+ *
+ * The copy is SOURCE_CLASS_LABELS — the repo's single user-facing label per
+ * class (intelContracts T-01: "Every class must have one") — rather than new
+ * prose invented here, so the map and every other surface say the same word for
+ * the same claim.
  */
 function describeClaim(c: LiveClaimLike): string {
+  if (c.sourceCountBucket === null) {
+    const label = Object.prototype.hasOwnProperty.call(SOURCE_CLASS_LABELS, c.sourceClass)
+      ? SOURCE_CLASS_LABELS[c.sourceClass]
+      : // An unrecognised class is not a traveler and not trustworthy-by-default.
+        "Source not attributed";
+    return `${label} · ${c.claimType}`;
+  }
   const cohort =
     c.sourceCountBucket === "many"
       ? "Many recent traveler reports"
@@ -550,24 +634,160 @@ function describeClaim(c: LiveClaimLike): string {
   return `${cohort} · ${c.claimType}`;
 }
 
+// ── §7's Activity and Trend axes, fed from the REAL claim vocabularies ────────
+//
+// WHAT WENT WRONG HERE, so it cannot recur quietly. The activity mapper used to
+// open with `if (c.claimType !== "crowd")` and then switch over
+// `very_quiet|quiet|moderate|busy|very_busy|peak`. Both halves were wrong:
+//
+//   • "crowd" is a LEGACY flat type (intelContracts.LEGACY_CLAIM_TYPES, seeded
+//     by migration 2122). What production writes is "crowd.level"
+//     (lib/quickSignal, routes/mapObservations), so every real claim returned
+//     undefined and §7's Activity axis had never once fired.
+//   • the switch's value vocabulary was §7's DISPLAY vocabulary, not the claim
+//     vocabulary. The claim values are intelContracts.CROWD_LEVELS —
+//     dead|quiet|moderate|busy|packed|unsafe_density. Three of six overlapped by
+//     coincidence, which is why a hand-written test fixture looked fine.
+//
+// The tables below are keyed by `Record<CrowdLevel, …>` / `Record<Trajectory, …>`
+// ON PURPOSE: adding a value to CROWD_LEVELS or TRAJECTORIES in intelContracts
+// now fails to COMPILE here until someone decides what it means on the map. A
+// switch could not do that — it would just start returning undefined.
+
 /**
- * Map a crowd claim's value onto §7's activity vocabulary. Returns undefined for
- * anything unrecognised — an unmapped value must not become "moderate".
+ * CROWD_LEVELS → §7 Activity. `null` means "deliberately not projected onto this
+ * axis", which is a different fact from "value we do not recognise" and is
+ * recorded as a different value.
+ *
+ *   dead → very_quiet, quiet → quiet, moderate → moderate, busy → busy.
+ *
+ *   packed → very_busy, NOT peak. "Peak" claims the place is at ITS OWN apex —
+ *   that is a statement about the trajectory (there is a literal `peaking`
+ *   trajectory value, and §7 puts Trend in a separate column). A contributor who
+ *   tapped "packed" said how full the room is, not that it has topped out.
+ *   Publishing `peak` from a level claim is the exact defect the CROWD_DIRECTIONS
+ *   note in intelContracts names: "publishes an inference the contributor never
+ *   made". `peak` stays reachable — mapAggregation.activityForCohort emits it for
+ *   a cohort ≥16× the k-floor, where the evidence for an apex actually exists.
+ *
+ *   unsafe_density → null. It is not a busyness reading at all; it is a SAFETY
+ *   claim (SPECIALIST_ONLY_CROWD_LEVELS: "a safety claim, not a vibe: specialist
+ *   review only"). §7's Activity scale tops out at "Peak", which on this map is
+ *   an ATTRACTOR — §38's north-star routes the traveler toward the stronger
+ *   area — so rendering a dangerous crush as "Peak" would advertise it as the
+ *   place to go. There is no Activity value that means "dangerous", and inventing
+ *   one is not this module's call. Withholding the axis is therefore the honest
+ *   answer, and it is the same answer inputAssistance/liveSuggestions already
+ *   gives for this value ("returns null so the formatter falls through rather
+ *   than presenting a safety signal as vibe") — one claim, one rendering, on both
+ *   surfaces. The claim is NOT silenced: it still appears as a §9 provenance line.
+ *   A real safety surface for it is owed, and is a different axis from this one.
+ */
+const CROWD_LEVEL_TO_ACTIVITY: Record<CrowdLevel, ActivityLevel | null> = {
+  dead: "very_quiet",
+  quiet: "quiet",
+  moderate: "moderate",
+  busy: "busy",
+  packed: "very_busy",
+  unsafe_density: null,
+};
+
+/**
+ * TRAJECTORIES → §7 Trend.
+ *
+ *   emerging, building → getting_busier. Both are upward. Neither asserts a
+ *   RATE, so neither may become "increasing quickly": that word is a claim about
+ *   speed, and a single categorical tap is a claim about state. `building` also
+ *   already renders as "Getting busier" in liveSuggestions, so the two surfaces
+ *   agree. `increasing_quickly` therefore has no single-claim producer — by
+ *   design: a rate needs a delta between two observations, which is aggregation's
+ *   job (mapAggregation.aggregateTrend), not this projection's.
+ *
+ *   peaking → stable. At the apex the crowd is neither growing nor shrinking, and
+ *   §7's Trend vocabulary has no "at peak" term — the apex belongs to the
+ *   Activity axis. Reading it as "cooling" would assert a decline nobody claimed.
+ *
+ *   stable → stable.
+ *
+ *   declining → cooling. The mildest downward term for the mildest downward
+ *   trajectory ("Winding down").
+ *
+ *   fragmenting, ending → getting_quieter. Further along than declining — the
+ *   crowd is breaking up / the thing is over — but still a statement about the
+ *   PHASE, not about how fast anyone is leaving.
+ *
+ *   relocating → rapidly_dispersing. The only trajectory that asserts wholesale
+ *   departure: the crowd is going, together, now. "Getting quieter" would badly
+ *   understate a room emptying, and reserving §7's strongest term for the one
+ *   value that actually means it keeps that term meaningful.
+ */
+const TRAJECTORY_TO_TREND: Record<Trajectory, TrendState | null> = {
+  emerging: "getting_busier",
+  building: "getting_busier",
+  peaking: "stable",
+  stable: "stable",
+  fragmenting: "getting_quieter",
+  relocating: "rapidly_dispersing",
+  declining: "cooling",
+  ending: "getting_quieter",
+};
+
+/**
+ * Claim types that carry a crowd LEVEL: the canonical dotted type production
+ * writes, plus the flat legacy type migration 2122 seeded and which
+ * intelContracts says is "kept for readers that still use them". Accepting both
+ * is what MediaProjectionService and inputAssistance/liveSuggestions already do;
+ * a legacy row is still a real observation and must not become invisible only
+ * because it predates the rename. The VALUE vocabulary check below is the same
+ * either way, so a legacy row buys no laxity.
+ */
+const CROWD_LEVEL_CLAIM_TYPES: ReadonlySet<string> = new Set<string>([
+  "crowd.level",
+  ...LEGACY_CLAIM_TYPES.filter((t) => t === "crowd"),
+]);
+
+/** Only the dotted type carries a trajectory; the flat legacy `crowd` never did. */
+const CROWD_TRAJECTORY_CLAIM_TYPES: ReadonlySet<string> = new Set<string>(["crowd.trajectory"]);
+
+/**
+ * The scalar inside a claim value. Production writes an object (`{level}` /
+ * `{trajectory}`); legacy flat rows and some callers carry a bare string.
+ */
+function claimScalar(value: unknown, key: string): string | null {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const v = (value as Record<string, unknown>)[key];
+    if (typeof v === "string") return v;
+  }
+  return null;
+}
+
+/** Own-property lookup only — an inherited key ("toString") is not a claim value. */
+function lookupMapped<V>(table: Record<string, V>, key: string | null): V | undefined {
+  if (key === null) return undefined;
+  return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
+}
+
+/**
+ * Map a crowd-level claim onto §7's Activity vocabulary. Returns undefined for
+ * anything unrecognised — an unmapped value must not become "moderate" — and for
+ * a value deliberately withheld from this axis (see CROWD_LEVEL_TO_ACTIVITY).
  */
 export function crowdValueToActivity(c: LiveClaimLike): ActivityLevel | undefined {
-  if (c.claimType !== "crowd") return undefined;
-  const v = typeof c.value === "string" ? c.value : (c.value as any)?.level;
-  switch (v) {
-    case "very_quiet":
-    case "quiet":
-    case "moderate":
-    case "busy":
-    case "very_busy":
-    case "peak":
-      return v;
-    default:
-      return undefined;
-  }
+  if (!CROWD_LEVEL_CLAIM_TYPES.has(c.claimType)) return undefined;
+  return lookupMapped(CROWD_LEVEL_TO_ACTIVITY, claimScalar(c.value, "level")) ?? undefined;
+}
+
+/**
+ * Map a crowd-trajectory claim onto §7's Trend vocabulary — the producer that
+ * did not exist. mapAggregation.aggregateTrend reads `o.trend` off contributors
+ * and nothing anywhere wrote it, so §6's pulsing outline, §8's "Trend ↑ Up" row
+ * and §38's "one area cooling" had no seed at all. Same fail-closed contract as
+ * the activity mapper: unrecognised ⇒ undefined, never a default "stable".
+ */
+export function crowdValueToTrend(c: LiveClaimLike): TrendState | undefined {
+  if (!CROWD_TRAJECTORY_CLAIM_TYPES.has(c.claimType)) return undefined;
+  return lookupMapped(TRAJECTORY_TO_TREND, claimScalar(c.value, "trajectory")) ?? undefined;
 }
 
 /** The subject id a live claim would be keyed by, or null if this kind has none. */

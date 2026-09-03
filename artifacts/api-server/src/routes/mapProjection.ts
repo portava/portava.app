@@ -148,7 +148,6 @@ import {
   servableOnly,
   withholdCoarsenableFlows,
   type FlowZone,
-  type LiveClaimLike,
   type TripViewLike,
 } from "../lib/mapProjection.js";
 
@@ -662,8 +661,16 @@ router.get(
     const enrichment = await enrichWithLiveClaims(
       objects,
       async (subjectId) => {
+        // NO CAST. The previous `as unknown as LiveClaimLike[]` here is what let
+        // the two shapes drift: the envelope's `sourceCountBucket` is nullable
+        // (withheld for sponsored / official / imported — §37), LiveClaimLike
+        // re-declared it as always-present, and the double cast told the compiler
+        // to stop caring. A sponsored claim then rendered as "A few recent
+        // traveler reports". Structural assignability is the check now; if the
+        // envelope ever diverges again this line, and the pin in lib/mapProjection,
+        // both go red.
         const claims = await readLiveClaims(sc, subjectId);
-        return claims.map(toLiveClaimEnvelope) as unknown as LiveClaimLike[];
+        return claims.map(toLiveClaimEnvelope);
       },
       { now: nowMs },
     );

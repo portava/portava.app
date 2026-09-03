@@ -38,6 +38,8 @@ import {
   isServable,
   type MapObject,
 } from "../lib/mapObjects.js";
+import { CLAIM_TYPES, LEGACY_CLAIM_TYPES } from "../lib/intelContracts.js";
+import { mapQuickSignal } from "../lib/quickSignal.js";
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -82,14 +84,34 @@ const EVENT = {
   visibility: "public",
 };
 
+/**
+ * THE FIXTURE IS DERIVED, NOT WRITTEN.
+ *
+ * This helper used to hard-code `claimType: "crowd", value: "busy"` — a shape
+ * production has never emitted. "crowd" is a LEGACY flat type
+ * (intelContracts.LEGACY_CLAIM_TYPES, seeded by migration 2122); what the
+ * capture path writes is `crowd.level` with `{ level }` (lib/quickSignal,
+ * routes/mapObservations). Every assertion below therefore passed against
+ * fiction while §7's Activity axis was dead in production.
+ *
+ * So the fixture now ASKS THE PRODUCER what a claim looks like. If
+ * `mapQuickSignal` ever changes the type or the value shape, these tests move
+ * with it instead of pinning a shape nobody writes any more.
+ */
+const PRODUCTION_CROWD_CLAIM = mapQuickSignal("arrival", "busy")!;
+
+/** The canonical claim-type registry — read from the contract, not retyped. */
+const CANONICAL_CLAIM_TYPES: ReadonlySet<string> = new Set(CLAIM_TYPES.map((s) => s.claimType));
+
 function claim(over: Partial<LiveClaimLike> = {}): LiveClaimLike {
   return {
     id: "snap-1",
-    claimType: "crowd",
-    value: "busy",
+    claimType: PRODUCTION_CROWD_CLAIM.claimType,
+    value: PRODUCTION_CROWD_CLAIM.value,
     confidence: 0.8,
     band: "live",
     sourceCountBucket: "several",
+    sourceClass: "firsthand_unverified",
     observedAt: "2026-08-31T11:58:00.000Z",
     validUntil: "2026-08-31T12:13:00.000Z",
     state: "live",
@@ -201,11 +223,30 @@ describe("no invented intelligence (spec §37)", () => {
     assert.equal(projectTraveler({ ...AREA_TRAVELER, freshness: undefined })!.freshness, "unknown");
   });
 
+  test("the live-claim fixture is a shape production actually emits", () => {
+    // The guard that would have caught the original defect: assert the fixture's
+    // claim type against the real registry, so a future rename fails here rather
+    // than passing green against a type nobody writes.
+    assert.ok(
+      CANONICAL_CLAIM_TYPES.has(PRODUCTION_CROWD_CLAIM.claimType),
+      `fixture claim type ${PRODUCTION_CROWD_CLAIM.claimType} is not in the canonical registry`,
+    );
+    assert.ok(
+      !(LEGACY_CLAIM_TYPES as readonly string[]).includes(PRODUCTION_CROWD_CLAIM.claimType),
+      "the fixture must not be a LEGACY flat claim type — production stopped writing those",
+    );
+    assert.equal(PRODUCTION_CROWD_CLAIM.claimType, "crowd.level");
+  });
+
   test("an unmapped crowd value does not become 'moderate'", () => {
-    assert.equal(crowdValueToActivity(claim({ value: "rammed" })), undefined);
-    assert.equal(crowdValueToActivity(claim({ claimType: "vibe", value: "busy" })), undefined);
-    assert.equal(crowdValueToActivity(claim({ value: "busy" })), "busy");
-    assert.equal(crowdValueToActivity(claim({ value: { level: "peak" } })), "peak");
+    assert.equal(crowdValueToActivity(claim({ value: { level: "rammed" } })), undefined);
+    assert.equal(crowdValueToActivity(claim({ claimType: "vibe.state", value: { state: "social" } })), undefined);
+    // The real production shape: crowd.level carrying { level }.
+    assert.equal(crowdValueToActivity(claim()), "busy");
+    // `peak` is §7 DISPLAY vocabulary, never a claim value. The old assertion
+    // here asserted the opposite and was green because the mapper switched over
+    // the display vocabulary instead of intelContracts.CROWD_LEVELS.
+    assert.equal(crowdValueToActivity(claim({ value: { level: "peak" } })), undefined);
   });
 });
 
