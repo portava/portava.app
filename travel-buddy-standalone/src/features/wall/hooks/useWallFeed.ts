@@ -41,13 +41,23 @@ export interface UseWallFeedResult {
   hasMore: boolean;
   loadMore: () => void;
   refresh: () => void;
+  /** Drop an object the viewer marked "not interested" and keep it hidden (§7/§32). */
+  hide: (projectionId: string) => void;
   mode: WallMode;
 }
 
-/** Keep only items whose canonicalObjectId has not already been seen (spec §28). */
-function dedupe(incoming: WallProjection[], seen: Set<string>): WallProjection[] {
+/**
+ * Keep only items whose canonicalObjectId has not already been seen (spec §28)
+ * and that the viewer has not hidden (§7 not-interested control).
+ */
+function dedupe(
+  incoming: WallProjection[],
+  seen: Set<string>,
+  hidden: Set<string>,
+): WallProjection[] {
   const out: WallProjection[] = [];
   for (const item of incoming) {
+    if (hidden.has(item.projectionId)) continue;
     const key = item.canonicalObjectId;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -72,6 +82,7 @@ export function useWallFeed(
   // Non-reactive session state.
   const cursorRef = useRef<string | null>(null);
   const seenRef = useRef<Set<string>>(new Set());
+  const hiddenRef = useRef<Set<string>>(new Set());
   const genRef = useRef(0);
   const inFlightRef = useRef(false);
 
@@ -113,9 +124,9 @@ export function useWallFeed(
           setCaughtUp(!!res.data.caughtUp);
           if (reset) {
             seenRef.current = new Set();
-            setItems(dedupe(res.data.items, seenRef.current));
+            setItems(dedupe(res.data.items, seenRef.current, hiddenRef.current));
           } else {
-            const fresh = dedupe(res.data.items, seenRef.current);
+            const fresh = dedupe(res.data.items, seenRef.current, hiddenRef.current);
             if (fresh.length > 0) setItems((prev) => [...prev, ...fresh]);
           }
         } else if (res.error !== 'aborted') {
@@ -152,6 +163,11 @@ export function useWallFeed(
     void doFetch('refresh');
   }, [doFetch]);
 
+  const hide = useCallback((projectionId: string) => {
+    hiddenRef.current.add(projectionId);
+    setItems((prev) => prev.filter((i) => i.projectionId !== projectionId));
+  }, []);
+
   return {
     items,
     loading,
@@ -163,6 +179,7 @@ export function useWallFeed(
     hasMore,
     loadMore,
     refresh,
+    hide,
     mode,
   };
 }

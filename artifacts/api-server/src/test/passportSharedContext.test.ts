@@ -130,3 +130,77 @@ describe("buildSharedContext", () => {
     assert.ok(r.compassHandoff.reasons.includes("plan_not_permitted"));
   });
 });
+
+// The Shared Moments capability chain — all four flags must read true for
+// areSharedMomentsEnabled() to permit the fact.
+const SHARED_MOMENTS_FLAGS = [
+  { flag: "external_places_enabled", enabled: true },
+  { flag: "live_places_enabled", enabled: true },
+  { flag: "place_days_enabled", enabled: true },
+  { flag: "shared_moments_enabled", enabled: true },
+];
+
+describe("buildSharedContext — shared_moments fact (§15/§17, TABLE 17)", () => {
+  it("emits a shared_moments fact when BOTH are accepted members of active Moments", async () => {
+    const db = makePassportDb({
+      profiles: [
+        { id: OWNER, current_city: "Da Nang", home_city: "Da Nang" },
+        { id: VIEWER, current_city: "Hanoi", home_city: "Hanoi" },
+      ],
+      feature_flags: SHARED_MOMENTS_FLAGS,
+      shared_moments: [
+        { id: "m-1", status: "active" },
+        { id: "m-2", status: "active" },
+        { id: "m-archived", status: "archived" }, // both members, but archived → excluded
+      ],
+      shared_moment_memberships: [
+        { moment_id: "m-1", user_id: OWNER, status: "accepted" },
+        { moment_id: "m-1", user_id: VIEWER, status: "accepted" },
+        { moment_id: "m-2", user_id: OWNER, status: "accepted" },
+        { moment_id: "m-2", user_id: VIEWER, status: "accepted" },
+        { moment_id: "m-archived", user_id: OWNER, status: "accepted" },
+        { moment_id: "m-archived", user_id: VIEWER, status: "accepted" },
+      ],
+    });
+    const r = await buildSharedContext(db, OWNER, VIEWER, ALL);
+    const fact = r.facts.find((f) => f.key === "shared_moments");
+    assert.ok(fact, "shared_moments fact emitted");
+    assert.equal(fact!.magnitude, 2, "only the two ACTIVE shared Moments count");
+    assert.equal(fact!.label, "2 Shared Moments");
+    assert.equal(fact!.detail, null, "no title/place/date leaks in the detail");
+  });
+
+  it("stays absent when only ONE party is a member (no shared Moment)", async () => {
+    const db = makePassportDb({
+      profiles: [
+        { id: OWNER, current_city: "Da Nang", home_city: "Da Nang" },
+        { id: VIEWER, current_city: "Hanoi", home_city: "Hanoi" },
+      ],
+      feature_flags: SHARED_MOMENTS_FLAGS,
+      shared_moments: [{ id: "m-1", status: "active" }],
+      shared_moment_memberships: [
+        { moment_id: "m-1", user_id: OWNER, status: "accepted" },
+        // VIEWER is NOT a member of m-1.
+      ],
+    });
+    const r = await buildSharedContext(db, OWNER, VIEWER, ALL);
+    assert.ok(!factKeys(r).includes("shared_moments"), "no shared Moment ⇒ no fact");
+  });
+
+  it("stays absent (fail-closed) when the Shared Moments capability is off", async () => {
+    const db = makePassportDb({
+      profiles: [
+        { id: OWNER, current_city: "Da Nang", home_city: "Da Nang" },
+        { id: VIEWER, current_city: "Hanoi", home_city: "Hanoi" },
+      ],
+      // feature_flags not staged ⇒ areSharedMomentsEnabled() is false.
+      shared_moments: [{ id: "m-1", status: "active" }],
+      shared_moment_memberships: [
+        { moment_id: "m-1", user_id: OWNER, status: "accepted" },
+        { moment_id: "m-1", user_id: VIEWER, status: "accepted" },
+      ],
+    });
+    const r = await buildSharedContext(db, OWNER, VIEWER, ALL);
+    assert.ok(!factKeys(r).includes("shared_moments"), "capability off ⇒ no fact");
+  });
+});
