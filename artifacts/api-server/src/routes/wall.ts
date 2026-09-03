@@ -168,15 +168,34 @@ async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerC
     logger.warn({ err }, "wall: trip membership read failed");
   }
   try {
-    const { data } = await sc
+    // `current_country` DOES NOT EXIST on profiles — it is a column of
+    // compass_user_profiles (migration 0051). Selecting it here failed the
+    // WHOLE read with PGRST100, and the catch below swallowed that, so
+    // BOTH fields were null on every request since this shipped: the Wall has
+    // never known the viewer's city either.
+    //
+    // profiles carries current_city, country, location_country, home_country —
+    // but no "current country". Rather than substitute one of those and assert
+    // a fact the schema does not record, the country stays null and says so.
+    // If the Wall needs it, the honest source is compass_user_profiles, which
+    // is a different read with its own privacy posture.
+    const { data, error } = await sc
       .from("profiles")
-      .select("current_city, current_country")
+      .select("current_city")
       .eq("id", viewerId)
       .maybeSingle();
+    // A missing row is normal and silent. A rejected query is not — that is how
+    // this was invisible for the life of the feature.
+    if (error) {
+      logger.warn(
+        { err: error, code: (error as any)?.code, viewerId },
+        "wall: viewer location read failed; the Wall will not know the viewer's city",
+      );
+    }
     ctx.currentCity = (data as any)?.current_city ?? null;
-    ctx.currentCountry = (data as any)?.current_country ?? null;
-  } catch {
-    /* non-fatal */
+    ctx.currentCountry = null;
+  } catch (err) {
+    logger.warn({ err }, "wall: viewer location read threw");
   }
   return ctx;
 }
