@@ -68,7 +68,9 @@ import {
   type OptimizeProposal,
 } from '../../src/features/map/trip/tripMapModel.ts';
 import { fetchTripPlanMap } from '../../src/services/tripPlan.ts';
-import { submitMapObservation } from '../../src/services/mapObservations.ts';
+import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
+import type { MapMediaAsset } from '../../src/features/map/truth/contributionFlow.ts';
+import type { MediaKind } from '../../src/features/map/truth/liveTruth.ts';
 import { openInMaps } from '../../src/lib/openInMaps.ts';
 import { centroidOf } from '../../src/types/mapObjects.ts';
 import { MapSearchSheet } from '../../src/components/map/MapSearchSheet.tsx';
@@ -394,6 +396,39 @@ export default function FullScreenMapScreen() {
 /** Inner implementation — reads map state from the store via useMapStore(). */
 function FullScreenMapScreenInner() {
   const insets = useSafeAreaInsets();
+  // §22's eighth prompt needs a camera, and this screen is where one lives.
+  // The shared picker is used rather than a map-specific one so the capture
+  // rules (Take Photo / Library, permissions, quality) stay one implementation.
+  const { pickMedia } = useMediaPicker();
+
+  /**
+   * §22 media capture for the contribution sheet.
+   *
+   * Picking ONLY. The upload goes through the app's existing
+   * `services/media.uploadMedia` (POST /api/media/upload, which strips
+   * EXIF/GPS) inside the sheet, and the observation the photo attaches to is
+   * submitted before it — §21's order. Nothing here reads a location: a §22
+   * artifact is evidence for an observation, not a position, and
+   * `intel_evidence` must not become a second location store.
+   */
+  const requestContributionMedia = useCallback(
+    async (kind: MediaKind): Promise<MapMediaAsset | null> => {
+      const assets = await pickMedia({
+        title: kind === 'video' ? 'Add video' : 'Add photo',
+        mediaTypes: kind === 'video' ? ['videos'] : ['images'],
+      });
+      const asset = assets?.[0];
+      if (!asset?.uri) return null;
+      return {
+        uri: asset.uri,
+        mimeType: asset.mimeType ?? null,
+        fileSize: asset.fileSize ?? null,
+        duration: asset.duration != null ? asset.duration / 1000 : null,
+        type: kind === 'video' ? 'video' : 'image',
+      };
+    },
+    [pickMedia],
+  );
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const { userId } = useSession();
   const params = useLocalSearchParams<{
@@ -1045,7 +1080,21 @@ function FullScreenMapScreenInner() {
   );
 
   // §5 levels 2-3: zones render beneath everything and skip collision.
-  const zoneObjects = useMemo(() => objects.filter((o) => isZoneKind(o.kind)), [objects]);
+  //
+  // `crowd_flow` is included even though it is NOT a ZoneKind, and that is
+  // deliberate rather than sloppy. This array feeds two layers — ActivityZone
+  // and CrowdFlowLayer — and each re-filters for what it draws: ActivityZone
+  // keeps only isZoneKind, CrowdFlowLayer keeps only 'crowd_flow'. Filtering to
+  // ZONE_KINDS here therefore starved the flow layer of every object it exists
+  // to render, so §10 would have gone live and drawn nothing.
+  //
+  // It must NOT be added to ZONE_KINDS to fix that: a flow is a LineString and
+  // ActivityZone draws polygons, so widening the kind list would send it to a
+  // renderer that cannot draw it. The feed widens; the vocabulary does not.
+  const zoneObjects = useMemo(
+    () => objects.filter((o) => isZoneKind(o.kind) || o.kind === 'crowd_flow'),
+    [objects],
+  );
 
   // §31 — collision only among the point-shaped markers. `dropped` is surfaced
   // rather than swallowed: a hidden object the user cannot reach is a silent
@@ -1595,24 +1644,24 @@ function FullScreenMapScreenInner() {
 
       {/* ── §22 one-tap contribution ────────────────────────────────────────
           An observation, never a rating — and a reward may never raise
-          confidence (§22, §37). Submission is the caller's seam. */}
+          confidence (§22, §37).
+
+          The sheet owns the submission (see its header): a photo attaches to an
+          observation that already exists, so the act is two calls in §21's
+          order and only the sheet can show the contributor how both landed.
+          `onSubmit` is telemetry, and must not post again. */}
       <MapContributionSheet
         visible={contributeObject !== null}
         object={contributeObject}
         onClose={() => setContributeObject(null)}
+        onRequestMedia={requestContributionMedia}
         onSubmit={(contribution) => {
           if (!contributeObject) return;
-          const obj = contributeObject;
           emitMapEvent('contribution_submitted', {
-            ref: describeMapObject(obj),
+            ref: describeMapObject(contributeObject),
             contributionKind: contribution.kind,
             prompt: 'sheet',
           });
-          // Fire-and-forget: §22 is a LOW-FRICTION capture surface, so the tap
-          // must not wait on the network. The server owns consent, validation
-          // and idempotency, and dedupes a double tap on its own.
-          void submitMapObservation(obj.id, obj.kind, contribution);
-          setContributeObject(null);
         }}
       />
 
