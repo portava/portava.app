@@ -199,6 +199,25 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/messaging.ts|select|dynamic table name", 1],
   // Recap parent is explicitly limited to the two canonical parent tables.
   ["src/routes/placeRecaps.ts|select|dynamic table name", 2],
+  // ── Media v2 owner-count / rank helpers (landed unallowlisted in #297) ────
+  //
+  // Both are private helpers whose ONLY callers pass table-name string literals:
+  //   MediaProjectionService.countOwned  <- "passport_postcards", "memories",
+  //                                         "hidden_gems", "media_assets"
+  //   MyWorldMemoryService.distinctUserRank <- "hidden_gem_contributions",
+  //                                            "hidden_gem_visits"
+  // They are allowlisted rather than rewritten because a rewrite would buy no
+  // coverage here: countOwned selects "*", and distinctUserRank's select list is
+  // a template string whose only substitution is the caller's own timeCol — so
+  // even with a literal table name this checker would still have no static
+  // column list to compare against the live schema. The blind spot is the
+  // wildcard/dynamic SELECT, not the table identifier.
+  //
+  // These two sites are why `api-server · check:all` has been red on main since
+  // #297; #312 merged through it. Cleared here so the branch can be judged on
+  // its own checks.
+  ["src/services/media/MediaProjectionService.ts|select|dynamic table name", 1],
+  ["src/services/media/MyWorldMemoryService.ts|select|dynamic table name", 1],
 
   // ── Dynamic insert table name ─────────────────────────────────────────────
   // post_event_links is a new join table (migration 20260731_post_event_links.sql);
