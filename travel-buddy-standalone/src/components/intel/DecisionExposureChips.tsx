@@ -97,13 +97,37 @@ export function buildLiveClaims(living: PlaceLivingResponse): ChipClaim[] {
     // floor + privacy gate, so treat it as a live-eligible crowd claim, but with
     // no fabricated number — band is set to the live-state floor and marked
     // synthesised so the sheet says detail is limited.
+    //
+    // §37 RULING on sourceClass, assessed separately from the dtoToClaim fix
+    // above and reaching the same answer for a DIFFERENT reason:
+    //
+    // The justification above is about FRESHNESS and PRIVACY. It says nothing
+    // about who is speaking, and those are different gates. Checked against the
+    // producer rather than inferred: readLiveCrowdLevel (api-server
+    // lib/liveClaimRead.ts) does `readLiveClaims(...{claimTypes:['crowd.level']})`
+    // and takes `claims.find(...)` — there is NO source-class filter anywhere on
+    // that path. A SPONSORED crowd.level claim can be the one returned.
+    //
+    // So hardcoding 'firsthand_unverified' here was the same §37 fail-open: a
+    // paid claim borrowing a traveller's credibility, reached by a route the
+    // comment's reasoning did not cover.
+    //
+    // null is also the literally accurate answer. The server reduced the claim
+    // to a bare STRING on this path; the attribution was dropped upstream, so
+    // the client does not have it. It renders "Source not attributed", and
+    // liveState() degrades it to 'typical' rather than 'live' — which is right:
+    // an unattributed level should not assert a present-tense observation.
+    //
+    // If this path should carry an attribution, the fix belongs on the server —
+    // readLiveCrowdLevel would have to return the class alongside the level, or
+    // exclude non-consensus classes. Inventing one here is what §37 forbids.
     return [
       {
         claimType: 'crowd.level',
         value: { level: living.crowdLevel },
         band: 'likely_current',
         confidence: null,
-        sourceClass: 'firsthand_unverified',
+        sourceClass: null,
         // A bare crowd level carries no cohort and no server state: it degrades to
         // the honest 'emerging' (band likely_current), never overstated as Live.
         sourceCountBucket: null,
