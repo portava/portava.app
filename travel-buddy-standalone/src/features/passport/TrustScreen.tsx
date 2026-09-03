@@ -60,6 +60,13 @@ import {
   type TrustDomainRow,
   type CredentialProjection,
 } from './useTrustProjection.ts';
+import { useContributions } from './useContributions.ts';
+import { ContributionCard } from './ContributionCard.tsx';
+import {
+  contributionsFromCredentials,
+  hasContributionSignal,
+  type ContributionProjection,
+} from '../../services/passportContributions.ts';
 
 // ── Icon helpers ─────────────────────────────────────────────────────────────
 
@@ -233,9 +240,15 @@ export interface TrustScreenProps {
   userId?: string;
   /** Test seam: inject a prebuilt projection to bypass the data hook. */
   projectionOverride?: TrustProjectionEnvelope;
+  /** Test seam: inject prebuilt contribution reputation (bypasses the fetch). */
+  contributionsOverride?: ContributionProjection | null;
 }
 
-export default function TrustScreen({ userId, projectionOverride }: TrustScreenProps = {}) {
+export default function TrustScreen({
+  userId,
+  projectionOverride,
+  contributionsOverride,
+}: TrustScreenProps = {}) {
   const insets = useSafeAreaInsets();
   const hook = useTrustProjection(userId);
 
@@ -244,6 +257,18 @@ export default function TrustScreen({ userId, projectionOverride }: TrustScreenP
   const error = projectionOverride ? null : hook.error;
 
   const view: TrustView | null = projection ? deriveTrustView(projection) : null;
+
+  // §20 contribution reputation. Prefer the dedicated reputation route; fall
+  // back to the contribution-relevant credentials the projection already
+  // carries. The fetch is disabled whenever a test seam is supplied so
+  // override-driven renders stay fully inert (no network, no async setState).
+  const contribHook = useContributions(userId, {
+    enabled: !projectionOverride && contributionsOverride === undefined,
+  });
+  const contributions: ContributionProjection | null =
+    contributionsOverride !== undefined
+      ? contributionsOverride
+      : contribHook.contributions ?? contributionsFromCredentials(projection?.credentials);
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -300,6 +325,14 @@ export default function TrustScreen({ userId, projectionOverride }: TrustScreenP
                   ))}
                 </View>
               </>
+            ) : null}
+
+            {/* Contribution reputation (§20, TABLE 21) — positive, organic only.
+                Paid contributions and private moderation data are never part of
+                the ContributionProjection shape, so they can't surface here. The
+                card is self-contained (its own heading), so no SectionTitle. */}
+            {hasContributionSignal(contributions) ? (
+              <ContributionCard data={contributions} />
             ) : null}
 
             {/* Positive capabilities (TABLE 14) */}
