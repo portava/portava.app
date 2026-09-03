@@ -190,6 +190,20 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/rentABuddy.ts|select|select list not statically resolvable", 4],
   ["src/routes/rentABuddyMarketplace.ts|select|select list not statically resolvable", 3],
 
+  // ── Generic count/scan helpers that take the table as a PARAMETER ─────────
+  //
+  // Both are small helpers whose whole purpose is to run the same shape of read
+  // over several tables, so the table name is an argument and no static analysis
+  // can resolve it. Rewriting them to be resolvable would mean unrolling one
+  // helper into N near-identical copies, which trades a narrow blind spot for a
+  // broad duplication hazard — the wrong side of that trade.
+  //
+  // Both read with select("*") or a template literal and are used only to COUNT
+  // or scan rows, so a wrong column name here fails the read rather than
+  // silently corrupting a write. That is what keeps the blind spot narrow.
+  ["src/services/media/MediaProjectionService.ts|select|dynamic table name", 1],
+  ["src/services/media/MyWorldMemoryService.ts|select|dynamic table name", 1],
+
   // ── Insert/upsert payloads built at runtime ───────────────────────────────
   ["src/routes/circle.ts|upsert|payload not statically resolvable", 1],
   // 3 sites: feed-section registration + the two /compass/ask uiBlock
