@@ -628,6 +628,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     ownerOnly: true,
     deepLink: '/passport/trust',
+    key: 'passport-shared-context',
+    path: 'passport/shared-context',
+    title: 'Shared Context',
+    // Reached while viewing ANOTHER traveler's passport — the other user's id
+    // arrives as a query param (?userId=…), so this is NOT ownerOnly.
+    parent: 'passport-viewer',
+    icon: 'Users',
+    requiresAuth: true,
+    deepLink: '/passport/shared-context',
   },
 
   // ── Stamps ────────────────────────────────────────────────────────────────
