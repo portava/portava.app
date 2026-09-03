@@ -628,6 +628,8 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     ownerOnly: true,
     deepLink: '/passport/trust',
+  },
+  {
     key: 'passport-shared-context',
     path: 'passport/shared-context',
     title: 'Shared Context',
