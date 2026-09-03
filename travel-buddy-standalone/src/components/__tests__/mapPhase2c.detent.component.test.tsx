@@ -42,7 +42,7 @@ import {
 } from '../../stores/mapStore.tsx';
 import type { MapStoreContextValue } from '../../stores/mapStore.tsx';
 import { MapCarousel } from '../map/MapCarousel.tsx';
-import type { MapEntity } from '../../types/mapTypes.ts';
+import { buddyEntity, gemEntity } from '../../__fixtures__/mapEntities.ts';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -75,68 +75,16 @@ jest.mock('../../services/messaging', () => ({
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-const gemEntity: MapEntity = {
-  id: 'gem:test-1',
-  type: 'gems',
-  lat: 10,
-  lng: 20,
-  payload: {
-    id: 'gem:test-1',
-    name: 'Secret Garden',
-    category: 'cafe',
-    city: 'Tokyo',
-    country: 'Japan',
-    neighborhood: 'Shinjuku',
-    description: 'A hidden garden with tea ceremonies.',
-    lat: 10,
-    lng: 20,
-    coordsPrecision: 'exact',
-    vibeTags: ['peaceful', 'garden'],
-    priceRange: '¥¥',
-    safetyNotes: null,
-    bestTimeToGo: 'Spring mornings',
-    localEtiquette: null,
-    layoverSafe: false,
-    minimumLayoverMinutes: null,
-    sensitivityLevel: 'public',
-    verificationLevel: 'unverified',
-    status: 'active',
-    submittedBy: null,
-    saveCount: 12,
-    visitCount: 44,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-};
-
-const buddyEntity: MapEntity = {
-  id: 'buddy:test-1',
-  type: 'buddies',
-  lat: 10,
-  lng: 20,
-  payload: {
-    id: 'buddy:test-1',
-    userId: 'user-1',
-    displayName: 'Yuki',
-    tagline: 'Tokyo local',
-    bio: 'I love showing visitors hidden spots around Shibuya.',
-    languages: ['Japanese', 'English'],
-    city: 'Tokyo',
-    country: 'Japan',
-    categories: ['culture'],
-    hourlyRateUsd: 25,
-    status: 'active',
-    verified: true,
-    verifiedAt: '2024-01-01T00:00:00Z',
-    averageRating: 4.9,
-    reviewCount: 38,
-    responseTimeH: 2,
-    coverPhotoUrl: null,
-    galleryUrls: [],
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-};
+// Built by the REAL projectors — see src/__fixtures__/mapEntities.ts for why a
+// hand-written payload literal is not acceptable here.
+const gemFixture = gemEntity({ id: 'test-1', name: 'Secret Garden', city: 'Tokyo' });
+const buddyFixture = buddyEntity({
+  id: 'test-1',
+  displayName: 'Yuki',
+  city: 'Tokyo',
+  country: 'Japan',
+  bio: 'I love showing visitors hidden spots around Shibuya.',
+});
 
 // ── Prop-capture component (store handle) ─────────────────────────────────────
 //
@@ -179,7 +127,7 @@ describe('Store previewDetent drives sheet', () => {
     await render(
       <MapStoreProvider>
         <StoreCapture ref={storeRef} />
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[gemFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByTestId('detent').props.children).toBe('medium');
@@ -190,7 +138,7 @@ describe('Store previewDetent drives sheet', () => {
     await render(
       <MapStoreProvider>
         <StoreCapture ref={storeRef} />
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[gemFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     await act(async () => { storeRef.current!.store.setPreviewDetent('collapsed'); });
@@ -202,7 +150,7 @@ describe('Store previewDetent drives sheet', () => {
     await render(
       <MapStoreProvider>
         <StoreCapture ref={storeRef} />
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[gemFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     await act(async () => { storeRef.current!.store.setPreviewDetent('full'); });
@@ -214,7 +162,7 @@ describe('Store previewDetent drives sheet', () => {
     await render(
       <MapStoreProvider>
         <StoreCapture ref={storeRef} />
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[gemFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     await act(async () => { storeRef.current!.store.setPreviewDetent('full'); });
@@ -237,7 +185,7 @@ describe('Reduce-motion detection — lifecycle', () => {
     await expect(
       render(
         <MapStoreProvider>
-          <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+          <MapCarousel entities={[gemFixture]} activeIndex={0} onIndexChange={jest.fn()} />
         </MapStoreProvider>,
       ),
     ).resolves.toBeDefined();
@@ -246,7 +194,7 @@ describe('Reduce-motion detection — lifecycle', () => {
   it('component unmounts without throwing (listener cleanup is safe)', async () => {
     const { unmount } = await render(
       <MapStoreProvider>
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[gemFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     // Wrap in act() so cleanup effects flush inside the act scope and don't
@@ -265,7 +213,7 @@ describe('Selection sync survives a detent change', () => {
       <MapStoreProvider>
         <StoreCapture ref={storeRef} />
         <MapCarousel
-          entities={[gemEntity, buddyEntity]}
+          entities={[gemFixture, buddyFixture]}
           activeIndex={0}
           onIndexChange={onIndexChange}
         />
@@ -284,49 +232,21 @@ describe('Selection sync survives a detent change', () => {
 // ── 5. Full-detent EntityFullDetail ──────────────────────────────────────────
 
 describe('Full-detent EntityFullDetail', () => {
-  it('gem description visible when previewDetent is full', async () => {
+  // A gem's description and bestTimeToGo used to be asserted here. NEITHER
+  // projector emits them (see docs/map-card-projection-gaps.md), so those
+  // assertions were describing a card the app has not rendered since the
+  // producers switched to MapObject. What the gem card CAN show at full detent
+  // is asserted below; the buddy card carries the extended-detail coverage.
+  it('gem full detail shows no description — the projection does not carry one', async () => {
     const storeRef = React.createRef<StoreHandle>();
     await render(
       <MapStoreProvider>
         <StoreCapture ref={storeRef} />
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[gemFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     await act(async () => { storeRef.current!.store.setPreviewDetent('full'); });
-    expect(screen.getByText(/hidden garden with tea ceremonies/i)).toBeTruthy();
-  });
-
-  it('gem bestTimeToGo visible when previewDetent is full', async () => {
-    const storeRef = React.createRef<StoreHandle>();
-    await render(
-      <MapStoreProvider>
-        <StoreCapture ref={storeRef} />
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
-      </MapStoreProvider>,
-    );
-    await act(async () => { storeRef.current!.store.setPreviewDetent('full'); });
-    expect(screen.getByText(/Spring mornings/i)).toBeTruthy();
-  });
-
-  it('gem description NOT visible at medium (default)', async () => {
-    await render(
-      <MapStoreProvider>
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
-      </MapStoreProvider>,
-    );
-    expect(screen.queryByText(/hidden garden with tea ceremonies/i)).toBeNull();
-  });
-
-  it('gem description NOT visible when previewDetent is collapsed', async () => {
-    const storeRef = React.createRef<StoreHandle>();
-    await render(
-      <MapStoreProvider>
-        <StoreCapture ref={storeRef} />
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
-      </MapStoreProvider>,
-    );
-    await act(async () => { storeRef.current!.store.setPreviewDetent('collapsed'); });
-    expect(screen.queryByText(/hidden garden with tea ceremonies/i)).toBeNull();
+    expect(screen.queryByText(/Quiet stairwell with a river view/i)).toBeNull();
   });
 
   it('buddy bio visible when previewDetent is full', async () => {
@@ -334,11 +254,32 @@ describe('Full-detent EntityFullDetail', () => {
     await render(
       <MapStoreProvider>
         <StoreCapture ref={storeRef} />
-        <MapCarousel entities={[buddyEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[buddyFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     await act(async () => { storeRef.current!.store.setPreviewDetent('full'); });
     expect(screen.getByText(/hidden spots around Shibuya/i)).toBeTruthy();
+  });
+
+  it('buddy bio NOT visible at medium (default)', async () => {
+    await render(
+      <MapStoreProvider>
+        <MapCarousel entities={[buddyFixture]} activeIndex={0} onIndexChange={jest.fn()} />
+      </MapStoreProvider>,
+    );
+    expect(screen.queryByText(/hidden spots around Shibuya/i)).toBeNull();
+  });
+
+  it('buddy bio NOT visible when previewDetent is collapsed', async () => {
+    const storeRef = React.createRef<StoreHandle>();
+    await render(
+      <MapStoreProvider>
+        <StoreCapture ref={storeRef} />
+        <MapCarousel entities={[buddyFixture]} activeIndex={0} onIndexChange={jest.fn()} />
+      </MapStoreProvider>,
+    );
+    await act(async () => { storeRef.current!.store.setPreviewDetent('collapsed'); });
+    expect(screen.queryByText(/hidden spots around Shibuya/i)).toBeNull();
   });
 });
 
@@ -348,7 +289,7 @@ describe('PeekStrip entity label', () => {
   it('shows entity name in the peek strip', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[gemFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     // 'Secret Garden' appears in the peek strip (may also appear in card body)
@@ -377,7 +318,7 @@ describe('PeekStrip detent controls', () => {
     await render(
       <MapStoreProvider>
         <StoreCapture ref={storeRef} />
-        <MapCarousel entities={[gemEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[gemFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
 

@@ -40,6 +40,7 @@ import {
   loadEnabledLayers,
 } from '../../src/components/map/MapFilterSheet.tsx';
 import type { MapEntity, ToggleableEntityType, PassportCountryPayload } from '../../src/types/mapTypes.ts';
+import { objectOf } from '../../src/types/mapCardPayloads.ts';
 import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
@@ -776,10 +777,12 @@ function FullScreenMapScreenInner() {
     // over a stale place stays stale. §37: "Do not let Compass invent live
     // conditions."
     const candidates: CompassMapCandidate[] = entities.map((e) => {
-      const obj = (e.payload as MapObject | undefined) ?? undefined;
+      // AskCompassBar projects its results (projectCompassResult), so `payload`
+      // is a MapObject here just as it is for every other producer.
+      const obj = objectOf(e) ?? undefined;
       return {
         id: e.id.includes(':') ? e.id.slice(e.id.indexOf(':') + 1) : e.id,
-        title: obj?.title ?? String((e.payload as any)?.title ?? 'Suggestion'),
+        title: obj?.title ?? 'Suggestion',
         subtitle: obj?.subtitle,
         lat: e.lat,
         lng: e.lng,

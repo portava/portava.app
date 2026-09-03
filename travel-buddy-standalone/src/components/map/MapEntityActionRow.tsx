@@ -54,11 +54,18 @@ import { TripWishlistPicker } from '../discovery/TripWishlistPicker.tsx';
 import type { AddToTripPayload } from '../discovery/TripWishlistPicker.tsx';
 import { ReportSheet } from '../ReportSheet.tsx';
 import {
-  MAP_OBJECT_KINDS,
   type MapObject,
   type MapObjectKind,
   type PrivacyClass,
 } from '../../types/mapObjects.ts';
+import {
+  buddyCardPayload,
+  friendCardPayload,
+  gemCardPayload,
+  isMapObject,
+  objectOf,
+  tripCardPayload,
+} from '../../types/mapCardPayloads.ts';
 import {
   countBucket,
   currentDecisionId,
@@ -117,20 +124,8 @@ const TELEMETRY_PRIVACY_BY_TYPE: Record<MapEntityType, PrivacyClass> = {
   stamps: 'aggregate_only',
 };
 
-function isMapObjectPayload(value: unknown): value is MapObject {
-  if (value == null || typeof value !== 'object') return false;
-  const o = value as { kind?: unknown; geometry?: unknown; privacyClass?: unknown };
-  return (
-    typeof o.kind === 'string' &&
-    (MAP_OBJECT_KINDS as readonly string[]).includes(o.kind) &&
-    typeof o.geometry === 'object' &&
-    o.geometry !== null &&
-    typeof o.privacyClass === 'string'
-  );
-}
-
 function entityTelemetryRef(entity: MapEntity): MapObjectRef {
-  if (isMapObjectPayload(entity.payload)) return describeMapObject(entity.payload);
+  if (isMapObject(entity.payload)) return describeMapObject(entity.payload);
   return describeMapObject({
     id: entity.id,
     kind: TELEMETRY_KIND_BY_TYPE[entity.type],
@@ -145,7 +140,7 @@ function entityTelemetryRef(entity: MapEntity): MapObjectRef {
 
 /** Distance the projection already computed, when there is one. */
 function entityDistanceKm(entity: MapEntity): number | null {
-  if (!isMapObjectPayload(entity.payload)) return null;
+  if (!isMapObject(entity.payload)) return null;
   const d = entity.payload.distanceKm;
   return typeof d === 'number' ? d : null;
 }
@@ -161,27 +156,93 @@ function fireAndForget(emit: () => void): void {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// ── Reading the entity ────────────────────────────────────────────────────────
+//
+// These used to read `entity.payload.userId` / `.displayName` / `.title` / `.name`
+// through `as any`. Once the producers switched to emitting `MapObject`, none of
+// those fields existed any more: every buddy was "Local Buddy", every gem was
+// "Hidden Gem", and `userId` was undefined — so Message, Follow and Block acted
+// on a null user. Nothing threw and nothing failed to compile, which is exactly
+// why it survived. Everything below now comes from the projection.
+
 /** Extract the userId from person-type entities; null otherwise. */
 function getEntityUserId(entity: MapEntity): string | null {
-  const p = entity.payload as any;
-  switch (entity.type) {
-    case 'buddies': return p.userId ?? null;
-    case 'friends': return p.userId ?? null;
-    default: return null;
-  }
+  const obj = objectOf(entity);
+  if (!obj) return null;
+  if (obj.kind === 'buddy_zone') return buddyCardPayload(obj)?.userId ?? null;
+  if (obj.kind === 'crew_member') return friendCardPayload(obj)?.userId ?? null;
+  return null;
 }
 
 /** Human-readable display name for the entity. */
 function getEntityName(entity: MapEntity): string {
-  const p = entity.payload as any;
-  switch (entity.type) {
-    case 'buddies': return p.displayName ?? 'Local Buddy';
-    case 'events':  return p.title ?? 'Event';
-    case 'gems':    return p.name ?? 'Hidden Gem';
-    case 'trips':   return p.title ?? 'Trip';
-    case 'friends': return p.name ?? 'Friend';
-    default:        return 'Place';
+  const obj = objectOf(entity);
+  // Every projected object carries a non-empty title (isRenderable enforces it).
+  if (obj) return obj.title;
+  const p = entity.payload;
+  if (p != null && typeof p === 'object') {
+    const name = (p as { name?: unknown }).name;
+    if (typeof name === 'string' && name !== '') return name;
+    const country = (p as { country?: unknown }).country;
+    if (typeof country === 'string' && country !== '') return country;
   }
+  return 'Place';
+}
+
+/**
+ * The DOMAIN id an action acts on — the buddy listing, the gem, the trip, the
+ * place. NOT the map object's id: a projected object's id is namespaced
+ * (`gem:abc`, `trip:t1`) so two sources can never collide, and passing that to
+ * a save or a report addresses a row that does not exist.
+ */
+function getEntitySubjectId(entity: MapEntity): string {
+  const obj = objectOf(entity);
+  if (obj) {
+    switch (obj.kind) {
+      case 'buddy_zone': {
+        const p = buddyCardPayload(obj);
+        if (p) return p.buddyId;
+        break;
+      }
+      case 'trip_stop': {
+        const p = tripCardPayload(obj);
+        if (p) return p.tripId;
+        break;
+      }
+      case 'crew_member': {
+        const p = friendCardPayload(obj);
+        if (p) return p.userId;
+        break;
+      }
+      default:
+        break;
+    }
+    // Gems and events do not carry a bare id on `payload`, but the namespaced
+    // object id is `<source>:<domain id>` by construction — see the projectors.
+    const sep = obj.id.indexOf(':');
+    return sep >= 0 ? obj.id.slice(sep + 1) : obj.id;
+  }
+  const p = entity.payload;
+  const raw = p != null && typeof p === 'object' ? (p as { id?: unknown }).id : undefined;
+  return typeof raw === 'string' && raw !== '' ? raw : entity.id;
+}
+
+/** The city an action should file this entity under, when the projection has one. */
+function entityCity(entity: MapEntity): string | undefined {
+  const obj = objectOf(entity);
+  if (obj) {
+    if (obj.kind === 'buddy_zone') return buddyCardPayload(obj)?.city ?? undefined;
+    if (obj.kind === 'trip_stop') return tripCardPayload(obj)?.destinationCity ?? undefined;
+    if (obj.kind === 'hidden_gem') return gemCardPayload(obj)?.city ?? undefined;
+    if (obj.kind === 'crew_member') return friendCardPayload(obj)?.city ?? undefined;
+    return undefined;
+  }
+  const p = entity.payload;
+  if (p != null && typeof p === 'object') {
+    const city = (p as { city?: unknown }).city;
+    if (typeof city === 'string' && city !== '') return city;
+  }
+  return undefined;
 }
 
 /** Map entity type to moderation subject type for ReportSheet. */
@@ -196,9 +257,8 @@ function getModerationSubjectType(entityType: MapEntityType): ModerationSubjectT
 
 /** Build the AddToTripPayload needed by TripWishlistPicker. */
 function buildSavePayload(entity: MapEntity): AddToTripPayload {
-  const p = entity.payload as any;
   return {
-    id: p.id ?? entity.id,
+    id: getEntitySubjectId(entity),
     name: getEntityName(entity),
     category: entity.type === 'gems' ? 'hidden_gem' : entity.type,
     lat: entity.lat,
@@ -290,9 +350,8 @@ function ActionRowInner({
   const perms = entity.permissions;
   const isPersonEntity = PERSON_TYPES.includes(entity.type);
 
-  // Extract derived values from the payload.
-  const entityPayload = entity.payload as any;
-  const rawEntityId: string = entityPayload.id ?? entity.id;
+  // Derived from the projection — never from a raw row.
+  const rawEntityId: string = getEntitySubjectId(entity);
   const entityName = getEntityName(entity);
   const userId = getEntityUserId(entity);
 
@@ -337,17 +396,15 @@ function ActionRowInner({
   const [wishlistOpen, setWishlistOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
 
-  // Optimistic RSVP state — seeded from the entity payload so that re-opening
-  // the same card within a session (after a successful RSVP) still shows
-  // 'Going' or 'Waitlisted'.  For events the payload is EventListItem which
-  // carries myRsvp; myWaitlistPosition (present on EventDetail payloads) seeds
-  // the waitlisted branch when the user was previously placed on the waitlist.
-  const [rsvpState, setRsvpState] = useState<'going' | 'waitlisted' | null>(() => {
-    if (entity.type !== 'events') return null;
-    if (entityPayload.myRsvp === 'going') return 'going';
-    if (entityPayload.myWaitlistPosition != null && entityPayload.myWaitlistPosition > 0) return 'waitlisted';
-    return null;
-  });
+  // Optimistic RSVP state, set when the user RSVPs during this session so the
+  // button still reads 'Going' / 'Waitlisted' if the card is re-opened.
+  //
+  // It is no longer SEEDED from the payload: this used to read
+  // `payload.myRsvp` / `payload.myWaitlistPosition` off a raw EventListItem, and
+  // the event projection emits neither — so the seed had been silently dead
+  // since the producers switched to MapObject. Restoring it means adding the
+  // viewer's RSVP to `projectEvent`; see docs/map-card-projection-gaps.md.
+  const [rsvpState, setRsvpState] = useState<'going' | 'waitlisted' | null>(null);
 
   // ── Button visibility ─────────────────────────────────────────────────────
   const showSave       = caps.includes('save');
@@ -411,13 +468,13 @@ function ActionRowInner({
       // placement is not a join, so it deliberately does not fire above.
       fireAndForget(() => {
         emitAccepted('plan_join');
-        const going = typeof entityPayload.goingCount === 'number' ? entityPayload.goingCount : null;
         emitMapEvent('plan_joined', {
           ref: entityTelemetryRef(entity),
           planKind: 'event',
-          // The joiner is definitionally a participant; when the card carried no
-          // goingCount this is a floor of 1, not an invented total.
-          participants: countBucket((going ?? 0) + 1),
+          // The event projection carries no attendee count, so the only
+          // participant this card can honestly attest to is the joiner. A
+          // floor of 1, never an invented total.
+          participants: countBucket(1),
           discovery: isRecommendation ? 'compass' : 'map',
         });
       });
@@ -429,7 +486,7 @@ function ActionRowInner({
         caps.filter((c) => c !== 'join'),
       );
     }
-  }, [rawEntityId, mapStore, entity, entityPayload, caps, emitAccepted, isRecommendation]);
+  }, [rawEntityId, mapStore, entity, caps, emitAccepted, isRecommendation]);
 
   const handleFollowToggle = useCallback(async () => {
     const succeeded = await followState.toggle();
@@ -538,7 +595,7 @@ function ActionRowInner({
                 id: rawEntityId,
                 type: entity.type,
                 title: entityName,
-                city: entityPayload.city ?? entityPayload.destinationCity,
+                city: entityCity(entity),
                 category: entity.type,
               });
             }}
@@ -583,7 +640,7 @@ function ActionRowInner({
             testID="map-action-book"
             icon={<Briefcase size={15} color={color.signal} />}
             label="Book"
-            onPress={() => { onBeforeNavigate?.(); router.push(`/(rent-a-buddy)/buddy/${entityPayload.id}` as any); }}
+            onPress={() => { onBeforeNavigate?.(); router.push(`/(rent-a-buddy)/buddy/${rawEntityId}` as any); }}
           />
         )}
         {showMessage && (

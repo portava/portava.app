@@ -67,7 +67,6 @@ import { MapEntityActionRow } from './MapEntityActionRow.tsx';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import type { MapEntity, MapEntityType, PassportCountryPayload } from '../../types/mapTypes.ts';
 import {
-  MAP_OBJECT_KINDS,
   isForecastKind,
   type MapObject,
   type MapObjectKind,
@@ -82,13 +81,18 @@ import {
 } from '../../features/map/telemetry/mapTelemetry.ts';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
-import type { BuddyProfile } from '../../services/rentABuddy.ts';
-import type { EventListItem } from '../../services/events.ts';
-import type { HiddenGem } from '../../services/hiddenGems.ts';
-import type { TripRow } from '../../services/trips.ts';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { openDirectThread } from '../../services/messaging.ts';
-import type { CircleMemberLocation } from '../../services/map.ts';
+import {
+  buddyCardPayload,
+  eventCardPayload,
+  friendCardPayload,
+  gemCardPayload,
+  isMapObject,
+  objectOf,
+  passportCardPayload,
+  tripCardPayload,
+} from '../../types/mapCardPayloads.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
@@ -133,20 +137,8 @@ const TELEMETRY_ZONE_KINDS: readonly MapObjectKind[] = [
   'prediction',
 ];
 
-function isMapObjectPayload(value: unknown): value is MapObject {
-  if (value == null || typeof value !== 'object') return false;
-  const o = value as { kind?: unknown; geometry?: unknown; privacyClass?: unknown };
-  return (
-    typeof o.kind === 'string' &&
-    (MAP_OBJECT_KINDS as readonly string[]).includes(o.kind) &&
-    typeof o.geometry === 'object' &&
-    o.geometry !== null &&
-    typeof o.privacyClass === 'string'
-  );
-}
-
 function entityTelemetryRef(entity: MapEntity): MapObjectRef {
-  if (isMapObjectPayload(entity.payload)) return describeMapObject(entity.payload);
+  if (isMapObject(entity.payload)) return describeMapObject(entity.payload);
   return describeMapObject({
     id: entity.id,
     kind: TELEMETRY_KIND_BY_TYPE[entity.type],
@@ -158,13 +150,13 @@ function entityTelemetryRef(entity: MapEntity): MapObjectRef {
 }
 
 function entityKind(entity: MapEntity): MapObjectKind {
-  return isMapObjectPayload(entity.payload)
+  return isMapObject(entity.payload)
     ? entity.payload.kind
     : TELEMETRY_KIND_BY_TYPE[entity.type];
 }
 
 function entityDistanceKm(entity: MapEntity): number | null {
-  if (!isMapObjectPayload(entity.payload)) return null;
+  if (!isMapObject(entity.payload)) return null;
   const d = entity.payload.distanceKm;
   return typeof d === 'number' ? d : null;
 }
@@ -218,19 +210,36 @@ const AnimatedFlatList = Animated.createAnimatedComponent(FlatList<MapEntity>);
 
 // ── Peek-strip helpers ────────────────────────────────────────────────────────
 
-/** Extract a one-line display label from any entity type for the peek strip. */
+/**
+ * One-line display label for the peek strip.
+ *
+ * Every projected object carries a non-empty `title` (isRenderable drops the
+ * ones that don't), so there is nothing to reach into `payload` for. The two
+ * producers that do not project — the places layer and passport mode — are
+ * read through their own guards.
+ */
 function getEntityPeekLabel(entity: MapEntity | undefined): string {
   if (!entity) return 'Nearby';
-  switch (entity.type) {
-    case 'trips':   return (entity.payload as TripRow).title                 ?? 'Trip';
-    case 'events':  return (entity.payload as EventListItem).title            ?? 'Event';
-    case 'buddies': return (entity.payload as BuddyProfile).displayName       ?? 'Local Buddy';
-    case 'gems':    return (entity.payload as HiddenGem).name                 ?? 'Gem';
-    case 'friends': return (entity.payload as CircleMemberLocation).name      ?? 'Friend nearby';
-    case 'stamps':  return (entity.payload as PassportCountryPayload).country ?? 'Country';
-    case 'places':  return (entity.payload as DiscoveryPlace).name            ?? 'Place';
-    default:        return 'Nearby';
+  const obj = objectOf(entity);
+  if (obj) return obj.title;
+  if (entity.type === 'stamps') {
+    return passportCardPayload(entity.payload)?.country ?? 'Country';
   }
+  if (entity.type === 'places') {
+    return discoveryPlaceOf(entity)?.name ?? 'Place';
+  }
+  return 'Nearby';
+}
+
+/**
+ * The 'places' layer is built directly in app/map/index.tsx from a
+ * `DiscoveryPlace` and never goes through a projector, so this is the one place
+ * a card still reads a service DTO — behind a guard, and only for that layer.
+ */
+function discoveryPlaceOf(entity: MapEntity): DiscoveryPlace | null {
+  const p = entity.payload;
+  if (p == null || typeof p !== 'object') return null;
+  return typeof (p as { name?: unknown }).name === 'string' ? (p as DiscoveryPlace) : null;
 }
 
 /**
@@ -309,41 +318,39 @@ function PeekStrip({
 
 // ── Per-type mini card bodies ─────────────────────────────────────────────────
 
-function BuddyCardBody({ entity }: { entity: MapEntity<BuddyProfile> }) {
-  const buddy = entity.payload;
+function BuddyCardBody({ obj }: { obj: MapObject }) {
   const cfg = MAP_LAYER_CONFIG.buddies;
-  const cats = buddy.categories?.slice(0, 2).join(' · ') ?? '';
+  const p = buddyCardPayload(obj);
+  const cats = (p?.categories ?? []).slice(0, 2).join(' · ');
   return (
     <>
       <View style={cs.topRow}>
         <View style={[cs.iconCircle, { backgroundColor: cfg.color }]}>
-          {buddy.coverPhotoUrl
-            ? <CachedImage source={{ uri: buddy.coverPhotoUrl }} style={cs.iconImg} fallbackLabel="" />
+          {p?.coverPhotoUrl
+            ? <CachedImage source={{ uri: p.coverPhotoUrl }} style={cs.iconImg} fallbackLabel="" />
             : <Users size={18} color="#fff" />}
         </View>
         <View style={cs.topText}>
-          <Text style={cs.primaryText} numberOfLines={1}>
-            {buddy.displayName ?? 'Local Buddy'}
-          </Text>
+          <Text style={cs.primaryText} numberOfLines={1}>{obj.title}</Text>
           {cats ? <Text style={cs.secondaryText} numberOfLines={1}>{cats}</Text> : null}
         </View>
       </View>
       <View style={cs.chipRow}>
-        {buddy.averageRating != null && (
+        {p?.averageRating != null && (
           <View style={cs.chip}>
             <Star size={10} color="#F59E0B" fill="#F59E0B" />
-            <Text style={cs.chipText}>{buddy.averageRating.toFixed(1)}</Text>
+            <Text style={cs.chipText}>{p.averageRating.toFixed(1)}</Text>
           </View>
         )}
-        {buddy.city ? (
+        {p?.city ? (
           <View style={cs.chip}>
             <MapPin size={10} color={color.mute} />
-            <Text style={cs.chipText} numberOfLines={1}>{buddy.city}</Text>
+            <Text style={cs.chipText} numberOfLines={1}>{p.city}</Text>
           </View>
         ) : null}
-        {buddy.hourlyRateUsd != null && (
+        {p?.hourlyRateUsd != null && (
           <View style={cs.chip}>
-            <Text style={cs.chipText}>${buddy.hourlyRateUsd}/hr</Text>
+            <Text style={cs.chipText}>${p.hourlyRateUsd}/hr</Text>
           </View>
         )}
         <View style={[cs.chip, cs.statusChip]}>
@@ -355,16 +362,22 @@ function BuddyCardBody({ entity }: { entity: MapEntity<BuddyProfile> }) {
   );
 }
 
-function EventCardBody({ entity }: { entity: MapEntity<EventListItem> }) {
-  const ev = entity.payload;
-  const now = Date.now();
-  const startsAt = ev.startsAt ? new Date(ev.startsAt).getTime() : null;
-  const endsAt = ev.endsAt ? new Date(ev.endsAt).getTime() : null;
-  const isLive = startsAt != null && endsAt != null && now >= startsAt && now <= endsAt;
-  const minutesLeft = endsAt != null && isLive ? Math.round((endsAt - now) / 60000) : null;
+function EventCardBody({ obj }: { obj: MapObject }) {
+  const cfg = MAP_LAYER_CONFIG.events;
+  const p = eventCardPayload(obj);
 
-  const dateLabel = ev.startsAt
-    ? new Date(ev.startsAt).toLocaleDateString(undefined, {
+  // LIVE is the PROJECTOR's call (`hasStarted`, decided against its own clock)
+  // bounded by the object's own `expiresAt`. The card used to recompute both
+  // from raw start/end timestamps — spec §19: "The mobile client should not
+  // independently reconstruct Portava intelligence rules."
+  const endsAtMs = obj.expiresAt ? new Date(obj.expiresAt).getTime() : NaN;
+  const now = Date.now();
+  const isLive = p?.hasStarted === true && (!Number.isFinite(endsAtMs) || now <= endsAtMs);
+  const minutesLeft =
+    isLive && Number.isFinite(endsAtMs) ? Math.round((endsAtMs - now) / 60000) : null;
+
+  const dateLabel = p?.startsAt
+    ? new Date(p.startsAt).toLocaleDateString(undefined, {
         weekday: 'short', month: 'short', day: 'numeric',
       })
     : null;
@@ -372,19 +385,21 @@ function EventCardBody({ entity }: { entity: MapEntity<EventListItem> }) {
   return (
     <>
       <View style={cs.topRow}>
-        <View style={[cs.iconCircle, { backgroundColor: MAP_LAYER_CONFIG.events.color }]}>
+        <View style={[cs.iconCircle, { backgroundColor: cfg.color }]}>
           <DisplayMediaImage
-            uri={ev.coverUrl ?? null}
+            uri={p?.coverUrl ?? null}
             width={46}
             height={46}
             style={cs.iconImg}
             fallbackIcon={<CalendarDays size={18} color="#fff" />}
-            fallbackBg={MAP_LAYER_CONFIG.events.color}
+            fallbackBg={cfg.color}
           />
         </View>
         <View style={cs.topText}>
-          <Text style={cs.primaryText} numberOfLines={2}>{ev.title}</Text>
-          {ev.hostName ? <Text style={cs.secondaryText} numberOfLines={1}>by {ev.hostName}</Text> : null}
+          <Text style={cs.primaryText} numberOfLines={2}>{obj.title}</Text>
+          {p?.locationName ? (
+            <Text style={cs.secondaryText} numberOfLines={1}>{p.locationName}</Text>
+          ) : null}
         </View>
       </View>
       <View style={cs.chipRow}>
@@ -399,81 +414,84 @@ function EventCardBody({ entity }: { entity: MapEntity<EventListItem> }) {
             <Text style={cs.chipText}>{dateLabel}</Text>
           </View>
         ) : null}
-        {minutesLeft != null && (
+        {minutesLeft != null && minutesLeft >= 0 && (
           <View style={cs.chip}>
             <Text style={cs.chipText}>Ends in {minutesLeft}m</Text>
           </View>
         )}
-        {ev.goingCount > 0 && (
-          <View style={cs.chip}>
-            <Users size={10} color={color.mute} />
-            <Text style={cs.chipText}>{ev.goingCount} going</Text>
-          </View>
-        )}
-        {ev.priceType === 'free' && (
-          <View style={[cs.chip, cs.greenChip]}>
-            <Text style={[cs.chipText, { color: color.success }]}>Free</Text>
-          </View>
-        )}
       </View>
     </>
   );
 }
 
-function GemCardBody({ entity }: { entity: MapEntity<HiddenGem> }) {
-  const gem = entity.payload;
+function GemCardBody({ obj }: { obj: MapObject }) {
+  const cfg = MAP_LAYER_CONFIG.gems;
+  const p = gemCardPayload(obj);
+  const verification = verificationLabel(p?.verificationLevel);
   return (
     <>
       <View style={cs.topRow}>
-        <View style={[cs.iconCircle, { backgroundColor: MAP_LAYER_CONFIG.gems.color }]}>
-          {gem.imageUrl
-            ? <CachedImage source={{ uri: gem.imageUrl }} style={cs.iconImg} fallbackLabel="" />
+        <View style={[cs.iconCircle, { backgroundColor: cfg.color }]}>
+          {p?.thumbnailUrl
+            ? <CachedImage source={{ uri: p.thumbnailUrl }} style={cs.iconImg} fallbackLabel="" />
             : <Sparkles size={18} color="#fff" />}
         </View>
         <View style={cs.topText}>
-          <Text style={cs.primaryText} numberOfLines={1}>{gem.name}</Text>
-          <Text style={cs.secondaryText} numberOfLines={1}>
-            {gem.neighborhood ?? gem.city} · {gem.category.replace('_', ' ')}
-          </Text>
+          <Text style={cs.primaryText} numberOfLines={1}>{obj.title}</Text>
+          {obj.subtitle ? (
+            <Text style={cs.secondaryText} numberOfLines={1}>{obj.subtitle}</Text>
+          ) : null}
         </View>
       </View>
-      <View style={cs.chipRow}>
-        {gem.vibeTags?.slice(0, 3).map((tag) => (
-          <View key={tag} style={cs.chip}>
-            <Text style={cs.chipText}>#{tag}</Text>
-          </View>
-        ))}
-        {gem.saveCount != null && gem.saveCount > 0 && (
+      {verification ? (
+        <View style={cs.chipRow}>
           <View style={cs.chip}>
             <StampIcon size={10} color={color.mute} />
-            <Text style={cs.chipText}>{gem.saveCount}</Text>
+            <Text style={cs.chipText}>{verification}</Text>
           </View>
-        )}
-      </View>
+        </View>
+      ) : null}
     </>
   );
 }
 
-function TripCardBody({ entity }: { entity: MapEntity<TripRow> }) {
-  const trip = entity.payload;
-  const dateRange = [trip.startDate, trip.endDate]
-    .filter(Boolean)
-    .map((d) => new Date(d!).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
+/**
+ * The gem's verification level in the product's own words. `unverified` gets no
+ * chip at all rather than a chip that says so — an absent claim is not a claim.
+ */
+function verificationLabel(level: string | null | undefined): string | null {
+  switch (level) {
+    case 'community':    return 'Community verified';
+    case 'guide':        return 'Guide verified';
+    case 'gps_verified': return 'GPS verified';
+    case 'admin':        return 'Portava verified';
+    default:             return null;
+  }
+}
+
+function TripCardBody({ obj }: { obj: MapObject }) {
+  const cfg = MAP_LAYER_CONFIG.trips;
+  const p = tripCardPayload(obj);
+  const dateRange = [p?.startDate, p?.endDate]
+    .filter((d): d is string => !!d)
+    .map((d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
     .join(' – ');
-  const memberAvatars: string[] = (trip as any).memberAvatarUrls?.slice(0, 3) ?? [];
+  const where = p?.destinationCity
+    ? `${p.destinationCity}${p.destinationCountry ? `, ${p.destinationCountry}` : ''}`
+    : null;
   return (
     <>
       <View style={cs.topRow}>
-        <View style={[cs.iconCircle, { backgroundColor: MAP_LAYER_CONFIG.trips.color }]}>
-          {trip.coverUrl
-            ? <CachedImage source={{ uri: trip.coverUrl }} style={cs.iconImg} fallbackLabel="" />
+        <View style={[cs.iconCircle, { backgroundColor: cfg.color }]}>
+          {p?.coverUrl
+            ? <CachedImage source={{ uri: p.coverUrl }} style={cs.iconImg} fallbackLabel="" />
             : <Plane size={18} color="#fff" />}
         </View>
         <View style={cs.topText}>
-          <Text style={cs.primaryText} numberOfLines={1}>{trip.title}</Text>
-          <Text style={cs.secondaryText} numberOfLines={1}>
-            {trip.destinationCity}{trip.destinationCountry ? `, ${trip.destinationCountry}` : ''}
-          </Text>
+          <Text style={cs.primaryText} numberOfLines={1}>{obj.title}</Text>
+          {where ? (
+            <Text style={cs.secondaryText} numberOfLines={1}>{where}</Text>
+          ) : null}
         </View>
       </View>
       <View style={cs.chipRow}>
@@ -483,37 +501,29 @@ function TripCardBody({ entity }: { entity: MapEntity<TripRow> }) {
             <Text style={cs.chipText}>{dateRange}</Text>
           </View>
         ) : null}
-        <View style={cs.chip}>
-          <Text style={cs.chipText}>{trip.visibility.replace('_', ' ')}</Text>
-        </View>
-        {memberAvatars.length > 0 && (
-          <View style={cs.memberAvatarsRow}>
-            {memberAvatars.map((url, i) => (
-              <Avatar
-                key={i}
-                uri={url}
-                size={20}
-                style={[cs.memberAvatarRing, { marginLeft: i === 0 ? 0 : -8 }]}
-              />
-            ))}
+        {/* No `.replace('_', ' ')` here: TripVisibility has no underscored
+            member, and the call used to throw outright once `payload` became a
+            MapObject and `visibility` came back undefined. */}
+        {p?.visibility ? (
+          <View style={cs.chip}>
+            <Text style={cs.chipText}>{p.visibility}</Text>
           </View>
-        )}
+        ) : null}
       </View>
     </>
   );
 }
 
-function FriendCardBody({ entity }: { entity: MapEntity<CircleMemberLocation> }) {
-  const loc = entity.payload;
+function FriendCardBody({ obj }: { obj: MapObject }) {
   const cfg = MAP_LAYER_CONFIG.friends;
-  const displayName = loc.name ?? 'Circle member';
-  const locationLabel = loc.city ?? 'Area location';
+  const p = friendCardPayload(obj);
+  const locationLabel = p?.city ?? 'Area location';
   return (
     <>
       <View style={cs.topRow}>
         <View style={[cs.avatarWrap, { borderColor: cfg.color }]}>
-          {loc.avatarUrl
-            ? <CachedImage source={{ uri: loc.avatarUrl }} style={cs.avatarImg} fallbackLabel="" />
+          {p?.avatarUrl
+            ? <CachedImage source={{ uri: p.avatarUrl }} style={cs.avatarImg} fallbackLabel="" />
             : (
               <View style={[cs.avatarFallback, { backgroundColor: cfg.color }]}>
                 <Heart size={14} color="#fff" />
@@ -521,7 +531,7 @@ function FriendCardBody({ entity }: { entity: MapEntity<CircleMemberLocation> })
             )}
         </View>
         <View style={cs.topText}>
-          <Text style={cs.primaryText} numberOfLines={1}>{displayName}</Text>
+          <Text style={cs.primaryText} numberOfLines={1}>{obj.title}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
             <MapPin size={10} color={color.mute} />
             <Text style={cs.secondaryText} numberOfLines={1}>Near {locationLabel}</Text>
@@ -536,8 +546,28 @@ function FriendCardBody({ entity }: { entity: MapEntity<CircleMemberLocation> })
   );
 }
 
-function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
-  const place = entity.payload;
+/**
+ * Fallback body for a projected object whose kind has no card of its own
+ * (a Compass result for a zone kind, an aggregated activity zone). Renders the
+ * two fields every MapObject guarantees rather than nothing.
+ */
+function GenericObjectCardBody({ obj }: { obj: MapObject }) {
+  return (
+    <View style={cs.topRow}>
+      <View style={[cs.iconCircle, { backgroundColor: color.haze }]}>
+        <MapPin size={18} color={color.mute} />
+      </View>
+      <View style={cs.topText}>
+        <Text style={cs.primaryText} numberOfLines={2}>{obj.title}</Text>
+        {obj.subtitle ? (
+          <Text style={cs.secondaryText} numberOfLines={1}>{obj.subtitle}</Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function PlaceCardBody({ place }: { place: DiscoveryPlace }) {
   // attribution may be an array (canonical place) or a single string / null (discovery place).
   const attributionList: string[] = Array.isArray((place as any).attribution)
     ? (place as any).attribution as string[]
@@ -639,8 +669,8 @@ function PlaceCardBody({ entity }: { entity: MapEntity<DiscoveryPlace> }) {
   );
 }
 
-function StampCardBody({ entity }: { entity: MapEntity<PassportCountryPayload> }) {
-  const { country, stampCount, cities } = entity.payload;
+function StampCardBody({ payload }: { payload: PassportCountryPayload }) {
+  const { country, stampCount, cities } = payload;
   const cfg = MAP_LAYER_CONFIG.stamps;
   const cityLabel = cities.slice(0, 3).join(' · ');
   return (
@@ -813,90 +843,57 @@ function EntityFullDetail({
   /** §35: this card is an option of the active Compass decision. */
   isRecommendation?: boolean;
 }) {
-  // Build type-specific extended content (description, stats, etc.).
+  // Extended content, built ONLY from fields the projection emits.
+  //
+  // Gem description / best-time / price-range and event description / address
+  // used to be read here off the raw service DTO. Neither projector emits them,
+  // so on the gateway path they were always undefined and the block rendered
+  // nothing — see docs/map-card-projection-gaps.md for the full list and how to
+  // restore each one. Trip notes are likewise not projected.
   const typeContent = (() => {
-    switch (entity.type) {
-      case 'buddies': {
-        const buddy = entity.payload as BuddyProfile;
+    const obj = objectOf(entity);
+    if (!obj) return null;
+    switch (obj.kind) {
+      case 'buddy_zone': {
+        const p = buddyCardPayload(obj);
+        if (!p) return null;
+        const where = p.city
+          ? `${p.city}${p.country ? `, ${p.country}` : ''}`
+          : p.country;
         return (
           <>
-            {buddy.bio ? (
-              <Text style={cs.fullDetailText} numberOfLines={5}>{buddy.bio}</Text>
+            {p.bio ? (
+              <Text style={cs.fullDetailText} numberOfLines={5}>{p.bio}</Text>
             ) : null}
-            {buddy.languages.length > 0 && (
+            {p.languages.length > 0 && (
               <View style={cs.fullDetailRow}>
                 <Text style={cs.fullDetailLabel}>Languages</Text>
-                <Text style={cs.fullDetailValue}>{buddy.languages.join(', ')}</Text>
+                <Text style={cs.fullDetailValue}>{p.languages.join(', ')}</Text>
               </View>
             )}
-            {buddy.responseTimeH != null && (
+            {p.responseTimeH != null && (
               <View style={cs.fullDetailRow}>
                 <Text style={cs.fullDetailLabel}>Response time</Text>
-                <Text style={cs.fullDetailValue}>~{buddy.responseTimeH}h</Text>
+                <Text style={cs.fullDetailValue}>~{p.responseTimeH}h</Text>
               </View>
             )}
-            {buddy.country ? (
+            {where ? (
               <View style={cs.fullDetailRow}>
                 <MapPin size={11} color={color.mute} />
-                <Text style={cs.fullDetailValue}>{buddy.city}, {buddy.country}</Text>
+                <Text style={cs.fullDetailValue}>{where}</Text>
               </View>
             ) : null}
           </>
         );
       }
-      case 'events': {
-        const ev = entity.payload as EventListItem;
-        const description = (ev as any).description as string | null | undefined;
-        const address = (ev as any).address as string | null | undefined;
-        if (!description && !address) return null;
+      case 'event': {
+        const p = eventCardPayload(obj);
+        if (!p?.locationName) return null;
         return (
-          <>
-            {description ? (
-              <Text style={cs.fullDetailText} numberOfLines={5}>{description}</Text>
-            ) : null}
-            {address ? (
-              <View style={cs.fullDetailRow}>
-                <MapPin size={11} color={color.mute} />
-                <Text style={cs.fullDetailValue}>{address}</Text>
-              </View>
-            ) : null}
-          </>
-        );
-      }
-      case 'gems': {
-        const gem = entity.payload as HiddenGem;
-        return (
-          <>
-            {gem.description ? (
-              <Text style={cs.fullDetailText} numberOfLines={5}>{gem.description}</Text>
-            ) : null}
-            {gem.bestTimeToGo ? (
-              <View style={cs.fullDetailRow}>
-                <Text style={cs.fullDetailLabel}>Best time</Text>
-                <Text style={cs.fullDetailValue}>{gem.bestTimeToGo}</Text>
-              </View>
-            ) : null}
-            {gem.priceRange ? (
-              <View style={cs.fullDetailRow}>
-                <Text style={cs.fullDetailLabel}>Price range</Text>
-                <Text style={cs.fullDetailValue}>{gem.priceRange}</Text>
-              </View>
-            ) : null}
-            {gem.neighborhood ? (
-              <View style={cs.fullDetailRow}>
-                <MapPin size={11} color={color.mute} />
-                <Text style={cs.fullDetailValue}>{gem.neighborhood}, {gem.city}</Text>
-              </View>
-            ) : null}
-          </>
-        );
-      }
-      case 'trips': {
-        const trip = entity.payload as TripRow;
-        const description = (trip as any).description as string | null | undefined;
-        if (!description) return null;
-        return (
-          <Text style={cs.fullDetailText} numberOfLines={5}>{description}</Text>
+          <View style={cs.fullDetailRow}>
+            <MapPin size={11} color={color.mute} />
+            <Text style={cs.fullDetailValue}>{p.locationName}</Text>
+          </View>
         );
       }
       default:
@@ -969,25 +966,29 @@ export function MapEntityCard({
 
   const cfg = MAP_LAYER_CONFIG[entity.type];
 
+  const obj = objectOf(entity);
+
   const renderBody = () => {
-    switch (entity.type) {
-      case 'buddies':
-        return <BuddyCardBody entity={entity as MapEntity<BuddyProfile>} />;
-      case 'events':
-        return <EventCardBody entity={entity as MapEntity<EventListItem>} />;
-      case 'gems':
-        return <GemCardBody entity={entity as MapEntity<HiddenGem>} />;
-      case 'trips':
-        return <TripCardBody entity={entity as MapEntity<TripRow>} />;
-      case 'friends':
-        return <FriendCardBody entity={entity as MapEntity<CircleMemberLocation>} />;
-      case 'stamps':
-        return <StampCardBody entity={entity as MapEntity<PassportCountryPayload>} />;
-      case 'places':
-        return <PlaceCardBody entity={entity as MapEntity<DiscoveryPlace>} />;
-      default:
-        return null;
+    if (obj) {
+      switch (obj.kind) {
+        case 'buddy_zone':  return <BuddyCardBody obj={obj} />;
+        case 'event':       return <EventCardBody obj={obj} />;
+        case 'hidden_gem':  return <GemCardBody obj={obj} />;
+        case 'trip_stop':   return <TripCardBody obj={obj} />;
+        case 'crew_member': return <FriendCardBody obj={obj} />;
+        default:            return <GenericObjectCardBody obj={obj} />;
+      }
     }
+    // The two producers that do not project.
+    if (entity.type === 'stamps') {
+      const stamp = passportCardPayload(entity.payload);
+      return stamp ? <StampCardBody payload={stamp} /> : null;
+    }
+    if (entity.type === 'places') {
+      const place = discoveryPlaceOf(entity);
+      return place ? <PlaceCardBody place={place} /> : null;
+    }
+    return null;
   };
 
   const navigateToDetail = () => {
@@ -995,57 +996,35 @@ export function MapEntityCard({
     // user navigates back, useFocusEffect can restore the map to this entity.
     setSelectedEntityId(entity.id);
 
-    // onBeforeNavigate is called at each individual push site — not at the top
-    // of this function — so that a failed async path (e.g. friends thread lookup)
+    // Friends are the one asynchronous case: /messages/[id] takes a THREAD id,
+    // which has to be resolved from the user id first. onBeforeNavigate fires
+    // only inside the callback, after the push is confirmed, so a failed lookup
     // never sets the back-nav flag when no push actually occurs.
-    switch (entity.type) {
-      case 'buddies': {
-        const b = entity.payload as BuddyProfile;
-        onBeforeNavigate?.();
-        router.push(`/(rent-a-buddy)/buddy/${b.id}` as any);
-        break;
-      }
-      case 'events': {
-        const ev = entity.payload as EventListItem;
-        onBeforeNavigate?.();
-        router.push(`/event/${ev.id}` as any);
-        break;
-      }
-      case 'gems': {
-        const gem = entity.payload as HiddenGem;
-        onBeforeNavigate?.();
-        router.push(`/gems/${gem.id}` as any);
-        break;
-      }
-      case 'trips': {
-        const trip = entity.payload as TripRow;
-        onBeforeNavigate?.();
-        router.push(`/trip/${trip.id}` as any);
-        break;
-      }
-      case 'friends': {
-        const loc = entity.payload as CircleMemberLocation;
-        // Resolve the direct thread first — /messages/[id] takes a THREAD id, not a user id.
-        // onBeforeNavigate fires only inside the callback, after push is confirmed.
-        void openDirectThread(loc.userId).then((res) => {
-          if (res.ok && res.data?.threadId) {
-            onBeforeNavigate?.();
-            router.push(`/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(loc.userId)}` as any);
-          }
-        });
-        break;
-      }
-      case 'stamps':
-        onBeforeNavigate?.();
-        router.push('/(tabs)/passport' as any);
-        break;
-      case 'places':
-        // Navigate to the canonical place detail screen when a detailRoute is
-        // present (e.g. /place/abc123), otherwise fall back to the Discover tab.
-        onBeforeNavigate?.();
-        router.push((entity.detailRoute ?? '/(tabs)/discovery') as any);
-        break;
+    if (obj?.kind === 'crew_member') {
+      const p = friendCardPayload(obj);
+      if (!p) return;
+      void openDirectThread(p.userId).then((res) => {
+        if (res.ok && res.data?.threadId) {
+          onBeforeNavigate?.();
+          router.push(`/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(p.userId)}` as any);
+        }
+      });
+      return;
     }
+
+    if (entity.type === 'stamps') {
+      onBeforeNavigate?.();
+      router.push('/(tabs)/passport' as any);
+      return;
+    }
+
+    // Every projector already built this card's detail route — the card used to
+    // rebuild it from `payload.id`, which on a MapObject is the PREFIXED map id
+    // (`gem:abc`), not the domain id the route expects.
+    const route = obj?.interaction?.detailRoute ?? entity.detailRoute;
+    if (!route) return;
+    onBeforeNavigate?.();
+    router.push(route as any);
   };
 
   const typeLabel = cfg.label;

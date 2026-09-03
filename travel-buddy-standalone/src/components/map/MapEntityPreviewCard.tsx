@@ -38,7 +38,6 @@ import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import { AvatarImage, DisplayMediaImage } from '../ui/DisplayMediaImage.tsx';
 import type { MapEntity, MapEntityType, PassportCountryPayload } from '../../types/mapTypes.ts';
 import {
-  MAP_OBJECT_KINDS,
   isForecastKind,
   type MapObject,
   type MapObjectKind,
@@ -51,13 +50,18 @@ import {
 } from '../../features/map/telemetry/mapTelemetry.ts';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { MapEntityActionRow } from './MapEntityActionRow.tsx';
-import type { BuddyProfile } from '../../services/rentABuddy.ts';
-import type { EventListItem } from '../../services/events.ts';
-import type { HiddenGem } from '../../services/hiddenGems.ts';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
 import { openDirectThread } from '../../services/messaging.ts';
-import type { TripRow } from '../../services/trips.ts';
-import type { CircleMemberLocation } from '../../services/map.ts';
+import {
+  buddyCardPayload,
+  eventCardPayload,
+  friendCardPayload,
+  gemCardPayload,
+  isMapObject,
+  objectOf,
+  passportCardPayload,
+  tripCardPayload,
+} from '../../types/mapCardPayloads.ts';
 
 // ── §35 telemetry ─────────────────────────────────────────────────────────────
 //
@@ -98,20 +102,8 @@ const TELEMETRY_ZONE_KINDS: readonly MapObjectKind[] = [
   'prediction',
 ];
 
-function isMapObjectPayload(value: unknown): value is MapObject {
-  if (value == null || typeof value !== 'object') return false;
-  const o = value as { kind?: unknown; geometry?: unknown; privacyClass?: unknown };
-  return (
-    typeof o.kind === 'string' &&
-    (MAP_OBJECT_KINDS as readonly string[]).includes(o.kind) &&
-    typeof o.geometry === 'object' &&
-    o.geometry !== null &&
-    typeof o.privacyClass === 'string'
-  );
-}
-
 function entityTelemetryRef(entity: MapEntity): MapObjectRef {
-  if (isMapObjectPayload(entity.payload)) return describeMapObject(entity.payload);
+  if (isMapObject(entity.payload)) return describeMapObject(entity.payload);
   return describeMapObject({
     id: entity.id,
     kind: TELEMETRY_KIND_BY_TYPE[entity.type],
@@ -123,7 +115,7 @@ function entityTelemetryRef(entity: MapEntity): MapObjectRef {
 }
 
 function entityKind(entity: MapEntity): MapObjectKind {
-  return isMapObjectPayload(entity.payload)
+  return isMapObject(entity.payload)
     ? entity.payload.kind
     : TELEMETRY_KIND_BY_TYPE[entity.type];
 }
@@ -158,69 +150,83 @@ function openEntityDetail(entity: MapEntity, onClose: () => void, route: string)
 
 // ── Per-type card bodies ───────────────────────────────────────────────────────
 
-function BuddyCard({ entity, onClose }: { entity: MapEntity<BuddyProfile>; onClose: () => void }) {
-  const buddy = entity.payload;
+function BuddyCard({
+  entity,
+  obj,
+  onClose,
+}: { entity: MapEntity; obj: MapObject; onClose: () => void }) {
   const cfg = MAP_LAYER_CONFIG.buddies;
-  const cats = buddy.categories.slice(0, 2).join(' · ');
+  const p = buddyCardPayload(obj);
+  // `p.categories` is always an array — the projector enumerates it. This read
+  // used to be `(entity.payload as BuddyProfile).categories.slice(0, 2)`, which
+  // threw the moment `payload` became a MapObject and `categories` came back
+  // undefined.
+  const cats = (p?.categories ?? []).slice(0, 2).join(' · ');
+  const detailRoute = obj.interaction?.detailRoute ?? entity.detailRoute;
   return (
     <>
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
-          {buddy.coverPhotoUrl
-            ? <DisplayMediaImage uri={buddy.coverPhotoUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Users size={20} color="#fff" />} fallbackBg={cfg.color} />
+          {p?.coverPhotoUrl
+            ? <DisplayMediaImage uri={p.coverPhotoUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Users size={20} color="#fff" />} fallbackBg={cfg.color} />
             : <Users size={20} color="#fff" />}
         </View>
         <View style={s.topText}>
-          <Text style={s.primaryText} numberOfLines={1}>
-            {buddy.displayName ?? 'Local Buddy'}
-          </Text>
+          <Text style={s.primaryText} numberOfLines={1}>{obj.title}</Text>
           {cats ? <Text style={s.secondaryText} numberOfLines={1}>{cats}</Text> : null}
         </View>
       </View>
       <View style={s.chipRow}>
-        {buddy.averageRating != null && (
+        {p?.averageRating != null && (
           <View style={s.chip}>
             <Star size={10} color="#F59E0B" fill="#F59E0B" />
-            <Text style={s.chipText}>{buddy.averageRating.toFixed(1)} ({buddy.reviewCount})</Text>
+            <Text style={s.chipText}>
+              {p.averageRating.toFixed(1)}{p.reviewCount != null ? ` (${p.reviewCount})` : ''}
+            </Text>
           </View>
         )}
-        <View style={s.chip}>
-          <MapPin size={10} color={color.mute} />
-          <Text style={s.chipText} numberOfLines={1}>{buddy.city}</Text>
-        </View>
-        {buddy.hourlyRateUsd != null && (
+        {p?.city ? (
           <View style={s.chip}>
-            <Text style={s.chipText}>${buddy.hourlyRateUsd}/hr</Text>
+            <MapPin size={10} color={color.mute} />
+            <Text style={s.chipText} numberOfLines={1}>{p.city}</Text>
+          </View>
+        ) : null}
+        {p?.hourlyRateUsd != null && (
+          <View style={s.chip}>
+            <Text style={s.chipText}>${p.hourlyRateUsd}/hr</Text>
           </View>
         )}
       </View>
-      <Pressable
-        style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => openEntityDetail(entity, onClose, `/(rent-a-buddy)/buddy/${buddy.id}`)}
-      >
-        <Text style={s.ctaText}>View Buddy Profile</Text>
-        <ArrowRight size={15} color="#fff" />
-      </Pressable>
+      {detailRoute ? (
+        <Pressable
+          style={[s.cta, { backgroundColor: cfg.color }]}
+          onPress={() => openEntityDetail(entity, onClose, detailRoute)}
+        >
+          <Text style={s.ctaText}>View Buddy Profile</Text>
+          <ArrowRight size={15} color="#fff" />
+        </Pressable>
+      ) : null}
     </>
   );
 }
 
-function EventCard({ entity, onClose }: { entity: MapEntity<EventListItem>; onClose: () => void }) {
-  const ev = entity.payload;
+function EventCard({
+  entity,
+  obj,
+  onClose,
+}: { entity: MapEntity; obj: MapObject; onClose: () => void }) {
   const cfg = MAP_LAYER_CONFIG.events;
-  const dateLabel = ev.startsAt
-    ? new Date(ev.startsAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const p = eventCardPayload(obj);
+  const dateLabel = p?.startsAt
+    ? new Date(p.startsAt).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : null;
-  // myWaitlistPosition is now included in EventListItem responses so the chip
-  // appears on the map without requiring a detail fetch.
-  const waitlistPosition: number | null | undefined = ev.myWaitlistPosition;
-  const showWaitlist = waitlistPosition != null && waitlistPosition > 0;
+  const detailRoute = obj.interaction?.detailRoute ?? entity.detailRoute;
   return (
     <>
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
           <DisplayMediaImage
-            uri={ev.coverUrl ?? null}
+            uri={p?.coverUrl ?? null}
             width={46}
             height={46}
             style={s.iconImg}
@@ -229,8 +235,10 @@ function EventCard({ entity, onClose }: { entity: MapEntity<EventListItem>; onCl
           />
         </View>
         <View style={s.topText}>
-          <Text style={s.primaryText} numberOfLines={2}>{ev.title}</Text>
-          {ev.hostName ? <Text style={s.secondaryText} numberOfLines={1}>by {ev.hostName}</Text> : null}
+          <Text style={s.primaryText} numberOfLines={2}>{obj.title}</Text>
+          {p?.locationName ? (
+            <Text style={s.secondaryText} numberOfLines={1}>{p.locationName}</Text>
+          ) : null}
         </View>
       </View>
       <View style={s.chipRow}>
@@ -240,99 +248,92 @@ function EventCard({ entity, onClose }: { entity: MapEntity<EventListItem>; onCl
             <Text style={s.chipText} numberOfLines={1}>{dateLabel}</Text>
           </View>
         )}
-        {ev.goingCount > 0 && (
-          <View style={s.chip}>
-            <Users size={10} color={color.mute} />
-            <Text style={s.chipText}>{ev.goingCount} going</Text>
-          </View>
-        )}
-        {ev.priceType === 'free' && (
+        {p?.hasStarted === true && (
           <View style={[s.chip, s.greenChip]}>
-            <Text style={[s.chipText, { color: color.success }]}>Free</Text>
-          </View>
-        )}
-        {showWaitlist && (
-          <View style={[s.chip, s.waitlistChip]} testID="event-waitlist-position-chip">
-            <Text style={[s.chipText, s.waitlistChipText]}>Waitlisted — #{waitlistPosition}</Text>
+            <Text style={[s.chipText, { color: color.success }]}>Happening now</Text>
           </View>
         )}
       </View>
-      <Pressable
-        style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => openEntityDetail(entity, onClose, `/event/${ev.id}`)}
-      >
-        <Text style={s.ctaText}>View Event</Text>
-        <ArrowRight size={15} color="#fff" />
-      </Pressable>
+      {detailRoute ? (
+        <Pressable
+          style={[s.cta, { backgroundColor: cfg.color }]}
+          onPress={() => openEntityDetail(entity, onClose, detailRoute)}
+        >
+          <Text style={s.ctaText}>View Event</Text>
+          <ArrowRight size={15} color="#fff" />
+        </Pressable>
+      ) : null}
     </>
   );
 }
 
-function GemCard({ entity, onClose }: { entity: MapEntity<HiddenGem>; onClose: () => void }) {
-  const gem = entity.payload;
+function GemCard({
+  entity,
+  obj,
+  onClose,
+}: { entity: MapEntity; obj: MapObject; onClose: () => void }) {
   const cfg = MAP_LAYER_CONFIG.gems;
+  const p = gemCardPayload(obj);
+  const detailRoute = obj.interaction?.detailRoute ?? entity.detailRoute;
   return (
     <>
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
-          {gem.imageUrl
-            ? <DisplayMediaImage uri={gem.imageUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Sparkles size={20} color="#fff" />} fallbackBg={cfg.color} />
+          {p?.thumbnailUrl
+            ? <DisplayMediaImage uri={p.thumbnailUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Sparkles size={20} color="#fff" />} fallbackBg={cfg.color} />
             : <Sparkles size={20} color="#fff" />}
         </View>
         <View style={s.topText}>
-          <Text style={s.primaryText} numberOfLines={1}>{gem.name}</Text>
-          <Text style={s.secondaryText} numberOfLines={1}>
-            {gem.category.replace('_', ' ')} · {gem.city}
-          </Text>
+          <Text style={s.primaryText} numberOfLines={1}>{obj.title}</Text>
+          {/* `subtitle` is the projector's "category · city" line. The card used
+              to build its own from `gem.category.replace('_', ' ')`, which threw
+              once `category` was no longer on the payload the producer emits. */}
+          {obj.subtitle ? (
+            <Text style={s.secondaryText} numberOfLines={1}>{obj.subtitle}</Text>
+          ) : null}
         </View>
       </View>
-      {gem.description ? (
-        <Text style={s.bodyText} numberOfLines={2}>{gem.description}</Text>
+      {detailRoute ? (
+        <Pressable
+          style={[s.cta, { backgroundColor: cfg.color }]}
+          onPress={() => openEntityDetail(entity, onClose, detailRoute)}
+        >
+          <Text style={s.ctaText}>View Hidden Gem</Text>
+          <ArrowRight size={15} color="#fff" />
+        </Pressable>
       ) : null}
-      <View style={s.chipRow}>
-        {gem.vibeTags.slice(0, 3).map((tag) => (
-          <View key={tag} style={s.chip}>
-            <Text style={s.chipText}>#{tag}</Text>
-          </View>
-        ))}
-        {gem.layoverSafe && (
-          <View style={[s.chip, s.greenChip]}>
-            <Text style={[s.chipText, { color: color.success }]}>Layover safe</Text>
-          </View>
-        )}
-      </View>
-      <Pressable
-        style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => openEntityDetail(entity, onClose, `/gems/${gem.id}`)}
-      >
-        <Text style={s.ctaText}>View Hidden Gem</Text>
-        <ArrowRight size={15} color="#fff" />
-      </Pressable>
     </>
   );
 }
 
-function TripCard({ entity, onClose }: { entity: MapEntity<TripRow>; onClose: () => void }) {
-  const trip = entity.payload;
+function TripCard({
+  entity,
+  obj,
+  onClose,
+}: { entity: MapEntity; obj: MapObject; onClose: () => void }) {
   const cfg = MAP_LAYER_CONFIG.trips;
-  const dateRange = [trip.startDate, trip.endDate]
-    .filter(Boolean)
-    .map((d) => new Date(d!).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
+  const p = tripCardPayload(obj);
+  const dateRange = [p?.startDate, p?.endDate]
+    .filter((d): d is string => !!d)
+    .map((d) => new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))
     .join(' – ');
+  const where = p?.destinationCity
+    ? `${p.destinationCity}${p.destinationCountry ? `, ${p.destinationCountry}` : ''}`
+    : null;
+  const detailRoute = obj.interaction?.detailRoute ?? entity.detailRoute;
   return (
     <>
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
-          {trip.coverUrl
-            ? <DisplayMediaImage uri={trip.coverUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Plane size={20} color="#fff" />} fallbackBg={cfg.color} />
+          {p?.coverUrl
+            ? <DisplayMediaImage uri={p.coverUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Plane size={20} color="#fff" />} fallbackBg={cfg.color} />
             : <Plane size={20} color="#fff" />}
         </View>
         <View style={s.topText}>
-          <Text style={s.primaryText} numberOfLines={1}>{trip.title}</Text>
-          <Text style={s.secondaryText} numberOfLines={1}>
-            {trip.destinationCity}
-            {trip.destinationCountry ? `, ${trip.destinationCountry}` : ''}
-          </Text>
+          <Text style={s.primaryText} numberOfLines={1}>{obj.title}</Text>
+          {where ? (
+            <Text style={s.secondaryText} numberOfLines={1}>{where}</Text>
+          ) : null}
         </View>
       </View>
       <View style={s.chipRow}>
@@ -342,32 +343,38 @@ function TripCard({ entity, onClose }: { entity: MapEntity<TripRow>; onClose: ()
             <Text style={s.chipText}>{dateRange}</Text>
           </View>
         ) : null}
-        <View style={s.chip}>
-          <Text style={s.chipText}>{trip.visibility.replace('_', ' ')}</Text>
-        </View>
+        {/* No `.replace('_', ' ')`: no TripVisibility member is underscored, and
+            the call threw outright once `visibility` was no longer on the
+            payload the producer emits. */}
+        {p?.visibility ? (
+          <View style={s.chip}>
+            <Text style={s.chipText}>{p.visibility}</Text>
+          </View>
+        ) : null}
       </View>
-      <Pressable
-        style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={() => openEntityDetail(entity, onClose, `/trip/${trip.id}`)}
-      >
-        <Text style={s.ctaText}>View Trip</Text>
-        <ArrowRight size={15} color="#fff" />
-      </Pressable>
+      {detailRoute ? (
+        <Pressable
+          style={[s.cta, { backgroundColor: cfg.color }]}
+          onPress={() => openEntityDetail(entity, onClose, detailRoute)}
+        >
+          <Text style={s.ctaText}>View Trip</Text>
+          <ArrowRight size={15} color="#fff" />
+        </Pressable>
+      ) : null}
     </>
   );
 }
 
-function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocation>; onClose: () => void }) {
-  const loc = entity.payload;
+function FriendCard({ obj, onClose }: { obj: MapObject; onClose: () => void }) {
   const cfg = MAP_LAYER_CONFIG.friends;
-  const displayName = loc.name ?? 'Circle member';
-  const locationLabel = loc.city ?? 'Area location shared';
+  const p = friendCardPayload(obj);
+  const locationLabel = p?.city ?? 'Area location shared';
   return (
     <>
       <View style={s.topRow}>
         <View style={[s.avatarWrap, { borderColor: cfg.color }]}>
-          {loc.avatarUrl
-            ? <AvatarImage uri={loc.avatarUrl} user={{ displayName: loc.name }} size={44} style={s.avatarImg} bg={cfg.color} />
+          {p?.avatarUrl
+            ? <AvatarImage uri={p.avatarUrl} user={{ displayName: obj.title }} size={44} style={s.avatarImg} bg={cfg.color} />
             : (
               <View style={[s.avatarFallback, { backgroundColor: cfg.color }]}>
                 <Heart size={16} color="#fff" />
@@ -375,7 +382,7 @@ function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocatio
             )}
         </View>
         <View style={s.topText}>
-          <Text style={s.primaryText} numberOfLines={1}>{displayName}</Text>
+          <Text style={s.primaryText} numberOfLines={1}>{obj.title}</Text>
           {/* Privacy: never show exact coordinates — show area label only */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <MapPin size={11} color={color.mute} />
@@ -386,31 +393,79 @@ function FriendCard({ entity, onClose }: { entity: MapEntity<CircleMemberLocatio
       <View style={s.privacyNotice}>
         <Text style={s.privacyText}>📍 Approximate location — area level only</Text>
       </View>
-      <Pressable
-        style={[s.cta, { backgroundColor: cfg.color }]}
-        onPress={async () => {
-          onClose();
-          // Resolve the direct thread first — /messages/[id] takes a THREAD id, not a user id.
-          const res = await openDirectThread(loc.userId);
-          if (res.ok && res.data?.threadId) {
-            // Defer past the sheet's close animation — see closeThenNavigate for why.
-            setTimeout(() => router.push(`/messages/${res.data!.threadId}?threadType=direct&otherUserId=${encodeURIComponent(loc.userId)}` as any), 320);
-          } else {
-            Alert.alert('Could not open conversation', 'Please try again.');
-          }
-        }}
-      >
-        <Text style={s.ctaText}>Message</Text>
-        <ArrowRight size={15} color="#fff" />
-      </Pressable>
+      {p ? (
+        <Pressable
+          style={[s.cta, { backgroundColor: cfg.color }]}
+          onPress={async () => {
+            onClose();
+            // Resolve the direct thread first — /messages/[id] takes a THREAD id, not a user id.
+            const res = await openDirectThread(p.userId);
+            if (res.ok && res.data?.threadId) {
+              // Defer past the sheet's close animation — see closeThenNavigate for why.
+              setTimeout(() => router.push(`/messages/${res.data!.threadId}?threadType=direct&otherUserId=${encodeURIComponent(p.userId)}` as any), 320);
+            } else {
+              Alert.alert('Could not open conversation', 'Please try again.');
+            }
+          }}
+        >
+          <Text style={s.ctaText}>Message</Text>
+          <ArrowRight size={15} color="#fff" />
+        </Pressable>
+      ) : null}
     </>
   );
 }
 
+/**
+ * Fallback body for a projected object whose kind has no card of its own.
+ * Renders the two fields every MapObject guarantees rather than nothing.
+ */
+function GenericObjectCard({
+  entity,
+  obj,
+  onClose,
+}: { entity: MapEntity; obj: MapObject; onClose: () => void }) {
+  const detailRoute = obj.interaction?.detailRoute ?? entity.detailRoute;
+  return (
+    <>
+      <View style={s.topRow}>
+        <View style={[s.iconCircle, { backgroundColor: color.haze }]}>
+          <MapPin size={20} color={color.mute} />
+        </View>
+        <View style={s.topText}>
+          <Text style={s.primaryText} numberOfLines={2}>{obj.title}</Text>
+          {obj.subtitle ? (
+            <Text style={s.secondaryText} numberOfLines={1}>{obj.subtitle}</Text>
+          ) : null}
+        </View>
+      </View>
+      {detailRoute ? (
+        <Pressable
+          style={[s.cta, { backgroundColor: MAP_LAYER_CONFIG.places.color }]}
+          onPress={() => openEntityDetail(entity, onClose, detailRoute)}
+        >
+          <Text style={s.ctaText}>View details</Text>
+          <ArrowRight size={15} color="#fff" />
+        </Pressable>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The 'places' layer is built directly in app/map/index.tsx from a
+ * `DiscoveryPlace` and never goes through a projector, so this is the one place
+ * a card still reads a service DTO — behind a guard, and only for that layer.
+ */
+function discoveryPlaceOf(entity: MapEntity): DiscoveryPlace | null {
+  const p = entity.payload;
+  if (p == null || typeof p !== 'object') return null;
+  return typeof (p as { name?: unknown }).name === 'string' ? (p as DiscoveryPlace) : null;
+}
+
 // ── Place card body ────────────────────────────────────────────────────────────
 
-function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onClose: () => void }) {
-  const place = entity.payload;
+function PlaceCard({ entity, place, onClose }: { entity: MapEntity; place: DiscoveryPlace; onClose: () => void }) {
   const cfg = MAP_LAYER_CONFIG.places;
   // attribution may be an array (canonical) or a single string/null (discovery).
   const attributionList: string[] = Array.isArray((place as any).attribution)
@@ -543,12 +598,14 @@ function PlaceCard({ entity, onClose }: { entity: MapEntity<DiscoveryPlace>; onC
 
 function StampCountryCardBody({
   entity,
+  payload,
   onClose,
 }: {
-  entity: MapEntity<PassportCountryPayload>;
+  entity: MapEntity;
+  payload: PassportCountryPayload;
   onClose: () => void;
 }) {
-  const { country, stampCount, cities } = entity.payload;
+  const { country, stampCount, cities } = payload;
   const cfg = MAP_LAYER_CONFIG.stamps;
   const cityLabel = cities.slice(0, 3).join(' · ');
   return (
@@ -601,24 +658,29 @@ export function MapEntityPreviewCard({
   onClose: () => void;
 }) {
   const renderBody = () => {
-    switch (entity.type) {
-      case 'buddies':
-        return <BuddyCard entity={entity as MapEntity<BuddyProfile>} onClose={onClose} />;
-      case 'events':
-        return <EventCard entity={entity as MapEntity<EventListItem>} onClose={onClose} />;
-      case 'gems':
-        return <GemCard entity={entity as MapEntity<HiddenGem>} onClose={onClose} />;
-      case 'trips':
-        return <TripCard entity={entity as MapEntity<TripRow>} onClose={onClose} />;
-      case 'friends':
-        return <FriendCard entity={entity as MapEntity<CircleMemberLocation>} onClose={onClose} />;
-      case 'stamps':
-        return <StampCountryCardBody entity={entity as MapEntity<PassportCountryPayload>} onClose={onClose} />;
-      case 'places':
-        return <PlaceCard entity={entity as MapEntity<DiscoveryPlace>} onClose={onClose} />;
-      default:
-        return null;
+    const obj = objectOf(entity);
+    if (obj) {
+      switch (obj.kind) {
+        case 'buddy_zone':  return <BuddyCard entity={entity} obj={obj} onClose={onClose} />;
+        case 'event':       return <EventCard entity={entity} obj={obj} onClose={onClose} />;
+        case 'hidden_gem':  return <GemCard entity={entity} obj={obj} onClose={onClose} />;
+        case 'trip_stop':   return <TripCard entity={entity} obj={obj} onClose={onClose} />;
+        case 'crew_member': return <FriendCard obj={obj} onClose={onClose} />;
+        default:            return <GenericObjectCard entity={entity} obj={obj} onClose={onClose} />;
+      }
     }
+    // The two producers that do not project.
+    if (entity.type === 'stamps') {
+      const stamp = passportCardPayload(entity.payload);
+      return stamp
+        ? <StampCountryCardBody entity={entity} payload={stamp} onClose={onClose} />
+        : null;
+    }
+    if (entity.type === 'places') {
+      const place = discoveryPlaceOf(entity);
+      return place ? <PlaceCard entity={entity} place={place} onClose={onClose} /> : null;
+    }
+    return null;
   };
 
   return (
