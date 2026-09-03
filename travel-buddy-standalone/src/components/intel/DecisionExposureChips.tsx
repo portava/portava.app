@@ -47,6 +47,12 @@ interface ChipClaim extends LiveIntelClaim {
 
 const KNOWN_BANDS = new Set<ConfidenceBand>(['unverified', 'provisional', 'likely_current', 'live', 'strong']);
 
+/** The wire's source-class vocabulary. An value outside it is not attributed. */
+const KNOWN_SOURCE_CLASSES = new Set<SourceClass>([
+  'verified_firsthand', 'firsthand_unverified', 'official_signed', 'sponsored',
+  'imported_owned', 'historical_pattern', 'portava_prediction', 'hearsay',
+]);
+
 function dtoToClaim(dto: LiveClaimDTO): ChipClaim {
   const band: ConfidenceBand =
     dto.band && KNOWN_BANDS.has(dto.band as ConfidenceBand)
@@ -58,7 +64,17 @@ function dtoToClaim(dto: LiveClaimDTO): ChipClaim {
     value: dto.value,
     band,
     confidence: dto.confidence ?? null,
-    sourceClass: (dto.sourceClass as SourceClass) ?? 'firsthand_unverified',
+    // VALIDATED, and never defaulted to a traveller report. The old
+    // `?? 'firsthand_unverified'` was a §37 fail-open: a claim the wire did not
+    // attribute — a sponsored one whose class was dropped, or a class this
+    // build does not know — rendered as a firsthand traveller observation. The
+    // `as SourceClass` cast also let an unrecognised value through unchecked.
+    // The band directly above already validates against a known set; this
+    // follows that precedent rather than inventing one.
+    sourceClass:
+      dto.sourceClass && KNOWN_SOURCE_CLASSES.has(dto.sourceClass as SourceClass)
+        ? (dto.sourceClass as SourceClass)
+        : null,
     // Prefer the served bucket; tolerate a legacy numeric count from an old payload.
     sourceCountBucket:
       dto.sourceCountBucket ??
