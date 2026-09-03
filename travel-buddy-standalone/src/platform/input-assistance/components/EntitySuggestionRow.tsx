@@ -15,6 +15,7 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import { EntityIcon } from './entityIcon.tsx';
+import { freshnessDisplay } from './freshnessDisplay.ts';
 import { color, space, radius, type as t, avatar } from '../../../theme/tokens.ts';
 
 export interface EntitySuggestionRowProps {
@@ -27,14 +28,10 @@ export interface EntitySuggestionRowProps {
   testID?: string;
 }
 
-function freshnessLabel(s: InputSuggestion): string | null {
-  const f = s.freshness;
-  if (!f || f.state === 'unavailable') return null; // never invent live state (§31)
-  return f.label ?? (f.state === 'live' ? 'Live' : f.state === 'recent' ? 'Recently confirmed' : null);
-}
-
 function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID }: EntitySuggestionRowProps) {
-  const fresh = freshnessLabel(suggestion);
+  // §31: render ONLY the freshness the server attached — the state label plus the
+  // "Updated 4m ago" age, verbatim. Never synthesized; absent ⇒ no chip.
+  const fresh = freshnessDisplay(suggestion.freshness).text;
   const a11yLabel = [
     suggestion.label,
     suggestion.entityType,
