@@ -1,24 +1,26 @@
 /**
- * Passport projection service — client bindings for the two read-only Passport
- * projection endpoints that already exist on the API server:
+ * passportProjection — client bindings for the read-only Passport projection
+ * endpoints that already exist on the API server:
  *
  *   GET /api/passport/:userId/journeys     → §14 grouped chronological journeys
- *   GET /api/passport/:userId/projection   → §29 aggregate (we read travelIdentity)
+ *   GET /api/passport/:userId/projection   → §29 aggregate (travelIdentity + the
+ *                                            lean Plans/QR view)
  *
- * These endpoints do ALL privacy filtering server-side (spec §4): the client
- * never re-derives visibility, and the payloads are already coarsened to the
- * granularity the viewer is permitted to see (coarse dates, city/neighbourhood
- * only — never coordinates, §23 / TABLE 25). This module is a thin fetch layer
- * that re-declares the response shapes (the server types live in a different
- * package) and unwraps the envelopes for the hooks.
+ * These endpoints do ALL privacy filtering server-side (spec §4/§21/§30): the
+ * client never re-derives visibility or authorization. Payloads are already
+ * coarsened to what the viewer may see (coarse dates, city/neighbourhood only —
+ * never coordinates, §23 / TABLE 25), and the projection carries an explicit
+ * `capabilities.actions` block the client renders verbatim. This module is a
+ * thin fetch layer that re-declares the response shapes (the server types live
+ * in a different package) and unwraps the envelopes for the hooks.
  *
  * Auth + fetch follow the same freshToken() pattern as passportStamps.ts.
  */
 import { freshToken as freshApiToken } from './apiToken.ts';
 
-// ── Result envelope (mirrors passportStamps.ts) ──────────────────────────────
+// ── Shared scaffold ──────────────────────────────────────────────────────────
 
-type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string };
+export type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string };
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -26,15 +28,17 @@ function apiBase(): string {
 
 /** Test seam — set to a non-null string to bypass Supabase auth in tests. */
 let _testAuthToken: string | null = null;
-export function _setTestAuthToken(t: string | null): void { _testAuthToken = t; }
+export function _setTestAuthToken(t: string | null): void {
+  _testAuthToken = t;
+}
 
-async function freshToken(): Promise<string | null> {
+async function authToken(): Promise<string | null> {
   if (_testAuthToken !== null) return _testAuthToken;
   return freshApiToken();
 }
 
 async function apiGet<T>(path: string): Promise<ApiResult<T>> {
-  const token = await freshToken();
+  const token = await authToken();
   if (!token) return { ok: false, message: 'Not authenticated' };
   try {
     const res = await fetch(`${apiBase()}/api${path}`, {
@@ -190,7 +194,7 @@ export interface TravelIdentityProjection {
   editable: boolean;
 }
 
-interface ProjectionEnvelope {
+interface ProjectionTravelIdentityEnvelope {
   projection?: { travelIdentity?: TravelIdentityProjection | null };
 }
 
@@ -202,7 +206,139 @@ interface ProjectionEnvelope {
 export async function getTravelIdentity(
   userId: string,
 ): Promise<ApiResult<TravelIdentityProjection | null>> {
-  const res = await apiGet<ProjectionEnvelope>(`/passport/${encodeURIComponent(userId)}/projection`);
+  const res = await apiGet<ProjectionTravelIdentityEnvelope>(`/passport/${encodeURIComponent(userId)}/projection`);
   if (!res.ok) return { ok: false, message: res.message };
   return { ok: true, data: res.data?.projection?.travelIdentity ?? null };
+}
+
+// ── Plans + QR projection view (§16 / §30 / TABLE 24 / TABLE 29) ──────────────
+
+export type PassportViewerContext =
+  | 'self'
+  | 'public'
+  | 'follower'
+  | 'following'
+  | 'trip_crew'
+  | 'trip_host'
+  | 'buddy_customer'
+  | 'buddy_provider'
+  | 'event_group';
+
+/** One upcoming plan the viewer is permitted to see (§16). */
+export interface PlanProjection {
+  tripId: string;
+  title: string;
+  destinationCity: string | null;
+  destinationCountry: string | null;
+  /** ISO date or null when the owner hides exact dates from this viewer. */
+  startDate: string | null;
+  endDate: string | null;
+  /** Raw trip visibility: 'public' | 'buddies' | 'private' | 'invite'. */
+  visibility: string;
+}
+
+/** Per-viewer action flags (TABLE 29) — server-projected, never re-derived. */
+export interface PassportViewerActions {
+  can_follow: boolean;
+  can_message: boolean;
+  can_make_plan: boolean;
+  can_invite_trip: boolean;
+  can_view_availability: boolean;
+  can_view_trust: boolean;
+}
+
+/** Minimal identity slice the client needs (Plans header + QR projection). */
+export interface PassportProjectionIdentity {
+  userId: string;
+  name: string | null;
+  handle: string | null;
+  avatarUrl: string | null;
+  verified: boolean;
+  verificationLevel: string | null;
+  homeCountry: string | null;
+}
+
+/** Lean client view of the §29 aggregate — only the Plans/QR fields. */
+export interface PassportProjectionView {
+  userId: string;
+  identity: PassportProjectionIdentity;
+  viewerContext: PassportViewerContext;
+  upcomingPlans: PlanProjection[];
+  actions: PassportViewerActions;
+  /** Interests the server permitted into the projection (travel identity). */
+  interests: string[];
+  /** True when the server reduced the projection for privacy/blocking. */
+  restricted: boolean;
+}
+
+const DEFAULT_ACTIONS: PassportViewerActions = {
+  can_follow: false,
+  can_message: false,
+  can_make_plan: false,
+  can_invite_trip: false,
+  can_view_availability: false,
+  can_view_trust: false,
+};
+
+function asString(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+function mapPlan(r: any): PlanProjection {
+  return {
+    tripId: String(r?.tripId ?? r?.trip_id ?? ''),
+    title: asString(r?.title) ?? 'Trip',
+    destinationCity: asString(r?.destinationCity ?? r?.destination_city),
+    destinationCountry: asString(r?.destinationCountry ?? r?.destination_country),
+    startDate: asString(r?.startDate ?? r?.start_date),
+    endDate: asString(r?.endDate ?? r?.end_date),
+    visibility: asString(r?.visibility) ?? 'private',
+  };
+}
+
+/** Map the raw server projection into the lean client view. Defensive to shape. */
+export function mapProjection(raw: any): PassportProjectionView {
+  const p = raw?.projection ?? raw ?? {};
+  const identity = p.identity ?? {};
+  const actions = p.capabilities?.actions ?? {};
+  const interests: string[] = Array.isArray(p.travelIdentity?.interests)
+    ? p.travelIdentity.interests.filter((x: unknown): x is string => typeof x === 'string')
+    : [];
+  const plans: unknown[] = Array.isArray(p.upcomingPlans) ? p.upcomingPlans : [];
+  return {
+    userId: String(p.userId ?? identity.userId ?? ''),
+    identity: {
+      userId: String(identity.userId ?? p.userId ?? ''),
+      name: asString(identity.name),
+      handle: asString(identity.handle),
+      avatarUrl: asString(identity.avatarUrl ?? identity.avatar_url),
+      verified: identity.verified === true,
+      verificationLevel: asString(identity.verificationLevel ?? identity.verification_level),
+      homeCountry: asString(identity.homeCountry ?? identity.home_country),
+    },
+    viewerContext: (p.viewerContext ?? 'public') as PassportViewerContext,
+    upcomingPlans: plans.map(mapPlan).filter((pl) => pl.tripId.length > 0),
+    actions: { ...DEFAULT_ACTIONS, ...actions },
+    interests,
+    restricted: Boolean(p.restricted),
+  };
+}
+
+/** Fetch the passport projection for `userId` (UUID or @handle) as this viewer. */
+export async function getPassportProjection(userId: string): Promise<ApiResult<PassportProjectionView>> {
+  const token = await authToken();
+  if (!token) return { ok: false, message: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/passport/${encodeURIComponent(userId)}/projection`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    const json = await res.json();
+    return { ok: true, data: mapProjection(json) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
+  }
 }
