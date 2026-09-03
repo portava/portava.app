@@ -1,20 +1,28 @@
 /**
- * clientProjection — projects the layers that do NOT yet come through the Map
- * Intelligence Gateway into the same MapObject contract (Map spec §18, §19).
+ * clientProjection — the ROLLBACK projectors (Map spec §18, §19).
  *
- * WHY THIS FILE EXISTS AT ALL
- * ===========================
- * Spec §19 wants one server-side projection. Three layers reach that today —
- * travelers, hidden gems and events — because each has an extractable,
- * privacy-complete server function that GET /api/map/projection can call. The
- * other three (buddies, trips, friends/circle) do not: their privacy logic
- * lives inline inside route handlers, and lifting it out is a separate change
- * that deserves its own tests rather than being done in passing.
+ * WHAT THIS FILE IS NOW
+ * =====================
+ * Spec §19 wants one server-side projection, and it has one: GET
+ * /api/map/projection serves every layer this app draws. `useMapEntities` asks
+ * it for all of them, so on the normal path NOTHING here runs.
  *
- * So those three keep their existing, already-correct per-layer transport, and
- * this module normalizes their payloads into `MapObject` at the client edge.
- * The renderer therefore sees ONE uniform stream today, and when each layer
- * moves server-side its projector here is deleted rather than rewritten.
+ * These projectors exist for the one case §19 does not cover: the gateway not
+ * answering at all — `map_projection_enabled` off, or the call failing. That
+ * makes the flag a real rollback rather than a blank map. They are dead code
+ * the day the flag becomes unconditional, and not before.
+ *
+ * THEY MUST MIRROR THE SERVER, FIELD FOR FIELD
+ * ============================================
+ * "The renderer cannot tell which path produced an object" is the whole
+ * contract, and it is easy to break silently: `projectTrip` read
+ * `trip.destination` for both its title fallback and its subtitle, a field
+ * `TripRow` has never carried (the API row is `destinationCity`), so every
+ * fallback trip subtitle collapsed to the bare date range and every untitled
+ * trip read "Trip". Nothing failed — the fixture had a `destination`. Each
+ * projector below now names the field the SERVER reads, and
+ * __tests__/clientProjection.test.ts pins them against the server's shape
+ * rather than against a fixture written to match this file.
  *
  * WHAT THIS MODULE MAY AND MAY NOT DO
  * ===================================
@@ -22,7 +30,7 @@
  * MAY NOT: invent freshness or a confidence band (spec §37 — those come only
  * from the intel pipeline, server-side), or sharpen a coordinate. Every
  * projector here leaves `confidence` and `freshness` undefined, because none of
- * these three sources carries evidence about "what is true here right now".
+ * these sources carries evidence about "what is true here right now".
  *
  * Pure: no React, no network, no storage. Fully unit-testable.
  */
@@ -63,8 +71,20 @@ export function projectBuddy(buddy: any): MapObject | null {
       detailRoute: `/(rent-a-buddy)/buddy/${buddy.id}`,
       opensSheet: true,
     },
-    payload: buddy,
+    // The public buddy DTO, minus the marketplace's `distanceKm`. Both paths
+    // run the same server mapper (lib/buddyMapRead.mapBuddyPublicProfile);
+    // POST /api/rent-a-buddy/search then adds a distance the gateway does not
+    // compute, so carrying it would be the one field that betrays which
+    // transport ran. Neither path gives a buddy pin a distance today — the
+    // contract's own `distanceKm` is populated for gems only.
+    payload: stripDistance(buddy),
   };
+}
+
+/** Drop the marketplace-only `distanceKm`; everything else passes through. */
+function stripDistance(buddy: any): Record<string, unknown> {
+  const { distanceKm: _distanceKm, ...rest } = buddy ?? {};
+  return rest;
 }
 
 // ── Trips ─────────────────────────────────────────────────────────────────────
@@ -84,8 +104,12 @@ export function projectTrip(trip: any): MapObject | null {
     id: `trip:${trip.id}`,
     kind: 'trip_stop',
     geometry: point(Number(lat), Number(lng)),
-    title: trip.title ?? trip.destination ?? 'Trip',
-    subtitle: joinParts([trip.destination, dateRange(trip.startDate, trip.endDate)], ' · '),
+    // `destinationCity`, NOT `destination`: `TripRow` (services/trips.ts) has
+    // only ever carried `destinationCity`, so the old read was undefined every
+    // time — the subtitle silently lost its city and kept only the dates. This
+    // is the field the server's projectTrip reads.
+    title: trip.title ?? trip.destinationCity ?? 'Trip',
+    subtitle: joinParts([trip.destinationCity, dateRange(trip.startDate, trip.endDate)], ' · '),
     privacyClass: TRIP_PRIVACY_CLASS,
     renderingPriority: KIND_DEFAULT_PRIORITY.trip_stop,
     interaction: {
@@ -93,7 +117,17 @@ export function projectTrip(trip: any): MapObject | null {
       detailRoute: `/trip/${trip.id}`,
       opensSheet: true,
     },
-    payload: trip,
+    // The server's six fields, not the whole TripRow. A payload wider than the
+    // gateway's would let a card render something on the rollback path that it
+    // cannot render on the normal one.
+    payload: {
+      destinationCity: trip.destinationCity ?? null,
+      destinationCountry: trip.destinationCountry ?? null,
+      startDate: trip.startDate ?? null,
+      endDate: trip.endDate ?? null,
+      status: trip.status ?? null,
+      visibility: trip.visibility ?? null,
+    },
   };
 }
 
@@ -126,7 +160,10 @@ export function projectFriend(loc: any): MapObject | null {
     // the server deliberately withheld. MapCarousel and MapEntityPreviewCard
     // already read it this way; this projector was the outlier.
     title: loc.name ?? 'Circle member',
-    subtitle: loc.city ?? undefined,
+    // City AND country, joined with ', ' — the server's projectCircleMember
+    // subtitle. This read the city alone, so the same member was labelled
+    // differently depending on which transport happened to serve them.
+    subtitle: joinParts([loc.city, loc.country], ', '),
     privacyClass: FRIEND_PRIVACY_CLASS,
     renderingPriority: KIND_DEFAULT_PRIORITY.crew_member,
     interaction: {
@@ -135,7 +172,18 @@ export function projectFriend(loc: any): MapObject | null {
       actions: ['message', 'follow', 'report', 'block'],
       opensSheet: true,
     },
-    payload: loc,
+    // The server's six fields. Note what is NOT among them: `lat`/`lng`. The
+    // position belongs in `geometry`, which the §24 protection gate and the
+    // §31 aggregator both coarsen; a copy sitting in `payload` would survive
+    // both untouched. Mirroring the server here is a narrowing.
+    payload: {
+      userId: loc.userId,
+      name: loc.name ?? null,
+      avatarUrl: loc.avatarUrl ?? null,
+      city: loc.city ?? null,
+      country: loc.country ?? null,
+      updatedAt: loc.updatedAt ?? null,
+    },
   };
 }
 

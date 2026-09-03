@@ -13,31 +13,57 @@
  * So the hook now produces `MapObject[]` (src/types/mapObjects.ts) from two
  * places, in this order of preference:
  *
- *   1. THE GATEWAY — GET /api/map/projection returns events and hidden gems
- *      already shaped, ranked, privacy-classed and (where the intel pipeline
- *      has anything to say) carrying freshness, a confidence band and
- *      provenance. Nothing about them is re-derived here.
+ *   1. THE GATEWAY — GET /api/map/projection returns EVERY layer this hook can
+ *      show (events, hidden gems, buddies, trips and friends/circle) already
+ *      shaped, ranked, privacy-classed and (where the intel pipeline has
+ *      anything to say) carrying freshness, a confidence band and provenance.
+ *      Nothing about them is re-derived here.
  *
- *   2. PER-LAYER FETCHERS — buddies, trips and friends/circle still fetch
- *      individually, because their privacy logic lives inline inside route
- *      handlers and lifting it out server-side is a separate change that
- *      deserves its own tests. They are normalized into the SAME MapObject
- *      contract by features/map/projection/clientProjection.ts, so the renderer
- *      cannot tell which path produced an object.
+ *   2. PER-LAYER FETCHERS — the ROLLBACK path only, used when the gateway did
+ *      not answer at all. They are normalized into the SAME MapObject contract
+ *      by features/map/projection/clientProjection.ts, so the renderer cannot
+ *      tell which path produced an object.
  *
- * Travelers are deliberately NOT requested from the gateway even though it can
- * serve them: they render through their own useMapTravelers/TravelerMapLayer
- * path, and pulling them in here as well would double-draw them. Retiring that
- * path is its own change.
+ * WHY EVERY LAYER MOVED, AND WHY IT HAD NOT
+ * =========================================
+ * The gateway has served all six kinds since buddies were extracted into
+ * lib/buddyMapRead. `GATEWAY_KIND_FOR_LAYER` listed only two of them, so
+ * `projectBuddy`, `projectCircleMember` and `projectTrip` on the server — and
+ * their privacy extractions, and their gateway-bypass guard entries — had no
+ * production caller: the client kept re-deriving those three layers itself,
+ * which is precisely what §19 forbids. A server half without a client half is
+ * not a delivered layer, and nothing failed while it was missing. The
+ * asymmetry is now a test (see useMapEntities.gatewayAsymmetry.test.ts).
+ *
+ * Travelers are deliberately NOT requested even though the gateway serves them
+ * as `social_zone`: `enabledLayers` is `ToggleableEntityType[]`, which excludes
+ * 'travelers' by type, and they render through their own
+ * useMapTravelers/TravelerMapLayer path on the Discovery map. Asking here would
+ * double-draw them. Retiring that path is its own change, on screens this hook
+ * does not own.
  *
  * FAIL-SOFT (this is the important part)
  * ======================================
  * `map_projection_enabled` is OFF by default, and the endpoint answers
  * `{ enabled: false, objects: [] }` rather than an error. When the gateway is
  * disabled OR the call fails, the hook falls back to the ORIGINAL per-layer
- * fetchers for events and gems too — so behaviour with the flag off is exactly
- * what it was before this change, and switching the flag off is a real rollback
- * rather than a blank map.
+ * fetchers for every layer — so behaviour with the flag off is exactly what it
+ * was before this change, and switching the flag off is a real rollback rather
+ * than a blank map.
+ *
+ * THE FALLBACK IS ALL-OR-NOTHING, ON PURPOSE
+ * ==========================================
+ * When the gateway ANSWERS, it owns every layer, even the ones it returned
+ * nothing for. It is tempting to read `sources` and re-fetch just the layers it
+ * did not name — but the gateway's empty answers are frequently fail-CLOSED
+ * decisions (an unreadable block set returns `sources: []` and no objects at
+ * all), while some legacy transports are fail-OPEN on the same input:
+ * POST /api/rent-a-buddy/search skips block filtering entirely when the block
+ * set cannot be read. Re-fetching a layer the gateway declined would therefore
+ * route around a fail-closed decision through a weaker path, and put blocked
+ * people back on the map precisely when the server could not tell who was
+ * blocked. So a partial gateway answer is REPORTED (`unreadLayers`) and never
+ * re-fetched.
  *
  * BACKWARDS COMPATIBILITY
  * =======================
@@ -69,10 +95,37 @@ import { mapCache } from '../features/map/cache/mapCache.ts';
 import type { Staleness } from '../features/map/cache/mapCache.ts';
 import { advanceStage, type LoadingStage } from '../features/map/cache/loadingStrategy.ts';
 
-/** Which contract kinds the gateway is asked for, per legacy layer toggle. */
-const GATEWAY_KIND_FOR_LAYER: Partial<Record<ToggleableEntityType, MapObjectKind>> = {
+/**
+ * Which contract kind the gateway is asked for, per legacy layer toggle.
+ *
+ * TOTAL over `ToggleableEntityType`, not `Partial`, and that is the point: a
+ * layer added to the toggle set without a gateway kind is now a COMPILE error
+ * rather than a layer that quietly keeps re-deriving itself on the device. The
+ * previous `Partial` is how buddies, trips and friends stayed on the client
+ * path for so long without anything noticing.
+ */
+export const GATEWAY_KIND_FOR_LAYER: Record<ToggleableEntityType, MapObjectKind> = {
   events: 'event',
   gems: 'hidden_gem',
+  buddies: 'buddy_zone',
+  trips: 'trip_stop',
+  friends: 'crew_member',
+};
+
+/**
+ * The name the gateway uses for each layer in its `sources` report.
+ *
+ * Mostly the layer name, EXCEPT `friends`, which the server calls "circle" —
+ * the one entry that can silently rot into a permanently-"unread" layer, so the
+ * asymmetry guard checks every value against the `sources.push(...)` calls in
+ * the route itself rather than trusting this copy.
+ */
+export const GATEWAY_SOURCE_FOR_LAYER: Record<ToggleableEntityType, string> = {
+  events: 'events',
+  gems: 'gems',
+  buddies: 'buddies',
+  trips: 'trips',
+  friends: 'circle',
 };
 
 /** The radius the gateway viewport covers when the caller only knows a centre. */
@@ -209,6 +262,17 @@ export interface UseMapEntitiesResult {
    * current, and rehydrate() has already downgraded its freshness.
    */
   staleness: Staleness | null;
+  /**
+   * Enabled layers the gateway did not name in its `sources` report — it tried
+   * to read them and could not. NOT the same as "that layer is empty", and the
+   * difference is the whole reason the server reports `sources` at all: an
+   * unreadable circle is indistinguishable from a circle where nobody is
+   * sharing unless something says so.
+   *
+   * Always empty on the legacy path, where each fetcher already swallows its
+   * own failure into `[]` and the distinction is unrecoverable.
+   */
+  unreadLayers: ToggleableEntityType[];
 }
 
 export function useMapEntities(opts: {
@@ -232,6 +296,7 @@ export function useMapEntities(opts: {
     useState<UseMapEntitiesResult['liveEnrichment']>(null);
   const [stage, setStage] = useState<LoadingStage>('cached_geography');
   const [staleness, setStaleness] = useState<Staleness | null>(null);
+  const [unreadLayers, setUnreadLayers] = useState<ToggleableEntityType[]>([]);
 
   const inFlight = useRef(false);
   const hasLoaded = useRef(false);
@@ -272,6 +337,9 @@ export function useMapEntities(opts: {
     if (enabledLayers.length === 0) {
       setObjects([]);
       setEntities([]);
+      // No layer is enabled, so no layer went unread. Leaving a stale list here
+      // would keep warning about a layer the user has since switched off.
+      setUnreadLayers([]);
       return;
     }
     inFlight.current = true;
@@ -280,14 +348,16 @@ export function useMapEntities(opts: {
 
     const now = Date.now();
 
-    // Which kinds could the gateway serve for the layers that are switched on?
-    const wantedKinds = enabledLayers
-      .map((l) => GATEWAY_KIND_FOR_LAYER[l])
-      .filter((k): k is MapObjectKind => k != null);
+    // Which kinds the gateway is asked for. Every enabled layer contributes
+    // exactly one — the map is total — and a layer the viewer has switched OFF
+    // contributes none, so a disabled layer is never requested and never
+    // arrives to be filtered out on the device.
+    const wantedKinds: MapObjectKind[] = enabledLayers.map((l) => GATEWAY_KIND_FOR_LAYER[l]);
 
     try {
       // ── 1. Try the gateway ────────────────────────────────────────────────
       let gatewayObjects: MapObject[] | null = null;
+      let gatewaySources: string[] = [];
       let enrichment: UseMapEntitiesResult['liveEnrichment'] = null;
 
       if (wantedKinds.length > 0 && lat != null && lng != null) {
@@ -301,30 +371,42 @@ export function useMapEntities(opts: {
         // as an empty world.
         if (res.ok && res.data.enabled) {
           gatewayObjects = res.data.objects;
+          gatewaySources = res.data.sources;
           enrichment = res.data.liveEnrichment;
         }
       }
 
-      // ── 2. Fetch whatever the gateway did not supply ──────────────────────
+      // ── 2. Roll back to the per-layer fetchers, or not at all ─────────────
+      // See the header: when the gateway answered it owns EVERY layer, because
+      // re-fetching one it declined would route around a fail-closed decision
+      // through a fail-open transport.
       const usedGateway = gatewayObjects !== null;
       const fetches: Promise<MapObject[]>[] = [];
 
-      if (!usedGateway && enabledLayers.includes('events') && lat != null && lng != null) {
-        fetches.push(fetchEvents(lat, lng, now).catch(() => []));
+      if (!usedGateway) {
+        if (enabledLayers.includes('events') && lat != null && lng != null) {
+          fetches.push(fetchEvents(lat, lng, now).catch(() => []));
+        }
+        if (enabledLayers.includes('gems') && city) {
+          fetches.push(fetchGems(city).catch(() => []));
+        }
+        if (enabledLayers.includes('buddies') && city) {
+          fetches.push(fetchBuddies(city, lat, lng).catch(() => []));
+        }
+        if (enabledLayers.includes('trips')) {
+          fetches.push(fetchTrips().catch(() => []));
+        }
+        if (enabledLayers.includes('friends')) {
+          fetches.push(fetchFriends().catch(() => []));
+        }
       }
-      if (!usedGateway && enabledLayers.includes('gems') && city) {
-        fetches.push(fetchGems(city).catch(() => []));
-      }
-      // These three never come from the gateway yet — see the header.
-      if (enabledLayers.includes('buddies') && city) {
-        fetches.push(fetchBuddies(city, lat, lng).catch(() => []));
-      }
-      if (enabledLayers.includes('trips')) {
-        fetches.push(fetchTrips().catch(() => []));
-      }
-      if (enabledLayers.includes('friends')) {
-        fetches.push(fetchFriends().catch(() => []));
-      }
+
+      // Which enabled layers the gateway did NOT name in `sources` — it read
+      // them and failed, or never got to them. An empty layer for that reason
+      // must never be presented as "nothing here"; it is surfaced, not refetched.
+      const unread: ToggleableEntityType[] = usedGateway
+        ? enabledLayers.filter((l) => !gatewaySources.includes(GATEWAY_SOURCE_FOR_LAYER[l]))
+        : [];
 
       const perLayer = await Promise.all(fetches);
       const merged = (gatewayObjects ?? []).concat(...perLayer);
@@ -335,7 +417,10 @@ export function useMapEntities(opts: {
 
       setObjects(merged);
       setEntities(mapObjectsToEntities(merged));
-      setSource(usedGateway ? (perLayer.length > 0 ? 'mixed' : 'gateway') : 'legacy');
+      // 'mixed' is unreachable now that the gateway serves every layer this
+      // hook can show: when it answers, no per-layer fetcher runs at all.
+      setSource(usedGateway ? 'gateway' : 'legacy');
+      setUnreadLayers(unread);
       setLiveEnrichment(enrichment);
       setError(null);
       hasLoaded.current = true;
@@ -387,5 +472,6 @@ export function useMapEntities(opts: {
     liveEnrichment,
     stage,
     staleness,
+    unreadLayers,
   };
 }

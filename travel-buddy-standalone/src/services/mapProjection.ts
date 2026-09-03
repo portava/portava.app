@@ -2,12 +2,18 @@
  * mapProjection service — the client half of the Map Intelligence Gateway
  * (Map spec §19).
  *
- * ONE call replaces the travelers/gems/events fan-out. The server does all the
- * privacy work (opt-in filtering, block filtering, coordinate coarsening,
- * show_exact_location redaction) and all the intelligence work (freshness,
- * confidence band, rendering priority, provenance). Everything received here is
- * already safe to render as-is, and — per §19 — the client must NOT
- * re-derive any of it.
+ * ONE call replaces the five-way per-layer fan-out (events, gems, buddies,
+ * trips, circle). The server does all the privacy work (opt-in filtering, block
+ * filtering, coordinate coarsening, show_exact_location redaction) and all the
+ * intelligence work (freshness, confidence band, rendering priority,
+ * provenance). Everything received here is already safe to render as-is, and —
+ * per §19 — the client must NOT re-derive any of it.
+ *
+ * The endpoint also serves `social_zone` (travelers) and `crowd_flow`, which
+ * this app does not request: travelers render through the Discovery map's own
+ * useMapTravelers path, and crowd flow has no client renderer yet.
+ * src/hooks/__tests__/useMapEntities.gatewayAsymmetry.test.ts holds those two
+ * to a stated reason, so a kind cannot go unrequested silently again.
  *
  * FAIL-SOFT BY DESIGN. `map_projection_enabled` is off by default, and the
  * endpoint answers `{ enabled: false, objects: [] }` rather than an error. The
