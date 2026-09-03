@@ -206,6 +206,18 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     // href: null — hidden from tab bar
   },
+  {
+    key: 'tab-wall',
+    path: '(tabs)/wall',
+    title: 'Wall',
+    parent: null,
+    icon: 'LayoutGrid',
+    requiresAuth: true,
+    // Flag-gated OFF server-side (wall_enabled). Added non-disruptively:
+    // href: null in the tabs layout, so it does not replace the Pulse landing
+    // tab and stays a secondary surface until the server flag is turned on.
+    featureFlag: 'wall_enabled',
+  },
 
   // ── Root stack screens ────────────────────────────────────────────────────
 
