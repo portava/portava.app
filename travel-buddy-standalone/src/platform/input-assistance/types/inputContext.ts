@@ -119,17 +119,27 @@ export type EntityType =
   | 'interest';
 
 /**
- * §31 — Freshness / Live Intelligence state carried by a suggestion. Live
- * suggestions remain projections of the Live Intelligence system; if live state
- * is stale/unavailable the label must be removed or shown as last-updated.
- * Never manufacture "busy now"/"available now" (Principle §2, §31).
+ * §8/§31 — Freshness / Live Intelligence state carried by a suggestion.
+ *
+ * The server (the P9 LiveSuggestionService) attaches this ONLY when a real,
+ * gated live claim backs the entity; it is ABSENT otherwise (the common,
+ * pre-launch case). The shape mirrors the server contract
+ * (api-server lib/inputAssistance/types.ts `FreshnessState`) VERBATIM so the SDK
+ * stays a PURE renderer: the client echoes `label` and `updatedAtLabel` exactly
+ * as sent and NEVER synthesizes a live label from `state` or anything else
+ * (Principle §2 / §31 anti-fabrication). If `stale`/`unavailable`, the state
+ * label is removed and at most the last-updated age is shown — never "busy now".
  */
 export interface FreshnessState {
-  state: 'live' | 'recent' | 'stale' | 'unavailable';
-  /** Human label e.g. "Getting busier", "Recently confirmed". Omit when unavailable. */
+  /**
+   * Live-state band. `fresh`/`recently_confirmed` carry a real, current claim;
+   * `stale`/`unavailable` never present as live (label dropped, last-updated only).
+   */
+  state: 'fresh' | 'recently_confirmed' | 'stale' | 'unavailable';
+  /** Server-formatted "Updated 4m ago" age. Absent when not servable. */
+  updatedAtLabel?: string;
+  /** Server current-state/trend label ("Getting busier"). Only from real live data. */
   label?: string;
-  /** ISO timestamp of the last confirmed update, when known. */
-  updatedAt?: string;
 }
 
 /**
