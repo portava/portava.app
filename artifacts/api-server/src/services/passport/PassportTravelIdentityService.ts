@@ -362,6 +362,68 @@ export async function buildTravelIdentity(
   };
 }
 
+/** The two namespaces a Travel DNA key can belong to (§19). */
+export type TravelDnaKind = "dimension" | "trait";
+
+/** Input for a single Show/Hide/Not-Me write (§19). */
+export interface TravelDnaPrefWrite {
+  key: string;
+  kind: TravelDnaKind;
+  state: string;
+}
+
+export type TravelDnaWriteResult =
+  | { ok: true; pref: { userId: string; key: string; kind: TravelDnaKind; state: TravelDnaState } }
+  | { ok: false; reason: "feature_disabled" | "invalid_state" | "invalid_key" | "db_error" };
+
+/**
+ * Upsert a traveller's own Show/Hide/Not-Me choice for one inferred Travel DNA
+ * dimension or trait (§19).
+ *
+ * OWNER-SCOPED: the caller supplies `userId` (the authenticated session user)
+ * and the row is written for exactly that user — the function never writes to
+ * another user's subtree. It is called through the service_role client from an
+ * owner-only route; RLS on the table (auth.uid() = user_id) is the second line
+ * of defence for any client-scoped caller.
+ *
+ * FAIL-CLOSED CAPABILITY GATE: the write is refused unless
+ * `passport_travel_dna_enabled` reads true (isFlagEnabled → false on any error),
+ * so a partially-configured rollout can never persist prefs the read side would
+ * ignore anyway.
+ *
+ * The stored key is the RAW dimension/trait key (not namespaced): the read side
+ * (`loadPrefs`) looks up prefs by the same raw key, and dimension and trait keys
+ * do not collide. `kind` is validated and echoed back for the client but is not
+ * itself a stored column — the key alone identifies the row.
+ */
+export async function writeTravelDnaPref(
+  sc: SupabaseClient,
+  userId: string,
+  input: TravelDnaPrefWrite,
+): Promise<TravelDnaWriteResult> {
+  const state = norm(input.state);
+  if (state !== "shown" && state !== "hidden" && state !== "not_me") {
+    return { ok: false, reason: "invalid_state" };
+  }
+  if (input.kind !== "dimension" && input.kind !== "trait") {
+    return { ok: false, reason: "invalid_key" };
+  }
+  const key = typeof input.key === "string" ? input.key.trim() : "";
+  if (!key || key.length > 120) {
+    return { ok: false, reason: "invalid_key" };
+  }
+  const on = await isFlagEnabled(sc, TRAVEL_DNA_FLAG);
+  if (!on) return { ok: false, reason: "feature_disabled" };
+
+  const { error } = await sc.from("passport_travel_dna_prefs").upsert(
+    { user_id: userId, dimension_key: key, state, updated_at: new Date().toISOString() },
+    { onConflict: "user_id,dimension_key" },
+  );
+  if (error) return { ok: false, reason: "db_error" };
+
+  return { ok: true, pref: { userId, key, kind: input.kind, state: state as TravelDnaState } };
+}
+
 /**
  * Non-owner view filter: hide dimensions/traits the owner marked "hidden" or
  * "not_me". The owner keeps everything (so they can toggle it back).
