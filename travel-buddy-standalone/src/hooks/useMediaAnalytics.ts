@@ -37,7 +37,19 @@ export type MediaEventType =
   | 'upload_start'
   | 'processing_complete'
   | 'processing_failure'
-  | 'playback_failure';
+  | 'playback_failure'
+  // §45 North-Star outcome transitions — the media → real-world OUTCOME linkage.
+  // These measure usefulness (§44/§26), not engagement; they are emitted through
+  // features/media/telemetry/mediaTelemetry.ts, which maps a media action to the
+  // one transition it represents and carries only coarse metadata.
+  | 'media_place_open'
+  | 'media_compass'
+  | 'media_route'
+  | 'media_trip_add'
+  | 'media_plan'
+  | 'media_contribution'
+  | 'media_correction'
+  | 'media_arrival';
 
 export interface MediaEventPayload {
   media_id?: string;
@@ -56,6 +68,10 @@ export interface MediaEventPayload {
   event_id?: string;
   trip_id?: string;
   gems_filter?: string;
+  /** Coarse entity kind for §45 north-star events: 'media' | 'place' | 'trip' | 'gem'. */
+  entity_kind?: string;
+  /** The media action id a §45 north-star event was mapped from. */
+  action_id?: string;
   from_mode?: string;
   to_mode?: string;
   failure_code?: string;
