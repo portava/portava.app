@@ -19,7 +19,8 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import rentABuddyRouter, { POLICY_TEXT } from "../routes/rentABuddy.js";
+import rentABuddyRouter, { POLICY_TEXT, toPublicBuddyReview } from "../routes/rentABuddy.js";
+import { toLedgerEntryView } from "../routes/rentABuddyMarketplace.js";
 import { specAliasRewrite } from "../lib/specAliasRewrite.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
@@ -4586,5 +4587,137 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
       `notification recipient must be the traveler (${USER_ID}), got: ${note.user_id}`);
     assert.notEqual(note.user_id, BUDDY_USER,
       "notification must not target the buddy who raised the change request");
+  });
+});
+
+// ── Row → view mappings ───────────────────────────────────────────────────────
+//
+// Both of these endpoints used to return raw snake_case rows while the app's
+// types declared camelCase. Nothing failed to compile on either side, because a
+// route's response is `any` on the way out and the app's type is an assertion on
+// the way in — so the mismatch could only ever show up at runtime, and it did:
+// the earnings ledger THREW on its first row, and every buddy review rendered
+// its date as "Invalid Date".
+
+describe("toLedgerEntryView", () => {
+  const ROW = {
+    id: "led-1",
+    booking_id: "bk-1",
+    pricing_type: "hourly",
+    total_booking_usd: 120,
+    addons_usd: 20,
+    tip_usd: 10,
+    platform_fee_percent: 22,
+    platform_fee_amount: 26.4,
+    traveler_service_fee_amount: 8,
+    buddy_gross_amount: 120,
+    buddy_net_estimated_amount: 93.6,
+    deposit_amount: 30,
+    in_app_amount_collected: 30,
+    cash_balance_due: 90,
+    cash_balance_confirmed: false,
+    is_estimated: true,
+    created_at: "2026-09-01T10:00:00.000Z",
+    // Present on the row, deliberately not part of the view.
+    buddy_user_id: "u-1",
+    traveler_id: "u-2",
+    note: "internal",
+  };
+
+  it("maps every numeric field the ledger screen calls .toFixed() on", () => {
+    const v = toLedgerEntryView(ROW);
+    // These four are the reads that threw: `undefined.toFixed(2)`.
+    assert.equal(v.buddyNetEstimatedAmount, ROW.buddy_net_estimated_amount);
+    assert.equal(v.totalBookingUsd, ROW.total_booking_usd);
+    assert.equal(v.platformFeeAmount, ROW.platform_fee_amount);
+    assert.equal(v.tipUsd, ROW.tip_usd);
+    for (const k of ["buddyNetEstimatedAmount", "totalBookingUsd", "platformFeeAmount", "tipUsd"]) {
+      assert.equal(typeof (v as any)[k], "number", `${k} must be a number, not undefined`);
+    }
+  });
+
+  it("maps the remaining declared fields", () => {
+    const v = toLedgerEntryView(ROW);
+    assert.equal(v.id, ROW.id);
+    assert.equal(v.bookingId, ROW.booking_id);
+    assert.equal(v.pricingType, ROW.pricing_type);
+    assert.equal(v.addonsUsd, ROW.addons_usd);
+    assert.equal(v.platformFeePercent, ROW.platform_fee_percent);
+    assert.equal(v.travelerServiceFeeAmount, ROW.traveler_service_fee_amount);
+    assert.equal(v.buddyGrossAmount, ROW.buddy_gross_amount);
+    assert.equal(v.depositAmount, ROW.deposit_amount);
+    assert.equal(v.inAppAmountCollected, ROW.in_app_amount_collected);
+    assert.equal(v.cashBalanceDue, ROW.cash_balance_due);
+    assert.equal(v.cashBalanceConfirmed, ROW.cash_balance_confirmed);
+    assert.equal(v.isEstimated, ROW.is_estimated);
+    assert.equal(v.createdAt, ROW.created_at);
+  });
+
+  it("emits NO snake_case key — the raw row must not leak through", () => {
+    // The bug was a `{ ...row }` spread. This is the assertion that catches a
+    // re-introduced spread even if every camelCase field is also present.
+    const v = toLedgerEntryView(ROW) as Record<string, unknown>;
+    const snake = Object.keys(v).filter((k) => k.includes("_"));
+    assert.deepEqual(snake, [], `raw columns leaked: ${snake.join(", ")}`);
+  });
+
+  it("warns only while the payout is an estimate", () => {
+    assert.ok(toLedgerEntryView(ROW).warning);
+    assert.equal(toLedgerEntryView({ ...ROW, is_estimated: false }).warning, undefined);
+  });
+});
+
+describe("toPublicBuddyReview", () => {
+  const ROW = {
+    id: "rv-1",
+    booking_id: "bk-1",
+    reviewer_id: "u-2",
+    reviewee_id: "u-1",
+    rating: 5,
+    body: "Great day out",
+    photos: ["https://cdn.example/1.jpg"],
+    is_public: true,
+    created_at: "2026-09-01T10:00:00.000Z",
+    updated_at: "2026-09-01T10:00:00.000Z",
+    // Columns select("*") used to hand out with the rest.
+    private_admin_note: "flagged by moderator",
+    moderation_status: "approved",
+    punctuality_score: 4,
+    communication_score: 5,
+    safety_score: 5,
+    blind_until: null,
+    role: "traveler",
+  };
+
+  it("maps createdAt — the read that rendered every review as Invalid Date", () => {
+    const v = toPublicBuddyReview(ROW);
+    assert.equal(v.createdAt, ROW.created_at);
+    assert.equal(Number.isNaN(new Date(v.createdAt).getTime()), false);
+  });
+
+  it("maps the reviewee onto buddyId, and the rest of the declared shape", () => {
+    const v = toPublicBuddyReview(ROW);
+    assert.equal(v.buddyId, ROW.reviewee_id);
+    assert.equal(v.reviewerId, ROW.reviewer_id);
+    assert.equal(v.bookingId, ROW.booking_id);
+    assert.equal(v.rating, ROW.rating);
+    assert.equal(v.body, ROW.body);
+    assert.deepEqual(v.photos, ROW.photos);
+    assert.equal(v.isPublic, ROW.is_public);
+    assert.equal(v.updatedAt, ROW.updated_at);
+  });
+
+  it("never forwards the private moderation columns", () => {
+    // An allowlist, not a redaction: a column added to rent_buddy_reviews
+    // cannot start leaking just because nobody remembered to exclude it.
+    const v = toPublicBuddyReview(ROW) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(v).sort(), [
+      "bookingId", "body", "buddyId", "createdAt", "id",
+      "isPublic", "photos", "rating", "reviewerId", "updatedAt",
+    ]);
+  });
+
+  it("a null photos column becomes an empty array, never null", () => {
+    assert.deepEqual(toPublicBuddyReview({ ...ROW, photos: null }).photos, []);
   });
 });

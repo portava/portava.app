@@ -947,6 +947,33 @@ router.get("/rent-a-buddy/buddies/:buddyId/blocked-dates", async (req, res) => {
   });
 });
 
+/**
+ * One `rent_buddy_reviews` row → the camelCase shape the app's `BuddyReview`
+ * type declares. Exported so the mapping is unit-testable without a database.
+ *
+ * The route used to return `data` straight from `select("*")`. Two consequences:
+ * `r.createdAt` was undefined, so every review on a buddy profile rendered its
+ * date as "Invalid Date"; and the raw row carried `private_admin_note`,
+ * `moderation_status` and the per-dimension scores out to anyone who could see
+ * the public profile. Both are closed by listing the fields explicitly — an
+ * allowlist, not a redaction, so a column added to the table cannot leak by
+ * default.
+ */
+export function toPublicBuddyReview(r: any) {
+  return {
+    id: r.id,
+    bookingId: r.booking_id,
+    reviewerId: r.reviewer_id,
+    buddyId: r.reviewee_id,
+    rating: r.rating,
+    body: r.body ?? null,
+    photos: Array.isArray(r.photos) ? r.photos : [],
+    isPublic: r.is_public,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
 router.get("/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ reviews: [], total: 0 });
@@ -976,7 +1003,9 @@ router.get("/rent-a-buddy/buddies/:buddyId/reviews", async (req, res) => {
     .order("created_at", { ascending: false })
     .range((page - 1) * limit, page * limit - 1);
 
-  return res.json({ reviews: data ?? [], total: count ?? 0 });
+  const reviews = (data ?? []).map(toPublicBuddyReview);
+
+  return res.json({ reviews, total: count ?? 0 });
 });
 
 // ── City/category restriction loader ────────────────────────────────────────────

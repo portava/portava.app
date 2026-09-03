@@ -197,6 +197,21 @@ describe("Trip Privacy — serializer unit tests", () => {
     assert.equal(result.tripNotes, "Book Hotel Mont-Blanc ASAP. Budget: EUR 2000 each.");
   });
 
+  it("accepted member receives coverMediaType in AuthorizedTripView", () => {
+    // This field was absent from the view until 2026-09-03, so GET /api/trips/me
+    // never sent it and the app's Trips LIST rendered every video cover as a
+    // still — while the detail screen, fed by a route that does send it, played
+    // the video. Asserted against the fixture's own value so it cannot go
+    // vacuous if the fixture changes.
+    const result = toAuthorizedTripView(FULL_TRIP_ROW);
+    assert.equal(result.coverMediaType, FULL_TRIP_ROW.cover_media_type);
+  });
+
+  it("a trip with no coverMediaType yields null, never undefined", () => {
+    const { cover_media_type: _omitted, ...noType } = FULL_TRIP_ROW;
+    assert.equal(toAuthorizedTripView(noType).coverMediaType, null);
+  });
+
   it("accepted member receives ownerId in AuthorizedTripView", () => {
     const result = toAuthorizedTripView(FULL_TRIP_ROW);
     assert.equal(result.ownerId, OWNER_ID);

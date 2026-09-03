@@ -101,6 +101,7 @@ export function toAuthorizedTripView(t: any): AuthorizedTripView {
     travelStyle: (t.travel_style as string | null) ?? null,
     openToMeet: Boolean(t.open_to_meet),
     coverUrl: (t.cover_url as string | null) ?? null,
+    coverMediaType: (t.cover_media_type as 'image' | 'video' | null) ?? null,
     progress: (t.progress as number) ?? 0,
     planEditPermission:
       (t.plan_edit_permission as string) ?? "all_members",
