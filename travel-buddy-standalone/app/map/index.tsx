@@ -890,6 +890,20 @@ function FullScreenMapScreenInner() {
   // ── Entity data fetch ───────────────────────────────────────────────────────
   // `title` is used as the city name — passed in from Discovery / Trips entry points.
   // In passport mode the hook still runs but its output is discarded in favour of
+  // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
+  //
+  // Declared HERE, above useMapEntities, and that position is load-bearing.
+  // §16 gives crowd_flow a `contextual` default whose two automatic triggers
+  // are both circular — `density` is measured by the projection layer (a
+  // property of the response) and CROWD_FLOW mode is gated on a capability
+  // derived from flows having already arrived. §16's EXPLICIT user choice is
+  // the only non-circular trigger, and it lives in this state, so the hook
+  // cannot ask for the kind unless this is resolved before it runs.
+  const [layerPrefs, setLayerPrefs] = useState<LayerPreferences>(EMPTY_LAYER_PREFERENCES);
+  useEffect(() => {
+    loadLayerPreferences().then(setLayerPrefs).catch(() => {});
+  }, []);
+
   // passportEntities — React hooks cannot be called conditionally.
   const {
     entities: defaultEntities,
@@ -902,6 +916,9 @@ function FullScreenMapScreenInner() {
     lat: fallbackLat,
     lng: fallbackLng,
     zoom: cameraZoom ?? paramZoom,
+    // §16 explicit choice only. Passport mode asks for nothing at all, so it
+    // must not smuggle a flow request past that intent.
+    crowdFlow: mode !== 'passport' && layerPrefs.crowd_flow === 'on',
   });
 
   // ── §11 Trip Map ────────────────────────────────────────────────────────────
@@ -1005,12 +1022,6 @@ function FullScreenMapScreenInner() {
     })();
     return () => { cancelled = true; };
   }, [mode]);
-
-  // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
-  const [layerPrefs, setLayerPrefs] = useState<LayerPreferences>(EMPTY_LAYER_PREFERENCES);
-  useEffect(() => {
-    loadLayerPreferences().then(setLayerPrefs).catch(() => {});
-  }, []);
 
   // ── §35 telemetry ───────────────────────────────────────────────────────────
   // Transport is installed once per map session. Without one the emitter keeps

@@ -149,10 +149,10 @@ const DISABLED = {
   },
 };
 
-async function load(enabledLayers: any[]) {
+async function load(enabledLayers: any[], extra: Record<string, unknown> = {}) {
   // RNTL v14's renderHook resolves a promise here — awaiting it is what makes
   // `result` exist at all.
-  const hook = await renderHook(() => useMapEntities({ enabledLayers, ...CENTER }));
+  const hook = await renderHook(() => useMapEntities({ enabledLayers, ...CENTER, ...extra }));
   // Settle on the §33 ladder advancing off its cache-first seed, which every
   // completed load does — rather than on objects appearing, because several
   // cases below assert an EMPTY result and would otherwise time out instead of
@@ -393,4 +393,50 @@ describe('a partial gateway answer is reported, never re-fetched', () => {
     const { result } = await load(['friends']);
     expect(result.current.unreadLayers).toEqual([]);
   });
+});
+
+// ── §16 Crowd Flow — requested on explicit choice, and only then ──────────────
+//
+// crowd_flow is NOT a ToggleableEntityType, so it rides beside `enabledLayers`
+// rather than inside them. That is deliberate: the legacy union is the five
+// pin toggles and every member is seeded ON, so requesting a people-derived
+// aggregate from there would ask for it on every map load — contradicting
+// §16's `contextual` default for this layer.
+//
+// §16's two AUTOMATIC triggers are both circular: `density` is measured by the
+// projection layer (a property of the response), and CROWD_FLOW mode is gated
+// on a capability derived from flows having already arrived. Explicit user
+// choice is the only non-circular trigger, and §16 says it outranks automatic
+// resolution.
+describe('§16 crowd flow', () => {
+  it('is NOT requested when the viewer has not chosen it', async () => {
+    await load(['events']);
+    expect(requestedKinds()).not.toContain('crowd_flow');
+  });
+
+  it('IS requested when the viewer has chosen it', async () => {
+    await load(['events'], { crowdFlow: true });
+    expect(requestedKinds()).toContain('crowd_flow');
+  });
+
+  // THE TRAP. doFetch early-returns when enabledLayers is empty, and that
+  // return cannot simply be deleted: passport mode passes [] deliberately to
+  // mean "fetch nothing". So a viewer who switches every legacy pin layer OFF
+  // but Crowd Flow ON must still reach the gateway — and used to be swallowed.
+  it('reaches the gateway with every pin layer off but crowd flow on', async () => {
+    await load([], { crowdFlow: true });
+    expect(fetchMapProjection).toHaveBeenCalled();
+    expect(requestedKinds()).toEqual(['crowd_flow']);
+  });
+
+  // NOT TESTED HERE, deliberately: "both empty fetches nothing". The empty-
+  // layers early return does not advance the §33 stage ladder, so this suite's
+  // `load` helper (which settles on that ladder) times out on it, and driving
+  // renderHook directly hangs the worker. That is pre-existing behaviour of the
+  // guard — a passport-mode map sits at `cached_geography` — and asserting it
+  // would mean asserting around someone else's bug with a bespoke harness.
+  //
+  // The property that MATTERS is covered above: crowd flow alone still reaches
+  // the gateway. The mutation proof for the guard itself lives in
+  // useMapEntities.gatewayAsymmetry.test.ts.
 });

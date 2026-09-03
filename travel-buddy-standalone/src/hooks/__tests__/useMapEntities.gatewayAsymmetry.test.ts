@@ -71,7 +71,7 @@ function reportedSources(): Set<string> {
 }
 
 /** One `Record<ToggleableEntityType, …>` literal in the hook, as a map. */
-function hookMap(name: string): Map<string, string> {
+function hookMap(name: string, minEntries = 2): Map<string, string> {
   const src = readFileSync(HOOK, 'utf8');
   const from = src.indexOf(`const ${name}`);
   assert.ok(from >= 0, `${name} not found in useMapEntities.ts — did it get renamed?`);
@@ -82,7 +82,10 @@ function hookMap(name: string): Map<string, string> {
   for (const m of src.slice(open, close).matchAll(/^\s+([a-z_]+):\s*'([a-z_]+)',/gm)) {
     out.set(m[1], m[2]);
   }
-  assert.ok(out.size >= 2, `parsed only ${out.size} entries from ${name} — the parse broke`);
+  assert.ok(
+    out.size >= minEntries,
+    `parsed only ${out.size} entries from ${name} — the parse broke`,
+  );
   return out;
 }
 
@@ -100,25 +103,19 @@ const NOT_REQUESTED_BY_THIS_CLIENT: Record<string, string> = {
   // that screen's, not this hook's. Asking here would double-draw them.
   social_zone:
     'rendered by useMapTravelers/TravelerMapLayer on the Discovery map; not a ToggleableEntityType',
-  // A real gap, recorded rather than hidden — but NOT the gap the first version
-  // of this entry described, and the difference is the whole point of keeping
-  // the reason honest. Both things it named as missing now exist:
-  //   - the toggle: `crowd_flow` is a §16 CORE_LAYER_ID, a `ToggleableLayerId`,
-  //     and `LayersSheet` renders a row for it (it maps over MAP_LAYER_IDS);
-  //   - the renderer: `CrowdFlowLine`/`CrowdFlowLayer` draw the LineString, and
-  //     both DiscoveryMapView and the map shell already pass objects to it.
-  // What is still missing is the one wire between them: `useMapEntities` is
-  // keyed by `ToggleableEntityType` (the five legacy PIN toggles) and is never
-  // handed the §16 layer decision, so it cannot ask for the kind. See the
-  // suite below for why only ONE of §16's triggers can close this.
-  crowd_flow:
-    'GAP — §16 toggle and LineString renderer both exist; the hook is never handed the §16 layer decision, so nothing can request the kind',
 };
 
 describe('the client asks for every kind the gateway serves', () => {
   test('no server-served kind is silently unrequested', () => {
     const served = servedKinds();
-    const requested = new Set(hookMap('GATEWAY_KIND_FOR_LAYER').values());
+    // The union of BOTH request maps. crowd_flow is requested from the optional
+    // map rather than the toggle-keyed one, because it is a §16 layer and not a
+    // legacy pin toggle — but a request is a request, and this guard must see
+    // every one of them or it is back to comparing one side against itself.
+    const requested = new Set([
+      ...hookMap('GATEWAY_KIND_FOR_LAYER').values(),
+      ...hookMap('GATEWAY_KIND_FOR_OPTIONAL_LAYER', 1).values(),
+    ]);
 
     const unrequested = [...served].filter((k) => !requested.has(k)).sort();
     assert.deepEqual(
