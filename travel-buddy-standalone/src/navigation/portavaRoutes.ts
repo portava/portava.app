@@ -691,6 +691,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
     deepLink: '/passport/availability',
   },
+  {
+    key: 'passport-share',
+    path: 'passport/share',
+    title: 'Share Passport',
+    parent: 'tab-passport',
+    icon: 'Share2',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/share',
+  },
 
   // ── Stamps ────────────────────────────────────────────────────────────────
 
