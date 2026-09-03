@@ -4716,10 +4716,12 @@ describe("toPublicBuddyReview", () => {
     // An allowlist, not a redaction: a column added to rent_buddy_reviews
     // cannot start leaking just because nobody remembered to exclude it.
     const v = toPublicBuddyReview(ROW) as Record<string, unknown>;
+    // Both sides sorted, so the assertion is about the SET of keys and cannot
+    // fail on the order I happened to type them in.
     assert.deepEqual(Object.keys(v).sort(), [
-      "bookingId", "body", "buddyId", "createdAt", "id",
+      "body", "bookingId", "buddyId", "createdAt", "id",
       "isPublic", "photos", "rating", "reviewerId", "updatedAt",
-    ]);
+    ].sort());
   });
 
   it("a null photos column becomes an empty array, never null", () => {
