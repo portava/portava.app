@@ -10,7 +10,8 @@
  */
 
 import React from 'react';
-import { View, Text, Pressable, ScrollView, Image, StyleSheet } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { CachedImage } from '../../../components/CachedImage.tsx';
 import { color, space, radius, type as t, avatar } from '../../../theme/tokens.ts';
 
 export interface QuickMediaEntry {
@@ -52,7 +53,7 @@ export function QuickMediaRow({
         >
           <View style={[s.ring, entry.isSelf && s.ringSelf]}>
             {entry.avatarUrl ? (
-              <Image source={{ uri: entry.avatarUrl }} style={s.avatarImg} />
+              <CachedImage source={{ uri: entry.avatarUrl }} style={s.avatarImg} />
             ) : (
               <Text style={s.initials}>{entry.isSelf ? '+' : initialsOf(entry.label)}</Text>
             )}

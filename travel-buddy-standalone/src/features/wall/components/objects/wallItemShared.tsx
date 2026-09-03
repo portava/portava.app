@@ -14,6 +14,7 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
+import { CachedImage } from '../../../../components/CachedImage.tsx';
 import { router } from 'expo-router';
 import { MapPin, Sparkles, MessageCircle, Share2, Bookmark } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon, aspect } from '../../../../theme/tokens.ts';
@@ -175,7 +176,7 @@ export function ActorByline({
     <View style={s.byline} accessible accessibilityRole="header">
       <View style={s.avatar}>
         {actor?.avatarUrl ? (
-          <Image source={{ uri: actor.avatarUrl }} style={s.avatarImg} />
+          <CachedImage source={{ uri: actor.avatarUrl }} style={s.avatarImg} />
         ) : (
           <Text style={s.avatarInitials}>{initialsOf(name)}</Text>
         )}
