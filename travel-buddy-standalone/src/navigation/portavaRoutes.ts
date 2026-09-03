@@ -619,6 +619,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
     deepLink: '/passport/my-world',
   },
+  {
+    key: 'passport-plans',
+    path: 'passport/plans',
+    title: 'Plans',
+    parent: 'tab-passport',
+    icon: 'CalendarClock',
+    requiresAuth: true,
+    deepLink: '/passport/plans',
+  },
 
   // ── Stamps ────────────────────────────────────────────────────────────────
 
