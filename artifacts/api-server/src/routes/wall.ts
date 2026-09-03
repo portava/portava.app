@@ -37,9 +37,18 @@ import { logger as rootLogger } from "../lib/logger.js";
 import { RankingEvent } from "../services/ranking/rankingAnalytics.js";
 import {
   projectObjects,
+  attachContextThreads,
   type WallCandidate,
   type ProjectViewerContext,
 } from "../services/wall/WallProjectionService.js";
+import {
+  applyFeedDiversity,
+  DEFAULT_FEED_DIVERSITY_POLICY,
+} from "../services/wall/WallDiversityService.js";
+import {
+  explainDiscovery,
+  type DiscoveryViewerSignals,
+} from "../services/wall/WallDiscoveryInsertionService.js";
 import {
   rankForYou,
   decodeForYouCursor,
@@ -84,7 +93,8 @@ const CANDIDATE_FETCH = 150;
 
 const POST_COLUMNS =
   "id, author_id, trip_id, content, visibility, status, created_at, published_at, " +
-  "canonical_place_id, has_video, media_count, category, location_city, location_country";
+  "canonical_place_id, has_video, media_count, category, location_city, location_country, " +
+  "like_count, comment_count, save_count";
 
 // ── Local analytics (reuses the existing rank_events store; no Wall table) ────
 
@@ -135,6 +145,16 @@ interface WallViewerContext {
   viewerTripIds: Set<string>;
   currentCity: string | null;
   currentCountry: string | null;
+  // ── Discovery-explanation signals (spec §13). All lowercased where they are
+  //    matched case-insensitively against candidate place cities / categories.
+  /** Authors that people the viewer follows also follow (second-degree proof). */
+  mutualFollowedAuthorIds: Set<string>;
+  /** Lowercased destination cities of the viewer's upcoming/active trips. */
+  upcomingTripCities: Set<string>;
+  /** Lowercased preferred / home cities. */
+  preferredCities: Set<string>;
+  /** Lowercased interest tokens (categories the viewer cares about). */
+  interests: Set<string>;
 }
 
 async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerContext> {
@@ -143,6 +163,10 @@ async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerC
     viewerTripIds: new Set<string>(),
     currentCity: null,
     currentCountry: null,
+    mutualFollowedAuthorIds: new Set<string>(),
+    upcomingTripCities: new Set<string>(),
+    preferredCities: new Set<string>(),
+    interests: new Set<string>(),
   };
   // Each read is independent and fail-soft — a missing signal degrades ranking
   // quality, never the feed itself (spec §34).
@@ -181,7 +205,7 @@ async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerC
     // is a different read with its own privacy posture.
     const { data, error } = await sc
       .from("profiles")
-      .select("current_city")
+      .select("current_city, home_city, interests")
       .eq("id", viewerId)
       .maybeSingle();
     // A missing row is normal and silent. A rejected query is not — that is how
@@ -193,9 +217,63 @@ async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerC
       );
     }
     ctx.currentCity = (data as any)?.current_city ?? null;
+    // Both sides of this merge wanted more from this read. main added home_city
+    // and interests; this branch had removed current_country because it DOES
+    // NOT EXIST on profiles (it belongs to compass_user_profiles, migration
+    // 0051). Verified again against the live schema during this merge:
+    // current_city, home_city and interests are all real; current_country is
+    // not.
+    //
+    // Keeping main's version verbatim would have kept the whole read failing
+    // with PGRST100 — and made it worse, because four fields would then be
+    // null instead of two. So main's INTENT is kept in full and only the
+    // column that breaks the query is dropped.
     ctx.currentCountry = null;
+    for (const c of [(data as any)?.current_city, (data as any)?.home_city]) {
+      if (c) ctx.preferredCities.add(String(c).trim().toLowerCase());
+    }
+    for (const i of ((data as any)?.interests as unknown[] | undefined) ?? []) {
+      if (typeof i === "string" && i.trim()) ctx.interests.add(i.trim().toLowerCase());
+    }
   } catch (err) {
     logger.warn({ err }, "wall: viewer location read threw");
+  }
+  // Upcoming/active trip destination cities — a real-world discovery signal
+  // (spec §13). Reads only the viewer's OWN trips, so nothing else leaks.
+  try {
+    const { data } = await sc
+      .from("trips")
+      .select("destination_city, status")
+      .eq("owner_id", viewerId)
+      .in("status", ["planning", "upcoming", "active"])
+      .limit(50);
+    for (const r of (data as any[]) ?? []) {
+      const c = (r as any).destination_city;
+      if (c) ctx.upcomingTripCities.add(String(c).trim().toLowerCase());
+    }
+  } catch (err) {
+    logger.warn({ err }, "wall: upcoming trips read failed");
+  }
+  // Second-degree follows: authors that people the viewer follows also follow.
+  // Powers the "followed by people you follow" discovery explanation (spec §13).
+  try {
+    const seeds = [...ctx.followedCreatorIds].slice(0, 200);
+    if (seeds.length > 0) {
+      const { data } = await sc
+        .from("user_follows")
+        .select("following_id")
+        .in("follower_id", seeds)
+        .limit(1000);
+      for (const r of (data as any[]) ?? []) {
+        const id = String((r as any).following_id);
+        // Not the viewer, and not someone they already follow (that is not
+        // "discovery" — it would already be in the primary set).
+        if (id === viewerId || ctx.followedCreatorIds.has(id)) continue;
+        ctx.mutualFollowedAuthorIds.add(id);
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, "wall: second-degree follow read failed");
   }
   return ctx;
 }
@@ -317,6 +395,35 @@ async function loadCandidates(
     logger.warn({ err }, "wall: place batch read failed");
   }
 
+  // Permitted-gem lookup for discovery explanations (spec §13/§20): a place is a
+  // "permitted Hidden Gem" only when its disclosure policy is public/approximate.
+  // Protected / reveal-after-* gems are NEVER surfaced as a discovery reason.
+  const permittedGemPlaceIds = new Set<string>();
+  if (opts.discoveryEnabled && placeIds.length > 0) {
+    try {
+      const { data } = await sc
+        .from("hidden_gems")
+        .select("canonical_place_id, sensitivity_level, status")
+        .in("canonical_place_id", placeIds.slice(0, 500))
+        .eq("status", "active");
+      for (const g of (data as any[]) ?? []) {
+        const pid = g.canonical_place_id ? String(g.canonical_place_id) : null;
+        const sens = String(g.sensitivity_level ?? "public");
+        if (pid && (sens === "public" || sens === "approximate")) permittedGemPlaceIds.add(pid);
+      }
+    } catch (err) {
+      logger.warn({ err }, "wall: hidden gem batch read failed");
+    }
+  }
+
+  const discoveryViewer: DiscoveryViewerSignals = {
+    mutualFollowedAuthorIds: viewer.mutualFollowedAuthorIds,
+    tripCities: viewer.upcomingTripCities,
+    currentCity: viewer.currentCity,
+    preferredCities: viewer.preferredCities,
+    interests: viewer.interests,
+  };
+
   const candidates: WallCandidate[] = [];
   const signals = new Map<string, WallRankSignals>();
   const placeByObject = new Map<string, PublicPlaceRef>();
@@ -328,6 +435,29 @@ async function loadCandidates(
     const isOutside = r.__outside === true;
     const objectType = classifyObjectType(r, isOutside, opts.discoveryEnabled);
     const placeRef = r.canonical_place_id ? placeById.get(String(r.canonical_place_id)) ?? null : null;
+
+    // Discovery insertions MUST be socially explained (spec §13) — an outside-
+    // graph object with no social explanation is NOT a naked directory listing;
+    // it is simply dropped. Followed-graph objects are never subject to this.
+    let discoveryReason: string | null = null;
+    if (objectType === "discovery") {
+      const explanation = explainDiscovery(
+        {
+          authorId,
+          placeCity: placeRef?.city ?? r.location_city ?? null,
+          placeCountry: placeRef?.country ?? r.location_country ?? null,
+          category: r.category ?? null,
+          likeCount: Number(r.like_count ?? 0),
+          saveCount: Number(r.save_count ?? 0),
+          commentCount: Number(r.comment_count ?? 0),
+          createdAt: String(r.created_at ?? r.published_at ?? ""),
+          isPermittedHiddenGem: placeRef ? permittedGemPlaceIds.has(placeRef.placeId) : false,
+        },
+        discoveryViewer,
+      );
+      if (!explanation) continue; // drop unexplained outside-graph object
+      discoveryReason = explanation.reason;
+    }
 
     const actor: PublicActorRef | undefined = prof
       ? {
@@ -350,7 +480,7 @@ async function loadCandidates(
       actor,
       authorAccountStatus: prof?.account_status ?? "active",
       isDeleted: false,
-      discoveryReason: objectType === "discovery" ? "interest" : null,
+      discoveryReason,
     });
 
     signals.set(id, {
@@ -460,12 +590,14 @@ router.get(
     const { mode, cursor, session_intent } = parsed.data;
     const limit = parsed.data.limit ?? DEFAULT_LIMIT;
 
-    const [inputIntelEnabled, discoveryEnabled, liveEnabled, compassHandoffEnabled] = await Promise.all([
-      isFlagEnabled(sc, "wall_input_intelligence_enabled"),
-      isFlagEnabled(sc, "wall_discovery_insertions_enabled"),
-      isFlagEnabled(sc, "wall_live_for_you_enabled"),
-      isFlagEnabled(sc, "wall_compass_handoff_enabled"),
-    ]);
+    const [inputIntelEnabled, discoveryEnabled, liveEnabled, compassHandoffEnabled, rabEnabled] =
+      await Promise.all([
+        isFlagEnabled(sc, "wall_input_intelligence_enabled"),
+        isFlagEnabled(sc, "wall_discovery_insertions_enabled"),
+        isFlagEnabled(sc, "wall_live_for_you_enabled"),
+        isFlagEnabled(sc, "wall_compass_handoff_enabled"),
+        isFlagEnabled(sc, "wall_rab_integration_enabled"),
+      ]);
 
     const viewer = await loadViewerContext(sc, user.id);
 
@@ -537,6 +669,14 @@ router.get(
       });
       items = built.items;
       nextCursor = built.nextCursor ? encodeForYouCursor(built.nextCursor) : undefined;
+
+      // ── Feed Diversity Controller (For You only, spec §15). Reorders to
+      //    prevent one-creator floods / five-videos-in-a-row / a wall of
+      //    annotations, and prunes over-budget discovery insertions so For You
+      //    never becomes a disguised Discovery page. Following is a strict-
+      //    chronology trust anchor and is deliberately NOT reordered.
+      const diversified = applyFeedDiversity(items, DEFAULT_FEED_DIVERSITY_POLICY);
+      items = diversified.items;
     }
 
     // ── Live For You strip: bounded, deduped against the feed's places (§4).
@@ -555,6 +695,22 @@ router.get(
       limit: MAX_LIVE_FOR_YOU,
       dedupeSubjectIds: feedSubjectIds,
     });
+
+    // ── Context Threads (spec §8/§9): attach an OPTIONAL compact bridge beneath
+    //    an object ONLY where the §9 gate says it earns its place. Behind
+    //    wall_context_threads_enabled (checked once in attachContextThreads).
+    //    Dedups against the Live For You strip (§4/§15) and caps annotations per
+    //    window (§15 maxContextThreadsInWindow). Runs in both modes.
+    const liveStripSubjectIds = new Set<string>(liveForYou.map((i) => i.subjectId));
+    try {
+      items = await attachContextThreads(sc, items, projectViewer, {
+        maxContextThreadsInWindow: DEFAULT_FEED_DIVERSITY_POLICY.maxContextThreadsInWindow,
+        liveStripSubjectIds,
+        rabEnabled,
+      });
+    } catch (err) {
+      logger.warn({ err }, "wall: context thread attach failed — items unannotated");
+    }
 
     const body: WallResponse = {
       mode,

@@ -206,6 +206,18 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     // href: null — hidden from tab bar
   },
+  {
+    key: 'tab-wall',
+    path: '(tabs)/wall',
+    title: 'Wall',
+    parent: null,
+    icon: 'LayoutGrid',
+    requiresAuth: true,
+    // Flag-gated OFF server-side (wall_enabled). Added non-disruptively:
+    // href: null in the tabs layout, so it does not replace the Pulse landing
+    // tab and stays a secondary surface until the server flag is turned on.
+    featureFlag: 'wall_enabled',
+  },
 
   // ── Root stack screens ────────────────────────────────────────────────────
 
@@ -639,6 +651,45 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: 'Users',
     requiresAuth: true,
     deepLink: '/passport/shared-context',
+  },
+  {
+    key: 'passport-journeys',
+    path: 'passport/journeys',
+    title: 'Journeys',
+    parent: 'tab-passport',
+    icon: 'Route',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/journeys',
+  },
+  {
+    key: 'passport-travel-identity',
+    path: 'passport/travel-identity',
+    title: 'Travel Identity',
+    parent: 'tab-passport',
+    icon: 'Fingerprint',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/travel-identity',
+  },
+  {
+    key: 'passport-plans',
+    path: 'passport/plans',
+    title: 'Plans',
+    parent: 'tab-passport',
+    icon: 'CalendarClock',
+    requiresAuth: true,
+    deepLink: '/passport/plans',
+  },
+  {
+    key: 'passport-availability',
+    path: 'passport/availability',
+    title: 'My Availability',
+    parent: 'tab-passport',
+    icon: 'CalendarClock',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/availability',
   },
 
   // ── Stamps ────────────────────────────────────────────────────────────────

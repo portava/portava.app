@@ -417,6 +417,10 @@ export default function TabLayout() {
         listeners={{ focus: refreshUnread, tabPress: refreshUnread }}
       />
       <Tabs.Screen name="ai" options={{ href: null, title: 'AI' }} />
+      {/* Wall — flag-gated OFF server-side (wall_enabled). Registered but hidden
+          from the tab bar (href: null) so the Pulse landing tab and the existing
+          tabs are unchanged; reached as a secondary surface until the flag is on. */}
+      <Tabs.Screen name="wall" options={{ href: null, title: 'Wall' }} />
     </Tabs>
   );
 
