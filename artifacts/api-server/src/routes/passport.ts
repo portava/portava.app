@@ -21,6 +21,8 @@ import {
 } from "../services/passport/PassportProjectionService.js";
 import { buildSharedContext } from "../services/passport/SharedContextService.js";
 import { buildJourneys } from "../services/passport/PassportJourneyService.js";
+import { writeTravelDnaPref } from "../services/passport/PassportTravelIdentityService.js";
+import { buildReputationSummary } from "../services/passport/PassportReputationService.js";
 
 const router = Router();
 
@@ -1519,6 +1521,62 @@ router.get("/passport/:userId/journeys", async (req, res) => {
   } catch (e: any) {
     req.log.error({ err: e }, "passport journeys failed");
     sendError(res, "db_error", e?.message ?? "Journeys failed");
+  }
+});
+
+// PUT /api/passport/me/travel-dna — owner-only Show/Hide/Not-Me write (§19).
+// Persists the caller's own display control over one inferred Travel DNA
+// dimension or trait. Owner-scoped (session user only), gated fail-closed by the
+// passport_travel_dna_enabled capability flag, written via service_role.
+const travelDnaWriteSchema = z.object({
+  key: z.string().trim().min(1).max(120),
+  kind: z.enum(["dimension", "trait"]),
+  state: z.enum(["shown", "hidden", "not_me"]),
+});
+
+router.put("/passport/me/travel-dna", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const parsed = travelDnaWriteSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
+  try {
+    const result = await writeTravelDnaPref(sc, auth.user.id, parsed.data);
+    if (!result.ok) {
+      if (result.reason === "feature_disabled") { sendError(res, "feature_disabled", "Travel DNA controls are unavailable"); return; }
+      if (result.reason === "invalid_state" || result.reason === "invalid_key") { sendError(res, "invalid_payload", "Invalid Travel DNA preference"); return; }
+      sendError(res, "db_error", "Failed to save preference");
+      return;
+    }
+    res.status(200).json({ pref: result.pref });
+  } catch (e: any) {
+    req.log.error({ err: e }, "passport travel-dna write failed");
+    sendError(res, "db_error", e?.message ?? "Travel DNA write failed");
+  }
+});
+
+// GET /api/passport/:userId/contributions — read-only reputation summary for the
+// client ContributionCard (§20/TABLE 21). Paid contributions never inflate the
+// factual counts and no private moderation data is exposed (enforced in
+// PassportReputationService). Blocked / unavailable relationships get nothing.
+router.get("/passport/:userId/contributions", async (req, res) => {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  try {
+    const targetId = await resolveProjectionUserId(sc, req.params.userId);
+    if (!targetId) { sendError(res, "not_found", "User not found"); return; }
+    const viewerId = await getOptionalViewerId(sc, req);
+    const resolution = await resolvePassportViewerContext(sc, targetId, viewerId);
+    if (resolution.permissions.isBlocked || resolution.permissions.isUnavailable) {
+      res.status(200).json({ contributions: null, restricted: true });
+      return;
+    }
+    const contributions = await buildReputationSummary(sc, targetId);
+    res.status(200).json({ contributions, viewerContext: resolution.context });
+  } catch (e: any) {
+    req.log.error({ err: e }, "passport contributions failed");
+    sendError(res, "db_error", e?.message ?? "Contributions failed");
   }
 });
 
