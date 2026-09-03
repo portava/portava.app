@@ -163,7 +163,13 @@ export function projectGem(g: any, distanceKm: number | null = null): MapObject 
     payload: {
       category: g.category ?? null,
       city: g.city ?? null,
-      thumbnailUrl: g.thumbnail_url ?? null,
+      // `image_url` is the column hidden_gems actually has, and the one
+      // findNearbyGems selects. This read used to be `g.thumbnail_url`, which is
+      // not a column on that table at ALL — so every gem the gateway served had
+      // a null thumbnail and rendered with no image, while the client's fallback
+      // projector (which reads the app DTO's `imageUrl`) showed one. Same shape,
+      // different pixels, depending on a feature flag.
+      thumbnailUrl: g.image_url ?? null,
       verificationLevel: g.verification_level ?? null,
       coordsPrecision: g.coordsPrecision ?? null,
     },

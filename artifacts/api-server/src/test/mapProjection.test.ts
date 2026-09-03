@@ -11,6 +11,9 @@
  */
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   applyLiveClaims,
@@ -58,19 +61,30 @@ const AREA_TRAVELER = {
 
 const CITY_TRAVELER = { ...AREA_TRAVELER, id: "u2", precision: "city" };
 
+// Shaped like what actually reaches projectGem: a hidden_gems row restricted to
+// findNearbyGems' select list, then passed through applyGemPrivacy — which drops
+// latitude/longitude/approx_* and adds camelCase lat/lng/coordsPrecision.
+//
+// It used to carry `thumbnail_url`, which is not a column on hidden_gems at all.
+// The fixture invented it, projectGem read it, and the test asserted the result —
+// so a field that was ALWAYS null in production looked covered. The
+// select-list guard at the bottom of this file now makes that impossible.
 const GEM = {
   id: "g1",
   name: "Rooftop stairwell",
   category: "viewpoint",
   city: "Da Nang",
   status: "active",
-  thumbnail_url: null,
+  image_url: "https://cdn.example/gem.jpg",
   verification_level: "community",
   coordsPrecision: "exact",
   lat: 16.06,
   lng: 108.21,
 };
 
+// Shaped like an events row as loadNearbyEvents selects it. `ends_at` was
+// missing from both this fixture AND that select, so `expiresAt` was silently
+// undefined on every gateway-served event.
 const EVENT = {
   id: "e1",
   title: "Night market",
@@ -78,6 +92,7 @@ const EVENT = {
   location_lat: 16.07,
   location_lng: 108.22,
   starts_at: "2026-08-31T12:00:00.000Z",
+  ends_at: "2026-08-31T18:00:00.000Z",
   cover_url: null,
   visibility: "public",
 };
@@ -481,5 +496,131 @@ describe("paginate", () => {
     assert.equal(decodeCursor("nonsense"), 0);
     assert.equal(decodeCursor("-5"), 0);
     assert.equal(paginate(objs, "nonsense", 3).page[0].id, "gem:g0");
+  });
+});
+
+// ── The column a projector reads must be one the query actually returns ───────
+//
+// WHY THIS GUARD EXISTS
+// =====================
+// `projectGem` read `g.thumbnail_url` for months. `hidden_gems` has no such
+// column — it has `image_url` — so every gem the gateway served carried a null
+// thumbnail and rendered with no picture, while the client's fallback projector
+// (reading the app DTO's `imageUrl`) showed one. Nothing failed: the row is
+// `any`, the fixture here invented the field to match, and the assertion passed.
+//
+// `projectEvent` read `ev.ends_at`, which IS a column on `events` but was not in
+// `loadNearbyEvents`' select list — equally undefined at runtime, equally silent.
+//
+// So a projector's snake_case reads are checked against BOTH:
+//   1. the generated schema (src/lib/database.types.ts) — does the column exist?
+//   2. the select list of the query that actually produces the row — is it fetched?
+//
+// Both are read as text. That is deliberate: executing the query needs a
+// database, and importing the row type gives no runtime guarantee about which
+// columns a particular `.select()` asked for.
+
+describe("projector reads only columns the query returns", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const projectionSrc = readFileSync(resolve(here, "../lib/mapProjection.ts"), "utf8");
+  const typesSrc = readFileSync(resolve(here, "../lib/database.types.ts"), "utf8");
+
+  /** Column names on a table's Row type in the generated schema. */
+  function tableColumns(table: string): Set<string> {
+    const m = new RegExp(`\\n      ${table}: \\{\\n        Row: \\{\\n([\\s\\S]*?)\\n        \\}\\n`).exec(
+      typesSrc,
+    );
+    assert.ok(m, `table ${table} not found in database.types.ts`);
+    return new Set([...m![1].matchAll(/^\s+([a-z0-9_]+)\??:/gm)].map((x) => x[1]));
+  }
+
+  /** The columns named in the first `.select("…")` / `.select(\`…\`)` of a file. */
+  function selectedColumns(rawSource: string, afterMarker: string): Set<string> {
+    const source = stripComments(rawSource);
+    const at = source.indexOf(afterMarker);
+    assert.notEqual(at, -1, `marker "${afterMarker}" not found`);
+    const m = /\.select\(\s*(["'`])([\s\S]*?)\1/.exec(source.slice(at));
+    assert.ok(m, `no .select(...) after "${afterMarker}"`);
+    return new Set(
+      m![2]
+        .split(",")
+        .map((c) => c.trim())
+        .filter((c) => /^[a-z0-9_]+$/.test(c)),
+    );
+  }
+
+  /**
+   * Strip line and block comments. A guard that a COMMENT can trip is a guard
+   * people route around: without this, documenting the old `g.thumbnail_url`
+   * read in a comment would fail the very test that documents it.
+   */
+  function stripComments(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  }
+
+  const projectionCode = stripComments(projectionSrc);
+
+  /** snake_case property reads off `<v>.` inside one exported function. */
+  function snakeReads(fnName: string, varName: string): string[] {
+    const start = projectionCode.indexOf(`export function ${fnName}(`);
+    assert.notEqual(start, -1, `${fnName} not found`);
+    const nextFn = projectionCode.indexOf("\nexport function ", start + 1);
+    const body = projectionCode.slice(start, nextFn === -1 ? undefined : nextFn);
+    const re = new RegExp(`\\b${varName}[?]?\\.([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\\b`, "g");
+    return [...new Set([...body.matchAll(re)].map((m) => m[1]))];
+  }
+
+  test("the guard is reading real data, not empty matches", () => {
+    // Without this, every assertion below would pass vacuously on a parse miss.
+    assert.ok(tableColumns("hidden_gems").size > 10);
+    assert.ok(tableColumns("events").size > 10);
+    assert.ok(snakeReads("projectGem", "g").length > 0);
+    assert.ok(snakeReads("projectEvent", "ev").length > 0);
+  });
+
+  test("projectGem reads only hidden_gems columns findNearbyGems selects", () => {
+    const discoverySrc = readFileSync(
+      resolve(here, "../services/hiddenGems/HiddenGemDiscoveryService.ts"),
+      "utf8",
+    );
+    const selected = selectedColumns(discoverySrc, 'from("hidden_gems")');
+    const columns = tableColumns("hidden_gems");
+    assert.ok(selected.size > 10, "select list did not parse");
+
+    for (const field of snakeReads("projectGem", "g")) {
+      assert.ok(columns.has(field), `projectGem reads g.${field}, not a hidden_gems column`);
+      assert.ok(selected.has(field), `projectGem reads g.${field}, which findNearbyGems does not select`);
+    }
+  });
+
+  test("projectEvent reads only events columns loadNearbyEvents selects", () => {
+    const routeSrc = readFileSync(resolve(here, "../routes/mapSearch.ts"), "utf8");
+    const selected = selectedColumns(routeSrc, "export async function loadNearbyEvents");
+    const columns = tableColumns("events");
+    assert.ok(selected.size > 10, "select list did not parse");
+
+    for (const field of snakeReads("projectEvent", "ev")) {
+      assert.ok(columns.has(field), `projectEvent reads ev.${field}, not an events column`);
+      assert.ok(selected.has(field), `projectEvent reads ev.${field}, which loadNearbyEvents does not select`);
+    }
+  });
+
+  test("the two regressions this guard was written for stay fixed", () => {
+    // Named explicitly so a revert reads as what it is, not as a generic failure.
+    assert.match(projectionCode, /thumbnailUrl:\s*g\.image_url/);
+    assert.doesNotMatch(projectionCode, /g\.thumbnail_url/);
+    const routeSrc = readFileSync(resolve(here, "../routes/mapSearch.ts"), "utf8");
+    assert.ok(
+      selectedColumns(routeSrc, "export async function loadNearbyEvents").has("ends_at"),
+      "loadNearbyEvents must select ends_at — projectEvent turns it into expiresAt",
+    );
+  });
+
+  test("a gem carries the image the query fetched", () => {
+    assert.equal((projectGem(GEM)!.payload as any).thumbnailUrl, GEM.image_url);
+  });
+
+  test("an event expires at its end time", () => {
+    assert.equal(projectEvent(EVENT, NOW)!.expiresAt, EVENT.ends_at);
   });
 });

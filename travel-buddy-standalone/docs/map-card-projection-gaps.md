@@ -44,16 +44,21 @@ category, city, thumbnailUrl, verificationLevel, coordsPrecision
 | `neighborhood` | full-detent location row | `subtitle` already carries `category · city` |
 | `layoverSafe` | "Layover safe" chip (preview card) | add to both `projectGem` payloads |
 
-**Separate server defect — user-visible today.** `projectGem` reads
-`g.thumbnail_url`, but the row it is given comes from `findNearbyGems`, which
-selects `image_url`; `hidden_gems` has no `thumbnail_url` column at all. So
-`thumbnailUrl` is **always null on the gateway path** and gem cards there have no
-image. The client mirror uses `gem.imageUrl` and does show one, so the two paths
-disagree on pixels while agreeing on shape. The fix is one expression in
-`projectGem` (`g.thumbnail_url ?? g.image_url ?? null`), but it lives in the
-api-server package, whose tests do not run under
-`travel-buddy-standalone`'s `check:all` — so it is reported here rather than
-changed blind.
+**Two server defects — FIXED 2026-09-03.**
+
+- `projectGem` read `g.thumbnail_url`. `hidden_gems` has no such column (it has
+  `image_url`), so `thumbnailUrl` was **always null on the gateway path** and gem
+  cards there had no image, while the client mirror — reading the app DTO's
+  `imageUrl` — showed one. Same shape, different pixels, depending on a flag.
+- `projectEvent` read `ev.ends_at`, which IS an `events` column but was **not in
+  `loadNearbyEvents`' select list** — equally undefined at runtime. `expiresAt`
+  was therefore never set on a gateway-served event, so a started event would
+  render LIVE forever (spec §37: "Do not let stale claims remain visually live").
+
+Both are now guarded: `artifacts/api-server/src/test/mapProjection.test.ts`
+checks every snake_case field the projectors read against **both** the generated
+schema and the `.select()` list of the query that produces the row. A column that
+does not exist, or exists but is not fetched, fails the test.
 
 ---
 

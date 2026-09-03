@@ -41,7 +41,11 @@ export async function loadNearbyEvents(
   const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
   const { data, error } = await sc
     .from("events")
-    .select("id, host_id, title, location_name, location_lat, location_lng, show_exact_location, starts_at, cover_url, visibility, state, age_min, age_max, trust_score_min, verified_only")
+    // `ends_at` is what projectEvent turns into the object's `expiresAt`, and
+    // `expiresAt` is what stops a started event rendering as LIVE forever
+    // (spec §37: "Do not let stale claims remain visually live"). It was absent
+    // from this list, so every gateway-served event had expiresAt undefined.
+    .select("id, host_id, title, location_name, location_lat, location_lng, show_exact_location, starts_at, ends_at, cover_url, visibility, state, age_min, age_max, trust_score_min, verified_only")
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public", "friends_only"])
     .gte("location_lat", lat - latDelta).lte("location_lat", lat + latDelta)
