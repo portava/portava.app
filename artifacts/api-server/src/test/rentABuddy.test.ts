@@ -1409,7 +1409,12 @@ describe("review display (ID domain regression)", () => {
     // Should find the review because BUDDY_PROF.user_id = BUDDY_USER
     assert.equal(r.body.total, 1,
       "Review should be returned when filtering by buddy user_id via profile lookup");
-    assert.equal(r.body.reviews[0].reviewee_id, BUDDY_USER);
+    // `buddyId`, not `reviewee_id`: this endpoint now maps rows to the camelCase
+    // shape the app's `BuddyReview` type declares instead of returning
+    // `select("*")` output. Reading the raw column here was the same coupling
+    // that made the app render "Invalid Date" for every review.
+    assert.equal(r.body.reviews[0].buddyId, BUDDY_USER);
+    assert.equal(r.body.reviews[0].reviewee_id, undefined, "raw columns must not leak");
   });
 });
 
