@@ -231,24 +231,41 @@ export const GEM_SEARCHABLE_STATUSES = ["active"] as const;
 // `text` column, not an enum, so a wrong literal there is a harmless non-match
 // rather than a 400. Enum-typed is what makes this class fatal.
 
+// `trip_status` labels: draft | planning | upcoming | active | completed |
+// cancelled | archived. "deleted" and "banned" — what these emitters used to
+// filter on — are not among them, and trips carry no moderation column at all,
+// so no real label means "banned".
+//
+// Two predicates, because search asks two different questions and the repo
+// already answers each of them somewhere. Adopting both rather than flattening
+// them into one is the difference between a fix and a behaviour change.
+
 /**
- * `trip_status` labels a public trip search must NOT return. The enum's full
- * label set is `draft | planning | upcoming | active | completed | cancelled |
- * archived`; "deleted" and "banned" — what this emitter used to filter on —
- * are not among them, and trips carry no moderation column at all, so there is
- * no real label meaning "banned".
+ * Statuses nobody searches — the trip is abandoned or put away. This is
+ * PassportRemembersService's rule for the owner's own trips ("Exclude
+ * cancelled/archived"), which CompassTripContext agrees with by listing every
+ * other label including `draft`.
+ */
+export const TRIP_RETIRED_STATUSES = ["cancelled", "archived"] as const;
+
+/**
+ * Statuses a PUBLIC trip search must not return: the retired ones plus `draft`,
+ * because an unpublished trip is not public content. This is wellKnownShare's
+ * public-unfurl gate verbatim ("draft/cancelled/archived trips are not
+ * shareable content even when the owner left visibility=public on them"), so a
+ * search row and a shared trip link agree about which trips are public.
  *
- * This is wellKnownShare's public-unfurl gate verbatim ("draft/cancelled/
- * archived trips are not shareable content even when the owner left
- * visibility=public on them"), so search and a shared link agree about which
- * trips are public content. Note it is strictly WIDER than the broken filter's
- * apparent intent: the old `.neq("status","cancelled")` would have surfaced
- * unpublished drafts and archived trips had it ever run.
+ * Strictly WIDER than the broken filter's apparent intent: the old
+ * `.neq("status","cancelled")` would have surfaced unpublished drafts and
+ * archived trips had it ever run.
  *
- * Exported so a test can hold this filter against the real enum instead of
+ * Derived from TRIP_RETIRED_STATUSES so the public gate cannot drift away from
+ * the owner one — the public rule is "the owner's rule, plus draft".
+ *
+ * Both are exported so a test can hold them against the real enum instead of
  * against a fixture's invented value.
  */
-export const TRIP_UNSEARCHABLE_STATUSES = ["draft", "cancelled", "archived"] as const;
+export const TRIP_UNSEARCHABLE_STATUSES = ["draft", ...TRIP_RETIRED_STATUSES] as const;
 
 /**
  * `post_status` labels a public post search may return. The enum's full label
@@ -840,23 +857,27 @@ async function searchPlans(
       .from("trips")
       .select("id, visibility, show_in_discovery, owner_id, status, start_date")
       .in("id", tripIds)
-      // Identical 22P02 defect to searchTrips above, and the same predicate, so
-      // a plan item and its parent trip cannot disagree about whether that trip
-      // is searchable.
+      // Identical 22P02 defect to searchTrips above ("deleted"/"banned" are not
+      // trip_status labels), but NOT the identical predicate.
       //
-      // This applies to the caller-owned branch too: the in-code filter below
-      // lets you find plan items on your OWN non-public trips, but a draft,
-      // cancelled or archived trip is out of the search index for everyone
-      // including its owner. That is a deliberate narrowing of the broken
-      // filter's apparent intent (it excluded only `cancelled`) and matches
-      // what searchTrips returns, so the two emitters agree in one response.
-      .not("status", "in", notInList(TRIP_UNSEARCHABLE_STATUSES));
+      // This emitter serves two audiences: public discoverable trips, and the
+      // caller's OWN trips regardless of visibility (see the filter below —
+      // that owner branch is the whole reason it reads trips at all). A draft
+      // trip is not public content, but it is very much the owner's, so `draft`
+      // is excluded per-branch below rather than here. Only the retired
+      // statuses — abandoned or put away — are out of the index for everyone.
+      .not("status", "in", notInList(TRIP_RETIRED_STATUSES));
 
     const allowedTrips = (trips ?? []).filter(
       (t: any) =>
-        // Public trips: also require show_in_discovery so owners who opted out are excluded.
-        // Caller-owned trips are always visible regardless of the flag.
-        (((t.visibility as string) === "public" && t.show_in_discovery === true) ||
+        // Public trips: also require show_in_discovery so owners who opted out are excluded,
+        // and exclude `draft` — an unpublished trip is not public content (this is the half
+        // of TRIP_UNSEARCHABLE_STATUSES the query above deliberately left to this branch;
+        // the retired statuses were already dropped there, for both branches).
+        // Caller-owned trips are always visible regardless of the flag, drafts included:
+        // a trip you are still writing is still yours to find.
+        (((t.visibility as string) === "public" && t.show_in_discovery === true
+          && (t.status as string) !== "draft") ||
           (t.owner_id as string) === userId) &&
         !blockedSet.has(t.owner_id as string) &&
         !ageRestrictedSet.has(t.owner_id as string) &&

@@ -69,6 +69,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
 import discoverySearchRouter, {
   TRIP_UNSEARCHABLE_STATUSES,
+  TRIP_RETIRED_STATUSES,
   POST_SEARCHABLE_STATUSES,
 } from "../routes/discoverySearch.js";
 import { Constants } from "../lib/database.types.js";
@@ -517,6 +518,29 @@ describe("discovery search — status predicates name only real enum labels", ()
     }
   });
 
+  it("TRIP_RETIRED_STATUSES holds only real trip_status labels", () => {
+    assert.ok(TRIP_RETIRED_STATUSES.length > 0, "an empty exclusion list excludes nothing");
+    for (const s of TRIP_RETIRED_STATUSES) {
+      assert.ok(REAL_ENUM_LABELS["trips.status"]!.has(s), `"${s}" is not a trip_status label`);
+    }
+  });
+
+  it("the public gate is the owner gate plus exactly `draft`", () => {
+    // The two predicates answer two questions, but they are not independent:
+    // public = retired + draft. Pinned so a change to one cannot silently make
+    // the public surface LOOSER than the owner surface.
+    assert.deepEqual(
+      [...TRIP_UNSEARCHABLE_STATUSES].sort(),
+      [...new Set([...TRIP_RETIRED_STATUSES, "draft"])].sort(),
+    );
+    for (const s of TRIP_RETIRED_STATUSES) {
+      assert.ok(
+        (TRIP_UNSEARCHABLE_STATUSES as readonly string[]).includes(s),
+        `"${s}" is hidden from the owner but not from the public — that is backwards`,
+      );
+    }
+  });
+
   it("leaves at least one trip status searchable", () => {
     // A denylist that happened to name every label would be a different way of
     // writing the same dead search.
@@ -667,7 +691,7 @@ describe("discovery search — trips status exclusion", () => {
 
 describe("discovery search — plans inherit their trip's status exclusion", () => {
   for (const status of TRIP_UNSEARCHABLE_STATUSES) {
-    it(`excludes a plan item whose trip is ${status}`, async () => {
+    it(`excludes a plan item on someone else's ${status} public trip`, async () => {
       setup({
         profiles: [profileRow()],
         trips: [tripRow({ status })],
@@ -703,17 +727,42 @@ describe("discovery search — plans inherit their trip's status exclusion", () 
     assert.deepEqual(await idsFor("/discovery/search?q=tokyo&type=plans"), [PLAN_ID]);
   });
 
-  it("excludes the caller's own plan item when their trip is a draft", async () => {
-    // The deliberate narrowing: a draft/cancelled/archived trip is out of the
-    // search index for everyone, its owner included, so searchTrips and
-    // searchPlans cannot disagree inside one response. Pinned because it is a
-    // judgement call, not a consequence of the enum labels.
+  it("returns the caller's own plan item on their DRAFT trip", async () => {
+    // The two-predicate split, pinned. `draft` is excluded from the PUBLIC
+    // branch only: an unpublished trip is not public content, but it is still
+    // the owner's, and this emitter reads trips precisely so the owner branch
+    // can exist. Matches CompassTripContext and PassportRemembersService, both
+    // of which include `draft` on owner-scoped trip reads.
     setup({
       profiles: [profileRow({ id: ME, handle: "me", username: "me", name: "Me" })],
       trips: [tripRow({ owner_id: ME, visibility: "private", status: "draft" })],
       trip_plan_items: [planRow({ creator_id: ME })],
     });
-    assert.deepEqual(await idsFor("/discovery/search?q=tokyo&type=plans"), []);
+    assert.deepEqual(await idsFor("/discovery/search?q=tokyo&type=plans"), [PLAN_ID]);
+  });
+
+  for (const status of TRIP_RETIRED_STATUSES) {
+    it(`excludes the caller's own plan item when their trip is ${status}`, async () => {
+      // Retired means retired for everyone — the owner branch does not reopen it.
+      setup({
+        profiles: [profileRow({ id: ME, handle: "me", username: "me", name: "Me" })],
+        trips: [tripRow({ owner_id: ME, visibility: "private", status })],
+        trip_plan_items: [planRow({ creator_id: ME })],
+      });
+      assert.deepEqual(await idsFor("/discovery/search?q=tokyo&type=plans"), []);
+    });
+  }
+
+  it("excludes a DRAFT public trip's plan item from a stranger", async () => {
+    setup({
+      profiles: [profileRow()],
+      trips: [tripRow({ owner_id: ALICE, visibility: "public", status: "draft" })],
+      trip_plan_items: [planRow()],
+    });
+    assert.deepEqual(
+      await idsFor("/discovery/search?q=tokyo&type=plans"), [],
+      "an unpublished trip is not public content, whatever its visibility says",
+    );
   });
 
   it("still excludes a plan item on someone else's private trip", async () => {
@@ -849,13 +898,13 @@ describe("discovery search — the wire literal matches the exported constant", 
     );
   });
 
-  it("plans: the trips sub-query sends the same set", async () => {
+  it("plans: the trips sub-query sends the RETIRED set, not the public one", async () => {
     setup({ profiles: [profileRow()], trips: [tripRow()], trip_plan_items: [planRow()] });
     await get("/discovery/search?q=tokyo&type=plans");
     assert.deepEqual(
       [...(recorded.filterValues.get("trips.status") ?? [])].sort(),
-      [...TRIP_UNSEARCHABLE_STATUSES].sort(),
-      "the two trip readers must not drift apart",
+      [...TRIP_RETIRED_STATUSES].sort(),
+      "the DB filter carries only the everyone-branch exclusion; `draft` is per-branch in code",
     );
   });
 
