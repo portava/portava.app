@@ -69,8 +69,11 @@ function okRepair(): AdminApiResult<DeleteGeocodeCacheResult> {
   };
 }
 
+// AdminApiResult's failure branch is `{ ok: false; error: string }` — it carries
+// no `data` at all, so the `data: {} as …` these two used to pass was a field
+// the type does not have and no consumer can legally read.
 function failDelete(error = 'Server error'): AdminApiResult<DeleteGeocodeCacheResult> {
-  return { ok: false, error, data: {} as DeleteGeocodeCacheResult };
+  return { ok: false, error };
 }
 
 /** Returns a DeleteFn that gives `first` on the first call, `second` on subsequent calls. */
@@ -483,7 +486,7 @@ function okPut(
 }
 
 function failPut(error = 'Server error'): AdminApiResult<PutGeocodeCacheResult> {
-  return { ok: false, error, data: {} as PutGeocodeCacheResult };
+  return { ok: false, error };
 }
 
 function makePutFake(

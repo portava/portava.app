@@ -68,6 +68,8 @@ const PLACE_WITH_IMAGE = {
   neighborhood:   'Old Quarter',
   rating:         4.2,
   blurb:          'Great vibes',
+  // Required by CompassUiPlace; the card renders a verified badge off it.
+  verified:       false,
   headerImageUrl: 'https://broken.example.com/no-such-image.jpg',
   lat:            10.3,
   lng:            123.9,

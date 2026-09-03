@@ -1,0 +1,5 @@
+{
+  "_comment": "Fixture/type mismatches that predate scripts/check-test-fixture-shapes.mjs. EMPTY on purpose: all 21 findings present when the guard was written were fixed rather than baselined. The list may shrink, never grow — a new entry means a fixture was allowed to claim a type it does not have, which is the exact failure this guard exists to stop. Keyed by \"<file>|TS<code>\" with a count; the guard also fails on a STALE entry, so a baseline cannot outlive its debt.",
+  "_generated": "2026-09-03",
+  "entries": {}
+}

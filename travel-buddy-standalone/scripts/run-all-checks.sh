@@ -34,6 +34,7 @@ run_check "lint:avatar-icon-sizing" pnpm run lint:avatar-icon-sizing
 run_check "test:avatar-icon-sizing-guard" pnpm run test:avatar-icon-sizing-guard
 run_check "lint:dev-proxy-not-shipped" pnpm run lint:dev-proxy-not-shipped
 run_check "lint:orphan-tests" pnpm run lint:orphan-tests
+run_check "check:test-fixture-shapes" pnpm run check:test-fixture-shapes
 
 echo ""
 echo "──────────────────────────────────────────────────────────"
