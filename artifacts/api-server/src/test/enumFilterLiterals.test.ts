@@ -28,10 +28,12 @@
  *
  * WHAT THIS GUARD CHECKS
  * ----------------------
- * Every `.eq()` / `.neq()` / `.in()` / `.not(…, "in", …)` string literal fed to
- * a column that `src/lib/database.types.ts` declares as enum-typed, held
- * against that enum's labels. Both the column→enum mapping and the label sets
- * are read out of the generated types — no hand-transcribed schema to drift.
+ * Every string literal fed to a column that `src/lib/database.types.ts`
+ * declares as enum-typed, held against that enum's labels — via `.eq()`,
+ * `.neq()`, `.gt()`/`.gte()`/`.lt()`/`.lte()`, `.in()`, `.not()` with any
+ * operator, `.filter()`, `.match()`, or a PostgREST filter string inside
+ * `.or()`. Both the column→enum mapping and the label sets are read out of the
+ * generated types — no hand-transcribed schema to drift.
  *
  * KNOWN_DEAD_QUERIES below is a RATCHET, not an allowlist: it records the sites
  * that already existed when this guard was written, with what each one breaks.
@@ -55,6 +57,13 @@
  *    and so is any filter built dynamically or held in a variable.
  *  - It sees only string LITERALS. `.eq("status", someVar)` is out of scope,
  *    which is where the next instance of this class will most likely hide.
+ *  - THE OPERATOR SET IS A NAMED LIST, and it has already been wrong once. The
+ *    first version matched only `.not(…, "in", …)` and therefore missed
+ *    `.not("post_status", "eq", "delayed_post")` at two live sites, reporting a
+ *    total that was short by two. It now covers eq/neq/gt/gte/lt/lte, `.in()`,
+ *    `.not()` with any operator, `.filter()`, `.match()` and `.or()` filter
+ *    strings. Any future supabase-js filter shape is invisible until added here,
+ *    so treat a clean total as "clean for the shapes below", not "clean".
  *  - It says nothing about whether a query with only real labels asks the RIGHT
  *    question. `searchPosts` filtered `.neq("status","deleted")` using a real
  *    label while leaving `hidden` and `reported` posts publicly searchable;
@@ -80,101 +89,174 @@ const TYPES = join(SRC, "lib/database.types.ts");
 
 // ── The known dead queries, as a ratchet ──────────────────────────────────────
 //
-// Each entry: the file, how many bad literals it contains today, and what the
-// dead query costs. Reported by the 2026-09-03 enum-literal sweep and left
-// UNFIXED — each needs its own judgement about which real label carries the
-// intent, which is the work the fix actually is (see searchPosts: the label it
-// was missing was not the one it looked like it was missing).
+// Sites that already existed when this guard was written, left UNFIXED — each
+// needs its own judgement about which real label carries the intent, which is
+// the work the fix actually is (see searchPosts: the label it was missing was
+// not the one it looked like it was missing).
 //
-// HOW MUCH EACH ONE COSTS TODAY. The `effect` lines describe the MECHANISM,
-// which is broken regardless of data. Production row counts on 2026-09-03,
-// because a broken mechanism over an empty table is a different priority from
-// one over a populated table:
+// TWO FIELDS, DELIBERATELY SEPARATE.
+//   `effect` — the MECHANISM. Broken regardless of data, always true.
+//   `today`  — what fixing it would ACTUALLY return in production, measured.
 //
-//   events            104 rows, all 104 in a searchable state  → live loss
-//   hidden_gems         6 rows, all 6 active                   → live loss
-//   discovery_places  184 rows                                 → unaffected
-//   rent_buddy_bookings 0 rows                                 → latent only
+// They are separate because conflating them is a mistake this file already made
+// once. Its first version read raw table counts and claimed "104 live events
+// lost" for the event sites. That was wrong: those queries also require public
+// visibility AND a forward time window, and every event in production started
+// 11+ days ago, so the true answer was ZERO. A row count is not an impact
+// estimate — you have to run the WHOLE predicate.
 //
-// So the Compass/event and hidden-gem entries below are losing real rows now.
-// The two rent_buddy_bookings entries cannot lose a row until bookings exist —
-// they are pre-launch defects, not active ones. Fix them before that changes.
+// Measured against production (ajrurzioarfkagpuxfnb) on 2026-09-03 by executing
+// each site's full corrected predicate. Summary of what that found:
+//
+//   LIVE, narrowly ....  trips "in_progress" (1 user), hidden_gems "approved"
+//                        (the duplicate-detection pool)
+//   LATENT ............  everything else — 5 of the 7 families return 0 rows
+//                        today for reasons that have nothing to do with the
+//                        enum bug: empty tables, feature flags that are off,
+//                        forward time windows over stale data, city gates.
+//
+// LATENT is not "safe". Every one of these is a real defect that flips LIVE with
+// no code change the moment the data or a flag moves. It only means: fixing the
+// literal today would not change what any user sees.
 //
 // To fix one: correct the literal, then drop its count here.
 
-const KNOWN_DEAD_QUERIES: Record<string, { count: number; effect: string }> = {
+const KNOWN_DEAD_QUERIES: Record<string, { count: number; effect: string; today: string }> = {
   "src/compass/CompassAbuseDefenseEngine.ts": {
     count: 1,
-    effect: 'rent_buddy_bookings "refunded" — the cancellation/refund abuse signal never fires.',
+    effect: 'rent_buddy_bookings "refunded" — the cancellation/refund abuse signal never fires. ' +
+      "The flag drives reach reduction and admin review, so this is an enforcement path.",
+    today: "0 rows. rent_buddy_bookings is EMPTY in production, and the rent-buddy master flag " +
+      "is off. Latent until bookings exist.",
   },
   "src/compass/CompassFallbackFeedBuilder.ts": {
-    count: 1,
-    effect: 'trips .in("status", ["in_progress", "upcoming"]) — "upcoming" is real and ' +
+    count: 3,
+    effect: 'THREE dead queries, two of which the first version of this scanner could not see. ' +
+      '(1) :283 trips .in("status", ["in_progress", "upcoming"]) — "upcoming" is real and ' +
       '"in_progress" is not, and Postgres casts every element before matching any, so the ' +
-      "fallback feed loses ALL of the user's owned trips, not just in-progress ones. The " +
-      "clearest example of why one bad literal in a list kills the whole query.",
+      "owned-trips query dies whole: the clearest example of why one bad literal in a list " +
+      'kills everything. (2) :447 and (3) :500 posts .not("post_status", "eq", "delayed_post") ' +
+      "— delayed_post_status has no such label, killing the verified-event-posts and " +
+      "popular-posts fallbacks. All three swallow into `catch { return []; }`.",
+    today: ":283 would yield 13 rows across 8 users; :500 would yield 8 rows. But every caller " +
+      "of buildFallbackFeed is either gated on COMPASS_FALLBACK_MODE_ENABLED (false in " +
+      "production) or is an exception handler, so no user reaches any of it in steady state. " +
+      ":447 is 0 regardless — prod has no posts with category='event' or location_verified.",
   },
   "src/compass/CompassItemHydrator.ts": {
     count: 1,
-    effect: 'hidden_gems "approved" — Compass hydrates no hidden gems at all (all 6 live).',
+    effect: 'hidden_gems "approved" — Compass hydrates no hidden gems at all. This is also the ' +
+      "LEAST observable site of the whole set: it destructures only `data`, never `error`, so " +
+      "its own catch-and-log cannot fire for this defect. Fixing the literal without adding an " +
+      "error check leaves the next failure just as silent.",
+    today: "0 rows for every real user. The gate is not the row count but `.ilike(city, " +
+      "currentCity)`, an EXACT unwildcarded match: the only 5 users with a location have Da " +
+      "Nang (in three spellings) or Paris, and no active gem is in either. Reaches 2 rows only " +
+      "via a caller-supplied ?city=Bangkok.",
   },
   "src/compass/CompassLiveEngine.ts": {
     count: 1,
     effect: 'trips "in_progress" — live intel never binds to the trip the user is on.',
+    today: "1 row, for exactly 1 of 20 candidate users (4 trips match but one owner holds all " +
+      "four and .limit(1) caps it). Genuinely live, and narrow.",
   },
   "src/compass/CompassSenseEngine.ts": {
     count: 1,
-    effect: 'trips "in_progress" — same, on the sense path.',
+    effect: 'trips "in_progress" — same defect on the sense path.',
+    today: "1 row for the same single user, but 0 downstream nudges: both consumers bail on " +
+      "empty plan items, and all 8 trip_plan_items rows have day_date NULL.",
   },
   "src/compass/CompassTools.ts": {
     count: 4,
-    effect: 'events "deleted"/"banned" at two sites — both Compass event tools return nothing, ' +
-      "against 104 live events all in a searchable state. Identical to the searchEvents defect " +
-      "fixed in 51402fe99; this copy was never updated.",
+    effect: 'events "deleted"/"banned" at two sites — both Compass event tools return nothing. ' +
+      "Identical to the searchEvents defect fixed in 51402fe99; this copy was never updated. " +
+      'The established replacement is mapSearch\'s STATE clause only — .not("state","in", ' +
+      '\'("draft","cancelled","archived")\') — not its broader visibility set.',
+    today: "0 rows. Both sites require starts_at >= now()-2h and the newest event in production " +
+      "started 2026-08-23, 11 days ago. This is the family that produced the \"104 events\" " +
+      "error: 104 rows exist, 98 pass visibility+state, and 0 pass the time window.",
   },
   "src/lib/inputAssistance/duplicateDetection.ts": {
     count: 1,
     effect: 'hidden_gems "approved" — the candidate pool is always empty, so duplicate ' +
-      "detection can never report a duplicate and every submission looks novel. Live: all 6 " +
-      "production gems are invisible to it.",
+      "detection can never report a duplicate and every submission looks novel.",
+    today: "Up to 6 rows — the whole active gem table. Genuinely reachable: service client, no " +
+      "feature flag, reached from the hidden-gem creation form. The most live of the set, " +
+      "though a Da Nang user typing a fresh name still gets 0 because no gem is near them.",
   },
   "src/routes/adminCompass.ts": {
     count: 1,
     effect: 'posts.post_status "delayed_post" — the admin pending-publish count is always empty.',
+    today: "0 rows. All 9 production posts are post_status='published' and none has " +
+      "publish_eligible_at in the future, so the tile reads 0 either way.",
   },
   "src/routes/compass.ts": {
     count: 1,
     effect: 'trips.visibility "friends" (the real label is "buddies") — the traveller-overlap ' +
-      "query is dead.",
+      "boost query is dead, so no traveller ever gets the +15 destination_overlap score.",
+    today: "0 rows, for two independent reasons: every forward-dated upcoming/active trip in " +
+      "production is visibility='private', and every public/buddies trip ended 106 days ago. " +
+      "Note the only way to make this return rows today is to include 'private', which would " +
+      "leak a private trip's destination — so every correct fix returns 0.",
   },
   "src/routes/compassHome.ts": {
     count: 2,
-    effect: 'events "deleted"/"banned" — Compass Home shows no events, against 104 live ones.',
+    effect: 'events "deleted"/"banned" — Compass Home\'s "Starting soon" and "Tonight" strips ' +
+      "show no events.",
+    today: "0 rows. Both strips are strictly forward windows (now→+6h, now→+12h) over the same " +
+      "stale event table. Same trap as CompassTools.",
   },
   "src/routes/dailyBrief.ts": {
     count: 1,
     effect: 'trips "in_progress" — the daily brief never picks up the trip in progress, which ' +
-      "is its stated highest-priority input.",
+      "is its stated highest-priority input. The read destructures no error, so the 400 falls " +
+      "through to the next branch rather than surfacing.",
+    today: "1 row, for 1 of 16 candidate users, and it flips that user's brief from the generic " +
+      "one to a real trip brief — the upcoming-within-3-days fallback matches 0 rows for " +
+      "everyone. The clearest live user-visible defect in the set, for exactly one user.",
   },
   "src/services/hiddenGems/HiddenGemModerationService.ts": {
     count: 1,
     effect: 'hidden_gems "approved" — the moderation queue\'s active list. The ONLY site of ' +
-      "these fifteen that rethrows its error instead of swallowing it, so it is the only one " +
-      "that ever surfaced as a failure rather than as emptiness.",
+      "these that rethrows its error instead of swallowing it (`if (aErr) throw aErr`), which " +
+      "routes/hiddenGems.ts turns into a db_error response. So it is the only one of the " +
+      "twenty that ever surfaced as a failure rather than as emptiness.",
+    today: "Would return all 6 active gems. Today the endpoint 500s instead of rendering them, " +
+      "which is why this one is discoverable at all.",
   },
   "src/services/interactionPermissions.ts": {
     count: 1,
     effect: 'rent_buddy_bookings "pre_booking" — `rabPreBooking` is permanently false, so the ' +
-      "`rab_off_app_payment_risk` safety warning can never be raised. Latent today " +
-      "(rent_buddy_bookings is empty in production), and the highest-consequence entry here " +
-      "the moment it is not: it is the only one that suppresses a SAFETY signal rather than " +
-      "a content list.",
+      "`rab_off_app_payment_risk` warning is never raised. Note the swallow is NOT the " +
+      "`.catch()` on that line — maybeSingle() resolves `{data:null,error}` rather than " +
+      "rejecting, so the catch never runs and `Boolean(null)` is what hides it.",
+    today: "0 rows — rent_buddy_bookings is empty. Also worth knowing before prioritising: " +
+      "`safetyWarnings` has no consumer anywhere outside this file, so the warning is display " +
+      "payload rather than an enforcement input.",
   },
   "src/services/ranking/CreatorActivityScoreService.ts": {
     count: 1,
-    effect: 'posts "published" — posts contribute 0 to every creator activity score.',
+    effect: 'posts "published" — posts contribute 0 to every creator activity score. (The ' +
+      "sibling reviews.state='published' in the same Promise.all is CORRECT — review_state " +
+      "does have that label. Only the posts filter is broken.)",
+    today: "0 rows, and the query is never even issued: ACTIVITY_DISCOVERY_BOOST_ENABLED is " +
+      "false in production and creator_activity_scores is empty.",
   },
 };
+
+// ── A companion defect the scanner cannot see ────────────────────────────────
+//
+// CompassFallbackFeedBuilder.ts:516 does `isDelayedPost: r.post_status === "delayed_post"`
+// — the same non-label, but as a JS comparison rather than a query filter, so it
+// raises no 22P02 and this scan will never flag it. It is permanently FALSE, and
+// it feeds CompassSafetyFilter (which gates the item out entirely) and
+// CompassPrivacyGuard (which strips publicLat/publicLng from a not-yet-eligible
+// post). So a location-privacy scrubber is wired to a constant.
+//
+// Recorded here because fixing the DB filter at :500 without fixing this leaves
+// the guard inert — and because the obvious repair, comparing to "published"
+// after the DB filter already selects only published rows, is tautologically
+// false and would look fixed while doing nothing.
 
 // ── Schema facts, read from the generated types ───────────────────────────────
 
@@ -265,14 +347,47 @@ function scan(colEnum: Map<string, string>, enumLabels: Map<string, Set<string>>
         });
       };
 
-      for (const x of seg.matchAll(/\.(eq|neq)\(\s*["'`](\w+)["'`]\s*,\s*["'`]([^"'`]*)["'`]\s*\)/g)) {
+      // Direct comparisons. gt/gte/lt/lte are included because enum types ARE
+      // ordered in Postgres, so they accept a literal and reject an unknown one
+      // exactly like eq does.
+      for (const x of seg.matchAll(/\.(eq|neq|gt|gte|lt|lte)\(\s*["'`](\w+)["'`]\s*,\s*["'`]([^"'`]*)["'`]\s*\)/g)) {
         emit(x[2]!, x[3]!, `.${x[1]}()`, x.index!);
       }
       for (const x of seg.matchAll(/\.in\(\s*["'`](\w+)["'`]\s*,\s*\[([^\]]*)\]/g)) {
         for (const v of x[2]!.matchAll(/["'`]([^"'`]*)["'`]/g)) emit(x[1]!, v[1]!, ".in()", x.index!);
       }
-      for (const x of seg.matchAll(/\.not\(\s*["'`](\w+)["'`]\s*,\s*["'`]in["'`]\s*,\s*["'`]\(([^)]*)\)["'`]/g)) {
-        for (const v of x[2]!.matchAll(/"([^"]*)"/g)) emit(x[1]!, v[1]!, '.not(…,"in",…)', x.index!);
+      // `.not(col, <op>, value)` for EVERY op, not just "in".
+      //
+      // The first version of this scanner matched only `.not(…, "in", …)`, and
+      // that gap hid two live defects: CompassFallbackFeedBuilder's
+      // `.not("post_status", "eq", "delayed_post")` at two sites. A guard whose
+      // blind spot is shaped like the bug is worse than no guard, because it
+      // reports a clean total. `is` is skipped — `.not(col,"is",null)` takes a
+      // null, not an enum literal.
+      for (const x of seg.matchAll(/\.not\(\s*["'`](\w+)["'`]\s*,\s*["'`](\w+)["'`]\s*,\s*["'`]([^"'`]*)["'`]\s*\)/g)) {
+        const op = x[2]!;
+        if (op === "is") continue;
+        if (op === "in") {
+          for (const v of x[3]!.matchAll(/"([^"]*)"/g)) emit(x[1]!, v[1]!, '.not(…,"in",…)', x.index!);
+        } else {
+          emit(x[1]!, x[3]!, `.not(…,"${op}",…)`, x.index!);
+        }
+      }
+      // The generic escape hatches, so a site cannot dodge this scan by using them.
+      for (const x of seg.matchAll(/\.filter\(\s*["'`](\w+)["'`]\s*,\s*["'`](\w+)["'`]\s*,\s*["'`]([^"'`]*)["'`]\s*\)/g)) {
+        emit(x[1]!, x[3]!, `.filter(…,"${x[2]}",…)`, x.index!);
+      }
+      for (const x of seg.matchAll(/\.match\(\s*\{([^}]*)\}/g)) {
+        for (const kv of x[1]!.matchAll(/(\w+)\s*:\s*["'`]([^"'`]*)["'`]/g)) {
+          emit(kv[1]!, kv[2]!, ".match()", x.index!);
+        }
+      }
+      // PostgREST filter strings inside `.or("col.op.val,…")`.
+      for (const x of seg.matchAll(/\.or\(\s*[`"']([^`"']*)[`"']/g)) {
+        for (const part of x[1]!.split(",")) {
+          const m = part.trim().match(/^(\w+)\.(eq|neq|gt|gte|lt|lte)\.(.+)$/);
+          if (m) emit(m[1]!, m[3]!, `.or(${m[2]})`, x.index!);
+        }
       }
     }
   }
@@ -304,6 +419,28 @@ describe("enum filter literals — the scan's own inputs", () => {
       assert.equal(COLUMN_ENUMS.get(col), en, `${col} no longer resolves to ${en}`);
       assert.ok((ENUM_LABELS.get(en)?.size ?? 0) > 0, `${en} has no labels`);
     }
+  });
+
+  it("every ratchet entry states BOTH the mechanism and a measured impact", () => {
+    // The "104 live events" error was possible because impact was prose in the
+    // same field as mechanism. Keeping `today` a required, non-trivial field is
+    // what stops the next entry being added from a row count instead of a
+    // measurement.
+    const thin: string[] = [];
+    for (const [file, entry] of Object.entries(KNOWN_DEAD_QUERIES)) {
+      if (!entry.effect || entry.effect.length < 40) thin.push(`${file}: effect is missing or too thin`);
+      if (!entry.today || entry.today.length < 40) thin.push(`${file}: today is missing or too thin`);
+      if (entry.count < 1) thin.push(`${file}: count must be at least 1`);
+      // A measurement names a number of rows, or says the query is unreachable.
+      if (entry.today && !/\d|unreachable|never|empty/i.test(entry.today)) {
+        thin.push(`${file}: today does not state a measured outcome`);
+      }
+    }
+    assert.deepEqual(
+      thin, [],
+      "each entry must say what is structurally broken AND what fixing it would return in " +
+      "production — run the site's FULL corrected predicate, not a raw table count:\n" + thin.join("\n"),
+    );
   });
 
   it("does not treat text columns as enums", () => {
