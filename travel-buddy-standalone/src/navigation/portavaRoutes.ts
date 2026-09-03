@@ -640,6 +640,26 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     deepLink: '/passport/shared-context',
   },
+  {
+    key: 'passport-journeys',
+    path: 'passport/journeys',
+    title: 'Journeys',
+    parent: 'tab-passport',
+    icon: 'Route',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/journeys',
+  },
+  {
+    key: 'passport-travel-identity',
+    path: 'passport/travel-identity',
+    title: 'Travel Identity',
+    parent: 'tab-passport',
+    icon: 'Fingerprint',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/travel-identity',
+  },
 
   // ── Stamps ────────────────────────────────────────────────────────────────
 

@@ -1,0 +1,208 @@
+/**
+ * Passport projection service — client bindings for the two read-only Passport
+ * projection endpoints that already exist on the API server:
+ *
+ *   GET /api/passport/:userId/journeys     → §14 grouped chronological journeys
+ *   GET /api/passport/:userId/projection   → §29 aggregate (we read travelIdentity)
+ *
+ * These endpoints do ALL privacy filtering server-side (spec §4): the client
+ * never re-derives visibility, and the payloads are already coarsened to the
+ * granularity the viewer is permitted to see (coarse dates, city/neighbourhood
+ * only — never coordinates, §23 / TABLE 25). This module is a thin fetch layer
+ * that re-declares the response shapes (the server types live in a different
+ * package) and unwraps the envelopes for the hooks.
+ *
+ * Auth + fetch follow the same freshToken() pattern as passportStamps.ts.
+ */
+import { freshToken as freshApiToken } from './apiToken.ts';
+
+// ── Result envelope (mirrors passportStamps.ts) ──────────────────────────────
+
+type ApiResult<T> = { ok: true; data: T } | { ok: false; message: string };
+
+function apiBase(): string {
+  return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
+}
+
+/** Test seam — set to a non-null string to bypass Supabase auth in tests. */
+let _testAuthToken: string | null = null;
+export function _setTestAuthToken(t: string | null): void { _testAuthToken = t; }
+
+async function freshToken(): Promise<string | null> {
+  if (_testAuthToken !== null) return _testAuthToken;
+  return freshApiToken();
+}
+
+async function apiGet<T>(path: string): Promise<ApiResult<T>> {
+  const token = await freshToken();
+  if (!token) return { ok: false, message: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    return { ok: true, data: (await res.json()) as T };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
+  }
+}
+
+// ── Journeys (§14 / TABLE 3 / TABLE 26) ──────────────────────────────────────
+
+/** One memory rooted to a Trip in the Journeys view. Coarse place only (§23). */
+export interface JourneyMemory {
+  id: string;
+  title: string | null;
+  city: string | null;
+  country: string | null;
+  category: string | null;
+  photoUrl: string | null;
+  earnedAt: string | null;
+}
+
+/** One stamp rooted to a Trip. Coarse place only (§23). */
+export interface JourneyStamp {
+  name: string | null;
+  city: string | null;
+  country: string | null;
+  earnedAt: string | null;
+}
+
+/**
+ * A person who shared this Trip. The current server projection does not yet
+ * populate this (Journeys is a pure Trip/Memory/Stamp projection), so it is
+ * OPTIONAL and forward-compatible: when the server begins attaching permitted
+ * companions, the Featured Journey's "Who was there" section renders them.
+ */
+export interface JourneyPerson {
+  id: string;
+  name: string | null;
+  handle: string | null;
+  avatarUrl: string | null;
+}
+
+/** One Trip projected into the Journeys view (§14). */
+export interface JourneyProjection {
+  tripId: string;
+  title: string;
+  year: number | null;
+  country: string | null;
+  city: string | null;
+  /** Coarse or exact per server permission; may be null when not permitted. */
+  startDate: string | null;
+  endDate: string | null;
+  durationLabel: string | null;
+  status: string;
+  memoryCount: number;
+  stampCount: number;
+  memories: JourneyMemory[];
+  stamps: JourneyStamp[];
+  featured: boolean;
+  /** Forward-compatible people context (see JourneyPerson). */
+  people?: JourneyPerson[];
+}
+
+/** Grouped chronological projection: year → country → city → Trip (TABLE 26). */
+export interface JourneysProjection {
+  userId: string;
+  years: Array<{
+    year: number | null;
+    countries: Array<{
+      country: string | null;
+      cities: Array<{
+        city: string | null;
+        journeys: JourneyProjection[];
+      }>;
+    }>;
+  }>;
+  featured: JourneyProjection | null;
+  totalJourneys: number;
+}
+
+/** Unwrapped journeys result plus the server's restricted/blocked signal. */
+export interface JourneysResult {
+  journeys: JourneysProjection;
+  /** True when the viewer is blocked/unavailable and the server returned no data. */
+  restricted: boolean;
+}
+
+interface JourneysEnvelope {
+  journeys?: JourneysProjection;
+  restricted?: boolean;
+  viewerContext?: string;
+}
+
+const EMPTY_JOURNEYS: JourneysProjection = { userId: '', years: [], featured: null, totalJourneys: 0 };
+
+export async function getPassportJourneys(userId: string): Promise<ApiResult<JourneysResult>> {
+  const res = await apiGet<JourneysEnvelope>(`/passport/${encodeURIComponent(userId)}/journeys`);
+  if (!res.ok) return { ok: false, message: res.message };
+  return {
+    ok: true,
+    data: {
+      journeys: res.data?.journeys ?? { ...EMPTY_JOURNEYS, userId },
+      restricted: res.data?.restricted === true,
+    },
+  };
+}
+
+// ── Travel Identity / Travel DNA (§19 / TABLE 20) ────────────────────────────
+
+export type TravelDnaState = 'shown' | 'hidden' | 'not_me';
+
+/** A single explainable spectrum reading (TABLE 20). */
+export interface TravelDimension {
+  key: string;
+  label: string;
+  /** Spectrum pole labels; null for value-list dimensions (interests, languages). */
+  poles: { low: string; high: string } | null;
+  /** 0..1 position on the axis, or null for a value list / no signal. */
+  position: number | null;
+  /** Human-readable reading, e.g. "Planner", "Night owl", "EN, VI". */
+  value: string;
+  /** The concrete facts this reading was inferred from (explainability, §19). */
+  evidence: string[];
+  /** Owner-controlled visibility state. */
+  state: TravelDnaState;
+  /** True when the reading is a weak default with no supporting evidence. */
+  inferred: boolean;
+}
+
+/** A named Travel DNA badge (Night Explorer, Hidden Gem Hunter, Food Driven…). */
+export interface TravelTrait {
+  key: string;
+  label: string;
+  description: string;
+  evidence: string[];
+  state: TravelDnaState;
+}
+
+export interface TravelIdentityProjection {
+  userId: string;
+  dimensions: TravelDimension[];
+  traits: TravelTrait[];
+  /** True when stored Show/Hide/Not-Me prefs were applied server-side. */
+  preferencesApplied: boolean;
+  /** True on the owner's own view — controls are only meaningful when editable. */
+  editable: boolean;
+}
+
+interface ProjectionEnvelope {
+  projection?: { travelIdentity?: TravelIdentityProjection | null };
+}
+
+/**
+ * Fetch the §29 aggregate and return ONLY the travelIdentity slice. Returns
+ * `null` (ok) when the projection carries no travel identity (e.g. the viewer
+ * is not permitted to see it) so the screen can show an explicit empty state.
+ */
+export async function getTravelIdentity(
+  userId: string,
+): Promise<ApiResult<TravelIdentityProjection | null>> {
+  const res = await apiGet<ProjectionEnvelope>(`/passport/${encodeURIComponent(userId)}/projection`);
+  if (!res.ok) return { ok: false, message: res.message };
+  return { ok: true, data: res.data?.projection?.travelIdentity ?? null };
+}
