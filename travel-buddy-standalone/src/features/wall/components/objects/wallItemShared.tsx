@@ -16,9 +16,26 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import { CachedImage } from '../../../../components/CachedImage.tsx';
 import { router } from 'expo-router';
-import { MapPin, Sparkles, MessageCircle, Share2, Bookmark } from 'lucide-react-native';
+import {
+  MapPin,
+  Sparkles,
+  MessageCircle,
+  Share2,
+  Bookmark,
+  EyeOff,
+  Compass as CompassIcon,
+} from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon, aspect } from '../../../../theme/tokens.ts';
-import { trackAction } from '../../services/wallAnalytics.ts';
+import {
+  trackAction,
+  trackEngagement,
+  trackFollowFromFeed,
+  trackHandoff,
+  trackNotInterested,
+  type WallHandoffSurface,
+} from '../../services/wallAnalytics.ts';
+import { askCompassFromWall } from '../../services/wallCompass.ts';
+import { sendAction, type WallActionEvent } from '../../services/wallApi.ts';
 import type {
   DisplayMedia,
   PublicActorRef,
@@ -26,7 +43,6 @@ import type {
   WallActionType,
   WallProjection,
 } from '../../types/wallProjection.ts';
-import type { WallActionEvent } from '../../services/wallApi.ts';
 
 // ── Two clocks (spec §16) ────────────────────────────────────────────────────
 
@@ -99,9 +115,8 @@ export function resolveActionRoute(
       return `/post/${objId}`;
     case 'see_live':
       return null; // handled by the Live For You strip, not per-object
-    // join / ask_compass / book_buddy: surfaced but routed conservatively.
     case 'ask_compass':
-      return '/compass-memories';
+      return null; // handled by askCompassFromWall (canonical prefill handoff, §21)
     case 'book_buddy':
       return '/availability';
     case 'join':
@@ -111,8 +126,45 @@ export function resolveActionRoute(
   }
 }
 
+/**
+ * The surrounding Portava surface an action bridges into, for handoff analytics
+ * (spec §32). Compass is handled by askCompassFromWall (which records its own
+ * handoff), so it is not mapped here.
+ */
+export function handoffSurfaceFor(type: WallActionType): WallHandoffSurface | null {
+  switch (type) {
+    case 'see_place':
+      return 'place';
+    case 'open_map':
+      return 'map';
+    case 'add_to_trip':
+      return 'trip';
+    case 'book_buddy':
+      return 'buddy';
+    default:
+      return null;
+  }
+}
+
 export function runWallAction(action: WallAction, projection: WallProjection): void {
   trackAction(projection, actionEventFor(action.type));
+
+  // A follow initiated from the feed — flag the discovery-follow conversion (§32).
+  if (action.type === 'follow') {
+    trackFollowFromFeed(projection, projection.objectType === 'discovery');
+  }
+
+  // Ask Compass — hand the canonical object to the Compass ask surface (§21).
+  // askCompassFromWall records the compass handoff itself, so return after it.
+  if (action.type === 'ask_compass') {
+    askCompassFromWall(projection);
+    return;
+  }
+
+  // Record a Map/Place/Trip/Buddy bridge (§32) before routing.
+  const surface = handoffSurfaceFor(action.type);
+  if (surface) trackHandoff(projection, surface);
+
   const route = resolveActionRoute(action, projection);
   if (route) {
     try {
@@ -214,7 +266,34 @@ export function PlaceLine({ projection }: { projection: WallProjection }) {
       <Text style={s.placeText} numberOfLines={1}>
         {label}
       </Text>
+      {/* Ask Compass from a place-linked post (spec §21) — an ACTION, not a
+          permanent panel. Quiet and secondary so the post stays primary (§35). */}
+      <AskCompassChip projection={projection} />
     </View>
+  );
+}
+
+/**
+ * A compact "Ask Compass" affordance for a place-linked object (spec §21). Hands
+ * the canonical object to the Compass ask surface via askCompassFromWall.
+ * Compass appears here as an action/interpretation entry point — never a
+ * standing panel, and never presenting inference as fact.
+ */
+export function AskCompassChip({ projection }: { projection: WallProjection }) {
+  return (
+    <Pressable
+      style={s.compassChip}
+      onPress={() => askCompassFromWall(projection)}
+      accessibilityRole="button"
+      accessibilityLabel="Ask Compass"
+      hitSlop={6}
+      testID={`wall-ask-compass-${projection.projectionId}`}
+    >
+      <CompassIcon size={icon.s14} color={color.deep} />
+      <Text style={s.compassChipText} numberOfLines={1}>
+        Ask Compass
+      </Text>
+    </Pressable>
   );
 }
 
@@ -247,17 +326,31 @@ export function ContextualActionChips({ projection }: { projection: WallProjecti
 export function SocialActionRow({ projection }: { projection: WallProjection }) {
   const [saved, setSaved] = React.useState(false);
   const open = () => runWallAction({ type: 'open_object', label: 'Open' }, projection);
+  // Stamp/comment measure the distinct engagement (spec §32) then open the
+  // canonical object where the interaction actually happens (spec §24).
+  const stamp = () => {
+    trackEngagement(projection, 'stamp');
+    open();
+  };
+  const comment = () => {
+    trackEngagement(projection, 'comment');
+    open();
+  };
   const toggleSave = () => {
     setSaved((v) => !v);
+    trackEngagement(projection, 'save');
     trackAction(projection, 'save');
   };
-  const share = () => trackAction(projection, 'share');
+  const share = () => {
+    trackEngagement(projection, 'share');
+    trackAction(projection, 'share');
+  };
   return (
     <View style={s.actionRow}>
-      <Pressable style={s.action} onPress={open} accessibilityRole="button" accessibilityLabel="Stamp">
+      <Pressable style={s.action} onPress={stamp} accessibilityRole="button" accessibilityLabel="Stamp">
         <Sparkles size={icon.s20} color={color.mute} />
       </Pressable>
-      <Pressable style={s.action} onPress={open} accessibilityRole="button" accessibilityLabel="Comment">
+      <Pressable style={s.action} onPress={comment} accessibilityRole="button" accessibilityLabel="Comment">
         <MessageCircle size={icon.s20} color={color.mute} />
       </Pressable>
       <Pressable style={s.action} onPress={share} accessibilityRole="button" accessibilityLabel="Share">
@@ -273,6 +366,48 @@ export function SocialActionRow({ projection }: { projection: WallProjection }) 
         <Bookmark size={icon.s20} color={saved ? color.signal : color.mute} />
       </Pressable>
     </View>
+  );
+}
+
+// ── Not-interested / hide control (spec §7 quiet control, §32 signal) ─────────
+
+/**
+ * A quiet per-object "not interested" control. Tapping it records the
+ * not-interested signal (analytics, ids only — spec §32), tells the server to
+ * stop surfacing the object (fire-and-forget `hide`, ids only), and asks the
+ * feed to drop it locally via `onHide`. Deliberately understated so it never
+ * competes with the post it hangs on (spec §35).
+ */
+export function NotInterestedControl({
+  projection,
+  onHide,
+}: {
+  projection: WallProjection;
+  onHide?: (projectionId: string) => void;
+}) {
+  const onPress = () => {
+    trackNotInterested(projection);
+    void sendAction(
+      {
+        objectId: projection.canonicalObjectId,
+        objectType: projection.objectType,
+        session: projection.ranking?.session,
+      },
+      'hide',
+    );
+    onHide?.(projection.projectionId);
+  };
+  return (
+    <Pressable
+      style={s.notInterested}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Not interested"
+      hitSlop={8}
+      testID={`wall-not-interested-${projection.projectionId}`}
+    >
+      <EyeOff size={icon.s16} color={color.faint} />
+    </Pressable>
   );
 }
 
@@ -303,6 +438,19 @@ const s = StyleSheet.create({
   meta: { ...t.small, color: color.faint },
   placeRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.xs },
   placeText: { ...t.small, color: color.deep, flexShrink: 1 },
+  compassChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    marginLeft: 'auto',
+    paddingHorizontal: space.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.haze,
+    backgroundColor: color.paper,
+  },
+  compassChipText: { ...t.small, color: color.deep, fontWeight: '600' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
   chip: {
     borderWidth: 1,
@@ -320,6 +468,13 @@ const s = StyleSheet.create({
     marginTop: space.md,
   },
   action: { padding: space.xs },
+  notInterested: {
+    position: 'absolute',
+    top: space.sm,
+    right: space.sm,
+    padding: space.xs,
+    zIndex: 2,
+  },
   mediaFrame: {
     width: '100%',
     backgroundColor: color.haze,
