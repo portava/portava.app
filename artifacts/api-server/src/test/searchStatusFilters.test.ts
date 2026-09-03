@@ -19,6 +19,21 @@
  * each emitter's `if (error || !data) return []` swallowed it. The search did
  * not fail; it silently returned nothing.
  *
+ * Verified by executing the equivalent SQL against PRODUCTION on 2026-09-03:
+ * `... where status <> 'deleted'::trip_status` and `... <> 'banned'::post_status`
+ * both raise 22P02. The repaired predicates run clean on the same database and
+ * reach 12 trips, 9 posts and 8 plan items that no search could return before.
+ *
+ * WHAT IS *NOT* CURRENTLY LEAKING — stated so nobody reads more into this
+ * -----------------------------------------------------------------------
+ * Both fixes are strictly tighter than a bare label substitution would be, and
+ * that extra tightness is load-bearing but presently inert: production today has
+ * NO draft/cancelled/archived trips and NO hidden/reported/deleted posts. So
+ * `.neq("status","deleted")` on posts would return the same 9 rows right now.
+ * The moderation-bypass argument below is about what the predicate PERMITS, not
+ * about rows that are escaping today — which is exactly why it needs a test
+ * rather than a look at the data.
+ *
  * This is the SIXTH and SEVENTH instance of the class in this repo (the gem and
  * event emitters were the fifth and sixth, fixed in 51402fe99). Every one of
  * them survived the same way: THE FIXTURE INVENTED THE LABEL. `status:

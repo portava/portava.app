@@ -86,6 +86,20 @@ const TYPES = join(SRC, "lib/database.types.ts");
 // intent, which is the work the fix actually is (see searchPosts: the label it
 // was missing was not the one it looked like it was missing).
 //
+// HOW MUCH EACH ONE COSTS TODAY. The `effect` lines describe the MECHANISM,
+// which is broken regardless of data. Production row counts on 2026-09-03,
+// because a broken mechanism over an empty table is a different priority from
+// one over a populated table:
+//
+//   events            104 rows, all 104 in a searchable state  → live loss
+//   hidden_gems         6 rows, all 6 active                   → live loss
+//   discovery_places  184 rows                                 → unaffected
+//   rent_buddy_bookings 0 rows                                 → latent only
+//
+// So the Compass/event and hidden-gem entries below are losing real rows now.
+// The two rent_buddy_bookings entries cannot lose a row until bookings exist —
+// they are pre-launch defects, not active ones. Fix them before that changes.
+//
 // To fix one: correct the literal, then drop its count here.
 
 const KNOWN_DEAD_QUERIES: Record<string, { count: number; effect: string }> = {
@@ -102,7 +116,7 @@ const KNOWN_DEAD_QUERIES: Record<string, { count: number; effect: string }> = {
   },
   "src/compass/CompassItemHydrator.ts": {
     count: 1,
-    effect: 'hidden_gems "approved" — Compass hydrates no hidden gems at all.',
+    effect: 'hidden_gems "approved" — Compass hydrates no hidden gems at all (all 6 live).',
   },
   "src/compass/CompassLiveEngine.ts": {
     count: 1,
@@ -114,13 +128,15 @@ const KNOWN_DEAD_QUERIES: Record<string, { count: number; effect: string }> = {
   },
   "src/compass/CompassTools.ts": {
     count: 4,
-    effect: 'events "deleted"/"banned" at two sites — both Compass event tools return nothing. ' +
-      "Identical to the searchEvents defect fixed in 51402fe99; this copy was never updated.",
+    effect: 'events "deleted"/"banned" at two sites — both Compass event tools return nothing, ' +
+      "against 104 live events all in a searchable state. Identical to the searchEvents defect " +
+      "fixed in 51402fe99; this copy was never updated.",
   },
   "src/lib/inputAssistance/duplicateDetection.ts": {
     count: 1,
-    effect: 'hidden_gems "approved" — duplicate detection finds no duplicates, so duplicate ' +
-      "gems are created unchallenged.",
+    effect: 'hidden_gems "approved" — the candidate pool is always empty, so duplicate ' +
+      "detection can never report a duplicate and every submission looks novel. Live: all 6 " +
+      "production gems are invisible to it.",
   },
   "src/routes/adminCompass.ts": {
     count: 1,
@@ -133,7 +149,7 @@ const KNOWN_DEAD_QUERIES: Record<string, { count: number; effect: string }> = {
   },
   "src/routes/compassHome.ts": {
     count: 2,
-    effect: 'events "deleted"/"banned" — Compass Home shows no events.',
+    effect: 'events "deleted"/"banned" — Compass Home shows no events, against 104 live ones.',
   },
   "src/routes/dailyBrief.ts": {
     count: 1,
@@ -149,7 +165,10 @@ const KNOWN_DEAD_QUERIES: Record<string, { count: number; effect: string }> = {
   "src/services/interactionPermissions.ts": {
     count: 1,
     effect: 'rent_buddy_bookings "pre_booking" — `rabPreBooking` is permanently false, so the ' +
-      "`rab_off_app_payment_risk` safety warning can never be raised.",
+      "`rab_off_app_payment_risk` safety warning can never be raised. Latent today " +
+      "(rent_buddy_bookings is empty in production), and the highest-consequence entry here " +
+      "the moment it is not: it is the only one that suppresses a SAFETY signal rather than " +
+      "a content list.",
   },
   "src/services/ranking/CreatorActivityScoreService.ts": {
     count: 1,
