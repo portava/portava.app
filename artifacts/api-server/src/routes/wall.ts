@@ -754,6 +754,7 @@ router.get(
       viewerId: user.id,
       viewerTripIds: viewer.viewerTripIds,
       followedCreatorIds: viewer.followedCreatorIds,
+      currentCity: viewer.currentCity,
       compassHandoffEnabled,
     };
     let projections: WallProjection[] = [];
