@@ -19,6 +19,9 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import type { Server } from "node:http";
 import express from "express";
 import pino from "pino";
@@ -33,6 +36,7 @@ import {
   timezoneFromCoords,
   cityTimezone,
   buildGraphFromSources,
+  GRAPH_NODE_KINDS,
   cleanupNonCanonicalCityRows,
   buildCityWorldModels,
   computeCityConfidenceIndex,
@@ -503,6 +507,126 @@ describe("graph substrate — batch builders persist typed nodes/edges", () => {
     const countAfterFirst = (fake.store.compass_graph_edges ?? []).length;
     await buildGraphFromSources(fake.fakeClient);
     assert.equal((fake.store.compass_graph_edges ?? []).length, countAfterFirst);
+  });
+});
+
+/* ── 2290: circle + experience node kinds (docs/architecture/05) ─────────── */
+
+describe("graph substrate — circle and experience kinds (2290)", () => {
+  beforeEach(() => seed());
+
+  const CIRCLE_ID = "c0000000-0000-0000-0000-000000000001";
+  const MEM_PUB   = "m0000000-0000-0000-0000-000000000001";
+  const MEM_ONLYME = "m0000000-0000-0000-0000-000000000002";
+  const MEM_DRAFT  = "m0000000-0000-0000-0000-000000000003";
+  const friEvening = "2026-07-24T11:00:00Z"; // Fri 19:00 in Cebu
+
+  function seedCircleAndExperienceData(store: Record<string, Row[]>) {
+    store.circles = [
+      { id: CIRCLE_ID, owner_id: USER_ID, name: "Secret Supper Club", description: "members only", city: "Cebu City", visibility: "private", created_at: friEvening },
+    ];
+    store.events = [
+      { id: "evt-hosted", city: "Cebu", category: "food", starts_at: friEvening, circle_id: CIRCLE_ID },
+      { id: "evt-solo",   city: "Cebu", category: "food", starts_at: friEvening, circle_id: null },
+    ];
+    store.memories = [
+      { id: MEM_PUB, owner_id: USER_ID, title: "Best lechon", caption: "with the crew", place_id: "osm/node/77", trip_id: "trip-1", event_id: "evt-hosted",
+        location_city: "Cebu", location_country: "Philippines", location_lat: 10.3, location_lng: 123.9, starts_at: friEvening, created_at: friEvening,
+        state: "published", visibility: "friends_only" },
+      { id: MEM_ONLYME, owner_id: USER_B, title: "private", caption: null, place_id: "osm/node/78", trip_id: null, event_id: null,
+        location_city: "Cebu", location_country: "Philippines", location_lat: 10.3, location_lng: 123.9, starts_at: friEvening, created_at: friEvening,
+        state: "published", visibility: "only_me" },
+      { id: MEM_DRAFT, owner_id: USER_B, title: "draft", caption: null, place_id: "osm/node/79", trip_id: null, event_id: null,
+        location_city: "Cebu", location_country: "Philippines", location_lat: 10.3, location_lng: 123.9, starts_at: friEvening, created_at: friEvening,
+        state: "draft", visibility: "public" },
+    ];
+  }
+
+  it("emits circle nodes from public.circles with owner and city edges, and hosted_by from events.circle_id", async () => {
+    seedCircleAndExperienceData(fake.store);
+    await buildGraphFromSources(fake.fakeClient);
+    const nodes = fake.store.compass_graph_nodes ?? [];
+    const edges = fake.store.compass_graph_edges ?? [];
+
+    const circle = nodes.find((n) => n.node_type === "circle" && n.node_key === CIRCLE_ID);
+    assert.ok(circle, "circle node must exist");
+    assert.equal(circle!.city, "cebu", "circle city is the canonical key");
+    assert.deepEqual(circle!.attrs, { visibility: "private" }, "circle attrs carry visibility ONLY — no name, no description");
+
+    assert.ok(edges.find((e) => e.edge_type === "owns_circle" && e.src_type === "person" && e.src_key === USER_ID && e.dst_type === "circle" && e.dst_key === CIRCLE_ID));
+    assert.ok(edges.find((e) => e.edge_type === "in_city" && e.src_type === "circle" && e.src_key === CIRCLE_ID && e.dst_key === "cebu"));
+    assert.ok(edges.find((e) => e.edge_type === "hosted_by" && e.src_type === "event" && e.src_key === "evt-hosted" && e.dst_type === "circle" && e.dst_key === CIRCLE_ID));
+    assert.equal(edges.find((e) => e.edge_type === "hosted_by" && e.src_key === "evt-solo"), undefined, "an event without a circle has no hosted_by edge");
+  });
+
+  it("emits experience nodes from PUBLISHED, non-only_me memories with person/place/trip/event/city edges and a time-slice", async () => {
+    seedCircleAndExperienceData(fake.store);
+    await buildGraphFromSources(fake.fakeClient);
+    const nodes = fake.store.compass_graph_nodes ?? [];
+    const edges = fake.store.compass_graph_edges ?? [];
+
+    const exp = nodes.find((n) => n.node_type === "experience" && n.node_key === MEM_PUB);
+    assert.ok(exp, "experience node must exist for the published memory");
+    assert.equal(exp!.city, "cebu");
+    assert.deepEqual(exp!.attrs, { has_place: true, has_trip: true, has_event: true, country: "Philippines" },
+      "experience attrs say WHICH anchors exist — never title, caption or media");
+
+    const has = (edge_type: string, src_key: string, dst_type: string, dst_key: string) =>
+      edges.some((e) => e.edge_type === edge_type && e.src_key === src_key && e.dst_type === dst_type && e.dst_key === dst_key);
+    assert.ok(has("experienced", USER_ID, "experience", MEM_PUB));
+    assert.ok(has("at_place",    MEM_PUB, "place", "osm/node/77"));
+    assert.ok(has("during_trip", MEM_PUB, "trip",  "trip-1"));
+    assert.ok(has("at_event",    MEM_PUB, "event", "evt-hosted"));
+    assert.ok(has("in_city",     MEM_PUB, "city",  "cebu"));
+    assert.ok(edges.some((e) => e.edge_type === "active_during:experience" && e.src_key === "cebu" && e.dst_type === "time_slice" && e.dst_key === "cebu|fri:evening"),
+      "an experience is a world-model observation for its city and slice");
+    assert.ok(edges.some((e) => e.edge_type === "active_in" && e.src_key === USER_ID && e.dst_key === "cebu|fri:evening"));
+
+    // The only_me memory and the draft never enter the graph — no node, no edge, no person link.
+    for (const id of [MEM_ONLYME, MEM_DRAFT]) {
+      assert.equal(nodes.find((n) => n.node_type === "experience" && n.node_key === id), undefined, `${id} must not become a node`);
+      assert.equal(edges.find((e) => e.src_key === id || e.dst_key === id), undefined, `${id} must not appear on any edge`);
+    }
+    assert.equal(nodes.find((n) => n.node_type === "person" && n.node_key === USER_B), undefined,
+      "a person whose only memories are excluded gets no person node from this builder");
+  });
+
+  it("every emitted node_type is an admitted kind, and migration 2290 admits exactly GRAPH_NODE_KINDS (no trail)", async () => {
+    seedTravelData(fake.store);
+    seedCircleAndExperienceData(fake.store);
+    await buildGraphFromSources(fake.fakeClient);
+    const emitted = new Set((fake.store.compass_graph_nodes ?? []).map((n) => String(n.node_type)));
+    for (const t of emitted) assert.ok((GRAPH_NODE_KINDS as readonly string[]).includes(t), `emitted kind ${t} is not admitted by the CHECK`);
+    assert.ok(emitted.has("circle") && emitted.has("experience"));
+
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const sql = readFileSync(path.join(here, "../migrations/2290_intelligence_graph_node_kinds.sql"), "utf8");
+    const checkBody = sql.match(/ADD CONSTRAINT compass_graph_nodes_node_type_check CHECK \(node_type IN \(([\s\S]*?)\)\)/)?.[1];
+    assert.ok(checkBody, "2290 must (re)declare the CHECK");
+    const admitted: string[] = [...checkBody!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!).sort();
+    assert.ok(!admitted.includes("trail"), "trail is not a node kind by ruling");
+    assert.deepEqual(admitted, [...GRAPH_NODE_KINDS].sort(), "the SQL CHECK and GRAPH_NODE_KINDS must be the same list");
+  });
+
+  it("a failing circles or memories read contributes nothing and never aborts the build (fail-soft)", async () => {
+    seedTravelData(fake.store);
+    const original = fake.fakeClient.from.bind(fake.fakeClient);
+    const client: any = new Proxy(fake.fakeClient, {
+      get(target, prop) {
+        if (prop === "from") {
+          return (table: string) => {
+            if (table === "circles" || table === "memories") throw new Error(`${table} down`);
+            return original(table);
+          };
+        }
+        return (target as any)[prop];
+      },
+    });
+    const report = await buildGraphFromSources(client);
+    assert.ok(report.nodesUpserted > 0);
+    const types = new Set((fake.store.compass_graph_nodes ?? []).map((n) => n.node_type));
+    assert.ok(types.has("person") && types.has("city"));
+    assert.ok(!types.has("circle") && !types.has("experience"));
   });
 });
 
