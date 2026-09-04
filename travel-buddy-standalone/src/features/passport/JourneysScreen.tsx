@@ -57,7 +57,7 @@ import type {
 
 // Deep-link to the main Map in passport mode — Journeys hands OFF to the Map for
 // any geographic exploration; it never embeds one (mirrors MyWorldScreen).
-const MAP_DEEPLINK = '/map?entityTypes=stamps&mode=passport';
+const MAP_DEEPLINK = '/map?entityTypes=stamps&mode=passport&entry=passport';
 
 function openMap(): void {
   router.push(MAP_DEEPLINK as never);

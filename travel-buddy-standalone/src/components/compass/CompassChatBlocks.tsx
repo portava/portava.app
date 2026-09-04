@@ -105,6 +105,8 @@ function usePlaceNavigation() {
       router.push({
         pathname: '/map',
         params: {
+          // §35: this session originates from Compass.
+          entry: 'compass',
           lat: String(place.lat),
           lng: String(place.lng),
           focusId: place.id,
@@ -425,6 +427,8 @@ function EventBlockCard({ event }: { event: CompassUiEvent }) {
                   router.push({
                     pathname: '/map',
                     params: {
+                      // §35: this session originates from Compass.
+                      entry: 'compass',
                       lat: String(event.lat),
                       lng: String(event.lng),
                       focusId: event.id,
@@ -487,6 +491,8 @@ function EventCardsBlock({ events }: { events: CompassUiEvent[] }) {
             router.push({
               pathname: '/map',
               params: {
+                // §35: this session originates from Compass.
+                entry: 'compass',
                 lat: String(first.lat),
                 lng: String(first.lng),
                 focusId: first.id,

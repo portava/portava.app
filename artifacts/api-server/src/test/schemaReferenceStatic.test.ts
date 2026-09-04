@@ -195,10 +195,20 @@ describe("static schema-reference check — catches the recurrence", () => {
     ]);
     assert.ok(sites.length > 500, `only ${sites.length} references outside routes+services`);
     const found = findUndeclaredReferences(schema(), sites).map((f) => `${f.table}.${f.column}`);
+    // The places.country recurrence this test was written against was fixed in
+    // 9e82e8450 (duplicateDetection.ts now reads `country_code`), so it can no
+    // longer serve as the coverage probe. close_friends.friend_id in
+    // src/lib/mediaAccess.ts is the next src/lib entry on the ratchet; when it is
+    // fixed too, move this probe to whichever src/lib dead reference remains.
     assert.ok(
-      found.includes("places.country"),
-      "the src/lib recurrence of places.country is no longer detected — either it " +
-        `was fixed (update this test) or coverage regressed. Found: ${found.join(", ")}`,
+      found.includes("close_friends.friend_id"),
+      "the src/lib dead reference close_friends.friend_id is no longer detected — " +
+        `either it was fixed (update this test) or coverage regressed. Found: ${found.join(", ")}`,
+    );
+    // And the founding defect must not come back a FOURTH time.
+    assert.ok(
+      !found.includes("places.country"),
+      "places.country is back — the table has country_code and has never had country",
     );
   });
 

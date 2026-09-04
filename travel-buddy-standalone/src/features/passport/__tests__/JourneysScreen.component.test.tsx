@@ -178,6 +178,6 @@ describe('JourneysScreen', () => {
 
     const btn = await waitFor(() => screen.getByText('Explore the Map'));
     fireEvent.press(btn);
-    expect(router.push).toHaveBeenCalledWith('/map?entityTypes=stamps&mode=passport');
+    expect(router.push).toHaveBeenCalledWith('/map?entityTypes=stamps&mode=passport&entry=passport');
   });
 });

@@ -22,6 +22,7 @@
     "db:apply-migrations": "tsx ./src/apply-migrations.ts",
     "db:apply-migrations:dry-run": "tsx ./src/apply-migrations.ts --dry-run",
     "check:rent-buddy-contract": "tsx ./src/rentBuddyContractCheck.ts",
+    "test:route-param-any": "node --import tsx/esm --test ./src/route-param-any-guard.test.ts",
     "test:cross-tree-paths": "node --import tsx/esm --test ./src/cross-tree-paths.test.ts"
   },
   "devDependencies": {

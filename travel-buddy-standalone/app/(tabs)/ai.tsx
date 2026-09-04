@@ -263,7 +263,8 @@ export default function AiChat() {
         router.push('/(tabs)/events' as any);
         break;
       case 'openMap':
-        router.push('/map' as any);
+        // §35: this is Compass acting on an openMap action, not a map tab.
+        router.push('/map?entry=compass' as any);
         break;
       case 'viewPassport':
         router.push('/(tabs)/passport' as any);

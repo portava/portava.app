@@ -148,7 +148,7 @@ describe('MyWorldScreen', () => {
     const mapBtn = await waitFor(() => screen.getByText('View on Map'));
     fireEvent.press(mapBtn);
 
-    expect(mockPush).toHaveBeenCalledWith('/map?entityTypes=stamps&mode=passport');
+    expect(mockPush).toHaveBeenCalledWith('/map?entityTypes=stamps&mode=passport&entry=passport');
   });
 
   it('deep-links into the country stamps screen when a country is pressed', async () => {
