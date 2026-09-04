@@ -1038,6 +1038,10 @@ function DiscoveryHubScreen() {
         visible={detailVisible}
         onClose={() => setDetailVisible(false)}
         onAddToPlan={handleAddToPlanFromPlace}
+        // Opened from DiscoveryCategoryTab cards (GET /discovery impressions)
+        // or the Pulse deep link; either way the only surface this screen's
+        // outcomes can be matched to is 'discovery'.
+        rankSurface="discovery"
       />
 
       {/* City picker — triggered from DestinationBar or location context */}
