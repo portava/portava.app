@@ -41,6 +41,8 @@ import {
   isServable,
   type MapObject,
 } from "../lib/mapObjects.js";
+import { CLAIM_TYPES, LEGACY_CLAIM_TYPES } from "../lib/intelContracts.js";
+import { mapQuickSignal } from "../lib/quickSignal.js";
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +73,11 @@ const CITY_TRAVELER = { ...AREA_TRAVELER, id: "u2", precision: "city" };
 // select-list guard at the bottom of this file now makes that impossible.
 const GEM = {
   id: "g1",
+  // The bridge to the live-claim subject space. HiddenGemDiscoveryService
+  // selects this column (:106), so a fixture without it is not the shape
+  // production emits — and its absence is exactly what let the id-space bug
+  // sit behind a green suite.
+  canonical_place_id: "place-uuid-for-g1",
   name: "Rooftop stairwell",
   category: "viewpoint",
   city: "Da Nang",
@@ -97,14 +104,34 @@ const EVENT = {
   visibility: "public",
 };
 
+/**
+ * THE FIXTURE IS DERIVED, NOT WRITTEN.
+ *
+ * This helper used to hard-code `claimType: "crowd", value: "busy"` — a shape
+ * production has never emitted. "crowd" is a LEGACY flat type
+ * (intelContracts.LEGACY_CLAIM_TYPES, seeded by migration 2122); what the
+ * capture path writes is `crowd.level` with `{ level }` (lib/quickSignal,
+ * routes/mapObservations). Every assertion below therefore passed against
+ * fiction while §7's Activity axis was dead in production.
+ *
+ * So the fixture now ASKS THE PRODUCER what a claim looks like. If
+ * `mapQuickSignal` ever changes the type or the value shape, these tests move
+ * with it instead of pinning a shape nobody writes any more.
+ */
+const PRODUCTION_CROWD_CLAIM = mapQuickSignal("arrival", "busy")!;
+
+/** The canonical claim-type registry — read from the contract, not retyped. */
+const CANONICAL_CLAIM_TYPES: ReadonlySet<string> = new Set(CLAIM_TYPES.map((s) => s.claimType));
+
 function claim(over: Partial<LiveClaimLike> = {}): LiveClaimLike {
   return {
     id: "snap-1",
-    claimType: "crowd",
-    value: "busy",
+    claimType: PRODUCTION_CROWD_CLAIM.claimType,
+    value: PRODUCTION_CROWD_CLAIM.value,
     confidence: 0.8,
     band: "live",
     sourceCountBucket: "several",
+    sourceClass: "firsthand_unverified",
     observedAt: "2026-08-31T11:58:00.000Z",
     validUntil: "2026-08-31T12:13:00.000Z",
     state: "live",
@@ -216,11 +243,30 @@ describe("no invented intelligence (spec §37)", () => {
     assert.equal(projectTraveler({ ...AREA_TRAVELER, freshness: undefined })!.freshness, "unknown");
   });
 
+  test("the live-claim fixture is a shape production actually emits", () => {
+    // The guard that would have caught the original defect: assert the fixture's
+    // claim type against the real registry, so a future rename fails here rather
+    // than passing green against a type nobody writes.
+    assert.ok(
+      CANONICAL_CLAIM_TYPES.has(PRODUCTION_CROWD_CLAIM.claimType),
+      `fixture claim type ${PRODUCTION_CROWD_CLAIM.claimType} is not in the canonical registry`,
+    );
+    assert.ok(
+      !(LEGACY_CLAIM_TYPES as readonly string[]).includes(PRODUCTION_CROWD_CLAIM.claimType),
+      "the fixture must not be a LEGACY flat claim type — production stopped writing those",
+    );
+    assert.equal(PRODUCTION_CROWD_CLAIM.claimType, "crowd.level");
+  });
+
   test("an unmapped crowd value does not become 'moderate'", () => {
-    assert.equal(crowdValueToActivity(claim({ value: "rammed" })), undefined);
-    assert.equal(crowdValueToActivity(claim({ claimType: "vibe", value: "busy" })), undefined);
-    assert.equal(crowdValueToActivity(claim({ value: "busy" })), "busy");
-    assert.equal(crowdValueToActivity(claim({ value: { level: "peak" } })), "peak");
+    assert.equal(crowdValueToActivity(claim({ value: { level: "rammed" } })), undefined);
+    assert.equal(crowdValueToActivity(claim({ claimType: "vibe.state", value: { state: "social" } })), undefined);
+    // The real production shape: crowd.level carrying { level }.
+    assert.equal(crowdValueToActivity(claim()), "busy");
+    // `peak` is §7 DISPLAY vocabulary, never a claim value. The old assertion
+    // here asserted the opposite and was green because the mapper switched over
+    // the display vocabulary instead of intelContracts.CROWD_LEVELS.
+    assert.equal(crowdValueToActivity(claim({ value: { level: "peak" } })), undefined);
   });
 });
 
@@ -296,9 +342,40 @@ describe("enrichWithLiveClaims", () => {
     Array.from({ length: n }, (_, i) => projectGem({ ...GEM, id: `g${i}` })!);
 
   test("only place-like objects are eligible", () => {
-    assert.equal(liveSubjectIdFor(projectGem(GEM)!), "g1");
     assert.equal(liveSubjectIdFor(projectTraveler(AREA_TRAVELER)!), null);
     assert.equal(liveSubjectIdFor(projectEvent(EVENT, NOW)!), null);
+  });
+
+  // ── The subject id must be one the claim store can actually match ──────────
+  //
+  // This asserted `"g1"` — the gem's OWN id. intel_state_snapshots.subject_id
+  // is `uuid NOT NULL REFERENCES public.places(id)` (migration 2130), and a
+  // gem id is a hidden_gems id: an independent uuid space. So the assertion
+  // pinned a value that could never match anything, and every enrichment test
+  // below injects a reader that ignores the id it is handed — which is why 27
+  // green tests sat on top of a join that has never returned a row.
+  test("a gem's live subject is its CANONICAL PLACE, not its own id", () => {
+    const subject = liveSubjectIdFor(projectGem(GEM)!);
+    assert.notEqual(subject, "g1", "the gem's own id cannot match places(id)");
+    assert.equal(subject, "place-uuid-for-g1");
+  });
+
+  test("a gem with no canonical place has NO live subject", () => {
+    // Null, never a fallback to the gem id: a wrong subject does not fail
+    // safely, it eventually matches somebody else's place.
+    const orphan = projectGem({ ...GEM, canonical_place_id: null })!;
+    assert.equal(liveSubjectIdFor(orphan), null);
+  });
+
+  test("the subject actually reaches the reader", async () => {
+    // The join, end to end. Without this the two assertions above could both
+    // pass while enrichment still queried something else entirely.
+    const seen: string[] = [];
+    await enrichWithLiveClaims([projectGem(GEM)!], async (id) => {
+      seen.push(id);
+      return [];
+    }, { now: NOW });
+    assert.deepEqual(seen, ["place-uuid-for-g1"]);
   });
 
   test("a cap is REPORTED, never silent", async () => {
@@ -561,14 +638,18 @@ describe("projector reads only columns the query returns", () => {
   const projectionCode = stripComments(projectionSrc);
 
   /** snake_case property reads off `<v>.` inside one exported function. */
-  function snakeReads(fnName: string, varName: string): string[] {
-    const start = projectionCode.indexOf(`export function ${fnName}(`);
+  function snakeReadsIn(source: string, fnName: string, varName: string): string[] {
+    const code = stripComments(source);
+    const start = code.indexOf(`export function ${fnName}(`);
     assert.notEqual(start, -1, `${fnName} not found`);
-    const nextFn = projectionCode.indexOf("\nexport function ", start + 1);
-    const body = projectionCode.slice(start, nextFn === -1 ? undefined : nextFn);
+    const nextFn = code.indexOf("\nexport function ", start + 1);
+    const body = code.slice(start, nextFn === -1 ? undefined : nextFn);
     const re = new RegExp(`\\b${varName}[?]?\\.([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\\b`, "g");
     return [...new Set([...body.matchAll(re)].map((m) => m[1]))];
   }
+
+  const snakeReads = (fnName: string, varName: string) =>
+    snakeReadsIn(projectionSrc, fnName, varName);
 
   test("the guard is reading real data, not empty matches", () => {
     // Without this, every assertion below would pass vacuously on a parse miss.
@@ -614,6 +695,38 @@ describe("projector reads only columns the query returns", () => {
       selectedColumns(routeSrc, "export async function loadNearbyEvents").has("ends_at"),
       "loadNearbyEvents must select ends_at — projectEvent turns it into expiresAt",
     );
+  });
+
+  // lib/mapSearch.ts shapes the SAME two sources for the search surface. Its
+  // `normalizeGem` carried an identical `g.thumbnail_url` read, so the two
+  // consumers of findNearbyGems were wrong in exactly the same way — which is
+  // the argument for checking every consumer of a source, not just the one that
+  // happened to be under review.
+  test("mapSearch's normalizers read only columns their queries return", () => {
+    const searchLib = readFileSync(resolve(here, "../lib/mapSearch.ts"), "utf8");
+    const discoverySrc = readFileSync(
+      resolve(here, "../services/hiddenGems/HiddenGemDiscoveryService.ts"),
+      "utf8",
+    );
+    const routeSrc = readFileSync(resolve(here, "../routes/mapSearch.ts"), "utf8");
+
+    const gemSelected = selectedColumns(discoverySrc, 'from("hidden_gems")');
+    const gemColumns = tableColumns("hidden_gems");
+    for (const field of snakeReadsIn(searchLib, "normalizeGem", "g")) {
+      assert.ok(gemColumns.has(field), `normalizeGem reads g.${field}, not a hidden_gems column`);
+      assert.ok(gemSelected.has(field), `normalizeGem reads g.${field}, which findNearbyGems does not select`);
+    }
+
+    const evSelected = selectedColumns(routeSrc, "export async function loadNearbyEvents");
+    const evColumns = tableColumns("events");
+    for (const field of snakeReadsIn(searchLib, "normalizeEvent", "ev")) {
+      assert.ok(evColumns.has(field), `normalizeEvent reads ev.${field}, not an events column`);
+      assert.ok(evSelected.has(field), `normalizeEvent reads ev.${field}, which loadNearbyEvents does not select`);
+    }
+
+    // Self-check: an empty read set would make both loops vacuous.
+    assert.ok(snakeReadsIn(searchLib, "normalizeGem", "g").length > 0);
+    assert.ok(snakeReadsIn(searchLib, "normalizeEvent", "ev").length > 0);
   });
 
   test("a gem carries the image the query fetched", () => {

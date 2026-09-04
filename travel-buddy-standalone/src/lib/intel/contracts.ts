@@ -219,30 +219,24 @@ export const CONFIDENCE_BAND_FLOOR: Record<ConfidenceBand, number> = {
 export const MIN_BAND_FOR_LIVE_STATE: ConfidenceBand = 'likely_current';
 
 // ── Source classes (epistemic standing) + labels ─────────────────────────────
-// Mirror of the api-server SOURCE_CLASS_LABELS. The bare `crowdLevel` the read
-// path returns today carries no source class, so the client treats a live crowd
-// value as `firsthand_unverified` (community, no presence proof) unless a richer
-// claim supplies one.
-export type SourceClass =
-  | 'verified_firsthand'
-  | 'firsthand_unverified'
-  | 'official_signed'
-  | 'sponsored'
-  | 'imported_owned'
-  | 'historical_pattern'
-  | 'portava_prediction'
-  | 'hearsay';
+// ── Source class: RE-EXPORTED, not re-copied ─────────────────────────────────
+//
+// This file used to hold a hand-copied third mirror of the server's
+// SOURCE_CLASSES / SOURCE_CLASS_LABELS, with nothing guarding it — its own
+// comment said "Mirror of the api-server SOURCE_CLASS_LABELS" and that was the
+// only thing keeping it honest. It happened to agree word for word (verified
+// 2026-09-03, all 8 labels), but nothing would have failed if it had drifted,
+// and a drifted label on a §37 surface means a paid claim reading as something
+// it is not.
+//
+// src/types/mapObjects.ts now carries the same vocabulary and IS guarded:
+// api-server's mapObjectsContract.test.ts reads both files as text and fails on
+// any divergence from the server. So the third copy is retired and this module
+// re-exports the guarded one. Three copies become two, and the survivor is the
+// one a test is watching.
+import { SOURCE_CLASSES, SOURCE_CLASS_LABELS, type SourceClass } from '../../types/mapObjects.ts';
 
-export const SOURCE_CLASS_LABELS: Record<SourceClass, string> = {
-  verified_firsthand: 'Live from verified visitor',
-  firsthand_unverified: 'Traveler report — unverified',
-  official_signed: 'Official update',
-  sponsored: 'Sponsored',
-  imported_owned: 'Imported source',
-  historical_pattern: 'Typical pattern',
-  portava_prediction: 'Portava prediction',
-  hearsay: 'Unverified tip',
-};
+export { SOURCE_CLASSES, SOURCE_CLASS_LABELS, type SourceClass };
 
 /** Classes that may never be presented as a current (live) observation. */
 export const NON_OBSERVATION_SOURCE_CLASSES: readonly SourceClass[] = ['historical_pattern', 'portava_prediction'];

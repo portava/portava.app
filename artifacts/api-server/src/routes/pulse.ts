@@ -1071,9 +1071,32 @@ router.get("/pulse/live", async (req, res) => {
       sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
       sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
     ]);
+    // "No blocks" and "the blocks query was rejected" both leave blockedSet
+    // empty, and every rail below (events, plans, buddies, bookings, requests)
+    // filters on it — so a schema/query error silently surfaces blocked users
+    // across the whole Live rail. The feed endpoint at the top of this file
+    // treats the same unknown as fail-closed; this one stays best-effort by
+    // design, but the failure must at least be visible. PostgREST returns such
+    // errors in `error`, so the catch never sees them.
+    if (outRes.error || inRes.error) {
+      req.log?.warn(
+        {
+          userId: user.id,
+          outCode: (outRes.error as any)?.code,
+          inCode: (inRes.error as any)?.code,
+          err: outRes.error ?? inRes.error,
+        },
+        "pulse/live: block-state read failed — blocked users are NOT being filtered from this response",
+      );
+    }
     for (const r of (outRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
     for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
-  } catch { /* non-fatal */ }
+  } catch (err) {
+    req.log?.warn(
+      { err, userId: user.id },
+      "pulse/live: block-state read rejected — blocked users are NOT being filtered from this response",
+    );
+  }
 
   // Internal-only fields, stripped before the response is serialised:
   //   _urgency     — sort key (see urgency()).
@@ -1374,14 +1397,33 @@ router.get("/pulse/live", async (req, res) => {
     const blockedProfileSet = new Set<string>();
     if (blockedSet.size > 0) {
       try {
-        const { data: blockedProfiles } = await sc
+        const { data: blockedProfiles, error: blockedProfilesErr } = await sc
           .from("rent_buddy_profiles")
           .select("id")
           .in("user_id", [...blockedSet]);
+        // A rejected query is indistinguishable from "none of the blocked users
+        // has a buddy profile", and this set is the ONLY block filter on the
+        // buddy side of the booking rail (the secondary guard below covers the
+        // traveler side only). Fail-open stays, but not silently.
+        if (blockedProfilesErr) {
+          req.log?.warn(
+            {
+              userId: user.id,
+              code: (blockedProfilesErr as any)?.code,
+              err: blockedProfilesErr,
+            },
+            "pulse/live: blocked-user → buddy-profile mapping failed — buddy-side block filter is OFF for this response",
+          );
+        }
         for (const bp of (blockedProfiles as any[]) ?? []) {
           blockedProfileSet.add(bp.id as string);
         }
-      } catch { /* non-fatal — fail open; user-ID check below is a secondary guard */ }
+      } catch (err) {
+        req.log?.warn(
+          { err, userId: user.id },
+          "pulse/live: blocked-user → buddy-profile mapping rejected — buddy-side block filter is OFF for this response",
+        );
+      }
     }
 
     const [travelerRes, buddyProfileRes] = await Promise.all([

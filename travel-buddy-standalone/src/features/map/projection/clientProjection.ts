@@ -1,20 +1,28 @@
 /**
- * clientProjection — projects the layers that do NOT yet come through the Map
- * Intelligence Gateway into the same MapObject contract (Map spec §18, §19).
+ * clientProjection — the ROLLBACK projectors (Map spec §18, §19).
  *
- * WHY THIS FILE EXISTS AT ALL
- * ===========================
- * Spec §19 wants one server-side projection. Three layers reach that today —
- * travelers, hidden gems and events — because each has an extractable,
- * privacy-complete server function that GET /api/map/projection can call. The
- * other three (buddies, trips, friends/circle) do not: their privacy logic
- * lives inline inside route handlers, and lifting it out is a separate change
- * that deserves its own tests rather than being done in passing.
+ * WHAT THIS FILE IS NOW
+ * =====================
+ * Spec §19 wants one server-side projection, and it has one: GET
+ * /api/map/projection serves every layer this app draws. `useMapEntities` asks
+ * it for all of them, so on the normal path NOTHING here runs.
  *
- * So those three keep their existing, already-correct per-layer transport, and
- * this module normalizes their payloads into `MapObject` at the client edge.
- * The renderer therefore sees ONE uniform stream today, and when each layer
- * moves server-side its projector here is deleted rather than rewritten.
+ * These projectors exist for the one case §19 does not cover: the gateway not
+ * answering at all — `map_projection_enabled` off, or the call failing. That
+ * makes the flag a real rollback rather than a blank map. They are dead code
+ * the day the flag becomes unconditional, and not before.
+ *
+ * THEY MUST MIRROR THE SERVER, FIELD FOR FIELD
+ * ============================================
+ * "The renderer cannot tell which path produced an object" is the whole
+ * contract, and it is easy to break silently: `projectTrip` read
+ * `trip.destination` for both its title fallback and its subtitle, a field
+ * `TripRow` has never carried (the API row is `destinationCity`), so every
+ * fallback trip subtitle collapsed to the bare date range and every untitled
+ * trip read "Trip". Nothing failed — the fixture had a `destination`. Each
+ * projector below now names the field the SERVER reads, and
+ * __tests__/clientProjection.test.ts pins them against the server's shape
+ * rather than against a fixture written to match this file.
  *
  * WHAT THIS MODULE MAY AND MAY NOT DO
  * ===================================
@@ -22,23 +30,7 @@
  * MAY NOT: invent freshness or a confidence band (spec §37 — those come only
  * from the intel pipeline, server-side), or sharpen a coordinate. Every
  * projector here leaves `confidence` and `freshness` undefined, because none of
- * these three sources carries evidence about "what is true here right now".
- *
- * PAYLOADS ARE ENUMERATED, NEVER PASSED THROUGH
- * =============================================
- * Each projector lists the fields it puts on `payload` (types in
- * src/types/mapCardPayloads.ts). It used to hand the whole service DTO through
- * instead, which read as harmless — the card found its fields either way — but
- * it made the client projectors and the SERVER projectors emit different shapes
- * for the same kind, so a card silently rendered differently depending on
- * whether `map_projection_enabled` was on. Enumerating the fields is what makes
- * the two paths indistinguishable, which is the only property that makes the
- * flag a real rollback.
- *
- * The inputs are typed (`BuddyProfile`, `TripRow`, …) rather than `any` for the
- * same reason: an `any` input is how `buddy.headline`, `trip.destination` and
- * `loc.displayName` — three fields that do not exist on their DTOs — got read
- * here without the compiler saying a word.
+ * these sources carries evidence about "what is true here right now".
  *
  * Pure: no React, no network, no storage. Fully unit-testable.
  */
@@ -49,18 +41,6 @@ import {
   type MapObjectKind,
   type PrivacyClass,
 } from '../../../types/mapObjects.ts';
-import type {
-  BuddyCardPayload,
-  EventCardPayload,
-  FriendCardPayload,
-  GemCardPayload,
-  TripCardPayload,
-} from '../../../types/mapCardPayloads.ts';
-import type { BuddyProfile } from '../../../services/rentABuddy.ts';
-import type { TripRow } from '../../../services/trips.ts';
-import type { CircleMemberLocation } from '../../../services/map.ts';
-import type { HiddenGem } from '../../../services/hiddenGems.ts';
-import type { EventListItem } from '../../../services/events.ts';
 
 // ── Buddies (Rent-a-Buddy availability) ───────────────────────────────────────
 
@@ -71,7 +51,7 @@ import type { EventListItem } from '../../../services/events.ts';
  */
 export const BUDDY_PRIVACY_CLASS: PrivacyClass = 'approximate';
 
-export function projectBuddy(buddy: BuddyProfile): MapObject<BuddyCardPayload> | null {
+export function projectBuddy(buddy: any): MapObject | null {
   const lat = buddy?.meetupBaseLat ?? null;
   const lng = buddy?.meetupBaseLng ?? null;
   if (lat == null || lng == null) return null;
@@ -80,10 +60,10 @@ export function projectBuddy(buddy: BuddyProfile): MapObject<BuddyCardPayload> |
     id: `buddy:${buddy.id}`,
     kind: 'buddy_zone',
     geometry: point(Number(lat), Number(lng)),
+    // `tagline`, not `headline`: the buddy DTO has never carried a `headline`,
+    // so this subtitle silently collapsed to the city alone. There is no
+    // `handle` on the DTO either — the fallback must be generic.
     title: buddy.displayName ?? 'Buddy',
-    // `tagline` is the buddy's one-line pitch. This read used to be
-    // `buddy.headline`, which BuddyProfile has never had — so every buddy pin's
-    // subtitle silently collapsed to just the city.
     subtitle: joinParts([buddy.city, buddy.tagline], ' · '),
     privacyClass: BUDDY_PRIVACY_CLASS,
     renderingPriority: KIND_DEFAULT_PRIORITY.buddy_zone,
@@ -92,21 +72,20 @@ export function projectBuddy(buddy: BuddyProfile): MapObject<BuddyCardPayload> |
       detailRoute: `/(rent-a-buddy)/buddy/${buddy.id}`,
       opensSheet: true,
     },
-    payload: {
-      buddyId: buddy.id,
-      userId: buddy.userId ?? null,
-      categories: buddy.categories ?? [],
-      city: buddy.city ?? null,
-      country: buddy.country ?? null,
-      coverPhotoUrl: buddy.coverPhotoUrl ?? null,
-      hourlyRateUsd: buddy.hourlyRateUsd ?? null,
-      averageRating: buddy.averageRating ?? null,
-      reviewCount: buddy.reviewCount ?? null,
-      responseTimeH: buddy.responseTimeH ?? null,
-      languages: buddy.languages ?? [],
-      bio: buddy.bio ?? null,
-    },
+    // The public buddy DTO, minus the marketplace's `distanceKm`. Both paths
+    // run the same server mapper (lib/buddyMapRead.mapBuddyPublicProfile);
+    // POST /api/rent-a-buddy/search then adds a distance the gateway does not
+    // compute, so carrying it would be the one field that betrays which
+    // transport ran. Neither path gives a buddy pin a distance today — the
+    // contract's own `distanceKm` is populated for gems only.
+    payload: stripDistance(buddy),
   };
+}
+
+/** Drop the marketplace-only `distanceKm`; everything else passes through. */
+function stripDistance(buddy: any): Record<string, unknown> {
+  const { distanceKm: _distanceKm, ...rest } = buddy ?? {};
+  return rest;
 }
 
 // ── Trips ─────────────────────────────────────────────────────────────────────
@@ -117,7 +96,7 @@ export function projectBuddy(buddy: BuddyProfile): MapObject<BuddyCardPayload> |
  */
 export const TRIP_PRIVACY_CLASS: PrivacyClass = 'place_level';
 
-export function projectTrip(trip: TripRow): MapObject<TripCardPayload> | null {
+export function projectTrip(trip: any): MapObject | null {
   const lat = trip?.destinationLat ?? null;
   const lng = trip?.destinationLng ?? null;
   if (lat == null || lng == null) return null;
@@ -126,13 +105,12 @@ export function projectTrip(trip: TripRow): MapObject<TripCardPayload> | null {
     id: `trip:${trip.id}`,
     kind: 'trip_stop',
     geometry: point(Number(lat), Number(lng)),
-    title: trip.title ?? 'Trip',
-    // `destinationCity` — this read used to be `trip.destination`, which TripRow
-    // has never had, so the subtitle was only ever the date range.
-    subtitle: joinParts(
-      [destinationLabel(trip), dateRange(trip.startDate, trip.endDate)],
-      ' · ',
-    ),
+    // `destinationCity`, NOT `destination`: `TripRow` (services/trips.ts) has
+    // only ever carried `destinationCity`, so the old read was undefined every
+    // time — the subtitle silently lost its city and kept only the dates. This
+    // is the field the server's projectTrip reads.
+    title: trip.title ?? trip.destinationCity ?? 'Trip',
+    subtitle: joinParts([trip.destinationCity, dateRange(trip.startDate, trip.endDate)], ' · '),
     privacyClass: TRIP_PRIVACY_CLASS,
     renderingPriority: KIND_DEFAULT_PRIORITY.trip_stop,
     interaction: {
@@ -140,22 +118,18 @@ export function projectTrip(trip: TripRow): MapObject<TripCardPayload> | null {
       detailRoute: `/trip/${trip.id}`,
       opensSheet: true,
     },
+    // The server's six fields, not the whole TripRow. A payload wider than the
+    // gateway's would let a card render something on the rollback path that it
+    // cannot render on the normal one.
     payload: {
-      tripId: trip.id,
       destinationCity: trip.destinationCity ?? null,
       destinationCountry: trip.destinationCountry ?? null,
       startDate: trip.startDate ?? null,
       endDate: trip.endDate ?? null,
-      coverUrl: trip.coverUrl ?? null,
+      status: trip.status ?? null,
       visibility: trip.visibility ?? null,
     },
   };
-}
-
-function destinationLabel(trip: TripRow): string | null {
-  const city = trip.destinationCity;
-  if (!city) return null;
-  return trip.destinationCountry ? `${city}, ${trip.destinationCountry}` : city;
 }
 
 // ── Friends / circle ──────────────────────────────────────────────────────────
@@ -172,18 +146,25 @@ function destinationLabel(trip: TripRow): string | null {
  */
 export const FRIEND_PRIVACY_CLASS: PrivacyClass = 'approximate';
 
-export function projectFriend(loc: CircleMemberLocation): MapObject<FriendCardPayload> | null {
+export function projectFriend(loc: any): MapObject | null {
   if (loc?.lat == null || loc?.lng == null) return null;
-  if (!loc.userId) return null;
 
   return {
     id: `friend:${loc.userId}`,
     kind: 'crew_member',
     geometry: point(Number(loc.lat), Number(loc.lng)),
-    // `name` — this read used to be `loc.displayName ?? loc.handle`, neither of
-    // which CircleMemberLocation has, so EVERY circle pin was titled "Friend".
+    // `name`, not `displayName`: the circle-locations reader emits `name`, so
+    // this read undefined and EVERY friend pin rendered the fallback. The
+    // reader has already gated `name` behind each member's name-visibility
+    // setting, so null means "has not opted into showing a real name" — the
+    // fallback must therefore be generic, and must never reach for a handle
+    // the server deliberately withheld. MapCarousel and MapEntityPreviewCard
+    // already read it this way; this projector was the outlier.
     title: loc.name ?? 'Circle member',
-    subtitle: loc.city ?? undefined,
+    // City AND country, joined with ', ' — the server's projectCircleMember
+    // subtitle. This read the city alone, so the same member was labelled
+    // differently depending on which transport happened to serve them.
+    subtitle: joinParts([loc.city, loc.country], ', '),
     privacyClass: FRIEND_PRIVACY_CLASS,
     renderingPriority: KIND_DEFAULT_PRIORITY.crew_member,
     interaction: {
@@ -192,10 +173,17 @@ export function projectFriend(loc: CircleMemberLocation): MapObject<FriendCardPa
       actions: ['message', 'follow', 'report', 'block'],
       opensSheet: true,
     },
+    // The server's six fields. Note what is NOT among them: `lat`/`lng`. The
+    // position belongs in `geometry`, which the §24 protection gate and the
+    // §31 aggregator both coarsen; a copy sitting in `payload` would survive
+    // both untouched. Mirroring the server here is a narrowing.
     payload: {
       userId: loc.userId,
+      name: loc.name ?? null,
       avatarUrl: loc.avatarUrl ?? null,
       city: loc.city ?? null,
+      country: loc.country ?? null,
+      updatedAt: loc.updatedAt ?? null,
     },
   };
 }
@@ -222,12 +210,11 @@ const COMPASS_KIND: Record<string, MapObjectKind> = {
 /**
  * FAIL-CLOSED privacy rungs for Compass results.
  *
- * A projector is supposed to RECORD the rung its source already applied, and
- * Compass states none — so these are the narrowest rung each kind is rendered at
- * anywhere else in the map, never a widening. Person-shaped kinds sit at
- * `approximate` (the rung `projectBuddy`/`projectFriend` use, where §6 draws a
- * ring rather than an avatar-precision pin) and travelers at `aggregate_only`,
- * matching the server's `travelerPrivacyClass` default.
+ * A projector RECORDS the rung its source already applied, and Compass states
+ * none — so these are the narrowest rung each kind is rendered at anywhere else
+ * in the map, never a widening. Person-shaped kinds sit at `approximate` (where
+ * §6 draws a ring rather than an avatar-precision pin) and travelers at
+ * `aggregate_only`, matching the server's `travelerPrivacyClass` default.
  */
 const COMPASS_PRIVACY: Record<MapObjectKind, PrivacyClass> = {
   place: 'place_level',
@@ -265,9 +252,10 @@ export interface CompassResultLike {
  * deliberately absent: a card renders this from `title` and `subtitle` and shows
  * no type-specific chips, which is honest about how little Compass sent.
  *
- * Coordinates are read from `data.lat`/`data.lng` and never invented — a result
- * without real coordinates is dropped, because placing it at the user's own dot
- * makes the camera fly-to look broken and puts a result where nothing is.
+ * Before this existed, AskCompassBar handed the raw `CompassRecommendation`
+ * through as `entity.payload` — a THIRD shape the cards had to guess at, and the
+ * one that made a Compass buddy or trip result hit `categories.slice` /
+ * `visibility.replace` and take the card down.
  */
 export function projectCompassResult(rec: CompassResultLike): MapObject | null {
   const kind = COMPASS_KIND[rec?.type ?? ''];
@@ -310,12 +298,10 @@ function firstNonEmpty(parts: (string | null | undefined)[]): string | null {
 //
 // Used ONLY when the gateway is unavailable (flag off, or the call failed) and
 // the hook falls back to the legacy per-layer fetchers. They must produce the
-// same shape the server would, so the renderer cannot tell which path ran —
-// including `payload`, field for field. See the server's `projectGem` and
-// `projectEvent` in artifacts/api-server/src/lib/mapProjection.ts.
+// same shape the server would, so the renderer cannot tell which path ran.
 
 /** Mirrors the server's `projectGem`. */
-export function projectGemLocal(gem: HiddenGem): MapObject<GemCardPayload> | null {
+export function projectGemLocal(gem: any): MapObject | null {
   if (gem?.lat == null || gem?.lng == null) return null;
   if (gem.status && gem.status !== 'active') return null;
 
@@ -335,21 +321,26 @@ export function projectGemLocal(gem: HiddenGem): MapObject<GemCardPayload> | nul
       opensSheet: true,
       contributable: true,
     },
+    // The server's five fields, not the whole HiddenGem. "Mirrors the server's
+    // projectGem" is only true if `payload` mirrors it too — a wider payload
+    // here is what let a gem card render vibe tags and a save count with the
+    // flag OFF and nothing with it ON. Enforced by serverMirror.test.ts.
     payload: {
       category: gem.category ?? null,
       city: gem.city ?? null,
       thumbnailUrl: gem.imageUrl ?? null,
       verificationLevel: gem.verificationLevel ?? null,
       coordsPrecision: gem.coordsPrecision ?? null,
+      // The live-claim subject bridge the server also emits: a gem's own id is
+      // in the hidden_gems id space, not places'. Carried here so the rollback
+      // path cannot lose a subject the gateway path has.
+      canonicalPlaceId: gem.canonicalPlaceId ?? null,
     },
   };
 }
 
 /** Mirrors the server's `projectEvent`. */
-export function projectEventLocal(
-  ev: EventListItem,
-  now: number = Date.now(),
-): MapObject<EventCardPayload> | null {
+export function projectEventLocal(ev: any, now: number = Date.now()): MapObject | null {
   const lat = ev?.locationLat ?? null;
   const lng = ev?.locationLng ?? null;
   if (lat == null || lng == null) return null;
@@ -374,6 +365,9 @@ export function projectEventLocal(
       opensSheet: true,
       contributable: true,
     },
+    // The server's five fields. `hasStarted` is the projector's own verdict on
+    // its own clock — a card reading it does not re-derive "is this live now",
+    // which spec §19 puts server-side.
     payload: {
       locationName: ev.locationName ?? null,
       startsAt: ev.startsAt ?? null,

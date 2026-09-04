@@ -483,9 +483,10 @@ function TripCardBody({ obj }: { obj: MapObject }) {
     <>
       <View style={cs.topRow}>
         <View style={[cs.iconCircle, { backgroundColor: cfg.color }]}>
-          {p?.coverUrl
-            ? <CachedImage source={{ uri: p.coverUrl }} style={cs.iconImg} fallbackLabel="" />
-            : <Plane size={18} color="#fff" />}
+          {/* No cover image: `projectTrip` emits six fields and `coverUrl` is
+              not among them, on either path. See
+              docs/map-card-projection-gaps.md. */}
+          <Plane size={18} color="#fff" />
         </View>
         <View style={cs.topText}>
           <Text style={cs.primaryText} numberOfLines={1}>{obj.title}</Text>

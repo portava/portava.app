@@ -60,6 +60,20 @@ function req(
 
 // ── Fake client builder ───────────────────────────────────────────────────────
 
+/**
+ * A position young enough to pass the 60-minute freshness gate, computed
+ * RELATIVE to now. An absolute literal is exactly how the sibling
+ * mapProjectionLayers fixtures rotted: fresh on the day they were written,
+ * silently expired the next, turning every "1 location" expectation into a
+ * vacuous empty-case pass.
+ *
+ * `last_known_at` is the gated field, not `updated_at`. The writer stamps
+ * `updated_at` on every upsert but `last_known_at` only when a coordinate is
+ * present, so a member who last moved in June and picked a manual city this
+ * morning has a one-minute-old `updated_at` over a three-month-old pin.
+ */
+const FRESH = new Date(Date.now() - 60_000).toISOString();
+
 interface FakeState {
   circleMemberships: Array<{ user_id: string; other_id: string }>;
   locationPreferences: Array<{
@@ -76,6 +90,7 @@ interface FakeState {
     city: string | null;
     country: string | null;
     updated_at: string | null;
+    last_known_at?: string | null;
   }>;
   profiles: Array<{ id: string; name: string | null; avatar_url: string | null }>;
   blocks?: Array<{ blocker_id: string; blocked_id: string }>;
@@ -189,7 +204,7 @@ describe("GET /api/me/circle-locations", () => {
       circleMemberships: [{ user_id: USER_ID, other_id: MEMBER_A }],
       locationPreferences: [],
       locationState: [
-        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: "2026-07-01T10:00:00Z" },
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [{ id: MEMBER_A, name: "Alice", avatar_url: null }],
     });
@@ -205,7 +220,7 @@ describe("GET /api/me/circle-locations", () => {
       circleMemberships: [{ user_id: USER_ID, other_id: MEMBER_B }],
       locationPreferences: [{ user_id: MEMBER_B, trusted_circle_share: true }],
       locationState: [
-        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: "2026-07-01T08:00:00Z" },
+        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [{ id: MEMBER_B, name: "Bob", avatar_url: "https://example.com/bob.jpg" }],
     });
@@ -225,7 +240,7 @@ describe("GET /api/me/circle-locations", () => {
       circleMemberships: [{ user_id: USER_ID, other_id: MEMBER_C }],
       locationPreferences: [{ user_id: MEMBER_C, trusted_circle_share: false }],
       locationState: [
-        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278, city: "London", country: "GB", updated_at: "2026-07-01T09:00:00Z" },
+        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278, city: "London", country: "GB", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [{ id: MEMBER_C, name: "Carol", avatar_url: null }],
     });
@@ -249,9 +264,9 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: MEMBER_C, trusted_circle_share: false },
       ],
       locationState: [
-        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: null },
-        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: null },
-        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278, city: "London", country: "GB", updated_at: null },
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: FRESH, last_known_at: FRESH },
+        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: FRESH, last_known_at: FRESH },
+        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278, city: "London", country: "GB", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [
         { id: MEMBER_A, name: "Alice", avatar_url: null },
@@ -278,7 +293,7 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: MEMBER_B, trusted_circle_share: true },
       ],
       locationState: [
-        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: null },
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [
         { id: MEMBER_A, name: "Alice", avatar_url: null },
@@ -304,8 +319,8 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: MEMBER_B, trusted_circle_share: false },
       ],
       locationState: [
-        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: null },
-        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: null },
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522, city: "Paris", country: "FR", updated_at: FRESH, last_known_at: FRESH },
+        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [
         { id: MEMBER_A, name: "Alice", avatar_url: null },
@@ -328,7 +343,7 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: MEMBER_B, trusted_circle_share: true, location_mode: "nearby", discovery_visibility: "neighborhood" },
       ],
       locationState: [
-        { user_id: MEMBER_B, lat: RAW_LAT, lng: RAW_LNG, city: "Tokyo", country: "JP", updated_at: "2026-07-01T08:00:00Z" },
+        { user_id: MEMBER_B, lat: RAW_LAT, lng: RAW_LNG, city: "Tokyo", country: "JP", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [{ id: MEMBER_B, name: "Bob", avatar_url: null }],
     });
@@ -359,7 +374,7 @@ describe("GET /api/me/circle-locations", () => {
       circleMemberships: [{ user_id: USER_ID, other_id: USER_ID }],
       locationPreferences: [],
       locationState: [
-        { user_id: USER_ID, lat: OWN_LAT, lng: OWN_LNG, city: "New York", country: "US", updated_at: "2026-07-01T12:00:00Z" },
+        { user_id: USER_ID, lat: OWN_LAT, lng: OWN_LNG, city: "New York", country: "US", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [{ id: USER_ID, name: "Owner", avatar_url: null }],
     });
@@ -392,8 +407,8 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: MEMBER_B, trusted_circle_share: true },
       ],
       locationState: [
-        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris", country: "FR", updated_at: "2026-07-01T10:00:00Z" },
-        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: "2026-07-01T08:00:00Z" },
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris", country: "FR", updated_at: FRESH, last_known_at: FRESH },
+        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [
         { id: MEMBER_A, name: "Alice", avatar_url: null },
@@ -430,9 +445,9 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: MEMBER_C, trusted_circle_share: true, discovery_visibility: "no_location" },
       ],
       locationState: [
-        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris",  country: "FR", updated_at: "2026-07-01T10:00:00Z" },
-        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo",  country: "JP", updated_at: "2026-07-01T08:00:00Z" },
-        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278,  city: "London", country: "GB", updated_at: "2026-07-01T09:00:00Z" },
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris",  country: "FR", updated_at: FRESH, last_known_at: FRESH },
+        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo",  country: "JP", updated_at: FRESH, last_known_at: FRESH },
+        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278,  city: "London", country: "GB", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [
         { id: MEMBER_A, name: "Alice", avatar_url: null },
@@ -458,8 +473,8 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: MEMBER_B, trusted_circle_share: true },
       ],
       locationState: [
-        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris", country: "FR", updated_at: null },
-        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: null },
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,   city: "Paris", country: "FR", updated_at: FRESH, last_known_at: FRESH },
+        { user_id: MEMBER_B, lat: 35.6762, lng: 139.6503, city: "Tokyo", country: "JP", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [
         { id: MEMBER_A, name: "Alice", avatar_url: null },
@@ -487,8 +502,8 @@ describe("GET /api/me/circle-locations", () => {
         { user_id: MEMBER_C, trusted_circle_share: true },
       ],
       locationState: [
-        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,  city: "Paris",  country: "FR", updated_at: null },
-        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278, city: "London", country: "GB", updated_at: null },
+        { user_id: MEMBER_A, lat: 48.8566, lng: 2.3522,  city: "Paris",  country: "FR", updated_at: FRESH, last_known_at: FRESH },
+        { user_id: MEMBER_C, lat: 51.5074, lng: -0.1278, city: "London", country: "GB", updated_at: FRESH, last_known_at: FRESH },
       ],
       profiles: [
         { id: MEMBER_A, name: "Alice", avatar_url: null },

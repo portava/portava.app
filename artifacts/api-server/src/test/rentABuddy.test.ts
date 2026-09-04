@@ -131,6 +131,17 @@ const FIRE_AND_FORGET_TABLES = new Set([
   "buddy_booking_events",
 ]);
 
+/**
+ * The fake's buddy-profile table. `FakeState.buddyProfiles` is optional because
+ * not every setup seeds it, but every test below runs `setupState()` first,
+ * which does. Asserting that here states the precondition once instead of
+ * reading through a possible `undefined` in each assertion.
+ */
+function buddyProfiles(): Record<string, any> {
+  assert.ok(state.buddyProfiles, "setupState() must have seeded buddyProfiles");
+  return state.buddyProfiles;
+}
+
 function makeClient(userId: string, role = "user") {
   const inserted: any[] = [];
 
@@ -180,7 +191,6 @@ function makeClient(userId: string, role = "user") {
       like(col: string, val: any) { this._filters.push(["like", col, val]); return this; },
       ilike(col: string, val: any) { this._filters.push(["ilike", col, val]); return this; },
       contains(col: string, val: any) { this._filters.push(["contains", col, val]); return this; },
-      neq(col: string, val: any) { this._filters.push(["neq", col, val]); return this; },
       or(expr: string) { return this; },
       is(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       limit(n: number) { this._limit = n; return this; },
@@ -691,7 +701,7 @@ before(async () => {
   app.use("/api", rentABuddyRouter);
 
   await new Promise<void>((resolve) => {
-    server = app.listen(0, "127.0.0.1", resolve);
+    server = app.listen(0, "127.0.0.1", () => resolve());
   });
   const addr = server.address() as { port: number };
   base = `http://127.0.0.1:${addr.port}`;
@@ -817,8 +827,8 @@ describe("search proximity", () => {
     setupState();
     // Second Tokyo buddy pinned in Shibuya (~ the queried origin), while the
     // default buddy falls back to Tokyo's city-centre seed coordinates.
-    state.buddyProfiles["buddy-prof-pinned"] = {
-      ...state.buddyProfiles[BUDDY_PROF],
+    buddyProfiles()["buddy-prof-pinned"] = {
+      ...buddyProfiles()[BUDDY_PROF],
       id: "buddy-prof-pinned", user_id: "buddy-user-pinned",
       meetup_base_lat: 35.6595, meetup_base_lng: 139.7005,
     };
@@ -842,19 +852,19 @@ describe("meetup base pin", () => {
     const r = await req("PATCH", "/api/rent-a-buddy/me/profile",
       { meetupBaseLat: 35.66, meetupBaseLng: 139.7 }, BUDDY_TOKEN);
     assert.equal(r.status, 200);
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lat, 35.66);
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lng, 139.7);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lat, 35.66);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lng, 139.7);
   });
 
   it("clears the pin when both coordinates are null", async () => {
     setupState();
-    state.buddyProfiles[BUDDY_PROF].meetup_base_lat = 35.66;
-    state.buddyProfiles[BUDDY_PROF].meetup_base_lng = 139.7;
+    buddyProfiles()[BUDDY_PROF].meetup_base_lat = 35.66;
+    buddyProfiles()[BUDDY_PROF].meetup_base_lng = 139.7;
     const r = await req("PATCH", "/api/rent-a-buddy/me/profile",
       { meetupBaseLat: null, meetupBaseLng: null }, BUDDY_TOKEN);
     assert.equal(r.status, 200);
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lat, null);
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lng, null);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lat, null);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lng, null);
   });
 
   it("rejects out-of-range or partial coordinates", async () => {
@@ -869,7 +879,7 @@ describe("meetup base pin", () => {
       assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(body)}`);
       assert.equal(r.body.error, "invalid_meetup_base");
     }
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lat ?? null, null);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lat ?? null, null);
   });
 });
 

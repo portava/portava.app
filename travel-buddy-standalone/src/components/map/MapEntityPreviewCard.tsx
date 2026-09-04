@@ -325,9 +325,8 @@ function TripCard({
     <>
       <View style={s.topRow}>
         <View style={[s.iconCircle, { backgroundColor: cfg.color }]}>
-          {p?.coverUrl
-            ? <DisplayMediaImage uri={p.coverUrl} width={46} height={46} style={s.iconImg} fallbackIcon={<Plane size={20} color="#fff" />} fallbackBg={cfg.color} />
-            : <Plane size={20} color="#fff" />}
+          {/* No cover image — `projectTrip` does not emit one. */}
+          <Plane size={20} color="#fff" />
         </View>
         <View style={s.topText}>
           <Text style={s.primaryText} numberOfLines={1}>{obj.title}</Text>

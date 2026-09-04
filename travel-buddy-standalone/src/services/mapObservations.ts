@@ -18,35 +18,49 @@
  * contribution was paid", and the cleanest way to honour it is for the reward
  * channel not to exist on this path at all.
  *
- * NOT ALL EIGHT PROMPTS ARE ACCEPTED YET. Only crowd_level, queue and
- * entry_access have canonical claim types today; the others are refused with a
- * reason. `submitMapObservation` surfaces that refusal rather than silently
- * swallowing it, so the UI can say "not yet supported here" instead of
- * pretending the observation landed.
+ * No coordinates either, on any prompt. The payload carries the SUBJECT's id,
+ * not a position, and the media prompt below carries a storage reference whose
+ * EXIF/GPS was stripped at upload. `intel_evidence` is not a second location
+ * store and this module is not a way to make it one.
+ *
+ * THE TWO ARROWS
+ * ==============
+ * §21 orders `Observation -> Evidence`, and one endpoint serves both:
+ *
+ *   the seven PROPOSITION prompts   -> an observation; the response carries its
+ *                                      id under `observation.id`
+ *   the MEDIA prompt                -> evidence attached to an observation that
+ *                                      ALREADY EXISTS, named by `observationId`
+ *
+ * A media contribution with no `observationId` is refused server-side with the
+ * ruling as the reason ("a photo is evidence, not a claim"), so `observationId`
+ * is REQUIRED on the media member of `MapContribution` and is sent below.
+ * `features/map/truth/contributionFlow.ts` owns the ordering; this module is
+ * one call.
  */
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken } from './apiToken.ts';
 import type { MapContribution } from '../features/map/truth/liveTruth.ts';
+import type {
+  ContributionSubmitOk,
+  ContributionSubmitRejected,
+  ContributionSubmitResult,
+} from '../features/map/truth/contributionFlow.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 }
 
-export interface MapObservationAccepted {
-  ok: true;
-  /** False when the flag is off — the tap was not an error, but nothing stored. */
-  enabled: boolean;
-  accepted: number;
-  /** Set when the server understood the prompt but has no claim type for it. */
-  unsupportedReason?: string | null;
-}
+export type MapObservationAccepted = ContributionSubmitOk;
+export type MapObservationRejected = ContributionSubmitRejected;
+export type MapObservationResult = ContributionSubmitResult;
 
-export interface MapObservationRejected {
-  ok: false;
-  error: string;
+/** Read an id out of the server's envelope without trusting its shape. */
+function idOf(envelope: unknown): string | null {
+  if (!envelope || typeof envelope !== 'object') return null;
+  const id = (envelope as { id?: unknown }).id;
+  return typeof id === 'string' && id !== '' ? id : null;
 }
-
-export type MapObservationResult = MapObservationAccepted | MapObservationRejected;
 
 /**
  * Post one contribution.
@@ -61,9 +75,9 @@ export async function submitMapObservation(
   objectKind: string,
   contribution: MapContribution,
 ): Promise<MapObservationResult> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured' };
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'Not configured', errorCode: null };
   const token = await freshToken();
-  if (!token) return { ok: false, error: 'Not authenticated' };
+  if (!token) return { ok: false, error: 'Not authenticated', errorCode: null };
 
   const subjectId = objectId.includes(':')
     ? objectId.slice(objectId.indexOf(':') + 1)
@@ -76,9 +90,14 @@ export async function submitMapObservation(
     kind: contribution.kind,
     value: (contribution as { value?: unknown }).value,
   };
-  // `media` is the one prompt with an extra required field.
-  const mediaUri = (contribution as { mediaUri?: string }).mediaUri;
-  if (mediaUri) body.mediaUri = mediaUri;
+  // `media` is the one prompt with extra required fields, and both are sent:
+  // the storage reference the upload produced, and the observation the artifact
+  // supports. Without the second the server refuses the contribution outright,
+  // which is §21's order rather than a bug to route around.
+  if (contribution.kind === 'media') {
+    body.mediaUri = contribution.mediaUri;
+    body.observationId = contribution.observationId;
+  }
 
   try {
     const res = await fetch(`${apiBase()}/api/map/observations`, {
@@ -91,16 +110,35 @@ export async function submitMapObservation(
     });
     const parsed = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) {
-      return { ok: false, error: String(parsed.message ?? `Request failed (${res.status})`) };
+      return {
+        ok: false,
+        error: String(parsed.message ?? `Request failed (${res.status})`),
+        // The server ANSWERED, so this is a refusal rather than a lost request,
+        // and the flow renders it as one. `error` is the stable code
+        // (invalid_payload / forbidden / not_found / rate_limited).
+        errorCode: typeof parsed.error === 'string' ? parsed.error : `http_${res.status}`,
+      };
     }
+    const observationEnvelope = parsed.observation;
+    const evidenceEnvelope = parsed.evidence;
     return {
       ok: true,
       enabled: parsed.enabled !== false,
       accepted: typeof parsed.accepted === 'number' ? parsed.accepted : 0,
-      unsupportedReason:
-        typeof parsed.unsupportedReason === 'string' ? parsed.unsupportedReason : null,
+      deduped: parsed.deduped === true,
+      // On the observation arrow the id is the observation's own; on the
+      // evidence arrow the server echoes the observation it attached to, so a
+      // caller always knows which observation this call concerned.
+      observationId:
+        idOf(observationEnvelope) ??
+        (typeof (evidenceEnvelope as { observationId?: unknown } | undefined)?.observationId === 'string'
+          ? ((evidenceEnvelope as { observationId: string }).observationId)
+          : null),
+      evidenceId: idOf(evidenceEnvelope),
     };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Network error' };
+    // No answer at all — not a refusal. `errorCode: null` is what tells the
+    // flow to say "could not be sent" rather than "was not recorded".
+    return { ok: false, error: e?.message ?? 'Network error', errorCode: null };
   }
 }

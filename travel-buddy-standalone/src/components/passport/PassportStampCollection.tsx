@@ -7,10 +7,11 @@ import React, { useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, Image,
 } from 'react-native';
-import { Compass } from 'lucide-react-native';
-import type { PassportStamp } from '../../types/models.ts';
+import { Compass, ShieldCheck, PenLine, Sparkles } from 'lucide-react-native';
+import type { PassportStamp, StampVerification } from '../../types/models.ts';
 import { PP, PP_LABEL, PP_VALUE, fmtMonthYear } from '../../theme/passportTokens.ts';
-import { avatar } from '../../theme/tokens.ts';
+import { avatar, dot } from '../../theme/tokens.ts';
+import { trackStampViewed } from '../../features/passport/passportTelemetry.ts';
 
 type StampFilter = 'all' | 'cities' | 'special';
 
@@ -47,15 +48,58 @@ function kindAccent(kind: PassportStamp['kind']): string {
   }
 }
 
+/**
+ * §12 verification treatment. `verification` is optional on legacy stamps; an
+ * absent value is treated as 'decorative' so a stamp of unknown provenance can
+ * never read as verified.
+ */
+const VERIFICATION_META: Record<
+  StampVerification,
+  { label: string; color: string; Icon: typeof ShieldCheck }
+> = {
+  verified:   { label: 'Verified',      color: '#2E7D5B', Icon: ShieldCheck },
+  reported:   { label: 'Self-reported', color: '#B4791F', Icon: PenLine },
+  decorative: { label: 'Decorative',    color: PP.inkMuted, Icon: Sparkles },
+};
+
+function stampVerification(stamp: PassportStamp): StampVerification {
+  return stamp.verification ?? 'decorative';
+}
+
+/**
+ * A small corner badge announcing the stamp's provenance treatment (§12). Colour
+ * is paired with a distinct glyph and an accessibility label so it is never the
+ * only signal (§27), and only 'verified' wears the green shield — a self-reported
+ * or decorative stamp can never impersonate a verified one.
+ */
+function VerificationMark({ verification }: { verification: StampVerification }) {
+  const meta = VERIFICATION_META[verification];
+  const Icon = meta.Icon;
+  return (
+    <View
+      style={[vm.badge, { backgroundColor: meta.color }]}
+      accessibilityLabel={`${meta.label} stamp`}
+    >
+      <Icon size={8} color={PP.paper} strokeWidth={2.5} />
+    </View>
+  );
+}
+
 function StampChit({ stamp, onPress }: { stamp: PassportStamp; onPress?: () => void }) {
   const accent = kindAccent(stamp.kind);
   const [artFailed, setArtFailed] = useState(false);
   const showArt = !!stamp.universalArtworkUrl && !artFailed;
+  const verification = stampVerification(stamp);
+  const handlePress = () => {
+    // §32 stamp_viewed — ids/enums only, never the stamp label text.
+    trackStampViewed({ stampId: stamp.id, kind: stamp.kind, verification });
+    onPress?.();
+  };
   return (
     <Pressable
       style={({ pressed }) => [ch.card, pressed && { opacity: 0.8 }]}
-      onPress={onPress}
-      accessibilityLabel={stamp.label + ' stamp'}
+      onPress={handlePress}
+      accessibilityLabel={`${stamp.label} stamp, ${VERIFICATION_META[verification].label}`}
     >
       {/* Top artwork area — AI artwork when available, colored placeholder otherwise */}
       {showArt ? (
@@ -77,6 +121,8 @@ function StampChit({ stamp, onPress }: { stamp: PassportStamp; onPress?: () => v
           ) : null}
         </View>
       )}
+      {/* §12 provenance treatment — verified never looks the same as reported/decorative. */}
+      <VerificationMark verification={verification} />
       {/* Bottom label strip */}
       <View style={ch.labelStrip}>
         <Text style={ch.labelText} numberOfLines={1}>
@@ -91,6 +137,21 @@ function StampChit({ stamp, onPress }: { stamp: PassportStamp; onPress?: () => v
     </Pressable>
   );
 }
+
+const vm = StyleSheet.create({
+  badge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: dot.s12,
+    height: dot.s12,
+    borderRadius: dot.s12 / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.85)',
+  },
+});
 
 function EmptyChit({ onViewAll }: { onViewAll?: () => void }) {
   return (

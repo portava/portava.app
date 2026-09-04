@@ -97,6 +97,14 @@ import {
   calculateDeposit,
   getBookingExpiresAt,
 } from "../services/rentBuddy/PricingService.js";
+import {
+  BUDDY_PUBLIC_COLUMNS,
+  mapBuddyPublicProfile,
+  stripBuddyPrivateFields,
+} from "../lib/buddyMapRead.js";
+// The ONE bidirectional, fail-closed block resolver — the same one the map
+// reader and POST /rent-a-buddy/search consume.
+import { fetchBlockedSet } from "../lib/blocks.js";
 
 const router = Router();
 
@@ -231,44 +239,45 @@ function mapRequest(row: any) {
   };
 }
 
-function mapProfile(row: any) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    userId: row.user_id,
-    displayName: row.display_name,
-    tagline: row.tagline,
-    city: row.city,
-    country: row.country,
-    languages: row.languages ?? [],
-    categories: row.categories ?? [],
-    hourlyRateUsd: row.hourly_rate_usd ? Number(row.hourly_rate_usd) : null,
-    halfDayRateUsd: row.half_day_rate_usd ? Number(row.half_day_rate_usd) : null,
-    fullDayRateUsd: row.full_day_rate_usd ? Number(row.full_day_rate_usd) : null,
-    nightlifeRateUsd: row.nightlife_rate_usd ? Number(row.nightlife_rate_usd) : null,
-    arrivalRateUsd: row.arrival_rate_usd ? Number(row.arrival_rate_usd) : null,
-    status: row.status,
-    verified: row.verified,
-    averageRating: row.average_rating ? Number(row.average_rating) : null,
-    reviewCount: row.review_count ?? 0,
-    completedBookings: row.completed_count ?? row.completed_bookings ?? 0,
-    responseTimeH: row.response_time_h ? Number(row.response_time_h) : null,
-    coverPhotoUrl: row.cover_photo_url,
-    galleryUrls: row.gallery_urls ?? [],
-    vibeTags: row.vibe_tags ?? [],
-    safetyBadges: row.safety_badges ?? [],
-    buddyLevel: row.buddy_level,
-    featured: row.featured ?? false,
-    cityAmbassador: row.city_ambassador ?? false,
-    availableNow: row.available_now ?? false,
-    femaleOnlyService: row.female_only_service ?? false,
-    publicMeetupOnly: row.public_meetup_only ?? false,
-    groupApproved: row.group_approved ?? false,
-    nightlifeApproved: row.nightlife_approved ?? false,
-    energyType: row.energy_type,
-    maxGroupSize: row.max_group_size,
-    createdAt: row.created_at,
-  };
+/**
+ * THE marketplace buddy card — every buddy this router puts on the wire.
+ *
+ * It is the CANONICAL public buddy DTO (lib/buddyMapRead: BUDDY_PUBLIC_COLUMNS
+ * on the select → stripBuddyPrivateFields → mapBuddyPublicProfile), so a private
+ * column is actively STRIPPED here rather than merely never mapped. The local
+ * `mapProfile` this replaced emitted no private field either, but only by
+ * omission: a field added to it later would have leaked silently, and it had
+ * already drifted from the canonical DTO in both directions.
+ *
+ * MINUS the meetup base. `mapBuddyPublicProfile` emits meetupBaseLat/Lng, and
+ * NONE of these endpoints has ever emitted them. They are a person's real (if
+ * area-rounded) location, so adding them because "the canonical DTO has them"
+ * would be a NEW disclosure on browsable lists of people — a widening dressed
+ * up as consolidation. Consolidating a DTO may narrow exposure; it may not
+ * widen it. No client reads them from any endpoint here; the ONE surface that
+ * legitimately serves a buddy's pin is the map reader, which is not this file.
+ */
+function mapMarketplaceBuddy(row: any) {
+  const dto = mapBuddyPublicProfile(stripBuddyPrivateFields(row, false));
+  if (!dto) return null;
+  const { meetupBaseLat, meetupBaseLng, ...withoutMeetupBase } = dto;
+  return withoutMeetupBase;
+}
+
+/**
+ * Drop everyone in `blocked` from a people-bearing list.
+ *
+ * `blocked` is `fetchBlockedSet`'s BIDIRECTIONAL set, so this removes both "I
+ * blocked them" and "they blocked me". Callers resolve the set once per request
+ * and must treat a `null` from fetchBlockedSet as expose-NOBODY before calling
+ * this — never as "no blocks".
+ */
+function withoutBlocked<T>(rows: T[], blocked: Set<string>, userIdOf: (row: T) => unknown): T[] {
+  if (blocked.size === 0) return rows;
+  return rows.filter((row) => {
+    const uid = userIdOf(row);
+    return !(uid != null && blocked.has(String(uid)));
+  });
 }
 
 // ── Build BuddyScoringData from DB row ────────────────────────────────────────
@@ -378,7 +387,30 @@ router.post("/rent-a-buddy/match", async (req, res) => {
     publicOnly: prefOverride?.publicOnly ?? (storedPrefs as any)?.public_only ?? false,
   };
 
-  // Load eligible Buddies in city
+  // ── Block filter ────────────────────────────────────────────────────────────
+  // The match result is a browsable, ranked list of people to hire, so it gets
+  // the same treatment POST /rent-a-buddy/search does: lib/blocks.fetchBlockedSet,
+  // the one bidirectional resolver, FAIL-CLOSED. This endpoint is requireUser,
+  // so there is always a viewer and `null` (block state unreadable) can only
+  // mean expose NOBODY. Resolved BEFORE the profile read so an outage costs no
+  // scoring work, and well before the score/search-event writes below, so a
+  // blocked buddy never lands in the cached match scores either.
+  const blockedSet = await fetchBlockedSet(svc as any, user.id);
+  if (blockedSet === null) { res.json({ results: [], total: 0 }); return; }
+
+  // Load eligible Buddies in city.
+  //
+  // `select("*")` STAYS, deliberately. The ranker below (toBuddyScoringData →
+  // calculateCompatibilityScore) reads eleven columns that BUDDY_PUBLIC_COLUMNS
+  // does not carry — risk_hold, admin_status, female_only_service,
+  // public_meetup_only, group_approved, nightlife_approved, arrival_approved,
+  // energy_type, city_ambassador, half_day_rate_usd, full_day_rate_usd — and
+  // two of them gate ELIGIBILITY, not ordering: CompatibilityScoreService
+  // excludes a buddy when `riskHold || adminStatus !== 'active'`. Narrowing this
+  // select to the public allow-list would leave risk_hold undefined, default it
+  // to false, and quietly make risk-held buddies matchable. That is a widening,
+  // so the allow-list is not widened and the select is not narrowed; what is
+  // fixed here is the EMISSION, which now strips before mapping.
   const query = svc
     .from("rent_buddy_profiles")
     .select("*")
@@ -389,7 +421,7 @@ router.post("/rent-a-buddy/match", async (req, res) => {
   const { data: buddyRows, error } = await query.limit(200);
   if (error) return sendError(res, 'db_error', error.message);
 
-  const rows = (buddyRows as any[]) ?? [];
+  const rows = withoutBlocked((buddyRows as any[]) ?? [], blockedSet, (r) => r.user_id);
 
   // Load trust scores in batch
   const userIds = rows.map((r: any) => r.user_id);
@@ -437,7 +469,7 @@ router.post("/rent-a-buddy/match", async (req, res) => {
 
   const rowMap = new Map(rows.map((r: any) => [r.id, r]));
   const results = top.map((s) => ({
-    ...mapProfile(rowMap.get(s.buddyProfileId)),
+    ...mapMarketplaceBuddy(rowMap.get(s.buddyProfileId)),
     compatibilityScore: s.score,
     scoreBreakdown: s.scoreBreakdown,
   }));
@@ -456,12 +488,39 @@ router.get("/rent-a-buddy/sections", async (req, res) => {
   const svc = sc() ?? auth.client;
 
   const city = (req.query.city as string) ?? null;
-  const queryBase = svc.from("rent_buddy_profiles").select("*").eq("status", "active").eq("admin_status", "active");
 
-  // Helper to run a filtered query
+  // ── Block filter ────────────────────────────────────────────────────────────
+  // Thirteen browsable lists of people to hire had no block filter at all: a
+  // buddy the viewer blocked, or who blocked the viewer, still appeared in every
+  // one of them. Same defect POST /rent-a-buddy/search carried, same fix —
+  // lib/blocks.fetchBlockedSet, the one bidirectional resolver, FAIL-CLOSED.
+  //
+  // Unlike search, this endpoint is requireUser (see above), so there is always
+  // a viewer and `null` can only mean "we could not read block state" — which
+  // means expose NOBODY, never "no blocks". Resolved ONCE here rather than per
+  // section, and BEFORE the thirteen profile reads fan out, so an unreadable
+  // block table costs no query work.
+  const blockedSet = await fetchBlockedSet(svc as any, user.id);
+  if (blockedSet === null) { res.json({ sections: [], city }); return; }
+  // Narrowed alias: TypeScript resets `blockedSet`'s narrowing inside the nested
+  // `section` helper below, and this keeps the fail-closed guard the single
+  // place null is handled.
+  const blocked: Set<string> = blockedSet;
+
+  // Helper to run a filtered query.
+  //
+  // BUDDY_PUBLIC_COLUMNS, not `*`: the section filters below narrow on columns
+  // that are deliberately NOT public (female_only_service, nightlife_approved,
+  // arrival_approved, group_approved, city_ambassador…), and PostgREST filters
+  // on columns whether or not they are selected — so the filters keep working
+  // while the rows that come back carry only public columns.
+  //
+  // The block filter is applied HERE, to every section's rows, so no section can
+  // be added later that forgets it.
   async function section(filter: (q: any) => any, limit: number): Promise<any[]> {
-    const q = svc.from("rent_buddy_profiles").select("*").eq("status", "active").eq("admin_status", "active");
-    return (await filter(q).limit(limit)).data ?? [];
+    const q = svc.from("rent_buddy_profiles").select(BUDDY_PUBLIC_COLUMNS).eq("status", "active").eq("admin_status", "active");
+    const rows = (await filter(q).limit(limit)).data ?? [];
+    return withoutBlocked(rows as any[], blocked, (r: any) => r.user_id);
   }
 
   const cityFilter = (q: any) => city ? q.eq("city", city) : q;
@@ -500,19 +559,19 @@ router.get("/rent-a-buddy/sections", async (req, res) => {
 
   res.json({
     sections: [
-      { key: "available_now",       title: "Available Now",              buddies: availableNowRows.map(mapProfile) },
-      { key: "top_in_city",         title: "Top Buddies in This City",   buddies: topCityRows.map(mapProfile) },
-      { key: "female_favorites",    title: "Female Traveler Favorites",  buddies: femaleRows.map(mapProfile) },
-      { key: "nightlife",           title: "Nightlife Guides",           buddies: nightlifeRows.map(mapProfile) },
-      { key: "language_help",       title: "Language Help",              buddies: languageRows.map(mapProfile) },
-      { key: "arrival_help",        title: "Arrival Support",            buddies: arrivalRows.map(mapProfile) },
-      { key: "content_photo",       title: "Content & Photo",            buddies: contentRows.map(mapProfile) },
-      { key: "budget_friendly",     title: "Budget-Friendly Picks",      buddies: budgetRows.map(mapProfile) },
-      { key: "luxury",              title: "Luxury Experiences",         buddies: luxuryRows.map(mapProfile) },
-      { key: "group",               title: "Group Experiences",          buddies: groupRows.map(mapProfile) },
-      { key: "new_verified",        title: "New Verified Buddies",       buddies: newVerifiedRows.map(mapProfile) },
-      { key: "city_ambassadors",    title: "City Ambassadors",           buddies: ambassadorRows.map(mapProfile) },
-      { key: "request_a_buddy",     title: "Request a Buddy",            buddies: requestRows.map(mapProfile), isCtaSection: true },
+      { key: "available_now",       title: "Available Now",              buddies: availableNowRows.map(mapMarketplaceBuddy) },
+      { key: "top_in_city",         title: "Top Buddies in This City",   buddies: topCityRows.map(mapMarketplaceBuddy) },
+      { key: "female_favorites",    title: "Female Traveler Favorites",  buddies: femaleRows.map(mapMarketplaceBuddy) },
+      { key: "nightlife",           title: "Nightlife Guides",           buddies: nightlifeRows.map(mapMarketplaceBuddy) },
+      { key: "language_help",       title: "Language Help",              buddies: languageRows.map(mapMarketplaceBuddy) },
+      { key: "arrival_help",        title: "Arrival Support",            buddies: arrivalRows.map(mapMarketplaceBuddy) },
+      { key: "content_photo",       title: "Content & Photo",            buddies: contentRows.map(mapMarketplaceBuddy) },
+      { key: "budget_friendly",     title: "Budget-Friendly Picks",      buddies: budgetRows.map(mapMarketplaceBuddy) },
+      { key: "luxury",              title: "Luxury Experiences",         buddies: luxuryRows.map(mapMarketplaceBuddy) },
+      { key: "group",               title: "Group Experiences",          buddies: groupRows.map(mapMarketplaceBuddy) },
+      { key: "new_verified",        title: "New Verified Buddies",       buddies: newVerifiedRows.map(mapMarketplaceBuddy) },
+      { key: "city_ambassadors",    title: "City Ambassadors",           buddies: ambassadorRows.map(mapMarketplaceBuddy) },
+      { key: "request_a_buddy",     title: "Request a Buddy",            buddies: requestRows.map(mapMarketplaceBuddy), isCtaSection: true },
     ],
     city,
   });
@@ -526,9 +585,16 @@ router.get("/rent-a-buddy/available-now", async (req, res) => {
   const svc = sc() ?? auth.client;
   const city = req.query.city as string | undefined;
 
+  // Fail-closed bidirectional block filter — see GET /sections. requireUser, so
+  // `null` means expose nobody. Resolved before the profile read.
+  const blockedSet = await fetchBlockedSet(svc as any, auth.user.id);
+  if (blockedSet === null) { res.json({ buddies: [] }); return; }
+
+  // BUDDY_PUBLIC_COLUMNS, not `*`: this list is served straight to a browsable
+  // card, and nothing in this handler reads a non-public column.
   let q = svc
     .from("rent_buddy_profiles")
-    .select("*")
+    .select(BUDDY_PUBLIC_COLUMNS)
     .eq("status", "active")
     .eq("admin_status", "active")
     .eq("available_now", true);
@@ -541,7 +607,8 @@ router.get("/rent-a-buddy/available-now", async (req, res) => {
 
   const { data, error } = await q.limit(20);
   if (error) return sendError(res, 'db_error', error.message);
-  res.json({ buddies: (data ?? []).map(mapProfile) });
+  const rows = withoutBlocked((data as any[]) ?? [], blockedSet, (r: any) => r.user_id);
+  res.json({ buddies: rows.map(mapMarketplaceBuddy) });
 });
 
 // ── Top in city ───────────────────────────────────────────────────────────────
@@ -552,9 +619,16 @@ router.get("/rent-a-buddy/cities/:city/top", async (req, res) => {
   const svc = sc() ?? auth.client;
   const { city } = req.params;
 
+  // Fail-closed bidirectional block filter — see GET /sections. requireUser, so
+  // `null` means expose nobody.
+  const blockedSet = await fetchBlockedSet(svc as any, auth.user.id);
+  if (blockedSet === null) { res.json({ buddies: [] }); return; }
+
+  // BUDDY_PUBLIC_COLUMNS, not `*`: `completed_count` is in the allow-list, so
+  // the ordering below is unaffected, and nothing here reads a non-public column.
   const { data, error } = await svc
     .from("rent_buddy_profiles")
-    .select("*")
+    .select(BUDDY_PUBLIC_COLUMNS)
     .eq("status", "active")
     .eq("admin_status", "active")
     .eq("city", city)
@@ -562,7 +636,8 @@ router.get("/rent-a-buddy/cities/:city/top", async (req, res) => {
     .limit(20);
 
   if (error) return sendError(res, 'db_error', error.message);
-  res.json({ buddies: (data ?? []).map(mapProfile) });
+  const rows = withoutBlocked((data as any[]) ?? [], blockedSet, (r: any) => r.user_id);
+  res.json({ buddies: rows.map(mapMarketplaceBuddy) });
 });
 
 // ── Availability settings ─────────────────────────────────────────────────────
@@ -1009,17 +1084,34 @@ router.get("/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
     return sendError(res, 'forbidden', "Not authorized to view offers for this request.");
   }
 
+  // Fail-closed bidirectional block filter. Nothing stops a buddy the traveler
+  // has blocked from offering on their open request — POST …/offers has no block
+  // check — so without this the blocked person arrives on the traveller's screen
+  // with their name, photo and rating. The offer row is left alone rather than
+  // rejected: it simply is not shown, and expires on its own `expires_at`.
+  const blockedSet = await fetchBlockedSet(svc as any, auth.user.id);
+  if (blockedSet === null) { res.json({ offers: [] }); return; }
+
+  // The buddy embed is an EXPLICIT column list, already narrower than
+  // BUDDY_PUBLIC_COLUMNS — no private column is read here, so this endpoint
+  // never had the select("*") half of the defect. It is left narrow (reading
+  // less is the right direction) and only the mapping is consolidated; the
+  // resulting card is the canonical DTO over the columns actually fetched.
+  // `user_id` is the one addition, and it is not a new disclosure: mapOffer
+  // already puts the same value on the wire as `buddyUserId`.
   const { data, error } = await svc
     .from("rent_buddy_offers")
-    .select("*, buddy:rent_buddy_profiles(id, display_name, tagline, average_rating, verified, buddy_level, cover_photo_url)")
+    .select("*, buddy:rent_buddy_profiles(id, user_id, display_name, tagline, average_rating, verified, buddy_level, cover_photo_url)")
     .eq("request_id", requestId)
     .order("created_at", { ascending: false });
 
   if (error) return sendError(res, 'db_error', error.message);
 
-  const offers = (data ?? []).map((o: any) => ({
+  const visible = withoutBlocked((data as any[]) ?? [], blockedSet, (o: any) => o.buddy_user_id);
+
+  const offers = visible.map((o: any) => ({
     ...mapOffer(o),
-    buddy: o.buddy ? mapProfile(o.buddy) : null,
+    buddy: o.buddy ? mapMarketplaceBuddy(o.buddy) : null,
   }));
 
   res.json({ offers });
@@ -1793,20 +1885,36 @@ router.get("/rent-a-buddy/me/saved-buddies", async (req, res) => {
   if (!auth) return;
   const svc = sc() ?? auth.client;
 
+  // Fail-closed bidirectional block filter. Blocking someone you had already
+  // saved must remove them from your own saved list too — a saved card carries
+  // their name and photo exactly like a search result does.
+  const blockedSet = await fetchBlockedSet(svc as any, auth.user.id);
+  if (blockedSet === null) { res.json({ saved: [] }); return; }
+
+  // BUDDY_PUBLIC_COLUMNS on the embed, not `*`: `rent_buddy_profiles(*)` pulled
+  // legal_name, phone_number, exact_address, home_address and
+  // id_verification_ref into memory on every saved card, and only the old local
+  // mapper's happening not to emit them kept them off the wire.
   const { data, error } = await svc
     .from("rent_buddy_saved")
-    .select("*, buddy:rent_buddy_profiles(*)")
+    .select(`*, buddy:rent_buddy_profiles(${BUDDY_PUBLIC_COLUMNS})`)
     .eq("user_id", auth.user.id)
     .order("updated_at", { ascending: false });
 
   if (error) return sendError(res, 'db_error', error.message);
 
-  const results = (data ?? []).map((row: any) => ({
+  const visible = withoutBlocked(
+    (data as any[]) ?? [],
+    blockedSet,
+    (row: any) => row.buddy?.user_id,
+  );
+
+  const results = visible.map((row: any) => ({
     buddyId: row.buddy_id,
     notes: row.notes,
     savedAt: row.created_at,
     updatedAt: row.updated_at,
-    buddy: mapProfile(row.buddy),
+    buddy: mapMarketplaceBuddy(row.buddy),
   }));
 
   res.json({ saved: results });

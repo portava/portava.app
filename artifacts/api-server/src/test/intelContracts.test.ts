@@ -18,7 +18,7 @@ import {
   COMMERCIAL_DISCLOSURES, CROWD_LEVELS, TRAJECTORIES,
   PRESENCE_LEVELS, PRESENCE_LEVEL_MEANING,
   CONFIDENCE_BANDS, CONFIDENCE_BAND_FLOOR, confidenceBand,
-  CLAIM_TYPES, isModerationEligible, isPilotClaimable,
+  CLAIM_TYPES, PHASE1_CLAIM_TYPES, isModerationEligible, isPilotClaimable,
   clampObservedAt, MAX_OBSERVED_AT_SKEW_MS,
   isValidIdempotencyKey, IDEMPOTENCY_KEY_MAX_LENGTH,
   INTEL_FLAGS, INTEL_FLAG_DEPENDENCIES,
@@ -92,7 +92,18 @@ describe("T-02 seed idempotence", () => {
 // ── T-03 · claim registry ──────────────────────────────────────────────────
 describe("T-03 claim-type registry", () => {
   it("declares exactly the thirteen Phase-1 claim types", () => {
-    assert.equal(CLAIM_TYPES.length, 13);
+    // The §22 map-contribution types added later are a SEPARATE list
+    // (MAP_CONTRIBUTION_CLAIM_TYPES, seeded by 2220 and pinned by
+    // mapContributionClaimTypes.test.ts) precisely so this count keeps meaning
+    // "the Phase-1 cut 2128 owns" instead of drifting into "however many claim
+    // types exist".
+    assert.equal(PHASE1_CLAIM_TYPES.length, 13);
+    assert.ok(CLAIM_TYPES.length >= PHASE1_CLAIM_TYPES.length,
+      "CLAIM_TYPES must contain the Phase-1 cut");
+    for (const c of PHASE1_CLAIM_TYPES) {
+      assert.ok(CLAIM_TYPES.some((x) => x.claimType === c.claimType),
+        `${c.claimType} dropped out of CLAIM_TYPES`);
+    }
   });
 
   it("every claim type is dotted family.type and has a coherent ceiling", () => {
@@ -105,7 +116,10 @@ describe("T-03 claim-type registry", () => {
   });
 
   it("the migration seeds exactly the claim types the module declares", () => {
-    for (const c of CLAIM_TYPES) {
+    // 2128 owns the Phase-1 cut and only it; 2220 owns the map-contribution
+    // types. Scoping this to PHASE1_CLAIM_TYPES keeps each migration answerable
+    // for its own rows.
+    for (const c of PHASE1_CLAIM_TYPES) {
       assert.ok(MIGRATION.includes(`'${c.claimType}'`), `${c.claimType} missing from 2128`);
       assert.ok(MIGRATION.includes(String(c.ttlSeconds)), `${c.claimType} ttl not in 2128`);
     }

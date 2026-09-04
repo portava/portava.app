@@ -1,4 +1,21 @@
--- 2222_input_selection_history.sql
+-- 2258_input_selection_history.sql
+--
+-- RENUMBERED from 2222 (was 2222_input_selection_history.sql), on branch
+-- claude/map-completion-20260831, to resolve a prefix collision with
+-- 2222_map_telemetry_refusal_event.sql.
+--
+-- checkMigrationPrefixes says to renumber whichever file is UNAPPLIED, because
+-- the filename is the record that a migration ran. Both databases were checked
+-- rather than assumed: this file's objects are absent from CI and from prod, and
+-- it has no row in schema_migration_ledger. The other 2222 IS applied to CI, has
+-- a ledger row, and is named in 2254's backfill list — renaming THAT one would
+-- have orphaned its ledger row and manufactured exactly the rename drift the
+-- ledger gate warns about.
+--
+-- So this file moved, and this one is the free move: unapplied everywhere, no
+-- ledger row, and no reference to its filename anywhere in src/ or docs/.
+-- Nothing about its content changed.
+--
 --
 -- Global Input Intelligence — Phase 8 (Personalization). §35 Selection Memory.
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band; Input lane 2220-2249).

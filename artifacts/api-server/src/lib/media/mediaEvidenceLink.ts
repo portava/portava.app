@@ -29,6 +29,24 @@
  * writes intel_observations/intel_claims/intel_state_snapshots, never touches
  * the consensus/expiry/live-label machinery, and never promotes anything to
  * "live" — the Live label stays owned by the gated IG path.
+ *
+ * ── STATE, 2026-09-03: THE WRITE HALF HAS NO PRODUCTION CALLER ───────────────
+ * READ (observationsHaveEligibleMediaEvidence) IS wired —
+ * lib/intelProjectionAggregator.ts calls it. WRITE (linkMediaEvidence) is
+ * reached ONLY from src/test/mediaEvidenceSeam.test.ts. Nothing in the product
+ * writes intel_evidence.media_asset_id, so the wired read side returns false on
+ * every claim even with the flag ON.
+ *
+ * This is NOT one missing line. The write half needs an intel_observations row
+ * and a canonical media_assets row in the same hand, and no path holds both:
+ * the §22 map media prompt is refused server-side (no canonical claim type),
+ * carries only a device-local mediaUri (no upload ⇒ no asset), and is hidden
+ * client-side. Wiring it to any EXISTING caller would violate the NOT NULL FK
+ * intel_evidence.observation_id → intel_observations(id).
+ *
+ * Read docs/map/media-evidence-seam-state-20260903.md BEFORE concluding this
+ * seam is built, and before flipping media_evidence_enabled. That note lists
+ * the five verified gaps and what has to exist first.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "../featureFlags.js";
@@ -84,6 +102,10 @@ function evidenceKindFor(mediaType: string | null | undefined): "photo" | "video
 /**
  * linkMediaEvidence — the capture-side choke-point. Records the evidence linkage
  * for an evidence-eligible media asset attached to an observation.
+ *
+ * NO PRODUCTION CALLER as of 2026-09-03 — the "capture side" this is the
+ * choke-point FOR does not exist yet. Tests are the only caller. See the module
+ * banner above and docs/map/media-evidence-seam-state-20260903.md.
  *
  * Order of gates (fail-closed):
  *   1. master flag OFF ⇒ refuse (no writes). The whole seam is dark by default.
