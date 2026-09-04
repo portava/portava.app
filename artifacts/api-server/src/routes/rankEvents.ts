@@ -2,9 +2,11 @@
  * POST /api/rank-events/outcome
  *
  * Records a user outcome (tap, save, join, rsvp, attended) against the most
- * recent matching impression row in rank_events for the authenticated user.
+ * recent matching rank_events row for the authenticated user whose current
+ * outcome sits on a LOWER funnel rung — an impression row, or a row already
+ * upgraded to a weaker outcome (impression → tap → save/join/rsvp → attended).
  *
- * Auth required.  Returns 404 when no impression row is found — phantom rows
+ * Auth required.  Returns 404 when no upgradable row is found — phantom rows
  * are never created.
  *
  * Body: { item_id: uuid, surface: string, outcome: OutcomeEnum, session_id?: uuid }
@@ -16,7 +18,6 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { asyncHandler } from "../lib/asyncHandler";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
-import { upsertDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
 import { RankingEvent, OUTCOME_TO_ANALYTICS_EVENT } from "../services/ranking/rankingAnalytics.js";
 
 const router = Router();
@@ -80,6 +81,38 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
 // sending the legacy string values.  New outcome event types are emitted
 // as additional analytics rows using the typed RankingEvent constants.
 const OUTCOME_VALUES = ["tap", "save", "join", "rsvp", "attended"] as const;
+type OutcomeValue = typeof OUTCOME_VALUES[number];
+
+/**
+ * Funnel rungs (0153_add_rank_events.sql: impression → tap → save/join/rsvp →
+ * attended).  rank_events is a mutable-state table — an outcome UPDATES the
+ * impression row in place — so the row can only ever hold ONE outcome, and it
+ * should be the furthest rung reached.
+ *
+ * The lookup below therefore accepts any row on a strictly LOWER rung than the
+ * reported outcome, not only outcome='impression'.  Without that, the first
+ * outcome consumes the row and every stronger one after it 404s: the discovery
+ * surface reports 'tap' when a place card opens its detail sheet, and a 'save'
+ * made from inside that sheet — the strongest signal the surface has — was
+ * silently lost.  A weaker or equal outcome (a 'tap' after a 'save', a 'join'
+ * after an 'rsvp') never downgrades: it finds no row and returns 404 exactly as
+ * a duplicate did before.
+ */
+const OUTCOME_RUNG: Record<OutcomeValue | "impression", number> = {
+  impression: 0,
+  tap:        1,
+  save:       2,
+  join:       2,
+  rsvp:       2,
+  attended:   3,
+};
+
+/** rank_events.outcome values a row may hold and still be upgraded to `outcome`. */
+export function upgradableOutcomesFor(outcome: OutcomeValue): string[] {
+  const rung = OUTCOME_RUNG[outcome];
+  return (Object.keys(OUTCOME_RUNG) as Array<keyof typeof OUTCOME_RUNG>)
+    .filter((o) => OUTCOME_RUNG[o] < rung);
+}
 
 /**
  * Surfaces a client may report an outcome against.  This is the ONLY server-side
@@ -127,14 +160,15 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Find the most recent impression row for this user + item (+ optionally surface)
+  // Find the most recent upgradable row for this user + item + surface
+  // (+ optionally session): an impression, or a row on a lower funnel rung.
   let query = sc
     .from("rank_events")
     .select("id")
     .eq("user_id", user.id)
     .eq("item_id", item_id)
     .eq("surface", surface)
-    .eq("outcome", "impression")   // only upgrade from impression rows
+    .in("outcome", upgradableOutcomesFor(outcome))   // never downgrades — see OUTCOME_RUNG
     .order("served_at", { ascending: false })
     .limit(1);
 
@@ -198,11 +232,13 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
       });
   }
 
-  // Update content_distribution_stats for this item — fire-and-forget.
-  // An outcome confirms the impression was real: increment eligible_impressions
-  // and unique_viewers, then let the service determine underexposure_status.
-  // negativeSignal=false: tap/save/join/rsvp/attended are all positive outcomes
-  void upsertDistributionStats(sc, item_id, user.id, false);
+  // content_distribution_stats is deliberately NOT touched here.  This route
+  // used to be the ONLY writer of eligible_impressions — "an outcome confirms
+  // the impression was real" — which made the exposure denominator a count of
+  // conversions (docs/architecture/00_STATUS.md defect 4).  The counter is now
+  // incremented where the impression is written (lib/rankLog.ts,
+  // lib/discoveryServeLog.ts → recordImpressionDistributionStats); an outcome
+  // is a numerator event and must never move the denominator.
 
   res.json({ ok: true });
 }));
