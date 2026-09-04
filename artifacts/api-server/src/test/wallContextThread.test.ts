@@ -47,15 +47,69 @@ function projectionWithPlace(placeId = "place-1", city = "Bangkok"): WallProject
   };
 }
 
+/**
+ * The columns `hidden_gems` actually has in the live schema, for the names this
+ * suite's readers put in a select list. Verified against project
+ * hwokxgbmezheskbzskfr on 2026-09-03.
+ *
+ * This list exists because the fixtures below used to hand the fake rows
+ * carrying `confirmation_count` and `days_since_last_confirmation` — two
+ * columns that have never existed. The fake ignored the select list, so the
+ * tests were green while the production read failed with PGRST100 on every
+ * call and the whole hidden-gem branch returned null. Pass this to
+ * `columnsByTable` and the fake rejects an unknown column the way PostgREST
+ * does, which is what makes that class of fiction fail here instead of in
+ * production.
+ */
+const LIVE_HIDDEN_GEM_COLUMNS = [
+  "id",
+  "sensitivity_level",
+  "verification_level",
+  "status",
+  "crowd_level",
+  "save_count",
+  "visit_count",
+  "updated_at",
+  "canonical_place_id",
+  "latitude",
+  "longitude",
+  "approx_latitude",
+  "approx_longitude",
+  "image_url",
+] as const;
+
 /** Minimal per-table fake: awaiting a builder resolves to { data, error }, and
  *  maybeSingle resolves to the first row. Filters are captured but not applied
  *  (each reader queries one table with a fixed shape, so returning the configured
- *  rows is sufficient). */
-function tableClient(rowsByTable: Record<string, any[]>, opts: { errorTables?: string[] } = {}) {
+ *  rows is sufficient).
+ *
+ *  `columnsByTable` opts a table into select-list validation: any name in the
+ *  select that the table does not have fails the WHOLE query with PGRST100,
+ *  which is PostgREST's real behaviour and the one this fake used to lack.
+ *  Only plain comma-separated column lists are parsed — no embedded-resource
+ *  syntax — which is all any reader in this service uses. */
+function tableClient(
+  rowsByTable: Record<string, any[]>,
+  opts: { errorTables?: string[]; columnsByTable?: Record<string, readonly string[]> } = {},
+) {
   const errorTables = new Set(opts.errorTables ?? []);
+  const columnsByTable = opts.columnsByTable ?? {};
   function builder(table: string) {
+    let unknownColumn: string | null = null;
     const b: any = {
-      select: () => b,
+      select: (list?: string) => {
+        const known = columnsByTable[table];
+        if (known && typeof list === "string") {
+          for (const raw of list.split(",")) {
+            const name = raw.trim();
+            if (name && name !== "*" && !known.includes(name)) {
+              unknownColumn = name;
+              break;
+            }
+          }
+        }
+        return b;
+      },
       eq: () => b,
       in: () => b,
       gte: () => b,
@@ -64,19 +118,30 @@ function tableClient(rowsByTable: Record<string, any[]>, opts: { errorTables?: s
       order: () => b,
       limit: () => b,
       maybeSingle: () =>
-        errorTables.has(table)
-          ? Promise.resolve({ data: null, error: { message: "boom" } })
-          : Promise.resolve({ data: (rowsByTable[table] ?? [])[0] ?? null, error: null }),
+        unknownColumn
+          ? Promise.resolve({ data: null, error: pgrst100(table, unknownColumn) })
+          : errorTables.has(table)
+            ? Promise.resolve({ data: null, error: { message: "boom" } })
+            : Promise.resolve({ data: (rowsByTable[table] ?? [])[0] ?? null, error: null }),
       then: (onF: any, onR: any) => {
-        const res = errorTables.has(table)
-          ? { data: null, error: { message: "boom" } }
-          : { data: rowsByTable[table] ?? [], error: null };
+        const res = unknownColumn
+          ? { data: null, error: pgrst100(table, unknownColumn) }
+          : errorTables.has(table)
+            ? { data: null, error: { message: "boom" } }
+            : { data: rowsByTable[table] ?? [], error: null };
         return Promise.resolve(res).then(onF, onR);
       },
     };
     return b;
   }
   return { from: builder };
+}
+
+function pgrst100(table: string, column: string) {
+  return {
+    code: "PGRST100",
+    message: `column ${table}.${column} does not exist`,
+  };
 }
 
 const VIEWER: ContextThreadViewerContext = { viewerId: "viewer-1", now: new Date("2026-09-01T12:00:00.000Z") };
@@ -169,20 +234,24 @@ describe("selectContextThread — at most one, highest utility", () => {
 
 describe("readHiddenGemCandidate — disclosure policy (spec §20)", () => {
   it("a public gem yields a non-sensitive, authorized candidate", async () => {
-    const sc = tableClient({
-      hidden_gems: [
-        {
-          id: "g1",
-          sensitivity_level: "public",
-          verification_level: "community",
-          status: "active",
-          crowd_level: "low",
-          confirmation_count: 3,
-          days_since_last_confirmation: 5,
-          updated_at: "2026-09-01T09:00:00.000Z",
-        },
-      ],
-    });
+    const sc = tableClient(
+      {
+        hidden_gems: [
+          {
+            id: "g1",
+            sensitivity_level: "public",
+            verification_level: "community",
+            status: "active",
+            crowd_level: "low",
+            save_count: 2,
+            visit_count: 4,
+            canonical_place_id: "place-1",
+            updated_at: "2026-09-01T09:00:00.000Z",
+          },
+        ],
+      },
+      { columnsByTable: { hidden_gems: LIVE_HIDDEN_GEM_COLUMNS } },
+    );
     const cand = await _internal.readHiddenGemCandidate(sc, projectionWithPlace(), VIEWER);
     assert.ok(cand);
     assert.equal(cand!.thread.kind, "hidden_gem");
@@ -191,26 +260,74 @@ describe("readHiddenGemCandidate — disclosure policy (spec §20)", () => {
   });
 
   it("a protected gem is marked sensitive + unauthorized (so the gate suppresses it)", async () => {
-    const sc = tableClient({
-      hidden_gems: [
-        {
-          id: "g2",
-          sensitivity_level: "protected",
-          verification_level: "guide",
-          status: "active",
-          crowd_level: "low",
-          confirmation_count: 4,
-          days_since_last_confirmation: 2,
-          updated_at: "2026-09-01T09:00:00.000Z",
-        },
-      ],
-    });
+    const sc = tableClient(
+      {
+        hidden_gems: [
+          {
+            id: "g2",
+            sensitivity_level: "protected",
+            verification_level: "guide",
+            status: "active",
+            crowd_level: "low",
+            save_count: 1,
+            visit_count: 3,
+            canonical_place_id: "place-1",
+            updated_at: "2026-09-01T09:00:00.000Z",
+          },
+        ],
+      },
+      { columnsByTable: { hidden_gems: LIVE_HIDDEN_GEM_COLUMNS } },
+    );
     const cand = await _internal.readHiddenGemCandidate(sc, projectionWithPlace(), VIEWER);
     assert.ok(cand);
     assert.equal(cand!.gate.sensitiveDisclosure, true);
     assert.equal(cand!.gate.viewerAuthorized, false);
     // And the gate refuses it.
     assert.equal(shouldAttachContextThread(cand!.gate), false);
+  });
+
+  it("names only columns hidden_gems actually has — an invented one kills the whole read", async () => {
+    // The guard, stated as a test rather than left to a CI script: this fake
+    // answers a select naming an unknown column exactly as PostgREST does, so a
+    // reader that reaches for a column the live schema lacks produces NO
+    // candidate here. Before 2026-09-03 the select carried confirmation_count
+    // and days_since_last_confirmation; both are absent from hidden_gems, so
+    // this reader returned null on every call in production while these tests
+    // stayed green.
+    const row = {
+      id: "g3",
+      sensitivity_level: "public",
+      verification_level: "community",
+      status: "active",
+      crowd_level: "low",
+      save_count: 0,
+      visit_count: 0,
+      canonical_place_id: "place-1",
+      updated_at: "2026-09-01T09:00:00.000Z",
+    };
+    const strict = tableClient(
+      { hidden_gems: [row] },
+      { columnsByTable: { hidden_gems: LIVE_HIDDEN_GEM_COLUMNS } },
+    );
+    const cand = await _internal.readHiddenGemCandidate(strict, projectionWithPlace(), VIEWER);
+    assert.ok(
+      cand,
+      "the gem select named a column hidden_gems does not have; PostgREST fails the whole read with PGRST100 and this branch can never produce a candidate",
+    );
+
+    // And the fake really does reject — otherwise the assertion above proves
+    // nothing. Same row, same reader, one invented column in the allowed set's
+    // place.
+    const withoutInvented = LIVE_HIDDEN_GEM_COLUMNS.filter((c) => c !== "crowd_level");
+    const rejecting = tableClient(
+      { hidden_gems: [row] },
+      { columnsByTable: { hidden_gems: withoutInvented } },
+    );
+    assert.equal(
+      await _internal.readHiddenGemCandidate(rejecting, projectionWithPlace(), VIEWER),
+      null,
+      "the fake must fail a select that names an unknown column, or the assertion above is vacuous",
+    );
   });
 
   it("returns null (fail-soft) when the gem read errors", async () => {
