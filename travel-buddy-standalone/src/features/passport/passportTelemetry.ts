@@ -125,8 +125,21 @@ export const PASSPORT_TELEMETRY_EVENTS: readonly PassportTelemetryEventName[] = 
 const DISALLOWED_KEY_RE =
   /(name|handle|username|e_?mail|phone|avatar|photo|bio|title|label|text|message|body|description|caption|note|address|street|postcode|postal|zip|lat|lng|lon|coord|geometry)/i;
 
+/**
+ * Keys that are explicitly SAFE despite containing a denylist fragment. Every
+ * entry must carry a closed enum or a count — never free text — and is listed
+ * here by exact name so the exception cannot widen by accident.
+ *
+ *   • `viewerContext` — the TABLE 5 enum ('self' | 'public' | 'follower' | …).
+ *     It contains the fragment "text", which silently stripped it from every
+ *     passport_viewed event until the transport was wired and a wire-level
+ *     test noticed the payload arriving without it.
+ */
+const ALLOWED_KEYS: ReadonlySet<string> = new Set(['viewerContext']);
+
 /** True when a key must be removed from a payload wherever it appears. */
 export function isDisallowedKey(key: string): boolean {
+  if (ALLOWED_KEYS.has(key)) return false;
   return DISALLOWED_KEY_RE.test(key);
 }
 
