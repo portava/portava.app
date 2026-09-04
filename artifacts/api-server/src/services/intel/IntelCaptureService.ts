@@ -33,7 +33,7 @@ import {
   type PartySizeBucket,
 } from "../../lib/intelContracts.js";
 import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickSignal.js";
-import { validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
+import { PHASE1_TRAIL_CAPTURE_CLAIM_TYPES, validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
 import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
 import { isSharedCrewMember } from "../../lib/tripMembership.js";
 import { resolveActiveCrewId } from "../../lib/activeCrew.js";
@@ -48,16 +48,18 @@ import { verifyPresence, type PresenceVerificationOutcome } from "./PresenceVeri
  * The mapping is applied in surfaceFlagEnabled() with literal flag args so
  * check-flag-polarity can resolve each stop statically.
  */
-export type CaptureSurface = "quick_signal" | "trail";
+export const CAPTURE_SURFACES = ["quick_signal", "trail"] as const;
+export type CaptureSurface = (typeof CAPTURE_SURFACES)[number];
 
 /**
  * The claim types each surface may emit. The trail surface (IG-06) persists only
- * the contracted, aggregate-gated going-next claim; exit_reason mapping exists in
- * lib/trailFollowup for the mobile prompt but is not yet a contracted claim.
+ * the contracted, aggregate-gated going-next claim (PHASE1_TRAIL_CAPTURE_CLAIM_TYPES
+ * — see its docstring for why exit_reason is not there). A client selects the
+ * surface explicitly (routes/intel.ts `captureSurface`); nothing infers it.
  */
 const SURFACE_CLAIMS: Record<CaptureSurface, readonly string[]> = {
   quick_signal: PHASE1_CAPTURE_CLAIM_TYPES,
-  trail: ["experience.next_move"],
+  trail: PHASE1_TRAIL_CAPTURE_CLAIM_TYPES,
 };
 
 function validateForSurface(surface: CaptureSurface, claimType: string, value: unknown): boolean {
@@ -311,7 +313,8 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   const clamped = clampObservedAt(input.observedAt);
   if (!clamped) return { ok: false, reason: "invalid_observed_at" };
 
-  if (!SURFACE_CLAIMS[surface].includes(input.claimType)) return { ok: false, reason: "invalid_claim_type", detail: input.claimType };
+  if (!SURFACE_CLAIMS[surface].includes(input.claimType))
+    return { ok: false, reason: "invalid_claim_type", detail: `${input.claimType} is not a contracted claim on the ${surface} capture surface` };
   if (!validateForSurface(surface, input.claimType, input.value)) return { ok: false, reason: "invalid_value", detail: input.claimType };
 
   const visibility: Visibility = input.visibility && VISIBILITIES.includes(input.visibility) ? input.visibility : "private";

@@ -394,6 +394,35 @@ describe("readSocialPresenceCandidate — k-anonymity floor, public-content only
     const cand = await _internal.readSocialPresenceCandidate(sc, projectionWithPlace(), VIEWER);
     assert.equal(cand, null);
   });
+
+  it("counts only PUBLISHED public posts — a pending delayed-geotag post must not reveal presence (D1)", async () => {
+    // A delayed_until_exit post is status='active' with post_status pending so
+    // the author's presence at the place stays hidden until they have left.
+    // The presence count must carry the delayed-publish predicate on the query.
+    const eqs: Record<string, any> = {};
+    const sc: any = {
+      from() {
+        const b: any = {
+          select: () => b,
+          eq: (c: string, v: any) => { eqs[c] = v; return b; },
+          in: () => b, gte: () => b, lte: () => b, gt: () => b, order: () => b, limit: () => b,
+          then: (onF: any, onR: any) =>
+            Promise.resolve({
+              data: [
+                { author_id: "f1", created_at: "2026-08-30T00:00:00.000Z" },
+                { author_id: "f2", created_at: "2026-08-31T00:00:00.000Z" },
+              ],
+              error: null,
+            }).then(onF, onR),
+        };
+        return b;
+      },
+    };
+    await _internal.readSocialPresenceCandidate(sc, projectionWithPlace(), viewerWithFollows);
+    assert.equal(eqs.visibility, "public");
+    assert.equal(eqs.status, "active");
+    assert.equal(eqs.post_status, "published", "presence is built from published posts only");
+  });
 });
 
 // ── Orchestrator flag gate ────────────────────────────────────────────────────
