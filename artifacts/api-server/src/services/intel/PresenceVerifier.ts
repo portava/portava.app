@@ -179,6 +179,10 @@ export function geofenceRadiusFor(subjectKind: string): number {
 }
 
 function finiteCoord(lat: unknown, lng: unknown): { lat: number; lng: number } | null {
+  // Explicit null/undefined/empty checks: Number(null) is 0, which would turn a
+  // coordinate-less place or fix into a point off the coast of Africa and grade
+  // it "outside" instead of "no coordinates". Fail closed on absence.
+  if (lat == null || lng == null || lat === "" || lng === "") return null;
   const la = typeof lat === "number" ? lat : Number(lat);
   const ln = typeof lng === "number" ? lng : Number(lng);
   if (!Number.isFinite(la) || !Number.isFinite(ln)) return null;
