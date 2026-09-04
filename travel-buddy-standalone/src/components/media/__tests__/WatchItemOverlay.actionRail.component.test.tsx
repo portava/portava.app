@@ -226,7 +226,9 @@ describe('WatchItemOverlay stamp button active state', () => {
             avatarUrl: null,
             isFollowing: false,
           },
-          caption: null,
+          // MediaFeedItem.caption is a non-nullable string — a captionless item
+          // is the empty string, not null.
+          caption: '',
           hashtags: [],
           place: null,
           linkedEntity: null,

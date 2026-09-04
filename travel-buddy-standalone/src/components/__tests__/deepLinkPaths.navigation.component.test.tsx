@@ -152,6 +152,7 @@ import { useCompassFeed }       from '../../hooks/compass/useCompassFeed.ts';
 import { fetchCompassHome }     from '../../services/compass.ts';
 import type { CompassFeedItem } from '../../services/compass.ts';
 import { buddyEntity, eventEntity } from '../../__fixtures__/mapEntities.ts';
+import type { CityEvent } from '../../types/models.ts';
 
 // ── Typed mock refs ───────────────────────────────────────────────────────────
 
@@ -161,13 +162,21 @@ const mockFetchCompassHome = fetchCompassHome as jest.Mock;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-const CITY_EVENT = {
+// Typed, so a field CityEvent does not have is a compile error rather than a
+// runtime undefined. `kind`, `citySlug`, `city` and `category` are REQUIRED and
+// were all absent — ExploreTodaySection groups by city and labels by category,
+// so this fixture was exercising those paths with undefined.
+const CITY_EVENT: CityEvent = {
   id: 'evt-abc',
+  kind: 'event',
   title: 'Jazz Night',
+  citySlug: 'tokyo',
+  city: 'Tokyo',
   startAt: new Date(Date.now() + 20 * 60 * 1000).toISOString(), // 20 min from now
   attendeeCount: 30,
   capacity: 100,
   block: 'evening' as const,
+  category: 'nightlife',
 };
 
 function makeCompassFeedItem(overrides: Partial<CompassFeedItem> = {}): CompassFeedItem {

@@ -256,8 +256,12 @@ describe('contract kinds and rendering priority', () => {
 
 describe('status filtering', () => {
   test('a non-active gem is dropped', () => {
+    // Every non-active member of GemStatus. This used to test 'removed', which
+    // is not a GemStatus at all — so the second case proved only that an
+    // impossible value is dropped, and 'hidden' and 'merged' went uncovered.
     assert.equal(projectGemLocal({ ...GEM, status: 'pending' }), null);
-    assert.equal(projectGemLocal({ ...GEM, status: 'removed' }), null);
+    assert.equal(projectGemLocal({ ...GEM, status: 'hidden' }), null);
+    assert.equal(projectGemLocal({ ...GEM, status: 'merged' }), null);
   });
 
   test('a gem with no status field is kept', () => {
