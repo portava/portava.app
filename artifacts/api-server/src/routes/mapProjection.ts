@@ -118,6 +118,7 @@ import { loadNearbyEvents } from "./mapSearch.js";
 import { aggregateForViewport, bboxContains, deriveCrowdFlow, type BBox } from "../lib/mapAggregation.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { CROWD_FLOW_FLAG, produceZoneTransitions } from "../lib/crowdFlowProducer.js";
+import { loadViewportPlaceRows, projectPlace } from "../lib/mapProjectPlace.js";
 
 /**
  * Compile-time pin for the flag literal used at the crowd-flow call site.
@@ -394,6 +395,7 @@ router.get(
         protection: null,
         liveEnrichment: null,
         crowdFlow: null,
+        places: null,
         generatedAt,
       });
       return;
@@ -442,6 +444,7 @@ router.get(
         protection: null,
         liveEnrichment: null,
         crowdFlow: null,
+        places: null,
         generatedAt,
       });
       return;
@@ -548,6 +551,33 @@ router.get(
           if (trips === null) return;
           for (const t of trips) collected.push(projectTrip(t));
           sources.push("trips");
+        })(),
+      );
+    }
+
+    // Canonical places (lib/mapProjectPlace). A public venue has no
+    // privacy-complete reader to route through — `places` holds no user column
+    // — so the viewport read IS the source; §24, §31 and enrichment all happen
+    // in the shared pipeline below, exactly as for every other kind. A read
+    // failure leaves the layer out of `sources` (not an empty layer), and a
+    // capped read is REPORTED via `places.truncated` rather than served as the
+    // whole viewport.
+    const placesReport: { report: { rows: number; projected: number; truncated: boolean } | null } = {
+      report: null,
+    };
+    if (wantKind("place")) {
+      tasks.push(
+        (async () => {
+          const read = await loadViewportPlaceRows(sc, bbox).catch(() => null);
+          if (read === null) return;
+          let projected = 0;
+          for (const row of read.rows) {
+            const obj = projectPlace(row);
+            if (obj) projected += 1;
+            collected.push(obj);
+          }
+          placesReport.report = { rows: read.rows.length, projected, truncated: read.truncated };
+          sources.push("places");
         })(),
       );
     }
@@ -695,6 +725,7 @@ router.get(
         protection: null,
         liveEnrichment: null,
         crowdFlow: null,
+        places: null,
         generatedAt,
       });
       return;
@@ -753,6 +784,10 @@ router.get(
       // "no flows" is never ambiguous between "the gates said no" and "nothing
       // asked". See CrowdFlowReport.
       crowdFlow: crowdFlow.report,
+      // Null when the layer was not requested or could not be read (then it is
+      // also absent from `sources`). Otherwise the row count and whether the
+      // bounded read was a SAMPLE of the viewport — see lib/mapProjectPlace.
+      places: placesReport.report,
       generatedAt,
     });
   }),
