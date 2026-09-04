@@ -262,6 +262,14 @@ export interface AuthorizedTripView {
   travelStyle: string | null;
   openToMeet: boolean;
   coverUrl: string | null;
+  /**
+   * Whether the cover is a still or a video. Absent from this view until
+   * 2026-09-03, so GET /api/trips/me never sent it and the app's Trips LIST
+   * rendered every video cover as a still — while the detail screen, fed by a
+   * route that does send it, played the video. Same shape of bug as the
+   * `destination_city` one already documented in the app's mapTripApiRow.
+   */
+  coverMediaType: 'image' | 'video' | null;
   progress: number;
   planEditPermission: string;
   tripNotes: string | null;

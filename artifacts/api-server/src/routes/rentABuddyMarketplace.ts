@@ -2156,6 +2156,41 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   });
 });
 
+/**
+ * One `rent_buddy_earnings_ledger` row → the camelCase shape the app's
+ * `LedgerEntry` type declares. Exported so the mapping is unit-testable without
+ * a database; the route below is the only caller.
+ *
+ * This used to be `{ ...row, isEstimated }` inline — a RAW spread — so every
+ * field except `isEstimated` reached the app in snake_case while the app's type
+ * said camelCase. `earnings-ledger.tsx` then called
+ * `entry.buddyNetEstimatedAmount.toFixed(2)` on undefined and the screen threw
+ * on its FIRST row. The type asserted the mapping had happened; nothing checked
+ * that it had. GET /me/earnings/summary, directly above, always mapped properly.
+ */
+export function toLedgerEntryView(row: any) {
+  return {
+    id: row.id,
+    bookingId: row.booking_id,
+    pricingType: row.pricing_type ?? null,
+    totalBookingUsd: row.total_booking_usd,
+    addonsUsd: row.addons_usd,
+    tipUsd: row.tip_usd,
+    platformFeePercent: row.platform_fee_percent ?? null,
+    platformFeeAmount: row.platform_fee_amount,
+    travelerServiceFeeAmount: row.traveler_service_fee_amount,
+    buddyGrossAmount: row.buddy_gross_amount,
+    buddyNetEstimatedAmount: row.buddy_net_estimated_amount,
+    depositAmount: row.deposit_amount,
+    inAppAmountCollected: row.in_app_amount_collected,
+    cashBalanceDue: row.cash_balance_due,
+    cashBalanceConfirmed: row.cash_balance_confirmed,
+    isEstimated: row.is_estimated,
+    createdAt: row.created_at,
+    warning: row.is_estimated ? "Estimated — payout not processed" : undefined,
+  };
+}
+
 router.get("/rent-a-buddy/me/earnings/ledger", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -2173,11 +2208,7 @@ router.get("/rent-a-buddy/me/earnings/ledger", async (req, res) => {
 
   if (error) return sendError(res, 'db_error', error.message);
 
-  const entries = (data ?? []).map((row: any) => ({
-    ...row,
-    isEstimated: row.is_estimated,
-    warning: row.is_estimated ? "Estimated — payout not processed" : undefined,
-  }));
+  const entries = (data ?? []).map(toLedgerEntryView);
 
   res.json({ ledger: entries, total: count ?? 0 });
 });
