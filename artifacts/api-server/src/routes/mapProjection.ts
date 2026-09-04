@@ -137,6 +137,7 @@ import {
   FLOW_ZONE_TYPES,
   bboxToCenterRadius,
   buildFlowZoneModel,
+  countAdjacentActiveEvents,
   enrichWithLiveClaims,
   filterKinds,
   indexPlaceZones,
@@ -832,6 +833,14 @@ router.get(
 
     // §19 order: shape → drop the unservable → rank → (aggregate) → page.
     let objects = servableOnly(collected);
+
+    // §9 / Table 7 event-adjacency source. Captured from the servable set BEFORE
+    // filterKinds so an "Active event nearby" line still appears on a place when
+    // the client has toggled the Events layer OFF — the event still explains the
+    // place's busyness even when its own marker is not drawn. These are the same
+    // event objects this request already loaded and shaped; nothing new is read.
+    const activeEvents = objects.filter((o) => o.kind === "event");
+
     objects = filterKinds(objects, kinds);
 
     // Attach already-computed live claims. Bounded and REPORTED — a capped
@@ -850,7 +859,21 @@ router.get(
         const claims = await readLiveClaims(sc, subjectId);
         return claims.map(toLiveClaimEnvelope);
       },
-      { now: nowMs },
+      {
+        now: nowMs,
+        // §9 contextual evidence. Only event-adjacency is sourced here: it is
+        // derivable, for free, from the events already in hand. Qualified-media
+        // is DELIBERATELY not sourced — the media→observation evidence table is
+        // write-only (authenticated holds no read grant, no read path selects
+        // from it, and routes/mapObservations records that a read path may not
+        // be added without a moderation ruling). `applyLiveClaims` accepts and
+        // renders qualified-media the moment a lawful source is ruled in; until
+        // then this route leaves it absent rather than opening that read path.
+        evidence: (obj) => {
+          const count = countAdjacentActiveEvents(obj, activeEvents, nowMs);
+          return count > 0 ? { eventNearby: { count } } : null;
+        },
+      },
     );
     objects = enrichment.objects;
 
