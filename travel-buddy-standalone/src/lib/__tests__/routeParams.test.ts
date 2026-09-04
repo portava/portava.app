@@ -86,7 +86,9 @@ describe('firstParam — the type boundary, checked by the compiler', () => {
   });
 
   test('a rejected value falls to the union member meant for it', () => {
-    const raw = firstParam('circle');
+    // 'direct' is the historical defect value: never a member, before or after
+    // explicit attribution added gems/circle/passport.
+    const raw = firstParam('direct');
     const resolved: MapEntryPoint = isMapEntryPoint(raw) ? raw : 'unknown';
     assert.equal(resolved, 'unknown');
   });
