@@ -24,6 +24,15 @@
  * privacy gate. The observation id is the natural unique key — one earning per
  * contribution, forever, on an append-only ledger.
  *
+ * THE HONEST ORACLE (unit I4a). With intel_outcome_attribution_enabled ON, "served"
+ * is no longer enough: the candidate must ALSO carry a finalized, non-contradicting,
+ * graded attribution row (intel_attributions, 2277) — a traveler went, reported an
+ * outcome, and it did not contradict the served state. The producer reads those
+ * rows and classifies them (services/intel/RewardOracle.classifyAttribution); a
+ * contradiction or the absence of any outcome leaves the contribution unrewarded
+ * and reconsidered next pass. With the flag OFF the candidate is marked
+ * `not_required` and the pre-I4a behaviour is byte-for-byte unchanged.
+ *
  * Gated on `intel_rewards`, fail-closed, self-rescheduling — the house scheduler
  * shape (see intelPromotionScheduler / intelCoverageScheduler). Off ⇒ an inert
  * no-op that reads and writes nothing. NON-CASH only: cash_amount is 0, enforced
@@ -37,8 +46,10 @@ import { recordEarnedReward } from "../services/intel/RewardService.js";
 import {
   buildRewardEligibilityContext,
   candidateQiu,
+  classifyAttribution,
   CURRENT_REWARD_LEDGER_VERSION,
   type EarningCandidate,
+  type OutcomeAttribution,
 } from "../services/intel/RewardOracle.js";
 import { evaluateRewardEligibility } from "./rewardEligibility.js";
 
@@ -104,6 +115,7 @@ interface ObsRow {
 }
 interface ConsentRow { user_id: string; enabled: boolean; withdrawn_at: string | null }
 interface LedgerRow { actor_id: string; idempotency_key: string | null }
+interface AttributionRow { observation_id: string; contradiction: boolean; outcome_score: number | string | null }
 
 export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}): Promise<RewardPassResult> {
   // Explicit null ⇒ "no client"; undefined ⇒ use the service client (house pattern —
@@ -176,6 +188,26 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
       if (l.idempotency_key) alreadyRewarded.add(`${l.actor_id}|${l.idempotency_key}`);
     }
 
+    // 3b. The honest oracle input: with the closed loop ON, read this pass's
+    //     candidates' attribution rows and classify each observation; OFF ⇒ every
+    //     candidate is `not_required` and nothing here is read.
+    // Flag literal inlined (ATTRIBUTION_FLAG in intelAttributionScheduler.ts) so the
+    // flag-polarity guard can resolve the name at this call site; keep the two in sync.
+    const honest = await isFlagEnabled(db, "intel_outcome_attribution_enabled");
+    const attributionByObs = new Map<string, AttributionRow[]>();
+    if (honest) {
+      const rows = await fetchIn<AttributionRow>(
+        db, "intel_attributions", "observation_id, contradiction, outcome_score", "observation_id",
+        behindServed.map((o) => o.id),
+      );
+      for (const r of rows) {
+        const arr = attributionByObs.get(r.observation_id) ?? [];
+        arr.push(r); attributionByObs.set(r.observation_id, arr);
+      }
+    }
+    const attributionFor = (observationId: string): OutcomeAttribution =>
+      honest ? classifyAttribution(attributionByObs.get(observationId) ?? []) : "not_required";
+
     // 4. Grade + book. A per-candidate error never aborts the pass.
     const tally = { candidates: 0, booked: 0, replayed: 0, ineligible: 0 };
     for (const o of behindServed) {
@@ -189,6 +221,7 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
         observationId: o.id,
         served: true, // it is in the served-key map by construction
         servedConfidence: servedConfidence.get(snapKey(o.subject_id, o.zone_id, o.claim_type)) ?? null,
+        outcomeAttribution: attributionFor(o.id),
         moderationState: o.moderation_state,
         consentEnabled: consent.enabled,
         consentWithdrawn: consent.withdrawn,
