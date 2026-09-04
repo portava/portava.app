@@ -49,6 +49,15 @@ const LEVEL_LABELS: Record<PublicTrustLevel, string> = {
   city_trusted:      "City Trusted",
 };
 
+/**
+ * The one human label for a public trust level. Exported so every surface that
+ * shows a trust label (Passport identity card, Rent-a-Buddy card, TrustScreen)
+ * renders the SAME wording for the SAME level — no parallel label tables.
+ */
+export function publicTrustLabel(level: PublicTrustLevel | null | undefined): string {
+  return LEVEL_LABELS[(level ?? "new_traveler") as PublicTrustLevel] ?? "New Traveler";
+}
+
 const RESTRICTION_MESSAGES: Record<RestrictionType, string> = {
   hosting:             "You cannot host group trips at this time.",
   private_plan_access: "You cannot join private plans at this time.",

@@ -27,6 +27,7 @@ import {
 } from "../interactionPermissions.js";
 import type { CallerContext } from "./PassportPrivacyGuard.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyGuard.js";
+import { getDisplayTrustScore, getTrustProfile } from "../trust/TrustScoreService.js";
 import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
 import { buildUnifiedStamps, type UnifiedStamp } from "./UnifiedStampService.js";
@@ -754,12 +755,15 @@ async function buildTrust(
     ? (verified ? "New Traveler · Verified" : "New Traveler")
     : (summary.publicLevel.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
 
-  // Numeric score is exposed only on the owner's own view (§9).
+  // Numeric score is exposed only on the owner's own view (§9). It reads THE
+  // canonical display helper (getDisplayTrustScore = rounded
+  // trust_profiles.overall_score) — the exact same source and rounding the
+  // identity card and Rent-a-Buddy card read through lib/trustScore, so the
+  // three surfaces can never show different numbers.
   let score: number | null = null;
   if (context === "self") {
     try {
-      const { data } = await sc.from("trust_profiles").select("overall_score").eq("user_id", userId).maybeSingle();
-      score = data ? Number((data as any).overall_score ?? 0) : null;
+      score = await getDisplayTrustScore(sc, userId);
     } catch {
       score = null;
     }

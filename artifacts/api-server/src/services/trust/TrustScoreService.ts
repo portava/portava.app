@@ -301,6 +301,28 @@ export async function recalculateTrustScore(
   };
 }
 
+/**
+ * THE canonical display Trust number (0–100), rounded, or null when the user has
+ * no persisted trust profile yet.
+ *
+ * This is the single source every Passport surface must read so the owner Home
+ * identity card, TrustScreen and the Rent-a-Buddy card can never disagree: it
+ * returns exactly `trust_profiles.overall_score` — the weighted, decay-aware,
+ * cap-clamped number recalculateTrustScore persists — rounded to an integer for
+ * display. It performs NO recalculation and NO write (safe on a GET path); a
+ * user with no row yet reads `null` (rendered as the non-stigmatizing "New
+ * Traveler" label, never a fabricated number).
+ */
+export async function getDisplayTrustScore(
+  db: SupabaseClient,
+  userId: string,
+): Promise<number | null> {
+  const profile = await getTrustProfile(db, userId);
+  if (!profile || profile.overall_score === null || profile.overall_score === undefined) return null;
+  const n = Number(profile.overall_score);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
 /** Load current trust profile without recalculating */
 export async function getTrustProfile(
   db: SupabaseClient,
