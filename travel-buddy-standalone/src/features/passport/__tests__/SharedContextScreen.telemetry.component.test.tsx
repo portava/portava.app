@@ -130,4 +130,30 @@ describe('SharedContextScreen — §32 telemetry', () => {
     // The view event still fires.
     expect(events.some((e) => e.type === 'shared_context_viewed')).toBe(true);
   });
+
+  // D11 — the screen may be opened via `?userId=@handle` (the endpoint resolves
+  // @handles). passportTelemetry's scrubber filters KEYS, not VALUES, so a raw
+  // @handle passed as an id VALUE would leak. Both events must carry the
+  // SERVER-RESOLVED owner uuid (data.ownerId), never the route param.
+  it('emits the server-resolved owner uuid, never the @handle route param', async () => {
+    const uuid = '11111111-2222-3333-4444-555555555555';
+    const payload = overlapPayload();
+    payload.sharedContext.ownerId = uuid;
+    mockGetSharedContext.mockResolvedValue({ ok: true, data: payload });
+
+    // Opened via an @handle route param, NOT a uuid.
+    await render(<SharedContextScreen userId="@mai" otherName="Mai" />);
+    await waitFor(() => expect(screen.getByText('Strong travel overlap')).toBeTruthy());
+
+    const viewed = events.find((e) => e.type === 'shared_context_viewed');
+    expect(viewed?.payload).toMatchObject({ subjectId: uuid });
+
+    const cta = await waitFor(() => screen.getByText('See What You Could Do'));
+    fireEvent.press(cta);
+    const started = events.find((e) => e.type === 'make_plan_started');
+    expect(started?.payload).toMatchObject({ subjectId: uuid, from: 'shared_context' });
+
+    // The raw @handle must never appear anywhere in telemetry.
+    expect(JSON.stringify(events)).not.toContain('@mai');
+  });
 });
