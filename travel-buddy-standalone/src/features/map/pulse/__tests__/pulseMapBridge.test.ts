@@ -25,6 +25,7 @@ import {
   normaliseLayers,
   padBounds,
   pulseItemToMapState,
+  pulseQueryForMap,
   reconcileOrDrop,
   selectHeadlinePulseItem,
 } from '../pulseMapBridge.ts';
@@ -267,6 +268,45 @@ test('the round trip preserves the subject', () => {
   const q = mapStateToPulseQuery(pulseItemToMapState(item, { center: { lat: 1, lng: 2 } }));
   assert.equal(q.focusItemId, 'gem-7');
   assert.ok(q.itemTypes.includes('hidden_gem'));
+});
+
+// ── pulseQueryForMap: the screen's Map → Pulse convenience ─────────────────────
+
+test('pulseQueryForMap: a centred map asks Pulse for nearMe with those coords', () => {
+  const q = pulseQueryForMap({ mode: 'LIVE', center: { lat: 16.06, lng: 108.22 } });
+  assert.equal(q.context, 'nearMe');
+  assert.equal(q.lat, 16.06);
+  assert.equal(q.lng, 108.22);
+  assert.ok(q.itemTypes.includes('event'));
+});
+
+test('pulseQueryForMap: no centre and no city falls back to myPlans, city wins when given', () => {
+  assert.equal(pulseQueryForMap({ mode: 'LIVE' }).context, 'myPlans');
+  assert.equal(pulseQueryForMap({ mode: 'LIVE', citySlug: 'da-nang' }).context, 'currentCity');
+});
+
+test('pulseQueryForMap: the mode drives the Pulse item-type whitelist', () => {
+  // A Trip-mode map asks for trip-shaped Pulse items; a Locate-Friends map for
+  // crew-shaped ones — the same MODE_ITEM_TYPES table the deep link uses.
+  assert.deepEqual(
+    pulseQueryForMap({ mode: 'TRIP', center: { lat: 1, lng: 2 } }).itemTypes,
+    ['trip', 'trip_request', 'event', 'safe_return'],
+  );
+  assert.deepEqual(
+    pulseQueryForMap({ mode: 'LOCATE_FRIENDS', center: { lat: 1, lng: 2 } }).itemTypes,
+    ['circle', 'available_buddy', 'buddy_request', 'safe_return'],
+  );
+});
+
+test('pulseQueryForMap: an explicit camera state overrides the centre default', () => {
+  const q = pulseQueryForMap({
+    mode: 'TRIP',
+    cameraState: 'FOCUS_TRIP',
+    center: { lat: 1, lng: 2 },
+    subjectId: 'trip-3',
+  });
+  assert.equal(q.context, 'specificTrip');
+  assert.equal(q.focusItemId, 'trip-3');
 });
 
 // ── The §3 headline ────────────────────────────────────────────────────────────
