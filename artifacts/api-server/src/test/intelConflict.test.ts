@@ -292,14 +292,14 @@ describe("intelConflict — helpers", () => {
 
 // ── Aggregator wiring ────────────────────────────────────────────────────────
 /** Minimal fake of the tables assembleClaimInput reads. */
-function makeDb(cfg: { observations: any[]; flags?: Record<string, boolean> }) {
+function makeDb(cfg: { observations: any[]; evidence?: any[]; flags?: Record<string, boolean> }) {
   const consentRows = [...new Set(cfg.observations.map((o) => o.actor_id))]
     .map((id) => ({ user_id: id, enabled: true, withdrawn_at: null }));
   const tables: Record<string, any[]> = {
     intel_observations: cfg.observations.map((o) => ({ moderation_state: "allowed", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, ...o })),
     intel_contribution_consent: consentRows,
     intel_confirmations: [],
-    intel_evidence: [],
+    intel_evidence: cfg.evidence ?? [],
     freshness_policies: [{ claim_type: "crowd.level", ttl_seconds: CROWD_TTL, note: null }],
   };
   return {
@@ -373,5 +373,77 @@ describe("intelProjectionAggregator — conflict state on the ProjectionInput", 
     ] });
     const input = await assembleClaimInput(db, claim, NOW);
     assert.equal(input.conflictState, "none");
+  });
+
+  // ── AT-04: three copied reports ⇒ one independence cluster, no consensus inflation ──
+  // Shared media is keyed by the TYPED media_asset_id (never the raw reference).
+  const photoEvidence = (actor: string, assetId: string) => ({
+    observation_id: `o-${actor}`, evidence_kind: "photo", media_asset_id: assetId, detail: null,
+  });
+
+  it("AT-04: three reports sharing one media asset collapse to ONE independent group", async () => {
+    const db = makeDb({
+      observations: [obs("a1", "g1", "packed", 4), obs("a2", "g2", "packed", 5), obs("a3", "g3", "packed", 6)],
+      // Distinct group_keys, but the SAME photo — one source echoed three times.
+      evidence: [photoEvidence("a1", "asset-XYZ"), photoEvidence("a2", "asset-XYZ"), photoEvidence("a3", "asset-XYZ")],
+    });
+    const input = await assembleClaimInput(db, claim, NOW);
+    assert.equal(input.distinctGroups, 1, "three copies are one cluster, not three groups");
+    assert.equal(input.maxGroupShare, 1);
+  });
+
+  it("AT-04: copied minority CANNOT manufacture a material conflict against a genuine cohort", async () => {
+    const db = makeDb({
+      observations: [
+        // Genuine, independent 'packed' cohort — three distinct parties, no shared media.
+        obs("p1", "gp1", "packed", 3), obs("p2", "gp2", "packed", 4), obs("p3", "gp3", "packed", 5),
+        // Three 'quiet' accounts that all post the SAME photo — one cluster, weight 1.
+        obs("q1", "gq1", "quiet", 3), obs("q2", "gq2", "quiet", 4), obs("q3", "gq3", "quiet", 5),
+      ],
+      evidence: [photoEvidence("q1", "copy-1"), photoEvidence("q2", "copy-1"), photoEvidence("q3", "copy-1")],
+    });
+    const input = await assembleClaimInput(db, claim, NOW);
+    // The copied side is one cluster (weight 1 < CONFLICT_MIN_WEIGHT), so the §10
+    // predicate does not fire — brigading cannot force "Reports differ".
+    assert.equal(input.conflictState, "minor");
+    // A control WITHOUT the shared photo — three genuine 'quiet' groups — IS material.
+    const dbGenuine = makeDb({ observations: [
+      obs("p1", "gp1", "packed", 3), obs("p2", "gp2", "packed", 4), obs("p3", "gp3", "packed", 5),
+      obs("q1", "gq1", "quiet", 3), obs("q2", "gq2", "quiet", 4), obs("q3", "gq3", "quiet", 5),
+    ] });
+    assert.equal((await assembleClaimInput(dbGenuine, claim, NOW)).conflictState, "material");
+  });
+
+  // ── AT-07: two independent groups, distant values, overlapping windows ──────
+  it("AT-07: two independent groups + distant values + overlapping windows ⇒ material, capped below Live, conflict block present", async () => {
+    const db = makeDb({ observations: [
+      obs("a1", "g1", "quiet", 4), obs("a2", "g2", "quiet", 5), obs("a3", "g3", "quiet", 6),
+      obs("b1", "g4", "packed", 3), obs("b2", "g5", "packed", 7), obs("b3", "g6", "packed", 8),
+    ] });
+    const input = await assembleClaimInput(db, claim, NOW);
+    assert.equal(input.conflictState, "material");
+    // Not strong-Live: capForConflict pulls any live-band score below the live floor.
+    const capped = capForConflict(input.conflictState!, 0.95, "live");
+    assert.equal(capped.band, "likely_current");
+    assert.ok(capped.confidence !== null && capped.confidence < CONFIDENCE_BAND_FLOOR.live);
+    // A conflict block is present and counts-only.
+    assert.deepEqual(conflictBlock(input.conflictState!, NOW.toISOString()), {
+      state: "material", sidesCount: 2, lastUpdated: NOW.toISOString(),
+    });
+  });
+
+  it("AT-07: once the minority majority-resolves (re-reports the majority value) ⇒ none", async () => {
+    const db = makeDb({ observations: [
+      obs("a1", "g1", "quiet", 8), obs("a2", "g2", "quiet", 9), obs("a3", "g3", "quiet", 10),
+      obs("b1", "g4", "packed", 6), obs("b2", "g5", "packed", 7), obs("b3", "g6", "packed", 8),
+      // The 'quiet' minority looks again and now agrees it is 'packed' (latest wins).
+      { ...obs("a1", "g1", "packed", 1), id: "o-a1-r" },
+      { ...obs("a2", "g2", "packed", 1), id: "o-a2-r" },
+      { ...obs("a3", "g3", "packed", 1), id: "o-a3-r" },
+    ] });
+    const input = await assembleClaimInput(db, claim, NOW);
+    assert.equal(input.conflictState, "none");
+    assert.deepEqual(input.value, { level: "packed" });
+    assert.deepEqual(input.penalties, {});
   });
 });
