@@ -36,7 +36,8 @@ import type {
 } from "../../lib/wallProjection.js";
 import type { WallRankSignals } from "./WallRankingService.js";
 import { dedupeCandidates, type WallCandidate } from "./WallProjectionService.js";
-import { isPostPublished } from "../../lib/postVisibility.js";
+import { isPostPublished, decidePostReadable } from "../../lib/postVisibility.js";
+import { loadViewerTripIds } from "../../lib/mediaEligibility.js";
 import {
   resolveViewer,
   loadEligibleCandidates,
@@ -970,6 +971,261 @@ export async function loadContextualOpportunityCandidates(
       saveCount: 0,
       isFirstImpression: true,
     });
+  }
+  return out;
+}
+
+// ── 5. Stories / Quick Media (spec §18) ──────────────────────────────────────
+
+/** How long a quick-media item lives on the top row (spec §18: short-lived). */
+export const QUICK_MEDIA_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Hard cap on items returned to the row — it is a small, quiet strip (§18). */
+export const MAX_QUICK_MEDIA_ITEMS = 60;
+
+/**
+ * One short-lived media item from a followed person. `media.url` is the stored
+ * storage reference (bare `<bucket>/<path>` or the row's public_url) — the
+ * private-bucket bytes are signed by the EXISTING hydration path on the client
+ * (CachedImage → useHydratedMedia → the batch-sign endpoint, which re-runs
+ * lib/mediaAccess per object). This service never mints a signed URL itself.
+ */
+export interface QuickMediaItem {
+  /** media_assets.id */
+  id: string;
+  ownerUserId: string;
+  actor: PublicActorRef;
+  media: DisplayMedia;
+  /** The canonical post the asset is published through — where "open" lands. */
+  postId: string;
+  createdAt: string;
+  /** createdAt + QUICK_MEDIA_WINDOW_MS — the client may drop it when passed. */
+  expiresAt: string;
+}
+
+/** moderation states that must never reach a social surface (media_assets). */
+const QUICK_MEDIA_BLOCKED_MODERATION: ReadonlySet<string> = new Set([
+  "rejected",
+  "flagged",
+  "removed",
+  "owner_deleted",
+]);
+
+function quickMediaAssetServable(row: any, nowMs: number): boolean {
+  if (!row || typeof row.id !== "string" || typeof row.owner_user_id !== "string") return false;
+  if (row.processing_status !== "ready") return false;
+  if (typeof row.moderation_status === "string" && QUICK_MEDIA_BLOCKED_MODERATION.has(row.moderation_status)) {
+    return false;
+  }
+  // 'private' is an explicit owner-only asset; anything else resolves through
+  // the publishing post below (deny by default when nothing publishes it).
+  if (row.visibility === "private") return false;
+  const createdMs = Date.parse(String(row.created_at ?? ""));
+  if (!Number.isFinite(createdMs)) return false;
+  if (nowMs - createdMs > QUICK_MEDIA_WINDOW_MS) return false; // expired (§18)
+  if (createdMs > nowMs + 5 * 60_000) return false; // clock-skewed future row
+  const bucket = typeof row.storage_bucket === "string" ? row.storage_bucket.trim() : "";
+  const path = typeof row.storage_path === "string" ? row.storage_path.trim() : "";
+  return bucket.length > 0 && path.length > 0;
+}
+
+/**
+ * Load the followed people's short-lived media for the Stories / Quick Media
+ * row (spec §18). Data source: media_assets created within the last 24 h by
+ * accounts the viewer follows.
+ *
+ * Every item passes the canonical policy before it is returned (§23):
+ *   - blocks, both directions, FAIL-CLOSED (an unreadable block list ⇒ nothing);
+ *   - owner account must be active;
+ *   - the asset must be ready, moderation-clean and not `private`;
+ *   - the asset must be PUBLISHED THROUGH A POST the viewer may read: the
+ *     attachment (media_attachments post/postcard) or, for rows recorded before
+ *     the canonical attachment layer, the post_media row at the same storage
+ *     path. That post must be active, published (delayed-post gate) and readable
+ *     under lib/postVisibility.decidePostReadable (trip_only ⇒ accepted trip
+ *     membership). An asset nothing publishes is DENIED, exactly as
+ *     lib/mediaAccess denies the bytes — media_assets.visibility='inherit' has
+ *     nothing to inherit from, and 'public' without a canonical object has
+ *     nowhere to open.
+ *   - the publishing post must belong to the asset owner (a post cannot publish
+ *     someone else's object).
+ *
+ * Never a coordinate; never a signed URL (see QuickMediaItem).
+ */
+export async function loadQuickMediaItems(
+  sc: any,
+  viewerId: string,
+  opts: { nowMs?: number; limit?: number } = {},
+): Promise<QuickMediaItem[]> {
+  const nowMs = opts.nowMs ?? Date.now();
+  const limit = Math.max(1, Math.min(opts.limit ?? MAX_QUICK_MEDIA_ITEMS, MAX_QUICK_MEDIA_ITEMS));
+
+  // 1. Follow graph — the row is "from followed people" only (§18).
+  let followed: string[] = [];
+  try {
+    const { data, error } = await sc
+      .from("user_follows")
+      .select("following_id")
+      .eq("follower_id", viewerId)
+      .limit(500);
+    if (error) throw error;
+    followed = [...new Set(((data as any[]) ?? []).map((r) => String(r.following_id)).filter(Boolean))];
+  } catch (err) {
+    logger.warn({ err }, "quick media: follow read failed — degrading to empty row");
+    return [];
+  }
+  if (followed.length === 0) return [];
+
+  // 2. Blocks, both directions, fail-closed.
+  const blocked = await fetchBlockedSet(sc, viewerId);
+  if (blocked === null) {
+    logger.warn("quick media: block list unreadable — failing closed to an empty row");
+    return [];
+  }
+  const owners = followed.filter((id) => !blocked.has(id) && id !== viewerId);
+  if (owners.length === 0) return [];
+
+  // 3. Recent media_assets from those owners.
+  const sinceIso = new Date(nowMs - QUICK_MEDIA_WINDOW_MS).toISOString();
+  let assets: any[] = [];
+  try {
+    const { data, error } = await sc
+      .from("media_assets")
+      .select(
+        "id, owner_user_id, storage_bucket, storage_path, public_url, media_type, thumbnail_path, thumbnail_url, " +
+          "width, height, duration_ms, moderation_status, processing_status, visibility, created_at",
+      )
+      .in("owner_user_id", owners.slice(0, 500))
+      .gte("created_at", sinceIso)
+      .eq("processing_status", "ready")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    // Re-checked in memory so a row fed past the query filters (a stale
+    // replica, a test double) cannot resurrect a private/expired asset.
+    assets = ((data as any[]) ?? []).filter((r) => quickMediaAssetServable(r, nowMs) && owners.includes(String(r.owner_user_id)));
+  } catch (err) {
+    logger.warn({ err }, "quick media: media_assets read failed — degrading to empty row");
+    return [];
+  }
+  if (assets.length === 0) return [];
+
+  // 4. Resolve the publishing post for each asset: canonical attachment first,
+  //    then the legacy post_media row at the same storage path.
+  const assetIds = assets.map((a) => String(a.id));
+  const postIdByAsset = new Map<string, string>();
+  try {
+    const { data } = await sc
+      .from("media_attachments")
+      .select("media_asset_id, entity_type, entity_id")
+      .in("media_asset_id", assetIds.slice(0, 500))
+      .in("entity_type", ["post", "postcard"]);
+    for (const att of (data as any[]) ?? []) {
+      const aid = String(att.media_asset_id);
+      if (!postIdByAsset.has(aid) && att.entity_id) postIdByAsset.set(aid, String(att.entity_id));
+    }
+  } catch (err) {
+    logger.warn({ err }, "quick media: attachment read failed — falling back to post_media paths");
+  }
+  const unresolved = assets.filter((a) => !postIdByAsset.has(String(a.id)));
+  if (unresolved.length > 0) {
+    try {
+      const paths = [...new Set(unresolved.map((a) => String(a.storage_path)))];
+      const { data } = await sc
+        .from("post_media")
+        .select("post_id, storage_path, moderation_status, processing_status")
+        .in("storage_path", paths.slice(0, 500));
+      const postByPath = new Map<string, string>();
+      for (const pm of (data as any[]) ?? []) {
+        if (!pm?.post_id || !pm?.storage_path) continue;
+        if (pm.moderation_status === "rejected" || pm.moderation_status === "flagged") continue;
+        if (pm.processing_status && pm.processing_status !== "ready") continue;
+        if (!postByPath.has(String(pm.storage_path))) postByPath.set(String(pm.storage_path), String(pm.post_id));
+      }
+      for (const a of unresolved) {
+        const pid = postByPath.get(String(a.storage_path));
+        if (pid) postIdByAsset.set(String(a.id), pid);
+      }
+    } catch (err) {
+      logger.warn({ err }, "quick media: post_media path read failed — unpublished assets stay hidden");
+    }
+  }
+  const publishedAssets = assets.filter((a) => postIdByAsset.has(String(a.id)));
+  if (publishedAssets.length === 0) return [];
+
+  // 5. The publishing posts, gated by the canonical post policy (§23).
+  const postIds = [...new Set([...postIdByAsset.values()])];
+  const posts = new Map<string, any>();
+  try {
+    const { data, error } = await sc
+      .from("posts")
+      .select("id, author_id, visibility, status, post_status, trip_id")
+      .in("id", postIds.slice(0, 500));
+    if (error) throw error;
+    for (const p of (data as any[]) ?? []) posts.set(String(p.id), p);
+  } catch (err) {
+    logger.warn({ err }, "quick media: post read failed — failing closed to an empty row");
+    return [];
+  }
+  const needsTrips = [...posts.values()].some((p) => p?.visibility === "trip_only");
+  const viewerTripIds = needsTrips ? await loadViewerTripIds(sc, viewerId) : new Set<string>();
+
+  const readableByPost = new Map<string, boolean>();
+  for (const [pid, p] of posts) {
+    const active = !p.status || p.status === "active";
+    const published = isPostPublished(p);
+    const tripMember = !!p.trip_id && viewerTripIds.has(String(p.trip_id));
+    readableByPost.set(pid, active && published && decidePostReadable(p, viewerId, tripMember).readable);
+  }
+
+  // 6. Owner profiles (display + account status).
+  const profiles = await batchProfiles(sc, publishedAssets.map((a) => String(a.owner_user_id)));
+
+  const out: QuickMediaItem[] = [];
+  for (const a of publishedAssets) {
+    const id = String(a.id);
+    const ownerId = String(a.owner_user_id);
+    const postId = postIdByAsset.get(id);
+    if (!postId) continue;
+    const post = posts.get(postId);
+    if (!post || !readableByPost.get(postId)) continue;
+    // A post cannot publish somebody else's object (lib/mediaAccess 3a rule).
+    if (String(post.author_id) !== ownerId) continue;
+    const prof = profiles.get(ownerId);
+    if (!prof || prof.accountStatus !== "active") continue;
+    const actor = actorFrom(prof, ownerId);
+    if (!actor) continue;
+
+    const bucket = String(a.storage_bucket).trim();
+    const path = String(a.storage_path).trim();
+    const url = typeof a.public_url === "string" && a.public_url.trim() ? a.public_url.trim() : `${bucket}/${path}`;
+    const thumbnailUrl =
+      typeof a.thumbnail_url === "string" && a.thumbnail_url.trim()
+        ? a.thumbnail_url.trim()
+        : typeof a.thumbnail_path === "string" && a.thumbnail_path.trim()
+          ? `${bucket}/${a.thumbnail_path.trim()}`
+          : null;
+    const kind: DisplayMedia["kind"] = a.media_type === "video" ? "video" : "image";
+    const createdAt = new Date(Date.parse(String(a.created_at))).toISOString();
+    out.push({
+      id,
+      ownerUserId: ownerId,
+      actor,
+      media: {
+        mediaId: id,
+        kind,
+        url,
+        thumbnailUrl,
+        width: typeof a.width === "number" ? a.width : null,
+        height: typeof a.height === "number" ? a.height : null,
+        durationMs: typeof a.duration_ms === "number" ? a.duration_ms : null,
+        autoplayEligible: kind === "video" ? false : undefined,
+        processing: false,
+      },
+      postId,
+      createdAt,
+      expiresAt: new Date(Date.parse(createdAt) + QUICK_MEDIA_WINDOW_MS).toISOString(),
+    });
+    if (out.length >= limit) break;
   }
   return out;
 }
