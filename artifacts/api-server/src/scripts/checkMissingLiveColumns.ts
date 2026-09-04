@@ -129,6 +129,14 @@ const ALLOWLIST = new Set<string>([
   "intel_state_snapshots.algorithm_version",
   "intel_state_snapshots.input_claim_versions",
   "intel_state_snapshots.conflict_state",
+  // ── Pending live apply: 2274_intel_claim_observation_model.sql (IG unit I1) ──
+  // Table-5 claim fields + the version pair the projection cites. Applied to
+  // the CI project on merge to main; remove once that apply is certified.
+  "intel_claims.observation_id",
+  "intel_claims.source_label",
+  "intel_claims.lineage",
+  "intel_claims.updated_at",
+  "intel_claims.version",
 ]);
 
 // ── Superseded / known-drifted migration files ────────────────────────────────

@@ -62,6 +62,9 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
           return { data: null, error: { code: "23505", message: "duplicate observation" } };
         if (table === "intel_confirmations" && store.some((r) => r.claim_id === row.claim_id && r.actor_id === row.actor_id))
           return { data: null, error: { code: "23505", message: "duplicate confirmation" } };
+        // 2274 intel_claims_one_per_observation_type: partial UNIQUE (observation_id, claim_type) WHERE observation_id IS NOT NULL.
+        if (table === "intel_claims" && row.observation_id && store.some((r) => r.observation_id === row.observation_id && r.claim_type === row.claim_type))
+          return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint \"intel_claims_one_per_observation_type\"" } };
         store.push(row);
         return { data: op === "insert_select" ? row : null, error: null };
       }
@@ -304,6 +307,55 @@ describe("IG-03 — claim lifecycle", () => {
     }
     // 'pending' (unpromoted) still flows in the pilot.
     assert.equal((await proposeClaim(db as any, { ...(written as any).observation, moderation_state: "pending" })).ok, true);
+  });
+});
+
+// ── I1 / 2274: proposeClaim is idempotent per (observation, claim_type) ──────
+describe("IG-03 propose — idempotent per (observation, claim_type), with Table-5 lineage", () => {
+  it("a replay returns the STORED candidate (deduped) instead of inserting a second row", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
+    const written = await writeObservation(db as any, ACTOR, baseInput() as any);
+    const obs = (written as any).observation;
+    const first = await proposeClaim(db as any, obs);
+    assert.equal(first.ok, true);
+    assert.equal((first as any).deduped, false);
+    // The double press / retried request from the routes/intel.ts header.
+    const second = await proposeClaim(db as any, obs);
+    assert.equal(second.ok, true);
+    assert.equal((second as any).deduped, true, "replay is reported as deduped");
+    assert.equal((second as any).claim.id, (first as any).claim.id, "the same candidate comes back");
+    assert.equal(db._tables.intel_claims.length, 1, "exactly one candidate row for the observation");
+  });
+
+  it("writes the Table-5 lineage root, source_label and lineage record — ids and classes only, no actor", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
+    const written = await writeObservation(db as any, ACTOR, baseInput() as any);
+    const obs = (written as any).observation;
+    const out = await proposeClaim(db as any, obs);
+    assert.equal(out.ok, true);
+    const claim = (out as any).claim;
+    assert.equal(claim.observation_id, obs.id);
+    assert.equal(claim.source_label, "unverified", "firsthand_unverified → Table-5 'unverified'");
+    assert.equal(claim.lineage.observation_id, obs.id);
+    assert.equal(claim.lineage.source_class, "firsthand_unverified");
+    assert.equal(claim.lineage.capture_surface, "quick_signal");
+    assert.deepEqual(claim.lineage.evidence, []);
+    assert.deepEqual(claim.lineage.confirmations, []);
+    assert.equal(claim.lineage.algorithm_version, null, "filled by the projection, not asserted at propose");
+    assert.equal(claim.lineage.correction_of, null);
+    assert.ok(!JSON.stringify(claim.lineage).includes(ACTOR), "lineage carries no actor id");
+    assert.equal(claim.asserted_confidence ?? null, null, "no contributor self-rating is invented");
+  });
+
+  it("the same observation may back DIFFERENT claim types — idempotency is per (observation, claim_type)", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
+    const written = await writeObservation(db as any, ACTOR, baseInput() as any);
+    const obs = (written as any).observation;
+    assert.equal((await proposeClaim(db as any, obs)).ok, true);
+    const other = await proposeClaim(db as any, { ...obs, claim_type: "queue.wait", value: { min: 5, max: 10, queue_for: "entry" } });
+    assert.equal(other.ok, true);
+    assert.equal((other as any).deduped, false);
+    assert.equal(db._tables.intel_claims.length, 2);
   });
 });
 

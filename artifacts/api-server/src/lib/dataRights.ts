@@ -97,6 +97,8 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
     reason: "Portava's TTL policy applied to the row." },
   { table: "intel_observations", column: "group_key", ownership: "restricted_no_redistribution", personal: true,
     reason: "A non-reversible HMAC derived from the contributor's identity (solo) or their Trip Crew. It is the privacy-gate's independent-group parameter; exposing it would let an attacker correlate a person's captures at a venue. Never leaves." },
+  { table: "intel_observations", column: "lifecycle_state", ownership: "portava_owned", personal: false,
+    reason: "Table 4 lifecycle state the envelope was written in (submitted/processing/published/...). Portava's operational vocabulary, says nothing about a person; the row is append-only so later states are derived, not written back." },
   { table: "intel_observations", column: "party_size_bucket", ownership: "restricted_no_redistribution", personal: true,
     reason: "The contributor's 'who are you here with?' attestation — a personal fact about their party. Measurement only; never an API field." },
 
@@ -116,6 +118,18 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
   { table: "intel_claims", column: "observed_at", ownership: "derived_aggregate", personal: false, reason: "Freshest contributing observation time." },
   { table: "intel_claims", column: "expires_at", ownership: "portava_owned", personal: false,
     reason: "Portava's TTL policy applied to the claim. Must travel with any redistributed value so a consumer cannot present an expired claim as current." },
+  // I1 (2274) Table-5 common claim fields. observation_id and lineage are
+  // internal pointers/ancestry — see INTERNAL_COLUMNS.
+  { table: "intel_claims", column: "qualifiers_json", ownership: "contributor_licensed", personal: false,
+    reason: "Table 5 qualifiers (access type, floor, group, traveler mode): context the contributor attached to the value, licensed with it. Never a coordinate or an identity." },
+  { table: "intel_claims", column: "asserted_confidence", ownership: "contributor_licensed", personal: false,
+    reason: "Table 5 optional 0–1 self-rating by the contributor. A number about the claim, not about a person; never an input to system_confidence (§8)." },
+  { table: "intel_claims", column: "source_label", ownership: "portava_owned", personal: false,
+    reason: "Table 5 registry label (official/verified_firsthand/consensus/historical/prediction/sponsored/unverified). Portava's truth-boundary vocabulary; must travel with any redistributed value so a prediction is never presented as an observation." },
+  { table: "intel_claims", column: "updated_at", ownership: "portava_owned", personal: false,
+    reason: "Row-version timestamp stamped by trigger (2274); cited by Table-17 input_claim_versions. A time about the record, not a person." },
+  { table: "intel_claims", column: "version", ownership: "portava_owned", personal: false,
+    reason: "Monotonic row version bumped by trigger (2274); cited by Table-17 input_claim_versions so a replay names the exact claim state it used." },
 
   // ── intel_state_snapshots ─────────────────────────────────────────────────
   { table: "intel_state_snapshots", column: "subject_id", ownership: "portava_owned", personal: false, reason: "Canonical place identifier." },
@@ -180,6 +194,10 @@ export const INTERNAL_COLUMNS: readonly string[] = [
   // superseded_by / claim_id above.
   "confidence_components",
   "input_claim_versions",
+  // I1 (2274) intel_claims.lineage: Table-5 ancestry (observation, evidence,
+  // confirmations, algorithm, correction) — a record of pointers into the
+  // pipeline, exactly like superseded_by / observation_id. Never redistributed.
+  "lineage",
 ];
 
 /** The intel tables this registry covers. */

@@ -134,6 +134,14 @@ const ALLOWLIST = new Set<string>([
   "intel_state_snapshots.algorithm_version",
   "intel_state_snapshots.input_claim_versions",
   "intel_state_snapshots.conflict_state",
+  //
+  // intel_claims.{observation_id, source_label, lineage} — added by
+  // 2274_intel_claim_observation_model.sql (IG unit I1, Table 5) and written by
+  // IntelCaptureService.proposeClaim. Applied to the CI project on merge to
+  // main; remove these three entries once that apply is certified.
+  "intel_claims.observation_id",
+  "intel_claims.source_label",
+  "intel_claims.lineage",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely

@@ -58,7 +58,8 @@ export async function runIntelProjectionPass(opts: { client?: any; now?: Date } 
   try {
     const { data, error } = await db
       .from("intel_claims")
-      .select("id, subject_id, zone_id, claim_type, value, status, observed_at")
+      // updated_at + version (2274) are what Table 17's input_claim_versions cites.
+      .select("id, subject_id, zone_id, claim_type, value, status, observed_at, updated_at, version")
       .in("status", LIVE_ELIGIBLE_CLAIM_STATUSES as unknown as string[])
       .limit(MAX_CLAIMS_PER_PASS);
     if (error) {

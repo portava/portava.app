@@ -203,7 +203,8 @@ const handleProposeClaim = asyncHandler(async (req: Request, res: Response) => {
       return sendError(res, "invalid_payload", "movement claims are aggregate-only; a single-user next_move is never published");
     return sendError(res, "db_error", out.reason ?? "propose failed");
   }
-  res.status(201).json({ claim: out.claim });
+  // Idempotent (2274): a replay returns the stored candidate, 200 not 201.
+  res.status(out.deduped ? 200 : 201).json({ claim: out.claim, deduped: out.deduped });
 });
 
 // APPROVAL IS THE TRUST GATE OF THE LIFECYCLE (candidate → active → publishable).

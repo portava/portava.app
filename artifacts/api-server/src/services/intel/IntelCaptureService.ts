@@ -296,8 +296,43 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   return { ok: true, observation: data, deduped: false };
 }
 
-/** Create a CANDIDATE claim from an approved observation (moment approval step 1). */
-export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boolean; claim?: any; reason?: string }> {
+/**
+ * Table 5 `source_label` for a claim proposed from an observation of a given
+ * source class. Registry: official | verified_firsthand | consensus |
+ * historical | prediction | sponsored | unverified. A single proposal is never
+ * "consensus" — that label is earned by the projection over a cohort, not
+ * asserted at propose time. Unknown/malformed → 'unverified' (fail-closed).
+ */
+export const SOURCE_LABEL_BY_CLASS: Readonly<Record<string, string>> = {
+  official_signed: "official",
+  verified_firsthand: "verified_firsthand",
+  firsthand_unverified: "unverified",
+  hearsay: "unverified",
+  imported_owned: "unverified",
+  sponsored: "sponsored",
+  historical_pattern: "historical",
+  portava_prediction: "prediction",
+};
+
+export function sourceLabelFor(sourceClass: unknown): string {
+  return (typeof sourceClass === "string" && SOURCE_LABEL_BY_CLASS[sourceClass]) || "unverified";
+}
+
+export type ProposeResult =
+  | { ok: true; claim: any; deduped: boolean }
+  | { ok: false; reason: string; claim?: undefined };
+
+/**
+ * Create a CANDIDATE claim from an approved observation (moment approval step 1).
+ *
+ * IDEMPOTENT per (observation, claim_type) — migration 2274's partial unique
+ * index intel_claims_one_per_observation_type. A replay (double press, retried
+ * request, re-run job) hits 23505 and the STORED candidate is returned with
+ * `deduped: true`; before 2274 every call inserted another candidate row
+ * (routes/intel.ts header). Table 5: the claim carries its lineage root
+ * (observation_id), its registry source_label and a lineage record.
+ */
+export async function proposeClaim(sc: any, observation: any): Promise<ProposeResult> {
   const surface: CaptureSurface = (observation.capture_surface as CaptureSurface) ?? "quick_signal";
   if (!(await surfaceFlagEnabled(sc, surface))) return { ok: false, reason: "disabled" };
   // Moderation (owner pilot ruling): explicitly-invalidated content
@@ -309,6 +344,7 @@ export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boo
   if (mustAggregate(observation.claim_type)) return { ok: false, reason: "must_aggregate" };
   const ttl = ttlFor(observation.claim_type);
   const base = new Date(observation.observed_at).getTime();
+  const observationId: string | null = typeof observation.id === "string" && observation.id.length > 0 ? observation.id : null;
   const claim = {
     subject_kind: observation.subject_kind,
     subject_id: observation.subject_id,
@@ -320,10 +356,40 @@ export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boo
     observed_at: observation.observed_at,
     expires_at: ttl ? new Date(base + ttl.ttlSeconds * 1000).toISOString() : null,
     hard_expires_at: ttl ? new Date(base + ttl.hardExpirySeconds * 1000).toISOString() : null,
+    // Table 5 (2274). observation_id is the lineage root and the idempotency key.
+    observation_id: observationId,
+    source_label: sourceLabelFor(observation.source_class),
+    // Table 5 lineage: "observation, evidence, confirmations, algorithm and
+    // correction ancestry". At propose time only the observation is known; the
+    // rest is filled by the pipeline stages that produce it (evidence links,
+    // confirmations, the projection's algorithm_version, a correction's
+    // superseded_by). Ids and classes only — no actor, no coordinates.
+    lineage: {
+      observation_id: observationId,
+      capture_surface: surface,
+      source_class: observation.source_class ?? null,
+      presence_level: observation.presence_level ?? null,
+      moderation_state_at_propose: observation.moderation_state ?? null,
+      evidence: [],
+      confirmations: [],
+      algorithm_version: null,
+      correction_of: null,
+    },
   };
   const { data, error } = await sc.from("intel_claims").insert(claim).select().single();
-  if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
-  return { ok: true, claim: data };
+  if (error) {
+    // 23505 on (observation_id, claim_type) → idempotent replay: return the
+    // stored candidate. Any other 23505 (e.g. 2174's one-live-per-key index)
+    // finds no row here and is reported as the error it is.
+    if (String((error as any).code) === "23505" && observationId) {
+      const { data: existing } = await sc
+        .from("intel_claims").select("*")
+        .eq("observation_id", observationId).eq("claim_type", observation.claim_type).maybeSingle();
+      if (existing) return { ok: true, claim: existing, deduped: true };
+    }
+    return { ok: false, reason: String((error as any).message ?? "db_error") };
+  }
+  return { ok: true, claim: data, deduped: false };
 }
 
 /**
