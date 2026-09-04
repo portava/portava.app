@@ -173,24 +173,26 @@ describe("loadPostcardCandidates (spec §10)", () => {
   });
 
   it("the reads carry the canonical predicates (live postcard rows for followed authors; active + published posts)", async () => {
-    let postcardQuery: { eqs: any; ins: any } | null = null;
-    let postsQuery: { eqs: any; ins: any } | null = null;
+    type Captured = { eqs: Record<string, any>; ins: Record<string, any> };
+    // A holder object (not `let x = null` reassigned inside a callback): TypeScript
+    // narrows the latter to `null`/`never` at the assertions below.
+    const captured: { postcard?: Captured; posts?: Captured } = {};
     const loaded = await loadPostcardCandidates(
       client({
-        passport_postcards: (ctx) => { postcardQuery = { eqs: { ...ctx.eqs }, ins: { ...ctx.ins } }; return PASSPORT_POSTCARDS; },
-        posts: (ctx) => { postsQuery = { eqs: { ...ctx.eqs }, ins: { ...ctx.ins } }; return POSTS; },
+        passport_postcards: (ctx: Captured) => { captured.postcard = { eqs: { ...ctx.eqs }, ins: { ...ctx.ins } }; return PASSPORT_POSTCARDS; },
+        posts: (ctx: Captured) => { captured.posts = { eqs: { ...ctx.eqs }, ins: { ...ctx.ins } }; return POSTS; },
       }),
       "for_you",
       FOLLOWED,
     );
     assert.equal(loaded.candidates.length, 1);
-    assert.ok(postcardQuery, "passport_postcards was read");
-    assert.equal(postcardQuery!.eqs.status, "active", "discriminator: live postcard rows only");
-    assert.deepEqual(postcardQuery!.ins.user_id, ["author-1"], "discriminator: scoped to followed authors");
-    assert.ok(postsQuery, "posts was read");
-    assert.deepEqual(postsQuery!.ins.id, ["pc-1"], "posts are fetched BY the postcard rows' post_id");
-    assert.equal(postsQuery!.eqs.status, "active");
-    assert.equal(postsQuery!.eqs.post_status, "published", "the same DB predicate the Following / global feeds apply");
+    assert.ok(captured.postcard, "passport_postcards was read");
+    assert.equal(captured.postcard?.eqs.status, "active", "discriminator: live postcard rows only");
+    assert.deepEqual(captured.postcard?.ins.user_id, ["author-1"], "discriminator: scoped to followed authors");
+    assert.ok(captured.posts, "posts was read");
+    assert.deepEqual(captured.posts?.ins.id, ["pc-1"], "posts are fetched BY the postcard rows' post_id");
+    assert.equal(captured.posts?.eqs.status, "active");
+    assert.equal(captured.posts?.eqs.post_status, "published", "the same DB predicate the Following / global feeds apply");
   });
 
   it("returns empty when the viewer follows no one (no in-graph postcards)", async () => {
