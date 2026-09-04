@@ -30,8 +30,18 @@ export interface UseTravelIdentityResult {
   reload: () => Promise<void>;
 }
 
-export function useTravelIdentity(): UseTravelIdentityResult {
-  const { userId } = useSession();
+/**
+ * @param targetUserId  the traveler whose Travel Identity to load (a UUID or
+ *   @handle), for the viewer-side surface. Omitted / null loads the signed-in
+ *   owner's own (editable) identity. The projection endpoint applies the
+ *   per-viewer privacy filter, so a viewer receives only the permitted,
+ *   read-only slice — the screen hides the Show/Hide/Not-Me controls for it.
+ */
+export function useTravelIdentity(targetUserId?: string | null): UseTravelIdentityResult {
+  const { userId: sessionUserId } = useSession();
+  const userId = (typeof targetUserId === 'string' && targetUserId.trim().length > 0)
+    ? targetUserId.trim()
+    : sessionUserId;
   const [identity, setIdentity] = useState<TravelIdentityProjection | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
