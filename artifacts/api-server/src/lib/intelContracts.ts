@@ -217,6 +217,29 @@ export const COMMERCIAL_DISCLOSURES = [
 ] as const;
 export type CommercialDisclosure = (typeof COMMERCIAL_DISCLOSURES)[number];
 
+/** True when a disclosure declares a commercial relationship to the subject (§22 Table 30). */
+export function isCommercialDisclosure(d: CommercialDisclosure): boolean {
+  return d !== "none";
+}
+
+/**
+ * §22 Table 30 "Venue brigading → Affiliation disclosure … official/community
+ * separation": a contributor who has DISCLOSED a commercial relationship to the
+ * subject (employee/owner/hosted/complimentary/affiliate/paid) is not an
+ * independent community reporter about it. Recording the observation under the
+ * `sponsored` source class — a NON_INDEPENDENT_SOURCE_CLASS — is that separation:
+ * mayCountAsConsensus() is false for it, so a disclosed-commercial report can
+ * never present a community-consensus / cohort badge, and it carries lower
+ * SOURCE_RELIABILITY in the confidence model. An undisclosed ('none') report keeps
+ * the honest Phase-1 default, firsthand_unverified.
+ *
+ * This is the ONE place the disclosure → epistemic-standing rule lives, so the
+ * capture path and any test read the same mapping.
+ */
+export function disclosureSourceClass(d: CommercialDisclosure): SourceClass {
+  return isCommercialDisclosure(d) ? "sponsored" : "firsthand_unverified";
+}
+
 // ── Crowd level and trajectory ───────────────────────────────────────────────
 // Six values. Note hidden_gems.crowd_level carries a different, narrower legacy
 // vocabulary; that surface is reconciled when it is next touched, not here.
