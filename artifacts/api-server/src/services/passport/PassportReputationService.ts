@@ -60,9 +60,23 @@ export interface ReputationSummary {
   hiddenGems: number;
   /** Up to three expertise categories, most-contributed first. */
   topExpertise: string[];
+  /**
+   * §20 experience-based city expertise ("Knows Bangkok well"), derived from
+   * legitimate qualified (non-paid) contribution history: cities where the
+   * traveller has at least CITY_EXPERTISE_MIN qualified contributions, most-
+   * contributed first. Never follower count; never paid volume.
+   */
+  cityExpertise: string[];
   /** Total qualified (non-paid) contributions counted toward the level. */
   totalContributions: number;
 }
+
+/**
+ * Minimum qualified (non-paid) contributions in a city before "Knows <City>
+ * well" is claimed — §20 requires expertise to reflect real, qualified history,
+ * not a single visit or a paid placement.
+ */
+const CITY_EXPERTISE_MIN = 3;
 
 /** A paid / sponsored contribution must never inflate factual confidence (§20). */
 function isPaid(metadata: any): boolean {
@@ -104,6 +118,13 @@ function titleCase(s: string): string {
     .join(" ");
 }
 
+/** The city an event pertains to, from its metadata (best-effort). */
+function cityOf(metadata: any): string | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const raw = metadata.city ?? metadata.location_city ?? metadata.destination_city;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
 /**
  * Build the §20 reputation summary for a user from their contribution ledger.
  * Best-effort and fail-soft: an unreadable ledger yields an all-zero, Level 1
@@ -122,6 +143,7 @@ export async function buildReputationSummary(
     confirmations: 0,
     hiddenGems: 0,
     topExpertise: [],
+    cityExpertise: [],
     totalContributions: 0,
   };
 
@@ -142,6 +164,7 @@ export async function buildReputationSummary(
   let hiddenGems = 0;
   let other = 0;
   const categoryCounts = new Map<string, { display: string; count: number }>();
+  const cityCounts = new Map<string, { display: string; count: number }>();
 
   for (const r of rows) {
     const type = typeof r.event_type === "string" ? r.event_type : "";
@@ -161,12 +184,27 @@ export async function buildReputationSummary(
       if (existing) existing.count++;
       else categoryCounts.set(keyLc, { display: titleCase(cat), count: 1 });
     }
+    // City expertise accrues only from qualified (counted, non-paid) events.
+    const city = cityOf(r.metadata);
+    if (city) {
+      const keyLc = city.toLowerCase();
+      const existing = cityCounts.get(keyLc);
+      if (existing) existing.count++;
+      else cityCounts.set(keyLc, { display: city, count: 1 });
+    }
   }
 
   const totalContributions = acceptedReports + confirmations + hiddenGems + other;
   const { level, label } = deriveLevel(totalContributions);
 
   const topExpertise = [...categoryCounts.values()]
+    .sort((a, b) => b.count - a.count || a.display.localeCompare(b.display))
+    .slice(0, 3)
+    .map((c) => c.display);
+
+  // §20: a city qualifies only with real, repeated qualified contributions.
+  const cityExpertise = [...cityCounts.values()]
+    .filter((c) => c.count >= CITY_EXPERTISE_MIN)
     .sort((a, b) => b.count - a.count || a.display.localeCompare(b.display))
     .slice(0, 3)
     .map((c) => c.display);
@@ -179,6 +217,7 @@ export async function buildReputationSummary(
     confirmations,
     hiddenGems,
     topExpertise,
+    cityExpertise,
     totalContributions,
   };
 }
