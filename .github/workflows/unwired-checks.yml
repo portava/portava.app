@@ -258,6 +258,11 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts typecheck
 
+      - name: 'scripts: test:route-param-any'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:route-param-any
+
       - name: 'scripts: test:cross-tree-paths'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash

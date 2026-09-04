@@ -104,7 +104,9 @@ export function resolveActionRoute(
     case 'see_place':
       return placeId ? `/place/${placeId}` : null;
     case 'open_map':
-      return '/map';
+      // §35 entry: origin is a Wall item; the vocabulary has no 'wall' member,
+      // so it is stated as unknown rather than guessed.
+      return '/map?entry=unknown';
     case 'add_to_trip':
       return '/trips';
     case 'message':

@@ -7,7 +7,8 @@
  *
  * Six rows that were previously disabled now have real routes:
  *   - Travelers      → /discover
- *   - Neighborhoods  → /map
+ *   - Neighborhoods  → /map?entry=unknown  (§35 origin: the vocabulary has no
+ *                        'explore' member, so the origin is stated as unknown)
  *   - Hidden Gems    → /gems
  *   - Blocked Accounts → /blocked-users
  *   - Muted Accounts   → /muted-users
@@ -47,7 +48,7 @@ function findItem(key: string) {
 describe('ExplorePortavaScreen SECTIONS — live route wiring', () => {
   const LIVE_ROUTES: Array<{ key: string; label: string; expectedRoute: string }> = [
     { key: 'travelers',    label: 'Travelers',        expectedRoute: '/discover' },
-    { key: 'neighborhoods',label: 'Neighborhoods',    expectedRoute: '/map' },
+    { key: 'neighborhoods',label: 'Neighborhoods',    expectedRoute: '/map?entry=unknown' },
     { key: 'hidden-gems',  label: 'Hidden Gems',      expectedRoute: '/gems' },
     { key: 'acc-blocked',  label: 'Blocked Accounts', expectedRoute: '/blocked-users' },
     { key: 'acc-muted',    label: 'Muted Accounts',   expectedRoute: '/muted-users' },
