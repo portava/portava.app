@@ -117,7 +117,9 @@ export function projectSafetyNotice(
   if (row.privacy_eligible !== true) return null;
   const expiresMs = new Date(String(row.expires_at)).getTime();
   if (!Number.isFinite(expiresMs) || expiresMs <= opts.now) return null;
-  if (!place || place.status === undefined ? false : place.status !== "active") return null;
+  // Fail-closed on the place too: only an ACTIVE, unmerged place can carry a
+  // notice. A missing status is not "active".
+  if (!place || place.status !== "active") return null;
   if (place.merged_into_place_id != null) return null;
   const lat = place.latitude;
   const lng = place.longitude;
