@@ -1016,6 +1016,22 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     ownerOnly: true,
   },
+
+  // ── Postcards ───────────────────────────────────────────────────────────────
+
+  {
+    // Canonical Postcard viewer (Wall spec §10/§24). A Postcard is a first-class
+    // travel-story object keyed by the canonical posts row id; opening one from
+    // the Wall or Passport lands here rather than the plain post detail, and it
+    // reads through the shared post-detail fetch. Public-viewable like post-detail.
+    key: 'postcard-viewer',
+    path: 'postcard/[id]',
+    title: 'Postcard',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    deepLink: '/postcard/[id]',
+  },
   {
     key: 'pending-posts',
     path: 'pending-posts',

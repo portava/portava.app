@@ -901,6 +901,19 @@ function FullScreenMapScreenInner() {
     // must not smuggle a flow request past that intent.
     crowdFlow: mode !== 'passport' && layerPrefs.crowd_flow === 'on',
     places: placesWanted,
+    // §16 Saved (default on): requested unless the viewer switched it off — the
+    // on-by-default twin of `places`.
+    saved: mode !== 'passport' && layerPrefs.saved !== 'off',
+    // §16 Memories (default off): explicit opt-in only.
+    memories: mode !== 'passport' && layerPrefs.memories === 'on',
+    // §5/§24 Safety (always on): a hazard notice cannot be switched off, so it
+    // is requested on every non-passport load. The §16 pipeline still force-
+    // resolves the layer visible; this is only the REQUEST.
+    safety: mode !== 'passport',
+    // §11/§16 Trip meeting points (trip layer, contextual): requested when a
+    // trip is on the map — trip mode, or the legacy Trips pin that seeds the
+    // §16 trip layer on. Downstream §16 filtering owns final visibility.
+    meetingPoints: mode !== 'passport' && (machine.mode === 'TRIP' || enabledLayers.includes('trips')),
   });
 
   // ── Places: projected through the gateway, or the legacy Discovery fetch ───

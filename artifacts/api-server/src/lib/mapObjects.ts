@@ -50,6 +50,16 @@ export function bboxPolygon(w: number, s: number, e: number, n: number): Polygon
 
 // ── Object kinds (spec §18) ────────────────────────────────────────────────────
 
+/**
+ * §18's thirteen kinds, plus `saved_place`: §16's "Saved" layer, §31's "Saved
+ * Place" tier and §6's gold marker all name a saved place, and the spec gave it
+ * no kind — `memory` is the Memories layer (§16 lists the two separately, with
+ * different defaults: Saved on, Memories off), and `place` is the generic POI
+ * the Saved layer exists to distinguish it from. One kind per layer is what
+ * lets the client's kinds= filter and the §16 layer toggles agree. Appended at
+ * the end so the app mirror (src/test/mapObjectsContract.test.ts) compares in
+ * order. Produced by lib/mapProducers/savedPlaceProducer.ts.
+ */
 export const MAP_OBJECT_KINDS = [
   "place",
   "event",
@@ -64,6 +74,7 @@ export const MAP_OBJECT_KINDS = [
   "safety_notice",
   "memory",
   "prediction",
+  "saved_place",
 ] as const;
 
 export type MapObjectKind = (typeof MAP_OBJECT_KINDS)[number];
@@ -267,6 +278,7 @@ export const KIND_DEFAULT_PRIORITY: Record<MapObjectKind, number> = {
   social_zone: RENDERING_PRIORITY.social_opportunity,
   buddy_zone: RENDERING_PRIORITY.social_opportunity,
   memory: RENDERING_PRIORITY.saved_place,
+  saved_place: RENDERING_PRIORITY.saved_place,
 };
 
 // ── Interaction (spec §18, §25) ────────────────────────────────────────────────

@@ -71,6 +71,37 @@ const READERS: Record<string, { approved: Record<string, string> }> = {
       // on this list.
     },
   },
+  // ── The M5 producers. Each is the ONE privacy-complete reader for its kind:
+  // meeting points are participant-scoped, memory is owner-only and coarsened,
+  // safety notices carry the specialist-reviewed claim with no presence
+  // payload, and saved places are the viewer's own wishlist. A caller other
+  // than the gateway would serve them without §31 ranking, the §24 gate,
+  // aggregation and privacy-class stamping — and, for memory, would be a
+  // second surface for private memory outside the Passport boundary.
+  readMeetingPoints: {
+    approved: {
+      "lib/mapProducers/meetingPointProducer.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+    },
+  },
+  readMemoryPins: {
+    approved: {
+      "lib/mapProducers/memoryProducer.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+    },
+  },
+  readSafetyNotices: {
+    approved: {
+      "lib/mapProducers/safetyNoticeProducer.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+    },
+  },
+  readSavedPlacePins: {
+    approved: {
+      "lib/mapProducers/savedPlaceProducer.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+    },
+  },
   loadViewportPlaceRows: {
     approved: {
       "lib/mapProjectPlace.ts": "defines it",

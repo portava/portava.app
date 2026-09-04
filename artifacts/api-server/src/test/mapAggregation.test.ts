@@ -28,6 +28,7 @@ import {
   MERCATOR_MAX_LAT,
   MIN_FLOW_COHORT_PER_BUCKET,
   MIN_SIGNAL_FAMILIES,
+  INFERRED_CAUSE_LABEL,
   MIN_ZONE_COHORT,
   NEVER_AGGREGATED_KINDS,
   ZOOM_BANDS,
@@ -871,10 +872,14 @@ describe("mapAggregation — deriveCrowdFlow (§10)", () => {
     assert.equal("cause" in p.observed, false);
     // …and the inference is a separate, separately-confidenced field.
     assert.deepEqual(p.inferred, {
+      label: INFERRED_CAUSE_LABEL,
       cause: "A stadium event is ending",
       confidence: "provisional",
       basis: ["event_context"],
     });
+    // §37: the inference is labelled as one, by this module, every time.
+    assert.equal(typeof p.inferred?.label, "string");
+    assert.match(p.inferred!.label, /inferred/i);
   });
 
   it("inferred is null when no cause was supplied — never invented", () => {
