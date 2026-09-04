@@ -303,6 +303,21 @@ let base: string;
 let server: ReturnType<typeof createServer>;
 let db: ReturnType<typeof makeDb>;
 
+/** The §19 response envelope POST /v1/intel/outcomes emits (routes/intelOutcomes.ts). */
+interface OutcomeResponse {
+  outcome: {
+    eventId: string; snapshotId: string; claimId: string; subjectId: string; outcome: string;
+    experienceRating: number | null; servedAt: string; occurredAt: string; touch: string;
+  };
+  deduped: boolean;
+  schemaVersion: number;
+  sourceLabel: string;
+  generatedAt: string;
+}
+interface ErrorResponse { error: string; message?: string }
+const asOutcome = async (r: Response): Promise<OutcomeResponse> => (await r.json()) as OutcomeResponse;
+const asError = async (r: Response): Promise<ErrorResponse> => (await r.json()) as ErrorResponse;
+
 function setup(seed: Seed) {
   db = makeDb(seed);
   _setTestClient(db, true);
@@ -353,13 +368,13 @@ describe("POST /v1/intel/outcomes", () => {
     setup(servedWorld({ flags: { [INTEL_OUTCOME_GATE_FLAG]: false } }));
     const r = await post(input());
     assert.equal(r.status, 404);
-    assert.equal((await r.json()).error, "feature_disabled");
+    assert.equal((await asError(r)).error, "feature_disabled");
     assert.equal(db._tables.canonical_events.length, 0);
   });
   it("201 writes the outcome for the SESSION user (a body actor is ignored) with the §19 envelope; replay is 200 deduped", async () => {
     const r = await post({ ...input({ experienceRating: 3, travelerMode: "group" }), actorId: OTHER, actor_id: OTHER });
     assert.equal(r.status, 201);
-    const body = await r.json();
+    const body = await asOutcome(r);
     assert.equal(body.deduped, false);
     assert.equal(body.schemaVersion, 1);
     assert.equal(body.sourceLabel, "traveler_outcome");
@@ -376,7 +391,7 @@ describe("POST /v1/intel/outcomes", () => {
 
     const again = await post(input({ outcome: "better" }), { key: "outcome-key-2" });
     assert.equal(again.status, 200);
-    const b2 = await again.json();
+    const b2 = await asOutcome(again);
     assert.equal(b2.deduped, true);
     assert.equal(b2.outcome.eventId, body.outcome.eventId);
     assert.equal(db._tables.canonical_events.length, 1);

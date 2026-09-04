@@ -27,7 +27,16 @@ import {
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(HERE, "../migrations");
-const CREATE_MIGRATION = "2130_intel_storage.sql";
+/**
+ * The migrations that CREATE intel tables. 2130 made the five storage tables;
+ * I4a's 2277/2278 add the attribution + scoped-trust ledgers. A new intel table
+ * is covered by listing its migration here AND the table in COVERED_TABLES.
+ */
+export const CREATE_MIGRATIONS = [
+  "2130_intel_storage.sql",
+  "2277_intel_outcomes_attribution.sql",
+  "2278_intel_scoped_trust.sql",
+] as const;
 
 /** Column names per intel table, parsed from the CREATE TABLE bodies. */
 export function columnsFromMigration(sql: string): Map<string, string[]> {
@@ -58,13 +67,25 @@ export function alterAddColumns(sql: string): Map<string, string[]> {
   return out;
 }
 
+/** CREATE TABLE bodies from every intel-creating migration (missing files are skipped). */
+export function intelCreateColumns(dir: string): Map<string, string[]> {
+  const merged = new Map<string, string[]>();
+  for (const file of CREATE_MIGRATIONS) {
+    let sql: string;
+    try { sql = readFileSync(join(dir, file), "utf8"); } catch { continue; }
+    for (const [table, cols] of columnsFromMigration(sql)) merged.set(table, cols);
+  }
+  return merged;
+}
+
 /**
- * The full live column set per intel table: the CREATE TABLE bodies (2130) plus
- * every ADD COLUMN across ALL migrations, so a column added by a later ALTER is
- * seen and must be classified — not silently skipped the way 2171's were.
+ * The full live column set per intel table: the CREATE TABLE bodies (2130 +
+ * 2277 + 2278) plus every ADD COLUMN across ALL migrations, so a column added
+ * by a later ALTER is seen and must be classified — not silently skipped the
+ * way 2171's were.
  */
 export function allIntelColumns(dir: string): Map<string, string[]> {
-  const merged = columnsFromMigration(readFileSync(join(dir, CREATE_MIGRATION), "utf8"));
+  const merged = intelCreateColumns(dir);
   for (const file of readdirSync(dir)) {
     if (!file.endsWith(".sql")) continue;
     for (const [table, cols] of alterAddColumns(readFileSync(join(dir, file), "utf8"))) {
@@ -87,7 +108,7 @@ export function computeProblems(tables: Map<string, string[]>): RightsProblem[] 
   for (const t of COVERED_TABLES) {
     const cols = tables.get(t);
     if (!cols || cols.length === 0) {
-      problems.push({ kind: "TABLE NOT PARSED", detail: `${t} has no columns in 2130 — the scan has no subject.` });
+      problems.push({ kind: "TABLE NOT PARSED", detail: `${t} has no columns in any of ${CREATE_MIGRATIONS.join(", ")} — the scan has no subject.` });
       continue;
     }
     for (const c of cols) {
@@ -104,7 +125,7 @@ export function computeProblems(tables: Map<string, string[]>): RightsProblem[] 
   // Stale entries and malformed classifications.
   for (const f of FIELD_RIGHTS) {
     const cols = tables.get(f.table);
-    if (!cols) { problems.push({ kind: "STALE TABLE", detail: `${f.table} is classified but not created by 2130.` }); continue; }
+    if (!cols) { problems.push({ kind: "STALE TABLE", detail: `${f.table} is classified but not created by an intel migration.` }); continue; }
     if (!cols.includes(f.column)) {
       problems.push({ kind: "STALE FIELD", detail: `${f.table}.${f.column} is classified but does not exist. Remove it.` });
     }
