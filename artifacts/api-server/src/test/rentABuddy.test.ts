@@ -780,6 +780,34 @@ function setupState(extra: Partial<FakeState> = {}) {
   _setTestServiceClient(client as any);
 }
 
+// ── Buddy card ↔ Passport consumer projection (§21/§33/§24) ──────────────────
+
+describe("buddy detail card requests its Passport projection", () => {
+  it("preserves the buddy-domain card and attaches the buddy Passport variant", async () => {
+    setupState();
+    const r = await req("GET", `/api/rent-a-buddy/buddies/${BUDDY_PROF}`);
+    assert.equal(r.status, 200);
+    // Parity: the existing buddy-domain card is unchanged.
+    assert.equal(r.body.buddy.id, BUDDY_PROF);
+    assert.equal(r.body.buddy.city, "Tokyo");
+    assert.ok("trustScore" in r.body.buddy, "buddy-domain trustScore preserved");
+    assert.ok("trustLabel" in r.body.buddy, "buddy-domain trustLabel preserved");
+    // The consumer now REQUESTS its projection instead of only re-deriving trust.
+    assert.ok("passport" in r.body.buddy, "buddy card exposes its Passport projection");
+    if (r.body.buddy.passport) {
+      const p = r.body.buddy.passport;
+      assert.equal(p.variant, "buddy");
+      assert.equal(p.userId, BUDDY_USER);
+      // §9: a viewer never receives a numeric trust score through the projection.
+      if (p.trust) assert.ok(!("score" in p.trust), "numeric trust score must not leak to a viewer");
+      // Allow-list: the person-card variant never carries the full aggregate.
+      for (const k of ["stamps", "memories", "upcomingPlans", "featuredJourney", "intent", "sharedContext", "travelIdentity", "travelerState"]) {
+        assert.ok(!(k in p), `buddy variant leaked full-aggregate field: ${k}`);
+      }
+    }
+  });
+});
+
 // ── Feature flag tests ────────────────────────────────────────────────────────
 
 describe("feature flag", () => {

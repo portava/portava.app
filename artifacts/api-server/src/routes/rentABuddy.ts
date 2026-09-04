@@ -21,6 +21,10 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { computeTrustScore } from "../lib/trustScore.js";
+// §21/§33: the buddy card requests its Passport consumer projection (identity,
+// verification, reputation summary, availability, §24 block/unavailable
+// propagation) from the ONE assembler instead of re-deriving privacy locally.
+import { buildConsumerProjection, type BuddyProjection } from "../services/passport/PassportConsumerProjections.js";
 import { adjustBuddyCounter, syncFavoritesCount } from "../services/rentBuddy/ReliabilityCounters.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
@@ -831,9 +835,17 @@ router.get("/rent-a-buddy/buddies/:buddyId", async (req, res) => {
   let trustScore: number | null = null;
   let trustLabel: string | null = null;
   let trustScoreBreakdown: { factors: Array<{ key: string; label: string; points: number; maxPoints: number; maxed: boolean; hint: null }> } | null = null;
+  // §21/§33 + §24: the canonical, privacy-aware Buddy Passport projection —
+  // identity, verification, reputation SUMMARY, availability, and per-viewer
+  // action eligibility — assembled ONCE by the shared assembler with block /
+  // unavailable propagation applied server-side. The numeric marketplace
+  // trustScore/breakdown above is the buddy-domain reputation (§20) and is
+  // retained; the projection carries the privacy-safe reputation label a viewer
+  // is permitted to see and never leaks a numeric score to a non-owner.
+  let passport: BuddyProjection | null = null;
   if (profileRes.data) {
+    const buddyUserId = (profileRes.data as any).user_id as string;
     try {
-      const buddyUserId = (profileRes.data as any).user_id as string;
       // Pass no preloaded row — profileRes.data is from rent_buddy_profiles, not profiles.
       // computeTrustScore will fetch the correct profiles row (verified, id_verified_at,
       // created_at, safety_flags_count) itself.
@@ -847,11 +859,17 @@ router.get("/rent-a-buddy/buddies/:buddyId", async (req, res) => {
     } catch {
       /* non-critical — buddy card still shown without trust breakdown */
     }
+    try {
+      passport = await buildConsumerProjection(serviceClient, "buddy", buddyUserId, userId);
+    } catch {
+      /* non-critical — the buddy card renders without the Passport projection */
+      passport = null;
+    }
   }
 
   return res.json({
     buddy: mapProfile(profileRes.data)
-      ? { ...mapProfile(profileRes.data), trustScore, trustLabel, trustScoreBreakdown }
+      ? { ...mapProfile(profileRes.data), trustScore, trustLabel, trustScoreBreakdown, passport }
       : null,
     packages: (packagesRes.data ?? []).map((p: any) => ({
       id: p.id, buddyId: p.buddy_id, title: p.title, description: p.description,
