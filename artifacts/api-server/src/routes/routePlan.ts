@@ -272,6 +272,43 @@ router.get("/route-plans/:id", asyncHandler(async (req, res) => {
   res.json(fullPlan);
 }));
 
+// ── GET /api/route-plans/for-trip/:tripId ──────────────────────────────────────
+//
+// The Trip Map (§11) renders "routes from the route plan", but the map is opened
+// with a tripId, not a plan id. This returns the VIEWER'S OWN route plan for the
+// trip — the accepted (status='active') one if present, else the most recently
+// updated — so the map can draw the route line without the client reconstructing
+// route intelligence (§19). Scoped to owner_user_id = the caller, so a member
+// only ever sees their own plan (no cross-member disclosure). Returns null when
+// the viewer has no route plan for the trip.
+//
+// The two-segment path never collides with GET /route-plans/:id (one segment).
+router.get("/route-plans/for-trip/:tripId", asyncHandler(async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { tripId } = req.params;
+  if (!UUID.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+
+  const { data: plans, error } = await (client as any)
+    .from("route_plans")
+    .select("id, status, updated_at")
+    .eq("owner_user_id", user.id)
+    .eq("trip_id", tripId)
+    .order("updated_at", { ascending: false });
+  if (error) { req.log.error({ err: error }, "route plans for trip"); sendError(res, "db_error", error.message ?? "Failed to read route plans"); return; }
+
+  const list = (plans ?? []) as Array<{ id: string; status: string }>;
+  // Prefer the accepted plan (§10: only accepted plans are declarations), else
+  // the most recently updated draft.
+  const chosen = list.find((p) => p.status === "active") ?? list[0] ?? null;
+  if (!chosen) { res.json(null); return; }
+
+  const fullPlan = await fetchFullPlan(client, chosen.id);
+  res.json(fullPlan ?? null);
+}));
+
 // ── POST /api/route-plans/:id/accept ──────────────────────────────────────────
 //
 // THE ACCEPTANCE TRANSITION — the only writer of route_plans.status='active'.

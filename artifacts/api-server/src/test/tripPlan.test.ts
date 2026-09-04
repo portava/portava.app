@@ -517,6 +517,114 @@ describe("POST /plan/items — creator_id from token", () => {
   });
 });
 
+// ── POST /plan/reorder — batch reorder (Optimize Today persistence) ───────────
+
+const ITEM_ID_3 = "88888888-0000-0000-0000-000000000006";
+
+function itemRow(id: string, sortOrder: number): Item {
+  return {
+    id, trip_id: TRIP_ID, creator_id: ALICE_ID,
+    title: `Item ${id}`, category: "activity", status: "confirmed",
+    source_type: "manual", source_id: null,
+    day_date: null, starts_at: null, ends_at: null,
+    location_name: null, notes: null,
+    sort_order: sortOrder, visibility: "members", removed_at: null,
+    created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
+  };
+}
+
+function stateWithThreeItems(roles: Record<string, string>): State {
+  const s = stateWithMembers(roles);
+  s.trip_plan_items.push(itemRow(ITEM_ID_1, 2), itemRow(ITEM_ID_2, 5), itemRow(ITEM_ID_3, 7));
+  return s;
+}
+
+describe("POST /api/trips/:tripId/plan/reorder — batch reorder", () => {
+  it("R1. owner reorder swaps only the provided items within their own slots", async () => {
+    const s = stateWithThreeItems({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    // Reorder [ITEM_2, ITEM_1]: they hold slots {2,5}; new order → ITEM_2=2, ITEM_1=5.
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/reorder`, "alice-tok", {
+      orderedItemIds: [ITEM_ID_2, ITEM_ID_1],
+    });
+    assert.equal(r.status, 200);
+    const body = r.body as { status: string; count: number };
+    assert.equal(body.status, "reordered");
+    assert.equal(body.count, 2);
+
+    const byId = (id: string) => s.trip_plan_items.find((i) => i.id === id)!;
+    assert.equal(byId(ITEM_ID_2).sort_order, 2, "ITEM_2 takes the earlier slot");
+    assert.equal(byId(ITEM_ID_1).sort_order, 5, "ITEM_1 takes the later slot");
+    // The item NOT in the list keeps its exact slot — no silent rewrite (§11).
+    assert.equal(byId(ITEM_ID_3).sort_order, 7, "unlisted item is untouched");
+    await close();
+  });
+
+  it("R2. non-owner member is forbidden (owner-only, matches single-item reorder)", async () => {
+    const s = stateWithThreeItems({ [ALICE_ID]: "owner", [BOB_ID]: "member" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/reorder`, "bob-tok", {
+      orderedItemIds: [ITEM_ID_2, ITEM_ID_1],
+    });
+    assert.equal(r.status, 403);
+    // Canonical order is untouched by a rejected reorder.
+    assert.equal(s.trip_plan_items.find((i) => i.id === ITEM_ID_1)!.sort_order, 2);
+    await close();
+  });
+
+  it("R3. a non-member is forbidden", async () => {
+    const s = stateWithThreeItems({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/reorder`, "bob-tok", {
+      orderedItemIds: [ITEM_ID_2, ITEM_ID_1],
+    });
+    assert.equal(r.status, 403);
+    await close();
+  });
+
+  it("R4. an id not on the trip is rejected", async () => {
+    const s = stateWithThreeItems({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/reorder`, "alice-tok", {
+      orderedItemIds: [ITEM_ID_1, "99999999-0000-0000-0000-00000000000a"],
+    });
+    assert.equal(r.status, 400);
+    await close();
+  });
+
+  it("R5. duplicate ids are rejected", async () => {
+    const s = stateWithThreeItems({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/reorder`, "alice-tok", {
+      orderedItemIds: [ITEM_ID_1, ITEM_ID_1],
+    });
+    assert.equal(r.status, 400);
+    await close();
+  });
+
+  it("R6. a soft-deleted item cannot be reordered", async () => {
+    const s = stateWithThreeItems({ [ALICE_ID]: "owner" });
+    s.trip_plan_items.find((i) => i.id === ITEM_ID_2)!.removed_at = "2026-06-02T00:00:00Z";
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/reorder`, "alice-tok", {
+      orderedItemIds: [ITEM_ID_2, ITEM_ID_1],
+    });
+    assert.equal(r.status, 400);
+    await close();
+  });
+
+  it("R7. an unchanged order persists nothing but still succeeds", async () => {
+    const s = stateWithThreeItems({ [ALICE_ID]: "owner" });
+    const { port, close } = await startServer(s);
+    const r = await post(port, `/api/trips/${TRIP_ID}/plan/reorder`, "alice-tok", {
+      orderedItemIds: [ITEM_ID_1, ITEM_ID_2],
+    });
+    assert.equal(r.status, 200);
+    assert.equal((r.body as { count: number }).count, 0, "already in slot order → no writes");
+    await close();
+  });
+});
+
 // ── canEditPlanItem — unit tests ──────────────────────────────────────────────
 
 function makeMiniClient(items: any[], members: any[]) {
