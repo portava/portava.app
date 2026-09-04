@@ -25,6 +25,7 @@ import {
   mapMachineReducer,
   withCapabilities,
   DEFAULT_MAP_CAPABILITIES,
+  MAP_CAPABILITY_KEYS,
   type MapCapabilities,
   type MapMachineEvent,
   type MapMachineState,
@@ -32,6 +33,85 @@ import {
 import { activeIntent, type TemporaryIntent } from '../features/map/intent/intentModel.ts';
 import { NOW_OFFSET, type TimeOffset } from '../features/map/time/timeMachine.ts';
 import { DEFAULT_HOME_FILTER, type HomeFilterId } from '../features/map/home/homeFilters.ts';
+
+// ── §30 capabilities: what the shell can honestly open ────────────────────────
+
+/**
+ * The facts a map session can observe about itself, from which the §30
+ * capability record is DERIVED rather than declared.
+ *
+ * `DEFAULT_MAP_CAPABILITIES` is a fail-closed placeholder, not a feature flag:
+ * there is no flag table, env var or admin toggle behind it, and nothing in the
+ * app called `setMapCapabilities`, so CROWD_FLOW / LOCATE_FRIENDS / TIME_MACHINE
+ * were permanently unreachable. This function is what makes them answerable —
+ * and it answers from evidence the caller can actually see, so a surface opens
+ * exactly when there is something behind it and closes again when there is not.
+ *
+ * Pure: no React, no I/O, no clock. The screen gathers the inputs; the rule
+ * lives here so it can be reasoned about without rendering a map.
+ */
+export interface MapCapabilityInputs {
+  /**
+   * §10 — how many `crowd_flow` objects actually reached the client for this
+   * viewport. Presence is the honest test: the server only serves flows when
+   * `map_crowd_flow_enabled` is on AND the cohort/privacy gates pass, so a
+   * non-zero count means there is genuinely aggregate movement to render.
+   * Zero means Crowd Flow mode would open onto an empty layer.
+   */
+  crowdFlowObjectCount: number;
+  /** §12 — the server's `locate_friends_enabled` flag. Fail-closed when unknown. */
+  locateFriendsFlagEnabled: boolean;
+  /**
+   * §12 — the group scope a session could be started for. Locate My Friends is
+   * "group-scoped" by definition, so without a scope there is no session to
+   * start and the mode has no subject. The shell can only name a trip today.
+   */
+  locateFriendsScopeId: string | null;
+  /**
+   * §12 — the viewer's own id. `LocateFriendsPanel` needs a `viewerMemberId`,
+   * so a signed-out viewer cannot be a member of the group they would open.
+   */
+  viewerId: string | null;
+}
+
+/**
+ * §15 Time Machine, deliberately left CLOSED.
+ *
+ * There is no per-offset producer anywhere — no route, no service and no
+ * projection emits a `prediction` object or any forecast state, on either side
+ * of the wire. `toTemporalObjects` can only RELABEL the objects that are on
+ * screen now, so every offset (+30m, +60m, +120m) would render today's map
+ * wearing a forecast badge. §37: "Do not make predictions look like
+ * observations." Opening the scrubber onto that would be worse than leaving it
+ * shut, so this stays `false` until something actually produces per-offset
+ * state, at which point it becomes a presence check like CROWD_FLOW's.
+ */
+export const TIME_MACHINE_HAS_NO_SOURCE = false;
+
+export function deriveMapCapabilities(inputs: MapCapabilityInputs): MapCapabilities {
+  return {
+    // §14 — the Compass pick pipeline and the Ask Compass bar both exist on
+    // this screen; unchanged.
+    COMPASS: true,
+    // §11 — trip objects project and Optimize Today proposes; unchanged.
+    TRIP: true,
+    CROWD_FLOW: inputs.crowdFlowObjectCount > 0,
+    LOCATE_FRIENDS:
+      inputs.locateFriendsFlagEnabled &&
+      inputs.locateFriendsScopeId != null &&
+      inputs.viewerId != null,
+    TIME_MACHINE: TIME_MACHINE_HAS_NO_SOURCE,
+  };
+}
+
+/** Do two capability records say the same thing about every known surface? */
+export function sameMapCapabilities(
+  a: MapCapabilities | null | undefined,
+  b: MapCapabilities | null | undefined,
+): boolean {
+  if (a == null || b == null) return a === b;
+  return MAP_CAPABILITY_KEYS.every((key) => a[key] === b[key]);
+}
 
 // ── State shape ───────────────────────────────────────────────────────────────
 
@@ -183,6 +263,11 @@ function reducer(state: MapStoreState, action: Action): MapStoreState {
       return next === state.machine ? state : { ...state, machine: next };
     }
     case 'SET_MAP_CAPABILITIES': {
+      // Identity bailout, like every other action here — but load-bearing
+      // rather than a nicety. `withCapabilities` always allocates a new state,
+      // so without this an effect that re-derives capabilities on render would
+      // re-render forever. The value is what matters, not the object.
+      if (sameMapCapabilities(state.machine.capabilities, action.payload)) return state;
       const next = withCapabilities(state.machine, action.payload);
       return next === state.machine ? state : { ...state, machine: next };
     }

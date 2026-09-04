@@ -981,6 +981,9 @@ export async function buildPassportProjection(
     isSelf,
     canSeeTrips: permissions.canSeeTrips,
     canSeeRestricted: permissions.canViewFullProfile || context === "trip_crew" || context === "trip_host",
+    // Per-memory gate for the featured journey's memories (same context the
+    // standalone `memories` array uses in step 9).
+    callerCtx,
   };
   const [featuredJourney, upcomingPlans] = await Promise.all([
     buildFeaturedJourney(sc, userId, journeyPerms).catch(() => null),

@@ -22,6 +22,7 @@ import {
   TILE_SIZE,
   ZOOM_BANDS,
   circlePolygon,
+  compassRecommendationIdsOf,
   confidenceAtLeast,
   confidenceRank,
   explainPriority,
@@ -263,6 +264,28 @@ test('selection, Compass and navigation promote in ladder order', () => {
   // A Set is accepted as well as an array.
   assert.equal(
     promotePriority(place, { compassRecommendationIds: new Set(['p1']) }),
+    RENDERING_PRIORITY.compass_recommendation,
+  );
+});
+
+test('compassRecommendationIdsOf recovers the rung promoteAll would discard', () => {
+  // The producers (compassMapModel.toMapObjects, tripMapModel's Compass
+  // alternatives) stamp the rung on the object. explainPriority seeds from the
+  // KIND, never from obj.renderingPriority, so promoteAll DROPS it — which is
+  // what made the whole Compass rung inert on the map screen.
+  const pick = obj({ id: 'p1', kind: 'place' });
+  pick.renderingPriority = RENDERING_PRIORITY.compass_recommendation;
+  const ordinary = obj({ id: 'p2', kind: 'place' });
+
+  assert.deepEqual(compassRecommendationIdsOf([pick, ordinary]), ['p1']);
+  assert.deepEqual(compassRecommendationIdsOf([ordinary]), []);
+  assert.deepEqual(compassRecommendationIdsOf([]), []);
+
+  // Without the context the stamp is lost; with it, it survives.
+  assert.equal(promoteAll([pick], {})[0].renderingPriority, RENDERING_PRIORITY.relevant_place);
+  assert.equal(
+    promoteAll([pick], { compassRecommendationIds: compassRecommendationIdsOf([pick]) })[0]
+      .renderingPriority,
     RENDERING_PRIORITY.compass_recommendation,
   );
 });

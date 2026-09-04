@@ -49,7 +49,14 @@ export interface LiveIntelClaim {
   value: unknown;
   band: ConfidenceBand;
   confidence: number | null;
-  sourceClass: SourceClass;
+  /**
+   * Who is speaking. NULL when the wire carried no class, or one this build
+   * does not recognise — deliberately nullable rather than defaulted, because
+   * every default is an assertion and the tempting one (firsthand_unverified)
+   * is the §37 violation: an unattributed or paid claim borrowing a traveller's
+   * credibility. Render it via sourceLabel, which says "Source not attributed".
+   */
+  sourceClass: SourceClass | null;
   /** Coarse cohort bucket; null when the source carries no cohort (synthesised). */
   sourceCountBucket: SourceCountBucket | null;
   /**
@@ -108,6 +115,11 @@ export const BAND_LABEL: Record<ConfidenceBand, string> = {
  */
 export function liveState(claim: LiveIntelClaim | null | undefined, now: Date = new Date()): LiveState {
   if (!claim) return 'unknown';
+  // An unattributed claim is not live. "Live" asserts someone observed this
+  // just now; with no source class we cannot say who, so we cannot say that.
+  // Fails toward 'typical' — the same direction a forecast or a historical
+  // pattern falls, and the direction §37 requires.
+  if (claim.sourceClass === null) return 'typical';
   if (!mayRenderAsLive(claim.sourceClass)) return 'typical';
   if (claim.validUntil && new Date(claim.validUntil).getTime() <= now.getTime()) return 'unknown';
   if (claim.serverState === 'live' || claim.serverState === 'emerging') return claim.serverState;
@@ -203,8 +215,14 @@ export function formatClaimValue(claimType: string, value: unknown): string {
 }
 
 // ── Source label + "why" explanation ─────────────────────────────────────────
-export function sourceLabel(cls: SourceClass): string {
-  return SOURCE_CLASS_LABELS[cls] ?? cls;
+export function sourceLabel(cls: SourceClass | null): string {
+  // null means the wire carried no source class, or one this build does not
+  // recognise. It must NOT read as a traveller report: §37 forbids letting a
+  // paid or unattributed assertion borrow firsthand credibility, and an
+  // unlabelled claim reads as the map's own finding — the same borrowing by a
+  // quieter route. Matches the server's describeClaim for the same case.
+  if (cls === null) return 'Source not attributed';
+  return SOURCE_CLASS_LABELS[cls] ?? 'Source not attributed';
 }
 
 /**
@@ -241,7 +259,10 @@ export function whyExplanation(claim: LiveIntelClaim): string {
 
 // ── Time formatting ──────────────────────────────────────────────────────────
 /** "Checked" for observations, "As of" generically. */
-export function observedVerb(cls: SourceClass): string {
+export function observedVerb(cls: SourceClass | null): string {
+  // An unattributed claim gets the neutral verb. "Checked" asserts somebody
+  // went and looked, which is exactly the claim we cannot support here.
+  if (cls === null) return 'As of';
   return mayRenderAsLive(cls) ? 'Checked' : 'As of';
 }
 

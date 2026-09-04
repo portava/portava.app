@@ -834,13 +834,27 @@ router.get("/users/suggestions", async (req, res) => {
       .from("blocks")
       .select("blocked_id, blocker_id")
       .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-    if (!blockErr) {
+    // `blockErr` was already bound but its two outcomes were indistinguishable
+    // downstream: an unreadable blocks table leaves the same empty set as a
+    // viewer who has blocked nobody, and every suggestion below is filtered on
+    // that set. The fail-open posture is unchanged; it is now observable.
+    if (blockErr) {
+      req.log.warn(
+        { code: (blockErr as any)?.code, err: blockErr, userId: user.id },
+        "follow suggestions: block-state read failed — blocked users are NOT being filtered from this response",
+      );
+    } else {
       for (const b of (blockRows ?? [])) {
         if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
         else blockedSet.add((b as any).blocker_id);
       }
     }
-  } catch { /* fail safe */ }
+  } catch (err) {
+    req.log.warn(
+      { err, userId: user.id },
+      "follow suggestions: block-state read rejected — blocked users are NOT being filtered from this response",
+    );
+  }
 
   // 2. Who follows me? + caller's travel-interest profile (in parallel).
   // Followers are ordered by follower_id for deterministic seededShuffle input —

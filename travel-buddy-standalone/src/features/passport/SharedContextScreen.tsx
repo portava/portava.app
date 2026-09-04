@@ -199,16 +199,21 @@ export default function SharedContextScreen({
     if (viewedRef.current || !data) return;
     viewedRef.current = true;
     trackSharedContextViewed({
-      subjectId: userId ?? '',
+      // The SERVER-RESOLVED owner uuid, never the raw route param — `userId` may
+      // be an @handle (the endpoint resolves @handles), and passportTelemetry's
+      // scrubber filters KEYS not VALUES, so a handle value would pass straight
+      // through and break the module's no-handle invariant (§23/§24/§32).
+      subjectId: data.ownerId,
       factCount: data.facts.length,
       summary: data.summaryLabel,
     });
-  }, [data, userId]);
+  }, [data]);
 
   function openCompass(): void {
     if (!data) return;
-    // §32 make_plan_started — the identity→action bridge (§18/§35).
-    trackMakePlanStarted(userId ?? '', 'shared_context');
+    // §32 make_plan_started — the identity→action bridge (§18/§35). Use the
+    // server-resolved owner uuid, not the raw (possibly @handle) route param.
+    trackMakePlanStarted(data.ownerId, 'shared_context');
     router.push({
       pathname: COMPASS_ROUTE,
       params: { prefillMessage: buildCompassPrompt(data, otherName) },

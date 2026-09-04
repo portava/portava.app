@@ -95,3 +95,66 @@ describe("buildJourneys", () => {
     assert.equal(r.featured, null);
   });
 });
+
+// ── D1 regression — a PUBLIC trip must not leak its non-public MEMORIES.
+//    Journey/featured memories run the SAME per-memory visibility gate
+//    (filterMemories) the standalone §29 step-9 `memories` array does. Before the
+//    fix, a viewer who could see a public trip also received that trip's private /
+//    circle_only / trip_crew memories.
+function dbWithMixedMemoryVisibility() {
+  return makePassportDb({
+    trip_members: [{ trip_id: T_VN, user_id: OWNER, role: "owner" }],
+    trips: [
+      { id: T_VN, owner_id: OWNER, title: "30 Days in Vietnam", destination_city: "Da Nang", destination_country: "Vietnam", start_date: "2025-03-01", end_date: "2025-03-30", status: "completed", visibility: "public", show_on_profile: true, show_exact_dates: true },
+    ],
+    passport_memories: [
+      { id: "m-pub", user_id: OWNER, status: "active", title: "Beach day", city: "Da Nang", country: "Vietnam", trip_id: T_VN, visibility: "public", earned_at: "2025-03-05" },
+      { id: "m-priv", user_id: OWNER, status: "active", title: "Secret spot", city: "Da Nang", country: "Vietnam", trip_id: T_VN, visibility: "private", earned_at: "2025-03-06" },
+      { id: "m-circle", user_id: OWNER, status: "active", title: "Circle only", city: "Da Nang", country: "Vietnam", trip_id: T_VN, visibility: "circle_only", earned_at: "2025-03-07" },
+    ],
+    user_stamps: [],
+  });
+}
+
+function journeyMemoryIds(r: Awaited<ReturnType<typeof buildJourneys>>): string[] {
+  const j = r.years
+    .flatMap((y) => y.countries)
+    .flatMap((c) => c.cities)
+    .flatMap((c) => c.journeys)
+    .find((jj) => jj.tripId === T_VN)!;
+  return j.memories.map((m) => m.id).sort();
+}
+
+describe("buildJourneys — per-memory visibility (D1)", () => {
+  it("hides a public trip's PRIVATE and CIRCLE_ONLY memories from a public viewer", async () => {
+    const r = await buildJourneys(dbWithMixedMemoryVisibility(), OWNER, {
+      isSelf: false, canSeeTrips: true, canSeeRestricted: false, callerCtx: "public",
+    });
+    assert.deepEqual(journeyMemoryIds(r), ["m-pub"], "only the public memory reaches a public viewer");
+    const j = r.years.flatMap((y) => y.countries).flatMap((c) => c.cities).flatMap((c) => c.journeys).find((jj) => jj.tripId === T_VN)!;
+    assert.equal(j.memoryCount, 1, "memoryCount reflects the gated set");
+  });
+
+  it("shows circle_only (but not private) to a circle viewer", async () => {
+    const r = await buildJourneys(dbWithMixedMemoryVisibility(), OWNER, {
+      isSelf: false, canSeeTrips: true, canSeeRestricted: true, callerCtx: "circle",
+    });
+    assert.deepEqual(journeyMemoryIds(r), ["m-circle", "m-pub"], "circle sees public + circle_only, never private");
+  });
+
+  it("shows ALL memories to the owner (self)", async () => {
+    const r = await buildJourneys(dbWithMixedMemoryVisibility(), OWNER, {
+      isSelf: true, canSeeTrips: true, canSeeRestricted: true, callerCtx: "owner",
+    });
+    assert.deepEqual(journeyMemoryIds(r), ["m-circle", "m-priv", "m-pub"], "owner sees everything");
+  });
+
+  it("featuredJourney also gates the featured trip's memories for a non-owner", async () => {
+    const featured = await buildFeaturedJourney(dbWithMixedMemoryVisibility(), OWNER, {
+      isSelf: false, canSeeTrips: true, canSeeRestricted: false, callerCtx: "public",
+    });
+    assert.ok(featured);
+    assert.equal(featured!.tripId, T_VN);
+    assert.deepEqual(featured!.memories.map((m) => m.id).sort(), ["m-pub"], "featured leaks no private memory");
+  });
+});

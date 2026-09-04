@@ -22,6 +22,33 @@ import { resolveProfileVisibility } from "./profileVisibility.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Branches 3a–3g decide access by looking the object up in a table: a row means
+ * "this entity publishes the object, apply its rules", no row means "nothing
+ * here references it, try the next branch". A REJECTED query — a renamed column,
+ * a table not yet migrated, a malformed `or()` filter — returns
+ * `{ data: null, error }` rather than throwing, so it reads as the second case
+ * exactly, the branch falls through, and §4 denies with no trace.
+ *
+ * The deny is the safe outcome and is deliberately left alone. What is not safe
+ * is that it is indistinguishable from a policy deny: the incident recorded in
+ * the urlForms comment below — three live public posts whose media loaded for
+ * their owner and for nobody else — is this failure seen from the outside, and
+ * nothing in the logs said so. Binding the error costs nothing and makes the
+ * next occurrence diagnosable.
+ */
+function noteLookupFailure(
+  branch: string,
+  error: unknown,
+  ctx: Record<string, unknown>,
+): void {
+  if (!error) return;
+  console.warn(
+    `mediaAccess: ${branch} lookup failed — this branch cannot decide and access falls through to deny`,
+    { ...ctx, code: (error as any)?.code, message: (error as any)?.message },
+  );
+}
+
 /** Per-(viewer,object) allow-cache — media loads burst per screen. */
 const ALLOW_TTL_MS = 60_000;
 const allowCache = new Map<string, number>();
@@ -195,12 +222,15 @@ async function decide(
 
   let owner = pathOwner;
   try {
-    const { data: asset } = await sc
+    const { data: asset, error: assetErr } = await sc
       .from("media_assets")
       .select("owner_user_id")
       .eq("storage_bucket", bucket)
       .eq("storage_path", path)
       .maybeSingle();
+    // A rejected read leaves `owner` as the PATH owner — a weaker attribution
+    // that makes branches 3d/3e deny outright ("cannot attribute the object").
+    noteLookupFailure("media_assets owner", assetErr, { bucket, path });
     if ((asset as any)?.owner_user_id) {
       owner = (asset as any).owner_user_id;
       if (owner === viewerId) return true;
@@ -252,22 +282,26 @@ async function decide(
 
   // 3a. Postcard media (post_media.storage_path → parent post rules).
   try {
-    const { data: pm } = await sc
+    const { data: pm, error: pmErr } = await sc
       .from("post_media")
       .select("post_id, moderation_status, processing_status")
       .eq("storage_path", path)
       .maybeSingle();
+    noteLookupFailure("3a post_media", pmErr, { bucket, path });
     if (pm) {
       if (
         (pm as any).moderation_status === "rejected" ||
         (pm as any).moderation_status === "flagged"
       )
         return false;
-      const { data: post } = await sc
+      const { data: post, error: postErr } = await sc
         .from("posts")
         .select("author_id, visibility, status, post_status, trip_id")
         .eq("id", (pm as any).post_id)
         .maybeSingle();
+      // Here the deny is returned, not fallen through: a rejected read denies
+      // the object as firmly as a deleted parent post does.
+      noteLookupFailure("3a parent post", postErr, { bucket, path, postId: (pm as any).post_id });
       if (!post) return false;
       // Only a post that OWNS the object may authorize it via post rules. If this
       // post_media row points at an object owned by someone else (or ownership
@@ -286,11 +320,12 @@ async function decide(
 
   // 3b. Regular post media (posts.media_urls array contains the public URL).
   try {
-    const { data: posts } = await sc
+    const { data: posts, error: postsErr } = await sc
       .from("posts")
       .select("author_id, visibility, status, post_status, trip_id")
       .overlaps("media_urls", urlForms)
       .limit(1);
+    noteLookupFailure("3b posts.media_urls", postsErr, { bucket, path });
     const post = (posts as any[])?.[0];
     // Found BY media_urls, so the post claiming the object is also the row
     // publishing it. Only decide here when the post's author OWNS the object, or
@@ -308,20 +343,24 @@ async function decide(
 
   // 3c. Message media → thread membership.
   try {
-    const { data: msgs } = await sc
+    const { data: msgs, error: msgsErr } = await sc
       .from("messages")
       .select("thread_id")
       .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
       .limit(1);
+    noteLookupFailure("3c messages", msgsErr, { bucket, path });
     const msg = (msgs as any[])?.[0];
     if (msg) {
-      const { data: member } = await sc
+      const { data: member, error: memberErr } = await sc
         .from("message_thread_members")
         .select("user_id")
         .eq("thread_id", msg.thread_id)
         .eq("user_id", viewerId)
         .is("left_at", null)
         .maybeSingle();
+      // Returned directly: an unreadable membership table denies a member's own
+      // thread media exactly as it denies a non-member's.
+      noteLookupFailure("3c thread membership", memberErr, { bucket, path, threadId: msg.thread_id });
       return Boolean(member);
     }
   } catch { /* fall through */ }
@@ -329,11 +368,12 @@ async function decide(
   // 3d. Story media — active + public, or close-friends when viewer qualifies.
   //     Richer lists (friends_only/circle/trip_crew/custom) → conservative deny.
   try {
-    const { data: stories } = await sc
+    const { data: stories, error: storiesErr } = await sc
       .from("stories")
       .select("owner_id, state, visibility, close_friends_only, expires_at")
       .in("media_url", urlForms)
       .limit(1);
+    noteLookupFailure("3d stories", storiesErr, { bucket, path });
     const story = (stories as any[])?.[0];
     if (story) {
       // The story is found BY media_url, so the row claiming "this is my media"
@@ -364,11 +404,12 @@ async function decide(
 
   // 3e. Highlight media — public + unexpired.
   try {
-    const { data: hs } = await sc
+    const { data: hs, error: hsErr } = await sc
       .from("highlights")
       .select("owner_id, visibility, expires_at")
       .in("media_url", urlForms)
       .limit(1);
+    noteLookupFailure("3e highlights", hsErr, { bucket, path });
     const h = (hs as any[])?.[0];
     if (h) {
       // Same trap as the story branch (3d): the highlight is found BY media_url,
@@ -385,11 +426,12 @@ async function decide(
 
   // 3f. Trip cover (user-uploaded) — trip member (owner handled above).
   try {
-    const { data: trips } = await sc
+    const { data: trips, error: tripsErr } = await sc
       .from("trips")
       .select("id")
       .in("cover_url", urlForms)
       .limit(1);
+    noteLookupFailure("3f trips.cover_url", tripsErr, { bucket, path });
     const trip = (trips as any[])?.[0];
     if (trip) return isTripMember(sc, trip.id, viewerId);
   } catch { /* fall through */ }

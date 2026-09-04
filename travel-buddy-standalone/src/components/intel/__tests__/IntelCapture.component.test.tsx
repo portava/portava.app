@@ -177,8 +177,20 @@ describe('DecisionExposureChips', () => {
       <SafeArea><DecisionExposureChips living={living} enabled /></SafeArea>,
     );
     fireEvent.press(getByTestId('intel-chip-crowd.level'));
+    // CHANGED, and the change is the point. This asserted /Traveler report/i,
+    // which is what the synthesised bare-crowdLevel path used to claim — it
+    // hardcoded sourceClass: 'firsthand_unverified'.
+    //
+    // That was a §37 fail-open. api-server's readLiveCrowdLevel takes the first
+    // crowd.level claim with NO source-class filter, so a SPONSORED claim can
+    // be the one reduced to this bare string. The attribution is dropped
+    // upstream, so the honest answer is that we do not have one.
+    //
+    // The fixture here is `{ crowdLevel: 'busy' }` — the synthesised path
+    // exactly. A test asserting the old string would be asserting the
+    // violation.
     // The sheet renders inside a Modal; findAllBy* waits for the deferred commit.
-    const matches = await findAllByText(/Traveler report/i);
+    const matches = await findAllByText(/Source not attributed/i);
     expect(matches.length).toBeGreaterThan(0);
   });
 

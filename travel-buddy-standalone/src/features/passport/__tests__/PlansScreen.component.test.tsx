@@ -22,6 +22,11 @@ import { computeTripOverlap } from '../usePassportPlans.ts';
 import { getPassportProjection } from '../../../services/passportProjection.ts';
 import { updateTrip } from '../../../services/trips.ts';
 import type { PassportProjectionView, PlanProjection } from '../../../services/passportProjection.ts';
+import {
+  setPassportTelemetrySink,
+  resetPassportTelemetrySink,
+  type PassportTelemetryEvent,
+} from '../passportTelemetry.ts';
 
 // NOTE: intentional stub — the real service reaches Supabase auth + the API
 // server, neither available under jest-expo. getPassportProjection is the seam
@@ -200,6 +205,70 @@ describe('PlansScreen — own passport', () => {
     await waitFor(() => {
       expect(mockUpdateTrip).toHaveBeenCalledWith('trip-bkk-me', { visibility: 'public' });
     });
+  });
+
+  // D8 — a NETWORK failure (offline) makes updateTrip THROW rather than return
+  // null. The optimistic Public→Private-style change must still revert and the
+  // error must surface, or the control would keep showing an un-saved value
+  // while the server still stores the old visibility.
+  it('reverts the optimistic visibility and surfaces an error when the write THROWS (offline)', async () => {
+    mockGetProjection.mockResolvedValueOnce({ ok: true, data: selfProjection([bangkokMine]) });
+    mockUpdateTrip.mockRejectedValueOnce(new Error('Network request failed'));
+
+    await render(<PlansScreen targetUserId={null} viewerUserId="me" />);
+
+    await waitFor(() => expect(screen.getByText('Thailand run')).toBeTruthy());
+    // Starts Private.
+    expect(screen.getByLabelText('Plan visibility: Private')).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText('Set visibility to Public'));
+
+    await waitFor(() =>
+      expect(mockUpdateTrip).toHaveBeenCalledWith('trip-bkk-me', { visibility: 'public' }),
+    );
+
+    // The thrown error reverts the optimistic Public back to Private…
+    await waitFor(() => expect(screen.getByLabelText('Plan visibility: Private')).toBeTruthy());
+    expect(screen.queryByLabelText('Plan visibility: Public')).toBeNull();
+    // …and surfaces the failure to the user.
+    expect(screen.getByText('Could not update visibility')).toBeTruthy();
+  });
+});
+
+// ── D11: make-plan telemetry carries the resolved uuid, never an @handle ──────
+
+describe('PlansScreen — §32 make-plan telemetry (no @handle leak)', () => {
+  let events: PassportTelemetryEvent[];
+  beforeEach(() => {
+    events = [];
+    setPassportTelemetrySink((e) => events.push(e));
+  });
+  afterEach(() => resetPassportTelemetrySink());
+
+  it('emits the server-resolved owner uuid, never the raw @handle route param', async () => {
+    const uuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const them = otherProjection([bangkokTheirs], true);
+    // The passport was opened via an @handle; the server resolves it to a uuid
+    // that the projection carries as identity.userId.
+    them.identity = makeIdentity(uuid, 'Mai Tran', 'mai');
+    them.userId = uuid;
+
+    mockGetProjection
+      .mockResolvedValueOnce({ ok: true, data: them })
+      .mockResolvedValueOnce({ ok: true, data: selfProjection([bangkokMine]) });
+
+    await render(<PlansScreen targetUserId="@mai" viewerUserId="me" onConnect={jest.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByText("You'll both be in Bangkok Sep 14–17")).toBeTruthy(),
+    );
+
+    fireEvent.press(screen.getByLabelText('Connect for Bangkok'));
+
+    const started = events.find((e) => e.type === 'make_plan_started');
+    expect(started?.payload).toMatchObject({ subjectId: uuid, from: 'plans_overlap' });
+    // The raw @handle route param must never reach telemetry.
+    expect(JSON.stringify(events)).not.toContain('@mai');
   });
 });
 

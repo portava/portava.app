@@ -1114,17 +1114,37 @@ router.get("/posts", async (req, res) => {
     // Cross-check: private followees must also have a user_friendships row.
     let followingIds = rawFollowingIds;
     try {
-      const { data: privateFollowees } = await sc
+      const { data: privateFollowees, error: privateErr } = await sc
         .from("profiles")
         .select("id")
         .in("id", rawFollowingIds)
         .or("is_private.eq.true,passport_visibility.eq.private");
+      // "None of these followees are private" and "the privacy query was
+      // rejected" both arrive as an empty/null list, and only the first one
+      // means the defensive layer had nothing to do. A schema/query error here
+      // degrades the feed to unfiltered — which is the exact case this layer
+      // exists to cover — so it must not pass silently.
+      if (privateErr) {
+        req.log.warn(
+          { code: (privateErr as any)?.code, err: privateErr, userId: user.id },
+          "following feed: private-followee lookup failed — stale-follow privacy cross-check skipped",
+        );
+      }
       if (privateFollowees && privateFollowees.length > 0) {
         const privateIdSet = new Set<string>(privateFollowees.map((p: any) => p.id));
-        const { data: friendships } = await sc
+        const { data: friendships, error: friendshipErr } = await sc
           .from("user_friendships")
           .select("user_a, user_b")
           .or(`user_a.eq.${user.id},user_b.eq.${user.id}`);
+        // Fails the other way: an unreadable friendships table looks like "no
+        // accepted friendships", so every private followee is dropped. Safe,
+        // but a silently emptied following feed is not something to guess at.
+        if (friendshipErr) {
+          req.log.warn(
+            { code: (friendshipErr as any)?.code, err: friendshipErr, userId: user.id },
+            "following feed: user_friendships read failed — private followees will all be excluded",
+          );
+        }
         const acceptedPrivate = new Set<string>();
         for (const f of friendships ?? []) {
           const other = (f as any).user_a === user.id ? (f as any).user_b : (f as any).user_a;
@@ -1136,7 +1156,12 @@ router.get("/posts", async (req, res) => {
           return;
         }
       }
-    } catch { /* best-effort — degrade to unfiltered if this check fails */ }
+    } catch (err) {
+      req.log.warn(
+        { err, userId: user.id },
+        "following feed: stale-follow privacy cross-check rejected — degrading to unfiltered",
+      );
+    }
 
     // Step 1b: fetch caller's hidden post IDs before the main LIMIT query so
     // the DB returns exactly `limit` visible posts (no premature end-of-feed).
@@ -1303,9 +1328,29 @@ router.get("/posts", async (req, res) => {
       svc.from("profiles").select("id").or("is_private.eq.true,passport_visibility.eq.private"),
       svc.from("profile_privacy_settings").select("user_id").eq("profile_visibility", "private"),
     ]);
+    // An empty set means "no private accounts exist"; a rejected query means
+    // "we could not find out". Both produce the same empty exclusion list, and
+    // the second one publishes every private account's posts to the global
+    // feed. PostgREST reports such failures in `error` rather than throwing, so
+    // the catch below never fires for them — inspect both results explicitly.
+    if (profRes.error || settingsRes.error) {
+      req.log.warn(
+        {
+          profilesCode: (profRes.error as any)?.code,
+          settingsCode: (settingsRes.error as any)?.code,
+          err: profRes.error ?? settingsRes.error,
+        },
+        "global feed: private-author lookup failed — private accounts are NOT being excluded from this page",
+      );
+    }
     for (const p of profRes.data ?? []) privateAuthorIdSet.add((p as any).id);
     for (const p of settingsRes.data ?? []) privateAuthorIdSet.add((p as any).user_id);
-  } catch { /* best-effort: feed degrades gracefully if this lookup fails */ }
+  } catch (err) {
+    req.log.warn(
+      { err },
+      "global feed: private-author lookup rejected — private accounts are NOT being excluded from this page",
+    );
+  }
   const privateAuthorIds = [...privateAuthorIdSet];
 
   let q = svc

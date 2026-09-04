@@ -132,6 +132,54 @@ export interface DiscoveryMapViewProps {
    * and lands underneath the floating controls.
    */
   filterRowOffset?: number;
+  /**
+   * The REAL camera, reported once on mount and then whenever the map settles
+   * (throttled to the same 250 ms as the internal zoom/centre tracking).
+   *
+   * This component has tracked its own camera zoom since the travelers layer
+   * landed, but the value never left the file: no prop exposed it, so the /map
+   * screen fell back to the `zoom` query param — a constant, 11 by default —
+   * for §17 band culling and for the §31 collision viewport. Pinching the map
+   * therefore changed which pins MapLibre drew and never changed which pins
+   * Portava DECIDED to draw: at the stuck value, "individual places only from
+   * district in" was evaluated at city zoom forever.
+   *
+   * `center` is in {lat, lng}, not MapLibre's [lng, lat], because every
+   * consumer of this callback is Portava code that speaks the former.
+   */
+  onCameraChange?: (camera: { zoom: number; center: { lat: number; lng: number } }) => void;
+  /**
+   * §25 long-press. Fired for a press-and-hold anywhere on the base map.
+   *
+   * The map SDK is the only thing that can answer "where is this on the
+   * ground": it owns the projection that drew the frame, so `lngLat` comes back
+   * unprojected by the engine rather than recomputed from a camera value this
+   * component rounds. `screenX`/`screenY` are the pixel point within this view,
+   * which is what anchors the menu under the finger.
+   *
+   * WHAT IS UNDER THE PRESS IS NOT DECIDED HERE. This component reports the
+   * point; `features/map/interaction/pressTarget.ts` decides whether an object
+   * is there. That split is why the press works over zones and flows too — they
+   * are style layers, not `<Marker>` views, and no per-marker `onLongPress`
+   * could ever have reported one.
+   *
+   * Omitted ⇒ no long-press behaviour, which is what every other surface that
+   * renders this map (ForYouTab, DiscoveryCategoryTab, LayoverMapCard) wants.
+   *
+   * TRAVELER PINS ARE DELIBERATELY NOT WIRED. They are the one marker family
+   * that stands for a PERSON rather than a place, and §25's menu on one would
+   * offer "Meet here" against a stranger's position — resolving somebody's
+   * presence into a rendezvous point, which is the sharpening §23 exists to
+   * forbid. `longPress.ts` refuses those actions for a person-bearing OBJECT;
+   * a traveler pin has no MapObject, so the refusal has to be here, by not
+   * reporting the press at all.
+   */
+  onLongPressMap?: (press: {
+    lat: number;
+    lng: number;
+    screenX: number;
+    screenY: number;
+  }) => void;
 }
 
 // ── Category pin colours ──────────────────────────────────────────────────────
@@ -214,6 +262,8 @@ export function DiscoveryMapView({
   onSelectEntity,
   selectedEntityId,
   filterRowOffset,
+  onCameraChange,
+  onLongPressMap,
 }: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
   // remounts (e.g. Expo Router tab navigation) start with the correct filter
@@ -238,6 +288,14 @@ export function DiscoveryMapView({
   const resetToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks whether onLongPress just fired so onPress can be suppressed for that gesture.
   const didLongPress = useRef(false);
+  /**
+   * The same guard for place pins — a §25 long press must not also select.
+   *
+   * Holds the pin's ID rather than a boolean: one flag shared by every pin
+   * would let a long press on one pin swallow the next tap on a DIFFERENT one.
+   * (Entity pins need no such care — `MarkerTouch` gives each marker its own.)
+   */
+  const didLongPressPin = useRef<string | null>(null);
 
   // Restore the last-used filter from AsyncStorage on mount.
   // Unrecognised or missing values fall back to 'all' silently.
@@ -334,8 +392,26 @@ export function DiscoveryMapView({
     }
   };
 
+  // Report the camera the map actually OPENS at, exactly once.
+  //
+  // Without this the parent has to guess until the user first pans, and the
+  // guess drives §17 band culling — so the map would open having decided which
+  // kinds are legible at a zoom it is not at. `initialViewState` below is
+  // computed from the same `vp`, so this reports the truth rather than a
+  // prediction. The ref guard is what keeps it to one report: `vp` is a fresh
+  // object every render and `onCameraChange` may be an inline arrow, so the
+  // dependency list alone would re-fire it and clobber a live zoom with the
+  // mount-time one.
+  const reportedInitialCamera = useRef(false);
+  useEffect(() => {
+    if (reportedInitialCamera.current || !vp || !onCameraChange) return;
+    reportedInitialCamera.current = true;
+    onCameraChange({ zoom: vp.zoom, center: { lat: vp.center[1], lng: vp.center[0] } });
+  }, [vp, onCameraChange]);
+
   // Throttled camera tracking (250ms): zoom feeds cluster bucketing, centre
-  // feeds the travelers fetch so panning to a new city loads its travelers.
+  // feeds the travelers fetch so panning to a new city loads its travelers, and
+  // onCameraChange hands both to the parent's render pipeline.
   const handleRegionChange = (e: any) => {
     const now = Date.now();
     if (now - zoomAt.current <= 250) return;
@@ -343,12 +419,69 @@ export function DiscoveryMapView({
     const z = e?.nativeEvent?.zoom;
     if (typeof z === 'number') setZoom(z);
     const c = e?.nativeEvent?.center;
+    let next: [number, number] | null = null;
     if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') {
-      setMapCenter((prev) => {
-        const next: [number, number] = [Math.round(c[0] * 100) / 100, Math.round(c[1] * 100) / 100];
-        return prev && prev[0] === next[0] && prev[1] === next[1] ? prev : next;
-      });
+      next = [Math.round(c[0] * 100) / 100, Math.round(c[1] * 100) / 100];
+      setMapCenter((prev) =>
+        prev && prev[0] === next![0] && prev[1] === next![1] ? prev : next!,
+      );
     }
+    // Read off the EVENT, not off the `zoom` / `mapCenter` state this handler
+    // just set: those are a render behind, and the parent's §31 collision
+    // viewport should not lag the camera by a frame.
+    if (typeof z === 'number' && onCameraChange) {
+      const centre = next ?? mapCenter ?? (vp ? vp.center : null);
+      if (centre) onCameraChange({ zoom: z, center: { lat: centre[1], lng: centre[0] } });
+    }
+  };
+
+  /**
+   * One way out for every long press, wherever it started.
+   *
+   * The map's own gesture and a pin's gesture are two different touch systems
+   * (see `MarkerTouch` in EntityMarkers.tsx for why a pin needs its own), and
+   * they must not become two different answers. Both land here, both report a
+   * point on the ground, and the screen hit-tests that point once.
+   *
+   * A pin therefore reports ITS OWN coordinate rather than where the finger
+   * landed on it: a 32 pt pin pressed at its edge is still a press on that pin,
+   * and reporting the finger's exact position would put it outside its own
+   * touch radius at high zoom.
+   */
+  const reportLongPress = (lat: number, lng: number, x: unknown, y: unknown) => {
+    if (!onLongPressMap) return;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    onLongPressMap({
+      lat,
+      lng,
+      screenX: typeof x === 'number' && Number.isFinite(x) ? x : 0,
+      screenY: typeof y === 'number' && Number.isFinite(y) ? y : 0,
+    });
+  };
+
+  /**
+   * §25 long-press → the screen, as a point on the ground and a point on the
+   * glass.
+   *
+   * Read defensively and reported only when BOTH are real numbers. The event
+   * shape is the SDK's (`PressEvent`: `lngLat` [lng, lat], `point` [x, y]), and
+   * a half-read press would put the menu somewhere the user did not touch, or
+   * open it on a coordinate off the map — worse than not opening at all,
+   * because the menu names the place it is acting on.
+   *
+   * Note the [lng, lat] order: MapLibre's, not this codebase's. The swap
+   * happens here, once, at the boundary.
+   */
+  const handleLongPress = (e: any) => {
+    if (!onLongPressMap) return;
+    const lngLat = e?.nativeEvent?.lngLat;
+    const pt = e?.nativeEvent?.point;
+    if (!Array.isArray(lngLat) || !Array.isArray(pt)) return;
+    const [lng, lat] = lngLat;
+    const [screenX, screenY] = pt;
+    if (typeof lat !== 'number' || typeof lng !== 'number') return;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    reportLongPress(lat, lng, screenX, screenY);
   };
 
   const recenterOnMe = () => {
@@ -384,6 +517,7 @@ export function DiscoveryMapView({
         logo={false}
         attribution={false}
         onRegionDidChange={handleRegionChange}
+        onLongPress={onLongPressMap ? handleLongPress : undefined}
       >
         <Camera
           ref={cameraRef}
@@ -411,7 +545,31 @@ export function DiscoveryMapView({
               key={place.id}
               lngLat={[place.lng!, place.lat!]}
             >
-              <Pressable onPress={() => onSelectPlace(place)}>
+              <Pressable
+                testID={`place-pin-${place.id}`}
+                onPress={() => {
+                  // Suppress the onPress React Native fires after onLongPress —
+                  // the same guard the filter row below already carries.
+                  if (didLongPressPin.current === place.id) {
+                    didLongPressPin.current = null;
+                    return;
+                  }
+                  onSelectPlace(place);
+                }}
+                onLongPress={
+                  onLongPressMap
+                    ? (e) => {
+                        didLongPressPin.current = place.id;
+                        reportLongPress(
+                          place.lat!,
+                          place.lng!,
+                          e.nativeEvent.pageX,
+                          e.nativeEvent.pageY,
+                        );
+                      }
+                    : undefined
+                }
+              >
                 <View style={[s.pin, db && s.dbPin, { backgroundColor: pinBg }]}>
                   {db
                     ? <Star size={10} color="#fff" fill="#fff" />
@@ -443,6 +601,11 @@ export function DiscoveryMapView({
             zoom={zoom ?? vp.zoom}
             onSelectEntity={onSelectEntity}
             selectedEntityId={selectedEntityId}
+            onLongPressEntity={
+              onLongPressMap
+                ? (entity, page) => reportLongPress(entity.lat, entity.lng, page.x, page.y)
+                : undefined
+            }
             onPressCluster={(lat, lng, currentZoom) => {
               cameraRef.current?.setCamera({
                 centerCoordinate: [lng, lat],
