@@ -30,6 +30,7 @@ import locationPreferencesRouter from "./locationPreferences";
 import mapTravelersRouter from "./mapTravelers";
 import geofenceRouter from "./geofence";
 import intelRouter from "./intel.js";
+import trailsRouter from "./trails.js";
 import intelCoverageRouter from "./intelCoverage.js";
 import intelApiRouter from "./intelApi.js";
 import intelOutcomesRouter from "./intelOutcomes.js";
@@ -283,6 +284,7 @@ router.use(contentTranslationRouter);
 router.use(sharedMomentsRouter);
 router.use(placeRecapsRouter);
 router.use(intelRouter);
+router.use(trailsRouter);
 router.use(intelCoverageRouter);
 router.use(intelApiRouter);
 // I4a outcome events — its own file (routes/intel.ts is owned by another unit),

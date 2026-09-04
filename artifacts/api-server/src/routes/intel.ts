@@ -24,6 +24,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   PRESENCE_LEVELS, VISIBILITIES, SOURCE_CLASS_LABELS, isValidIdempotencyKey, PARTY_SIZE_BUCKETS,
+  COMMERCIAL_DISCLOSURES,
 } from "../lib/intelContracts.js";
 import { QUICK_SIGNAL_CONTEXTS, mapQuickSignal, type QuickSignalContext } from "../lib/quickSignal.js";
 import {
@@ -62,6 +63,10 @@ const observationSchema = z.object({
   // sends 'trail' — before this field existed (2026-09-04) every Trail write was
   // treated as a Quick Signal and refused, so the surface was unreachable.
   captureSurface: z.enum(CAPTURE_SURFACES).optional(),
+  // §22 Table 30 commercial disclosure. Optional; the server maps a non-'none'
+  // value onto a NON_INDEPENDENT source class so a disclosed-commercial report
+  // never counts as independent consensus. Omitted ⇒ 'none' (server-side).
+  commercialDisclosure: z.enum(COMMERCIAL_DISCLOSURES).optional(),
   // Quick Signal / Trail form (§6): a context + a chosen option, mapped server-side.
   // For context 'movement' the option is the coarse destination area (§13).
   context: z.enum(QUICK_SIGNAL_CONTEXTS).optional(),
@@ -180,6 +185,7 @@ router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
     // list (quick_signal by default), so an unknown or omitted surface can only
     // narrow what is accepted, never widen it.
     captureSurface: b.captureSurface,
+    commercialDisclosure: b.commercialDisclosure,
     partySize: b.partySize,
     partyId: b.partyId ?? null,
   };
@@ -277,6 +283,7 @@ router.post("/v1/intel/claims/:id/correct", asyncHandler(async (req, res) => {
     claimType: b.claimType, value: b.value, observedAt: b.observedAt, capturedAt: b.capturedAt ?? null,
     visibility: b.visibility, idempotencyKey: key, presenceLevel: b.presenceLevel,
     captureSurface: b.captureSurface,
+    commercialDisclosure: b.commercialDisclosure,
   };
   const result = await correctClaim(getServiceClient()!, auth.user.id, req.params.id, input);
   sendCaptureResult(res, result);
