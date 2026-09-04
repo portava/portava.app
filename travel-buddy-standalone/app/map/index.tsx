@@ -996,7 +996,31 @@ function FullScreenMapScreenInner() {
   // band decides what is legible at this scale, Time Machine coerces forecasts
   // so they cannot look like observations, and only then does §31 collision
   // decide what actually fits.
-  const activeZoom = cameraZoom ?? paramZoom;
+  //
+  // `liveCamera` is the camera DiscoveryMapView actually has, reported through
+  // its onCameraChange prop. It is held HERE rather than pushed into mapStore's
+  // cameraZoom because that value is part of useMapEntities' fetch key above —
+  // a float that changes on every pinch would refetch the projection
+  // continuously. What needs the live camera is this pipeline (§17 bands, the
+  // §31 collision viewport), not the fetch.
+  //
+  // It takes precedence over cameraZoom/cameraCenter: those are written when
+  // the screen COMMANDS a camera move (a carousel swipe, a marker tap), so they
+  // describe where the camera was sent, and liveCamera describes where it
+  // ended up. When the two disagree the camera is the authority.
+  const [liveCamera, setLiveCamera] =
+    useState<{ zoom: number; lat: number; lng: number } | null>(null);
+  const handleCameraChange = useCallback(
+    (cam: { zoom: number; center: { lat: number; lng: number } }) => {
+      setLiveCamera((prev) =>
+        prev && prev.zoom === cam.zoom && prev.lat === cam.center.lat && prev.lng === cam.center.lng
+          ? prev
+          : { zoom: cam.zoom, lat: cam.center.lat, lng: cam.center.lng },
+      );
+    },
+    [],
+  );
+  const activeZoom = liveCamera?.zoom ?? cameraZoom ?? paramZoom;
   const zoomBand = zoomRenderBand(activeZoom);
 
   const objects: MapObject[] = useMemo(() => {
@@ -1045,8 +1069,8 @@ function FullScreenMapScreenInner() {
           viewport: {
             zoom: activeZoom,
             center: {
-              lat: cameraCenter?.lat ?? fallbackLat ?? 0,
-              lng: cameraCenter?.lng ?? fallbackLng ?? 0,
+              lat: liveCamera?.lat ?? cameraCenter?.lat ?? fallbackLat ?? 0,
+              lng: liveCamera?.lng ?? cameraCenter?.lng ?? fallbackLng ?? 0,
             },
             width: windowWidth,
             height: windowHeight,
@@ -1060,6 +1084,7 @@ function FullScreenMapScreenInner() {
     [
       objects,
       activeZoom,
+      liveCamera,
       cameraCenter,
       fallbackLat,
       fallbackLng,
@@ -1070,6 +1095,36 @@ function FullScreenMapScreenInner() {
     ],
   );
   const hiddenByCollision = renderResult.collisionDroppedCount ?? 0;
+
+  // Every id the pipeline above had JURISDICTION over: the objects it starts
+  // from, minus the zone kinds, which `zoneObjects` draws instead and which
+  // never enter collision. Anything outside this set has no MapObject
+  // projection at all — place pins, passport stamps, raw Compass envelopes —
+  // so `renderResult` holds no verdict about it and it must pass through.
+  const pipelineJudgedIds = useMemo(() => {
+    const base = compassPickObjects ?? (tripObjects ?? defaultObjects);
+    const ids = new Set<string>();
+    for (const o of base) if (!isZoneKind(o.kind)) ids.add(o.id);
+    return ids;
+  }, [compassPickObjects, tripObjects, defaultObjects]);
+
+  // What the MARKER LAYER draws. `renderResult.kept` is the pipeline's verdict —
+  // what survived §16 layers, §3's chip, §17 band culling and §31 collision —
+  // and until now the map was handed the raw `entities` array instead, so the
+  // entire stage was computed and thrown away. That also made the "+N more
+  // nearby" chip below a lie: it counted markers that were still on screen.
+  //
+  // Matched by id because MapEntity and MapObject are two envelopes over the
+  // same object (mapObjectToEntity copies `obj.id` verbatim).
+  //
+  // The CAROUSEL deliberately keeps the full list: collision.ts is explicit
+  // that "a hidden object the user cannot reach is a silent truncation", so a
+  // decluttered pin stays reachable as a card.
+  const renderedEntities = useMemo(() => {
+    if (pipelineJudgedIds.size === 0) return entities;
+    const kept = new Set(renderResult.kept.map((o) => o.id));
+    return entities.filter((e) => kept.has(e.id) || !pipelineJudgedIds.has(e.id));
+  }, [entities, renderResult, pipelineJudgedIds]);
 
   // ── §8 the selected MapObject, and its §30 overlays ─────────────────────────
   const selectedObject = useMemo(
@@ -1272,11 +1327,12 @@ function FullScreenMapScreenInner() {
         userLat={userLat}
         userLng={userLng}
         externalCameraRef={cameraRef}
-        entities={entities}
+        entities={renderedEntities}
         zoneObjects={zoneObjects}
         enabledEntityLayers={enabledLayers}
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
+        onCameraChange={handleCameraChange}
         filterRowOffset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT + 8}
       />
 
@@ -1470,13 +1526,18 @@ function FullScreenMapScreenInner() {
           onPress={() => {
             // easeTo is the v11 replacement for setCamera; guard its existence
             // so a future API change fails soft rather than throwing.
+            //
+            // Steps up from `activeZoom` — the camera's REAL zoom — not from
+            // the store's commanded one. This chip's whole promise is "zoom in
+            // to see them", and off the stale value a user already pinched to
+            // 16 would be eased to 12.5: a zoom OUT that hides more, not less.
             const cam = cameraRef.current;
-            const lat = cameraCenter?.lat ?? fallbackLat;
-            const lng = cameraCenter?.lng ?? fallbackLng;
+            const lat = liveCamera?.lat ?? cameraCenter?.lat ?? fallbackLat;
+            const lng = liveCamera?.lng ?? cameraCenter?.lng ?? fallbackLng;
             if (cam && typeof cam.easeTo === 'function' && lat != null && lng != null) {
               cam.easeTo({
                 center: [lng, lat],
-                zoom: Math.min((cameraZoom ?? paramZoom) + 1.5, 18),
+                zoom: Math.min(activeZoom + 1.5, 18),
                 duration: 400,
               });
             }
