@@ -7,9 +7,13 @@
  * POST /v1/intel/claims/:id/confirm               — independent agree/disagree/unsure
  * POST /v1/intel/claims/:id/correct               — supersede with a new observation
  *
+ * GET  /v1/internal/intel/trail/movement          — admin-only IG-06 cohort read (never a publication)
+ *
  * Every write requires an Idempotency-Key header. actor_id is taken from the
  * session, never the body. Responses carry schema_version, source label, observed
- * time and expiry — never location proof. Gated by intel_capture_quick_signal;
+ * time and expiry — never location proof. Each write names its capture surface
+ * (`captureSurface`, default quick_signal) and is gated by that surface's flag —
+ * intel_capture_quick_signal or, for the IG-06 Trail follow-up, intel_trail_followup;
  * off means every call is a fail-closed no-op (the service returns `disabled`).
  */
 import { Router, type Request, type Response } from "express";
@@ -23,10 +27,11 @@ import {
 } from "../lib/intelContracts.js";
 import { QUICK_SIGNAL_CONTEXTS, mapQuickSignal, type QuickSignalContext } from "../lib/quickSignal.js";
 import {
-  writeObservation, proposeClaim, approveClaim, confirmClaim, correctClaim,
+  writeObservation, proposeClaim, approveClaim, confirmClaim, correctClaim, CAPTURE_SURFACES,
   type CaptureResult, type CaptureInput,
 } from "../services/intel/IntelCaptureService.js";
 import { getIntelConsentState, setIntelConsent } from "../lib/intelConsent.js";
+import { readTrailMovement } from "../lib/trailServe.js";
 
 const router = Router();
 
@@ -51,9 +56,16 @@ const observationSchema = z.object({
   capturedAt: z.string().datetime().nullable().optional(),
   visibility: z.enum(VISIBILITIES).optional(),
   presenceLevel: z.enum(PRESENCE_LEVELS).optional(),
-  // Quick Signal form (§6): a context + a chosen option, mapped server-side.
+  // Which §6 collection surface this write comes from. Each surface has its own
+  // flag and its own contracted claim list in IntelCaptureService; omitted ⇒
+  // quick_signal (the pre-existing default, unchanged). The IG-06 Trail sheet
+  // sends 'trail' — before this field existed (2026-09-04) every Trail write was
+  // treated as a Quick Signal and refused, so the surface was unreachable.
+  captureSurface: z.enum(CAPTURE_SURFACES).optional(),
+  // Quick Signal / Trail form (§6): a context + a chosen option, mapped server-side.
+  // For context 'movement' the option is the coarse destination area (§13).
   context: z.enum(QUICK_SIGNAL_CONTEXTS).optional(),
-  option: z.string().max(60).optional(),
+  option: z.string().max(120).optional(),
   // Direct form: an already-canonical claim.
   claimType: z.string().max(60).optional(),
   value: z.record(z.string(), z.unknown()).optional(),
@@ -143,7 +155,7 @@ router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
   let value: Record<string, unknown> | undefined;
   if (b.context && b.option) {
     const mapped = mapQuickSignal(b.context as QuickSignalContext, b.option);
-    if (!mapped) return sendError(res, "invalid_payload", `no Phase-1 claim maps from ${b.context}/${b.option}`);
+    if (!mapped) return sendError(res, "invalid_payload", `no claim maps from ${b.context}/${b.option}`);
     claimType = mapped.claimType;
     value = mapped.value;
   } else if (b.claimType && b.value) {
@@ -164,6 +176,10 @@ router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
     visibility: b.visibility,
     idempotencyKey: key,
     presenceLevel: b.presenceLevel,
+    // Threaded, not inferred: the service applies the surface's flag and claim
+    // list (quick_signal by default), so an unknown or omitted surface can only
+    // narrow what is accepted, never widen it.
+    captureSurface: b.captureSurface,
     partySize: b.partySize,
     partyId: b.partyId ?? null,
   };
@@ -260,9 +276,30 @@ router.post("/v1/intel/claims/:id/correct", asyncHandler(async (req, res) => {
     subjectId: b.subjectId, subjectKind: b.subjectKind, zoneId: b.zoneId ?? null,
     claimType: b.claimType, value: b.value, observedAt: b.observedAt, capturedAt: b.capturedAt ?? null,
     visibility: b.visibility, idempotencyKey: key, presenceLevel: b.presenceLevel,
+    captureSurface: b.captureSurface,
   };
   const result = await correctClaim(getServiceClient()!, auth.user.id, req.params.id, input);
   sendCaptureResult(res, result);
+}));
+
+// ── IG-06 Trail follow-up — internal cohort read ──────────────────────────────
+// The serve side of the trail surface: origin → destination-area cohorts derived
+// from captured experience.next_move observations (lib/trailServe, which is the
+// production caller of lib/trailFollowup's aggregate + AT-10 block filter).
+//
+// INTERNAL ONLY (§29 Included: "Internal coverage dashboard for pilot zones").
+// This is NOT movement publication — §29 EXCLUDES "Public Crowd Movement
+// output"; that stays behind intel_movement_prediction (seeded OFF) and the §13
+// mayPublishMovement gate, which no route calls. requireAdmin, never a client.
+router.get("/v1/internal/intel/trail/movement", asyncHandler(async (req: Request, res: Response) => {
+  const ctx = await requireAdmin(req, res);
+  if (!ctx) return;
+  const q = z.object({ subjectId: z.string().uuid().optional() }).safeParse(req.query ?? {});
+  if (!q.success) return sendError(res, "invalid_payload", "subjectId must be a uuid when supplied");
+  const read = await readTrailMovement(getServiceClient()!, ctx.userId, { originId: q.data.subjectId ?? null });
+  if (read.refusal === "flag_off") return sendError(res, "feature_disabled", "intel_trail_followup is off");
+  if (read.refusal !== null) return sendError(res, "db_error", read.refusal);
+  res.json(read);
 }));
 
 export default router;

@@ -398,6 +398,11 @@ async function readSocialPresenceCandidate(
       .eq("canonical_place_id", place.placeId)
       .eq("visibility", "public")
       .eq("status", "active")
+      // "Published" is load-bearing (comment above): a delayed-geotag post is
+      // status='active' with post_status='pending_location_exit' precisely so
+      // the author's presence at the place stays hidden until they have left.
+      // Counting it here would surface that presence through the thread.
+      .eq("post_status", "published")
       .in("author_id", [...followed].slice(0, 500))
       .gte("created_at", cutoff)
       .limit(200);
