@@ -30,7 +30,7 @@ import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyG
 import { getDisplayTrustScore, getTrustProfile } from "../trust/TrustScoreService.js";
 import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
-import { buildUnifiedStamps, type UnifiedStamp } from "./UnifiedStampService.js";
+import { buildUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
 import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
 import { countUserTrips } from "../../lib/tripCounts.js";
@@ -192,7 +192,10 @@ export interface TravelStats {
 }
 
 export interface StampProjection {
+  /** Storage origin (v1_gps | v2_achievement). */
   source: string;
+  /** TABLE 16 canonical provenance, derived server-side. */
+  stampSource: StampSource;
   name: string | null;
   city: string | null;
   country: string | null;
@@ -805,15 +808,18 @@ function buildCredentials(
 function mapStamp(s: UnifiedStamp): StampProjection {
   return {
     source: s.source,
+    // TABLE 16 provenance + verification, derived from the live source_type /
+    // verification_level by UnifiedStampService — NOT hard-coded. A self-inserted
+    // v1 stamp (verification_level='unverified') surfaces as "reported" and can
+    // never impersonate a verified travel fact (§12).
+    stampSource: s.stampSource,
     name: s.name,
     city: s.city,
     country: s.country,
     earnedAt: s.earnedAt,
     rarity: s.rarity,
     artworkUrl: s.artworkUrl,
-    // Unified stamps are all system/earned — never a self-reported decorative
-    // badge, so they are safe to present as verified travel facts (§12).
-    verification: "verified",
+    verification: s.verification,
   };
 }
 
