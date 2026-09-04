@@ -15,6 +15,11 @@
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dir = dirname(fileURLToPath(import.meta.url));
 
 import {
   BUDDY_PRIVACY_CLASS,
@@ -35,30 +40,50 @@ import {
 
 const NOW = Date.parse('2026-08-31T12:00:00.000Z');
 
+// These fixtures MUST mirror what the server actually puts on the wire.
+// They previously did not — BUDDY carried `handle` and `headline`, FRIEND
+// carried `displayName`, and none of the three exist in any server DTO. The
+// projectors read those invented fields, so every buddy subtitle collapsed to
+// the city and every friend pin rendered the generic fallback. The tests
+// passed throughout, because the fixtures had been written to match the
+// projectors rather than reality.
+//
+// `dtoFieldGuard` at the bottom of this file now pins these key sets against
+// the server source, so a fixture can no longer drift into fiction.
 const BUDDY = {
   id: 'b1',
   displayName: 'Mika',
-  handle: 'mika',
   city: 'Bangkok',
-  headline: 'Street food guide',
+  tagline: 'Street food guide',
   meetupBaseLat: 13.75,
   meetupBaseLng: 100.5,
 };
 
+// `destinationCity`, not `destination`. The old fixture carried `destination`,
+// a field neither TripRow (services/trips.ts) nor the server's TripViewLike has
+// ever had — so `projectTrip` read undefined in production and every trip
+// subtitle rendered as a bare date range, while this suite stayed green because
+// the fixture supplied the invented field. Same failure, same shape, as
+// `headline` and `displayName` before it; the TRIP guard below is what was
+// missing.
 const TRIP = {
   id: 't1',
   title: 'Songkran',
-  destination: 'Chiang Mai',
+  destinationCity: 'Chiang Mai',
+  destinationCountry: 'Thailand',
   destinationLat: 18.79,
   destinationLng: 98.98,
   startDate: '2026-04-12',
   endDate: '2026-04-16',
+  status: 'planning',
+  visibility: 'public',
 };
 
 const FRIEND = {
   userId: 'u9',
-  displayName: 'Rui',
+  name: 'Rui',
   city: 'Tokyo',
+  country: 'Japan',
   lat: 35.68,
   lng: 139.76,
 };
@@ -278,7 +303,7 @@ describe('identity of the object itself', () => {
     // isRenderable() drops empty titles, so a nameless row must still get a word.
     for (const obj of [
       projectBuddy({ ...BUDDY, displayName: null, handle: null })!,
-      projectTrip({ ...TRIP, title: null, destination: null })!,
+      projectTrip({ ...TRIP, title: null, destinationCity: null })!,
       projectFriend({ ...FRIEND, displayName: null, handle: null })!,
       projectGemLocal({ ...GEM, name: null })!,
       projectEventLocal({ ...EVENT, title: null }, NOW)!,
@@ -289,7 +314,7 @@ describe('identity of the object itself', () => {
   });
 
   test('subtitle is undefined rather than an empty or dangling separator', () => {
-    assert.equal(projectBuddy({ ...BUDDY, city: null, headline: null })!.subtitle, undefined);
+    assert.equal(projectBuddy({ ...BUDDY, city: null, tagline: null })!.subtitle, undefined);
     assert.equal(projectGemLocal({ ...GEM, category: null, city: null })!.subtitle, undefined);
     // One present part must not carry the separator.
     assert.equal(projectGemLocal({ ...GEM, category: null })!.subtitle, 'Da Nang');
@@ -297,5 +322,182 @@ describe('identity of the object itself', () => {
 
   test('a trip with only one date still renders a legible range', () => {
     assert.match(projectTrip({ ...TRIP, endDate: null })!.subtitle!, /2026-04-12 → \?/);
+  });
+});
+
+// ── The fixtures are pinned to the server's real DTOs ─────────────────────────
+//
+// The buddy and friend projectors both read fields that no server DTO has ever
+// emitted (`headline`, `handle`, `displayName` on a circle member). The bugs
+// were invisible for the same reason in both cases: the fixture supplied the
+// invented field, so the projector found it and the assertion passed. The test
+// was checking that the code agreed with itself.
+//
+// These guards read the SERVER SOURCE and fail when a fixture names a field the
+// server does not emit. That is the property that was actually missing — not
+// another example, which would have been written against the same wrong fixture.
+
+describe('the fixtures mirror the server DTOs', () => {
+  const SERVER = resolve(__dir, '../../../../../..', 'artifacts', 'api-server', 'src');
+
+  /** The object-literal keys of a mapper/interface, read from source. */
+  function emittedKeys(file: string, startMarker: string, endMarker: string): Set<string> {
+    const src = readFileSync(resolve(SERVER, file), 'utf8');
+    const from = src.indexOf(startMarker);
+    assert.ok(from >= 0, `marker "${startMarker}" not found in ${file} — did it get renamed?`);
+    const to = src.indexOf(endMarker, from);
+    assert.ok(to > from, `end marker "${endMarker}" not found after "${startMarker}" in ${file}`);
+    const body = src.slice(from, to);
+    const keys = new Set<string>();
+    for (const m of body.matchAll(/^\s{2,}([A-Za-z_][A-Za-z0-9_]*)\s*[:?]/gm)) keys.add(m[1]);
+    assert.ok(keys.size > 3, `parsed only ${keys.size} keys from ${file} — the parse broke, so this guard would be inert`);
+    return keys;
+  }
+
+  test('every BUDDY fixture field is one the server actually emits', () => {
+    const emitted = emittedKeys('lib/buddyMapRead.ts', 'export function mapBuddyPublicProfile', '\n}');
+    const invented = Object.keys(BUDDY).filter((k) => !emitted.has(k));
+    assert.deepEqual(
+      invented,
+      [],
+      'the fixture names fields no server DTO emits — a projector reading one of these gets undefined in production while this suite stays green',
+    );
+  });
+
+  test('every FRIEND fixture field is one the server actually emits', () => {
+    const emitted = emittedKeys('lib/circleLocationsRead.ts', 'export interface CircleLocationEntry', '\n}');
+    const invented = Object.keys(FRIEND).filter((k) => !emitted.has(k));
+    assert.deepEqual(invented, [], 'the fixture names fields no server DTO emits');
+  });
+
+  test('the buddy subtitle uses a field that survives the round trip', () => {
+    // The specific regression: `headline` produced a subtitle of the city alone,
+    // which looks like a buddy who simply has no tagline. Nothing about the
+    // rendered output said the field was missing.
+    const withTagline = projectBuddy(BUDDY)!;
+    const withoutTagline = projectBuddy({ ...BUDDY, tagline: null })!;
+    assert.notEqual(
+      withTagline.subtitle,
+      withoutTagline.subtitle,
+      'the subtitle ignores the tagline entirely — it is reading a field the DTO does not carry',
+    );
+    assert.ok(withTagline.subtitle?.includes('Street food guide'));
+  });
+
+  test('a named circle member renders their name, not the fallback', () => {
+    assert.equal(projectFriend(FRIEND)!.title, 'Rui');
+  });
+
+  test('an unnamed circle member falls back generically, never to a handle', () => {
+    // `name` is null when the member has NOT opted into showing a real name.
+    // Reaching past it for a handle would defeat that gate, so the projector
+    // must not accept one even if a caller supplies it.
+    const anon = projectFriend({ ...FRIEND, name: null, handle: 'rui_t' })!;
+    assert.equal(anon.title, 'Circle member');
+    assert.ok(!JSON.stringify(anon.title).includes('rui_t'));
+  });
+
+  test('every TRIP fixture field is one the server actually emits', () => {
+    // The guard that did not exist. BUDDY and FRIEND were pinned after their
+    // invented fields were found; TRIP was not, and `destination` survived.
+    const emitted = emittedKeys('lib/mapProjection.ts', 'export type TripViewLike', '\n}');
+    const invented = Object.keys(TRIP).filter((k) => !emitted.has(k));
+    assert.deepEqual(
+      invented,
+      [],
+      'the fixture names fields no server DTO emits — a projector reading one of these gets undefined in production while this suite stays green',
+    );
+  });
+
+  test('the trip subtitle uses a field that survives the round trip', () => {
+    // The specific regression: reading `destination` produced a subtitle of the
+    // date range alone, which looks exactly like a trip whose city is simply
+    // unset. Nothing in the rendered output said a field was missing.
+    const withCity = projectTrip(TRIP)!;
+    const withoutCity = projectTrip({ ...TRIP, destinationCity: null })!;
+    assert.notEqual(
+      withCity.subtitle,
+      withoutCity.subtitle,
+      'the subtitle ignores the destination city entirely — it is reading a field the DTO does not carry',
+    );
+    assert.ok(withCity.subtitle?.includes('Chiang Mai'));
+  });
+
+  test('an untitled trip falls back to its city, not to the generic label', () => {
+    assert.equal(projectTrip({ ...TRIP, title: null })!.title, 'Chiang Mai');
+  });
+});
+
+// ── Byte-parity with the server's projectors ──────────────────────────────────
+//
+// These are the rollback projectors: they run only when the gateway did not
+// answer. "The renderer cannot tell which path produced an object" is their
+// whole contract, so the expectations below are written from the SERVER source
+// (artifacts/api-server/src/lib/mapProjection.ts) rather than from this
+// module's current output. A field this file gets right and the server gets
+// differently is still a bug — it makes the map change shape when a flag flips.
+
+describe('the rollback projectors mirror the server field for field', () => {
+  test('buddy_zone: title, subtitle and rung match projectBuddy', () => {
+    const obj = projectBuddy(BUDDY)!;
+    assert.equal(obj.id, 'buddy:b1');
+    assert.equal(obj.kind, 'buddy_zone');
+    // server: title: b.displayName ?? "Buddy"
+    assert.equal(obj.title, 'Mika');
+    // server: subtitle: joinParts([b.city, b.tagline], " · ")
+    assert.equal(obj.subtitle, 'Bangkok · Street food guide');
+    assert.equal(obj.privacyClass, 'approximate');
+    assert.deepEqual(obj.geometry, { type: 'Point', coordinates: [100.5, 13.75] });
+  });
+
+  test('crew_member: subtitle carries city AND country, as the server joins them', () => {
+    const obj = projectFriend(FRIEND)!;
+    assert.equal(obj.id, 'friend:u9');
+    assert.equal(obj.kind, 'crew_member');
+    assert.equal(obj.title, 'Rui');
+    // server: subtitle: joinParts([m.city, m.country], ", ") — the country was
+    // dropped here, so the same member read "Tokyo" through one transport and
+    // "Tokyo, Japan" through the other.
+    assert.equal(obj.subtitle, 'Tokyo, Japan');
+    assert.equal(obj.privacyClass, 'approximate');
+  });
+
+  test('trip_stop: title falls back to the city and the subtitle leads with it', () => {
+    const obj = projectTrip(TRIP)!;
+    assert.equal(obj.id, 'trip:t1');
+    assert.equal(obj.kind, 'trip_stop');
+    assert.equal(obj.title, 'Songkran');
+    // server: joinParts([t.destinationCity, tripDateRange(start, end)], " · ")
+    assert.equal(obj.subtitle, 'Chiang Mai · 2026-04-12 → 2026-04-16');
+    assert.equal(obj.privacyClass, 'place_level');
+  });
+
+  test('a circle member payload carries no coordinates', () => {
+    // The server's projectCircleMember emits userId/name/avatarUrl/city/
+    // country/updatedAt and NOT lat/lng. The position belongs in `geometry`,
+    // which the §24 protection gate and the §31 aggregator both coarsen; a
+    // second copy in `payload` would sail past both.
+    const payload = projectFriend(FRIEND)!.payload as Record<string, unknown>;
+    assert.deepEqual(Object.keys(payload).sort(), [
+      'avatarUrl', 'city', 'country', 'name', 'updatedAt', 'userId',
+    ]);
+    assert.ok(!('lat' in payload), 'a coordinate in payload escapes every downstream coarsening step');
+    assert.ok(!('lng' in payload));
+  });
+
+  test('a trip payload carries the six fields the server emits, and no more', () => {
+    const payload = projectTrip(TRIP)!.payload as Record<string, unknown>;
+    assert.deepEqual(Object.keys(payload).sort(), [
+      'destinationCity', 'destinationCountry', 'endDate', 'startDate', 'status', 'visibility',
+    ]);
+  });
+
+  test('a buddy payload drops the marketplace-only distanceKm', () => {
+    // POST /api/rent-a-buddy/search adds `distanceKm` on top of the shared
+    // mapper; the gateway's readBuddyMapPins does not. Carrying it would be the
+    // one field that tells the renderer which transport ran.
+    const payload = projectBuddy({ ...BUDDY, distanceKm: 2.4 })!.payload as Record<string, unknown>;
+    assert.ok(!('distanceKm' in payload));
+    assert.equal(payload.displayName, 'Mika', 'the rest of the DTO must survive the strip');
   });
 });

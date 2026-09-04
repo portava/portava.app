@@ -62,8 +62,10 @@ import {
 } from "./discoverySearchHelpers.js";
 import {
   suggestCanonicalLocations,
+  normalizeLocationName,
   type CanonicalRow,
 } from "../lib/canonicalLocations";
+import type { SensitivityLevel } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import {
   logDiscoveryServe,
@@ -124,6 +126,182 @@ export interface SearchResult {
   verified?: boolean;
   /** True when this user is an @Portava Official account. Only set for travelers/buddies results. */
   isOfficial?: boolean;
+}
+
+// ── §27 map placement — the position contract ────────────────────────────────
+//
+// §27 ends with "Geographic results should center or frame the relevant map
+// object". A search result reaches the map through the client's search adapter
+// (travel-buddy-standalone/src/features/map/search/searchAdapter.ts), which
+// reads coordinates out of the untyped `metadata` bag — `metadata.lat` /
+// `metadata.lng`, the shape searchPlaces has always used. A result whose type
+// the adapter recognises but whose metadata carries no position is DROPPED: it
+// is listed, it is tappable, and it can never be placed.
+//
+// That asymmetry — recognised type, unusable payload — is why events, hidden
+// gems, activities, cities and countries were invisible on the map while
+// looking perfectly healthy in the list. Every emitter below whose type the
+// adapter maps MUST put lat/lng in metadata, `null` included, so "this row has
+// no position" is a value rather than a missing key.
+//
+// The single exception is a position the viewer is not authorized to have:
+// §24 says the public map must never receive more location detail than the
+// viewer may see, so a withheld position is emitted as null, never coarsened
+// upward and never guessed.
+
+/** A metadata position pair. `null` means "no position this viewer may have". */
+interface MetadataPosition {
+  lat: number | null;
+  lng: number | null;
+}
+
+/** Narrow a raw DB numeric to a finite coordinate, else null. */
+function coord(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** A position is emitted only when BOTH halves survive — never half a pin. */
+function position(lat: unknown, lng: unknown): MetadataPosition {
+  const a = coord(lat);
+  const b = coord(lng);
+  return a === null || b === null ? { lat: null, lng: null } : { lat: a, lng: b };
+}
+
+// ── §24 protected location — hidden gem coordinate floor ─────────────────────
+//
+// The single choke point for gem coordinate disclosure is
+// services/hiddenGems/HiddenGemPrivacyGuard.resolveGemCoords. For a viewer with
+// no save row and no accepted-trip binding — which is every viewer on this
+// endpoint, because search carries neither — its five-level rule reduces to:
+//
+//   protected                 → NO coordinates, ever. It is the one level that
+//                               does not fall through to the approximate
+//                               centroid; the guard returns nulls outright.
+//   approximate               → the approx_* centroid.
+//   reveal_after_save         → exact only on proof of a save; without it the
+//                               guard's fallback is the approx_* centroid.
+//   reveal_after_acceptance   → exact only on proof of accepted membership AND
+//                               a gem↔trip binding; without both, approx_*.
+//   public                    → exact.
+//
+// Search applies that rule AT ITS FLOOR. A search result is a list row a
+// stranger produces by typing a name, and §24 exists precisely because search
+// is where someone hunting a location looks — so this endpoint emits the
+// APPROXIMATE pair or nothing, for every viewer including the submitter. A gem
+// whose sensitivity denies placement is emitted with a null position rather
+// than an approximate one, because "roughly here" is still a disclosure.
+//
+// The exact pair is therefore NOT in the select list. It never enters this
+// process, so no future edit to the emitter below can leak it by accident —
+// the guarantee is structural, not a discipline someone has to remember.
+
+/** The five real `hidden_gem_sensitivity` enum labels (verified against the live schema). */
+const GEM_SENSITIVITY_LEVELS: ReadonlySet<SensitivityLevel> = new Set<SensitivityLevel>([
+  "public",
+  "approximate",
+  "reveal_after_save",
+  "reveal_after_acceptance",
+  "protected",
+]);
+
+/** Levels for which resolveGemCoords returns no coordinates at all. */
+const GEM_POSITION_DENIED: ReadonlySet<SensitivityLevel> = new Set<SensitivityLevel>([
+  "protected",
+]);
+
+/**
+ * `hidden_gem_status` labels a gem search may return. The enum's full label set
+ * is `pending | active | hidden | merged` (verified against the live schema);
+ * only `active` is publicly searchable. Exported so a test can hold this filter
+ * against the real enum instead of against a fixture's invented value.
+ */
+export const GEM_SEARCHABLE_STATUSES = ["active"] as const;
+
+export interface GemSearchPosition extends MetadataPosition {
+  /** "approximate" when a centroid is emitted; "hidden" when nothing is. Never "exact". */
+  coordsPrecision: "approximate" | "hidden";
+}
+
+/**
+ * The position a hidden gem may carry on the search surface.
+ *
+ * Reads ONLY the approximate pair — the exact columns are deliberately absent
+ * from both this signature and the emitter's select list. Fails closed: a
+ * missing, unrecognised, or placement-denying sensitivity yields no position.
+ *
+ * Exported for direct test against resolveGemCoords, so this floor cannot
+ * silently drift away from the guard it is derived from.
+ */
+export function gemSearchPosition(g: {
+  sensitivity_level?: string | null;
+  approx_latitude?: number | null;
+  approx_longitude?: number | null;
+}): GemSearchPosition {
+  const hidden: GemSearchPosition = { lat: null, lng: null, coordsPrecision: "hidden" };
+  const level = g.sensitivity_level;
+  if (typeof level !== "string") return hidden;
+  if (!GEM_SENSITIVITY_LEVELS.has(level as SensitivityLevel)) return hidden;
+  if (GEM_POSITION_DENIED.has(level as SensitivityLevel)) return hidden;
+
+  const p = position(g.approx_latitude, g.approx_longitude);
+  if (p.lat === null) return hidden;
+  return { lat: p.lat, lng: p.lng, coordsPrecision: "approximate" };
+}
+
+// ── Canonical centroids for aggregated city/country rows ─────────────────────
+//
+// searchCities/searchCountries aggregate NAMES out of profiles, and `profiles`
+// holds no coordinates — so unlike every other emitter there is no position on
+// the source row to pass through. The centroid comes from the same public geo
+// registry the /discovery/suggest path already uses (canonicalToCityResult),
+// which is what stops the two paths from disagreeing about where a city is.
+//
+// Registry rows carry no user linkage, so nothing here can leak a private
+// user's location. Enrichment only: any failure leaves the position null and
+// the result still lists.
+
+/** canonical_locations kinds that class as a city (mirrors canonicalLocations.kindClass). */
+const CANONICAL_CITY_KINDS = ["city", "town", "district", "neighborhood"] as const;
+/** canonical_locations kinds that class as a country. */
+const CANONICAL_COUNTRY_KINDS = ["country"] as const;
+
+interface CanonicalCentroid { id: string; lat: number; lng: number }
+
+/**
+ * Batched centroid lookup, keyed by `normalizeLocationName` — the same
+ * normalization the registry stores in `normalized_name`, imported rather than
+ * re-derived so "Đà Nẵng" and a typed "da nang" fold identically here too.
+ *
+ * One query for the whole page. Rows without both coordinates are skipped, so
+ * a registry row that exists but has never been geocoded yields no position
+ * instead of a half pin.
+ */
+async function canonicalCentroids(
+  sc: any, names: string[], kinds: readonly string[],
+): Promise<Map<string, CanonicalCentroid>> {
+  const out = new Map<string, CanonicalCentroid>();
+  const keys = [...new Set(names.map((n) => normalizeLocationName(n)).filter((k) => k.length > 0))];
+  if (keys.length === 0) return out;
+  try {
+    const { data, error } = await sc
+      .from("canonical_locations")
+      .select("id, kind, normalized_name, lat, lng")
+      .in("normalized_name", keys)
+      .in("kind", kinds as unknown as string[])
+      .limit(keys.length * 4);
+    if (error || !data) return out;
+    for (const r of data as any[]) {
+      const key = typeof r.normalized_name === "string" ? r.normalized_name : null;
+      if (key === null || out.has(key)) continue;
+      const p = position(r.lat, r.lng);
+      if (p.lat === null || p.lng === null) continue;
+      out.set(key, { id: r.id as string, lat: p.lat, lng: p.lng });
+    }
+  } catch {
+    // Enrichment is never a gate — an unreachable registry means unplaced
+    // rows, not a failed search.
+  }
+  return out;
 }
 
 // ── Static taxonomic datasets ──────────────────────────────────────────────────
@@ -413,12 +591,22 @@ async function searchEvents(
     const pat = sqlPattern(q);
     let evQ: any = sc
       .from("events")
-      .select("id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at")
+      // location_lat/location_lng/show_exact_location feed the §27 map position;
+      // the gate below is toAuthorizedEventView's, not a second opinion.
+      .select("id, title, host_id, cover_url, city, country, starts_at, visibility, state, created_at, location_lat, location_lng, show_exact_location")
       .or(`title.ilike.${pat},city.ilike.${pat}`)
       .eq("visibility", "public")
-      .neq("state", "cancelled")
-      .neq("state", "deleted")
-      .neq("state", "banned")
+      // `event_state` is an ENUM: draft | open | full | waitlist | started |
+      // completed | cancelled | archived. "deleted" and "banned" are NOT labels,
+      // and Postgres rejects an unknown enum literal outright (22P02) rather
+      // than matching nothing — so `.neq("state","deleted")` made every event
+      // search error out and fall into the `return []` below.
+      //
+      // The replacement is mapSearch.loadNearbyEvents' predicate verbatim, so
+      // the discovery list and the map agree about which events exist (§26).
+      // Every label in it is real, and it also drops the unpublished `draft`
+      // events the broken filter would have surfaced.
+      .not("state", "in", '("draft","cancelled","archived")')
       .order("starts_at", { ascending: true });
 
     if (ctx?.startsAfter || ctx?.startsBefore) {
@@ -455,7 +643,19 @@ async function searchEvents(
       .in("event_id", eventIds);
     const attendingSet = new Set<string>((rsvpRows ?? []).map((r: any) => r.event_id as string));
 
-    const mapped: SearchResult[] = activeRows.map((e: any): SearchResult => ({
+    const mapped: SearchResult[] = activeRows.map((e: any): SearchResult => {
+      // §24 venue disclosure. This is lib/privacy/eventSerializers'
+      // toAuthorizedEventView rule verbatim —
+      //   showCoords = isHost || goingRsvp || show_exact_location !== false
+      // — so a search row and the event detail agree about whether this viewer
+      // may see the venue. `show_exact_location` defaults to FALSE in the
+      // schema, which makes the default outcome "no pin for strangers"; the
+      // participant branch discloses nothing the detail route would not.
+      const isHost = (e.host_id as string | null) === userId;
+      const isGoing = attendingSet.has(e.id as string);
+      const showVenue = isHost || isGoing || e.show_exact_location !== false;
+      const pos = showVenue ? position(e.location_lat, e.location_lng) : { lat: null, lng: null };
+      return {
       id: e.id,
       type: "events",
       title: (e.title as string) ?? "",
@@ -469,10 +669,11 @@ async function searchEvents(
       privacyState: { isPublic: true },
       accessState: { canAccess: true },
       destinationRoute: `/event/${e.id as string}`,
-      metadata: { hostId: e.host_id, status: e.state },
+      metadata: { hostId: e.host_id, status: e.state, lat: pos.lat, lng: pos.lng },
       createdAt: (e.created_at as string | null) ?? null,
       startsAt: (e.starts_at as string | null) ?? null,
-    }));
+      };
+    });
 
     return mapped;
   } catch {
@@ -718,9 +919,17 @@ async function searchHiddenGems(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("hidden_gems")
-      .select("id, name, city, country, submitted_by, category, status, created_at")
+      // sensitivity_level + approx_* feed gemSearchPosition. The EXACT pair
+      // (latitude/longitude) is deliberately absent — see the §24 note above.
+      .select("id, name, city, country, submitted_by, category, status, created_at, sensitivity_level, approx_latitude, approx_longitude")
       .or(`name.ilike.${pat},city.ilike.${pat}`)
-      .in("status", ["approved", "active"])
+      // `hidden_gem_status` is an ENUM: pending | active | hidden | merged.
+      // "approved" is not one of its labels, and Postgres rejects an unknown
+      // enum literal outright (22P02) rather than simply matching nothing — so
+      // the previous `["approved", "active"]` filter made every hidden-gem
+      // search error out and fall into the `return []` below. The gem lived
+      // only in a fixture that invented the label.
+      .in("status", GEM_SEARCHABLE_STATUSES)
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
@@ -737,7 +946,9 @@ async function searchHiddenGems(
 
     return rows
       .filter((g: any) => activeSubmitterSet.has(g.submitted_by as string))
-      .map((g: any): SearchResult => ({
+      .map((g: any): SearchResult => {
+        const pos = gemSearchPosition(g);
+        return {
         id: g.id,
         type: "hidden_gems",
         title: (g.name as string) ?? "",
@@ -751,10 +962,19 @@ async function searchHiddenGems(
         privacyState: null,
         accessState: { canAccess: true },
         destinationRoute: `/hidden-gem/${g.id as string}`,
-        metadata: { category: g.category },
+        // `coordsPrecision` is the map's existing gem vocabulary (mapSearch's
+        // normalizeGem badges "approx. location" off it) — the pin says what it
+        // is instead of implying a precision this surface never has.
+        metadata: {
+          category: g.category,
+          lat: pos.lat,
+          lng: pos.lng,
+          coordsPrecision: pos.coordsPrecision,
+        },
         createdAt: (g.created_at as string | null) ?? null,
         startsAt: null,
-      }));
+        };
+      });
   } catch {
     return [];
   }
@@ -969,7 +1189,11 @@ async function searchActivities(
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, created_at")
+      // Same discovery_places table searchPlaces reads lat/lng from — an
+      // activity is a Place under a category filter, and the client adapter
+      // maps `activities` to the same 'place' map type, so it must carry the
+      // same position or it silently drops off the map.
+      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, lat, lng, created_at")
       .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`)
       .in("category", ["activities", "sports", "adventure", "outdoors", "wellness"])
       .eq("status", "active")
@@ -994,6 +1218,8 @@ async function searchActivities(
       destinationRoute: `/place/${p.id as string}`,
       metadata: {
         category: p.category,
+        lat: (p.lat as number | null) ?? null,
+        lng: (p.lng as number | null) ?? null,
         headerImageSource: (p.header_image_source as string | null) ?? null,
         imageSourceType: (p.image_source_type as string | null) ?? null,
         accuracyStatus: (p.image_accuracy_status as string | null) ?? null,
@@ -1077,15 +1303,37 @@ async function searchCities(
         privacyState: null,
         accessState: { canAccess: true },
         destinationRoute: `/city/${encodeURIComponent(city.toLowerCase())}`,
-        metadata: null,
+        // Filled in below from the canonical registry — declared here so the
+        // key always exists and a positionless city is a null, not a gap.
+        metadata: { lat: null, lng: null, source: "profile" },
         createdAt: null,
         startsAt: null,
       });
       if (results.length >= fetchLimit) break;
     }
+    await attachCentroids(sc, results, CANONICAL_CITY_KINDS);
     return results;
   } catch {
     return [];
+  }
+}
+
+/**
+ * Attach registry centroids to city/country rows in place, keyed off `title`
+ * (the aggregated place name). One batched query for the whole page.
+ * `canonicalId` appears only when the position actually came from a registry
+ * row, so the provenance of the coordinates is readable on the wire.
+ */
+async function attachCentroids(
+  sc: any, results: SearchResult[], kinds: readonly string[],
+): Promise<void> {
+  if (results.length === 0) return;
+  const centroids = await canonicalCentroids(sc, results.map((r) => r.title), kinds);
+  if (centroids.size === 0) return;
+  for (const r of results) {
+    const hit = centroids.get(normalizeLocationName(r.title));
+    if (!hit) continue;
+    r.metadata = { ...(r.metadata ?? {}), lat: hit.lat, lng: hit.lng, canonicalId: hit.id };
   }
 }
 
@@ -1152,12 +1400,19 @@ async function searchCountries(
         privacyState: null,
         accessState: { canAccess: true },
         destinationRoute: `/country/${encodeURIComponent(country.toLowerCase())}`,
-        metadata: null,
+        // Same contract as cities. `canonical_locations` models kind='country'
+        // (canonicalLocations.kindClass maps it to the admin class) but holds
+        // no country rows today, so in practice a country result carries a null
+        // position until the registry is seeded — a null the client reads as
+        // "not placeable", which is the honest answer rather than a centroid
+        // averaged out of whatever cities happen to exist.
+        metadata: { lat: null, lng: null, source: "profile" },
         createdAt: null,
         startsAt: null,
       });
       if (results.length >= fetchLimit) break;
     }
+    await attachCentroids(sc, results, CANONICAL_COUNTRY_KINDS);
     return results;
   } catch {
     return [];

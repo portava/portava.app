@@ -176,6 +176,9 @@ export { storeSnapshot, storeSetters };
 jest.mock('../../../src/stores/mapStore', () => {
   const React = require('react');
   return {
+    // Spread first so pure exports the screen imports (deriveMapCapabilities,
+    // sameMapCapabilities) keep working; the provider/hook below still win.
+    ...jest.requireActual('../../../src/stores/mapStore'),
     MapStoreProvider: ({ children }: { children: React.ReactNode }) => children,
     useMapStore: () => {
       // eslint-disable-next-line @typescript-eslint/no-var-requires

@@ -437,6 +437,28 @@ export function promoteAll(objects: readonly MapObject[], ctx: PromotionContext 
   });
 }
 
+/**
+ * The ids a producer already stamped with the §14 Compass rung.
+ *
+ * `explainPriority` seeds from `KIND_DEFAULT_PRIORITY[obj.kind]` and never
+ * looks at the object's own `renderingPriority`, so a rung a producer set —
+ * `compassMapModel.toMapObjects` on every pick, `tripMapModel` on every Compass
+ * alternative — is DISCARDED by `promoteAll` unless the id is also named in
+ * `PromotionContext.compassRecommendationIds`. A pick of kind `place` silently
+ * fell from `compass_recommendation` (70) to `relevant_place` (40), losing
+ * collisions to ordinary events (60) and live zones (50) that §31 says it
+ * outranks; picks of different kinds ended up on different rungs, so "these are
+ * the N picks" stopped being one tier.
+ *
+ * This re-declares that producer intent through the documented channel rather
+ * than teaching the ladder about Compass payload shapes.
+ */
+export function compassRecommendationIdsOf(objects: readonly MapObject[]): string[] {
+  return objects
+    .filter((o) => o.renderingPriority === RENDERING_PRIORITY.compass_recommendation)
+    .map((o) => o.id);
+}
+
 // ── §31 collision resolution ──────────────────────────────────────────────────
 
 export interface HitBox {

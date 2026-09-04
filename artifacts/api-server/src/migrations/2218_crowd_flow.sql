@@ -21,15 +21,36 @@
 -- The name ends in `_enabled`, so scripts/check-flag-polarity.mjs classifies it
 -- automatically and no CLASSIFIED entry is needed.
 --
--- APPLYING THIS ENABLES NOTHING. Two independent things still hold crowd flow
--- shut, and both are recorded in the lib/crowdFlowProducer header:
+-- APPLYING THIS ENABLES NOTHING. Four independent things still hold crowd flow
+-- shut, and they are recorded in the lib/crowdFlowProducer header:
 --
 --   1. This flag is FALSE.
---   2. §10 requires MIN_SIGNAL_FAMILIES (2) OBSERVED signal families and this
---      repository feeds exactly ONE (`next_stop_contribution`, itself behind
---      `intel_trail_followup`, also off). `readCrowdFlowSignals` therefore
---      refuses to issue its query at all — it will not process consent-scoped
---      contribution rows for a result that provably cannot publish.
+--   2. No route calls `produceZoneTransitions` or `deriveCrowdFlow`. There is
+--      no HTTP surface for crowd flow at all, so nothing can ask for one.
+--   3. Both consent tables (`intel_contribution_consent`,
+--      `route_flow_contribution_consent`) are default-off and empty, and
+--      consent is checked per contributor at READ time, so a withdrawal is
+--      immediate and retroactive rather than eventual.
+--   4. The caller must inject both zone resolvers; without them the read
+--      refuses rather than falling back to a coordinate.
+--
+-- SUPERSEDED CLAIM, kept visible rather than quietly deleted: this header used
+-- to say the repository feeds "exactly ONE" family and that
+-- `readCrowdFlowSignals` therefore refuses to issue its query at all.
+-- Migration 2224 added a SECOND family (`accepted_plan`, derived from accepted
+-- route plans), so that sentence is no longer true and the blanket refusal no
+-- longer fires.
+--
+-- Read that as a narrower change than it sounds. The second family clears the
+-- audit's four-part bar on SOURCE independence (different table, consent
+-- record, capture service and traveller act), but both families are
+-- self-reported INTENT rather than measured movement, and their populations
+-- overlap: one person can accept a plan and file a next-move contribution for
+-- the same edge. Two families here therefore certify two independent SOURCES,
+-- not two independent POPULATIONS. That residual is recorded in
+-- `ACCEPTED_PLAN_INDEPENDENCE.residualCorrelation`, and a test fails if anyone
+-- empties it. The confidence ladder is the mitigation and is unchanged: two
+-- families still cap the band at `provisional`; `likely_current` needs three.
 --
 -- Idempotent; safe to re-run.
 

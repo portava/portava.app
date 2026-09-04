@@ -198,21 +198,51 @@ async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerC
     logger.warn({ err }, "wall: trip membership read failed");
   }
   try {
-    const { data } = await sc
+    // `current_country` DOES NOT EXIST on profiles — it is a column of
+    // compass_user_profiles (migration 0051). Selecting it here failed the
+    // WHOLE read with PGRST100, and the catch below swallowed that, so
+    // BOTH fields were null on every request since this shipped: the Wall has
+    // never known the viewer's city either.
+    //
+    // profiles carries current_city, country, location_country, home_country —
+    // but no "current country". Rather than substitute one of those and assert
+    // a fact the schema does not record, the country stays null and says so.
+    // If the Wall needs it, the honest source is compass_user_profiles, which
+    // is a different read with its own privacy posture.
+    const { data, error } = await sc
       .from("profiles")
-      .select("current_city, current_country, home_city, interests")
+      .select("current_city, home_city, interests")
       .eq("id", viewerId)
       .maybeSingle();
+    // A missing row is normal and silent. A rejected query is not — that is how
+    // this was invisible for the life of the feature.
+    if (error) {
+      logger.warn(
+        { err: error, code: (error as any)?.code, viewerId },
+        "wall: viewer location read failed; the Wall will not know the viewer's city",
+      );
+    }
     ctx.currentCity = (data as any)?.current_city ?? null;
-    ctx.currentCountry = (data as any)?.current_country ?? null;
+    // Both sides of this merge wanted more from this read. main added home_city
+    // and interests; this branch had removed current_country because it DOES
+    // NOT EXIST on profiles (it belongs to compass_user_profiles, migration
+    // 0051). Verified again against the live schema during this merge:
+    // current_city, home_city and interests are all real; current_country is
+    // not.
+    //
+    // Keeping main's version verbatim would have kept the whole read failing
+    // with PGRST100 — and made it worse, because four fields would then be
+    // null instead of two. So main's INTENT is kept in full and only the
+    // column that breaks the query is dropped.
+    ctx.currentCountry = null;
     for (const c of [(data as any)?.current_city, (data as any)?.home_city]) {
       if (c) ctx.preferredCities.add(String(c).trim().toLowerCase());
     }
     for (const i of ((data as any)?.interests as unknown[] | undefined) ?? []) {
       if (typeof i === "string" && i.trim()) ctx.interests.add(i.trim().toLowerCase());
     }
-  } catch {
-    /* non-fatal */
+  } catch (err) {
+    logger.warn({ err }, "wall: viewer location read threw");
   }
   // Upcoming/active trip destination cities — a real-world discovery signal
   // (spec §13). Reads only the viewer's OWN trips, so nothing else leaks.
@@ -261,6 +291,13 @@ interface LoadedCandidates {
   signals: Map<string, WallRankSignals>;
   /** canonicalObjectId → place ref (for live-strip candidate derivation). */
   placeByObject: Map<string, PublicPlaceRef>;
+  /**
+   * Following mode only: true when the followed-post fetch reached the TRUE end
+   * of eligible content (returned fewer than CANDIDATE_FETCH rows). Undefined for
+   * For You. buildFollowing requires this before reporting `caughtUp`, so a full
+   * (capped) fetch never masquerades as "you're all caught up" (§27).
+   */
+  followingReachedEnd?: boolean;
 }
 
 function classifyObjectType(row: any, isOutsideGraph: boolean, discoveryEnabled: boolean): WallObjectType {
@@ -274,15 +311,17 @@ async function loadCandidates(
   sc: any,
   mode: "for_you" | "following",
   viewer: WallViewerContext,
-  opts: { snapshotAtIso?: string; discoveryEnabled: boolean },
+  opts: { snapshotAtIso?: string; discoveryEnabled: boolean; followingCursorPublishedAt?: string },
 ): Promise<LoadedCandidates> {
   const empty: LoadedCandidates = { candidates: [], signals: new Map(), placeByObject: new Map() };
   const followed = [...viewer.followedCreatorIds];
 
-  // Following: only followed authors. With no follows there is nothing to show.
-  if (mode === "following" && followed.length === 0) return empty;
+  // Following: only followed authors. With no follows there is nothing to show —
+  // and that IS the true end (caught up immediately).
+  if (mode === "following" && followed.length === 0) return { ...empty, followingReachedEnd: true };
 
   let rows: any[] = [];
+  let followingReachedEnd: boolean | undefined;
   try {
     // Primary set: followed authors (+ self is implicitly followable but the
     // author's own posts belong on their profile; the Wall's Following is other
@@ -296,8 +335,19 @@ async function loadCandidates(
         .order("created_at", { ascending: false })
         .limit(CANDIDATE_FETCH);
       if (opts.snapshotAtIso) q = q.lte("created_at", opts.snapshotAtIso);
+      // Following pagination: slide the fetch window down to the cursor so older
+      // followed posts past the first CANDIDATE_FETCH are actually reachable (the
+      // window is inclusive; buildFollowing re-applies the precise after-cursor
+      // filter). Without this the fetch was frozen at the newest 150 and the tail
+      // was unreachable — and falsely reported as "caught up".
+      if (mode === "following" && opts.followingCursorPublishedAt) {
+        q = q.lte("created_at", opts.followingCursorPublishedAt);
+      }
       const { data } = await q;
-      rows = ((data as any[]) ?? []).map((r) => ({ ...r, __outside: false }));
+      const primary = (data as any[]) ?? [];
+      // True end of the followed spine iff the fetch came back short of its cap.
+      if (mode === "following") followingReachedEnd = primary.length < CANDIDATE_FETCH;
+      rows = primary.map((r) => ({ ...r, __outside: false }));
     }
 
     // For You may reach outside the follow graph (discovery), but only when the
@@ -323,7 +373,7 @@ async function loadCandidates(
     return empty;
   }
 
-  if (rows.length === 0) return empty;
+  if (rows.length === 0) return { ...empty, followingReachedEnd };
 
   // Dedupe by post id (a post could appear in both queries).
   const byId = new Map<string, any>();
@@ -469,7 +519,7 @@ async function loadCandidates(
     if (placeRef) placeByObject.set(id, placeRef);
   }
 
-  return { candidates, signals, placeByObject };
+  return { candidates, signals, placeByObject, followingReachedEnd };
 }
 
 // ── Intent steering (temporary; never changes saved preferences, spec §17) ───
@@ -603,6 +653,9 @@ router.get(
     const loaded = await loadCandidates(sc, mode, viewer, {
       snapshotAtIso: forYouCursor?.snapshotAt,
       discoveryEnabled,
+      // Following pagination slides its fetch window down to the cursor so the
+      // tail past CANDIDATE_FETCH is reachable (and `caughtUp` stays honest).
+      followingCursorPublishedAt: followingCursor?.publishedAt,
     });
 
     // ── Supplementary object types (spec §6): Postcards (§10), video/media (§11)
@@ -613,16 +666,21 @@ router.get(
     //    Post spine, which is left untouched. Every merged candidate still runs
     //    through the SAME eligibility → block → visibility gate below.
     const loaderViewer = { viewerId: user.id, followedCreatorIds: viewer.followedCreatorIds };
+    // Freeze the supplementary loaders to the SAME For You created-at horizon as
+    // the Post spine (loadCandidates, above) so a postcard/video/moment published
+    // mid-session cannot enter the candidate set and drift ranks across pages
+    // (§28). Following mode has no horizon (forYouCursor is null) and is unaffected.
+    const loaderOpts = { snapshotAtIso: forYouCursor?.snapshotAt };
     const [postcardsLoaded, mediaLoaded, momentsLoaded] = await Promise.all([
-      loadPostcardCandidates(sc, mode, loaderViewer).catch((err) => {
+      loadPostcardCandidates(sc, mode, loaderViewer, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: postcard loader threw — no postcards");
         return { candidates: [], signals: new Map(), placeByObject: new Map() };
       }),
-      loadVideoMediaCandidates(sc, user.id).catch((err) => {
+      loadVideoMediaCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: video/media loader threw — no media objects");
         return { candidates: [], signals: new Map(), placeByObject: new Map() };
       }),
-      loadSharedMomentCandidates(sc, user.id).catch((err) => {
+      loadSharedMomentCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: shared moment loader threw — no moments");
         return { candidates: [], signals: new Map(), placeByObject: new Map() };
       }),
@@ -652,7 +710,13 @@ router.get(
     let caughtUp: boolean | undefined;
 
     if (mode === "following") {
-      const built = buildFollowing(projections, { limit, cursor: followingCursor });
+      const built = buildFollowing(projections, {
+        limit,
+        cursor: followingCursor,
+        // Only claim "caught up" when the followed-post fetch actually reached the
+        // end — never merely because a capped 150-row window was exhausted (§27).
+        reachedEnd: loaded.followingReachedEnd,
+      });
       items = built.items;
       caughtUp = built.caughtUp;
       nextCursor = built.nextCursor ? encodeFollowingCursor(built.nextCursor) : undefined;

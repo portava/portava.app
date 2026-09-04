@@ -657,14 +657,42 @@ describe('createContribution — construction enforces the rules', () => {
   });
 
   test('a media contribution without an asset is not an observation', () => {
-    assert.equal(createContribution(obj(), 'media', 'photo', { now: NOW }), null);
+    const OBS = 'a3f7f6f2-0f2a-4a2b-9f4a-6d3f9c1b2e10';
+    assert.equal(createContribution(obj(), 'media', 'photo', { now: NOW, observationId: OBS }), null);
     assert.equal(
-      createContribution(obj(), 'media', 'photo', { now: NOW, mediaUri: '   ' }),
+      createContribution(obj(), 'media', 'photo', { now: NOW, mediaUri: '   ', observationId: OBS }),
       null,
     );
+  });
+
+  test('a media contribution without an observation is not a contribution at all', () => {
+    // §21 orders Observation -> Evidence and intel_evidence.observation_id is
+    // NOT NULL, so a photo that names no observation asserts nothing and has
+    // nowhere to be stored. The server refuses it with that ruling; refusing to
+    // CONSTRUCT it is the same rule made structural, so a caller that skipped
+    // the observation cannot even build the payload.
+    assert.equal(
+      createContribution(obj(), 'media', 'photo', { now: NOW, mediaUri: 'post-media/u1/a.jpg' }),
+      null,
+    );
+    assert.equal(
+      createContribution(obj(), 'media', 'photo', {
+        now: NOW,
+        mediaUri: 'post-media/u1/a.jpg',
+        observationId: '   ',
+      }),
+      null,
+    );
+  });
+
+  test('a media contribution carries the reference and the observation it supports', () => {
+    const OBS = 'a3f7f6f2-0f2a-4a2b-9f4a-6d3f9c1b2e10';
     const withAsset = createContribution(obj(), 'media', 'photo', {
       now: NOW,
-      mediaUri: 'file:///tmp/a.jpg',
+      // The STORAGE REFERENCE an upload produced — not the device URI, which
+      // the server refuses because it cannot prove such a path is ours.
+      mediaUri: 'post-media/u1/a.jpg',
+      observationId: OBS,
     });
     assert.deepEqual(withAsset, {
       objectId: 'obj-1',
@@ -672,8 +700,14 @@ describe('createContribution — construction enforces the rules', () => {
       observedAt: new Date(NOW).toISOString(),
       kind: 'media',
       value: 'photo',
-      mediaUri: 'file:///tmp/a.jpg',
+      mediaUri: 'post-media/u1/a.jpg',
+      observationId: OBS,
     });
+    // No coordinate, no claim type, no reward — an artifact asserts nothing.
+    assert.deepEqual(
+      Object.keys(withAsset as object).sort(),
+      ['kind', 'mediaUri', 'objectId', 'objectKind', 'observationId', 'observedAt', 'value'],
+    );
   });
 
   test('carries no reward, score or rating field (§22, §37)', () => {

@@ -72,6 +72,26 @@ export interface LoaderViewer {
   followedCreatorIds: Set<string>;
 }
 
+/**
+ * Optional per-request loader options. `snapshotAtIso` is the For You session's
+ * created-at freeze horizon (from the For You cursor): supplementary candidates
+ * must be frozen to the SAME horizon as the Post spine (routes/wall.ts
+ * loadCandidates), otherwise a postcard/video published mid-pagination enters the
+ * candidate set, shifts ranks, and duplicates/skips items across pages (§28).
+ * Absent (Following mode, or the first For You page) ⇒ no horizon, freshest rows.
+ */
+export interface LoaderOptions {
+  snapshotAtIso?: string;
+}
+
+/** Is a canonical row within the For You freeze horizon? A row with no created_at
+ *  cannot be proven pre-snapshot, so it is excluded once a horizon is set. */
+function withinSnapshot(createdAt: unknown, snapshotAtIso: string | undefined): boolean {
+  if (!snapshotAtIso) return true;
+  const c = typeof createdAt === "string" ? createdAt : "";
+  return c !== "" && c <= snapshotAtIso;
+}
+
 function emptyLoaded(): LoadedWallCandidates {
   return { candidates: [], signals: new Map(), placeByObject: new Map() };
 }
@@ -197,13 +217,14 @@ export async function loadPostcardCandidates(
   sc: any,
   mode: "for_you" | "following",
   viewer: LoaderViewer,
+  opts: LoaderOptions = {},
 ): Promise<LoadedWallCandidates> {
   const followed = [...viewer.followedCreatorIds];
   if (followed.length === 0) return emptyLoaded(); // no in-graph postcards to show
 
   let rows: any[] = [];
   try {
-    const { data } = await sc
+    let q = sc
       .from("posts")
       .select(POSTCARD_COLUMNS)
       .eq("status", "active")
@@ -211,6 +232,10 @@ export async function loadPostcardCandidates(
       .in("author_id", followed.slice(0, 500))
       .order("created_at", { ascending: false })
       .limit(LOADER_FETCH);
+    // Freeze to the For You horizon so a newly-published postcard can't enter
+    // mid-pagination (mirrors the Post spine's `.lte(created_at, snapshotAt)`).
+    if (opts.snapshotAtIso) q = q.lte("created_at", opts.snapshotAtIso);
+    const { data } = await q;
     // Client-side guard: a Postcard is defined by add_to_passport === true.
     // Re-checking here (not just trusting the query filter) keeps a loader that
     // is fed rows without the flag from mis-emitting ordinary posts as postcards.
@@ -304,15 +329,21 @@ export async function loadPostcardCandidates(
 export async function loadVideoMediaCandidates(
   sc: any,
   viewerId: string,
+  opts: LoaderOptions = {},
 ): Promise<LoadedWallCandidates> {
   try {
     const resolved = await resolveViewer(sc, viewerId, { needFollows: true });
     if (resolved.followedCreatorIds.size === 0) return emptyLoaded();
 
-    const rows: MediaCandidateRow[] = await loadEligibleCandidates(sc, resolved, {
+    const fetched: MediaCandidateRow[] = await loadEligibleCandidates(sc, resolved, {
       feedType: "following",
       limit: LOADER_FETCH,
     });
+    // Freeze to the For You horizon: drop media published after the session
+    // snapshot so it can't drift ranks mid-pagination (like the Post spine).
+    const rows = opts.snapshotAtIso
+      ? fetched.filter((r) => withinSnapshot((r as any).created_at, opts.snapshotAtIso))
+      : fetched;
     if (rows.length === 0) return emptyLoaded();
 
     const nowMs = Date.now();
@@ -413,6 +444,7 @@ export async function loadVideoMediaCandidates(
 export async function loadSharedMomentCandidates(
   sc: any,
   viewerId: string,
+  opts: LoaderOptions = {},
 ): Promise<LoadedWallCandidates> {
   try {
     if (!(await areSharedMomentsEnabled(sc))) return emptyLoaded();
@@ -437,7 +469,10 @@ export async function loadSharedMomentCandidates(
 
   const moments = memberships
     .map((m) => m?.shared_moments)
-    .filter((row: any) => row && row.status === "active" && row.owner_id);
+    .filter((row: any) => row && row.status === "active" && row.owner_id)
+    // Freeze to the For You horizon: a Moment created after the session snapshot
+    // must not enter mid-pagination (mirrors the Post spine's created-at freeze).
+    .filter((row: any) => withinSnapshot(row.created_at, opts.snapshotAtIso));
   if (moments.length === 0) return emptyLoaded();
 
   const momentIds = moments.map((m: any) => String(m.id));
@@ -494,7 +529,10 @@ export async function loadSharedMomentCandidates(
       place: placeRef,
       actor: actorFrom(profiles.get(ownerId), ownerId),
       participants: participants.length > 0 ? participants : undefined,
-      authorAccountStatus: "active",
+      // Real owner status (already loaded for the byline above) so the Wall gate's
+      // passesEligibility can drop a banned/suspended owner's moment — matching the
+      // Post spine and media loader. Hardcoding "active" here defeated that gate.
+      authorAccountStatus: profiles.get(ownerId)?.accountStatus ?? "active",
       isDeleted: false,
       // Consent already resolved by accepted membership above.
       callerVisibilityResolved: true,

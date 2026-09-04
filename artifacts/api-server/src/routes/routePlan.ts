@@ -3,8 +3,18 @@
  *
  *   POST   /api/route-plans               — create + optimize
  *   GET    /api/route-plans/:id           — fetch with stops + legs
+ *   POST   /api/route-plans/:id/accept    — the traveller ACCEPTS the plan
  *   PATCH  /api/route-plans/:id/stops/:stopId — checkpoint status / reorder / skip
  *   DELETE /api/route-plans/:id           — delete plan
+ *
+ * ON `status`. POST creates a plan as 'draft' and NOTHING ELSE writes 'active'.
+ * That is deliberate and load-bearing: the stops a plan holds are OPTIMIZER
+ * OUTPUT (services/routeOptimizer picked the ordering), so a draft records what
+ * a machine proposed, not what a traveller decided. Only POST .../accept turns
+ * a proposal into a declaration, and migration 2224's CHECK constraint
+ * `route_plans_accepted_requires_evidence` makes an accepted state with no
+ * recorded accepter unrepresentable. Map spec §10 (lib/routeHopSignal) reads
+ * ONLY accepted plans for exactly this reason.
  */
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -260,6 +270,115 @@ router.get("/route-plans/:id", asyncHandler(async (req, res) => {
   }
 
   res.json(fullPlan);
+}));
+
+// ── POST /api/route-plans/:id/accept ──────────────────────────────────────────
+//
+// THE ACCEPTANCE TRANSITION — the only writer of route_plans.status='active'.
+//
+// WHY IT EXISTS. Until this endpoint, `status` was written exactly once, as
+// 'draft', so the enum's accepted states were unreachable and there was no way
+// to tell a plan a traveller ADOPTED from one the optimizer merely GENERATED.
+// That distinction is the whole basis on which Map spec §10 may treat a route
+// leg as a signal at all: an optimizer's proposed ordering is a machine's guess
+// about where somebody might go, and aggregating those would publish what a
+// machine proposed rather than what people did.
+//
+// WHAT MAKES AN ACCEPTED PLAN DISTINGUISHABLE, IN THE DATA:
+//   status='active' AND accepted_at IS NOT NULL AND accepted_by_user_id IS NOT
+//   NULL — and migration 2224's CHECK constraint makes any other combination
+//   unrepresentable, so a reader is trusting the database rather than trusting
+//   that every future writer remembers to stamp all three.
+//
+// OWNER ONLY. Acceptance is a declaration about the accepter's own intended
+// movement, so it is not a trip-editing permission: a trip editor may reshape
+// somebody else's plan (canEditPlan), but may not declare on their behalf. This
+// also keeps the §10 actor unambiguous — one accepted plan contributes exactly
+// one person, the one who pressed accept.
+//
+// IDEMPOTENT, AND DELIBERATELY NOT RE-STAMPING. Re-accepting an already-active
+// plan returns the existing acceptance untouched. Re-stamping accepted_at would
+// let a client refresh a plan's freshness on demand and hold a stale hop inside
+// the crowd-flow window indefinitely — a freshness gate anyone can reset is not
+// a freshness gate.
+//
+// ACCEPTANCE IS NOT CONSENT TO PUBLISH. Nothing here reads or requires
+// route_flow_contribution_consent: a traveller may accept a plan and contribute
+// nothing. Consent is checked at READ time (lib/routeHopSignal), so a
+// withdrawal takes effect immediately and retroactively.
+
+router.post("/route-plans/:id/accept", asyncHandler(async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid plan id"); return; }
+
+  const { data: plan } = await client
+    .from("route_plans")
+    .select("id, owner_user_id, status, accepted_at, accepted_by_user_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!plan) { sendError(res, "not_found", "Route plan not found"); return; }
+
+  if ((plan as any).owner_user_id !== user.id) {
+    sendError(res, "forbidden", "Only the route owner can accept this plan"); return;
+  }
+
+  const status = (plan as any).status as string;
+
+  if (status === "active") {
+    res.json({
+      id,
+      status,
+      acceptedAt:        (plan as any).accepted_at ?? null,
+      acceptedByUserId:  (plan as any).accepted_by_user_id ?? null,
+      alreadyAccepted:   true,
+    });
+    return;
+  }
+  if (status !== "draft") {
+    sendError(res, "invalid_state_transition", `A ${status} route plan cannot be accepted`);
+    return;
+  }
+
+  const acceptedAt = new Date().toISOString();
+  // Compare-and-set on status='draft': two concurrent accepts collapse to one
+  // acceptance instead of racing to overwrite each other's timestamp.
+  const { data: updated, error: acceptErr } = await (client as any)
+    .from("route_plans")
+    .update({
+      status:              "active",
+      accepted_at:         acceptedAt,
+      accepted_by_user_id: user.id,
+      updated_at:          acceptedAt,
+    })
+    .eq("id", id)
+    .eq("status", "draft")
+    .select("id, status, accepted_at, accepted_by_user_id")
+    .maybeSingle();
+
+  if (acceptErr) {
+    req.log.error({ err: acceptErr }, "accept route_plan");
+    sendError(res, "db_error", acceptErr.message ?? "Failed to accept route plan");
+    return;
+  }
+  if (!updated) {
+    // The compare-and-set matched nothing: the plan left 'draft' between the
+    // read and the write. Say so rather than reporting a success we did not do.
+    sendError(res, "conflict", "Route plan changed state while being accepted");
+    return;
+  }
+
+  res.json({
+    id:               (updated as any).id,
+    status:           (updated as any).status,
+    acceptedAt:       (updated as any).accepted_at,
+    acceptedByUserId: (updated as any).accepted_by_user_id,
+    alreadyAccepted:  false,
+  });
 }));
 
 // ── PATCH /api/route-plans/:id/stops/:stopId ──────────────────────────────────

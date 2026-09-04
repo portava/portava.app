@@ -21,9 +21,13 @@ import {
 } from "../routes/mapTelemetry.js";
 
 describe("the §35 event set", () => {
-  test("is exactly the sixteen events the spec names", () => {
-    assert.equal(MAP_EVENT_NAMES.length, 16);
-    assert.deepEqual([...MAP_EVENT_NAMES].sort(), [
+  test("carries §35s sixteen events, plus only deliberate additions", () => {
+    // §35 names sixteen. `meet_here_refused` is a SEVENTEENTH, added
+    // deliberately (migration 2222): §35 has no event for something the product
+    // refused to do, so a §23 policy block was indistinguishable from a feature
+    // nobody used. Keeping the spec list separate means it stays a faithful
+    // quote and any further addition is a deliberate edit here.
+    const SPEC_35 = [
       "alternative_requested",
       "compass_option_selected",
       "compass_requested",
@@ -40,7 +44,21 @@ describe("the §35 event set", () => {
       "trip_stop_added",
       "why_shown_opened",
       "zone_selected",
-    ]);
+    ];
+    const BEYOND_SPEC = ["meet_here_refused"];
+
+    for (const name of SPEC_35) {
+      assert.ok(
+        (MAP_EVENT_NAMES as readonly string[]).includes(name),
+        `§35 event missing from the server allowlist: ${name}`,
+      );
+    }
+    assert.deepEqual(
+      [...MAP_EVENT_NAMES].sort(),
+      [...SPEC_35, ...BEYOND_SPEC].sort(),
+      "the server event allowlist drifted — an event the client can emit but the server drops is a silent data loss",
+    );
+    assert.equal(MAP_EVENT_NAMES.length, SPEC_35.length + BEYOND_SPEC.length);
   });
 
   test("has no duplicates", () => {

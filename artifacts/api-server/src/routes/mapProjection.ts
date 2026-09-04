@@ -20,23 +20,85 @@
  *   gems      → findNearbyGems + applyGemPrivacyBatch
  *   events    → loadNearbyEvents        (same gates as GET /api/events/nearby,
  *                                        incl. show_exact_location redaction)
+ *   circle    → readCircleLocations     (kill switch + membership + blocks +
+ *                                        affirmative consent + master switch +
+ *                                        SERVER-SIDE coarsening)
+ *   trips     → loadViewerTrips         (accepted-membership scope, then the
+ *                                        shared toAuthorizedTripView DTO)
  *
  * The block set is resolved ONCE, fail-closed: if it cannot be read, nobody is
- * returned. Objects are passed through `servableOnly` before serialization, so
- * anything at privacy rung 'none' or without renderable geometry is dropped at
- * the boundary whatever produced it.
+ * returned. That single set is handed to every people-bearing source —
+ * listMapTravelers and readCircleLocations both take it — so this request can
+ * never end up with two different answers to "who is blocked". Objects are
+ * passed through `servableOnly` before serialization, so anything at privacy
+ * rung 'none' or without renderable geometry is dropped at the boundary
+ * whatever produced it.
  *
- * SCOPE — stated rather than implied
- * ==================================
- * The projection serves the three sources above because they are the three with
- * an extractable, privacy-complete server function. The buddies, trips and
- * friends/circle layers still fetch per-layer on the client: their privacy
- * logic lives inline inside route handlers (e.g. GET /api/me/circle-locations)
- * and lifting it out is a separate, carefully-tested change — not something to
- * do in passing. The client normalizes those three into the SAME MapObject
- * contract, so the renderer already sees one uniform stream; only their
- * transport is still per-layer. `sources` in the response says which arrived
- * through the gateway, so nobody has to guess.
+ * WHY THE CIRCLE LAYER IS THE ONE THAT MATTERED
+ * =============================================
+ * Its coordinates are people. `readCircleLocations` coarsens every position
+ * with `coarsenPosition` BEFORE returning it, so the coarse coordinate is what
+ * this route shapes and serializes — the precise one never reaches the
+ * projection, let alone the wire. The client's post-fetch ±0.01° jitter
+ * (coarsenForFriend) sits on top of that and is cosmetic; a client-side
+ * coarsening step could never have protected anything, because the value it
+ * "protects" has already been delivered to the device.
+ *
+ * SCOPE — all six layers now arrive through the gateway
+ * =====================================================
+ * Buddies were the last hold-out, and for a real reason: their visibility rules
+ * (the rent_buddy_enabled flag, then status/admin_status), their public column
+ * allow-list (BUDDY_PUBLIC_COLUMNS) and their private-field strip
+ * (stripBuddyPrivateFields → mapBuddyPublicProfile) were module-private to
+ * routes/rentABuddy.ts, interleaved with marketplace ranking, pagination and an
+ * outbound Nominatim geocode. Restating "which buddy fields are public" here
+ * would have created exactly the second implementation this route exists to
+ * remove. So the privacy-complete part was EXTRACTED into lib/buddyMapRead —
+ * one BUDDY_PUBLIC_COLUMNS, one stripBuddyPrivateFields, shared by the
+ * marketplace and this route — while ranking, pagination and the geocode stayed
+ * behind in the marketplace, where they belong.
+ *
+ *   buddies   → readBuddyMapPins       (feature flag + status/admin_status +
+ *                                       blocks + meetup-base-only, no geocode)
+ *
+ * `sources` names what actually arrived through the gateway, so nobody has to
+ * guess which path a layer took.
+ *
+ * §10 CROWD FLOW — THE LAYER NOTHING COULD ASK FOR
+ * ================================================
+ * §10 was fully built and completely unreachable: `produceZoneTransitions` and
+ * `deriveCrowdFlow` had no caller in src/routes, so no client could ever be
+ * served a flow however many gates it cleared. This route is that surface.
+ *
+ *   flows     → produceZoneTransitions  (per-family consent, freshness, zone
+ *                                        granularity enforced by type)
+ *               → deriveCrowdFlow       (§10's four gates: privacy/k, freshness,
+ *                                        multiple signal families, density)
+ *
+ * IT IS A `crowd_flow` KIND IN THIS GATEWAY, NOT AN ENDPOINT OF ITS OWN. §19
+ * says the client must not reconstruct Portava's intelligence rules, and a
+ * bespoke /api/map/crowd-flow would have skipped §31 ranking, the §24
+ * protection gate, viewport aggregation and privacy-class stamping — the exact
+ * bypass src/test/gatewayBypassGuard.test.ts exists to catch, which is why
+ * `produceZoneTransitions` is now registered there with this file as its only
+ * approved caller.
+ *
+ * THE ZONE MODEL IS THIS ROUTE'S JOB, AND ONLY THIS ROUTE'S. The producer takes
+ * `resolveZoneId`, `resolveZoneForPoint` and `zoneCentroids` from its caller and
+ * REFUSES rather than approximating an endpoint to a coordinate when they are
+ * missing. `loadFlowZones` + `loadViewportPlaces` + lib/mapProjection's
+ * `buildFlowZoneModel` supply them from curated `geo_zones` geography; every
+ * endpoint that resolves to no zone is dropped. NO GATE CONSTANT IS TOUCHED
+ * HERE — MIN_SIGNAL_FAMILIES, the k floor, maxGroupShare and the freshness
+ * bound all stay where they are and say what they said.
+ *
+ * WHAT IT SERVES TODAY: NOTHING, AND THAT IS THE CORRECT ANSWER.
+ * `map_crowd_flow_enabled` is seeded FALSE and both contribution-consent tables
+ * are empty, so `crowdFlow.refusal` reads `flag_off` and no flow object exists.
+ * An empty flow layer for that reason is indistinguishable from an empty flow
+ * layer caused by broken wiring — which is why `crowdFlow` reports refusals and
+ * counts, and why src/test/mapCrowdFlowLayer.test.ts drives a synthetic cohort
+ * that CLEARS every gate through this route and asserts the object arrives.
  */
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -46,26 +108,47 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { listMapTravelers } from "../lib/mapTravelers.js";
+import { readCircleLocations } from "../lib/circleLocationsRead.js";
+import { readBuddyMapPins } from "../lib/buddyMapRead.js";
+import { toAuthorizedTripView } from "../lib/privacy/tripSerializers.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
 import { loadNearbyEvents } from "./mapSearch.js";
-import { aggregateForViewport } from "../lib/mapAggregation.js";
+import { aggregateForViewport, bboxContains, deriveCrowdFlow, type BBox } from "../lib/mapAggregation.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
+import { CROWD_FLOW_FLAG, produceZoneTransitions } from "../lib/crowdFlowProducer.js";
+
+/**
+ * Compile-time pin for the flag literal used at the crowd-flow call site.
+ * The literal exists so check:flag-polarity can resolve it; this makes renaming
+ * the constant a TYPE ERROR rather than a silently-diverging second spelling.
+ */
+const CROWD_FLOW_FLAG_PIN: "map_crowd_flow_enabled" = CROWD_FLOW_FLAG;
+void CROWD_FLOW_FLAG_PIN;
 import { type MapObject, type MapObjectKind } from "../lib/mapObjects.js";
 import {
+  FLOW_ZONE_TYPES,
   bboxToCenterRadius,
+  buildFlowZoneModel,
   enrichWithLiveClaims,
   filterKinds,
+  indexPlaceZones,
   paginate,
   parseBbox,
+  parseFlowZones,
   parseKinds,
+  projectBuddy,
+  projectCircleMember,
   projectEvent,
   projectGem,
   projectTraveler,
+  projectTrip,
   rankObjects,
   servableOnly,
-  type LiveClaimLike,
+  withholdCoarsenableFlows,
+  type FlowZone,
+  type TripViewLike,
 } from "../lib/mapProjection.js";
 
 const router = Router();
@@ -124,6 +207,158 @@ async function loadProtectedZones(sc: any): Promise<ProtectedZone[] | null> {
   return zones;
 }
 
+/**
+ * §10 flow zones (`geo_zones`).
+ *
+ * Same fail-closed shape as `loadProtectedZones` and for the same reason: null
+ * means "could not be read", [] means "there are none", and the caller must not
+ * confuse them — a crowd flow anchored on a zone model we failed to read would
+ * be a flow anchored on nothing.
+ *
+ * Cached briefly: curated geography changes on a human timescale, and this
+ * endpoint is polled on every camera settle. `nowMs` is passed IN rather than
+ * read here, so the whole handler still has exactly one clock read.
+ */
+const FLOW_ZONE_CACHE_TTL_MS = 30_000;
+const MAX_FLOW_ZONE_ROWS = 2_000;
+let _flowZoneCache: { zones: FlowZone[]; at: number } | null = null;
+
+export function _clearFlowZoneCache(): void { _flowZoneCache = null; }
+
+async function loadFlowZones(sc: any, nowMs: number): Promise<FlowZone[] | null> {
+  if (_flowZoneCache && nowMs - _flowZoneCache.at < FLOW_ZONE_CACHE_TTL_MS) {
+    return _flowZoneCache.zones;
+  }
+  const { data, error } = await sc
+    .from("geo_zones")
+    .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
+    .in("zone_type", FLOW_ZONE_TYPES as string[])
+    .limit(MAX_FLOW_ZONE_ROWS);
+  if (error || !Array.isArray(data)) return null;
+  const zones = parseFlowZones(data as any[]);
+  _flowZoneCache = { zones, at: nowMs };
+  return zones;
+}
+
+/**
+ * Places inside the viewport, for the ORIGIN half of a next-stop contribution.
+ *
+ * A contributor answers the trail prompt while standing at a PLACE
+ * (`intel_observations.subject_id`), and lib/crowdFlowProducer asks the caller
+ * to turn that place id into a zone. This read is what makes that answerable:
+ * public place geography, viewport-scoped like every other layer here, and it
+ * NEVER touches a person — `places` holds no user column that this select could
+ * reach. The rows are consumed by `indexPlaceZones`, which keeps ids only.
+ *
+ * Bounded and read-failure-safe: null means the index could not be built, which
+ * costs origins and therefore flows — the fail-closed direction.
+ */
+const MAX_INDEXED_PLACES = 1_000;
+
+async function loadViewportPlaces(sc: any, bbox: BBox): Promise<any[] | null> {
+  const { data, error } = await sc
+    .from("places")
+    .select("id, latitude, longitude")
+    .eq("status", "active")
+    .is("merged_into_place_id", null)
+    .gte("latitude", bbox.south)
+    .lte("latitude", bbox.north)
+    .gte("longitude", bbox.west)
+    .lte("longitude", bbox.east)
+    .limit(MAX_INDEXED_PLACES);
+  if (error || !Array.isArray(data)) return null;
+  return data as any[];
+}
+
+/**
+ * The zone model is scoped to the viewport, grown by one viewport on each side
+ * so that an edge whose MIDPOINT the client can see still has both of its
+ * endpoints in the model. Zones outside it resolve to nothing, so a hop that
+ * leaves the neighbourhood of the request is dropped rather than half-resolved.
+ */
+function expandBbox(b: BBox): BBox {
+  const dLat = Math.max(0, b.north - b.south);
+  const dLng = Math.max(0, b.east - b.west);
+  return {
+    west: b.west - dLng,
+    south: Math.max(-90, b.south - dLat),
+    east: b.east + dLng,
+    north: Math.min(90, b.north + dLat),
+  };
+}
+
+/**
+ * What the crowd flow layer did, in counts.
+ *
+ * `refusal` and `familyRefusals` are the machine-readable answer to the
+ * question this layer would otherwise be unable to answer: an empty flow layer
+ * because §10's gates said no looks EXACTLY like an empty flow layer because
+ * the wiring is broken, and only one of those is fine.
+ *
+ * `withheld` is a TOTAL, deliberately without the per-gate breakdown that would
+ * be so much more useful to a developer. A breakdown would describe the shape
+ * of the cohorts that did NOT clear the floor — "two edges were held back
+ * because one party dominated" is a statement about a specific group of people
+ * in the viewport the client chose. The bare count follows the same rule (and
+ * the same reasoning) as `aggregation.suppressedForKAnonymity` and
+ * `protection`: enough to prove something was withheld, not enough to describe
+ * it. The per-gate reasons exist on the server, where lib/mapAggregation
+ * returns them.
+ */
+interface CrowdFlowReport {
+  refusal: string | null;
+  familyRefusals: Record<string, string | null>;
+  zoneModel: {
+    zones: number;
+    ambiguousNames: number;
+    indexedPlaces: number;
+    placeIndexFailed: boolean;
+  };
+  transitions: number;
+  published: number;
+  withheld: number;
+  withheldForProtection: number;
+}
+
+/**
+ * The viewer's own trips, scoped exactly as GET /api/trips/me scopes them.
+ *
+ * WHY THIS READ IS HERE AND NOT EXTRACTED
+ * =======================================
+ * The trips layer has no leftover privacy logic to extract: its FIELD-level
+ * discipline — which trip columns an authorized viewer may see — already lives
+ * in the shared `toAuthorizedTripView` DTO, and that is what this calls. The
+ * only thing restated is the SCOPE predicate: "rows in trip_members for this
+ * user whose role is not 'invited'". An invited-but-not-accepted member must
+ * NOT get the authorized view, so that `.neq("role", "invited")` is the whole
+ * privacy decision, and src/test/mapProjectionLayers.test.ts pins it against
+ * GET /api/trips/me's own output over the same data rather than trusting that
+ * two copies of one predicate will stay in step.
+ *
+ * Failure returns null (not []) so the caller can leave the layer OUT of
+ * `sources` rather than claim an empty trips layer it never successfully read.
+ */
+async function loadViewerTrips(sc: any, viewerId: string): Promise<TripViewLike[] | null> {
+  const { data: memberRows, error: memErr } = await sc
+    .from("trip_members")
+    .select("trip_id, role")
+    .eq("user_id", viewerId)
+    .neq("role", "invited");
+  if (memErr) return null;
+
+  const tripIds = ((memberRows ?? []) as any[]).map((r) => r.trip_id as string);
+  if (tripIds.length === 0) return [];
+
+  const { data: trips, error: tripsErr } = await sc
+    .from("trips")
+    .select("*")
+    .in("id", tripIds)
+    .not("status", "is", null);
+  if (tripsErr) return null;
+
+  return ((trips ?? []) as any[]).map(toAuthorizedTripView) as unknown as TripViewLike[];
+}
+
 router.get(
   "/map/projection",
   asyncHandler(async (req, res) => {
@@ -158,6 +393,7 @@ router.get(
         aggregation: null,
         protection: null,
         liveEnrichment: null,
+        crowdFlow: null,
         generatedAt,
       });
       return;
@@ -205,6 +441,7 @@ router.get(
         aggregation: null,
         protection: null,
         liveEnrichment: null,
+        crowdFlow: null,
         generatedAt,
       });
       return;
@@ -265,6 +502,154 @@ router.get(
       );
     }
 
+    if (wantKind("crew_member")) {
+      tasks.push(
+        (async () => {
+          // The SAME fail-closed block set every other people-bearing source
+          // got. Passing it in also means this request cannot see two different
+          // answers to "who is blocked" between the traveler and circle layers.
+          const read = await readCircleLocations(sc, user.id, { blockedSet }).catch(() => null);
+          // A read failure is NOT an empty circle: leaving the layer out of
+          // `sources` is how the client learns the difference between "nobody
+          // is sharing" and "we could not tell".
+          if (!read || !read.ok) return;
+          for (const m of read.locations) collected.push(projectCircleMember(m));
+          sources.push("circle");
+        })(),
+      );
+    }
+
+    if (wantKind("buddy_zone")) {
+      tasks.push(
+        (async () => {
+          // The SAME fail-closed block set every other people-bearing source
+          // got. A buddy is a person, so this layer cannot be allowed to
+          // disagree with the traveler and circle layers about who is blocked.
+          const read = await readBuddyMapPins(sc, user.id, {
+            lat,
+            lng,
+            radiusKm,
+            blockedSet,
+          }).catch(() => null);
+          // A read failure is NOT an empty marketplace: leaving the layer out
+          // of `sources` is how the client learns the difference between "no
+          // buddies here" and "we could not tell".
+          if (!read || !read.ok) return;
+          for (const b of read.pins) collected.push(projectBuddy(b));
+          sources.push("buddies");
+        })(),
+      );
+    }
+
+    if (wantKind("trip_stop")) {
+      tasks.push(
+        (async () => {
+          const trips = await loadViewerTrips(sc, user.id).catch(() => null);
+          if (trips === null) return;
+          for (const t of trips) collected.push(projectTrip(t));
+          sources.push("trips");
+        })(),
+      );
+    }
+
+    // §10 Crowd Flow. The producer and the consumer both already existed and
+    // nothing could ask for them: `deriveCrowdFlow` and `produceZoneTransitions`
+    // had no caller in src/routes at all, so a fully-gated, fully-tested map
+    // surface could never reach a client. This is that surface, and it is HERE
+    // rather than at an endpoint of its own on purpose — a bespoke
+    // /api/map/crowd-flow would skip §31 ranking, the §24 protection gate,
+    // viewport aggregation and privacy-class stamping, which is precisely the
+    // regression src/test/gatewayBypassGuard.test.ts exists to catch.
+    //
+    // (Held in a box rather than a bare `let` because the report is filled in
+    // by the task closure below, which control-flow analysis cannot see.)
+    const crowdFlow: { report: CrowdFlowReport | null } = { report: null };
+    if (wantKind("crowd_flow")) {
+      tasks.push(
+        (async () => {
+          const report: CrowdFlowReport = {
+            refusal: null,
+            familyRefusals: {},
+            zoneModel: { zones: 0, ambiguousNames: 0, indexedPlaces: 0, placeIndexFailed: false },
+            transitions: 0,
+            published: 0,
+            withheld: 0,
+            withheldForProtection: 0,
+          };
+          crowdFlow.report = report;
+
+          // The flag is checked HERE as well as inside readCrowdFlowSignals so
+          // that a disabled layer costs nothing: no zone read, no place read,
+          // and no cohort assembled for an outcome that cannot be published.
+          // A LITERAL, not CROWD_FLOW_FLAG: check:flag-polarity resolves flag
+          // arguments statically, and a constant defeats it — it then cannot
+          // tell whether this flag is a privacy stop, which is exactly the
+          // question worth answering for this layer. CROWD_FLOW_FLAG is still
+          // imported and pinned by CROWD_FLOW_FLAG_PIN below, so the literal
+          // and the constant cannot drift apart silently.
+          if (!(await isFlagEnabled(sc, "map_crowd_flow_enabled"))) {
+            report.refusal = "flag_off";
+            return;
+          }
+
+          const allZones = await loadFlowZones(sc, nowMs).catch(() => null);
+          if (allZones === null) {
+            // Unreadable geography is NOT absent geography — see loadFlowZones.
+            report.refusal = "zone_read_failed";
+            return;
+          }
+          const near = expandBbox(bbox);
+          const zones = allZones.filter((z) => bboxContains(near, z.centroid.lat, z.centroid.lng));
+          if (zones.length === 0) {
+            // Without a zone model the producer refuses rather than falling
+            // back to a coordinate, which is the behaviour we want; say so
+            // rather than reporting an empty layer.
+            report.refusal = "no_zone_model";
+            return;
+          }
+
+          const placeRows = await loadViewportPlaces(sc, bbox).catch(() => null);
+          const model = buildFlowZoneModel(zones, indexPlaceZones(placeRows, zones));
+          report.zoneModel = {
+            zones: model.centroids.size,
+            ambiguousNames: model.ambiguousNames,
+            indexedPlaces: model.indexedPlaces,
+            // A failed place read costs the next-stop family its ORIGINS, which
+            // silently shrinks the layer. "0 places indexed because the read
+            // failed" and "0 places indexed because there are none here" are
+            // different facts and are reported as different facts.
+            placeIndexFailed: placeRows === null,
+          };
+
+          // read → derive → attach cause. Every gate below is the producer's
+          // and lib/mapAggregation's; this route supplies the zone model and
+          // the clock, and decides nothing about who may be counted.
+          const produced = await produceZoneTransitions(sc, {
+            now: nowMs,
+            zoneCentroids: model.centroids,
+            resolveZoneId: model.resolveZoneId,
+            resolveZoneForPoint: model.resolveZoneForPoint,
+          }).catch(() => null);
+          if (!produced) {
+            report.refusal = "produce_failed";
+            return;
+          }
+          report.refusal = produced.refusal;
+          report.familyRefusals = { ...produced.familyRefusals };
+          report.transitions = produced.transitions.length;
+
+          const flow = deriveCrowdFlow(produced.transitions, { now: nowMs });
+          report.published = flow.flows.length;
+          report.withheld = flow.rejected.length;
+          for (const f of flow.flows) collected.push(f);
+
+          // A refusal means we never looked, so the layer must not appear in
+          // `sources` claiming an empty answer it did not obtain.
+          if (produced.refusal === null) sources.push("crowd_flow");
+        })(),
+      );
+    }
+
     await Promise.all(tasks);
 
     // §19 order: shape → drop the unservable → rank → (aggregate) → page.
@@ -276,8 +661,16 @@ router.get(
     const enrichment = await enrichWithLiveClaims(
       objects,
       async (subjectId) => {
+        // NO CAST. The previous `as unknown as LiveClaimLike[]` here is what let
+        // the two shapes drift: the envelope's `sourceCountBucket` is nullable
+        // (withheld for sponsored / official / imported — §37), LiveClaimLike
+        // re-declared it as always-present, and the double cast told the compiler
+        // to stop caring. A sponsored claim then rendered as "A few recent
+        // traveler reports". Structural assignability is the check now; if the
+        // envelope ever diverges again this line, and the pin in lib/mapProjection,
+        // both go red.
         const claims = await readLiveClaims(sc, subjectId);
-        return claims.map(toLiveClaimEnvelope) as unknown as LiveClaimLike[];
+        return claims.map(toLiveClaimEnvelope);
       },
       { now: nowMs },
     );
@@ -301,10 +694,24 @@ router.get(
         aggregation: null,
         protection: null,
         liveEnrichment: null,
+        crowdFlow: null,
         generatedAt,
       });
       return;
     }
+    // §24, one step ahead of the gate, for `crowd_flow` only: inside a
+    // protected zone a flow is WITHHELD rather than coarsened, because a
+    // coarsened flow would keep — in `payload.observed` — exactly the cohort
+    // size and observation time that coarsening exists to strip. See
+    // lib/mapProjection.withholdCoarsenableFlows. This only ever removes
+    // objects, and `applyProtection` below is still the gate.
+    const flowGate = withholdCoarsenableFlows(objects, zones);
+    objects = flowGate.objects;
+    if (crowdFlow.report) {
+      crowdFlow.report.withheldForProtection = flowGate.withheld;
+      crowdFlow.report.published = Math.max(0, crowdFlow.report.published - flowGate.withheld);
+    }
+
     const protection = applyProtection(objects, zones);
     objects = protection.objects;
 
@@ -342,6 +749,10 @@ router.get(
         enriched: enrichment.enriched,
         skipped: enrichment.skipped,
       },
+      // Null when the layer was not requested. Otherwise counts + refusals, so
+      // "no flows" is never ambiguous between "the gates said no" and "nothing
+      // asked". See CrowdFlowReport.
+      crowdFlow: crowdFlow.report,
       generatedAt,
     });
   }),

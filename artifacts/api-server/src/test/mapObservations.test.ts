@@ -44,6 +44,8 @@ import { ACTIVITY_LEVELS, MAP_OBJECT_KINDS } from "../lib/mapObjects.js";
 import {
   CLAIM_TYPES,
   CROWD_LEVELS,
+  TRAJECTORIES,
+  claimTypeLiveLabelRuling,
   IDEMPOTENCY_KEY_PATTERN,
   SPECIALIST_ONLY_CROWD_LEVELS,
 } from "../lib/intelContracts.js";
@@ -278,7 +280,12 @@ describe("prompt → canonical claim", () => {
     assert.equal(accepted("entry_closed"), false);
   });
 
-  it("refuses the five prompts with no canonical claim rather than inventing one", () => {
+  it("refuses every prompt with no canonical claim rather than inventing one", () => {
+    // Today that is `media` alone, and the refusal is a ruling (a photo asserts
+    // no proposition), not a gap waiting to be filled. This loop is written over
+    // the constant so it keeps testing whatever the refusal set actually is.
+    assert.ok(Object.keys(UNSUPPORTED_CONTRIBUTION_KINDS).length > 0,
+      "an empty refusal set would make this assertion vacuous");
     for (const kind of Object.keys(UNSUPPORTED_CONTRIBUTION_KINDS)) {
       for (const value of optionsFor(kind)) {
         assert.equal(mapContributionToClaim(kind, value), null, `${kind}/${value} must not map`);
@@ -288,10 +295,60 @@ describe("prompt → canonical claim", () => {
 
   it("never turns a crowd DIRECTION into a crowd TRAJECTORY", () => {
     // Direction of flow and trajectory of intensity are different facts. Storing
-    // 'arriving' as 'building' would publish an inference nobody made.
+    // 'arriving' as 'building' would publish an inference nobody made. The
+    // prompt is now supported — but under its OWN claim type, with its own value
+    // key, so the two claims cannot be confused by a reader or a query.
     for (const direction of CROWD_DIRECTIONS) {
-      assert.equal(mapContributionToClaim("crowd_direction", direction), null);
+      const mapped = mapContributionToClaim("crowd_direction", direction);
+      assert.ok(mapped, `${direction} must map`);
+      assert.equal(mapped!.claimType, "crowd.direction");
+      assert.notEqual(mapped!.claimType, "crowd.trajectory");
+      assert.deepEqual(mapped!.value, { direction });
+      assert.equal((mapped!.value as any).trajectory, undefined,
+        "a direction claim must not carry a trajectory key");
+      // And no direction is a TRAJECTORIES value wearing a different label.
+      assert.equal((TRAJECTORIES as readonly string[]).includes(direction), false,
+        `'${direction}' must not be a trajectory value`);
     }
+  });
+
+  it("gives each newly supported prompt its own claim type and its own value key", () => {
+    // One prompt, one claim type, one key naming the fact. Two prompts sharing a
+    // claim type would make their answers contradict each other about one fact.
+    const expected: Record<string, { claimType: string; key: string }> = {
+      vibe: { claimType: "vibe.state", key: "state" },
+      event_status: { claimType: "event.status", key: "status" },
+      closure: { claimType: "closure.state", key: "state" },
+      crowd_direction: { claimType: "crowd.direction", key: "direction" },
+    };
+    const seen = new Set<string>();
+    for (const [kind, { claimType, key }] of Object.entries(expected)) {
+      assert.ok(SUPPORTED_CONTRIBUTION_KINDS.includes(kind as any), `${kind} must be supported`);
+      for (const value of optionsFor(kind)) {
+        const mapped = mapContributionToClaim(kind, value)!;
+        assert.equal(mapped.claimType, claimType, `${kind}/${value}`);
+        assert.deepEqual(Object.keys(mapped.value), [key], `${kind} must carry exactly { ${key} }`);
+        assert.equal((mapped.value as any)[key], value, "the option IS the value — nothing is translated");
+      }
+      assert.equal(seen.has(claimType), false, `${claimType} is claimed by two prompts`);
+      seen.add(claimType);
+    }
+  });
+
+  it("accepts a permanent-closure report but never lets it render live", () => {
+    // Refusing the value would break the client round trip and lose a real
+    // report; rendering it live would let one stranger's tap take a living
+    // business off the map. Capture it, bar the label.
+    const mapped = mapContributionToClaim("closure", "permanently_closed")!;
+    assert.equal(mapped.claimType, "closure.state");
+    assert.deepEqual(mapped.value, { state: "permanently_closed" });
+    for (const state of CLOSURE_STATES) {
+      assert.equal(claimTypeLiveLabelRuling("closure.state", { state }), "never", state);
+    }
+    assert.equal(claimTypeLiveLabelRuling("event.status", { status: "cancelled" }), "never");
+    assert.equal(claimTypeLiveLabelRuling("event.status", { status: "under_way" }), "eligible");
+    assert.equal(claimTypeLiveLabelRuling("vibe.state", { state: "going_off" }), "eligible");
+    assert.equal(claimTypeLiveLabelRuling("crowd.direction", { direction: "arriving" }), "eligible");
   });
 
   it("refuses an option outside the prompt's vocabulary", () => {
