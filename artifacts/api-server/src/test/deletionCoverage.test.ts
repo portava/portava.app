@@ -78,7 +78,15 @@ describe("deletion coverage — the guard bites", () => {
     // If this ever reaches zero the program is done with D6; until then the
     // number is the honest measure of how much survives account deletion.
     assert.ok(UNCLASSIFIED_BACKLOG.length > 0);
-    assert.equal(RETAINED_WITH_REASON.length, 0,
+    // Updated deliberately (IG unit I1, migration 2273): the ONE decided
+    // retention is the append-only projection history, which carries no actor
+    // column at all — it is retained because nothing in it is a person's row,
+    // not because a person's row was ruled kept. Any further entry here must
+    // come with the same kind of written reason.
+    assert.equal(RETAINED_WITH_REASON.length, 1,
       "once retentions are decided, update this expectation deliberately");
+    assert.equal(RETAINED_WITH_REASON[0].table, "intel_state_snapshot_versions");
+    assert.ok(RETAINED_WITH_REASON[0].reason.length > 40, "a retention needs a reason a user could be shown");
+    assert.match(RETAINED_WITH_REASON[0].reason, /no actor column/);
   });
 });

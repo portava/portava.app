@@ -7,8 +7,9 @@
  * snapshots — which stay privacy-suppressed while group data is absent (the gate
  * refuses, it is not weakened).
  */
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
+import { logger } from "../lib/logger.js";
 import { deriveComponents, derivePenalties, assembleClaimInput, type ClaimEvidence, type ClaimRow } from "../lib/intelProjectionAggregator.js";
 import { runIntelProjectionPass } from "../lib/intelProjectionScheduler.js";
 import { invalidateFreshnessPolicyCache } from "../lib/freshnessPolicy.js";
@@ -38,6 +39,8 @@ function makeDb(cfg: {
   rangeError?: { table: string; minOffset?: number };
 }) {
   const snaps: any[] = [...(cfg.snapshots ?? [])];
+  // I1: every snapshot write is preceded by an append to the version table.
+  const versions: any[] = [];
   // Every .update(...).in("id",[...]) is recorded here so a test can assert which
   // snapshot ids (if any) the reconciliation force-expired.
   const updates: { table: string; ids: any[]; patch: any }[] = [];
@@ -47,7 +50,7 @@ function makeDb(cfg: {
   const consentRows = [...new Set((cfg.observations ?? []).map((o: any) => o.actor_id).filter(Boolean))]
     .map((id: string) => ({ user_id: id, enabled: !withdrawn.has(id), withdrawn_at: withdrawn.has(id) ? NOW.toISOString() : null }));
   function from(table: string) {
-    let op: "select" | "upsert" | "update" = "select"; let payload: any = null;
+    let op: "select" | "upsert" | "update" | "insert" = "select"; let payload: any = null;
     const eqs: [string, any][] = []; const gts: [string, any][] = [];
     let inF: [string, any[]] | null = null; let lim = Infinity; let rangeF: [number, number] | null = null;
     // Observations default to moderation_state 'allowed' (explicit values override),
@@ -71,6 +74,10 @@ function makeDb(cfg: {
         return { data: null, error: { message: "range boom" } };
       }
       if (op === "upsert") { snaps.push(...(Array.isArray(payload) ? payload : [payload])); return { data: null, error: null }; }
+      if (op === "insert") {
+        if (table === "intel_state_snapshot_versions") versions.push(...(Array.isArray(payload) ? payload : [payload]));
+        return { data: null, error: null };
+      }
       if (op === "update") {
         const ids = inF && inF[0] === "id" ? [...inF[1]] : [];
         for (const r of src()) if (match(r)) Object.assign(r, payload); // mutate the store in place
@@ -82,6 +89,7 @@ function makeDb(cfg: {
     const b: any = {
       select() { return b; },
       upsert(row: any) { op = "upsert"; payload = row; return Promise.resolve(run()); },
+      insert(row: any) { op = "insert"; payload = row; return Promise.resolve(run()); },
       update(patch: any) { op = "update"; payload = patch; return b; },
       eq(c: string, v: any) { eqs.push([c, v]); return b; },
       gt(c: string, v: any) { gts.push([c, v]); return b; },
@@ -94,14 +102,16 @@ function makeDb(cfg: {
     };
     return b;
   }
-  return { from, _snaps: snaps, _updates: updates };
+  return { from, _snaps: snaps, _versions: versions, _updates: updates };
 }
 
 describe("intelProjection aggregator — deriveComponents (conservative)", () => {
-  it("maps presence P0→0, P4→1; freshness = 1 − ageRatio; independence saturates at k", () => {
+  it("maps presence P0→0, P4→1; freshness = 1 − ageRatio^1.5 (spec §9); independence saturates at k", () => {
     assert.equal(deriveComponents(baseEvidence({ maxPresenceLevel: "P0" })).presence, 0);
     assert.equal(deriveComponents(baseEvidence({ maxPresenceLevel: "P4" })).presence, 1);
-    assert.equal(deriveComponents(baseEvidence({ ageRatio: 0.25 })).freshness, 0.75);
+    assert.equal(deriveComponents(baseEvidence({ ageRatio: 0.25 })).freshness, 1 - Math.pow(0.25, 1.5), "0.875 — the linear curve gave 0.75");
+    assert.equal(deriveComponents(baseEvidence({ ageRatio: 0 })).freshness, 1);
+    assert.equal(deriveComponents(baseEvidence({ ageRatio: 1 })).freshness, 0, "at the TTL it is 0");
     assert.equal(deriveComponents(baseEvidence({ ageRatio: 2 })).freshness, 0, "stale clamps to 0");
     assert.equal(deriveComponents(baseEvidence({ distinctActors: 15 })).independence, 1, "saturates at k=15");
     assert.equal(deriveComponents(baseEvidence({ distinctActors: 3 })).independence, 0.2);
@@ -160,7 +170,11 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     assert.deepEqual(input.value, { level: "busy" });
     assert.equal(input.components.agreement, 2 / 3);
     assert.equal(input.components.presence, 0.25, "strongest presence = P1");
-    assert.ok(input.components.freshness > 0.6 && input.components.freshness < 0.8, "fresh (15/45)");
+    const fr = input.components.freshness;
+    assert.ok(fr !== undefined && fr > 0.75 && fr < 0.85, `fresh (15/45 → 1 − (1/3)^1.5 ≈ 0.81), got ${fr}`);
+    assert.deepEqual(input.freshness, { ageSeconds: 15 * 60, ttlSeconds: 2700 }, "the (age, ttl) inputs travel with the input for the replay record");
+    assert.deepEqual(input.inputClaimVersions, [{ claim_id: "c1", updated_at: null, version: null, status: "active" }], "Table-17 lineage names the claim row; version fields null until 2274 columns are read");
+    assert.deepEqual(input.candidateLineage, { observations_total: 3, after_freshness: 3, after_consent: 3, freshness_extenders: 0 }, "§24 counts: no observation carries observed_at, so none can extend");
     // No group_key on these observations → distinctGroups is 0 (finite), not fabricated.
     // The gate then returns below_group_threshold rather than invalid_input.
     assert.equal(input.distinctGroups, 0, "no group_key → zero groups, never invented");
@@ -335,6 +349,45 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     assert.deepEqual(okInput.penalties, {}, "clear plurality + agreement → no conflict penalty");
   });
 
+  // ── I1: Table 16 — only a family-qualified observation EXTENDS the freshness clock ─
+  it("REFUSES to extend crowd.level when the anchoring person merely taps again; an independent person extends it", async () => {
+    // The anchor observation (a1, 30 min ago) is what the claim's observed_at
+    // was copied from. a1 taps again 5 min ago. Before I1 that re-tap moved the
+    // freshness clock; Table 16 says crowd level needs an INDEPENDENT
+    // reconfirmation, so the clock must stay at the anchor.
+    const anchorAt = new Date(NOW.getTime() - 30 * 60_000).toISOString();
+    const retap = new Date(NOW.getTime() - 5 * 60_000).toISOString();
+    const anchored: ClaimRow = { ...claim, observed_at: anchorAt };
+    const sameActor = [
+      { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: anchorAt, value: { level: "busy" } },
+      { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: retap, value: { level: "busy" } },
+    ];
+    const refused = await assembleClaimInput(
+      makeDb({ flags: {}, observations: sameActor, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] }) as any,
+      anchored, NOW,
+    );
+    assert.equal(refused.observedAt, anchorAt, "the same person re-tapping does NOT extend crowd level (Table 16: independent reconfirmation)");
+    assert.equal(refused.candidateLineage?.freshness_extenders, 0);
+    assert.equal(refused.distinctActors, 1, "the re-tap still counts as a person in the cohort — it just does not make the claim young");
+
+    // Same shape, but the second tap is a DIFFERENT person → independent → extends.
+    const independent = [sameActor[0], { ...sameActor[1], actor_id: "a2" }];
+    const extended = await assembleClaimInput(
+      makeDb({ flags: {}, observations: independent, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] }) as any,
+      anchored, NOW,
+    );
+    assert.equal(extended.observedAt, retap, "an independent reconfirmation extends the clock");
+    assert.equal(extended.candidateLineage?.freshness_extenders, 1);
+
+    // And a hearsay tip from a third person never extends anything, any family.
+    const hearsay = [sameActor[0], { ...sameActor[1], actor_id: "a3", source_class: "hearsay" }];
+    const unqualified = await assembleClaimInput(
+      makeDb({ flags: {}, observations: hearsay, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] }) as any,
+      anchored, NOW,
+    );
+    assert.equal(unqualified.observedAt, anchorAt, "hearsay is not a qualified source and cannot extend");
+  });
+
   // ── H3: the publication-delay anchor is the EARLIEST observation, not the newest ─
   it("keys the publication-delay anchor to the EARLIEST observation while freshness tracks the newest (H3)", async () => {
     const earliest = new Date(NOW.getTime() - 40 * 60_000).toISOString(); // 40 min ago
@@ -483,6 +536,32 @@ describe("intelProjection scheduler — runIntelProjectionPass (flag-gated, fail
     const snap = db._snaps.find((s: any) => s.id === "snap-tail");
     assert.ok(snap, "snapshot still present");
     assert.equal(snap.privacy_eligible, true, "snapshot stays servable (privacy_eligible untouched)");
+  });
+
+  // ── I1 / §24: completion status of a correction's invalidation targets ──────
+  it("expires an ORPHANED servable snapshot and emits intel.correction.invalidation.completed naming it (§24 completion status)", async () => {
+    // A servable snapshot whose claim has been superseded (a correction's
+    // invalidation target) — no live-eligible claim stands behind its key.
+    const orphan = { ...tailSnapshot(), id: "snap-orphan", claim_type: "crowd.level" };
+    const db = makeDb({
+      flags: { intel_claim_projection_crowd: true },
+      claims: [{ id: "c-old", subject_id: "subj-recon", zone_id: null, claim_type: "crowd.level", value: { level: "busy" }, status: "superseded", observed_at: OBSERVED }],
+      observations: [], confirmations: [], policies: [],
+      snapshots: [orphan],
+    });
+    const records: any[] = [];
+    const m = mock.method(logger, "info", (obj: unknown) => { records.push(obj); });
+    try {
+      const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+      assert.equal(r.reason, null);
+    } finally { m.mock.restore(); }
+    assert.ok(db._updates.some((u) => u.ids.includes("snap-orphan")), "the orphan is force-expired");
+    const done = records.find((r) => r?.event === "intel.correction.invalidation.completed");
+    assert.ok(done, "a structured completion record is emitted");
+    assert.deepEqual(done.snapshot_ids, ["snap-orphan"]);
+    assert.deepEqual(done.keys, [{ subject_id: "subj-recon", zone_id: "", claim_type: "crowd.level" }]);
+    assert.equal(done.expired, 1);
+    assert.ok(!JSON.stringify(done).includes("actor"), "keys and ids only — no actor in the completion log");
   });
 
   it("aborts reconciliation and expires NOTHING when a live-key page errors (partial read is fail-closed)", async () => {

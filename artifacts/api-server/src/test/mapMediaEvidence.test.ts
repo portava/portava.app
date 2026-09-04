@@ -20,6 +20,7 @@
  * appStorageUrlInfo, ownerFromPath, hasValidIntelConsent, clampObservedAt,
  * assembleClaimInput and scoreConfidence are all the shipping implementations.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -167,7 +168,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
     return b;
   }
 
-  return { from, _tables: tables, _writes: writes, _reads: reads };
+  return { from, _tables: tables, _writes: writes, _reads: reads } as unknown as SupabaseClient & { _tables: typeof tables; _writes: typeof writes; _reads: typeof reads };
 }
 
 function openDb(actors: string[] = [ACTOR], places: string[] = [PLACE]) {
