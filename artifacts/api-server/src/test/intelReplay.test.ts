@@ -11,7 +11,7 @@ import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { projectAndStore, PROJECTION_ALGORITHM_VERSION } from "../lib/intelProjection.js";
 import { replayVersion, replaySnapshotVersion, parseReplayRecord } from "../lib/intelReplay.js";
-import { SEED_FRESHNESS_POLICIES, invalidateFreshnessPolicyCache, FRESHNESS_CURVE_VERSION } from "../lib/freshnessPolicy.js";
+import { SEED_FRESHNESS_POLICIES, invalidateFreshnessPolicyCache, FRESHNESS_CURVE_VERSION, freshnessScore } from "../lib/freshnessPolicy.js";
 import { PRIVACY_THRESHOLD_V1, CLAIM_TYPES } from "../lib/intelContracts.js";
 
 const NOW = new Date("2026-08-22T12:00:00.000Z");
@@ -50,6 +50,11 @@ function client(opts: { readError?: boolean } = {}) {
   };
 }
 
+// The freshness component is DERIVED from the same curve the aggregator uses
+// (freshnessScore over the stored age/ttl), never hand-written: a hand value
+// asserts a shape the producer does not emit, and the replay would — correctly —
+// report it as freshness_component_mismatch.
+const FRESHNESS_INPUTS = { ageSeconds: 810, ttlSeconds: 2700 };
 const input = {
   claimType: "crowd.level",
   value: { level: "busy" },
@@ -57,9 +62,9 @@ const input = {
   distinctActors: PRIVACY_THRESHOLD_V1.minUniqueActors,
   distinctGroups: PRIVACY_THRESHOLD_V1.minIndependentGroups,
   maxGroupShare: PRIVACY_THRESHOLD_V1.maxSingleGroupShare,
-  components: { presence: 0.5, freshness: 0.7, independence: 1, sourceReliability: 0.5, evidenceQuality: 0.3, agreement: 0.5, specificity: 0.5 },
+  components: { presence: 0.5, freshness: freshnessScore(FRESHNESS_INPUTS.ageSeconds, FRESHNESS_INPUTS.ttlSeconds), independence: 1, sourceReliability: 0.5, evidenceQuality: 0.3, agreement: 0.5, specificity: 0.5 },
   penalties: { materialConflict: 0.2 },
-  freshness: { ageSeconds: 810, ttlSeconds: 2700 },
+  freshness: FRESHNESS_INPUTS,
   inputClaimVersions: [{ claim_id: "claim-1", updated_at: "2026-08-22T11:40:00.000Z", version: 2, status: "active" }],
 };
 
@@ -131,6 +136,17 @@ describe("intelReplay — a changed formula/algorithm version is REPORTED as div
     const rec = { ...v.confidence_components, freshness: { ...v.confidence_components.freshness, curve: "not-" + FRESHNESS_CURVE_VERSION } };
     const r = replayVersion({ ...v, confidence_components: rec });
     assert.deepEqual(r.reasons, ["freshness_curve_changed"]);
+  });
+
+  it("a freshness component that does not come from the stored (age, ttl) under the current curve is freshness_component_mismatch", async () => {
+    // A row whose component was produced by the OLD linear curve but stamped
+    // with the current curve tag: the replay recomputes 1 − (810/2700)^1.5 and
+    // finds the stored 0.7 (= 1 − 810/2700) does not match.
+    const v = await storedVersion();
+    const rec = { ...v.confidence_components, components: { ...v.confidence_components.components, freshness: 1 - 810 / 2700 } };
+    const r = replayVersion({ ...v, confidence_components: rec });
+    assert.equal(r.status, "diverged");
+    assert.ok(r.reasons.includes("freshness_component_mismatch"), r.reasons.join(","));
   });
 
   it("a tampered stored confidence is confidence_mismatch — same versions, different answer", async () => {

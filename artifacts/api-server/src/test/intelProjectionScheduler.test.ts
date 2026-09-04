@@ -105,10 +105,12 @@ function makeDb(cfg: {
 }
 
 describe("intelProjection aggregator — deriveComponents (conservative)", () => {
-  it("maps presence P0→0, P4→1; freshness = 1 − ageRatio; independence saturates at k", () => {
+  it("maps presence P0→0, P4→1; freshness = 1 − ageRatio^1.5 (spec §9); independence saturates at k", () => {
     assert.equal(deriveComponents(baseEvidence({ maxPresenceLevel: "P0" })).presence, 0);
     assert.equal(deriveComponents(baseEvidence({ maxPresenceLevel: "P4" })).presence, 1);
-    assert.equal(deriveComponents(baseEvidence({ ageRatio: 0.25 })).freshness, 0.75);
+    assert.equal(deriveComponents(baseEvidence({ ageRatio: 0.25 })).freshness, 1 - Math.pow(0.25, 1.5), "0.875 — the linear curve gave 0.75");
+    assert.equal(deriveComponents(baseEvidence({ ageRatio: 0 })).freshness, 1);
+    assert.equal(deriveComponents(baseEvidence({ ageRatio: 1 })).freshness, 0, "at the TTL it is 0");
     assert.equal(deriveComponents(baseEvidence({ ageRatio: 2 })).freshness, 0, "stale clamps to 0");
     assert.equal(deriveComponents(baseEvidence({ distinctActors: 15 })).independence, 1, "saturates at k=15");
     assert.equal(deriveComponents(baseEvidence({ distinctActors: 3 })).independence, 0.2);
@@ -167,7 +169,10 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     assert.deepEqual(input.value, { level: "busy" });
     assert.equal(input.components.agreement, 2 / 3);
     assert.equal(input.components.presence, 0.25, "strongest presence = P1");
-    assert.ok(input.components.freshness > 0.6 && input.components.freshness < 0.8, "fresh (15/45)");
+    assert.ok(input.components.freshness > 0.75 && input.components.freshness < 0.85, `fresh (15/45 → 1 − (1/3)^1.5 ≈ 0.81), got ${input.components.freshness}`);
+    assert.deepEqual(input.freshness, { ageSeconds: 15 * 60, ttlSeconds: 2700 }, "the (age, ttl) inputs travel with the input for the replay record");
+    assert.deepEqual(input.inputClaimVersions, [{ claim_id: "c1", updated_at: null, version: null, status: "active" }], "Table-17 lineage names the claim row; version fields null until 2274 columns are read");
+    assert.deepEqual(input.candidateLineage, { observations_total: 3, after_freshness: 3, after_consent: 3, freshness_extenders: 0 }, "§24 counts: no observation carries observed_at, so none can extend");
     // No group_key on these observations → distinctGroups is 0 (finite), not fabricated.
     // The gate then returns below_group_threshold rather than invalid_input.
     assert.equal(input.distinctGroups, 0, "no group_key → zero groups, never invented");
@@ -340,6 +345,45 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
       claim, NOW,
     );
     assert.deepEqual(okInput.penalties, {}, "clear plurality + agreement → no conflict penalty");
+  });
+
+  // ── I1: Table 16 — only a family-qualified observation EXTENDS the freshness clock ─
+  it("REFUSES to extend crowd.level when the anchoring person merely taps again; an independent person extends it", async () => {
+    // The anchor observation (a1, 30 min ago) is what the claim's observed_at
+    // was copied from. a1 taps again 5 min ago. Before I1 that re-tap moved the
+    // freshness clock; Table 16 says crowd level needs an INDEPENDENT
+    // reconfirmation, so the clock must stay at the anchor.
+    const anchorAt = new Date(NOW.getTime() - 30 * 60_000).toISOString();
+    const retap = new Date(NOW.getTime() - 5 * 60_000).toISOString();
+    const anchored: ClaimRow = { ...claim, observed_at: anchorAt };
+    const sameActor = [
+      { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: anchorAt, value: { level: "busy" } },
+      { actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: retap, value: { level: "busy" } },
+    ];
+    const refused = await assembleClaimInput(
+      makeDb({ flags: {}, observations: sameActor, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] }) as any,
+      anchored, NOW,
+    );
+    assert.equal(refused.observedAt, anchorAt, "the same person re-tapping does NOT extend crowd level (Table 16: independent reconfirmation)");
+    assert.equal(refused.candidateLineage?.freshness_extenders, 0);
+    assert.equal(refused.distinctActors, 1, "the re-tap still counts as a person in the cohort — it just does not make the claim young");
+
+    // Same shape, but the second tap is a DIFFERENT person → independent → extends.
+    const independent = [sameActor[0], { ...sameActor[1], actor_id: "a2" }];
+    const extended = await assembleClaimInput(
+      makeDb({ flags: {}, observations: independent, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] }) as any,
+      anchored, NOW,
+    );
+    assert.equal(extended.observedAt, retap, "an independent reconfirmation extends the clock");
+    assert.equal(extended.candidateLineage?.freshness_extenders, 1);
+
+    // And a hearsay tip from a third person never extends anything, any family.
+    const hearsay = [sameActor[0], { ...sameActor[1], actor_id: "a3", source_class: "hearsay" }];
+    const unqualified = await assembleClaimInput(
+      makeDb({ flags: {}, observations: hearsay, confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }] }) as any,
+      anchored, NOW,
+    );
+    assert.equal(unqualified.observedAt, anchorAt, "hearsay is not a qualified source and cannot extend");
   });
 
   // ── H3: the publication-delay anchor is the EARLIEST observation, not the newest ─
