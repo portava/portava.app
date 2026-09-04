@@ -171,6 +171,28 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
     reason: "Whether the outcome contradicted the served state. The Verification product may surface contradiction COUNTS (Table 28)." },
   { table: "intel_attributions", column: "scope_key", ownership: "portava_owned", personal: false,
     reason: "Portava's §15 scope bucket (city-level geography × family × band × mode × season) — a label, never a coordinate." },
+
+  // ── intel_scoped_trust (I4a, 2278) ────────────────────────────────────────
+  // "Internal Trust remains purpose-limited" (§15): every number here is about
+  // ONE person's reliability in ONE scope and never leaves at row level. The
+  // only public product is the read-only badge derivation (lib/intelScopedTrust
+  // deriveScopedBadges), which carries no number.
+  { table: "intel_scoped_trust", column: "actor_id", ownership: "restricted_no_redistribution", personal: true,
+    reason: "Identifies the contributor whose scoped reliability this is. Never redistributable." },
+  { table: "intel_scoped_trust", column: "scope_key", ownership: "portava_owned", personal: false,
+    reason: "Portava's §15 scope bucket — a label, never a coordinate." },
+  { table: "intel_scoped_trust", column: "trust", ownership: "restricted_no_redistribution", personal: true,
+    reason: "The internal, purpose-limited scoped trust number (§15). Public UI shows badges, never this value." },
+  { table: "intel_scoped_trust", column: "outcomes", ownership: "restricted_no_redistribution", personal: true,
+    reason: "A person's graded-outcome count in a scope — evidence-portfolio input, internal only." },
+  { table: "intel_scoped_trust", column: "successes", ownership: "restricted_no_redistribution", personal: true,
+    reason: "As per outcomes." },
+  { table: "intel_scoped_trust", column: "contradictions", ownership: "restricted_no_redistribution", personal: true,
+    reason: "As per outcomes — a per-person contradiction count; only claim-level aggregates may surface (Table 28)." },
+  { table: "intel_scoped_trust", column: "calibration_error", ownership: "restricted_no_redistribution", personal: true,
+    reason: "A person's calibration measure in a scope. Feeds the calibrated badge; the number stays internal." },
+  { table: "intel_scoped_trust", column: "calibration_samples", ownership: "restricted_no_redistribution", personal: true,
+    reason: "Denominator of calibration_error — same treatment." },
 ];
 
 /** Columns never considered for redistribution, so never classified. */
@@ -192,10 +214,9 @@ export const INTERNAL_COLUMNS: readonly string[] = [
   // scoped-trust application bookkeeping. Pure lineage, like superseded_by.
   "outcome_event_id",
   "algorithm_version",
-  "attribution_id",
   "last_attribution_id",
+  "last_attribution_at",
   "last_updated_at",
-  "applied_at",
 ];
 
 /** The intel tables this registry covers. */
@@ -203,7 +224,7 @@ export const COVERED_TABLES: readonly string[] = [
   "intel_observations", "intel_claims", "intel_evidence",
   "intel_confirmations", "intel_state_snapshots",
   // I4a (2277 / 2278).
-  "intel_attributions",
+  "intel_attributions", "intel_scoped_trust",
 ];
 
 /** May this field be redistributed at all? Fail-closed on an unknown field. */

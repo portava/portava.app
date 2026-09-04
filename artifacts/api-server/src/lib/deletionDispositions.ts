@@ -84,6 +84,13 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // not named on this table (their id stays on the canonical_events spine row,
   // whose retention 2120 governs).
   "intel_attributions",
+  // I4a scoped-trust fold (migration 2278, actor_id = the CONTRIBUTOR). Mutable
+  // derived state whose profiles cascade never fires under the tombstone, so it
+  // is deleted EXPLICITLY inside erase_intel_for_actor (re-created by 2278 as a
+  // superset of 2130's body) — the same declared-erasure RPC the worker already
+  // calls. Attribution rows for the actor are deleted there too, so nothing
+  // waits on a cascade.
+  "intel_scoped_trust",
   "comment_likes",
   "devices",
   "event_saves",
@@ -446,6 +453,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // I4a attribution ledger, added by migration 2277 (post-baseline). Classified
   // in ERASED_BY_CASCADE above.
   "intel_attributions",
+  // I4a scoped-trust fold, added by migration 2278 (post-baseline). Classified
+  // in ERASED_BY_CASCADE above.
+  "intel_scoped_trust",
   // IG mission candidates, added by migration 2167 (post-baseline). Classified
   // in ANONYMISED_FK_NULLED (accepted_by is NULLed, the row is kept).
   "intel_mission_candidates",

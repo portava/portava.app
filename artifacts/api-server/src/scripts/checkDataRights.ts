@@ -46,7 +46,10 @@ export function columnsFromMigration(sql: string): Map<string, string[]> {
     const cols: string[] = [];
     for (const line of body.split("\n")) {
       const c = line.match(/^\s{2}([a-z_][a-z0-9_]*)\s+[a-z]/i);
-      if (c && !/^CONSTRAINT/i.test(c[1])) cols.push(c[1]);
+      // Table-level constraint lines (CONSTRAINT …, PRIMARY KEY (…), UNIQUE (…),
+      // FOREIGN KEY (…), CHECK (…)) are not columns — 2278's composite PK is the
+      // first intel table to declare one.
+      if (c && !/^(CONSTRAINT|PRIMARY|UNIQUE|FOREIGN|CHECK|EXCLUDE)$/i.test(c[1])) cols.push(c[1]);
     }
     out.set(table, cols);
   }
