@@ -135,6 +135,8 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
     reason: "Portava's TTL policy applied to the snapshot. Redistributing live state without its expiry invites a consumer to cache it indefinitely." },
   { table: "intel_state_snapshots", column: "conflict_state", ownership: "derived_aggregate", personal: false,
     reason: "§10 material-conflict state (none/minor/material) of the projected cohort. A consumer MUST see it: spec §10 forbids high-confidence external output while reports materially differ, and the state is the only honest way to say so. Counts-only by construction — it names no side, no size, no contributor." },
+  { table: "intel_state_snapshots", column: "source_class", ownership: "derived_aggregate", personal: false,
+    reason: "IG-05 provenance class of the projected state (live / emerging / typical historical-pattern / official). A consumer MUST see it to render the §5 degradation order ('Live' vs 'Typical' vs 'Unknown') honestly. Derived from the cohort or the historical-pattern aggregate, never from one contributor; names no person." },
 
   // ── intel_evidence / intel_confirmations ──────────────────────────────────
   { table: "intel_evidence", column: "actor_id", ownership: "restricted_no_redistribution", personal: true, reason: "Identifies the contributor." },
