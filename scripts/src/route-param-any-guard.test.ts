@@ -20,6 +20,14 @@
  * from the params object. `Array.isArray` is used ~129 times in this app for
  * ordinary reasons; none of those is the defect and none of them is flagged.
  *
+ * WHY IT LIVES IN scripts/ AND NOT BESIDE THE CODE. This is a repo-wide static
+ * analysis pass over another workspace's tree, which is exactly what its
+ * siblings here do (dead-routes, workflow-paths, routes-guard, cross-tree-paths).
+ * It was first written under travel-buddy-standalone/src and the cross-tree-path
+ * guard rejected it, correctly: that guard requires every readFileSync argument
+ * in that tree to be statically traceable, and a directory walk never can be.
+ * The guard was right about the file's location, not about the walk.
+ *
  * LIMITS, stated rather than implied:
  *   - A params value first assigned to an intermediate local and THEN passed
  *     through the idiom is not detected; the alias is not followed.
@@ -37,7 +45,9 @@ import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import ts from 'typescript';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+// scripts/src/<this file> -> repo root
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const ROOT = join(REPO_ROOT, 'travel-buddy-standalone');
 const ROOTS = ['app', 'src'];
 const PARAM_HOLDERS = new Set(['params', 'searchParams', 'query', 'routeParams', 'localParams']);
 
