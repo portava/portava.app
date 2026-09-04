@@ -93,6 +93,25 @@ describe("FollowingFeedService", () => {
     assert.deepEqual(out.items.map((x) => x.canonicalObjectId), ["a", "b"]);
   });
 
+  it("does not claim caughtUp on a mid-tail page when the fetch was capped (D10)", () => {
+    // A mid-tail page: the gated window ran out of after-cursor items, but the
+    // underlying fetch was CAPPED (reachedEnd=false) — older eligible posts remain
+    // unfetched. buildFollowing must NOT report "you're all caught up".
+    const cursor = { publishedAt: "2026-09-01T03:00:00Z", id: "post-149" };
+    const window = [p("post-150", "2026-09-01T02:00:00Z")]; // few items after the cursor in THIS window
+    const capped = buildFollowing(window, { limit: 20, cursor, reachedEnd: false });
+    assert.equal(capped.caughtUp, false, "a capped fetch window never masquerades as caught up");
+
+    // Same page shape but the fetch reached the TRUE end (short read) ⇒ genuinely caught up.
+    const ended = buildFollowing(window, { limit: 20, cursor, reachedEnd: true });
+    assert.equal(ended.caughtUp, true, "the true end (short fetch) IS caught up");
+
+    // Back-compat: callers that fetch the whole set (no reachedEnd) still report
+    // caughtUp on the last page.
+    const whole = buildFollowing(window, { limit: 20, cursor });
+    assert.equal(whole.caughtUp, true, "reachedEnd unspecified ⇒ !hasMore suffices");
+  });
+
   it("round-trips the cursor codec and rejects garbage", () => {
     const c = { publishedAt: "2026-09-01T04:00:00Z", id: "b" };
     assert.deepEqual(decodeFollowingCursor(encodeFollowingCursor(c)), c);

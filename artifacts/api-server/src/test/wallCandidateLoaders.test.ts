@@ -138,6 +138,60 @@ describe("loadPostcardCandidates (spec §10)", () => {
     assert.equal(loaded.candidates.length, 0);
   });
 
+  it("freezes to the For You snapshot: a postcard created after the horizon is excluded (D5)", async () => {
+    // A fake that HONORS `.lte('created_at', X)` on the posts query so the freeze
+    // horizon is actually exercised (the generic tableClient treats lte as a no-op).
+    function snapshotPostsClient(posts: any[]) {
+      const tables: Record<string, any[]> = {
+        posts,
+        post_media: [],
+        profiles: [{ id: "author-1", display_name: "Aya", username: "aya", account_status: "active" }],
+        places: [],
+      };
+      function builder(table: string) {
+        let lteCreatedAt: string | null = null;
+        const b: any = {
+          select: () => b,
+          eq: () => b,
+          in: () => b,
+          or: () => b,
+          order: () => b,
+          limit: () => b,
+          gte: () => b,
+          gt: () => b,
+          lte: (c: string, v: string) => {
+            if (c === "created_at") lteCreatedAt = v;
+            return b;
+          },
+          maybeSingle: () => Promise.resolve({ data: (tables[table] ?? [])[0] ?? null, error: null }),
+          then: (onF: any, onR: any) => {
+            let rows = tables[table] ?? [];
+            if (table === "posts" && lteCreatedAt) rows = rows.filter((r) => String(r.created_at) <= lteCreatedAt!);
+            return Promise.resolve({ data: rows, error: null }).then(onF, onR);
+          },
+        };
+        return b;
+      }
+      return { from: builder };
+    }
+
+    const base = {
+      author_id: "author-1", trip_id: null, content: "lanterns", visibility: "public", status: "active",
+      canonical_place_id: null, add_to_passport: true, has_video: false, media_count: 0,
+      category: "culture", location_city: "Hoi An", location_country: "VN", save_count: 0,
+    };
+    const posts = [
+      { ...base, id: "pc-old", created_at: "2026-09-01T00:00:00Z", published_at: "2026-09-01T00:00:00Z" },
+      { ...base, id: "pc-new", created_at: "2026-09-10T00:00:00Z", published_at: "2026-09-10T00:00:00Z" },
+    ];
+    // With a horizon between the two, only the pre-horizon postcard is returned.
+    const frozen = await loadPostcardCandidates(snapshotPostsClient(posts), "for_you", FOLLOWED, { snapshotAtIso: "2026-09-05T00:00:00Z" });
+    assert.deepEqual(frozen.candidates.map((c) => c.canonicalObjectId), ["pc-old"], "the post-snapshot postcard is frozen out");
+    // Without a horizon, both surface.
+    const live = await loadPostcardCandidates(snapshotPostsClient(posts), "for_you", FOLLOWED);
+    assert.deepEqual(live.candidates.map((c) => c.canonicalObjectId).sort(), ["pc-new", "pc-old"], "no horizon ⇒ both surface");
+  });
+
   it("postcards run the same visibility gate: a private one from another author is dropped", async () => {
     const priv = [{ ...POSTCARDS[0], id: "pc-priv", author_id: "author-2", visibility: "private", canonical_place_id: null }];
     const loaded = await loadPostcardCandidates(
@@ -258,6 +312,53 @@ describe("loadSharedMomentCandidates (spec §12)", () => {
     assert.ok(pids.includes("owner-1") && pids.includes("friend-1"), "co-members surfaced");
     assert.ok(!pids.includes(VIEWER), "the viewer is not a participant label");
     assert.ok(!pids.includes("blocked-1"), "a blocked co-member is filtered out");
+  });
+
+  it("drops a shared moment whose OWNER is suspended/banned (D4 — real status, not hardcoded 'active')", async () => {
+    // Owner profile is suspended. Before the fix the loader hardcoded
+    // authorAccountStatus:'active', so passesEligibility could never drop it.
+    const suspendedOwner = tableClient({
+      feature_flags: (ctx) => [{ enabled: !!ON_FLAGS[String(ctx.eqs["flag"])] }],
+      shared_moment_memberships: (ctx) =>
+        ctx.ins["moment_id"] ? MEMBERS : [{ role: "member", status: "accepted", shared_moments: MOMENT }],
+      blocks: [],
+      profiles: [
+        { id: "owner-1", display_name: "Owner", username: "own", account_status: "suspended" },
+        { id: "friend-1", display_name: "Friend", username: "fr", account_status: "active" },
+      ],
+      places: PLACES,
+    });
+    const loaded = await loadSharedMomentCandidates(suspendedOwner, VIEWER);
+    assert.equal(loaded.candidates.length, 1, "loader emits it; the eligibility gate decides");
+    assert.equal(
+      loaded.candidates[0].authorAccountStatus,
+      "suspended",
+      "the real owner status is threaded, not a hardcoded 'active'",
+    );
+    // No block staged — the ONLY reason to drop is the suspended owner (eligibility).
+    const projected = await projectObjects(blocksClient(), loaded.candidates, viewerCtx());
+    assert.equal(projected.length, 0, "passesEligibility drops the suspended owner's moment");
+  });
+
+  it("freezes to the For You snapshot: a Moment created after the horizon is excluded (D5)", async () => {
+    const lateMoment = { ...MOMENT, id: "m-late", created_at: "2026-09-10T00:00:00Z" };
+    const mkClient = () =>
+      tableClient({
+        feature_flags: (ctx) => [{ enabled: !!ON_FLAGS[String(ctx.eqs["flag"])] }],
+        shared_moment_memberships: (ctx) =>
+          ctx.ins["moment_id"]
+            ? [{ moment_id: "m-late", user_id: VIEWER, status: "accepted" }]
+            : [{ role: "member", status: "accepted", shared_moments: lateMoment }],
+        blocks: [],
+        profiles: PROFILES,
+        places: PLACES,
+      });
+    // Snapshot BEFORE the moment's created_at ⇒ it must not enter mid-pagination.
+    const frozen = await loadSharedMomentCandidates(mkClient(), VIEWER, { snapshotAtIso: "2026-09-05T00:00:00Z" });
+    assert.equal(frozen.candidates.length, 0, "a post-snapshot moment is excluded from the frozen set");
+    // No horizon ⇒ the moment surfaces normally.
+    const live = await loadSharedMomentCandidates(mkClient(), VIEWER);
+    assert.equal(live.candidates.length, 1, "without a horizon the moment surfaces");
   });
 
   it("a moment owned by a blocked user is dropped by the gate", async () => {
