@@ -1,5 +1,3 @@
-<title>Map §22 media evidence — seam state</title>
-
 # §22 media evidence — the seam is half-wired, and the missing half is a surface, not a line
 
 **Date:** 2026-09-03
