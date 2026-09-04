@@ -350,6 +350,17 @@ const CLASSIFIED = [
       'already-dispatched commitment are intentionally ungated. Missions are non-cash (table CHECK cash_amount=0).',
   },
   {
+    flag: 'intel_presence_verification_enabled',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` lets services/intel/PresenceVerifier confirm a live-grade presence level (P2 geofence+dwell/' +
+      'interaction, P3 +receipt, P4 +mission nonce) from SERVER-HELD evidence, read once per live-grade capture ' +
+      'by IntelCaptureService.resolvePresenceForCapture. False-on-error is correct and is the design: OFF ' +
+      'means the pre-2276 clamp (every P2+ claim stored as P1) and no verifier read or audit write at all — ' +
+      'spec §30 Table 38 "presence off by default". Verification only ever LOWERS a claim; an unreadable flag ' +
+      'therefore leaves the system at its most conservative, never at a higher level.',
+  },
+  {
     flag: 'intel_coverage',
     kind: 'CAPABILITY',
     reason:
