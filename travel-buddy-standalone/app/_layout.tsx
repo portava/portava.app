@@ -59,6 +59,13 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { reportCrash } from '@/src/lib/crashReporter';
 import { useCryptoInit } from '../src/hooks/useCryptoInit';
 import { supabase } from '../src/lib/supabase';
+import { freshToken } from '../src/services/apiToken';
+import { getIntelConsent, hasValidConsent } from '../src/services/intelConsent';
+import {
+  setWallAnalyticsSink,
+  setRealWorldOutcomeConsent,
+} from '../src/features/wall/services/wallAnalytics';
+import { createWallAnalyticsTransport } from '../src/features/wall/services/wallAnalyticsTransport';
 
 /**
  * Session-aware root crash boundary. Sits inside SessionProvider so it can
@@ -86,6 +93,25 @@ function CompassFrontloadSetup() {
 
 function CryptoSetup() {
   useCryptoInit();
+  return null;
+}
+
+/**
+ * Installs the Wall's real §32 analytics transport once at boot, so the Wall's
+ * client-only events reach the pipeline instead of the dev-only console sink.
+ * Also loads the server-authoritative Intelligence-Contribution consent snapshot
+ * that gates real-world-outcome signals (fail-closed until it resolves).
+ */
+function WallAnalyticsSetup() {
+  useEffect(() => {
+    setWallAnalyticsSink(
+      createWallAnalyticsTransport({
+        baseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? '',
+        getToken: freshToken,
+      }),
+    );
+    void getIntelConsent().then((state) => setRealWorldOutcomeConsent(hasValidConsent(state)));
+  }, []);
   return null;
 }
 
@@ -214,6 +240,7 @@ export default function RootLayout() {
                       <PushSetup />
                       <CryptoSetup />
                       <CompassFrontloadSetup />
+                      <WallAnalyticsSetup />
                       <StatusBar style="dark" />
                       <Stack
                         screenOptions={{

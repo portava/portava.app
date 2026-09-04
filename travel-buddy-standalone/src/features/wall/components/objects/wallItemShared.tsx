@@ -27,12 +27,14 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon, aspect } from '../../../../theme/tokens.ts';
 import {
+  recordRealWorldOutcome,
   trackAction,
   trackEngagement,
   trackFollowFromFeed,
   trackHandoff,
   trackNotInterested,
   type WallHandoffSurface,
+  type WallRealWorldOutcome,
 } from '../../services/wallAnalytics.ts';
 import { askCompassFromWall } from '../../services/wallCompass.ts';
 import { sendAction, type WallActionEvent } from '../../services/wallApi.ts';
@@ -148,6 +150,26 @@ export function handoffSurfaceFor(type: WallActionType): WallHandoffSurface | nu
   }
 }
 
+/**
+ * The coarse real-world outcome a bridge action represents, or null when the
+ * action is not a physical-world commitment (spec §32). Only the physical
+ * commitments — seeing the place, planning it into a Trip, or booking a human —
+ * count as a real-world outcome; in-app navigation (open_map) and interpretation
+ * (ask_compass) do not, so they never emit an outcome signal.
+ */
+export function realWorldOutcomeFor(type: WallActionType): WallRealWorldOutcome | null {
+  switch (type) {
+    case 'see_place':
+      return 'see_place';
+    case 'add_to_trip':
+      return 'add_to_trip';
+    case 'book_buddy':
+      return 'book_buddy';
+    default:
+      return null;
+  }
+}
+
 export function runWallAction(action: WallAction, projection: WallProjection): void {
   trackAction(projection, actionEventFor(action.type));
 
@@ -166,6 +188,12 @@ export function runWallAction(action: WallAction, projection: WallProjection): v
   // Record a Map/Place/Trip/Buddy bridge (§32) before routing.
   const surface = handoffSurfaceFor(action.type);
   if (surface) trackHandoff(projection, surface);
+
+  // A physical-world commitment (see place / add to Trip / book Buddy) is also a
+  // real-world OUTCOME signal — recorded ONLY under valid contribution consent
+  // (§32); recordRealWorldOutcome enforces the consent gate and drops otherwise.
+  const outcome = realWorldOutcomeFor(action.type);
+  if (outcome) recordRealWorldOutcome(projection, outcome);
 
   const route = resolveActionRoute(action, projection);
   if (route) {
