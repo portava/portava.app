@@ -13,7 +13,9 @@ import {
   rankForYou,
   decodeForYouCursor,
   encodeForYouCursor,
+  WALL_RANK_VERSION,
   type ForYouCursor,
+  type WallRankSignals,
   type WallRankViewer,
 } from "../services/wall/WallRankingService.js";
 import type { WallProjection } from "../lib/wallProjection.js";
@@ -132,6 +134,147 @@ describe("WallRankingService For You cursor", () => {
     assert.equal(
       decodeForYouCursor(Buffer.from(JSON.stringify({ ...c, session: "bad" })).toString("base64url")),
       null,
+    );
+  });
+
+  // ── The evaluation instant (spec §28) ──────────────────────────────────────
+  //
+  // Ranking is not a pure function of the candidate set: freshness decays
+  // continuously, so WHEN a page is scored changes the order it produces. The
+  // route already freezes the candidate set to the cursor's `snapshotAt`; these
+  // prove the ranker is handed that same instant, so one session's pages are
+  // scored at one moment rather than at three successive wall clocks.
+  //
+  // The clock is stubbed rather than waited on: the production failure is a
+  // millisecond of real drift between two calls, which is unreproducible by
+  // waiting and is exactly what made the stability test above flaky on CI
+  // (it passed 30/30 locally and failed once in CI with a/c/b for a/b/c).
+
+  const REAL_NOW = Date.now;
+  const SNAPSHOT = "2026-09-01T12:00:00.000Z";
+
+  /** Run one page with `clock` installed as Date.now, then restore it. */
+  async function orderUnderClock(
+    clock: () => number,
+    cursor: ForYouCursor,
+    items: WallProjection[],
+    signals?: Map<string, WallRankSignals>,
+  ): Promise<string[]> {
+    Date.now = clock;
+    try {
+      const r = await rankForYou(null, items, VIEWER, {
+        limit: 50,
+        cursor,
+        signals,
+        rankOverrides: RANK_OVERRIDES,
+      });
+      return r.items.map((x) => x.canonicalObjectId);
+    } finally {
+      Date.now = REAL_NOW;
+    }
+  }
+
+  function cursorAt(snapshotAt: string): ForYouCursor {
+    return {
+      session: "11111111-2222-4333-8444-555555555555",
+      version: WALL_RANK_VERSION,
+      offset: 0,
+      snapshotAt,
+    };
+  }
+
+  it("scores one session at ONE instant, not once per item (millisecond drift)", async () => {
+    // `b`/`c` and `d`/`e` share a publish time, so at any single instant they are
+    // exact score ties and the session-seeded tiebreak decides. Reading the clock
+    // per item breaks those ties by whichever side of a millisecond boundary each
+    // item landed on — which is the real CI failure, reproduced deterministically
+    // by a clock that ticks once per read.
+    const cursor = cursorAt(SNAPSHOT);
+    const t0 = Date.parse(SNAPSHOT);
+
+    const frozen = await orderUnderClock(() => t0, cursor, corpus());
+    let tick = t0;
+    const ticking = await orderUnderClock(() => tick++, cursor, corpus());
+
+    assert.deepEqual(
+      ticking,
+      frozen,
+      "a clock that advances mid-ranking must not reorder the page",
+    );
+  });
+
+  it("scores one session at its snapshot, not at the wall clock", async () => {
+    // A score crossing, not a tie: `vintage` is older but carries the engagement
+    // signals, so freshness alone puts `fresh` first — until enough time passes
+    // that the decayed freshness gap falls below the quality gap. Which side of
+    // that crossing a page lands on must be decided by the session's snapshot,
+    // so page 2 sees the same world as page 1.
+    const items = [
+      p("vintage", "2026-08-01T12:00:00.000Z"),
+      p("fresh", "2026-09-01T11:00:00.000Z"),
+    ];
+    const signals = new Map<string, WallRankSignals>([
+      ["vintage", {
+        completeness: 1,
+        positiveReviewRate: 1,
+        saveCount: 40,
+        shareCount: 20,
+        commentCount: 30,
+        impressionCount: 500,
+        uniqueViewerCount: 400,
+      }],
+    ]);
+    const cursor = cursorAt(SNAPSHOT);
+    const t0 = Date.parse(SNAPSHOT);
+
+    const atSnapshot = await orderUnderClock(() => t0, cursor, items, signals);
+    const muchLater = await orderUnderClock(
+      () => t0 + 30 * 86_400_000,
+      cursor,
+      items,
+      signals,
+    );
+
+    assert.deepEqual(
+      muchLater,
+      atSnapshot,
+      "the same session must produce the same order whenever its pages are fetched",
+    );
+    // Guards the assertion above against passing vacuously: this corpus really
+    // does have an order to get wrong.
+    assert.deepEqual(atSnapshot, ["fresh", "vintage"]);
+  });
+
+  it("a LATER snapshot ranks the same corpus differently (the instant is read)", async () => {
+    // Positive control for the two tests above: they would also pass if the
+    // ranker had simply stopped depending on time. Two sessions differing ONLY
+    // in `snapshotAt`, scored under one frozen wall clock, must disagree — which
+    // is only possible if `snapshotAt` is what the ranker evaluates at.
+    const items = [
+      p("vintage", "2026-08-01T12:00:00.000Z"),
+      p("fresh", "2026-09-01T11:00:00.000Z"),
+    ];
+    const signals = new Map<string, WallRankSignals>([
+      ["vintage", {
+        completeness: 1,
+        positiveReviewRate: 1,
+        saveCount: 40,
+        shareCount: 20,
+        commentCount: 30,
+        impressionCount: 500,
+        uniqueViewerCount: 400,
+      }],
+    ]);
+    const frozen = () => Date.parse(SNAPSHOT);
+    const later = new Date(Date.parse(SNAPSHOT) + 30 * 86_400_000).toISOString();
+
+    assert.deepEqual(
+      await orderUnderClock(frozen, cursorAt(SNAPSHOT), items, signals),
+      ["fresh", "vintage"],
+    );
+    assert.deepEqual(
+      await orderUnderClock(frozen, cursorAt(later), items, signals),
+      ["vintage", "fresh"],
     );
   });
 });
