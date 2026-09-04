@@ -27,6 +27,8 @@ import { PRIVACY_THRESHOLD_V1, PILOT_CLAIMABLE_MODERATION_STATES, CLAIM_TYPES } 
 import { getPolicy, freshnessFromRatio, mayExtendFreshness, isQualifyingExtensionSource } from "./freshnessPolicy.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { observationsHaveEligibleMediaEvidence } from "./media/mediaEvidenceLink.js";
+import { assessConflict, type ConflictAssessment, type ConflictVote } from "./intelConflict.js";
+import { clusterByIndependence, type IndependenceObservation } from "./intelIndependence.js";
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
@@ -169,30 +171,69 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   const freshObs = freshObsAll.filter((o) => o.actor_id && consentedActors.has(o.actor_id));
   const distinctActors = new Set(freshObs.map((o) => o.actor_id)).size;
 
-  // Independent-group signal (V1). group_key is a shared token per Trip Crew/party
-  // and per-actor for a solo observer; NULL means "no verifiable independent group"
-  // (a non-crew "with others" answer, or a pre-signal row) and earns ZERO group
-  // credit — it counts as a person above but never as a group. We never infer a
-  // group from a bare actor. distinctGroups is the count of DISTINCT non-null keys;
-  // maxGroupShare is ACTOR-based (distinct actors per group / total grouped actors)
-  // so one prolific reporter cannot make a single group look larger than it is.
-  const groupActors = new Map<string, Set<string>>();
-  const groupedActorUnion = new Set<string>();
-  for (const o of freshObs) {
-    if (o.group_key == null || o.group_key === "") continue;
-    let set = groupActors.get(o.group_key);
-    if (!set) { set = new Set(); groupActors.set(o.group_key, set); }
-    if (o.actor_id) { set.add(o.actor_id); groupedActorUnion.add(o.actor_id); }
+  // Independence evidence (§11 / Table 30). Read the media/source artifacts
+  // attached to the fresh observations so coordinated reports collapse into one
+  // cluster before they can count as independent corroboration. SECURITY: this
+  // NEVER selects intel_evidence.reference — a raw storage key for unmoderated
+  // contributor media (mapMediaEvidence's "nobody selects reference" invariant).
+  // Shared media is keyed by the TYPED media_asset_id FK (2255) or a content hash
+  // carried in detail; common source by the feed identifier in detail. None of
+  // these are contributor bytes and none leave the projection (they only cluster
+  // reporters). Fail-soft: a query error leaves the maps empty, so clustering
+  // falls back to group_key + synchronized behaviour — it can never invent
+  // independence, only fail to detect it.
+  const obsIds = freshObs.map((o) => o.id).filter(Boolean);
+  const mediaByObs = new Map<string, Set<string>>();
+  const sourceByObs = new Map<string, Set<string>>();
+  if (obsIds.length > 0) {
+    const { data: evidence } = await sc
+      .from("intel_evidence")
+      .select("observation_id, evidence_kind, media_asset_id, detail")
+      .in("observation_id", obsIds);
+    for (const e of ((evidence as any[]) ?? [])) {
+      const oid = e.observation_id;
+      if (!oid) continue;
+      const detail = e.detail && typeof e.detail === "object" ? (e.detail as Record<string, unknown>) : {};
+      // A shared MEDIA asset is keyed by its typed asset id (a re-post of the same
+      // asset shares it) or a content hash in detail — never the storage key.
+      const contentHash = [detail.content_hash, detail.contentHash, detail.hash, detail.sha256]
+        .find((h) => typeof h === "string" && h.length > 0) as string | undefined;
+      if (["photo", "receipt", "sensor", "video"].includes(e.evidence_kind)) {
+        const assetKey = (typeof e.media_asset_id === "string" && e.media_asset_id.length > 0
+          ? `asset:${e.media_asset_id}` : null) ?? (contentHash ? `hash:${contentHash}` : null);
+        if (assetKey) { let s = mediaByObs.get(oid); if (!s) { s = new Set(); mediaByObs.set(oid, s); } s.add(assetKey); }
+      }
+      // A COMMON SOURCE is the official feed / partner-API identifier carried in
+      // detail (never the raw reference).
+      if (["official_feed", "partner_api"].includes(e.evidence_kind)) {
+        const feed = [detail.feed, detail.source, detail.source_label, detail.source_id]
+          .find((r) => typeof r === "string" && r.length > 0) as string | undefined;
+        if (feed) { let s = sourceByObs.get(oid); if (!s) { s = new Set(); sourceByObs.set(oid, s); } s.add(feed); }
+      }
+    }
   }
-  const distinctGroups = groupActors.size;
-  let maxGroupActors = 0;
-  for (const set of groupActors.values()) if (set.size > maxGroupActors) maxGroupActors = set.size;
-  // Denominator is the DISTINCT grouped actors (the union), NOT the sum of per-group
-  // sizes: one actor who belongs to several crews must not dilute the dominant
-  // group's share. So a group that holds every grouped actor reads as share 1.0 →
-  // single_group_dominates. Always finite (0 when no grouped observations) so the
-  // gate returns an accurate below_group_threshold, never invalid_input.
-  const maxGroupShare = groupedActorUnion.size > 0 ? maxGroupActors / groupedActorUnion.size : 0;
+
+  // Independent-group signal (V1 + §11 clustering). Collapse coordinated reports
+  // (shared crew token, shared media asset, common feed, or unusually synchronized
+  // identical values) into one cluster BEFORE counting independent groups, so a
+  // handful of copies cannot manufacture consensus (AT-04). A cluster earns a
+  // "verified group" seat only when it carries a non-null group_key; an unattested
+  // solo actor counts as a person but never as an independent group (unchanged
+  // rule). distinctGroups/maxGroupShare are read off the merged clusters — both
+  // can only ever shrink the group count / raise the dominant share (stricter).
+  const independenceObs: IndependenceObservation[] = freshObs
+    .filter((o) => o.actor_id)
+    .map((o) => ({
+      actorId: o.actor_id as string,
+      groupKey: o.group_key == null || o.group_key === "" ? null : String(o.group_key),
+      valueKey: stableValueKey(o.value),
+      observedAtMs: o.observed_at ? new Date(o.observed_at).getTime() : Number.NaN,
+      mediaRefs: [...(mediaByObs.get(o.id) ?? [])],
+      sourceRefs: [...(sourceByObs.get(o.id) ?? [])],
+    }));
+  const independence = clusterByIndependence(independenceObs);
+  const distinctGroups = independence.distinctGroups;
+  const maxGroupShare = independence.maxGroupShare;
   const maxPresenceLevel = freshObs.reduce(
     (m, o) => ((PRESENCE_STRENGTH[o.presence_level] ?? 0) > (PRESENCE_STRENGTH[m] ?? 0) ? o.presence_level : m),
     "P0",
@@ -220,12 +261,18 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   // (already consent-filtered), a withdrawn contributor's value cannot win. Fall
   // back to the anchor's value when the cohort supplies no value or has no clear
   // winner (a tie for the lead) — never invent a value the cohort did not give.
-  const latestValueByActor = new Map<string, { value: unknown; at: number }>();
+  const latestValueByActor = new Map<string, { value: unknown; at: number; groupKey: string | null }>();
   for (const o of freshObs) {
     if (o.value === undefined || o.actor_id == null) continue;
     const at = o.observed_at ? new Date(o.observed_at).getTime() : 0;
     const prev = latestValueByActor.get(o.actor_id);
-    if (!prev || at >= prev.at) latestValueByActor.set(o.actor_id, { value: o.value, at });
+    if (!prev || at >= prev.at) {
+      latestValueByActor.set(o.actor_id, {
+        value: o.value,
+        at,
+        groupKey: o.group_key == null || o.group_key === "" ? null : String(o.group_key),
+      });
+    }
   }
   const valueVotes = new Map<string, { value: unknown; count: number }>();
   for (const { value } of latestValueByActor.values()) {
@@ -383,6 +430,32 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     after_consent: freshObs.length,
     freshness_extenders: freshnessExtenders,
   };
+  // ── Material conflict (§10, AT-07) — lib/intelConflict ─────────────────────
+  // One vote per consented actor (their most recent value), weighted by
+  // INDEPENDENCE CLUSTER: a shared group_key is one cluster and carries a
+  // verifiable identity (weight 1); an actor with no group_key is their own
+  // "unclear" cluster (weight 0.5) — they can never be inferred into someone
+  // else's party, and they never earn full independent weight either. The
+  // predicate then needs distant values, qualifying weight on BOTH sides, and
+  // overlapping observation windows before it says 'material'. This runs over
+  // the same freshObs cohort as everything above, so a withdrawn or moderated
+  // contributor cannot manufacture a conflict.
+  // Cluster ids come from the SAME independence clustering that fed distinctGroups
+  // (shared media / common source / synchronized behaviour, not group_key alone),
+  // so three copied reports are one side-cluster of weight 1 — they cannot inflate
+  // a side past CONFLICT_MIN_WEIGHT (AT-04). `independent` is the cluster's
+  // attestation: a merged copy-cluster with no group_key is 'unclear' (0.5).
+  const conflictVotes: ConflictVote[] = [];
+  for (const [actorId, v] of latestValueByActor) {
+    conflictVotes.push({
+      actorId,
+      clusterId: independence.clusterForUnit(v.groupKey, actorId),
+      independent: independence.attestedForUnit(v.groupKey, actorId),
+      value: v.value,
+      observedAt: new Date(v.at).toISOString(),
+    });
+  }
+  const conflict: ConflictAssessment = assessConflict({ claimType: claim.claim_type, ttlSeconds: ttl, votes: conflictVotes });
 
   const evidence: ClaimEvidence = {
     distinctActors,
@@ -393,9 +466,10 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     sourceClass,
     ageRatio,
     // Reachable now: either the frozen claim status (still honoured) OR a
-    // genuinely disagreeing live cohort. Before this the flag was dead, because
-    // nothing ever writes status='conflicting'.
-    conflicting: claim.status === "conflicting" || cohortConflicting,
+    // genuinely disagreeing live cohort (a tie at the top, or ≥half disagree
+    // confirmations) OR a MATERIAL conflict under the §10 predicate. The penalty
+    // only ever adds; a material conflict can never raise confidence.
+    conflicting: claim.status === "conflicting" || cohortConflicting || conflict.state === "material",
   };
 
   return {
@@ -420,5 +494,9 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     freshness: { ageSeconds, ttlSeconds: ttl },
     inputClaimVersions,
     candidateLineage,
+    // §10 conflict state, persisted on the snapshot (intel_state_snapshots.
+    // conflict_state, migration 2275) so the read path can suppress the strong
+    // Live label and surface "Reports differ" without recomputing the cohort.
+    conflictState: conflict.state,
   };
 }

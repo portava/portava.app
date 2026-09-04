@@ -57,6 +57,7 @@ import {
 import { evaluatePrivacy, type PrivacyDecision, type SuppressionReason } from "./privacyGate.js";
 import { expiresAt as policyExpiresAt, FRESHNESS_CURVE_VERSION } from "./freshnessPolicy.js";
 import { LIVE_ELIGIBLE_CLAIM_STATUSES } from "./intelContracts.js";
+import type { ConflictState } from "./intelConflict.js";
 
 /**
  * The projection algorithm version stamped on every snapshot and version row
@@ -124,6 +125,7 @@ export interface ProjectionInput {
   components: Partial<ConfidenceComponents>;
   penalties?: Partial<ConfidencePenalties>;
   /**
+  /**
    * The freshness inputs the aggregator derived `components.freshness` from.
    * Stored in the replay record so a replay can recompute the curve, not just
    * re-add weighted components.
@@ -133,6 +135,12 @@ export interface ProjectionInput {
   inputClaimVersions?: InputClaimVersion[];
   /** §24 candidate counts, for the lineage log line. */
   candidateLineage?: ProjectionCandidateLineage;
+  /**
+   * §10 material-conflict state of the cohort (lib/intelConflict), persisted
+   * onto the snapshot by projectAndStore. Absent ⇒ 'none'. It never feeds the
+   * score here — the aggregator already folded the penalty into `penalties`.
+   */
+  conflictState?: ConflictState;
 }
 
 /**
@@ -164,8 +172,9 @@ export interface ProjectedSnapshot {
   confidence_components: ConfidenceReplayRecord;
   algorithm_version: string;
   input_claim_versions: InputClaimVersion[];
-  /** Table 17 conflict_state. Column only in I1 — unit I2 populates it. */
-  conflict_state: null;
+  /** Table 17 conflict_state. Column added in I1; unit I2 (2275) populates it —
+   *  projectClaim leaves it null and projectAndStore writes the assessed state. */
+  conflict_state: ConflictState | null;
 }
 
 /** One row of intel_state_snapshot_versions, as this writer inserts it. */
@@ -320,10 +329,15 @@ export async function projectAndStore(
       }
       funnel.after_ttl_policy++;
 
+      // conflict_state (2275) rides alongside the projected row: the §10 state
+      // the aggregator assessed for this cohort, 'none' when the caller did not
+      // assess one. The read path treats NULL/absent as 'none' too.
+      const snapshotRow = { ...r.snapshot, conflict_state: input.conflictState ?? "none" };
+
       // 1. The record: append the immutable version row FIRST.
       const version: SnapshotVersionRow = {
         id: randomUUID(),
-        ...r.snapshot,
+        ...snapshotRow,
         privacy_reason: r.privacy.reason,
         generated_at: now.toISOString(),
       };
@@ -341,7 +355,7 @@ export async function projectAndStore(
       // 2. The cache: the current-state row readers key on.
       const { error } = await sc
         .from("intel_state_snapshots")
-        .upsert(r.snapshot, { onConflict: "subject_id,zone_id,claim_type" });
+        .upsert(snapshotRow, { onConflict: "subject_id,zone_id,claim_type" });
       if (error) {
         tally.skipped++;
         logger.warn({ err: error, version_id: version.id }, "intelProjection: upsert failed");

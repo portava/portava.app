@@ -170,7 +170,8 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     assert.deepEqual(input.value, { level: "busy" });
     assert.equal(input.components.agreement, 2 / 3);
     assert.equal(input.components.presence, 0.25, "strongest presence = P1");
-    assert.ok(input.components.freshness > 0.75 && input.components.freshness < 0.85, `fresh (15/45 → 1 − (1/3)^1.5 ≈ 0.81), got ${input.components.freshness}`);
+    const fr = input.components.freshness;
+    assert.ok(fr !== undefined && fr > 0.75 && fr < 0.85, `fresh (15/45 → 1 − (1/3)^1.5 ≈ 0.81), got ${fr}`);
     assert.deepEqual(input.freshness, { ageSeconds: 15 * 60, ttlSeconds: 2700 }, "the (age, ttl) inputs travel with the input for the replay record");
     assert.deepEqual(input.inputClaimVersions, [{ claim_id: "c1", updated_at: null, version: null, status: "active" }], "Table-17 lineage names the claim row; version fields null until 2274 columns are read");
     assert.deepEqual(input.candidateLineage, { observations_total: 3, after_freshness: 3, after_consent: 3, freshness_extenders: 0 }, "§24 counts: no observation carries observed_at, so none can extend");

@@ -154,7 +154,7 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
   { table: "intel_state_snapshots", column: "algorithm_version", ownership: "portava_owned", personal: false,
     reason: "The projection algorithm version that produced the state. A version string; says nothing about any person and lets a consumer tell two computations apart." },
   { table: "intel_state_snapshots", column: "conflict_state", ownership: "derived_aggregate", personal: false,
-    reason: "none/contextualized/material (Table 17). Derived from the cohort, never from one contributor; the 'Reports differ' signal §10 requires be visible rather than averaged away." },
+    reason: "§10 material-conflict state (none/minor/material) of the projected cohort. A consumer MUST see it: spec §10 forbids high-confidence external output while reports materially differ, and the state is the only honest way to say so. Counts-only by construction — it names no side, no size, no contributor." },
 
   // ── intel_evidence / intel_confirmations ──────────────────────────────────
   { table: "intel_evidence", column: "actor_id", ownership: "restricted_no_redistribution", personal: true, reason: "Identifies the contributor." },

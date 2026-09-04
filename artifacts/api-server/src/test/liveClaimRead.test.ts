@@ -284,7 +284,9 @@ describe("readLiveClaimEnvelopes — rich decision-exposure response", () => {
     const [env] = await readLiveClaimEnvelopes(client({ flag: true, rows: [leaky] }), "p1", { now: NOW });
     assert.deepEqual(
       Object.keys(env).sort(),
-      ["band", "claimType", "confidence", "id", "observedAt", "sourceClass", "sourceCountBucket", "state", "validUntil", "value"],
+      // `conflict` / `conflictState` (§10, 2275) are counts-only derived state —
+      // {state, sidesCount, lastUpdated}, never the sides' membership.
+      ["band", "claimType", "confidence", "conflict", "conflictState", "id", "observedAt", "sourceClass", "sourceCountBucket", "state", "validUntil", "value"],
     );
   });
 });
@@ -318,6 +320,8 @@ describe("toLiveClaimEnvelope — pure mapping", () => {
       id: "s1", claimType: "queue.wait", value: { minMinutes: 0, maxMinutes: 10 },
       confidence: 0.9, band: "strong", sourceClass: "firsthand_unverified",
       sourceCountBucket: "few", observedAt: PAST, validUntil: FUTURE, state: "live",
+      // No conflict state on the input ⇒ 'none', and no block.
+      conflictState: "none", conflict: null,
     });
   });
 });
