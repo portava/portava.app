@@ -264,6 +264,11 @@ export function ActorByline({
 
 // ── Place line ───────────────────────────────────────────────────────────────
 
+/** True when the projection carries a server-issued Ask Compass action (§21). */
+export function hasAskCompassAction(projection: WallProjection): boolean {
+  return (projection.actions ?? []).some((a) => a.type === 'ask_compass');
+}
+
 export function PlaceLine({ projection }: { projection: WallProjection }) {
   if (!projection.place) return null;
   const p = projection.place;
@@ -275,8 +280,12 @@ export function PlaceLine({ projection }: { projection: WallProjection }) {
         {label}
       </Text>
       {/* Ask Compass from a place-linked post (spec §21) — an ACTION, not a
-          permanent panel. Quiet and secondary so the post stays primary (§35). */}
-      <AskCompassChip projection={projection} />
+          permanent panel. Quiet and secondary so the post stays primary (§35).
+          The server only issues the `ask_compass` action when
+          `wall_compass_handoff_enabled` is on (WallProjectionService.buildActions);
+          gate the chip on that action so the client never surfaces Compass the
+          server withheld (§7: intelligence is optional and server-authoritative). */}
+      {hasAskCompassAction(projection) ? <AskCompassChip projection={projection} /> : null}
     </View>
   );
 }
@@ -308,7 +317,12 @@ export function AskCompassChip({ projection }: { projection: WallProjection }) {
 // ── Contextual action chips (optional / additive, spec §7) ───────────────────
 
 export function ContextualActionChips({ projection }: { projection: WallProjection }) {
-  const actions = (projection.actions ?? []).filter((a) => a.type !== 'open_object');
+  // `open_object` is the whole-card tap, not a chip. `ask_compass` is surfaced by
+  // the dedicated AskCompassChip in PlaceLine (spec §21) — excluding it here keeps
+  // Compass to a single quiet affordance rather than a duplicate badge (§35).
+  const actions = (projection.actions ?? []).filter(
+    (a) => a.type !== 'open_object' && a.type !== 'ask_compass',
+  );
   if (actions.length === 0) return null;
   return (
     <View style={s.chipRow}>
