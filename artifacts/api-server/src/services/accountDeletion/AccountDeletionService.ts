@@ -445,6 +445,24 @@ export async function executeAccountDeletion(
     { name: "delete_compass_memories",      run: () => sc.from("compass_memories").delete().eq("user_id", userId) },
     { name: "delete_compass_conversations", run: () => sc.from("compass_conversations").delete().eq("user_id", userId) },
     { name: "delete_compass_user_preferences", run: () => sc.from("compass_user_preferences").delete().eq("user_id", userId) },
+    // ── Passport / Wall owner-scoped tables (migrations 2260 / 2261 / 2271) ────
+    // Each is `user_id REFERENCES profiles(id) ON DELETE CASCADE`, so its header
+    // implies profiles-cascade erasure — but the deletion keeps an anonymised
+    // TOMBSTONE profile rather than deleting profiles(id), so that cascade never
+    // fires (the same mistake 2172/2170/2187 made for consent/reward-ledger/
+    // derived-memory, corrected by 2203/2204/2190). Left alone, the rows survive
+    // account deletion as orphaned personal data keyed to the tombstoned uuid.
+    // None is append-only, so a direct scoped delete keyed by user_id clears each;
+    // service_role already holds DELETE on all three (2260/2271 grant it
+    // explicitly, 2261 inherits it from the Supabase default privileges), so no
+    // grant migration is needed.
+    //   availability_windows      — §8 Open-to-Plans / temporary-intent windows.
+    //   passport_travel_dna_prefs — §19 Travel-DNA Show/Hide/Not-Me control state.
+    //   wall_session_intents      — §17 typed Wall session intent (stores a
+    //                               raw_text echo of what the user typed).
+    { name: "delete_availability_windows", run: () => sc.from("availability_windows").delete().eq("user_id", userId) },
+    { name: "delete_travel_dna_prefs",     run: () => sc.from("passport_travel_dna_prefs").delete().eq("user_id", userId) },
+    { name: "delete_wall_session_intent",  run: () => sc.from("wall_session_intents").delete().eq("user_id", userId) },
   ];
   for (const d of contentDeletes) {
     const ok = await step(steps, d.name, async () => {
