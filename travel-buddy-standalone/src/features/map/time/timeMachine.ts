@@ -196,6 +196,30 @@ export function offsetsEqual(a: TimeOffset, b: TimeOffset): boolean {
   return offsetKey(a) === offsetKey(b);
 }
 
+/**
+ * The §15 control's WIRE encoding for GET /api/map/projection/temporal.
+ *
+ * The client owns the timezone and the DST-safe calendar arithmetic, so a NAMED
+ * offset (Yesterday / Tonight / Tomorrow / Last Friday) is resolved HERE into an
+ * explicit [windowStartsAt, windowEndsAt] plus `at` — the server must never
+ * re-derive "Last Friday" in a second, possibly-divergent place (§19: the client
+ * does not reconstruct Portava's rules, but it DOES own its own clock). A NOW or
+ * relative offset needs no calendar and goes as a plain `offsetMinutes`.
+ *
+ * Pure — kept beside the offset model rather than in the RN-coupled service so it
+ * is unit-testable without a network stack.
+ */
+export function temporalQueryParams(offset: TimeOffset, now: Date = new Date(), tz?: string): Record<string, string> {
+  if (offset.kind === 'now') return { offsetMinutes: '0' };
+  if (offset.kind === 'relative') return { offsetMinutes: String(offset.minutes) };
+  const resolved = resolveOffset(offset, now, tz);
+  return {
+    windowStartsAt: resolved.windowStartsAt.toISOString(),
+    windowEndsAt: resolved.windowEndsAt.toISOString(),
+    at: resolved.at.toISOString(),
+  };
+}
+
 /** Display text for the control. */
 export function offsetLabel(offset: TimeOffset): string {
   switch (offset.kind) {
