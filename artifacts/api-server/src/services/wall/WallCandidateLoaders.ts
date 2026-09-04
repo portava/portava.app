@@ -43,6 +43,12 @@ import {
 import { toMediaProjection, type MediaCandidateRow } from "../../lib/media/mediaProjection.js";
 import { areSharedMomentsEnabled } from "../../lib/places/sharedMoments.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { checkBookingKycGate } from "../../lib/rentBuddyKycGate.js";
+// The ONE booking-creation gate (audit RAB-1/RAB-2). The RAB opportunity
+// producer below runs every surfaced buddy through it so the Wall never shows
+// a "book" opportunity the canonical POST /rent-a-buddy/bookings would refuse.
+import { enforceBookingCreationGates } from "../../routes/rentABuddy.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 
 const logger = rootLogger.child({ svc: "wallCandidateLoaders" });
@@ -574,4 +580,331 @@ export function mergeLoadedCandidates(
   }
 
   return { candidates: dedupeCandidates(allCandidates), signals, placeByObject };
+}
+
+// ── 4. Contextual opportunities: Rent-a-Buddy (spec §19) ─────────────────────
+
+/**
+ * The viewer facts the RAB opportunity producer needs — the LoaderViewer plus
+ * the context signals the route already reads for discovery (§13): the
+ * viewer's current city, upcoming trip cities and interests (all lowercased
+ * where they are matched case-insensitively).
+ */
+export interface OpportunityViewer extends LoaderViewer {
+  currentCity: string | null;
+  /** Lowercased destination cities of upcoming/active trips. */
+  upcomingTripCities: Set<string>;
+  /** Lowercased interest tokens. */
+  interests: Set<string>;
+}
+
+/** How many available buddies the producer reads before context matching. */
+const OPPORTUNITY_FETCH = 60;
+/** How many matched buddies are run through the booking gate per request. The
+ *  gate is several reads per buddy, so this is deliberately small. */
+const OPPORTUNITY_GATE_CHECKS = 6;
+/** The most opportunities one page may carry (spec §19: "sparingly"). */
+const MAX_OPPORTUNITIES = 3;
+/** Approved meetup zones shown as the coarse area label (never a coordinate). */
+const MAX_ZONE_LABELS = 2;
+/** Buddy experience media carried as social content (spec §19). */
+const MAX_BUDDY_MEDIA = 3;
+
+/** Booking statuses that count as "the viewer has engaged with this buddy". */
+const ENGAGED_BOOKING_STATUSES = ["confirmed", "in_progress", "completed"] as const;
+
+/**
+ * The rent_buddy_profiles columns this producer reads. DELIBERATELY EXCLUDES
+ * meetup_base_lat / meetup_base_lng and every other private field (spec §19:
+ * never expose precise Buddy coordinates — the approved area/service zone is
+ * the only location the Wall carries). The gate-input columns (category
+ * approvals, verification, nightlife sign-off) are here because
+ * enforceBookingCreationGates reads them off the loaded row.
+ */
+const BUDDY_OPPORTUNITY_COLUMNS =
+  "id, user_id, display_name, tagline, city, country, categories, available_now, " +
+  "available_now_until, preferred_meetup_zones, cover_photo_url, gallery_urls, " +
+  "intro_video_url, buddy_level, updated_at, status, admin_status, risk_hold, " +
+  "category_approvals, nightlife_admin_approved, verification_status, id_verified, phone_verified";
+
+/** Human role label for the buddy's matched service category (spec §19: the
+ *  commercial identity is secondary to the person, so this is a small tag). */
+export function buddyRoleLabel(category: string | null | undefined): string {
+  const c = String(category ?? "").trim().toLowerCase();
+  if (!c) return "Buddy";
+  return `${c.charAt(0).toUpperCase()}${c.slice(1)} Buddy`;
+}
+
+function lower(s: unknown): string {
+  return typeof s === "string" ? s.trim().toLowerCase() : "";
+}
+
+/** Pick the service category the viewer is most likely to care about: an
+ *  interest match first, else the buddy's first category, else the MVP
+ *  default "city". */
+function matchCategory(categories: unknown, interests: Set<string>): { category: string; interestMatch: boolean } {
+  const cats = Array.isArray(categories) ? categories.map(lower).filter(Boolean) : [];
+  for (const c of cats) if (interests.has(c)) return { category: c, interestMatch: true };
+  return { category: cats[0] ?? "city", interestMatch: false };
+}
+
+/** A stored media reference (bare `<bucket>/<path>` or public URL) → a coarse
+ *  DisplayMedia. The client hydrates private-bucket refs through the existing
+ *  signing path (CachedImage → /api/media/sign); the server never fabricates a URL. */
+function buddyMediaToDisplay(row: any): DisplayMedia[] {
+  const out: DisplayMedia[] = [];
+  const push = (url: unknown, kind: "image" | "video", tag: string) => {
+    if (typeof url !== "string" || url.trim().length === 0) return;
+    if (out.length >= MAX_BUDDY_MEDIA) return;
+    out.push({
+      mediaId: `${row.id}:${tag}`,
+      kind,
+      url: url.trim(),
+      thumbnailUrl: null,
+      autoplayEligible: kind === "video" ? false : undefined,
+      processing: false,
+    });
+  };
+  push(row.cover_photo_url, "image", "cover");
+  for (const [i, g] of (Array.isArray(row.gallery_urls) ? row.gallery_urls : []).entries()) {
+    push(g, "image", `gallery-${i}`);
+  }
+  push(row.intro_video_url, "video", "intro");
+  return out;
+}
+
+/**
+ * A response capture for the shared booking-creation gate. enforceBookingCreationGates
+ * follows the route convention (writes the refusal to `res` and returns false),
+ * so a read-only caller hands it a recorder instead of a live response. Only
+ * `status()` and `json()` are ever called on it.
+ */
+function gateCapture(): { status: (c: number) => any; json: (b: unknown) => any; code: number; body: unknown } {
+  const cap: any = {
+    code: 200,
+    body: null,
+    status(c: number) { cap.code = c; return cap; },
+    json(b: unknown) { cap.body = b; return cap; },
+  };
+  return cap;
+}
+
+/**
+ * Load Rent-a-Buddy contextual opportunities (spec §6 ContextualOpportunityProjection,
+ * §19 Rent a Buddy Integration):
+ *
+ *   • buddy_dispatch — a Buddy the viewer FOLLOWS or has ENGAGED with (a confirmed /
+ *                      in-progress / completed booking) who is available now.
+ *   • buddy_around   — a Buddy who is "I'm Around" (available_now, within its
+ *                      available_now_until horizon) in the viewer's current city
+ *                      or an upcoming trip city, matched to the viewer's interests.
+ *
+ * Buddy experience media (cover / gallery / intro video) rides on the projection
+ * as social content; the person identity stays primary and the service identity
+ * is a small `buddyRole` tag on the actor (§7/§19).
+ *
+ * FAIL-CLOSED ON BOTH FLAGS: `wall_rab_integration_enabled` AND the RAB master
+ * `rent_buddy_enabled` are read here through isFlagEnabled, so an unreadable
+ * flag yields no opportunities. Both must be ON.
+ *
+ * HONOURS THE CONSOLIDATED BOOKING GATE: every matched buddy is run through the
+ * SAME enforceBookingCreationGates that seats a booking (kill switches, rollout
+ * / launch controls, account limits, launch-control identity + age, the
+ * fail-closed rent_buddy_city_restrictions read, blocks, nightlife / group
+ * approvals, high-risk verification) plus the KYC gate. A buddy the viewer
+ * could not actually book right now is never surfaced — an opportunity the Wall
+ * shows is one the viewer can act on. Cities the gate refuses (launch control
+ * disabled / waitlist-only / restriction unreadable) therefore never appear.
+ *
+ * Never exposes a precise Buddy coordinate: the projection carries the city and
+ * approved meetup zones only, and the select list never reads meetup_base_*.
+ * Paid promotion cannot manufacture an opportunity — only the honest
+ * `available_now` flag admits a buddy here (§19).
+ *
+ * Fully fail-soft (spec §34 / TABLE 5 "RAB unavailable → remove Buddy context
+ * only"): any read failure degrades to an empty set.
+ */
+export async function loadContextualOpportunityCandidates(
+  sc: any,
+  viewer: OpportunityViewer,
+  opts: LoaderOptions = {},
+): Promise<LoadedWallCandidates> {
+  // ── Flags (both fail-closed) ──────────────────────────────────────────────
+  try {
+    const [wallRab, rabMaster] = await Promise.all([
+      isFlagEnabled(sc, "wall_rab_integration_enabled"),
+      isFlagEnabled(sc, "rent_buddy_enabled"),
+    ]);
+    if (!wallRab || !rabMaster) return emptyLoaded();
+  } catch {
+    return emptyLoaded();
+  }
+
+  // ── Bookings must be possible at all (KYC gate, fail-closed) ─────────────
+  try {
+    const kyc = await checkBookingKycGate(sc);
+    if (!kyc.allowed) return emptyLoaded();
+  } catch {
+    return emptyLoaded();
+  }
+
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+
+  // ── Buddies the viewer has engaged with (their own bookings only) ─────────
+  const engagedBuddyIds = new Set<string>();
+  try {
+    const { data, error } = await sc
+      .from("rent_buddy_bookings")
+      .select("buddy_id, status")
+      .eq("traveler_id", viewer.viewerId)
+      .in("status", [...ENGAGED_BOOKING_STATUSES])
+      .limit(50);
+    if (error) logger.warn({ err: error }, "opportunity: engaged-buddy read rejected");
+    for (const b of (data as any[]) ?? []) if (b?.buddy_id) engagedBuddyIds.add(String(b.buddy_id));
+  } catch (err) {
+    logger.warn({ err }, "opportunity: engaged-buddy read failed — dispatch limited to follows");
+  }
+
+  // ── Available buddies (honest available_now only) ─────────────────────────
+  let rows: any[] = [];
+  try {
+    const { data, error } = await sc
+      .from("rent_buddy_profiles")
+      .select(BUDDY_OPPORTUNITY_COLUMNS)
+      .eq("status", "active")
+      .eq("admin_status", "active")
+      .eq("available_now", true)
+      .order("updated_at", { ascending: false })
+      .limit(OPPORTUNITY_FETCH);
+    if (error) {
+      logger.warn({ err: error }, "opportunity: buddy read rejected — no opportunities");
+      return emptyLoaded();
+    }
+    rows = (data as any[]) ?? [];
+  } catch (err) {
+    logger.warn({ err }, "opportunity: buddy read failed — no opportunities");
+    return emptyLoaded();
+  }
+  if (rows.length === 0) return emptyLoaded();
+
+  const contextCities = new Set<string>([...viewer.upcomingTripCities].map(lower).filter(Boolean));
+  if (viewer.currentCity) contextCities.add(lower(viewer.currentCity));
+
+  interface Matched {
+    row: any;
+    kind: "buddy_dispatch" | "buddy_around";
+    category: string;
+    interestMatch: boolean;
+  }
+  const matched: Matched[] = [];
+  for (const row of rows) {
+    if (!row || !row.id || !row.user_id) continue;
+    // Re-check the honest availability flag client-side (never trust a fed row).
+    if (row.available_now !== true) continue;
+    if (row.status !== "active" || row.admin_status !== "active") continue;
+    if (row.risk_hold === true) continue;
+    if (String(row.user_id) === viewer.viewerId) continue; // never surface self
+    // "I'm Around" has a horizon; an expired horizon is not live (spec §4/§19).
+    if (typeof row.available_now_until === "string" && row.available_now_until <= nowIso) continue;
+    // For You freeze horizon (§28), mirroring the other loaders.
+    if (!withinSnapshot(row.updated_at, opts.snapshotAtIso)) continue;
+
+    const userId = String(row.user_id);
+    const isDispatch = viewer.followedCreatorIds.has(userId) || engagedBuddyIds.has(String(row.id));
+    const inContext = contextCities.size > 0 && contextCities.has(lower(row.city));
+    if (!isDispatch && !inContext) continue;
+    const { category, interestMatch } = matchCategory(row.categories, viewer.interests);
+    matched.push({ row, kind: isDispatch ? "buddy_dispatch" : "buddy_around", category, interestMatch });
+  }
+  if (matched.length === 0) return emptyLoaded();
+
+  // Dispatch (social tie) first, then interest-matched "around", then the rest.
+  matched.sort((a, b) => {
+    const ka = a.kind === "buddy_dispatch" ? 0 : a.interestMatch ? 1 : 2;
+    const kb = b.kind === "buddy_dispatch" ? 0 : b.interestMatch ? 1 : 2;
+    return ka - kb;
+  });
+  const toGate = matched.slice(0, OPPORTUNITY_GATE_CHECKS);
+
+  // ── The consolidated booking gate, per buddy (fail-closed on throw) ───────
+  const gated = await Promise.all(
+    toGate.map(async (m) => {
+      try {
+        const capture = gateCapture();
+        const ok = await enforceBookingCreationGates({
+          sc,
+          res: capture,
+          userId: viewer.viewerId,
+          buddyProfile: m.row,
+          city: String(m.row.city ?? ""),
+          countryCode: m.row.country ?? null,
+          category: m.category,
+          applyKillSwitch: true,
+          applyRollout: true,
+          applyLimits: true,
+        });
+        return ok === true;
+      } catch (err) {
+        logger.warn({ err, buddyProfileId: m.row.id }, "opportunity: booking gate threw — dropping buddy");
+        return false;
+      }
+    }),
+  );
+  const admitted = toGate.filter((_, i) => gated[i]).slice(0, MAX_OPPORTUNITIES);
+  if (admitted.length === 0) return emptyLoaded();
+
+  // Person identity from profiles (primary); the buddy row's display_name is
+  // only a fallback so the Wall never shows a blank byline.
+  const profiles = await batchProfiles(sc, admitted.map((m) => String(m.row.user_id)));
+
+  const out = emptyLoaded();
+  for (const m of admitted) {
+    const row = m.row;
+    const id = String(row.id);
+    const userId = String(row.user_id);
+    const prof = profiles.get(userId);
+    const city = typeof row.city === "string" ? row.city : null;
+    const zones = (Array.isArray(row.preferred_meetup_zones) ? row.preferred_meetup_zones : [])
+      .filter((z: unknown): z is string => typeof z === "string" && z.trim().length > 0)
+      .slice(0, MAX_ZONE_LABELS);
+    const areaLine = city ? `Around ${city}${zones.length > 0 ? ` · ${zones.join(", ")}` : ""}` : null;
+    const tagline = typeof row.tagline === "string" && row.tagline.trim() ? row.tagline.trim() : null;
+    const text = [tagline, areaLine].filter((s): s is string => !!s).join("\n") || null;
+    const media = buddyMediaToDisplay(row);
+
+    const actor: PublicActorRef = {
+      userId,
+      displayName: prof?.displayName ?? (typeof row.display_name === "string" && row.display_name ? row.display_name : "Buddy"),
+      handle: prof?.handle ?? null,
+      avatarUrl: prof?.avatarUrl ?? null,
+      isBuddy: true,
+      buddyRole: buddyRoleLabel(m.category),
+    };
+
+    out.candidates.push({
+      objectType: "contextual_opportunity",
+      canonicalObjectId: id,
+      authorId: userId,
+      // The moment availability was last set — the publication clock (§16).
+      publishedAt: String(row.updated_at ?? nowIso),
+      text,
+      actor,
+      media: media.length > 0 ? media : undefined,
+      authorAccountStatus: prof?.accountStatus ?? "active",
+      isDeleted: false,
+      opportunityKind: m.kind,
+      opportunityArea: city,
+      // Service eligibility resolved above by the consolidated booking gate.
+      callerVisibilityResolved: true,
+    });
+    out.signals.set(id, {
+      category: m.category,
+      city,
+      country: typeof row.country === "string" ? row.country : null,
+      saveCount: 0,
+      isFirstImpression: true,
+    });
+  }
+  return out;
 }

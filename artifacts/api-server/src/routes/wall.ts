@@ -45,6 +45,7 @@ import {
   loadPostcardCandidates,
   loadVideoMediaCandidates,
   loadSharedMomentCandidates,
+  loadContextualOpportunityCandidates,
   mergeLoadedCandidates,
 } from "../services/wall/WallCandidateLoaders.js";
 import {
@@ -675,21 +676,38 @@ router.get(
     // mid-session cannot enter the candidate set and drift ranks across pages
     // (§28). Following mode has no horizon (forYouCursor is null) and is unaffected.
     const loaderOpts = { snapshotAtIso: forYouCursor?.snapshotAt };
-    const [postcardsLoaded, mediaLoaded, momentsLoaded] = await Promise.all([
+    // RAB contextual opportunities (§19) are For You only: Following is the
+    // strict-chronology trust anchor of followed PEOPLE's content (TABLE 1) and
+    // an availability signal is not a post. The loader re-reads BOTH flags
+    // itself (fail-closed); the route's `rabEnabled` short-circuits the call.
+    const opportunityViewer = {
+      ...loaderViewer,
+      currentCity: viewer.currentCity,
+      upcomingTripCities: viewer.upcomingTripCities,
+      interests: viewer.interests,
+    };
+    const emptyLoad = () => ({ candidates: [], signals: new Map(), placeByObject: new Map() });
+    const [postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded] = await Promise.all([
       loadPostcardCandidates(sc, mode, loaderViewer, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: postcard loader threw — no postcards");
-        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+        return emptyLoad();
       }),
       loadVideoMediaCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: video/media loader threw — no media objects");
-        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+        return emptyLoad();
       }),
       loadSharedMomentCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: shared moment loader threw — no moments");
-        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+        return emptyLoad();
       }),
+      mode === "for_you" && rabEnabled
+        ? loadContextualOpportunityCandidates(sc, opportunityViewer, loaderOpts).catch((err) => {
+            logger.warn({ err }, "wall: RAB opportunity loader threw — no buddy opportunities");
+            return emptyLoad();
+          })
+        : Promise.resolve(emptyLoad()),
     ]);
-    const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded);
+    const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded);
 
     const steered = applyIntentSteer(merged.candidates, sessionIntent);
 
