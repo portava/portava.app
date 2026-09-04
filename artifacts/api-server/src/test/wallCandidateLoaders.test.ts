@@ -260,6 +260,48 @@ describe("loadPostcardCandidates (spec §10)", () => {
     assert.deepEqual(live.candidates.map((c) => c.canonicalObjectId).sort(), ["pc-new", "pc-old"], "no horizon ⇒ both surface");
   });
 
+  it("Following slides the postcard window DOWN to the cursor: older postcards past the newest page stay reachable (§28)", async () => {
+    // A fake that HONORS `.lte('created_at', X)` on the posts query so the
+    // Following-cursor slide is actually exercised.
+    function slidePostsClient(posts: any[]) {
+      const tables: Record<string, any[]> = {
+        posts,
+        passport_postcards: posts.map((p) => ({ post_id: p.id, user_id: p.author_id, status: "active", deleted_at: null, created_at: p.created_at })),
+        post_media: [],
+        profiles: [{ id: "author-1", display_name: "Aya", username: "aya", account_status: "active" }],
+        places: [],
+      };
+      function builder(table: string) {
+        let lteCreatedAt: string | null = null;
+        const b: any = {
+          select: () => b, eq: () => b, in: () => b, or: () => b, order: () => b, limit: () => b, gte: () => b, gt: () => b,
+          lte: (c: string, v: string) => { if (c === "created_at") lteCreatedAt = v; return b; },
+          maybeSingle: () => Promise.resolve({ data: (tables[table] ?? [])[0] ?? null, error: null }),
+          then: (onF: any, onR: any) => {
+            let rows = tables[table] ?? [];
+            if ((table === "posts" || table === "passport_postcards") && lteCreatedAt) rows = rows.filter((r) => String(r.created_at) <= lteCreatedAt!);
+            return Promise.resolve({ data: rows, error: null }).then(onF, onR);
+          },
+        };
+        return b;
+      }
+      return { from: builder };
+    }
+    const base = {
+      author_id: "author-1", trip_id: null, content: "lanterns", visibility: "public", status: "active", post_status: "published",
+      canonical_place_id: null, add_to_passport: true, has_video: false, media_count: 0,
+      category: "culture", location_city: "Hoi An", location_country: "VN", save_count: 0,
+    };
+    const posts = [
+      { ...base, id: "pc-old", created_at: "2026-09-01T00:00:00Z", published_at: "2026-09-01T00:00:00Z" },
+      { ...base, id: "pc-new", created_at: "2026-09-10T00:00:00Z", published_at: "2026-09-10T00:00:00Z" },
+    ];
+    // Following page whose cursor is at 2026-09-05: the newer postcard already
+    // appeared on an earlier page; the older one (≤ cursor) must remain reachable.
+    const slid = await loadPostcardCandidates(slidePostsClient(posts), "following", FOLLOWED, { followingCursorPublishedAt: "2026-09-05T00:00:00Z" });
+    assert.deepEqual(slid.candidates.map((c) => c.canonicalObjectId), ["pc-old"], "the older postcard past the newest window is still fetched");
+  });
+
   it("postcards run the same visibility gate: a private one from another author is dropped", async () => {
     const priv = [{ ...POSTS[0], id: "pc-priv", author_id: "author-2", visibility: "private", canonical_place_id: null }];
     const loaded = await loadPostcardCandidates(
@@ -433,6 +475,25 @@ describe("loadSharedMomentCandidates (spec §12)", () => {
     // No horizon ⇒ the moment surfaces normally.
     const live = await loadSharedMomentCandidates(mkClient(), VIEWER);
     assert.equal(live.candidates.length, 1, "without a horizon the moment surfaces");
+  });
+
+  it("Following slides the Moment window DOWN to the cursor (§28)", async () => {
+    const lateMoment = { ...MOMENT, id: "m-late", created_at: "2026-09-10T00:00:00Z" };
+    const mkClient = () =>
+      tableClient({
+        feature_flags: (ctx) => [{ enabled: !!ON_FLAGS[String(ctx.eqs["flag"])] }],
+        shared_moment_memberships: (ctx) =>
+          ctx.ins["moment_id"]
+            ? [{ moment_id: "m-late", user_id: VIEWER, status: "accepted" }]
+            : [{ role: "member", status: "accepted", shared_moments: lateMoment }],
+        blocks: [],
+        profiles: PROFILES,
+        places: PLACES,
+      });
+    // A cursor BEFORE the moment's created_at ⇒ the newer moment (already shown on
+    // an earlier page) must not re-enter the slid window.
+    const slid = await loadSharedMomentCandidates(mkClient(), VIEWER, { followingCursorPublishedAt: "2026-09-05T00:00:00Z" });
+    assert.equal(slid.candidates.length, 0, "a moment newer than the Following cursor is excluded from the slid window");
   });
 
   it("a moment owned by a blocked user is dropped by the gate", async () => {
