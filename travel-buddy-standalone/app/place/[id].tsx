@@ -18,6 +18,7 @@ import {
   View, Text, ScrollView, StyleSheet, ActivityIndicator, Pressable, Linking,
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
+import { firstParam } from '../../src/lib/routeParams.ts';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Flag, MapPin, Globe, Phone, Tag, Bookmark, Navigation, Clock, Star, ListPlus, Bell } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, dot } from '../../src/theme/tokens';
@@ -301,8 +302,8 @@ function capitalize(s: string) {
 
 export default function PlaceDetailScreen() {
   const params = useLocalSearchParams<{ id: string; placeJson?: string; city?: string }>();
-  const id = Array.isArray(params.id) ? params.id[0] : params.id;
-  const city = Array.isArray(params.city) ? params.city[0] : (params.city ?? null);
+  const id = firstParam(params.id);
+  const city = firstParam(params.city);
 
   const { isEnabled: isFlagEnabled, isLivePlacesEnabled } = useFeatureFlags();
   const { isAuthed } = useSession();

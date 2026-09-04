@@ -44,7 +44,7 @@ import {
 // Deep-link target for the main Map in passport ("my stamps") mode. Mirrors the
 // canonical passport→map link used elsewhere (src/components/MapTab.tsx). My
 // World hands off to the Map; it does not render one.
-const MAP_DEEPLINK = '/map?entityTypes=stamps&mode=passport';
+const MAP_DEEPLINK = '/map?entityTypes=stamps&mode=passport&entry=passport';
 
 function openMap(): void {
   router.push(MAP_DEEPLINK as never);

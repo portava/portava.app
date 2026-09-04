@@ -89,7 +89,7 @@ export function CircleMapSection({ members, meetingPoint, meetingPointLabel }: P
       {/* Full-screen map button */}
       <Pressable
         style={s.fullMapBtn}
-        onPress={() => router.push('/map?entityTypes=friends&mode=circle' as any)}
+        onPress={() => router.push('/map?entityTypes=friends&mode=circle&entry=circle' as any)}
         hitSlop={4}
       >
         <Maximize2 size={12} color="#fff" />

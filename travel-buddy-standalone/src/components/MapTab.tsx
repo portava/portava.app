@@ -241,7 +241,7 @@ export function MapTab({ postcards, currentCity, currentUserId, sentinel }: MapT
         {/* Full-screen map button */}
         <Pressable
           style={mp.fullMapBtn}
-          onPress={() => router.push('/map?entityTypes=stamps&mode=passport' as any)}
+          onPress={() => router.push('/map?entityTypes=stamps&mode=passport&entry=passport' as any)}
           hitSlop={4}
         >
           <Text style={mp.fullMapBtnText}>Open full map</Text>

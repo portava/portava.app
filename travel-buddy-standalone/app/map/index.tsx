@@ -85,6 +85,9 @@ import {
 import { useSession } from '../../src/context/SessionContext.tsx';
 import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
 import { countBucket, durationBucketMs } from '../../src/features/map/telemetry/mapTelemetry.ts';
+import { deriveMapEntryPoint } from '../../src/features/map/telemetry/mapTelemetry.ts';
+import { firstParam } from '../../src/lib/routeParams.ts';
+import type { MapEntryPoint } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
 import {
   coordinateTarget,
@@ -640,7 +643,7 @@ function parseCategory(v: string | string[] | undefined): DiscoveryCategory {
  */
 export default function FullScreenMapScreen() {
   const params = useLocalSearchParams<{ mode?: string }>();
-  const mode = Array.isArray(params.mode) ? params.mode[0] : (params.mode ?? null);
+  const mode = firstParam(params.mode);
 
   // Pre-select enabled layers based on mode so MapStoreProvider gets the right
   // initial value — circle mode pre-selects friends only.
@@ -700,6 +703,13 @@ function FullScreenMapScreenInner() {
     category?: string;
     focusId?: string;
     mode?: string;
+    /**
+     * §35 entry point, for `map_opened.entry`. Declared so a caller CAN state
+     * where the user came from; validated against MAP_ENTRY_POINTS before it
+     * is published, because a query param is user-controllable and `entry` is
+     * an enumerated telemetry dimension.
+     */
+    entry?: string;
     /** §11: render ONE trip's itinerary rather than every trip's destination. */
     tripId?: string;
   }>();
@@ -738,13 +748,31 @@ function FullScreenMapScreenInner() {
   const paramLat = parseCoord(params.lat);
   const paramLng = parseCoord(params.lng);
   const paramZoom = parseZoom(params.zoom);
-  const title = Array.isArray(params.title) ? params.title[0] : (params.title ?? null);
-  const entityTypes = Array.isArray(params.entityTypes) ? params.entityTypes[0] : (params.entityTypes ?? '');
+  const title = firstParam(params.title);
+  const entityTypes = firstParam(params.entityTypes) ?? '';
   const category = parseCategory(params.category);
   /** focusId: if set, carousel + camera will snap to the matching entity on first load. */
-  const focusId = Array.isArray(params.focusId) ? params.focusId[0] : (params.focusId ?? null);
+  const focusId = firstParam(params.focusId);
   /** mode: 'passport' | 'circle' | undefined — controls layer presets and UI. */
-  const mode = Array.isArray(params.mode) ? params.mode[0] : (params.mode ?? null);
+  const mode = firstParam(params.mode);
+
+  /**
+   * §35 `map_opened.entry` — WHERE the user came from. A different vocabulary
+   * from `mode` above, which is a MAP MODE.
+   *
+   * This was `mode ?? 'direct'`, and every production path emitted a value
+   * outside MapEntryPoint: 'circle' and 'passport' are modes, and 'direct' is
+   * not in the union at all — so a plain tab open, the commonest case of all,
+   * published an invalid entry point. Nothing caught it because `mode` was
+   * `any` (see firstParam above), so an arbitrary deep-link string could also
+   * be published into an enumerated dimension.
+   *
+   * Derived only from what is knowable here: an explicit, VALIDATED `entry`
+   * param when a caller supplies one, else `tab` for a bare open and
+   * `deeplink` for a URL carrying anything. No information is lost — the same
+   * payload already reports `mode` from the state machine.
+   */
+  const entryPoint: MapEntryPoint = deriveMapEntryPoint(params);
 
   // Resolved camera position: prefer explicit params, then fall back through the
   // full 3-tier cascade (GPS → last-known session → profile home) via resolvedLocation.
@@ -937,7 +965,7 @@ function FullScreenMapScreenInner() {
   // from the area label would be exactly the §23 violation that design prevents.
   // The others have no reachable source on this screen today. They are left out
   // rather than faked; tripToMapObjects omits any section it is not given.
-  const tripId = Array.isArray(params.tripId) ? params.tripId[0] : (params.tripId ?? null);
+  const tripId = firstParam(params.tripId);
   const [tripStops, setTripStops] = useState<TripStop[]>([]);
   const [proposal, setProposal] = useState<OptimizeProposal | null>(null);
 
@@ -1038,7 +1066,7 @@ function FullScreenMapScreenInner() {
     );
     const sub = AppState.addEventListener('change', notifyMapAppStateChange);
     emitMapEvent('map_opened', {
-      entry: mode ?? 'direct',
+      entry: entryPoint,
       mode: machine.mode,
       zoom: cameraZoom ?? paramZoom,
       hasTripContext: entityTypes.includes('trips'),
