@@ -63,12 +63,21 @@ import { OptimizeTodaySheet } from '../../src/components/map/OptimizeTodaySheet.
 import {
   tripToMapObjects,
   optimizeToday,
-  acceptProposal,
   dismissProposal,
   type TripStop,
   type OptimizeProposal,
 } from '../../src/features/map/trip/tripMapModel.ts';
-import { fetchTripPlanMap } from '../../src/services/tripPlan.ts';
+import {
+  composeTripMap,
+  persistOptimizeAcceptance,
+  type ComposedTripMap,
+} from '../../src/features/map/trip/tripMapSources.ts';
+import { fetchTripPlanMap, reorderPlanItems, createPlanItem } from '../../src/services/tripPlan.ts';
+import { listSaved } from '../../src/services/discoveryBookmarks.ts';
+import { getCrewMap } from '../../src/services/tripCrewLocation.ts';
+import { fetchTripRoutePlan } from '../../src/services/routePlan.ts';
+import { getActiveSession } from '../../src/services/safeReturn.ts';
+import { fetchCompassRecommendations } from '../../src/services/compass.ts';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import type { MapMediaAsset } from '../../src/features/map/truth/contributionFlow.ts';
 import type { MediaKind } from '../../src/features/map/truth/liveTruth.ts';
@@ -1009,57 +1018,73 @@ function FullScreenMapScreenInner() {
 
   // ── §11 Trip Map ────────────────────────────────────────────────────────────
   // "Trip Map renders the current Trip geographically without duplicating or
-  // replacing Trip ownership." The itinerary is read, never written: the plan
-  // stays canonical in Trips (§20), and Optimize Today produces a PROPOSAL the
-  // user must accept.
+  // replacing Trip ownership." Every §11 element is read from its OWNING system
+  // (§20) and composed by `composeTripMap`; the plan stays canonical in Trips.
   //
-  // WHAT IS DELIBERATELY ABSENT. §11 also names crew, meeting points, routes,
-  // saved ideas and Safe Return context. Crew cannot be projected: getCrewMap
-  // returns CrewMemberCard, which carries an AREA LABEL and no coordinates —
-  // the server declines to give the client crew positions, and inventing them
-  // from the area label would be exactly the §23 violation that design prevents.
-  // The others have no reachable source on this screen today. They are left out
-  // rather than faked; tripToMapObjects omits any section it is not given.
+  //   lodging / stops / meeting points  ← the trip's plan-map items
+  //   saved ideas                       ← the trip's wishlist (listSaved)
+  //   crew                              ← getCrewMap, as COARSE AREA LABELS ONLY
+  //                                       (§23) — no coordinates are ever invented
+  //   routes                            ← the viewer's route plan for the trip
+  //   Safe Return                       ← the active Safe Return session
+  //   Compass alternatives              ← recommendations for the next stop
+  //
+  // Each source is fetched independently and a failure is swallowed to [] / null,
+  // so one unreachable system never blanks the map (§33). Optimize Today is a
+  // PROPOSAL the user must accept; acceptance persists through the Trips write
+  // path (`persistOptimizeAcceptance`), never a silent rewrite.
   const tripId = firstParam(params.tripId);
-  const [tripStops, setTripStops] = useState<TripStop[]>([]);
+  const tripCity = title;
+  const [composedTrip, setComposedTrip] = useState<ComposedTripMap | null>(null);
   const [proposal, setProposal] = useState<OptimizeProposal | null>(null);
 
-  useEffect(() => {
-    if (!tripId) return;
-    let cancelled = false;
-    void (async () => {
-      const items = await fetchTripPlanMap(tripId).catch(() => []);
-      if (cancelled) return;
-      const stops: TripStop[] = items
-        .filter((i) => i.lat != null && i.lng != null && !i.locationIsPrivate)
-        .map((i) => ({
-          id: i.id,
-          title: i.title,
-          subtitle: i.locationName ?? undefined,
-          lat: i.lat as number,
-          lng: i.lng as number,
-          // The CANONICAL ordering. tripMapModel never renumbers it — a
-          // proposal reorders the array, not these values.
-          orderIndex: i.sortOrder,
-          // 'fixed' is the hard anchor the optimizer may not move; 'flexible'
-          // and 'optional' are both revisable, so neither becomes a reservation.
-          reservationAt: i.lockType === 'fixed' ? i.startsAt : null,
-          eventStartsAt: i.startsAt,
-          eventEndsAt: i.endsAt,
-          plannedArrivalTime: i.startsAt,
-        }));
-      setTripStops(stops);
-    })();
-    return () => { cancelled = true; };
-  }, [tripId]);
+  const buildComposedTrip = useCallback(async (): Promise<ComposedTripMap | null> => {
+    if (!tripId) return null;
+    const nowIso = new Date().toISOString();
+    const [planItems, savedPlaces, crewRes, routePlan, safeRes, compassRes] = await Promise.all([
+      fetchTripPlanMap(tripId).catch(() => []),
+      listSaved(tripId).catch(() => []),
+      getCrewMap(tripId).catch(() => ({ ok: false as const, error: 'unavailable' })),
+      fetchTripRoutePlan(tripId).catch(() => null),
+      getActiveSession().catch(() => ({ session: null })),
+      fetchCompassRecommendations({ surface: 'trip', tripId, city: tripCity ?? undefined }).catch(
+        () => ({ ok: false as const, error: 'unavailable' }),
+      ),
+    ]);
+    // Safe Return is only this trip's context when the active session is bound
+    // to this trip (§24 purpose-bound); an unrelated session is not projected.
+    const safeReturnSession =
+      safeRes.session && safeRes.session.tripId === tripId ? safeRes.session : null;
+    return composeTripMap({
+      tripId,
+      planItems,
+      savedPlaces,
+      crew: crewRes.ok ? crewRes.data.members : [],
+      routePlan,
+      safeReturnSession,
+      compassRecommendations: compassRes.ok ? (compassRes.data?.recommendations ?? []) : [],
+      now: nowIso,
+    });
+  }, [tripId, tripCity]);
 
-  const tripObjects = useMemo(
-    () =>
-      tripId && tripStops.length > 0
-        ? (tripToMapObjects({ tripId, stops: tripStops }, { now: new Date().toISOString() }) as MapObject[])
-        : null,
-    [tripId, tripStops],
+  useEffect(() => {
+    let cancelled = false;
+    void buildComposedTrip().then((c) => { if (!cancelled) setComposedTrip(c); });
+    return () => { cancelled = true; };
+  }, [buildComposedTrip]);
+
+  // The day's stops, in canonical order, for Optimize Today. Never renumbered —
+  // a proposal reorders the array, not the orderIndex values.
+  const tripStops = useMemo<readonly TripStop[]>(
+    () => composedTrip?.source.stops ?? [],
+    [composedTrip],
   );
+
+  const tripObjects = useMemo(() => {
+    if (!tripId || !composedTrip) return null;
+    const objs = tripToMapObjects(composedTrip.source, { now: new Date().toISOString() }) as MapObject[];
+    return objs.length > 0 ? objs : null;
+  }, [tripId, composedTrip]);
 
   // ── §30 capabilities ────────────────────────────────────────────────────────
   // `canEnterMode` fails closed, and nothing in the app ever called
@@ -2479,15 +2504,23 @@ function FullScreenMapScreenInner() {
       />
 
       {/* ── §11 Optimize Today ──────────────────────────────────────────────
-          A PROPOSAL, never a rewrite: acceptProposal/dismissProposal return
-          data, and persisting it is the caller's job. §11: "the map should not
-          silently rewrite the canonical Trip." */}
+          A PROPOSAL, never a rewrite. Acceptance persists through the Trips
+          write path (persistOptimizeAcceptance → owner-only batch reorder), so
+          the accepted order is durable — not a local-only shuffle. §11: "the
+          map should not silently rewrite the canonical Trip." */}
       {tripId && tripStops.length > 1 ? (
         <Pressable
           style={[s2.optimizeChip, { bottom: insets.bottom + 240 }]}
           onPress={() =>
             setProposal(
-              optimizeToday(tripStops, { now: new Date().toISOString() }),
+              optimizeToday(tripStops, {
+                now: new Date().toISOString(),
+                lodging: composedTrip?.source.lodging ?? null,
+                // §11 saved-ideas factor: an idea barely off the route may be
+                // proposed as an addition (the sheet shows it; the user accepts).
+                savedIdeas: composedTrip?.source.savedIdeas,
+                maxSavedIdeaInsertions: 1,
+              }),
             )
           }
           accessibilityRole="button"
@@ -2506,17 +2539,49 @@ function FullScreenMapScreenInner() {
           setProposal(null);
         }}
         onAccept={(p) => {
-          const change = acceptProposal(p, new Date().toISOString());
-          // `persisted: false` — the write is a Trips concern (§20), and this
-          // screen does not own the itinerary. Reorder locally so the map
-          // reflects the accepted plan; the durable write belongs to TripPage.
-          const byId = new Map(tripStops.map((st) => [st.id, st]));
-          setTripStops(
-            change.orderedStopIds
-              .map((id) => byId.get(id))
-              .filter((st): st is TripStop => st != null),
-          );
-          setProposal(null);
+          const activeTripId = tripId;
+          if (!activeTripId) { setProposal(null); return; }
+          void (async () => {
+            const result = await persistOptimizeAcceptance(p, new Date().toISOString(), {
+              // Owner-only batch reorder — the durable Trips write (§20).
+              reorder: (ids) => reorderPlanItems(activeTripId, ids),
+              // An accepted saved-idea insertion becomes a real plan item via
+              // the canonical create path, not a fabricated stop.
+              addSavedIdea: async (idea) => {
+                const item = await createPlanItem(activeTripId, {
+                  title: idea.title,
+                  category: 'activity',
+                  sourceType: idea.savedIdeaId ? 'place' : 'manual',
+                  ...(idea.savedIdeaId ? { sourceId: idea.savedIdeaId } : {}),
+                  lat: idea.lat,
+                  lng: idea.lng,
+                  ...(idea.subtitle ? { locationName: idea.subtitle } : {}),
+                });
+                return item.id;
+              },
+            });
+            if (result.persisted) {
+              // Durable — re-read the trip so the map reflects the saved order
+              // and any added ideas from the canonical source of truth.
+              const refreshed = await buildComposedTrip();
+              setComposedTrip(refreshed);
+            } else {
+              // The write did not land: reflect the accepted order locally so
+              // the map still shows it, WITHOUT claiming it was saved.
+              setComposedTrip((prev) => {
+                if (!prev) return prev;
+                const byId = new Map((prev.source.stops ?? []).map((st) => [st.id, st]));
+                const reordered = result.orderedStopIds
+                  .map((id) => byId.get(id))
+                  .filter((st): st is TripStop => st != null);
+                const rest = (prev.source.stops ?? []).filter(
+                  (st) => !result.orderedStopIds.includes(st.id),
+                );
+                return { ...prev, source: { ...prev.source, stops: [...reordered, ...rest] } };
+              });
+            }
+            setProposal(null);
+          })();
         }}
       />
 

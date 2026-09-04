@@ -175,6 +175,27 @@ export async function reorderPlanItem(
   }
 }
 
+/**
+ * Persist a whole-day re-ordering in one owner-only write — the Trips path
+ * Optimize Today (§11) acceptance goes through. `orderedItemIds` are existing
+ * plan-item ids in the accepted order; the server reassigns their sort_order
+ * slots (see POST /trips/:tripId/plan/reorder). Throws on any non-2xx so the
+ * caller never treats an accepted proposal as saved unless it truly was.
+ */
+export async function reorderPlanItems(
+  tripId: string,
+  orderedItemIds: string[],
+): Promise<void> {
+  const res = await authedFetch(planUrl(tripId, 'reorder'), {
+    method: 'POST',
+    body: JSON.stringify({ orderedItemIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message ?? `reorderPlanItems ${res.status}`);
+  }
+}
+
 // ── Editable trips ─────────────────────────────────────────────────────────────
 
 export interface EditableTripRow {

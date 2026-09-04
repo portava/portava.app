@@ -24,9 +24,10 @@ import {
   composeSavedIdeas,
   composeTripMap,
   partitionPlanItems,
+  persistOptimizeAcceptance,
   type TripCrewArea,
 } from '../tripMapSources.ts';
-import { tripToMapObjects, type TripLodging } from '../tripMapModel.ts';
+import { optimizeToday, tripToMapObjects, type TripLodging, type TripStop, type TripSavedIdea } from '../tripMapModel.ts';
 import type { TripPlanItem } from '../../../../types/models.ts';
 import type { BookmarkedPlace } from '../../../../services/discoveryBookmarks.ts';
 import type { CrewMemberCard, CrewStatusLabel } from '../../../../services/tripCrewLocation.ts';
@@ -399,4 +400,80 @@ test('composeTripMap honours an explicit next stop over the clock', () => {
   });
   assert.equal(composed.source.nextStopId, 'stop-2');
   assert.equal(composed.source.compassAlternatives?.[0].forStopId, 'stop-2');
+});
+
+// ── persistOptimizeAcceptance — the write path (§11, §20) ────────────────────────
+
+function tripStop(over: Partial<TripStop> & { id: string; orderIndex: number }): TripStop {
+  return { title: `Stop ${over.id}`, lat: 16.06, lng: 108.22, status: 'pending', ...over };
+}
+
+test('persistOptimizeAcceptance calls the reorder write path and reflects persisted state', async () => {
+  const stops: TripStop[] = [
+    tripStop({ id: 's1', orderIndex: 0, lat: 16.00, lng: 108.00 }),
+    tripStop({ id: 's2', orderIndex: 1, lat: 16.10, lng: 108.10 }),
+    tripStop({ id: 's3', orderIndex: 2, lat: 16.05, lng: 108.05 }),
+  ];
+  const proposal = optimizeToday(stops, { now: '2026-09-05T18:00:00.000Z' });
+
+  const calls: string[][] = [];
+  const result = await persistOptimizeAcceptance(proposal, '2026-09-05T18:05:00.000Z', {
+    reorder: async (ids: string[]) => { calls.push(ids); },
+  });
+
+  assert.equal(result.persisted, true, 'a successful write is reflected as persisted');
+  assert.equal(calls.length, 1, 'the reorder write path was called exactly once');
+  // What was persisted matches the accepted proposal's ordering of existing stops.
+  assert.deepEqual(calls[0], result.orderedStopIds);
+  assert.deepEqual(result.orderedStopIds.slice().sort(), ['s1', 's2', 's3']);
+});
+
+test('persistOptimizeAcceptance does NOT claim persisted when the write path throws', async () => {
+  const stops: TripStop[] = [
+    tripStop({ id: 's1', orderIndex: 0, lat: 16.00, lng: 108.00 }),
+    tripStop({ id: 's2', orderIndex: 1, lat: 16.10, lng: 108.10 }),
+  ];
+  const proposal = optimizeToday(stops, { now: '2026-09-05T18:00:00.000Z' });
+
+  let attempted = false;
+  const result = await persistOptimizeAcceptance(proposal, '2026-09-05T18:05:00.000Z', {
+    reorder: async () => { attempted = true; throw new Error('forbidden'); },
+  });
+
+  assert.equal(attempted, true, 'the write was attempted');
+  assert.equal(result.persisted, false, 'a failed write is never reported as saved (§20)');
+  assert.equal(result.error, 'forbidden');
+});
+
+test('persistOptimizeAcceptance reorders existing stops and adds accepted saved ideas through the canonical path', async () => {
+  // Two stops with a saved idea sitting almost on the line between them, so the
+  // optimizer proposes inserting it (barely a detour).
+  const stops: TripStop[] = [
+    tripStop({ id: 's1', orderIndex: 0, lat: 16.000, lng: 108.000 }),
+    tripStop({ id: 's2', orderIndex: 1, lat: 16.000, lng: 108.010 }),
+  ];
+  const savedIdeas: TripSavedIdea[] = [
+    { id: 'idea-1', title: 'Coffee', lat: 16.000, lng: 108.005 },
+  ];
+  const proposal = optimizeToday(stops, {
+    now: '2026-09-05T18:00:00.000Z',
+    savedIdeas,
+    maxSavedIdeaInsertions: 1,
+  });
+  assert.equal(proposal.insertions.length, 1, 'the saved idea is proposed as an insertion');
+
+  const reorderCalls: string[][] = [];
+  const added: TripStop[] = [];
+  const result = await persistOptimizeAcceptance(proposal, '2026-09-05T18:05:00.000Z', {
+    reorder: async (ids: string[]) => { reorderCalls.push(ids); },
+    addSavedIdea: async (idea: TripStop) => { added.push(idea); return `item-${idea.id}`; },
+  });
+
+  assert.equal(result.persisted, true);
+  // The reorder is over EXISTING stops only — the insertion has no plan-item id yet.
+  assert.deepEqual(reorderCalls[0].slice().sort(), ['s1', 's2']);
+  assert.ok(!reorderCalls[0].includes('idea-1'), 'the un-created insertion is not sent to reorder');
+  // The accepted saved idea was added through the canonical Trips path.
+  assert.deepEqual(added.map((s) => s.id), ['idea-1']);
+  assert.deepEqual(result.addedInsertionItemIds, ['item-idea-1']);
 });

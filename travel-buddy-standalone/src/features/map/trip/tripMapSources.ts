@@ -39,7 +39,9 @@
  */
 
 import {
+  acceptProposal,
   nextStopOf,
+  type OptimizeProposal,
   type SafeReturnContext,
   type TripCompassAlternative,
   type TripLodging,
@@ -411,6 +413,93 @@ export function composeTripMap(input: TripMapComposeInput): ComposedTripMap {
   };
 
   return { source, crewAreas };
+}
+
+// ── Optimize Today persistence (§11, §20) ────────────────────────────────────────
+
+/**
+ * The Trips write path an accepted Optimize Today proposal is persisted through.
+ * INJECTED so this module stays network-free and testable — the app hands the
+ * real `reorderPlanItems` / `createPlanItem` service calls.
+ */
+export interface OptimizePersistWriters {
+  /** Persist the new ordering of the day's EXISTING stops (owner-only server). */
+  reorder: (orderedItemIds: string[]) => Promise<void>;
+  /**
+   * Add one accepted saved-idea insertion to the trip as a real plan item,
+   * returning its new id. Optional: without it, insertions are surfaced but not
+   * written (the reorder still persists).
+   */
+  addSavedIdea?: (idea: TripStop) => Promise<string>;
+}
+
+export interface OptimizePersistResult {
+  /**
+   * TRUE only once the reorder was durably written. The UI must not show a
+   * proposal as "saved" unless this is true (§11: no silent rewrite; §20: the
+   * Trips system owns the itinerary).
+   */
+  persisted: boolean;
+  /** The existing-stop ids, in the order that was persisted. */
+  orderedStopIds: string[];
+  /** New plan-item ids created for accepted saved-idea insertions. */
+  addedInsertionItemIds: string[];
+  /** The accepted saved-idea insertions (proposed additions), for the caller. */
+  insertions: TripStop[];
+  /** Set when the reorder write failed; `persisted` is then false. */
+  error?: string;
+}
+
+/**
+ * Persist an accepted Optimize Today proposal through the Trips write path.
+ *
+ * The reorder of the day's EXISTING stops is the acceptance and the gate: if it
+ * throws, nothing is claimed saved (`persisted:false`). Accepted saved-idea
+ * insertions are then added best-effort as real plan items via `addSavedIdea` —
+ * a proposed addition the user accepted, added through the canonical Trips path
+ * rather than woven into the slot-preserving reorder. `orderedStopIds` excludes
+ * the insertions (which have no plan-item id until they are created).
+ */
+export async function persistOptimizeAcceptance(
+  proposal: OptimizeProposal,
+  at: string,
+  writers: OptimizePersistWriters,
+): Promise<OptimizePersistResult> {
+  const change = acceptProposal(proposal, at);
+  const insertionIds = new Set(proposal.insertions.map((s) => s.id));
+  const orderedStopIds = change.orderedStopIds.filter((id) => !insertionIds.has(id));
+
+  try {
+    await writers.reorder(orderedStopIds);
+  } catch (e) {
+    return {
+      persisted: false,
+      orderedStopIds,
+      addedInsertionItemIds: [],
+      insertions: change.insertions,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+
+  const addedInsertionItemIds: string[] = [];
+  if (writers.addSavedIdea) {
+    for (const idea of change.insertions) {
+      try {
+        addedInsertionItemIds.push(await writers.addSavedIdea(idea));
+      } catch {
+        // The reorder — the acceptance itself — is already durable. A failed
+        // add is a missing suggestion, not a lost reorder, so it does not flip
+        // `persisted`; the caller re-reads the trip to see what landed.
+      }
+    }
+  }
+
+  return {
+    persisted: true,
+    orderedStopIds,
+    addedInsertionItemIds,
+    insertions: change.insertions,
+  };
 }
 
 // Re-export for callers that only touch the composition layer.
