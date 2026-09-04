@@ -25,6 +25,7 @@ import { isFlagEnabled } from "./featureFlags.js";
 import { projectAndStore } from "./intelProjection.js";
 import { assembleClaimInput, type ClaimRow } from "./intelProjectionAggregator.js";
 import { LIVE_ELIGIBLE_CLAIM_STATUSES } from "./intelContracts.js";
+import { captureSnapshotStates, emitStateChangedEvents, type SnapshotRow } from "./intelDomainEvents.js";
 
 const STARTUP_DELAY_MS = 3 * 60 * 1000;
 const INTERVAL_MS = 5 * 60 * 1000; // spec §24: aggregate live state every five minutes
@@ -76,6 +77,16 @@ export async function runIntelProjectionPass(opts: { client?: any; now?: Date } 
       if (!g) { g = { subjectId: c.subject_id, zoneId: c.zone_id ?? null, claims: [] }; groups.set(key, g); }
       g.claims.push(c);
     }
+
+    // §21 intel.state.changed: capture the prior semantic state of every
+    // projected subject's snapshots BEFORE the pass writes, so a real diff
+    // (value/band/eligibility) can be detected after. Bounded to the group
+    // subjects — the set the projection can move. Orphan snapshots of subjects
+    // that left live-eligibility entirely are handled as "went dark" below.
+    const groupSubjectIds = [...new Set([...groups.values()].map((g) => g.subjectId))];
+    const priorStates = await captureSnapshotStates(db, groupSubjectIds);
+    const groupSubjectSet = new Set(groupSubjectIds);
+    const wentDarkRows: Pick<SnapshotRow, "id" | "subject_id" | "zone_id" | "claim_type">[] = [];
 
     const tally = { written: 0, suppressed: 0, skipped: 0 };
     for (const g of groups.values()) {
@@ -147,19 +158,34 @@ export async function runIntelProjectionPass(opts: { client?: any; now?: Date } 
       // partial/errored read must never delete a servable row — leave snapshots
       // alone (the TTL still bounds staleness).
       if (liveKeysComplete && servableComplete) {
-        const orphanIds = servable
-          .filter((s) => !liveKeys.has(JSON.stringify([s.subject_id, s.zone_id ?? "", s.claim_type])))
-          .map((s) => s.id);
+        const orphans = servable
+          .filter((s) => !liveKeys.has(JSON.stringify([s.subject_id, s.zone_id ?? "", s.claim_type])));
+        const orphanIds = orphans.map((s) => s.id);
         if (orphanIds.length > 0) {
           await db.from("intel_state_snapshots")
             .update({ privacy_eligible: false, expires_at: now.toISOString() })
             .in("id", orphanIds);
           logger.info({ expired: orphanIds.length }, "intelProjection pass: expired snapshots whose claim is no longer live-eligible");
+          // An orphan of a subject we did NOT project this pass went dark and
+          // its subject is not in priorStates/post: emit its state.changed here
+          // (subjects we DID project have their eligibility flip caught by the
+          // prior/post diff, and the emitter dedups by snapshot id).
+          for (const o of orphans) {
+            if (!groupSubjectSet.has(o.subject_id)) {
+              wentDarkRows.push({ id: o.id, subject_id: o.subject_id, zone_id: o.zone_id ?? null, claim_type: o.claim_type });
+            }
+          }
         }
       }
     } catch (err) {
       logger.warn({ err }, "intelProjection pass: snapshot reconciliation failed (non-fatal)");
     }
+
+    // §21 intel.state.changed — emitted only on a real diff (spec §11). Fully
+    // fail-closed: never throws into the pass, so a spine hiccup cannot corrupt
+    // the projection result the caller relies on.
+    const postStates = await captureSnapshotStates(db, groupSubjectIds);
+    await emitStateChangedEvents(db, priorStates, postStates, wentDarkRows, { now });
 
     if (tally.written > 0 || tally.suppressed > 0) {
       logger.info({ subjects: groups.size, ...tally }, "intelProjection pass complete");
