@@ -151,9 +151,8 @@ import { MapEntityPreviewCard } from '../map/MapEntityPreviewCard.tsx';
 import { useCompassFeed }       from '../../hooks/compass/useCompassFeed.ts';
 import { fetchCompassHome }     from '../../services/compass.ts';
 import type { CompassFeedItem } from '../../services/compass.ts';
-import type { MapEntity }       from '../../types/mapTypes.ts';
-import type { BuddyProfile }    from '../../services/rentABuddy.ts';
-import type { EventListItem }   from '../../services/events.ts';
+import { buddyEntity, eventEntity } from '../../__fixtures__/mapEntities.ts';
+import type { CityEvent } from '../../types/models.ts';
 
 // ── Typed mock refs ───────────────────────────────────────────────────────────
 
@@ -163,13 +162,21 @@ const mockFetchCompassHome = fetchCompassHome as jest.Mock;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-const CITY_EVENT = {
+// Typed, so a field CityEvent does not have is a compile error rather than a
+// runtime undefined. `kind`, `citySlug`, `city` and `category` are REQUIRED and
+// were all absent — ExploreTodaySection groups by city and labels by category,
+// so this fixture was exercising those paths with undefined.
+const CITY_EVENT: CityEvent = {
   id: 'evt-abc',
+  kind: 'event',
   title: 'Jazz Night',
+  citySlug: 'tokyo',
+  city: 'Tokyo',
   startAt: new Date(Date.now() + 20 * 60 * 1000).toISOString(), // 20 min from now
   attendeeCount: 30,
   capacity: 100,
   block: 'evening' as const,
+  category: 'nightlife',
 };
 
 function makeCompassFeedItem(overrides: Partial<CompassFeedItem> = {}): CompassFeedItem {
@@ -382,25 +389,13 @@ describe('MapEntityPreviewCard — CTA navigation paths', () => {
 
   beforeEach(() => onClose.mockClear());
 
+  // Fixtures come from the REAL projectors (src/__fixtures__/mapEntities.ts), so
+  // these assert the route the PRODUCER built. They used to hand-write a partial
+  // DTO and assert a route the card rebuilt from `payload.id` — which is how the
+  // card kept passing after `payload` became a MapObject whose `id` is the
+  // NAMESPACED map id (`buddy:b1`), not the domain id these routes take.
   it('8. buddy CTA → /(rent-a-buddy)/buddy/:id (not /buddy/:id without prefix)', async () => {
-    const buddyEntity: MapEntity<BuddyProfile> = {
-      id:      'buddy-77',
-      type:    'buddies',
-      lat:     35.6762,
-      lng:     139.6503,
-      payload: {
-        id:            'buddy-77',
-        displayName:   'Kenji',
-        categories:    ['Food', 'Culture'],
-        city:          'Tokyo',
-        hourlyRateUsd: 25,
-        averageRating: 4.8,
-        reviewCount:   14,
-        coverPhotoUrl: null,
-      } as unknown as BuddyProfile,
-    };
-
-    await render(<MapEntityPreviewCard entity={buddyEntity} onClose={onClose} />);
+    await render(<MapEntityPreviewCard entity={buddyEntity({ id: 'buddy-77' })} onClose={onClose} />);
 
     fireEvent.press(screen.getByText('View Buddy Profile'));
 
@@ -412,27 +407,12 @@ describe('MapEntityPreviewCard — CTA navigation paths', () => {
     // Must include the /(rent-a-buddy)/ group prefix — the old bug omitted it.
     expect(pushed).toContain('/(rent-a-buddy)/');
     expect(pushed).not.toMatch(/^\/buddy\//);
+    // Never the namespaced map id the projection puts on `MapObject.id`.
+    expect(pushed).not.toContain('buddy:');
   });
 
   it('9. event CTA → /event/:id (not /events/:id)', async () => {
-    const eventEntity: MapEntity<EventListItem> = {
-      id:   'event:concert-88',
-      type: 'events',
-      lat:  35.6762,
-      lng:  139.6503,
-      payload: {
-        id:         'concert-88',
-        title:      'Live Jazz',
-        startsAt:   new Date(Date.now() + 2 * 3600 * 1000).toISOString(),
-        endsAt:     null,
-        goingCount: 42,
-        priceType:  'free',
-        hostName:   'Jazz Club',
-        coverUrl:   null,
-      } as unknown as EventListItem,
-    };
-
-    await render(<MapEntityPreviewCard entity={eventEntity} onClose={onClose} />);
+    await render(<MapEntityPreviewCard entity={eventEntity({ id: 'concert-88' })} onClose={onClose} />);
 
     fireEvent.press(screen.getByText('View Event'));
 
@@ -442,5 +422,6 @@ describe('MapEntityPreviewCard — CTA navigation paths', () => {
     const pushed = mockPush.mock.calls[0][0] as string;
     expect(pushed).toBe('/event/concert-88');
     expect(pushed).not.toMatch(/\/events\//);
+    expect(pushed).not.toContain('event:');
   });
 });

@@ -191,6 +191,18 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:frozen-dir
 
+      # The STATIC half of the schema-reference contract. Deliberately here and
+      # not in live-db.yml: this is the check that catches `places.country`, and
+      # the live lane it used to depend on was evicting 64 of every 100 runs, so
+      # the guard that should have stopped that column mostly did not run. This
+      # needs no database, no credentials and no network, so nothing can starve
+      # it. See src/scripts/checkSchemaReferences.ts for the ownership split
+      # against check:write-path-columns, which keeps the live question.
+      - name: 'check:schema-references (static; no DB, cannot be starved)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:schema-references
+
       - name: 'check:async-handlers'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash

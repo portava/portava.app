@@ -38,6 +38,7 @@ import {
   KIND_DEFAULT_PRIORITY,
   point,
   type MapObject,
+  type MapObjectKind,
   type PrivacyClass,
 } from '../../../types/mapObjects.ts';
 
@@ -187,6 +188,112 @@ export function projectFriend(loc: any): MapObject | null {
   };
 }
 
+// ── Compass recommendations ───────────────────────────────────────────────────
+
+/**
+ * Which contract kind a Compass result stands for. Compass answers in its own
+ * vocabulary; anything not listed here has no map representation and is dropped
+ * rather than rendered as an untyped dot.
+ */
+const COMPASS_KIND: Record<string, MapObjectKind> = {
+  event: 'event',
+  place: 'place',
+  gem: 'hidden_gem',
+  hidden_gem: 'hidden_gem',
+  buddy: 'buddy_zone',
+  traveler: 'social_zone',
+  user: 'social_zone',
+  trip: 'trip_stop',
+  friend: 'crew_member',
+};
+
+/**
+ * FAIL-CLOSED privacy rungs for Compass results.
+ *
+ * A projector RECORDS the rung its source already applied, and Compass states
+ * none — so these are the narrowest rung each kind is rendered at anywhere else
+ * in the map, never a widening. Person-shaped kinds sit at `approximate` (where
+ * §6 draws a ring rather than an avatar-precision pin) and travelers at
+ * `aggregate_only`, matching the server's `travelerPrivacyClass` default.
+ */
+const COMPASS_PRIVACY: Record<MapObjectKind, PrivacyClass> = {
+  place: 'place_level',
+  event: 'place_level',
+  hidden_gem: 'approximate',
+  trip_stop: 'place_level',
+  buddy_zone: 'approximate',
+  crew_member: 'approximate',
+  social_zone: 'aggregate_only',
+  activity_zone: 'aggregate_only',
+  crowd_flow: 'aggregate_only',
+  meeting_point: 'place_level',
+  safety_notice: 'place_level',
+  memory: 'aggregate_only',
+  prediction: 'aggregate_only',
+};
+
+/** The fields of a Compass recommendation this projector reads. */
+export interface CompassResultLike {
+  id: string;
+  type?: string | null;
+  category?: string | null;
+  title?: string | null;
+  reason?: string | null;
+  city?: string | null;
+  data?: Record<string, unknown> | null;
+}
+
+/**
+ * Project one Compass recommendation into the contract.
+ *
+ * Compass returns a RANKED ANSWER, not an observation, so nothing here carries
+ * freshness, confidence or activity — §37: "Do not let Compass invent live
+ * conditions." It also carries no per-kind detail payload, so `payload` is
+ * deliberately absent: a card renders this from `title` and `subtitle` and shows
+ * no type-specific chips, which is honest about how little Compass sent.
+ *
+ * Before this existed, AskCompassBar handed the raw `CompassRecommendation`
+ * through as `entity.payload` — a THIRD shape the cards had to guess at, and the
+ * one that made a Compass buddy or trip result hit `categories.slice` /
+ * `visibility.replace` and take the card down.
+ */
+export function projectCompassResult(rec: CompassResultLike): MapObject | null {
+  const kind = COMPASS_KIND[rec?.type ?? ''];
+  if (!kind) return null;
+
+  const lat = numberOrNull(rec.data?.lat);
+  const lng = numberOrNull(rec.data?.lng);
+  if (lat == null || lng == null) return null;
+
+  const title = firstNonEmpty([rec.title, rec.category]) ?? 'Suggestion';
+
+  return {
+    id: rec.id,
+    kind,
+    geometry: point(lat, lng),
+    title,
+    subtitle: joinParts([rec.reason, rec.city], ' · '),
+    privacyClass: COMPASS_PRIVACY[kind],
+    renderingPriority: KIND_DEFAULT_PRIORITY[kind],
+    interaction: {
+      actions: ['view'],
+      detailRoute: kind === 'place' && rec.id ? `/place/${encodeURIComponent(rec.id)}` : undefined,
+      opensSheet: true,
+    },
+  };
+}
+
+function numberOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function firstNonEmpty(parts: (string | null | undefined)[]): string | null {
+  for (const p of parts) {
+    if (p != null && String(p).trim() !== '') return String(p);
+  }
+  return null;
+}
+
 // ── Legacy fallback projectors ────────────────────────────────────────────────
 //
 // Used ONLY when the gateway is unavailable (flag off, or the call failed) and
@@ -214,7 +321,21 @@ export function projectGemLocal(gem: any): MapObject | null {
       opensSheet: true,
       contributable: true,
     },
-    payload: gem,
+    // The server's five fields, not the whole HiddenGem. "Mirrors the server's
+    // projectGem" is only true if `payload` mirrors it too — a wider payload
+    // here is what let a gem card render vibe tags and a save count with the
+    // flag OFF and nothing with it ON. Enforced by serverMirror.test.ts.
+    payload: {
+      category: gem.category ?? null,
+      city: gem.city ?? null,
+      thumbnailUrl: gem.imageUrl ?? null,
+      verificationLevel: gem.verificationLevel ?? null,
+      coordsPrecision: gem.coordsPrecision ?? null,
+      // The live-claim subject bridge the server also emits: a gem's own id is
+      // in the hidden_gems id space, not places'. Carried here so the rollback
+      // path cannot lose a subject the gateway path has.
+      canonicalPlaceId: gem.canonicalPlaceId ?? null,
+    },
   };
 }
 
@@ -233,6 +354,7 @@ export function projectEventLocal(ev: any, now: number = Date.now()): MapObject 
     geometry: point(Number(lat), Number(lng)),
     title: ev.title ?? 'Event',
     subtitle: joinParts([ev.locationName, ev.startsAt ? String(ev.startsAt).slice(0, 10) : null], ' · '),
+    expiresAt: ev.endsAt ? String(ev.endsAt) : undefined,
     privacyClass: 'place_level',
     renderingPriority: active
       ? KIND_DEFAULT_PRIORITY.event
@@ -243,7 +365,16 @@ export function projectEventLocal(ev: any, now: number = Date.now()): MapObject 
       opensSheet: true,
       contributable: true,
     },
-    payload: ev,
+    // The server's five fields. `hasStarted` is the projector's own verdict on
+    // its own clock — a card reading it does not re-derive "is this live now",
+    // which spec §19 puts server-side.
+    payload: {
+      locationName: ev.locationName ?? null,
+      startsAt: ev.startsAt ?? null,
+      coverUrl: ev.coverUrl ?? null,
+      visibility: ev.visibility ?? null,
+      hasStarted: active,
+    },
   };
 }
 

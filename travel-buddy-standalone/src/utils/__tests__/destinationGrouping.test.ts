@@ -28,6 +28,8 @@ function makeMemory(overrides: Partial<PassportMemory> = {}): PassportMemory {
     verificationLevel: 'none',
     sourceType: null,
     photoUrl: null,
+    // Required by PassportMemory.
+    mediaType: null,
     planId: null,
     tripId: null,
     suggestionReason: null,
@@ -84,6 +86,8 @@ function makeTrip(overrides: Partial<TripRow> = {}): TripRow {
     travelStyle: null,
     openToMeet: false,
     coverUrl: null,
+    // Required by TripRow.
+    coverMediaType: null,
     progress: 0,
     tripType: null,
     timezone: null,
@@ -101,6 +105,8 @@ function makeTrip(overrides: Partial<TripRow> = {}): TripRow {
     delayedPostingDefault: false,
     preciseLocationVisible: false,
     planEditPermission: null,
+    // Required by TripRow.
+    showHeaderPublicly: false,
     ...overrides,
   };
 }

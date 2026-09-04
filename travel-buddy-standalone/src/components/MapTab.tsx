@@ -144,7 +144,7 @@ function MapSentinelView({ kind }: { kind: PostcardsSentinel }) {
   );
 }
 
-interface MapTabProps {
+export interface MapTabProps {
   postcards: PassportPostcard[];
   currentCity?: string | null;
   currentUserId?: string | null;

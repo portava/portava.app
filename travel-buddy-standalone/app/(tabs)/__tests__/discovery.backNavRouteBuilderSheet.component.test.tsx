@@ -263,11 +263,17 @@ jest.mock('../../../src/components/discovery/SectionErrorBoundary', () => ({
 }));
 
 // ── Fake route stop draft ─────────────────────────────────────────────────────
-const FAKE_DRAFT = {
-  placeId:   'place-test-1',
-  placeName: 'Test Ramen Shop',
-  address:   '1-1 Test St, Tokyo',
-} as RouteStopDraft;
+// The real RouteStopDraft shape. This used to be `{ placeId, placeName, address }`
+// — an older shape with ZERO fields in common with the current interface, held
+// in place by an `as RouteStopDraft` cast. The test only checks that the sheet
+// opens, so nothing noticed; a test that read the draft would have seen
+// undefined for every field.
+const FAKE_DRAFT: RouteStopDraft = {
+  id:    'place-test-1',
+  title: 'Test Ramen Shop',
+  lat:   35.6762,
+  lng:   139.6503,
+};
 
 // ── Window event emitter ──────────────────────────────────────────────────────
 // jest-expo's native environment has a `window` global but no DOM event APIs.

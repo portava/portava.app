@@ -106,7 +106,10 @@ function makeTrip(id: string, city: string): TripRow {
     delayedPostingDefault: false,
     preciseLocationVisible: false,
     planEditPermission: null,
-  } as TripRow;
+    // Required by TripRow. It was missing, and the redundant `as TripRow` on a
+    // value already annotated `: TripRow` suppressed the missing-property error.
+    showHeaderPublicly: false,
+  };
 }
 
 function makeMemory(id: string, city: string): PassportMemory {

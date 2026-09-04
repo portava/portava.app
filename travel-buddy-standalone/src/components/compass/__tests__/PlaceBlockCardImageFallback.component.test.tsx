@@ -13,6 +13,7 @@
 import React from 'react';
 import { render, waitFor, fireEvent } from '@testing-library/react-native';
 import { CompassChatBlocks } from '../CompassChatBlocks.tsx';
+import type { CompassUiPlace } from '../../../services/compass.ts';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -60,7 +61,20 @@ jest.mock('../../../utils/compassFormat.ts', () => ({
 
 // ── Fixture ───────────────────────────────────────────────────────────────────
 
-const PLACE_WITH_IMAGE = {
+/**
+ * TYPED, so a field CompassUiPlace does not have has to be declared deliberately
+ * rather than appearing by accident — and `headerImageUrl` is exactly such a
+ * field.
+ *
+ * KNOWN GAP: the server's `UiPlace` (api-server compass/CompassUiBlocks.ts) has
+ * NO image field, and nothing in the block builder ever sets one, so a real
+ * compass chat place card has never had an image to break. This test still
+ * earns its place — it covers the card's onError fallback, which is real client
+ * behaviour — but the intersection type is here so the next reader knows the
+ * fixture is ahead of the API rather than describing it. Wiring the image
+ * end-to-end is a Compass change; see the notes in PR #321.
+ */
+const PLACE_WITH_IMAGE: CompassUiPlace & { headerImageUrl: string } = {
   id:             'place-broken-img',
   name:           'Broken Image Café',
   category:       'food',
@@ -68,6 +82,7 @@ const PLACE_WITH_IMAGE = {
   neighborhood:   'Old Quarter',
   rating:         4.2,
   blurb:          'Great vibes',
+  verified:       false,
   headerImageUrl: 'https://broken.example.com/no-such-image.jpg',
   lat:            10.3,
   lng:            123.9,
