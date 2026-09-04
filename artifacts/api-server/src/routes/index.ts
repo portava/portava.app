@@ -32,6 +32,7 @@ import geofenceRouter from "./geofence";
 import intelRouter from "./intel.js";
 import intelCoverageRouter from "./intelCoverage.js";
 import intelApiRouter from "./intelApi.js";
+import intelOutcomesRouter from "./intelOutcomes.js";
 import safeReturnRouter from "./safeReturn";
 import tripCrewLocationRouter from "./tripCrewLocation";
 import highlightsRouter from "./highlights";
@@ -284,6 +285,9 @@ router.use(placeRecapsRouter);
 router.use(intelRouter);
 router.use(intelCoverageRouter);
 router.use(intelApiRouter);
+// I4a outcome events — its own file (routes/intel.ts is owned by another unit),
+// mounted alongside the other intel routers.
+router.use(intelOutcomesRouter);
 router.use(wallRouter);
 
 export default router;

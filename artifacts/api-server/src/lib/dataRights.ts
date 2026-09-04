@@ -150,6 +150,51 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
     reason: "Individually it is one person's opinion tied to a place and time; only the aggregate leaves." },
   { table: "intel_confirmations", column: "presence_level", ownership: "derived_aggregate", personal: true, reason: "As per observations." },
   { table: "intel_confirmations", column: "observed_at", ownership: "derived_aggregate", personal: true, reason: "As per observations." },
+
+  // ── intel_attributions (I4a, 2277) ────────────────────────────────────────
+  // A row links a CONTRIBUTOR to a traveler's outcome. Nothing here leaves at
+  // row level: the only redistributable products are aggregates (contradiction
+  // counts, scoped reliability badges — Table 28 'Verification').
+  { table: "intel_attributions", column: "actor_id", ownership: "restricted_no_redistribution", personal: true,
+    reason: "Identifies the credited contributor. Never redistributable; badges and counts carry no identity." },
+  { table: "intel_attributions", column: "touch", ownership: "restricted_no_redistribution", personal: true,
+    reason: "How the REPORTER interacted with the contribution (Table 22 touch) — behavioural telemetry about a person, kept internal." },
+  { table: "intel_attributions", column: "weight", ownership: "derived_aggregate", personal: false,
+    reason: "Portava's computed attribution weight. May leave only inside an aggregate, never with a contributor identity." },
+  { table: "intel_attributions", column: "outcome", ownership: "derived_aggregate", personal: false,
+    reason: "The Appendix-A outcome copied from the event; leaves only as an aggregate (e.g. contradiction rate per claim family), never as a row." },
+  { table: "intel_attributions", column: "outcome_score", ownership: "derived_aggregate", personal: false,
+    reason: "Portava's accuracy grade of the outcome. Aggregate-only, like outcome." },
+  { table: "intel_attributions", column: "expected_accuracy", ownership: "derived_aggregate", personal: false,
+    reason: "The served confidence at report time — Portava's own calibration target." },
+  { table: "intel_attributions", column: "counterfactual", ownership: "restricted_no_redistribution", personal: true,
+    reason: "The reporter's stated counterfactual ('would have made the same choice') — a personal statement, internal only." },
+  { table: "intel_attributions", column: "contradiction", ownership: "derived_aggregate", personal: false,
+    reason: "Whether the outcome contradicted the served state. The Verification product may surface contradiction COUNTS (Table 28)." },
+  { table: "intel_attributions", column: "scope_key", ownership: "portava_owned", personal: false,
+    reason: "Portava's §15 scope bucket (city-level geography × family × band × mode × season) — a label, never a coordinate." },
+
+  // ── intel_scoped_trust (I4a, 2278) ────────────────────────────────────────
+  // "Internal Trust remains purpose-limited" (§15): every number here is about
+  // ONE person's reliability in ONE scope and never leaves at row level. The
+  // only public product is the read-only badge derivation (lib/intelScopedTrust
+  // deriveScopedBadges), which carries no number.
+  { table: "intel_scoped_trust", column: "actor_id", ownership: "restricted_no_redistribution", personal: true,
+    reason: "Identifies the contributor whose scoped reliability this is. Never redistributable." },
+  { table: "intel_scoped_trust", column: "scope_key", ownership: "portava_owned", personal: false,
+    reason: "Portava's §15 scope bucket — a label, never a coordinate." },
+  { table: "intel_scoped_trust", column: "trust", ownership: "restricted_no_redistribution", personal: true,
+    reason: "The internal, purpose-limited scoped trust number (§15). Public UI shows badges, never this value." },
+  { table: "intel_scoped_trust", column: "outcomes", ownership: "restricted_no_redistribution", personal: true,
+    reason: "A person's graded-outcome count in a scope — evidence-portfolio input, internal only." },
+  { table: "intel_scoped_trust", column: "successes", ownership: "restricted_no_redistribution", personal: true,
+    reason: "As per outcomes." },
+  { table: "intel_scoped_trust", column: "contradictions", ownership: "restricted_no_redistribution", personal: true,
+    reason: "As per outcomes — a per-person contradiction count; only claim-level aggregates may surface (Table 28)." },
+  { table: "intel_scoped_trust", column: "calibration_error", ownership: "restricted_no_redistribution", personal: true,
+    reason: "A person's calibration measure in a scope. Feeds the calibrated badge; the number stays internal." },
+  { table: "intel_scoped_trust", column: "calibration_samples", ownership: "restricted_no_redistribution", personal: true,
+    reason: "Denominator of calibration_error — same treatment." },
 ];
 
 /** Columns never considered for redistribution, so never classified. */
@@ -166,12 +211,22 @@ export const INTERNAL_COLUMNS: readonly string[] = [
   // Internal promotion provenance ('admin' | 'system'): never surfaced publicly,
   // never redistributed — pure lineage, like superseded_by.
   "promotion_source",
+  // I4a lineage pointers + versioning (2277/2278): an FK to the outcome event on
+  // the spine, the algorithm version a row was computed under, and the
+  // scoped-trust application bookkeeping. Pure lineage, like superseded_by.
+  "outcome_event_id",
+  "algorithm_version",
+  "last_attribution_id",
+  "last_attribution_at",
+  "last_updated_at",
 ];
 
 /** The intel tables this registry covers. */
 export const COVERED_TABLES: readonly string[] = [
   "intel_observations", "intel_claims", "intel_evidence",
   "intel_confirmations", "intel_state_snapshots",
+  // I4a (2277 / 2278).
+  "intel_attributions", "intel_scoped_trust",
 ];
 
 /** May this field be redistributed at all? Fail-closed on an unknown field. */

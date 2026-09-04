@@ -80,6 +80,23 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // delete; the ledger has no DELETE-blocking trigger), with service_role DELETE
   // granted by migration 2204. Non-cash, so no financial-retention reason to keep it.
   "intel_reward_ledger",
+  // I4a attribution ledger (migration 2277, actor_id = the CONTRIBUTOR). Erased
+  // with the contributor's observations: observation_id REFERENCES
+  // intel_observations ON DELETE CASCADE, and that cascade fires INSIDE
+  // erase_intel_for_actor's declared-erasure transaction (the reused 2130
+  // append-only trigger permits DELETE there). The profiles cascade never fires
+  // under the tombstone, but it does not need to — every row hangs off an
+  // observation the erasure function already removes. The outcome REPORTER is
+  // not named on this table (their id stays on the canonical_events spine row,
+  // whose retention 2120 governs).
+  "intel_attributions",
+  // I4a scoped-trust fold (migration 2278, actor_id = the CONTRIBUTOR). Mutable
+  // derived state whose profiles cascade never fires under the tombstone, so it
+  // is deleted EXPLICITLY inside erase_intel_for_actor (re-created by 2278 as a
+  // superset of 2130's body) — the same declared-erasure RPC the worker already
+  // calls. Attribution rows for the actor are deleted there too, so nothing
+  // waits on a cascade.
+  "intel_scoped_trust",
   "comment_likes",
   "devices",
   "event_saves",
@@ -439,6 +456,12 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "intel_contribution_consent",
   // IG-10 non-cash reward ledger, added by migration 2170 (post-baseline).
   "intel_reward_ledger",
+  // I4a attribution ledger, added by migration 2277 (post-baseline). Classified
+  // in ERASED_BY_CASCADE above.
+  "intel_attributions",
+  // I4a scoped-trust fold, added by migration 2278 (post-baseline). Classified
+  // in ERASED_BY_CASCADE above.
+  "intel_scoped_trust",
   // IG mission candidates, added by migration 2167 (post-baseline). Classified
   // in ANONYMISED_FK_NULLED (accepted_by is NULLed, the row is kept).
   "intel_mission_candidates",
