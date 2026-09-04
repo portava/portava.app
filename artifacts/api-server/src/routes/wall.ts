@@ -163,7 +163,11 @@ interface WallViewerContext {
   interests: Set<string>;
 }
 
-async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerContext> {
+// Exported as a TEST SEAM only (see src/test/wallViewerLocationRead.test.ts).
+// The Wall's viewer signals are read here and consumed only inside this module;
+// without a seam the `profiles` select list can only be asserted through a full
+// HTTP round-trip, which is how a nonexistent column in it went unnoticed.
+export async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerContext> {
   const ctx: WallViewerContext = {
     followedCreatorIds: new Set<string>(),
     viewerTripIds: new Set<string>(),
