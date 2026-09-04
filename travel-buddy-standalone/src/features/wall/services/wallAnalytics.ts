@@ -212,3 +212,39 @@ export function trackRealWorldOutcome(
     outcome,
   });
 }
+
+// ── Real-world-outcome consent gate (spec §32/§23) ───────────────────────────
+
+/** Coarse real-world outcomes the Wall can attribute to an object (§32). */
+export type WallRealWorldOutcome = 'see_place' | 'add_to_trip' | 'book_buddy';
+
+/**
+ * The viewer's Intelligence-Contribution consent snapshot (D4). Real-world
+ * outcomes are a contribution signal, so they are recorded ONLY under valid
+ * consent (§32). Fail-closed: until the app boot loads the authoritative state
+ * (services/intelConsent.ts), this is false and no outcome is recorded.
+ */
+let realWorldOutcomeConsented = false;
+
+/** Set at app boot from the server-authoritative intel-contribution consent. */
+export function setRealWorldOutcomeConsent(consented: boolean): void {
+  realWorldOutcomeConsented = consented;
+}
+
+/** Reset the consent snapshot (fail-closed). Test cleanup + app teardown. */
+export function resetRealWorldOutcomeConsent(): void {
+  realWorldOutcomeConsented = false;
+}
+
+/**
+ * The consented-only caller for `trackRealWorldOutcome`. Invoked from the Wall's
+ * real-world action handlers (see_place / add_to_trip / book_buddy in
+ * runWallAction): it records the outcome ONLY when the viewer has valid
+ * intel-contribution consent, so an un-consented viewer never emits one.
+ */
+export function recordRealWorldOutcome(
+  projection: WallProjection,
+  outcome: WallRealWorldOutcome,
+): void {
+  trackRealWorldOutcome(projection, outcome, realWorldOutcomeConsented);
+}

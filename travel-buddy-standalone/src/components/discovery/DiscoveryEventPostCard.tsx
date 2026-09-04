@@ -42,16 +42,22 @@ function truncate(text: string, max = 120): string {
 
 interface Props {
   post: DiscoveryEventPost;
+  /**
+   * Called just before navigation when the card is tapped. The Discovery feed
+   * rail uses it to report a 'discovery' rank outcome for this post; other
+   * callers may omit it. Navigation happens regardless.
+   */
+  onOpen?: () => void;
 }
 
-export function DiscoveryEventPostCard({ post }: Props) {
+export function DiscoveryEventPostCard({ post, onOpen }: Props) {
   const thumbnail = post.mediaUrls[0] ?? null;
   const label = post.linkedEventTitle ?? post.venueLabel ?? post.venueName ?? null;
 
   return (
     <Pressable
       style={s.card}
-      onPress={() => router.push(`/post/${post.id}` as any)}
+      onPress={() => { onOpen?.(); router.push(`/post/${post.id}` as any); }}
       accessibilityRole="button"
       accessibilityLabel={`Post from ${label ?? 'event'}: ${post.content.slice(0, 60)}`}
     >

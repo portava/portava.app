@@ -123,9 +123,9 @@ type ScopeVerifier = (sc: any, scopeId: string, userId: string) => Promise<boole
  * migration, and making it USABLE is an entry here plus whatever query proves
  * membership. Those are two separate decisions and only the second one can leak.
  *
- * Every verifier fails closed on a read error. `circle` and `plan` are absent
- * because neither has a membership table this module could prove against today;
- * they are refused rather than approximated.
+ * Every verifier fails closed on a read error, and treats a scope whose owning
+ * row cannot be read — a circle/plan/trip that does not exist — as a refusal,
+ * never as an ownerless group anyone may join.
  */
 export const SCOPE_MEMBERSHIP_VERIFIERS: Partial<Record<GroupScopeKind, ScopeVerifier>> = {
   /** Accepted trip crew: the owner, or a trip_members row with an accepted role. */
@@ -160,6 +160,74 @@ export const SCOPE_MEMBERSHIP_VERIFIERS: Partial<Record<GroupScopeKind, ScopeVer
       .maybeSingle();
     if (error || !data) return false;
     return (data as any).status === "going";
+  },
+  /**
+   * Circle: the circle's owner, or an accepted member of it.
+   *
+   * `groupScopeId` is a `circles.id`, matching the pattern the trip verifier
+   * uses with `trips.id` — the scope is the group's own row, not a user id. So
+   * the id is resolved to the circle's `owner_id` first, and an id that names no
+   * circle is a refusal (fail-closed), never an ownerless group.
+   *
+   * Membership is keyed by OWNER, not by `circles.id`: `circle_memberships` has
+   * `(user_id = circle owner, other_id = member)` and no `circle_id` column, so
+   * a member is a row `(user_id = owner_id, other_id = caller)`. That row is
+   * written ONLY when a circle invite is accepted (routes/friends.ts and
+   * routes/requests.ts are the only writers, both on accept), so the row's
+   * EXISTENCE is the accepted-membership signal — the same shape lib/chatSync.ts
+   * and services/groupChatSync.ts read to drive circle chat membership. A status
+   * column is deliberately NOT consulted: the accept path leaves it at its table
+   * default rather than stamping 'accepted', so filtering on 'accepted' would
+   * refuse every real member.
+   */
+  circle: async (sc, circleId, userId) => {
+    const { data: circle, error: circleError } = await sc
+      .from("circles")
+      .select("owner_id")
+      .eq("id", circleId)
+      .maybeSingle();
+    if (circleError) return false;
+    const ownerId = (circle as any)?.owner_id;
+    if (typeof ownerId !== "string" || ownerId === "") return false;
+    if (ownerId === userId) return true;
+    const { data, error } = await sc
+      .from("circle_memberships")
+      .select("other_id")
+      .eq("user_id", ownerId)
+      .eq("other_id", userId)
+      .maybeSingle();
+    if (error) return false;
+    return Boolean(data);
+  },
+  /**
+   * Plan: the route plan's owner, or a joined participant.
+   *
+   * `groupScopeId` is a `route_plans.id` — Portava's collaborative plan, the one
+   * that carries its own `trip_id`/`circle_id` and a participant list. Resolved
+   * to `owner_user_id` first, so an id that names no plan is a refusal.
+   *
+   * Participation is a `route_plan_members` row `(route_plan_id, user_id)`. That
+   * table has no status column — a member either joined (a row exists) or did
+   * not — so, as with circle, existence is the whole signal.
+   */
+  plan: async (sc, planId, userId) => {
+    const { data: plan, error: planError } = await sc
+      .from("route_plans")
+      .select("owner_user_id")
+      .eq("id", planId)
+      .maybeSingle();
+    if (planError) return false;
+    const ownerId = (plan as any)?.owner_user_id;
+    if (typeof ownerId !== "string" || ownerId === "") return false;
+    if (ownerId === userId) return true;
+    const { data, error } = await sc
+      .from("route_plan_members")
+      .select("user_id")
+      .eq("route_plan_id", planId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) return false;
+    return Boolean(data);
   },
 };
 

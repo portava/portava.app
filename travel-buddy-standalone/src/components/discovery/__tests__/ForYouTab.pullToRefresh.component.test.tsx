@@ -25,6 +25,10 @@ jest.mock('../../../services/discovery', () => ({
   getDiscoveryPlaces:       (...args: unknown[]) => mockGetDiscoveryPlaces(...args),
   getSavedPlaceIds:         jest.fn().mockResolvedValue([]),
   getCachedDiscoveryPlaces: (...args: unknown[]) => mockGetCachedDiscoveryPlaces(...args),
+  // DiscoveryEventPostsRail (serve point 7) calls this; the rail renders nothing
+  // on a non-ok result, which keeps this pull-to-refresh test focused on the
+  // OSM baseline path.
+  getDiscoveryFeed:         jest.fn().mockResolvedValue({ ok: false, error: 'test' }),
 }));
 
 // NOTE: intentionally exhaustive — the real module imports Supabase.

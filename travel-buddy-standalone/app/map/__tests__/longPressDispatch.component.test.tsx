@@ -17,12 +17,14 @@
  * test below asserts the REAL far end: the picker mounting with a payload, the
  * detail route being pushed, the position endpoint being called.
  *
- * The `share` test asserts an ABSENCE, and it is the most important one here.
- * §25's `share` is "Share permitted location" — a §23-bounded share of the
- * pressed point that expires. §8's `share`, which this screen does own, sends a
- * permanent link to a place. They collide on one slug, so the cheap "fix" is to
- * route this row to `shareMapObject` and answer a bounded location share with a
- * permanent link. Nothing may reach `Share.share` from this menu.
+ * The `share` tests are the most important here. §25's `share` is "Share
+ * permitted location" — a §23-bounded share of the pressed point that expires,
+ * opened on the live §12 session (the bounded, revocable channel). §8's `share`,
+ * which this screen also owns, sends a PERMANENT link to a place. They collide
+ * on one slug, so the cheap wrong "fix" is to route this row to `shareMapObject`
+ * and answer a bounded location share with a permanent link. So the tests assert
+ * BOTH ends: with a live session the row reaches `sharePermittedLocation`, and
+ * `Share.share` is never reached from this menu whether or not a session exists.
  */
 import React from 'react';
 import { render, screen, act, fireEvent, waitFor } from '@testing-library/react-native';
@@ -149,6 +151,12 @@ jest.mock('../../../src/services/locateFriends', () => ({
   ),
   publishManualCheckpoint: jest.fn(() =>
     Promise.resolve({ ok: true, data: { enabled: true, stored: true } }),
+  ),
+  sharePermittedLocation: jest.fn(() =>
+    Promise.resolve({
+      ok: true,
+      data: { enabled: true, stored: true, storedPrecision: 'approximate', refusal: null, decision: { publish: true } },
+    }),
   ),
 }));
 
@@ -328,6 +336,7 @@ function locateMock() {
   return jest.requireMock('../../../src/services/locateFriends') as {
     startLocateFriendsSession: jest.Mock;
     publishManualCheckpoint: jest.Mock;
+    sharePermittedLocation: jest.Mock;
   };
 }
 
@@ -357,7 +366,9 @@ async function startGroupSession() {
   await waitFor(() => expect(screen.getByTestId('live-pulse-card')).toBeTruthy());
   await act(async () => { pulseMock().__holder.onDeepLink!({ mode: 'LOCATE_FRIENDS' }); });
 
-  const chip = await screen.findByLabelText('Start locating friends for two hours');
+  // §12: the duration is CHOSEN, then Start opens the session. The default
+  // selection is two hours, so pressing Start straight away starts a 2h session.
+  const chip = await screen.findByLabelText('Start locating friends');
   await act(async () => { await fireEvent.press(chip); });
   await waitFor(() => expect(locateMock().startLocateFriendsSession).toHaveBeenCalled());
   return menuMock().__holder.onSelect!;
@@ -368,6 +379,7 @@ beforeEach(() => {
   alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   locateMock().startLocateFriendsSession.mockClear();
   locateMock().publishManualCheckpoint.mockClear();
+  locateMock().sharePermittedLocation.mockClear();
   pushMock().mockClear();
 });
 
@@ -460,14 +472,59 @@ describe('§25 long-press — add to trip', () => {
   });
 });
 
-describe('§25 long-press — share', () => {
-  it('never falls through to §8 permanent link share', async () => {
-    // The menu refuses this row (longPress.ts BOUNDED_SHARE_CHANNEL_EXISTS), so
-    // in practice nothing arrives. This asserts the screen would not answer it
-    // with the wrong action even if something did.
+describe('§25 long-press — share permitted location', () => {
+  it('with no live session there is no channel, so nothing is shared', async () => {
+    // `select` mounts fresh with no session started, so shareChannelSessionId is
+    // null: the row is disabled and, even if selected, the screen opens nothing.
     await select('share', OBJECT_TARGET);
+    expect(locateMock().sharePermittedLocation).not.toHaveBeenCalled();
     expect(shareSpy).not.toHaveBeenCalled();
     expect(pushMock()).not.toHaveBeenCalled();
+  });
+
+  it('opens a bounded share on the live session — never §8’s permanent link', async () => {
+    const onSelect = await startGroupSession();
+    await act(async () => { onSelect('share', COORD_TARGET); });
+    await waitFor(() => expect(locateMock().sharePermittedLocation).toHaveBeenCalled());
+    const arg = locateMock().sharePermittedLocation.mock.calls[0][0];
+    // The bounded, expiring, revocable channel is the live §12 session.
+    expect(arg.sessionId).toBe('session-1');
+    expect(arg.point).toEqual({ lat: 14.55, lng: 120.95 });
+    expect(arg.bound.privacyClass).toBeTruthy();
+    // §37: the permanent-link share and any route push are never reached.
+    expect(shareSpy).not.toHaveBeenCalled();
+    expect(pushMock()).not.toHaveBeenCalled();
+  });
+});
+
+describe('§12 — the session lifetime is chosen, not baked in', () => {
+  it('starts with the default 2h when Start is pressed straight away', async () => {
+    await render(<FullScreenMapScreen />);
+    await waitFor(() => expect(screen.getByTestId('live-pulse-card')).toBeTruthy());
+    await act(async () => { pulseMock().__holder.onDeepLink!({ mode: 'LOCATE_FRIENDS' }); });
+    const start = await screen.findByLabelText('Start locating friends');
+    await act(async () => { await fireEvent.press(start); });
+    await waitFor(() => expect(locateMock().startLocateFriendsSession).toHaveBeenCalled());
+    expect(locateMock().startLocateFriendsSession).toHaveBeenCalledWith(
+      expect.objectContaining({ ttlMinutes: 120 }),
+    );
+  });
+
+  it('carries the CHOSEN duration to the API, not a frozen constant', async () => {
+    await render(<FullScreenMapScreen />);
+    await waitFor(() => expect(screen.getByTestId('live-pulse-card')).toBeTruthy());
+    await act(async () => { pulseMock().__holder.onDeepLink!({ mode: 'LOCATE_FRIENDS' }); });
+    // Pick the 12h ceiling, then Start.
+    const twelve = await screen.findByLabelText(
+      'Locate my friends for twelve hours, the maximum',
+    );
+    await act(async () => { await fireEvent.press(twelve); });
+    const start = await screen.findByLabelText('Start locating friends');
+    await act(async () => { await fireEvent.press(start); });
+    await waitFor(() => expect(locateMock().startLocateFriendsSession).toHaveBeenCalled());
+    expect(locateMock().startLocateFriendsSession).toHaveBeenCalledWith(
+      expect.objectContaining({ ttlMinutes: 720 }),
+    );
   });
 });
 
