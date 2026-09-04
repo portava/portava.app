@@ -89,12 +89,15 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
     if (!stamp) return;
     onClose();
     const target = isOwner ? undefined : (username ?? undefined);
-    router.push(journeysHref(target, stamp.tripId ?? undefined) as never);
+    // Defer past the sheet's close animation so navigation does not fire on the
+    // unmounting modal (BUG CC/CD close-then-navigate race).
+    setTimeout(() => router.push(journeysHref(target, stamp.tripId ?? undefined) as never), 80);
   }, [stamp, isOwner, username, onClose]);
 
   const openMyWorld = useCallback(() => {
     onClose();
-    router.push(myWorldHref() as never);
+    // Defer past the sheet's close animation (BUG CC/CD close-then-navigate race).
+    setTimeout(() => router.push(myWorldHref() as never), 80);
   }, [onClose]);
 
   if (!stamp) return null;
