@@ -19,6 +19,8 @@
  */
 import { redistributableFields, mayRedistribute } from "./dataRights.js";
 import { sourceCountBucket } from "./liveClaimRead.js";
+import { normalizeConflictState, capForConflict, conflictBlock } from "./intelConflict.js";
+import { confidenceBand, CONFIDENCE_BANDS, type ConfidenceBand } from "./intelContracts.js";
 
 /** Project a row to only its redistributable columns (fail-closed on unknowns). */
 export function projectRedistributable(table: string, row: Record<string, unknown>): Record<string, unknown> {
@@ -61,5 +63,23 @@ export function projectSnapshotForApi(
     proj["source_count_bucket"] = sourceCountBucket(proj["source_count"] as number);
     delete proj["source_count"];
   }
+  // §10: "prevent high-confidence external API output" under a material
+  // conflict. Normalise the stored state (NULL/pre-2275 ⇒ 'none'; unknown ⇒
+  // material, fail-closed), cap the confidence + band below the live band the
+  // same way the user-facing read does, and attach the counts-only conflict
+  // block so a consumer sees WHY the confidence is capped. Only ever lowers.
+  const conflictState = normalizeConflictState(row.conflict_state);
+  const rawConfidence = typeof proj["confidence"] === "number" ? (proj["confidence"] as number) : null;
+  const storedBand = proj["confidence_band"];
+  const rawBand = (CONFIDENCE_BANDS as readonly string[]).includes(storedBand as string)
+    ? (storedBand as ConfidenceBand)
+    : confidenceBand(rawConfidence);
+  const capped = capForConflict(conflictState, rawConfidence, rawBand);
+  if (rawConfidence !== null) proj["confidence"] = capped.confidence;
+  if (proj["confidence_band"] !== undefined) proj["confidence_band"] = capped.band;
+  proj["conflict_state"] = conflictState;
+  const lastUpdated = typeof row.computed_at === "string" ? row.computed_at
+    : typeof row.observed_at === "string" ? row.observed_at : now.toISOString();
+  proj["conflict"] = conflictBlock(conflictState, lastUpdated);
   return proj;
 }

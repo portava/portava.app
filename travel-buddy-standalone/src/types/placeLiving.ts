@@ -97,6 +97,14 @@ export interface LiveClaimDTO {
   validUntil: string;
   /** Server-computed state. `emerging` = cleared the serve floor but not Live-qualified. */
   state: 'live' | 'emerging' | 'typical' | 'unknown';
+  /**
+   * IG §10 conflict state (mirror of api-server `ConflictState`). 'material'
+   * ⇒ the server has already capped `band`/`state` below Live; the client
+   * renders "Reports differ". Optional: older payloads omit it (⇒ 'none').
+   */
+  conflictState?: 'none' | 'minor' | 'material';
+  /** Counts-only conflict block; null/absent when there is no conflict. */
+  conflict?: { state: 'none' | 'minor' | 'material'; sidesCount: number; lastUpdated: string } | null;
 }
 
 export interface LivingOfficialInfo {
