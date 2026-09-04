@@ -97,6 +97,16 @@ export interface ViewerContext {
    * boost in scoreCandidate — a ×1.15 multiplier for affinity-positive places.
    */
   placeAffinities?: Record<string, number>;
+  /**
+   * place_id → local momentum in [0, 1] (lib/discoveryLocalMomentum.ts): how
+   * much MORE a place is being served/saved/acted on in the last 48 h than its
+   * own baseline. USER-INDEPENDENT — it rides on the context only because the
+   * context is the per-request bag the ranker receives. Absent ⇒ 0 for every
+   * candidate, which is today's behaviour. Its contribution is HARD-CAPPED at
+   * LOCAL_MOMENTUM_MAX_CONTRIBUTION regardless of weights (ROADMAP step 7:
+   * "capped local_momentum as modifiers only").
+   */
+  localMomentum?: Record<string, number>;
 }
 
 export interface RankWeights {
@@ -116,8 +126,30 @@ export interface RankWeights {
   verifiedBonus: number;
   capacityOpen: number;
   seenPenalty: number;
+  /**
+   * Weight on the local-momentum modifier. Whatever this is set to, the
+   * feature's contribution is clamped to LOCAL_MOMENTUM_MAX_CONTRIBUTION in
+   * scoreCandidate — the cap is enforced in code, not by the weight table, so
+   * an admin weight override cannot turn a modifier into a driver.
+   */
+  localMomentum: number;
   kindPrior: Partial<Record<CandidateKind, number>>;
 }
+
+/**
+ * THE MOMENTUM CAP — the largest score contribution local momentum may ever
+ * make, whatever the weights say.
+ *
+ * Why 0.15: it is below every taste-side signal in DEFAULT_WEIGHTS —
+ * categoryAffinity 0.4, interestTag 0.3, cityMatch 0.45, actionability 0.9 —
+ * and equal to the smallest positive one (verifiedBonus 0.15). A fully
+ * saturated momentum can therefore break a tie between two places the
+ * viewer's taste rates alike, and cannot lift a place over one the viewer's
+ * taste prefers by even a single interest tag. That is the ROADMAP step 7
+ * boundary made numeric: momentum is a MODIFIER, taste is the spine. Change
+ * this constant only with a ruling; the `portavaRank` cap test pins it.
+ */
+export const LOCAL_MOMENTUM_MAX_CONTRIBUTION = 0.15;
 
 /**
  * Trusted-publisher boost multiplier applied to the total score when
@@ -164,6 +196,7 @@ export const DEFAULT_WEIGHTS: RankWeights = {
   verifiedBonus: 0.15,
   capacityOpen: 0.1,
   seenPenalty: -0.6,
+  localMomentum: LOCAL_MOMENTUM_MAX_CONTRIBUTION,   // the weight IS the cap; see above
   kindPrior: { event: 0.15, plan: 0.15, gem: 0.05, buddy: 0.0, post: 0.0 },
 };
 
@@ -293,6 +326,17 @@ export function scoreCandidate<T extends RankCandidate>(
   f.capacityOpen = c.hasCapacity ? w.capacityOpen : 0;
   f.seenPenalty = ctx.seenIds?.has(c.id) ? w.seenPenalty : 0;
   f.kindPrior = w.kindPrior[c.kind] ?? 0;
+
+  // Local momentum — a CAPPED modifier (ROADMAP step 7). Absent map or absent
+  // id ⇒ 0. The clamp on the input keeps a malformed value in [0,1]; the clamp
+  // on the output is the cap itself, applied AFTER the weight so that no weight
+  // table can exceed LOCAL_MOMENTUM_MAX_CONTRIBUTION.
+  const momentumRaw = ctx.localMomentum?.[c.id];
+  const momentum = typeof momentumRaw === 'number' && Number.isFinite(momentumRaw)
+    ? Math.min(1, Math.max(0, momentumRaw)) : 0;
+  f.localMomentum = momentum > 0
+    ? Math.min(LOCAL_MOMENTUM_MAX_CONTRIBUTION, Math.max(0, w.localMomentum * momentum))
+    : 0;
 
   let score = 0;
   for (const k of Object.keys(f)) score += f[k];

@@ -34,6 +34,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { loadPdeViewer, rankForViewer, suppressWrites, type PdePlace } from "../lib/discoveryPde.js";
+import { inertModifiers, type DiscoveryModifiers } from "../lib/discoveryModifiers.js";
+import { LOCAL_MOMENTUM_MAX_CONTRIBUTION } from "../lib/portavaRank.js";
+import { GOVERNOR_BUDGET_MAX_PCT, GOVERNOR_MIN_CANDIDATES } from "../services/ranking/FeedSlotAllocator.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -503,5 +506,132 @@ describe("N. place-engagement affinity boost", () => {
     const out = await rankForViewer([A, B], viewer, { sc: null, served: false });
     // No boost, identical candidates → input order preserved.
     assert.deepEqual(out.ranked.map((p) => p.id), ["db/a", "db/b"]);
+  });
+});
+
+// ── ROADMAP step 7/8 modifiers — behind discovery_ranking_modifiers_enabled ──
+
+describe("PDE modifiers (ROADMAP step 7/8) — OFF is inert, ON is bounded", () => {
+  const NOW_MS = Date.parse("2026-09-04T12:00:00Z");
+  const ids = (out: { ranked: { id: string }[] }) => out.ranked.map((p) => p.id);
+
+  function onModifiers(over: Partial<DiscoveryModifiers> = {}): DiscoveryModifiers {
+    return {
+      enabled: true, reason: "flag_on", localMomentum: {}, cityConfidence: null,
+      momentumScale: 0.5, explorationBudgetPct: GOVERNOR_BUDGET_MAX_PCT, ...over,
+    };
+  }
+  function twin(id: string, category = "food"): PdePlace & { name: string } {
+    return {
+      id, name: id, category, distanceKm: 1.0, savedCount: 5, rating: 4.0, tags: ["t"],
+      lat: 48.85, lng: 2.35, headerImageUrl: null, description: null,
+    };
+  }
+
+  it("OFF (no flag row): modifiers inert, order identical to the inert record, governor OBSERVES and records", async () => {
+    const { client, writes } = recordingClient();          // the flag read resolves null ⇒ off
+    const input = places(20);
+    const off = await rankForViewer(input, VIEWER, { sc: client, served: false, nowMs: NOW_MS });
+    assert.equal(off.stages.modifiers, "flag_off");
+    assert.equal(off.modifiers.enabled, false);
+    assert.equal(writes.length, 0, "a shadow run still writes nothing");
+
+    const inert = await rankForViewer(input, VIEWER, {
+      sc: client, served: false, nowMs: NOW_MS, modifiers: inertModifiers("flag_off"),
+    });
+    assert.deepEqual(ids(off), ids(inert), "the flag-off path and the inert record rank identically");
+
+    // The governor computed an allocation but did not touch the order …
+    assert.equal(off.stages.governor, "observed");
+    assert.ok(off.governor);
+    assert.equal(off.governor!.applied, false);
+    assert.ok(off.governor!.slotCount > 0);
+    assert.deepEqual(off.governor!.order, ids(off));
+    // … and the decision is on every item's feature vector, which logImpression writes verbatim.
+    let slots = 0;
+    for (const s of off.scoredById.values()) {
+      assert.equal(s.features.governorApplied, 0);
+      assert.equal(s.features.governorBudgetPct, off.governor!.budgetPct);
+      if (s.features.governorSlot === 1) slots += 1;
+    }
+    assert.equal(slots, off.governor!.slotCount);
+  });
+
+  it("ON: the governor APPLIES a budgeted allocation — a permutation, picks at their slots, inside the budget", async () => {
+    const input = places(20);
+    const out = await rankForViewer(input, VIEWER, { sc: null, served: false, nowMs: NOW_MS, modifiers: onModifiers() });
+    assert.equal(out.stages.modifiers, "flag_on");
+    assert.equal(out.stages.governor, "applied");
+    const g = out.governor!;
+    assert.equal(g.applied, true);
+    assert.equal(g.slotCount, Math.floor((20 * GOVERNOR_BUDGET_MAX_PCT) / 100));
+    assert.ok((g.slotCount * 100) / 20 <= GOVERNOR_BUDGET_MAX_PCT);
+    assert.deepEqual([...ids(out)].sort(), input.map((p) => p.id).sort(), "ranking stays a permutation");
+    for (const a of g.allocations) assert.equal(out.ranked[a.slotIndex]!.id, a.id);
+    let slots = 0;
+    for (const s of out.scoredById.values()) {
+      assert.equal(s.features.governorApplied, 1);
+      if (s.features.governorSlot === 1) slots += 1;
+    }
+    assert.equal(slots, g.slotCount);
+    const reasoned = [...out.scoredById.values()].filter((s) =>
+      Object.keys(s.features).some((k) => k.startsWith("governor_") && s.features[k] === 1));
+    assert.equal(reasoned.length, g.slotCount, "every pick carries at least one governor_<reason> feature");
+  });
+
+  it("ON: exploration runs ONCE — portavaRank's fixed every-7th slot yields to the governor", async () => {
+    // 21 twins that differ ONLY in local momentum, a feature DRS never reads.
+    // DRS therefore scores them identically and (stable sort) keeps its input
+    // order, so the pre-governor order is portavaRank's — which is strictly
+    // descending momentum iff portavaRank's own every-7th exploration pass was
+    // switched off. Had it run, it moves an item from index ≥ 14 to index 6,
+    // below the governor's pool, where it can only remain a non-pick and would
+    // break the descending order. So: every non-pick, in momentum order.
+    const input = Array.from({ length: 21 }, (_, i) => twin(`db/t${i}`));
+    const localMomentum = Object.fromEntries(input.map((p, i) => [p.id, (i + 1) / 21]));
+    const out = await rankForViewer(input, VIEWER, {
+      sc: null, served: false, nowMs: NOW_MS, modifiers: onModifiers({ localMomentum }),
+    });
+    assert.equal(out.stages.governor, "applied");
+    const picks = new Set(out.governor!.allocations.map((a) => a.id));
+    const rest = ids(out).filter((id) => !picks.has(id));
+    assert.equal(rest.length, 21 - out.governor!.slotCount);
+    for (let i = 1; i < rest.length; i++) {
+      assert.ok(
+        localMomentum[rest[i - 1]!]! > localMomentum[rest[i]!]!,
+        `non-picks must stay in strictly descending momentum order; broke at ${i} (${rest[i - 1]}→${rest[i]})`,
+      );
+    }
+  });
+
+  it("ON: momentum is a capped modifier — the surging twin ranks above its cold twin, by the cap", async () => {
+    const HOT = twin("db/hot");
+    const COLD = twin("db/cold");
+    const out = await rankForViewer([COLD, HOT], VIEWER, {
+      sc: null, served: false, nowMs: NOW_MS, modifiers: onModifiers({ localMomentum: { "db/hot": 1 } }),
+    });
+    assert.deepEqual(ids(out), ["db/hot", "db/cold"]);
+    assert.equal(out.scoredById.get("db/hot")!.features.localMomentum, LOCAL_MOMENTUM_MAX_CONTRIBUTION);
+    assert.equal(out.scoredById.get("db/cold")!.features.localMomentum, 0);
+    assert.ok(2 < GOVERNOR_MIN_CANDIDATES);
+    assert.equal(out.stages.governor, "skipped", "two candidates are too few to govern");
+  });
+
+  it("OFF: the same momentum map is IGNORED — the flag decides, not the data", async () => {
+    const HOT = twin("db/hot");
+    const COLD = twin("db/cold");
+    const out = await rankForViewer([COLD, HOT], VIEWER, {
+      sc: null, served: false, nowMs: NOW_MS,
+      modifiers: { ...inertModifiers("flag_off"), localMomentum: { "db/hot": 1 } },
+    });
+    assert.deepEqual(ids(out), ["db/cold", "db/hot"]);
+    assert.equal(out.scoredById.get("db/hot")!.features.localMomentum, 0);
+  });
+
+  it("a throwing modifiers loader is the inert record, never a thrown request", async () => {
+    const detonator: any = { from() { throw new Error("modifiers read exploded"); } };
+    const out = await rankForViewer(places(8), VIEWER, { sc: detonator, served: false, nowMs: NOW_MS });
+    assert.equal(out.modifiers.enabled, false);
+    assert.equal(out.ranked.length, 8);
   });
 });

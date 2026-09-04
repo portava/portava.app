@@ -37,6 +37,8 @@
  *   drop assertLabelsCoverEnum        -> RED (the enum-coverage test)
  *   put 7-9 into DISCOVERY_ENDPOINT_POINTS
  *                                     -> RED (the population-separation test)
+ *   key ranked-ness on the serve point again (the static {5,6} set)
+ *                                     -> RED (the pde-ranked cache-hit tests)
  *
  * The last one is the one most likely to be "simplified" away by someone tidying
  * up, and it is the one that would silently bias the D5 verdict. Its test says
@@ -51,12 +53,16 @@ import {
   ALL_SERVE_POINTS,
   CACHE_A_POINTS,
   DISCOVERY_ENDPOINT_POINTS,
-  RANKED_POINTS,
+  LEGACY_RANKED_POINTS,
   SERVE_POINT_LABEL,
   ReportWindowError,
   assertLabelsCoverEnum,
   countOn,
+  countRankedOn,
+  isRankedRow,
   observedPoints,
+  rankedInRequest,
+  rankedOutsideLegacyPoints,
   resolveReportWindow,
   tallyServePoints,
   unexercisedPoints,
@@ -107,7 +113,7 @@ describe("discoveryServePointReport — the production window that broke the old
     // suggest: it contains no ranker call, so these are not serves that could
     // have been ranked and lost.
     assert.equal(countOn(t, DISCOVERY_ENDPOINT_POINTS), 0);
-    assert.equal(countOn(t, RANKED_POINTS), 0);
+    assert.equal(countRankedOn(t, DISCOVERY_ENDPOINT_POINTS), 0);
 
     // rankedRows / marked would have been 0/5 = a clean 0.0%: under the 33%
     // threshold, hence "PROCEED WITH D5" — a confident verdict from a window
@@ -197,7 +203,7 @@ describe("discoveryServePointReport — the two populations stay separate", () =
 
     for (const sp of [DiscoveryServePoint.FEED, DiscoveryServePoint.SEARCH, DiscoveryServePoint.SUGGEST]) {
       assert.equal(DISCOVERY_ENDPOINT_POINTS.has(sp), false, `serve point ${sp} is not GET /discovery`);
-      assert.equal(RANKED_POINTS.has(sp), false, `serve point ${sp} runs no ranker`);
+      assert.equal(LEGACY_RANKED_POINTS.has(sp), false, `serve point ${sp} runs no ranker`);
     }
   });
 
@@ -210,38 +216,130 @@ describe("discoveryServePointReport — the two populations stay separate", () =
     assert.ok(SERVE_POINT_LABEL[DiscoveryServePoint.COMMUNITY], "must be labelled");
     assert.ok(!DISCOVERY_ENDPOINT_POINTS.has(DiscoveryServePoint.COMMUNITY),
       "community is not part of GET /discovery");
-    assert.ok(!RANKED_POINTS.has(DiscoveryServePoint.COMMUNITY),
+    assert.ok(!LEGACY_RANKED_POINTS.has(DiscoveryServePoint.COMMUNITY),
       "community runs no ranker");
     assert.ok(!CACHE_A_POINTS.has(DiscoveryServePoint.COMMUNITY),
       "community does not serve from cache A");
   });
 
-  it("ranked and cache-A sets are subsets of GET /discovery", () => {
-    for (const sp of RANKED_POINTS) assert.ok(DISCOVERY_ENDPOINT_POINTS.has(sp));
+  it("legacy-ranked and cache-A sets are subsets of GET /discovery", () => {
+    for (const sp of LEGACY_RANKED_POINTS) assert.ok(DISCOVERY_ENDPOINT_POINTS.has(sp));
     for (const sp of CACHE_A_POINTS) assert.ok(DISCOVERY_ENDPOINT_POINTS.has(sp));
-    assert.deepEqual([...RANKED_POINTS].sort((a, b) => a - b), [5, 6]);
+    assert.deepEqual([...LEGACY_RANKED_POINTS].sort((a, b) => a - b), [5, 6]);
     assert.deepEqual([...CACHE_A_POINTS].sort((a, b) => a - b), [1, 2, 3]);
   });
 
   it("a mixed window splits into the two populations without summing them", () => {
     const t = tallyServePoints([
-      { features: { servePoint: 1 } },
-      { features: { servePoint: 1 } },
-      { features: { servePoint: 6 } },
-      { features: { servePoint: 9 } },
-      { features: { servePoint: 9 } },
-      { features: { servePoint: 9 } },
+      { features: { servePoint: 1, rankedInRequest: false } },
+      { features: { servePoint: 1, rankedInRequest: false } },
+      { features: { servePoint: 6, rankedInRequest: true } },
+      { features: { servePoint: 9, rankedInRequest: false } },
+      { features: { servePoint: 9, rankedInRequest: false } },
+      { features: { servePoint: 9, rankedInRequest: false } },
     ]);
 
     assert.equal(t.marked, 6);
     assert.equal(countOn(t, DISCOVERY_ENDPOINT_POINTS), 3);
-    assert.equal(countOn(t, RANKED_POINTS), 1);
+    assert.equal(countRankedOn(t, DISCOVERY_ENDPOINT_POINTS), 1);
 
     // The distinction the D5 clause turns on: 1/3 over GET /discovery serves,
     // NOT 1/6 over every marked row. The second understates it by half, and
     // always in the direction that confirms the packet.
-    assert.equal(countOn(t, RANKED_POINTS) / countOn(t, DISCOVERY_ENDPOINT_POINTS), 1 / 3);
-    assert.notEqual(countOn(t, RANKED_POINTS) / t.marked, 1 / 3);
+    assert.equal(countRankedOn(t, DISCOVERY_ENDPOINT_POINTS) / countOn(t, DISCOVERY_ENDPOINT_POINTS), 1 / 3);
+    assert.notEqual(countRankedOn(t, DISCOVERY_ENDPOINT_POINTS) / t.marked, 1 / 3);
+  });
+});
+
+// ── Ranked-ness is a property of the ROW, not of the serve point ──────────────
+//
+// docs/discovery/serve-point-report-20260828.md, "A modelling trap to record
+// before anyone does build it": RANKED_POINTS was the static set {5, 6}, and
+// under D5=B serve points 1-3 rank per request. The pde serve path now exists
+// (routes/discovery.ts, serveCachedPlaces, the `pdeScoredById` branch) and logs
+// `rankedInRequest: true` on serve point 1/2/3. A reader keyed on the point
+// would report the engine's first ranked cache hit as unranked — pushing the
+// measured ranked share DOWN by exactly the serves the engine added.
+//
+// Red-proof: restore `countOn(tally, {5,6})` as the numerator and the first two
+// tests below go red.
+
+/** The row the pde cache-A branch writes: serve point 1, ranked, mode pde. */
+const PDE_RANKED_L1_ROW: ServeRow = {
+  session_id: "pde-0001-0000-0000-0000-000000000000",
+  features: {
+    servePoint: DiscoveryServePoint.CACHE_A_L1, route: "GET /discovery", rankedInRequest: true,
+    cacheLevel: "L1", engineMode: "pde", modeReason: "resolved",
+  } as ServeRow["features"],
+};
+
+/** The same serve point under legacy: served from cache, no ranker. */
+const LEGACY_L1_ROW: ServeRow = {
+  session_id: "leg-0001-0000-0000-0000-000000000000",
+  features: {
+    servePoint: DiscoveryServePoint.CACHE_A_L1, route: "GET /discovery", rankedInRequest: false,
+    cacheLevel: "L1", engineMode: "legacy", modeReason: "flag_disabled",
+  } as ServeRow["features"],
+};
+
+describe("discoveryServePointReport — a pde-ranked cache-A serve counts as RANKED", () => {
+  it("serve point 1 with rankedInRequest=true is ranked; the same point under legacy is not", () => {
+    assert.equal(rankedInRequest(PDE_RANKED_L1_ROW), "ranked");
+    assert.equal(rankedInRequest(LEGACY_L1_ROW), "unranked");
+    assert.equal(isRankedRow(PDE_RANKED_L1_ROW, DiscoveryServePoint.CACHE_A_L1), true);
+    assert.equal(isRankedRow(LEGACY_L1_ROW, DiscoveryServePoint.CACHE_A_L1), false);
+    // The point itself has NOT become a legacy ranked point — it is the ROW.
+    assert.equal(LEGACY_RANKED_POINTS.has(DiscoveryServePoint.CACHE_A_L1), false);
+  });
+
+  it("the D5 numerator counts the pde-ranked cache hit — the trap the 2026-08-28 report named", () => {
+    const t = tallyServePoints([
+      PDE_RANKED_L1_ROW, PDE_RANKED_L1_ROW,       // 2 pde-ranked cache hits
+      LEGACY_L1_ROW,                               // 1 legacy cache hit
+      { features: { servePoint: 6, rankedInRequest: true } },  // 1 cold fetch
+    ]);
+    assert.equal(countOn(t, DISCOVERY_ENDPOINT_POINTS), 4);
+    // 3 of 4, not 1 of 4. The static set would have said 1/4 and printed
+    // "cache A absorbs the traffic" about a window where the engine ranked
+    // three quarters of it.
+    assert.equal(countRankedOn(t, DISCOVERY_ENDPOINT_POINTS), 3);
+    assert.notEqual(countRankedOn(t, DISCOVERY_ENDPOINT_POINTS), countOn(t, LEGACY_RANKED_POINTS));
+    assert.equal(t.rankedByPoint.get(DiscoveryServePoint.CACHE_A_L1), 2);
+    assert.deepEqual(rankedOutsideLegacyPoints(t), [DiscoveryServePoint.CACHE_A_L1]);
+    assert.equal(t.rankedUnrecorded, 0);
+  });
+
+  it("serve point 4 (Cache B replay) says rankedInRequest=false and is honoured as unranked", () => {
+    // discoveryServeLog.ts: the order came from a ranker, but not from THIS
+    // request. The writer says false and the reader must not overrule it.
+    const t = tallyServePoints([{ features: { servePoint: 4, rankedInRequest: false } }]);
+    assert.equal(countRankedOn(t, DISCOVERY_ENDPOINT_POINTS), 0);
+  });
+
+  it("the row wins over the point: a serve point 6 row marked unranked is unranked", () => {
+    const t = tallyServePoints([{ features: { servePoint: 6, rankedInRequest: false } }]);
+    assert.equal(countRankedOn(t, DISCOVERY_ENDPOINT_POINTS), 0);
+    assert.equal(t.rankedUnrecorded, 0);
+  });
+
+  it("a row with NO marker falls back to the legacy set and is counted as UNRECORDED, apart", () => {
+    const t = tallyServePoints([
+      { features: { servePoint: 6 } },   // legacy-ranked by construction
+      { features: { servePoint: 1 } },   // legacy-unranked by construction
+      { features: { servePoint: 5 } },
+    ]);
+    assert.equal(rankedInRequest({ features: { servePoint: 6 } }), "unrecorded");
+    assert.equal(countRankedOn(t, DISCOVERY_ENDPOINT_POINTS), 2);
+    // Three rows classified by fallback — the report must say so rather than
+    // presenting the share as a measurement of the engine.
+    assert.equal(t.rankedUnrecorded, 3);
+    assert.deepEqual(rankedOutsideLegacyPoints(t), []);
+  });
+
+  it("a non-boolean marker is UNRECORDED, never coerced into ranked", () => {
+    for (const bad of ["true", 1, null, undefined, "yes"]) {
+      assert.equal(rankedInRequest({ features: { servePoint: 1, rankedInRequest: bad } }), "unrecorded");
+    }
   });
 });
 
