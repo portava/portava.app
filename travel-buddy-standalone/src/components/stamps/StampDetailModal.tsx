@@ -8,7 +8,9 @@ import {
   Modal, View, Text, Pressable, StyleSheet, ScrollView, Switch, ActivityIndicator, Image,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { X, Link } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { X, Link, Route, Globe } from 'lucide-react-native';
+import { journeysHref, myWorldHref } from '../../features/passport/passportNav.ts';
 import { PortavaShareIcon } from '../icons/PortavaShareIcon.tsx';
 import { StampArtwork } from '../StampArtwork.tsx';
 import { StampShareCard } from '../StampShareCard.tsx';
@@ -75,6 +77,25 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [stamp, username]);
+
+  // §13: the stamp detail can link to Journey and My World, respecting
+  // historical-location privacy (the destinations enforce their own). Close
+  // the sheet first, then navigate. For a VIEWER (not owner) the Journey link
+  // carries the stamp owner's @handle so the journeys endpoint resolves the
+  // right traveler; the owner opens their own (no id). My World is the OWNER's
+  // personal geographic history (§26) — no viewer variant — so it is offered
+  // only to the owner.
+  const openJourney = useCallback(() => {
+    if (!stamp) return;
+    onClose();
+    const target = isOwner ? undefined : (username ?? undefined);
+    router.push(journeysHref(target, stamp.tripId ?? undefined) as never);
+  }, [stamp, isOwner, username, onClose]);
+
+  const openMyWorld = useCallback(() => {
+    onClose();
+    router.push(myWorldHref() as never);
+  }, [onClose]);
 
   if (!stamp) return null;
 
@@ -164,6 +185,33 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
                   year: 'numeric', month: 'long', day: 'numeric',
                 })}
               </Text>
+            </View>
+
+            {/* §13: explore links — Journey (this stamp in its trip history) and,
+                for the owner, My World (personal geographic history). */}
+            <View style={styles.linkRow}>
+              <Pressable
+                style={styles.linkBtn}
+                onPress={openJourney}
+                accessibilityRole="button"
+                accessibilityLabel="View in Journeys"
+                testID="stamp-open-journey"
+              >
+                <Route size={16} color={color.ink} />
+                <Text style={styles.linkText}>View Journey</Text>
+              </Pressable>
+              {isOwner ? (
+                <Pressable
+                  style={styles.linkBtn}
+                  onPress={openMyWorld}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open My World"
+                  testID="stamp-open-my-world"
+                >
+                  <Globe size={16} color={color.ink} />
+                  <Text style={styles.linkText}>My World</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             {/* Admire block */}
@@ -365,6 +413,13 @@ const styles = StyleSheet.create({
     backgroundColor: color.paper,
     marginTop: space.sm,
   },
+  linkRow:  { flexDirection: 'row', gap: space.sm, width: '100%', marginTop: space.xs },
+  linkBtn:  {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 10, borderRadius: radius.md,
+    borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper,
+  },
+  linkText: { ...t.small, color: color.ink, fontWeight: '700' },
   shareRow:           { flexDirection: 'row', gap: space.sm, width: '100%', marginTop: space.sm },
   shareBtnDisabled:   { opacity: 0.6 },
   shareBtnCopied:     { borderColor: '#16A34A', backgroundColor: '#F0FDF4' },
