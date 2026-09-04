@@ -15,6 +15,10 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import TravelIdentityScreen from '../TravelIdentityScreen.tsx';
+import type {
+  TravelDnaPref,
+  TravelDnaPrefInput,
+} from '../../../services/passportProjection.ts';
 
 // NOTE: intentional stub — TravelIdentityScreen imports putTravelDna +
 // getTravelIdentity from this module, which reaches Supabase auth + the API
@@ -77,8 +81,9 @@ function makeIdentity() {
 
 describe('TravelIdentityScreen — Travel-DNA persistence (F6)', () => {
   it('persists a Hide via the write endpoint and keeps the optimistic state', async () => {
-    const persist = jest.fn((input: { key: string; kind: string; state: string }) =>
-      Promise.resolve({ ok: true as const, data: { userId: 'me-123', ...input } }),
+    const persist = jest.fn(
+      (input: TravelDnaPrefInput): Promise<{ ok: true; data: TravelDnaPref }> =>
+        Promise.resolve({ ok: true as const, data: { userId: 'me-123', ...input } }),
     );
 
     await render(
@@ -116,8 +121,9 @@ describe('TravelIdentityScreen — Travel-DNA persistence (F6)', () => {
   });
 
   it('persists a dimension control with kind "dimension"', async () => {
-    const persist = jest.fn((input: { key: string; kind: string; state: string }) =>
-      Promise.resolve({ ok: true as const, data: { userId: 'me-123', ...input } }),
+    const persist = jest.fn(
+      (input: TravelDnaPrefInput): Promise<{ ok: true; data: TravelDnaPref }> =>
+        Promise.resolve({ ok: true as const, data: { userId: 'me-123', ...input } }),
     );
 
     await render(
