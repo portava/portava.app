@@ -21,13 +21,16 @@
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import {
   CLAIM_TYPES,
+  COMMERCIAL_DISCLOSURES,
   MODERATION_STATES,
   VISIBILITIES,
   PRESENCE_LEVELS,
   MIN_PRESENCE_FOR_LIVE_CLAIM,
   clampObservedAt,
+  disclosureSourceClass,
   isValidIdempotencyKey,
   isPilotClaimable,
+  type CommercialDisclosure,
   type Visibility,
   type PresenceLevel,
   type PartySizeBucket,
@@ -101,6 +104,11 @@ export interface CaptureInput {
   presenceLevel?: string;         // from a presence attestation; default 'P0'
   presenceAttestation?: Record<string, unknown> | null;
   captureSurface?: CaptureSurface; // default 'quick_signal'
+  // §22 Table 30 commercial disclosure. Optional; omitted/unknown ⇒ 'none'
+  // (fail-closed). A non-'none' disclosure records the observation under a
+  // NON_INDEPENDENT source class (disclosureSourceClass) so a disclosed-commercial
+  // report never counts as independent community consensus.
+  commercialDisclosure?: CommercialDisclosure;
   // V1 independent-group signal (§privacy). partySize is the raw "who are you here
   // with?" answer; partyId is the observer's active Trip Crew id (validated here).
   // Both optional → group_key resolves to null (fail-closed) for older clients.
@@ -369,6 +377,17 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   }
   const groupKey = deriveGroupKey(input.subjectId, groupIdentity);
 
+  // §22 Table 30 commercial disclosure. Fail-closed: an unknown/omitted value is
+  // 'none'. A DISCLOSED commercial relationship (non-'none') records the
+  // observation under the NON_INDEPENDENT `sponsored` source class
+  // (disclosureSourceClass), which is the "official/community separation" that
+  // keeps a disclosed-commercial report out of independent community consensus —
+  // it never overwrites confidence, only its epistemic standing.
+  const commercialDisclosure: CommercialDisclosure =
+    input.commercialDisclosure && (COMMERCIAL_DISCLOSURES as readonly string[]).includes(input.commercialDisclosure)
+      ? input.commercialDisclosure
+      : "none";
+
   const row = {
     actor_id: actorId,
     subject_kind: input.subjectKind ?? "experience",
@@ -376,11 +395,11 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     zone_id: input.zoneId ?? null,
     claim_type: input.claimType,
     value: input.value,
-    source_class: "firsthand_unverified",
+    source_class: disclosureSourceClass(commercialDisclosure),
     capture_surface: surface,
     visibility,
     moderation_state: "pending",
-    commercial_disclosure: "none",
+    commercial_disclosure: commercialDisclosure,
     presence_level: presence.presenceLevel,
     presence_attestation: presence.attestation,
     observed_at: clamped.observedAt,

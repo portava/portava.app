@@ -21,6 +21,7 @@ import { color, space, radius, typography } from '../../src/theme/tokens';
 import { IntelModalScaffold } from '../../src/components/intel/IntelModalScaffold';
 import { PromptBlock } from '../../src/components/intel/PromptBlock';
 import { OptionPills } from '../../src/components/intel/OptionPills';
+import { DisclosureControl } from '../../src/components/intel/DisclosureControl';
 import { SuppressedNotice, PrivateLocationBadge, SentToast } from '../../src/components/intel/IntelBits';
 import { IntelConsentGate } from '../../src/components/intel/IntelConsentGate';
 import { TravelButton } from '../../src/components/primitives';
@@ -42,6 +43,7 @@ import {
   type VenueCategory,
   type PromptQuestion,
   type PartySizeBucket,
+  type CommercialDisclosure,
 } from '../../src/lib/intel/contracts';
 
 function asContext(v: string | undefined): QuickSignalContext {
@@ -91,6 +93,9 @@ export default function QuickSignalScreen() {
   // and attached to every label-eligible write on this screen. Null = skipped
   // (the server fail-closes: no group_key, no credit toward the group floor).
   const [partySize, setPartySize] = useState<PartySizeBucket | null>(null);
+  // §22 commercial disclosure — declared once, attached to every write here. Null
+  // (nothing declared) sends nothing; the server defaults to 'none'.
+  const [disclosure, setDisclosure] = useState<CommercialDisclosure | null>(null);
   // D4 Intelligence Contributions consent. `undefined` = still loading; the server
   // is authoritative and enforces regardless, so this only gates the UI so we show
   // the disclosure/consent surface before the first capture.
@@ -242,6 +247,8 @@ export default function QuickSignalScreen() {
           </View>
         ) : null}
 
+        <DisclosureControl value={disclosure} onChange={setDisclosure} />
+
         <View style={{ gap: space.xl }}>
           {venueQuestions.map((q) => (
             <PromptBlock
@@ -251,6 +258,7 @@ export default function QuickSignalScreen() {
               visibility={DEFAULT_VISIBILITY}
               zoneId={zoneId}
               partySize={partySize ?? undefined}
+              commercialDisclosure={disclosure ?? undefined}
               onSent={handleSent}
             />
           ))}
