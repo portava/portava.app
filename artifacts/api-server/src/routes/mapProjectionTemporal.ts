@@ -530,7 +530,7 @@ router.get(
 
       const forecast = projectForecast(
         {
-          events,
+          events: events ?? [],
           itineraryStops: itineraryStops ?? [],
           planArrivals: planRead.arrivals,
         },
