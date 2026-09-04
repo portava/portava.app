@@ -50,6 +50,26 @@ export const NONCASH_FUNDING_SOURCE_KNOWN = true;
 const SUPPRESSED_MODERATION = new Set(["restricted", "blocked", "removed"]);
 
 /**
+ * What the I4a attribution ledger (intel_attributions, 2277) says about this
+ * observation — the HONEST finalized-outcome signal, derived by the producer:
+ *
+ *   not_required  the closed loop is OFF (intel_outcome_attribution_enabled =
+ *                 false): the pre-I4a oracle applies and `served` alone decides
+ *                 outcomeFinalized — behaviour unchanged while the flag is off.
+ *   finalized     ≥1 attribution row, none contradicting, ≥1 graded (a traveler
+ *                 went and reported better/slightly_better/same). The outcome
+ *                 the contribution led to is finalized and did not harm anyone.
+ *   contradicted  ≥1 attribution row contradicts the served state (worse /
+ *                 could_not_enter). Never finalized for reward — §23 "integrity
+ *                 == 0 ⇒ qiu = 0" in spirit: the contribution was wrong.
+ *   ungraded      only did_not_go rows: the traveler never tested the claim.
+ *                 Nothing is finalized yet.
+ *   absent        no attribution row at all: no traveler outcome has closed the
+ *                 loop on this contribution. Not finalized.
+ */
+export type OutcomeAttribution = "not_required" | "finalized" | "contradicted" | "ungraded" | "absent";
+
+/**
  * A contributor's earning candidate, assembled by the producer from real intel_*
  * table reads. Every field is a fact about actual state, never a caller boolean.
  */
@@ -72,6 +92,12 @@ export interface EarningCandidate {
    * when the snapshot carried no confidence ⇒ earns nothing (fail-closed).
    */
   servedConfidence: number | null;
+  /**
+   * The attribution ledger's verdict on this observation (see OutcomeAttribution).
+   * Set by the producer from real intel_attributions rows when the closed loop
+   * is on, `not_required` when it is off. Never caller-chosen.
+   */
+  outcomeAttribution: OutcomeAttribution;
   /** intel_observations.moderation_state at scan time. */
   moderationState: string;
   /** intel_contribution_consent.enabled for this actor (false if no row). */
@@ -86,9 +112,13 @@ export interface EarningCandidate {
  */
 export function buildRewardEligibilityContext(c: EarningCandidate): RewardEligibilityContext {
   return {
-    // Reached the served live state (privacy gate passed) — the finalized-outcome
-    // signal, computed from a real snapshot, never trusted from the caller.
-    outcomeFinalized: c.served === true,
+    // Reached the served live state (privacy gate passed) AND — when the I4a
+    // closed loop is on — a traveler's outcome closed the loop without
+    // contradicting it (a finalized, non-contradicting, graded attribution row).
+    // With the loop off, served alone decides, exactly as before I4a. Both are
+    // computed from real rows, never trusted from the caller.
+    outcomeFinalized: c.served === true
+      && (c.outcomeAttribution === "not_required" || c.outcomeAttribution === "finalized"),
     // The contributor's current, un-withdrawn contribution consent IS their
     // explicit permission for their intel to be used commercially (§23). A
     // withdrawn or absent consent removes the permission — fail-closed.
@@ -100,6 +130,21 @@ export function buildRewardEligibilityContext(c: EarningCandidate): RewardEligib
     // A suppressed moderation state is a real abuse hold.
     fraudHold: SUPPRESSED_MODERATION.has(c.moderationState),
   };
+}
+
+/**
+ * Classify an observation's attribution rows (intel_attributions, this
+ * observation's rows only). Pure; the precedence is contradicted > finalized >
+ * ungraded > absent, so one contradiction is never outvoted by successes.
+ */
+export function classifyAttribution(rows: ReadonlyArray<{ contradiction: boolean; outcome_score: number | string | null }>): Exclude<OutcomeAttribution, "not_required"> {
+  if (rows.length === 0) return "absent";
+  if (rows.some((r) => r.contradiction === true)) return "contradicted";
+  const graded = rows.some((r) => {
+    const n = typeof r.outcome_score === "string" ? Number(r.outcome_score) : r.outcome_score;
+    return typeof n === "number" && Number.isFinite(n);
+  });
+  return graded ? "finalized" : "ungraded";
 }
 
 /** Grade a candidate through the pure gate. Convenience over build + evaluate. */

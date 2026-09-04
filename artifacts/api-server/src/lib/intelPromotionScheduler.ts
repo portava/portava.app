@@ -22,6 +22,7 @@
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
+import { emitPromotionDomainEvents } from "./intelDomainEvents.js";
 
 const STARTUP_DELAY_MS = 2 * 60 * 1000; // ahead of the projection's 3-minute startup
 const INTERVAL_MS = 5 * 60 * 1000;
@@ -32,9 +33,15 @@ export interface PromotionResult {
   promoted: number;
   skipped: boolean;
   reason: "disabled" | "no_client" | "error" | null;
+  // §21 domain events emitted this pass (spec Table 29). Independent of the
+  // promotion count: a catch-up emitter files intel.claim.promoted /
+  // intel.observation.recorded for any system-promoted claim not yet on the
+  // spine. Zero when nothing was outstanding.
+  claimsPromoted?: number;
+  observationsRecorded?: number;
 }
 
-export async function runIntelPromotionPass(opts: { client?: any } = {}): Promise<PromotionResult> {
+export async function runIntelPromotionPass(opts: { client?: any; now?: Date } = {}): Promise<PromotionResult> {
   // Explicit null means "no client"; undefined means "use the service client" —
   // the house pattern (see intelRetentionScheduler for why `??` is wrong here).
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
@@ -43,6 +50,7 @@ export async function runIntelPromotionPass(opts: { client?: any } = {}): Promis
     return { promoted: 0, skipped: true, reason: "disabled" };
   }
 
+  const now = opts.now ?? new Date();
   try {
     const { data, error } = await db.rpc("system_promote_admissible_intel_claims");
     if (error) {
@@ -52,7 +60,17 @@ export async function runIntelPromotionPass(opts: { client?: any } = {}): Promis
     // bigint may arrive as a string over PostgREST — coerce, do not typeof-guard.
     const promoted = Number(data) || 0;
     if (promoted > 0) logger.info({ promoted }, "intel promotion created active claims");
-    return { promoted, skipped: false, reason: null };
+
+    // §21 domain events. Fully fail-closed — never throws, never alters the
+    // promotion outcome — so a spine hiccup can't roll back a real promotion.
+    const emitted = await emitPromotionDomainEvents(db, { now });
+    return {
+      promoted,
+      skipped: false,
+      reason: null,
+      claimsPromoted: emitted.claimsPromoted,
+      observationsRecorded: emitted.observationsRecorded,
+    };
   } catch (err) {
     logger.warn({ err }, "intel promotion pass threw");
     return { promoted: 0, skipped: true, reason: "error" };
