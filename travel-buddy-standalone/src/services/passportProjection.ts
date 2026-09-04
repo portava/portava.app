@@ -298,6 +298,67 @@ export interface PassportViewerActions {
   can_view_trust: boolean;
 }
 
+/** Travel stats block (§3 "Travel stats") — coarse counts only. */
+export interface PassportStatsView {
+  countries: number;
+  cities: number;
+  stamps: number;
+  trips: number;
+}
+
+/**
+ * One stamp in the §3 "recent stamps" Home preview. Mirrors the server
+ * StampProjection — coarse place only (§23), verification provenance verbatim
+ * so a decorative stamp can never masquerade as verified (§12).
+ */
+export interface PassportStampView {
+  source: string | null;
+  name: string | null;
+  city: string | null;
+  country: string | null;
+  earnedAt: string | null;
+  rarity: string | null;
+  artworkUrl: string | null;
+  verification: 'verified' | 'reported' | 'decorative';
+}
+
+/** The single Featured Journey (§14) surfaced as a §3 Home preview. */
+export interface PassportFeaturedJourneyView {
+  tripId: string;
+  title: string;
+  city: string | null;
+  country: string | null;
+  durationLabel: string | null;
+  year: number | null;
+  memoryCount: number;
+  stampCount: number;
+}
+
+/** One memory in the §3 "memories" Home preview. Coarse place only (§23). */
+export interface PassportMemoryView {
+  id: string;
+  title: string | null;
+  city: string | null;
+  country: string | null;
+  category: string | null;
+  photoUrl: string | null;
+  earnedAt: string | null;
+  tripId: string | null;
+}
+
+/**
+ * Lean shared-context summary for the §3 "YOU TWO" Home preview (§17). Never a
+ * numeric match score (§18 / TABLE 18) — only the qualitative label the server
+ * derived, the count of contributing facts, and whether the Compass handoff
+ * (§18) is eligible. The full fact list + CTA live on SharedContextScreen.
+ */
+export interface PassportSharedContextSummary {
+  summaryLabel: string;
+  factCount: number;
+  facts: Array<{ key: string; label: string; detail: string | null }>;
+  handoffEligible: boolean;
+}
+
 /** Minimal identity slice the client needs (Plans header + QR projection). */
 export interface PassportProjectionIdentity {
   userId: string;
@@ -309,12 +370,26 @@ export interface PassportProjectionIdentity {
   homeCountry: string | null;
 }
 
-/** Lean client view of the §29 aggregate — only the Plans/QR fields. */
+/**
+ * Client view of the §29 aggregate covering the §3 Passport Home previews plus
+ * the Plans/QR fields. Every array is already privacy-filtered server-side
+ * (§4/§21/§30) — the client only renders what the projection returned and never
+ * re-derives visibility.
+ */
 export interface PassportProjectionView {
   userId: string;
   identity: PassportProjectionIdentity;
   viewerContext: PassportViewerContext;
+  stats: PassportStatsView;
+  /** §3 recent-stamps preview (already coarsened + verification-tagged). */
+  recentStamps: PassportStampView[];
+  /** §14 Featured Journey preview, or null when none is permitted. */
+  featuredJourney: PassportFeaturedJourneyView | null;
   upcomingPlans: PlanProjection[];
+  /** §3 memories preview — permitted memories only (per-item privacy, §15). */
+  memories: PassportMemoryView[];
+  /** §3/§17 "YOU TWO" summary — null on self / when not permitted. */
+  sharedContext: PassportSharedContextSummary | null;
   actions: PassportViewerActions;
   /** Interests the server permitted into the projection (travel identity). */
   interests: string[];
@@ -347,6 +422,82 @@ function mapPlan(r: any): PlanProjection {
   };
 }
 
+function toNumber(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+function mapStats(r: any): PassportStatsView {
+  const s = r ?? {};
+  return {
+    countries: toNumber(s.countries),
+    cities: toNumber(s.cities),
+    stamps: toNumber(s.stamps),
+    trips: toNumber(s.trips),
+  };
+}
+
+function mapStamp(r: any): PassportStampView {
+  const v = asString(r?.verification);
+  return {
+    source: asString(r?.source),
+    name: asString(r?.name),
+    city: asString(r?.city),
+    country: asString(r?.country),
+    earnedAt: asString(r?.earnedAt ?? r?.earned_at),
+    rarity: asString(r?.rarity),
+    artworkUrl: asString(r?.artworkUrl ?? r?.artwork_url),
+    // Trust the server's provenance verbatim; only fall back to 'verified' when
+    // the field is genuinely absent (older payload). Never invent a stronger
+    // tier than the server sent (§12).
+    verification: v === 'reported' || v === 'decorative' || v === 'verified' ? v : 'verified',
+  };
+}
+
+function mapFeaturedJourney(r: any): PassportFeaturedJourneyView | null {
+  if (!r || typeof r !== 'object') return null;
+  const tripId = String(r.tripId ?? r.trip_id ?? '');
+  if (!tripId) return null;
+  return {
+    tripId,
+    title: asString(r.title) ?? 'Journey',
+    city: asString(r.city),
+    country: asString(r.country),
+    durationLabel: asString(r.durationLabel ?? r.duration_label),
+    year: typeof r.year === 'number' ? r.year : null,
+    memoryCount: toNumber(r.memoryCount ?? r.memory_count),
+    stampCount: toNumber(r.stampCount ?? r.stamp_count),
+  };
+}
+
+function mapMemory(r: any): PassportMemoryView {
+  return {
+    id: String(r?.id ?? ''),
+    title: asString(r?.title),
+    city: asString(r?.city),
+    country: asString(r?.country),
+    category: asString(r?.category),
+    photoUrl: asString(r?.photoUrl ?? r?.photo_url),
+    earnedAt: asString(r?.earnedAt ?? r?.earned_at),
+    tripId: asString(r?.tripId ?? r?.trip_id),
+  };
+}
+
+function mapSharedContext(r: any): PassportSharedContextSummary | null {
+  if (!r || typeof r !== 'object') return null;
+  const rawFacts: unknown[] = Array.isArray(r.facts) ? r.facts : [];
+  const facts = rawFacts.map((f: any) => ({
+    key: String(f?.key ?? ''),
+    label: asString(f?.label) ?? '',
+    detail: asString(f?.detail),
+  }));
+  return {
+    summaryLabel: asString(r.summaryLabel ?? r.summary_label) ?? 'Some overlap',
+    factCount: facts.length,
+    facts,
+    handoffEligible: (r.compassHandoff ?? r.compass_handoff)?.eligible === true,
+  };
+}
+
 /** Map the raw server projection into the lean client view. Defensive to shape. */
 export function mapProjection(raw: any): PassportProjectionView {
   const p = raw?.projection ?? raw ?? {};
@@ -356,6 +507,8 @@ export function mapProjection(raw: any): PassportProjectionView {
     ? p.travelIdentity.interests.filter((x: unknown): x is string => typeof x === 'string')
     : [];
   const plans: unknown[] = Array.isArray(p.upcomingPlans) ? p.upcomingPlans : [];
+  const stamps: unknown[] = Array.isArray(p.stamps) ? p.stamps : [];
+  const memories: unknown[] = Array.isArray(p.memories) ? p.memories : [];
   return {
     userId: String(p.userId ?? identity.userId ?? ''),
     identity: {
@@ -368,7 +521,12 @@ export function mapProjection(raw: any): PassportProjectionView {
       homeCountry: asString(identity.homeCountry ?? identity.home_country),
     },
     viewerContext: (p.viewerContext ?? 'public') as PassportViewerContext,
+    stats: mapStats(p.stats),
+    recentStamps: stamps.map(mapStamp),
+    featuredJourney: mapFeaturedJourney(p.featuredJourney ?? p.featured_journey),
     upcomingPlans: plans.map(mapPlan).filter((pl) => pl.tripId.length > 0),
+    memories: memories.map(mapMemory).filter((m) => m.id.length > 0),
+    sharedContext: mapSharedContext(p.sharedContext ?? p.shared_context),
     actions: { ...DEFAULT_ACTIONS, ...actions },
     interests,
     restricted: Boolean(p.restricted),

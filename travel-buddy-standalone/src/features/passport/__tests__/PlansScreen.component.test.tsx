@@ -75,11 +75,22 @@ function makeIdentity(userId: string, name: string, handle: string) {
   };
 }
 
+// §3 Home-preview fields the Plans screen does not consume — empty defaults so
+// the fixtures satisfy the extended PassportProjectionView contract.
+const EMPTY_HOME_PREVIEW = {
+  stats: { countries: 0, cities: 0, stamps: 0, trips: 0 },
+  recentStamps: [],
+  featuredJourney: null,
+  memories: [],
+  sharedContext: null,
+} as const;
+
 function selfProjection(plans: PlanProjection[]): PassportProjectionView {
   return {
     userId: 'me',
     identity: makeIdentity('me', 'Ada Lovelace', 'ada'),
     viewerContext: 'self',
+    ...EMPTY_HOME_PREVIEW,
     upcomingPlans: plans,
     actions: DEFAULT_ACTIONS,
     interests: ['Food', 'Nightlife'],
@@ -92,6 +103,7 @@ function otherProjection(plans: PlanProjection[], canMakePlan = true): PassportP
     userId: 'them',
     identity: makeIdentity('them', 'Mai Tran', 'mai'),
     viewerContext: 'following',
+    ...EMPTY_HOME_PREVIEW,
     upcomingPlans: plans,
     actions: { ...DEFAULT_ACTIONS, can_make_plan: canMakePlan },
     interests: [],
