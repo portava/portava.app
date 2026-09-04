@@ -45,6 +45,22 @@ import {
   type TravelIdentityProjection,
   type TravelIdentitySignals,
 } from "./PassportTravelIdentityService.js";
+import {
+  listWindows,
+  projectPublicWindows,
+  isActive as isWindowActive,
+  effectiveExpiry as windowEffectiveExpiry,
+  type AvailabilityWindow,
+  type ViewerRelationship as WindowViewerRelationship,
+} from "./OpenToPlansService.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+
+/**
+ * §8 availability-windows capability flag (seeded OFF, migration 2260). A local
+ * literal, matching routes/availability.ts, so check:flag-polarity can resolve
+ * the argument to isFlagEnabled below (it does not follow imported constants).
+ */
+const OPEN_TO_PLANS_WINDOWS_FLAG = "open_to_plans_windows_enabled";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TABLE 5 — viewer context
@@ -152,11 +168,36 @@ export interface TravelerState {
   expiresAt: string | null;
 }
 
+/**
+ * The §8 explicit availability window (TABLE 8) currently active for the owner
+ * and visible to this viewer. Projected from `availability_windows` via
+ * OpenToPlansService, so it is EXPLICIT-only and expiry-checked on read (§7/§31).
+ */
+export interface ActiveAvailabilityWindow {
+  type: string;
+  startAt: string;
+  endAt: string;
+  intents: string[];
+  groupPreference: string | null;
+  maxTravelMinutes: number | null;
+  /** TABLE 10 SocialAvailability the owner set on this window, if any. */
+  socialAvailability: "open" | "maybe" | "crew_only" | "following_only" | "not_open" | null;
+  /** COALESCE(expiresAt, endAt): the instant this window stops being current. */
+  expiresAt: string;
+}
+
 export interface AvailabilityProjection {
   openToPlans: boolean;
   socialAvailability: "open" | "maybe" | "crew_only" | "following_only" | "not_open";
-  /** Current explicit window, filtered to non-expired (§31 "never render stale"). */
+  /** Current quick-status window, filtered to non-expired (§31 "never render stale"). */
   currentWindow: { status: string; expiresAt: string | null } | null;
+  /**
+   * The §8 explicit availability window active now (TABLE 8), if the windows
+   * feature is on and one is visible to this viewer under §7 rules. Distinct
+   * from the legacy quick status + weekly grid — it carries intents, group
+   * preference and travel radius, and expires on read.
+   */
+  explicitWindow: ActiveAvailabilityWindow | null;
   weekly: Record<string, string[]>;
   expiresAt: string | null;
 }
@@ -640,6 +681,7 @@ function buildTravelerState(
   profile: Record<string, any>,
   quick: { status: string; expiresAt: string | null } | null,
   activeTripCity: string | null,
+  activity: TravelerActivity,
   permissions: ViewerPermissions,
   visibility: OwnerFieldVisibility,
 ): TravelerState {
@@ -654,9 +696,33 @@ function buildTravelerState(
 
   let state: TravelerStateKind = "home";
   let city: string | null = null;
+  // §5: every temporary state carries validFrom + expiration. Defaults null;
+  // each derived state below sets its own bounds from the underlying record.
+  let validFrom: string | null = null;
+  let expiresAt: string | null = quick?.expiresAt ?? null;
 
+  // Precedence (most specific/actionable first). An explicit "busy" always wins
+  // — the traveler has said not to bother them, so no activity overrides it.
+  // Otherwise the concrete real-time activities (§5) rank above the coarse
+  // traveling / open-to-plans reads, which rank above the default home.
   if (quick?.status === "busy") {
     state = "unavailable";
+  } else if (activity.atEvent) {
+    state = "at_event";
+    // Broad event city is ordinary Passport context, still gated below.
+    city = activity.atEvent.city;
+    validFrom = activity.atEvent.startsAt;
+    expiresAt = activity.atEvent.endsAt;
+  } else if (activity.withCrew) {
+    state = "with_crew";
+    // Crew session location is purpose-bound Presence (§23/§25) — never a city here.
+    validFrom = activity.withCrew.startedAt;
+    expiresAt = activity.withCrew.expiresAt;
+  } else if (activity.exploring) {
+    state = "exploring";
+    // Trip-stop coordinates are purpose-bound Presence (§23/§25) — never a city here.
+    validFrom = activity.exploring.arrivedAt;
+    expiresAt = activity.exploring.departsAt;
   } else if (activeTripCity) {
     state = "traveling";
     city = activeTripCity;
@@ -679,7 +745,7 @@ function buildTravelerState(
     traveling: displayCity ? `Traveling · ${displayCity}` : "Traveling",
     exploring: "Exploring",
     open_to_plans: "Open to Plans",
-    at_event: "At Event",
+    at_event: displayCity ? `At Event · ${displayCity}` : "At Event",
     with_crew: "With Crew",
     unavailable: "Unavailable",
   };
@@ -688,15 +754,79 @@ function buildTravelerState(
     state,
     label: labels[state],
     city: displayCity,
-    validFrom: null,
-    expiresAt: quick?.expiresAt ?? null,
+    validFrom,
+    expiresAt,
   };
+}
+
+/** TABLE 5 viewer context → the §7 window visibility relationship. */
+export function toWindowViewerRelationship(context: PassportViewerContext): WindowViewerRelationship {
+  switch (context) {
+    case "self": return "self";
+    case "follower": return "follower";
+    case "following": return "following";
+    // Trip crew/host are the "crew" relationship for window visibility.
+    case "trip_crew":
+    case "trip_host": return "crew";
+    // Buddy/event/public relationships get only public windows.
+    default: return "public";
+  }
+}
+
+/**
+ * The §8 explicit availability window active NOW for the owner and visible to
+ * this viewer, or null. Gated by the windows feature flag (fail-closed): when
+ * off, the aggregate carries no window and the legacy quick-status/grid still
+ * apply. §7 (explicit-only, visibility) and §31 (expiry-on-read) are enforced by
+ * OpenToPlansService — for a non-self viewer via projectPublicWindows (explicit
+ * + visible + non-expired), for the owner via their own active windows.
+ */
+async function loadActiveExplicitWindow(
+  sc: SupabaseClient,
+  userId: string,
+  context: PassportViewerContext,
+): Promise<ActiveAvailabilityWindow | null> {
+  try {
+    if (!(await isFlagEnabled(sc, OPEN_TO_PLANS_WINDOWS_FLAG))) return null;
+    const nowMs = Date.now();
+    const relationship = toWindowViewerRelationship(context);
+    let candidates: AvailabilityWindow[];
+    if (relationship === "self") {
+      // The owner sees their own active windows regardless of visibility, but
+      // the aggregate is EXPLICIT-only (§7): an inferred (plan_derived) window is
+      // a private "Free tonight?" prompt, never the owner's shared availability.
+      const own = await listWindows(sc, userId, { includeExpired: false, nowMs });
+      candidates = own.filter((w) => w.source === "explicit" && isWindowActive(w, nowMs));
+    } else {
+      // projectPublicWindows already applies §7 (explicit-only + visibility) and
+      // §31 (non-expired); narrow to those actually active (already started).
+      const visible = await projectPublicWindows(sc, userId, relationship, nowMs);
+      candidates = visible.filter((w) => isWindowActive(w, nowMs));
+    }
+    if (candidates.length === 0) return null;
+    // Soonest-ending active window is the current one.
+    candidates.sort((a, b) => windowEffectiveExpiry(a) - windowEffectiveExpiry(b));
+    const w = candidates[0];
+    return {
+      type: w.type,
+      startAt: w.startAt,
+      endAt: w.endAt,
+      intents: Array.isArray(w.intents) ? w.intents.slice(0, 8) : [],
+      groupPreference: w.groupPreference,
+      maxTravelMinutes: w.maxTravelMinutes,
+      socialAvailability: w.socialAvailability,
+      expiresAt: new Date(windowEffectiveExpiry(w)).toISOString(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function buildAvailability(
   sc: SupabaseClient,
   userId: string,
   quick: { status: string; expiresAt: string | null } | null,
+  explicitWindow: ActiveAvailabilityWindow | null,
 ): Promise<AvailabilityProjection> {
   let weekly: Record<string, string[]> = {};
   let openToMeet = false;
@@ -709,18 +839,43 @@ async function buildAvailability(
   } catch {
     /* tolerate */
   }
-  const openToPlans = openToMeet || (quick != null && quick.status !== "busy");
-  const social: AvailabilityProjection["socialAvailability"] = openToPlans ? "open" : "not_open";
+  // An active explicit window is the strongest signal (§8): its openToPlans and
+  // socialAvailability override the coarse legacy reads when present.
+  const openToPlans = explicitWindow != null || openToMeet || (quick != null && quick.status !== "busy");
+  const social: AvailabilityProjection["socialAvailability"] =
+    explicitWindow?.socialAvailability ?? (openToPlans ? "open" : "not_open");
+  // The aggregate expiry is the SOONEST of the quick-status and window expiries —
+  // never render either as current past its horizon (§31).
+  const expiryCandidates = [quick?.expiresAt ?? null, explicitWindow?.expiresAt ?? null].filter(
+    (x): x is string => typeof x === "string",
+  );
+  const expiresAt = expiryCandidates.length
+    ? expiryCandidates.reduce((a, b) => (a <= b ? a : b))
+    : null;
   return {
     openToPlans,
     socialAvailability: social,
     currentWindow: quick,
+    explicitWindow,
     weekly,
-    expiresAt: quick?.expiresAt ?? null,
+    expiresAt,
   };
 }
 
-function buildIntent(profile: Record<string, any>, quick: { status: string; expiresAt: string | null } | null): IntentProjection | undefined {
+function buildIntent(
+  profile: Record<string, any>,
+  quick: { status: string; expiresAt: string | null } | null,
+  explicitWindow: ActiveAvailabilityWindow | null,
+): IntentProjection | undefined {
+  // §8: an explicit window's intents are the current temporary intent and carry
+  // the window's TTL. They take precedence over the profile's availability_tags.
+  if (explicitWindow && explicitWindow.intents.length > 0) {
+    return {
+      current: explicitWindow.intents.slice(0, 8),
+      ttlExpiresAt: explicitWindow.expiresAt,
+      source: "explicit",
+    };
+  }
   const tags: string[] = Array.isArray(profile.availability_tags) ? profile.availability_tags.filter(Boolean) : [];
   if (tags.length === 0) return undefined;
   return {
@@ -912,6 +1067,148 @@ async function loadActiveTripCity(sc: SupabaseClient, userId: string): Promise<s
   return null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-time traveler-state signals (§5): exploring / at_event / with_crew.
+//
+// §5 requires that Passport separate PERMANENT identity from TEMPORARY traveler
+// state, and that every temporary state carry `validFrom` + expiration semantics.
+// buildTravelerState (below) previously only ever produced home / traveling /
+// open_to_plans / unavailable and always left `validFrom` null. These loaders
+// derive the three activity states from CANONICAL records — never invented, and
+// always time-bounded so a stale activity can never read as "now" (§31):
+//
+//   • exploring  — an active trip stop in progress: a route_stops row the owner
+//                  has ARRIVED at, still within its planned departure window.
+//   • at_event   — an event the owner RSVP'd "going" to that is happening now
+//                  (started, not yet ended, in a live state).
+//   • with_crew  — an active, un-expired Locate/crew session the owner has
+//                  opted into and not left.
+//
+// Location boundary (§23/§25): `at_event` may surface the event's BROAD city as
+// ordinary Passport context (subject to the same show_current_city gate as every
+// other city here). `with_crew` and `exploring` are purpose-bound Presence — the
+// crew session and the trip-stop coordinates belong to Locate/Crew, never to an
+// ordinary Passport read — so those states expose NO city at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The highest-priority real-time activity a traveler is currently engaged in. */
+interface TravelerActivity {
+  atEvent: { city: string | null; startsAt: string | null; endsAt: string } | null;
+  withCrew: { startedAt: string | null; expiresAt: string } | null;
+  exploring: { arrivedAt: string | null; departsAt: string } | null;
+}
+
+const NO_ACTIVITY: TravelerActivity = { atEvent: null, withCrew: null, exploring: null };
+
+/** Event states in which an RSVP'd event is genuinely happening (not draft/cancelled/archived). */
+const LIVE_EVENT_STATES = new Set(["open", "full", "waitlist", "started"]);
+
+/** An event the user RSVP'd "going" to that is happening right now (bounded by ends_at). */
+async function loadActiveRsvpEvent(
+  sc: SupabaseClient,
+  userId: string,
+  nowIso: string,
+): Promise<TravelerActivity["atEvent"]> {
+  const { data: rsvps } = await sc
+    .from("event_rsvps")
+    .select("event_id, status")
+    .eq("user_id", userId)
+    .eq("status", "going");
+  const ids = ((rsvps as any[]) ?? []).map((r) => r.event_id).filter(Boolean);
+  if (ids.length === 0) return null;
+  const { data: events } = await sc
+    .from("events")
+    .select("id, city, starts_at, ends_at, state")
+    .in("id", ids);
+  // Happening now: live state, started, and an explicit end still in the future.
+  // An event with no ends_at cannot be time-bounded, so it never becomes an
+  // unbounded "At Event" — §5 requires expiration semantics.
+  const live = ((events as any[]) ?? []).filter(
+    (e) =>
+      LIVE_EVENT_STATES.has(String(e.state)) &&
+      typeof e.starts_at === "string" && e.starts_at <= nowIso &&
+      typeof e.ends_at === "string" && e.ends_at >= nowIso,
+  );
+  if (live.length === 0) return null;
+  // Prefer the event ending soonest — the most concretely "now".
+  live.sort((a, b) => String(a.ends_at).localeCompare(String(b.ends_at)));
+  const e = live[0];
+  return { city: e.city ?? null, startsAt: e.starts_at ?? null, endsAt: String(e.ends_at) };
+}
+
+/** An active, un-expired Locate/crew session the user has opted into and not left. */
+async function loadActiveCrewSession(
+  sc: SupabaseClient,
+  userId: string,
+  nowIso: string,
+): Promise<TravelerActivity["withCrew"]> {
+  const { data: members } = await sc
+    .from("locate_friends_members")
+    .select("session_id, left_at")
+    .eq("user_id", userId)
+    .is("left_at", null);
+  const ids = ((members as any[]) ?? []).map((m) => m.session_id).filter(Boolean);
+  if (ids.length === 0) return null;
+  const { data: sessions } = await sc
+    .from("locate_friends_sessions")
+    .select("id, started_at, expires_at, ended_at")
+    .in("id", ids)
+    .is("ended_at", null)
+    .gt("expires_at", nowIso);
+  const active = ((sessions as any[]) ?? []).filter((s) => typeof s.expires_at === "string");
+  if (active.length === 0) return null;
+  // Soonest-expiring active session bounds the state.
+  active.sort((a, b) => String(a.expires_at).localeCompare(String(b.expires_at)));
+  const s = active[0];
+  return { startedAt: s.started_at ?? null, expiresAt: String(s.expires_at) };
+}
+
+/** A trip stop the owner has arrived at and is still within the planned departure window. */
+async function loadActiveTripStop(
+  sc: SupabaseClient,
+  userId: string,
+  nowIso: string,
+): Promise<TravelerActivity["exploring"]> {
+  const { data: plans } = await sc
+    .from("route_plans")
+    .select("id, status")
+    .eq("owner_user_id", userId)
+    .eq("status", "active");
+  const planIds = ((plans as any[]) ?? []).map((p) => p.id).filter(Boolean);
+  if (planIds.length === 0) return null;
+  const { data: stops } = await sc
+    .from("route_stops")
+    .select("route_plan_id, checkpoint_status, arrived_at, planned_arrival_time, planned_departure_time")
+    .in("route_plan_id", planIds)
+    .eq("checkpoint_status", "arrived");
+  // In progress now: arrived, still before the planned departure, and (if a
+  // planned arrival exists) already past it. A stop with no planned departure
+  // cannot be bounded, so it never becomes an unbounded "Exploring".
+  const inProgress = ((stops as any[]) ?? []).filter(
+    (s) =>
+      typeof s.planned_departure_time === "string" && s.planned_departure_time >= nowIso &&
+      (s.planned_arrival_time == null || s.planned_arrival_time <= nowIso),
+  );
+  if (inProgress.length === 0) return null;
+  inProgress.sort((a, b) => String(a.planned_departure_time).localeCompare(String(b.planned_departure_time)));
+  const s = inProgress[0];
+  return {
+    arrivedAt: s.arrived_at ?? s.planned_arrival_time ?? null,
+    departsAt: String(s.planned_departure_time),
+  };
+}
+
+/** Load all three activity signals in parallel; any failure degrades to "no signal". */
+async function loadTravelerActivity(sc: SupabaseClient, userId: string): Promise<TravelerActivity> {
+  const nowIso = new Date().toISOString();
+  const [atEvent, withCrew, exploring] = await Promise.all([
+    loadActiveRsvpEvent(sc, userId, nowIso).catch(() => null),
+    loadActiveCrewSession(sc, userId, nowIso).catch(() => null),
+    loadActiveTripStop(sc, userId, nowIso).catch(() => null),
+  ]);
+  return { atEvent, withCrew, exploring };
+}
+
 /** Derive light Travel-DNA signals from unified stamps + stats. */
 function deriveTravelSignals(profile: Record<string, any>, stamps: UnifiedStamp[], stats: TravelStats, hiddenGems: number): TravelIdentitySignals {
   let nightlife = 0;
@@ -1030,14 +1327,20 @@ export async function buildPassportProjection(
   };
 
   // 5. Traveler state + availability + intent (availability/intent gated).
-  const activeTripCity = await loadActiveTripCity(sc, userId);
-  const travelerState = buildTravelerState(profile, quick, activeTripCity, permissions, ownerVisibility);
+  const [activeTripCity, activity] = await Promise.all([
+    loadActiveTripCity(sc, userId),
+    loadTravelerActivity(sc, userId),
+  ]);
+  const travelerState = buildTravelerState(profile, quick, activeTripCity, activity, permissions, ownerVisibility);
 
   let availability: AvailabilityProjection | undefined;
   let intent: IntentProjection | undefined;
   if (isSelf || permissions.canSeeAvailability) {
-    availability = await buildAvailability(sc, userId, quick);
-    intent = buildIntent(profile, quick);
+    // §8: an explicit availability window (visible to this viewer under §7) is
+    // projected into the aggregate alongside the legacy quick-status/grid.
+    const explicitWindow = await loadActiveExplicitWindow(sc, userId, context);
+    availability = await buildAvailability(sc, userId, quick, explicitWindow);
+    intent = buildIntent(profile, quick, explicitWindow);
   }
 
   // 6. Trust + credentials.
@@ -1142,4 +1445,72 @@ export async function buildPassportProjection(
     viewerContext: context,
   };
   return projection;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §31 cache tiering
+//
+// §31 splits the aggregate into two cache classes:
+//   • STATIC — identity, stamp metadata, travel stats, travel identity, credentials
+//     and permitted public journeys/memories/plans change rarely.
+//   • DYNAMIC — Availability, current state, Open to Plans, Shared Context, Trust
+//     projection and capabilities MUST use short TTLs and "never render stale".
+//
+// The route sets one Cache-Control max-age (the SHORTEST TTL among the sections
+// actually present, so the response as a whole is only cacheable as long as its
+// most volatile part) plus an ETag. The per-section `sections` map is returned
+// in the body so the CLIENT can tier its own cache — holding identity/stamps for
+// an hour while re-fetching availability/state every 30s.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Static-tier TTL, seconds — identity, stamps, stats, credentials, DNA, journeys. */
+export const PASSPORT_STATIC_MAX_AGE = 3600;
+/** Dynamic-tier TTL, seconds — availability, state, intent, trust, shared context, capabilities. */
+export const PASSPORT_DYNAMIC_MAX_AGE = 30;
+
+/** Which cache tier each §29 aggregate section belongs to (§31). */
+const SECTION_TIER: Record<string, number> = {
+  // Static
+  identity: PASSPORT_STATIC_MAX_AGE,
+  stamps: PASSPORT_STATIC_MAX_AGE,
+  stats: PASSPORT_STATIC_MAX_AGE,
+  credentials: PASSPORT_STATIC_MAX_AGE,
+  travelIdentity: PASSPORT_STATIC_MAX_AGE,
+  featuredJourney: PASSPORT_STATIC_MAX_AGE,
+  memories: PASSPORT_STATIC_MAX_AGE,
+  upcomingPlans: PASSPORT_STATIC_MAX_AGE,
+  // Dynamic
+  travelerState: PASSPORT_DYNAMIC_MAX_AGE,
+  availability: PASSPORT_DYNAMIC_MAX_AGE,
+  intent: PASSPORT_DYNAMIC_MAX_AGE,
+  trust: PASSPORT_DYNAMIC_MAX_AGE,
+  sharedContext: PASSPORT_DYNAMIC_MAX_AGE,
+  capabilities: PASSPORT_DYNAMIC_MAX_AGE,
+};
+
+export interface ProjectionCachePolicy {
+  /** Cache-Control max-age for the whole response: the shortest present-section TTL. */
+  maxAge: number;
+  /** Per-section max-age so the client cache can tier the aggregate (§31). */
+  sections: Record<string, number>;
+}
+
+/**
+ * Derive the §31 cache policy for a built projection. Pure and deterministic:
+ * only sections actually PRESENT in the projection contribute, and the overall
+ * `maxAge` is the minimum of those — so a public view lacking availability is
+ * still bounded by its dynamic traveler-state/trust/capabilities sections, while
+ * a restricted card (a relationship state) is treated as fully dynamic.
+ */
+export function buildProjectionCachePolicy(projection: PassportProjection): ProjectionCachePolicy {
+  const sections: Record<string, number> = {};
+  for (const [key, ttl] of Object.entries(SECTION_TIER)) {
+    if ((projection as any)[key] !== undefined) sections[key] = ttl;
+  }
+  // A restricted (blocked/unavailable) card carries a relationship-dependent
+  // `restricted` marker — never cache it beyond the dynamic horizon.
+  if (projection.restricted) sections.restricted = PASSPORT_DYNAMIC_MAX_AGE;
+  const ttls = Object.values(sections);
+  const maxAge = ttls.length ? Math.min(...ttls) : PASSPORT_DYNAMIC_MAX_AGE;
+  return { maxAge, sections };
 }

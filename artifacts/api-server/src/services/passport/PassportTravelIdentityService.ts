@@ -230,6 +230,76 @@ export function inferTravelIdentity(
     });
   }
 
+  // ── Energy: Low ↔ High ──────────────────────────────────────────────────────
+  // A distinct axis from travel pace (Relaxed↔Packed): pace is about itinerary
+  // density, energy is about the intensity of the activities themselves. Read
+  // from nightlife behaviour + high/low-energy interests, with pace as a weak
+  // tie-breaker. Every reading carries the concrete evidence it came from.
+  {
+    const night = Number(signals.nightlifeCount ?? 0);
+    const interests: string[] = Array.isArray(p.interests) ? p.interests.map(norm) : [];
+    const highEnergyInterest = interests.some((i) =>
+      /night|party|adventure|hik|trek|climb|surf|sport|dance|festival|dive|kayak/.test(i),
+    );
+    const lowEnergyInterest = interests.some((i) =>
+      /relax|spa|wellness|beach|caf|slow|read|retreat|meditat|lounge/.test(i),
+    );
+    const pacePos = spectrumOf(p.travel_pace, ["relax", "slow", "easy", "chill"], ["pack", "fast", "busy", "intense"]);
+    let pos: number | null = null;
+    const evidence: string[] = [];
+    if (night >= 2 || highEnergyInterest) {
+      pos = 0.8;
+      if (night >= 2) evidence.push(`${night} nightlife visits`);
+      if (highEnergyInterest) evidence.push("High-energy interests");
+    } else if (lowEnergyInterest || (pacePos != null && pacePos <= 0.2)) {
+      pos = 0.2;
+      if (lowEnergyInterest) evidence.push("Low-key interests");
+      if (pacePos != null && pacePos <= 0.2) evidence.push("Relaxed travel pace");
+    } else if (pacePos != null && pacePos >= 0.8) {
+      pos = 0.75;
+      evidence.push("Packed travel pace");
+    }
+    dimensions.push({
+      key: "energy",
+      label: "Energy",
+      poles: { low: "Low", high: "High" },
+      position: pos,
+      value: pos == null ? "Balanced" : pos > 0.6 ? "High energy" : pos < 0.4 ? "Low key" : "Balanced",
+      evidence,
+      state: "shown",
+      inferred: pos == null,
+    });
+  }
+
+  // ── Group style: 1:1 / small / large groups ─────────────────────────────────
+  // TABLE 20's group-size axis, distinct from the Solo↔Social dimension above:
+  // Social answers "alone or with others", Group style answers "how many". Read
+  // from the explicit travel_group_style tags the profile carries.
+  {
+    const groups: string[] = Array.isArray(p.travel_group_style) ? p.travel_group_style : [];
+    const gv = groups.map(norm);
+    const wantsLarge = gv.some((g) => g.includes("large") || (g.includes("group") && !g.includes("small")));
+    const wantsSmall = gv.some((g) => g.includes("small"));
+    const wantsIntimate = gv.some(
+      (g) => g.includes("1:1") || g.includes("1-on-1") || g.includes("one_on_one") || g.includes("one on one") || g.includes("solo") || g.includes("intimate"),
+    );
+    let pos: number | null = null;
+    let value = "Balanced";
+    if (wantsLarge) { pos = 0.85; value = "Large groups"; }
+    else if (wantsSmall) { pos = 0.4; value = "Small groups"; }
+    else if (wantsIntimate) { pos = 0.15; value = "1:1"; }
+    dimensions.push({
+      key: "group_style",
+      label: "Group style",
+      poles: { low: "1:1 / small", high: "Large groups" },
+      position: pos,
+      value,
+      evidence: groups.length ? [`Group style: ${groups.join(", ")}`] : [],
+      state: "shown",
+      inferred: pos == null,
+    });
+  }
+
   // ── Interests (value list) ──────────────────────────────────────────────────
   {
     const interests: string[] = Array.isArray(p.interests) ? p.interests.filter(Boolean) : [];

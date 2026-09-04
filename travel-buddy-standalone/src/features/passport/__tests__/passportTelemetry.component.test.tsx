@@ -24,6 +24,7 @@ import {
   trackMyWorldOpened,
   trackPassportShared,
   trackMakePlanStarted,
+  trackPassportViewed,
   type PassportTelemetryEvent,
 } from '../passportTelemetry.ts';
 
@@ -72,9 +73,17 @@ describe('passportTelemetry — privacy scrubber (§23/§24)', () => {
     for (const k of ['name', 'displayName', 'handle', 'username', 'email', 'phone', 'avatarUrl', 'bio', 'title', 'label', 'text', 'message', 'description', 'lat', 'lng', 'coordinate']) {
       expect(isDisallowedKey(k)).toBe(true);
     }
-    for (const k of ['subjectId', 'stampId', 'kind', 'verification', 'method', 'factCount', 'countryCount', 'from', 'summary']) {
+    for (const k of ['subjectId', 'stampId', 'kind', 'verification', 'method', 'factCount', 'countryCount', 'from', 'summary', 'viewerContext']) {
       expect(isDisallowedKey(k)).toBe(false);
     }
+  });
+
+  it('regression: the closed-enum viewerContext survives the "text" fragment, free text does not', () => {
+    const events = spy();
+    trackPassportViewed('them', 'follower');
+    expect(events[0].payload).toEqual({ subjectId: 'them', viewerContext: 'follower' });
+    // The exception is by exact key only — any other "…text…" key is still stripped.
+    expect(scrubPayload({ subjectId: 'them', contextText: 'hello', text: 'hi' })).toEqual({ subjectId: 'them' });
   });
 
   it('strips disallowed keys at any depth', () => {

@@ -208,6 +208,7 @@ export const OBJECT_KIND_CAMERA: Record<MapObjectKind, CameraState> = {
   trip_stop: 'FOCUS_PLACE',
   meeting_point: 'FOCUS_PLACE',
   memory: 'FOCUS_PLACE',
+  saved_place: 'FOCUS_PLACE',
   safety_notice: 'FOCUS_PLACE',
   activity_zone: 'FOCUS_AREA',
   social_zone: 'FOCUS_AREA',

@@ -88,13 +88,18 @@ function makeIdentity(userId: string, name: string, handle: string) {
 // these five fields against the real shape instead of just widening a literal.
 const EMPTY_HOME_PREVIEW: Pick<
   PassportProjectionView,
-  'stats' | 'recentStamps' | 'featuredJourney' | 'memories' | 'sharedContext'
+  | 'stats' | 'recentStamps' | 'featuredJourney' | 'memories' | 'sharedContext'
+  | 'travelerState' | 'availability' | 'trust' | 'hasTravelIdentity'
 > = {
   stats: { countries: 0, cities: 0, stamps: 0, trips: 0 },
   recentStamps: [],
   featuredJourney: null,
   memories: [],
   sharedContext: null,
+  travelerState: null,
+  availability: null,
+  trust: null,
+  hasTravelIdentity: false,
 };
 
 function selfProjection(plans: PlanProjection[]): PassportProjectionView {

@@ -108,7 +108,7 @@ describe("GET /discovery/feed", () => {
     const r = await get(server, "/discovery/feed?lat=25.77&lng=-80.19&city=Miami");
     assert.equal(r.status, 200);
     const b = r.body;
-    for (const key of ["places", "events", "posts", "memories", "sections", "nextCursor", "total", "sourceSummary"]) {
+    for (const key of ["places", "events", "posts", "memories", "sections", "nextCursor", "total", "sourceSummary", "sessionId"]) {
       assert.ok(key in b, `envelope must contain key: ${key}`);
     }
     assert.ok(Array.isArray(b.places),   "places must be array");
@@ -119,6 +119,29 @@ describe("GET /discovery/feed", () => {
     assert.ok("seededDbCount"    in b.sourceSummary, "sourceSummary must have seededDbCount");
     assert.ok("osmCount"         in b.sourceSummary, "sourceSummary must have osmCount");
     assert.ok("userCreatedCount" in b.sourceSummary, "sourceSummary must have userCreatedCount");
+  });
+
+  // ── Served rank context (session id) ──────────────────────────────────────
+  // The client threads this back on POST /rank-events/outcome so the outcome
+  // upgrades the serve-point-7 impression this exact load wrote, not the most
+  // recent 'discovery' impression across all serve points. logDiscoveryServe is
+  // handed the same value (discovery.ts) — the envelope is the observable half.
+
+  it("returns a UUID sessionId as the served rank context", async () => {
+    const r = await get(server, "/discovery/feed?lat=25.77&lng=-80.19&city=Miami");
+    assert.equal(r.status, 200);
+    assert.equal(typeof r.body.sessionId, "string", "sessionId must be a string");
+    assert.match(
+      r.body.sessionId,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      "sessionId must be a UUID",
+    );
+  });
+
+  it("issues a distinct sessionId per feed load", async () => {
+    const r1 = await get(server, "/discovery/feed?lat=25.77&lng=-80.19&city=Miami");
+    const r2 = await get(server, "/discovery/feed?lat=25.77&lng=-80.19&city=Miami");
+    assert.notEqual(r1.body.sessionId, r2.body.sessionId, "each load gets its own session");
   });
 
   // ── DB merge ──────────────────────────────────────────────────────────────

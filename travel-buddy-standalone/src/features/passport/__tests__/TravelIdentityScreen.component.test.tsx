@@ -150,4 +150,20 @@ describe('TravelIdentityScreen', () => {
     await waitFor(() => expect(screen.getByText('No travel identity yet')).toBeTruthy());
     expect(screen.queryByText('Night Explorer')).toBeNull();
   });
+
+  it('viewer projection is read-only: the readings render but the Show/Hide/Not-Me controls do not (§19/§30)', async () => {
+    mockGetIdentity.mockResolvedValue({ ok: true, data: makeIdentity() });
+
+    // A target user id marks this as a VIEWER opening someone else's Passport.
+    await render(<TravelIdentityScreen targetUserId="them-99" />);
+
+    // Readings + explainability still show.
+    await waitFor(() => expect(screen.getByText('Night Explorer')).toBeTruthy());
+    expect(screen.getAllByText(/Why we inferred this/i).length).toBeGreaterThan(0);
+
+    // But a viewer may not rewrite another traveler's DNA prefs — no controls.
+    expect(screen.queryByText('Show')).toBeNull();
+    expect(screen.queryByText('Hide')).toBeNull();
+    expect(screen.queryByText('Not me')).toBeNull();
+  });
 });
