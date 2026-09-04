@@ -1155,6 +1155,11 @@ const ReorderSchema = z.object({
   sortOrder: z.number().int(),
 });
 
+// Optimize Today (§11) accepts a whole-day ordering, not one item at a time.
+const ReorderBatchSchema = z.object({
+  orderedItemIds: z.array(z.string().regex(UUID)).min(1).max(200),
+});
+
 // ── Conflict detection helper ─────────────────────────────────────────────────
 
 function computeWarnings(
@@ -1619,6 +1624,84 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   if (!updated) { sendError(res, "not_found", "Plan item not found in this trip"); return; }
 
   res.json({ status: "reordered", itemId, sortOrder: parsed.data.sortOrder });
+});
+
+// ── POST /trips/:tripId/plan/reorder — batch reorder (owner-only) ──────────────
+//
+// Optimize Today (§11) accepts a whole-day re-ordering, not one item at a time.
+// This is the Trips write path that acceptance persists through, so the Trip Map
+// is never left claiming a reorder it never saved. Like the single-item reorder,
+// it is OWNER-ONLY: only the trip owner may change the global sort order.
+//
+// SLOT-PRESERVING. The provided ids are reassigned only among the sort_order
+// SLOTS they already collectively occupy (their current sort_order values, sorted
+// ascending and re-paired to the accepted order). Plan items NOT in the list —
+// other days, unmapped or private items — keep their exact sort_order, so
+// accepting a map reorder never silently moves a stop the user did not see on the
+// map. §11: "the map should not silently rewrite the canonical Trip."
+router.post("/trips/:tripId/plan/reorder", async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { tripId } = req.params;
+  if (!UUID.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const parsed = ReorderBatchSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", "orderedItemIds must be a non-empty array of item ids"); return; }
+  const orderedItemIds = parsed.data.orderedItemIds;
+  if (new Set(orderedItemIds).size !== orderedItemIds.length) {
+    sendError(res, "invalid_payload", "orderedItemIds must not contain duplicates"); return;
+  }
+
+  // Owner-only (matches the single-item reorder): the global sort order is the
+  // trip owner's prerogative, not any accepted member's.
+  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  if ((trip as { owner_id: string }).owner_id !== user.id) {
+    sendError(res, "forbidden", "Only the trip owner can reorder plan items"); return;
+  }
+
+  // Current sort_order of exactly the requested items, scoped to this trip and
+  // excluding soft-deleted rows.
+  const { data: rows, error: readErr } = await client
+    .from("trip_plan_items")
+    .select("id, sort_order")
+    .in("id", orderedItemIds)
+    .eq("trip_id", tripId)
+    .is("removed_at", null);
+  if (readErr) { req.log.error({ err: readErr }, "reorder batch read"); sendError(res, "db_error", readErr.message); return; }
+
+  const found = new Map(
+    (rows ?? []).map((r) => [(r as { id: string }).id, (r as { sort_order: number }).sort_order] as const),
+  );
+  // Every id must belong to this trip and still be live — refuse to reorder a set
+  // that references an item from another trip or a removed one.
+  const missing = orderedItemIds.filter((id) => !found.has(id));
+  if (missing.length > 0) {
+    sendError(res, "invalid_payload", "One or more items are not live plan items on this trip"); return;
+  }
+
+  // The slots these items collectively hold, ascending, re-paired to the accepted
+  // order. Items outside the list keep their slots untouched.
+  const slots = orderedItemIds.map((id) => found.get(id) as number).sort((a, b) => a - b);
+
+  const updates: Array<{ itemId: string; sortOrder: number }> = [];
+  const stamp = new Date().toISOString();
+  for (let i = 0; i < orderedItemIds.length; i += 1) {
+    const itemId = orderedItemIds[i];
+    const nextSort = slots[i];
+    if (found.get(itemId) === nextSort) continue; // already in place — no write
+    const { error: upErr } = await client
+      .from("trip_plan_items")
+      .update({ sort_order: nextSort, updated_at: stamp })
+      .eq("id", itemId)
+      .eq("trip_id", tripId);
+    if (upErr) { req.log.error({ err: upErr }, "reorder batch update"); sendError(res, "db_error", upErr.message); return; }
+    updates.push({ itemId, sortOrder: nextSort });
+  }
+
+  res.json({ status: "reordered", count: updates.length, order: orderedItemIds });
 });
 
 export default router;
