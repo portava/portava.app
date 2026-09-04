@@ -192,6 +192,21 @@ export function projectGem(g: any, distanceKm: number | null = null): MapObject 
       thumbnailUrl: g.thumbnail_url ?? null,
       verificationLevel: g.verification_level ?? null,
       coordsPrecision: g.coordsPrecision ?? null,
+      // THE LIVE-CLAIM SUBJECT, and it is NOT this gem's own id.
+      //
+      // intel_state_snapshots.subject_id is `uuid NOT NULL REFERENCES
+      // public.places(id)` (migration 2130). A gem's id is a hidden_gems id —
+      // an independent uuid space. Keying the live-claim read on `gem:<g.id>`
+      // therefore looked correct, compiled, had tests, and COULD NEVER MATCH:
+      // no gem on this map has ever carried an activity, trend, confidence,
+      // freshness, sourceClass or provenance, and nothing failed.
+      //
+      // hidden_gems.canonical_place_id (migration 2044) is the bridge, and it
+      // was already being selected at the call site
+      // (HiddenGemDiscoveryService.ts:106) — it just was not used. Null when a
+      // gem has not been reconciled to a canonical place, in which case it
+      // correctly has no live subject rather than a mismatched one.
+      canonicalPlaceId: g.canonical_place_id ?? null,
     },
   };
 }
@@ -863,8 +878,22 @@ export function crowdValueToTrend(c: LiveClaimLike): TrendState | undefined {
 export function liveSubjectIdFor(obj: MapObject): string | null {
   const [kind, rest] = obj.id.split(":", 2);
   if (!rest) return null;
+
+  // A GEM'S SUBJECT IS ITS CANONICAL PLACE, NOT ITS OWN ID.
+  //
+  // The live-claim store keys on places(id); a gem id is a hidden_gems id.
+  // Returning `rest` here meant every gem enrichment queried an id space the
+  // snapshot table does not use, so the join silently returned nothing for the
+  // life of this function. A gem with no canonical place has NO live subject —
+  // null, not a mismatched id, because a wrong subject would eventually match
+  // somebody else's place.
+  if (kind === "gem") {
+    const canonical = (obj.payload as { canonicalPlaceId?: unknown } | undefined)?.canonicalPlaceId;
+    return typeof canonical === "string" && canonical.length > 0 ? canonical : null;
+  }
+
   // Only place-like objects carry live claims today.
-  return kind === "gem" || kind === "place" ? rest : null;
+  return kind === "place" ? rest : null;
 }
 
 /**

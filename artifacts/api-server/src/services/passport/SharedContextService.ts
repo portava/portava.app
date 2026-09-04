@@ -17,6 +17,7 @@
  * already entitled to.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { areSharedMomentsEnabled } from "../../lib/places/sharedMoments.js";
 
 /** One explainable overlap fact. `detail` is safe, coarse, viewer-permitted. */
 export interface SharedContextFact {
@@ -167,6 +168,49 @@ async function loadUpcomingCities(sc: SupabaseClient, tripIds: Set<string>): Pro
   }
 }
 
+/**
+ * Count the active Shared Moments the viewer AND owner are BOTH accepted
+ * members of (§15/§17, TABLE 17 — "2 Shared Moments").
+ *
+ * Authorization is intrinsic and needs no extra per-relationship permission:
+ * every moment counted here is one the VIEWER themselves is an accepted member
+ * of, so the viewer is already entitled to know it exists (they belong to it).
+ * The count therefore reveals nothing the viewer could not already list from
+ * their own memberships — it never surfaces a moment the viewer is not in, and
+ * carries no title, place, date or coordinate. Archived / removed moments and
+ * pending / declined memberships are excluded.
+ */
+async function loadSharedMomentCount(
+  sc: SupabaseClient,
+  ownerId: string,
+  viewerId: string,
+): Promise<number> {
+  try {
+    const [ownerRows, viewerRows] = await Promise.all([
+      sc.from("shared_moment_memberships").select("moment_id").eq("user_id", ownerId).eq("status", "accepted"),
+      sc.from("shared_moment_memberships").select("moment_id").eq("user_id", viewerId).eq("status", "accepted"),
+    ]);
+    const ownerMoments = new Set(
+      (((ownerRows as any).data ?? []) as any[]).map((r) => r.moment_id).filter(Boolean),
+    );
+    const shared: string[] = [];
+    for (const r of (((viewerRows as any).data ?? []) as any[])) {
+      if (r.moment_id && ownerMoments.has(r.moment_id)) shared.push(r.moment_id);
+    }
+    if (shared.length === 0) return 0;
+    // Only Moments that are still active count (an archived Moment is history
+    // that neither party is actively part of any more).
+    const { data } = await sc
+      .from("shared_moments")
+      .select("id")
+      .in("id", Array.from(new Set(shared)))
+      .eq("status", "active");
+    return (((data as any[]) ?? [])).length;
+  } catch {
+    return 0;
+  }
+}
+
 function intersect<T>(a: Set<T>, b: Set<T>): T[] {
   const out: T[] = [];
   for (const v of a) if (b.has(v)) out.push(v);
@@ -301,6 +345,22 @@ export async function buildSharedContext(
         label: "Both heading to the same place",
         detail: bothGoing.slice(0, 2).join(", "),
         magnitude: bothGoing.length,
+      });
+    }
+  }
+
+  // ── Shared Moments (§15/§17, TABLE 17) — private, membership-authorized ──────
+  // Gated behind the Shared Moments capability chain (fail-closed): when the
+  // subsystem is off there is nothing to surface. Membership itself authorizes
+  // each counted Moment, so no per-relationship permission flag applies.
+  if (await areSharedMomentsEnabled(sc)) {
+    const sharedMoments = await loadSharedMomentCount(sc, ownerId, viewerId);
+    if (sharedMoments > 0) {
+      facts.push({
+        key: "shared_moments",
+        label: `${sharedMoments} Shared Moment${sharedMoments === 1 ? "" : "s"}`,
+        detail: null,
+        magnitude: sharedMoments,
       });
     }
   }

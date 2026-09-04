@@ -487,9 +487,22 @@ async function readHiddenGemCandidate(
   try {
     const { data, error } = await sc
       .from("hidden_gems")
+      // `confirmation_count` and `days_since_last_confirmation` were in this
+      // select list but exist on NO table in the schema — not hidden_gems, not
+      // anywhere in public. PostgREST fails the WHOLE read on an unknown
+      // select-list column (PGRST100), so the `if (error || !data) return null`
+      // below fired on every call and this thread never rendered at all.
+      //
+      // Dropped rather than invented: the two derivations already default them
+      // (`?? null`, `?? 0`), so removing them yields exactly the values the code
+      // was written to expect, and a thread that renders instead of one that
+      // never does.
+      //
+      // To make those signals real, derive them from `hidden_gem_verifications`
+      // (the confirmations table) rather than adding denormalised counters here.
       .select(
         "id, sensitivity_level, verification_level, status, crowd_level, " +
-          "save_count, visit_count, confirmation_count, days_since_last_confirmation, updated_at",
+          "save_count, visit_count, updated_at",
       )
       .eq("canonical_place_id", place.placeId)
       .eq("status", "active")

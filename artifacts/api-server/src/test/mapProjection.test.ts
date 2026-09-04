@@ -62,6 +62,11 @@ const CITY_TRAVELER = { ...AREA_TRAVELER, id: "u2", precision: "city" };
 
 const GEM = {
   id: "g1",
+  // The bridge to the live-claim subject space. HiddenGemDiscoveryService
+  // selects this column (:106), so a fixture without it is not the shape
+  // production emits — and its absence is exactly what let the id-space bug
+  // sit behind a green suite.
+  canonical_place_id: "place-uuid-for-g1",
   name: "Rooftop stairwell",
   category: "viewpoint",
   city: "Da Nang",
@@ -322,9 +327,40 @@ describe("enrichWithLiveClaims", () => {
     Array.from({ length: n }, (_, i) => projectGem({ ...GEM, id: `g${i}` })!);
 
   test("only place-like objects are eligible", () => {
-    assert.equal(liveSubjectIdFor(projectGem(GEM)!), "g1");
     assert.equal(liveSubjectIdFor(projectTraveler(AREA_TRAVELER)!), null);
     assert.equal(liveSubjectIdFor(projectEvent(EVENT, NOW)!), null);
+  });
+
+  // ── The subject id must be one the claim store can actually match ──────────
+  //
+  // This asserted `"g1"` — the gem's OWN id. intel_state_snapshots.subject_id
+  // is `uuid NOT NULL REFERENCES public.places(id)` (migration 2130), and a
+  // gem id is a hidden_gems id: an independent uuid space. So the assertion
+  // pinned a value that could never match anything, and every enrichment test
+  // below injects a reader that ignores the id it is handed — which is why 27
+  // green tests sat on top of a join that has never returned a row.
+  test("a gem's live subject is its CANONICAL PLACE, not its own id", () => {
+    const subject = liveSubjectIdFor(projectGem(GEM)!);
+    assert.notEqual(subject, "g1", "the gem's own id cannot match places(id)");
+    assert.equal(subject, "place-uuid-for-g1");
+  });
+
+  test("a gem with no canonical place has NO live subject", () => {
+    // Null, never a fallback to the gem id: a wrong subject does not fail
+    // safely, it eventually matches somebody else's place.
+    const orphan = projectGem({ ...GEM, canonical_place_id: null })!;
+    assert.equal(liveSubjectIdFor(orphan), null);
+  });
+
+  test("the subject actually reaches the reader", async () => {
+    // The join, end to end. Without this the two assertions above could both
+    // pass while enrichment still queried something else entirely.
+    const seen: string[] = [];
+    await enrichWithLiveClaims([projectGem(GEM)!], async (id) => {
+      seen.push(id);
+      return [];
+    }, { now: NOW });
+    assert.deepEqual(seen, ["place-uuid-for-g1"]);
   });
 
   test("a cap is REPORTED, never silent", async () => {
