@@ -12,6 +12,8 @@ import {
   buildUnifiedStamps,
   getUnifiedStampCount,
   unifiedViewEnabled,
+  mapStampSource,
+  verificationFromLevel,
 } from "../services/passport/UnifiedStampService.js";
 
 const U = "user-1";
@@ -153,5 +155,64 @@ describe("UnifiedStampService", () => {
     assert.equal(await unifiedViewEnabled(makeSc({ flagOn: false })), false);
     const throwing = { from() { throw new Error("x"); } } as any;
     assert.equal(await unifiedViewEnabled(throwing), false);
+  });
+});
+
+describe("UnifiedStampService — TABLE 16 provenance + verification (§12)", () => {
+  it("mapStampSource maps the live source_type strings onto the TABLE 16 enum", () => {
+    assert.equal(mapStampSource("trips"), "trip_derived");
+    assert.equal(mapStampSource("events"), "event_verified");
+    assert.equal(mapStampSource("posts"), "contribution_earned");
+    assert.equal(mapStampSource("rent_buddy"), "buddy_derived");
+    assert.equal(mapStampSource("admin"), "admin_issued");
+    assert.equal(mapStampSource("moderation"), "admin_issued");
+    assert.equal(mapStampSource("partner_verified"), "partner_verified");
+    assert.equal(mapStampSource("manual_memory"), "self_reported");
+    // Platform defaults / unknowns → system_observed (no more specific provenance).
+    assert.equal(mapStampSource("system"), "system_observed");
+    assert.equal(mapStampSource("gps"), "system_observed");
+    assert.equal(mapStampSource(null), "system_observed");
+    assert.equal(mapStampSource(undefined), "system_observed");
+  });
+
+  it("verificationFromLevel treats platform levels as verified, unverified as reported", () => {
+    for (const lvl of ["verified", "gps", "checkin", "crew", "safe_return", "admin", "community"]) {
+      assert.equal(verificationFromLevel(lvl), "verified", `${lvl} → verified`);
+    }
+    // The self-inserted default and any unknown level are NOT verified (§12).
+    assert.equal(verificationFromLevel("unverified"), "reported");
+    assert.equal(verificationFromLevel(null), "reported");
+    assert.equal(verificationFromLevel("whatever"), "reported");
+    assert.equal(verificationFromLevel("decorative"), "decorative");
+  });
+
+  it("a self-inserted v1 stamp surfaces as REPORTED, never impersonating verified", async () => {
+    const sc = makeSc({
+      v1: [v1Row({ verification_level: "unverified", source_type: "system", city: "Baguio", country: "Philippines" })],
+    });
+    const r = await buildUnifiedStamps(sc, U);
+    const stamp = r.stamps.find((s) => s.source === "v1_gps")!;
+    assert.ok(stamp, "v1 stamp present");
+    assert.equal(stamp.verification, "reported", "unverified self-inserted stamp is reported, not verified");
+  });
+
+  it("a GPS-observed v1 stamp is verified, and provenance is carried through", async () => {
+    const sc = makeSc({
+      v1: [v1Row({ verification_level: "gps", source_type: "trips", source_id: "t1", city: "Da Nang", country: "Vietnam" })],
+    });
+    const r = await buildUnifiedStamps(sc, U);
+    const stamp = r.stamps.find((s) => s.source === "v1_gps")!;
+    assert.equal(stamp.verification, "verified");
+    assert.equal(stamp.stampSource, "trip_derived");
+  });
+
+  it("a v2 achievement is verified (service-role awarded) with its provenance mapped", async () => {
+    const sc = makeSc({
+      v2: [v2Row({ source_type: "rent_buddy" })],
+    });
+    const r = await buildUnifiedStamps(sc, U);
+    const stamp = r.stamps.find((s) => s.source === "v2_achievement")!;
+    assert.equal(stamp.verification, "verified");
+    assert.equal(stamp.stampSource, "buddy_derived");
   });
 });

@@ -27,9 +27,10 @@ import {
 } from "../interactionPermissions.js";
 import type { CallerContext } from "./PassportPrivacyGuard.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyGuard.js";
+import { getDisplayTrustScore, getTrustProfile } from "../trust/TrustScoreService.js";
 import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
-import { buildUnifiedStamps, type UnifiedStamp } from "./UnifiedStampService.js";
+import { buildUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
 import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
 import { countUserTrips } from "../../lib/tripCounts.js";
@@ -45,6 +46,7 @@ import {
   type TravelIdentityProjection,
   type TravelIdentitySignals,
 } from "./PassportTravelIdentityService.js";
+import { buildReputationSummary, type ReputationSummary } from "./PassportReputationService.js";
 import {
   listWindows,
   projectPublicWindows,
@@ -208,6 +210,23 @@ export interface IntentProjection {
   source: "explicit" | "inferred";
 }
 
+/**
+ * TABLE 12 — one domain's trust presentation. Carries only a qualitative,
+ * non-stigmatizing PRESENTATION word (§9/§10: "Do not make it a single universal
+ * authorization number"; §34 "Not a Trust leaderboard"). The raw 0–100 domain
+ * score NEVER leaves the server on this object.
+ */
+export interface DomainTrust {
+  /** Stable key, e.g. "overall" | "traveler" | "trip_guest" | "trip_host" | "contributor" | "buddy". */
+  key: string;
+  /** Display label, e.g. "Trip Host". */
+  domain: string;
+  /** Presentation word, e.g. "Excellent" | "Strong" | "Established" | "Building" | "New" | "Not applicable". */
+  presentation: string;
+  /** False when the domain does not apply to this user (e.g. Buddy for a non-buddy). */
+  applicable: boolean;
+}
+
 export interface TrustProjection {
   label: string;
   publicLevel: string;
@@ -215,6 +234,8 @@ export interface TrustProjection {
   score: number | null;
   confidence: "low" | "medium" | "high";
   strengths: string[];
+  /** TABLE 12 per-domain trust presentations (never raw scores). */
+  domains: DomainTrust[];
 }
 
 export interface CredentialProjection {
@@ -232,7 +253,10 @@ export interface TravelStats {
 }
 
 export interface StampProjection {
+  /** Storage origin (v1_gps | v2_achievement). */
   source: string;
+  /** TABLE 16 canonical provenance, derived server-side. */
+  stampSource: StampSource;
   name: string | null;
   city: string | null;
   country: string | null;
@@ -885,23 +909,81 @@ function buildIntent(
   };
 }
 
+/**
+ * Non-stigmatizing presentation word for a 0–100 domain score (§10, TABLE 12).
+ * Deliberately avoids "low/poor/weak" — a neutral 50 reads "Established", not a
+ * penalty, so new travelers are not stigmatized.
+ */
+function presentationWord(score: number): string {
+  if (score >= 80) return "Excellent";
+  if (score >= 65) return "Strong";
+  if (score >= 50) return "Established";
+  if (score >= 35) return "Building";
+  return "New";
+}
+
+function mean(...xs: number[]): number {
+  const vals = xs.filter((x) => Number.isFinite(x));
+  if (vals.length === 0) return 50;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+/**
+ * TABLE 12 — project the nine canonical category scores into per-domain trust
+ * PRESENTATIONS (no raw numbers reach the viewer). Categories default to the
+ * neutral 50 when there is no trust profile, matching the trust engine's own
+ * neutral default, so a brand-new account reads "Established" everywhere rather
+ * than an alarming zero.
+ */
+function buildDomainTrust(
+  overallScore: number,
+  categories: Record<string, number> | null | undefined,
+  isBuddy: boolean,
+): DomainTrust[] {
+  const c = (k: string): number => {
+    const v = Number((categories as Record<string, number> | undefined)?.[k]);
+    return Number.isFinite(v) ? v : 50;
+  };
+  const domains: DomainTrust[] = [
+    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true },
+    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true },
+    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true },
+    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true },
+    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true },
+    // Buddy is a contextual projection (§20): "Not applicable" unless the user
+    // actually offers a buddy service.
+    isBuddy
+      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true }
+      : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false },
+  ];
+  return domains;
+}
+
 async function buildTrust(
   sc: SupabaseClient,
   userId: string,
   context: PassportViewerContext,
   stats: TravelStats,
   verified: boolean,
+  isBuddy: boolean,
 ): Promise<TrustProjection> {
   // Confidence is evidence-aware (§9/§10): a score built on many stamps/trips is
   // more trustworthy than the same number on a brand-new account.
   const evidence = stats.stamps + stats.trips * 2 + (verified ? 3 : 0);
   const confidence: TrustProjection["confidence"] = evidence >= 12 ? "high" : evidence >= 4 ? "medium" : "low";
 
+  // The canonical category scores + overall drive the TABLE 12 per-domain
+  // presentation for EVERY context (public included) — domains carry only words,
+  // never numbers, so they are safe to project to any viewer (§9/§10).
+  const profile = await getTrustProfile(sc, userId).catch(() => null);
+  const overallForDomains = profile && Number.isFinite(Number(profile.overall_score)) ? Number(profile.overall_score) : 50;
+  const domains = buildDomainTrust(overallForDomains, profile?.categories as Record<string, number> | undefined, isBuddy);
+
   if (context === "public") {
     const badge = await getPublicTrustBadge(sc, userId);
     // Non-stigmatizing copy for low-evidence accounts (§10).
     const label = confidence === "low" ? (verified ? "New Traveler · Verified" : "New Traveler") : badge.label;
-    return { label, publicLevel: badge.level, score: null, confidence, strengths: badge.strengths };
+    return { label, publicLevel: badge.level, score: null, confidence, strengths: badge.strengths, domains };
   }
 
   const summary = await getSafeTrustSummary(sc, userId);
@@ -909,24 +991,29 @@ async function buildTrust(
     ? (verified ? "New Traveler · Verified" : "New Traveler")
     : (summary.publicLevel.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
 
-  // Numeric score is exposed only on the owner's own view (§9).
+  // Numeric score is exposed only on the owner's own view (§9). It reads THE
+  // canonical display helper (getDisplayTrustScore = rounded
+  // trust_profiles.overall_score) — the exact same source and rounding the
+  // identity card and Rent-a-Buddy card read through lib/trustScore, so the
+  // three surfaces can never show different numbers.
   let score: number | null = null;
   if (context === "self") {
     try {
-      const { data } = await sc.from("trust_profiles").select("overall_score").eq("user_id", userId).maybeSingle();
-      score = data ? Number((data as any).overall_score ?? 0) : null;
+      score = await getDisplayTrustScore(sc, userId);
     } catch {
       score = null;
     }
   }
 
-  return { label, publicLevel: summary.publicLevel, score, confidence, strengths: summary.strengths };
+  return { label, publicLevel: summary.publicLevel, score, confidence, strengths: summary.strengths, domains };
 }
 
 function buildCredentials(
   profile: Record<string, any>,
   trust: TrustProjection,
   stats: TravelStats,
+  reputation: ReputationSummary | null,
+  buddyRep: BuddyReputation | null,
 ): CredentialProjection[] {
   const creds: CredentialProjection[] = [];
   if (profile.verified === true || profile.verified_at) {
@@ -950,22 +1037,87 @@ function buildCredentials(
       tier: "positive",
     });
   }
+  // §20 / TABLE 13 — Contributor credential (qualified, non-paid contributions).
+  if (reputation && reputation.totalContributions > 0 && reputation.level >= 2) {
+    creds.push({
+      key: "contributor",
+      label: reputation.levelLabel,
+      detail: `${reputation.acceptedReports} accepted report${reputation.acceptedReports === 1 ? "" : "s"}`,
+      tier: "positive",
+    });
+  }
+  // §20 / TABLE 13 — "Host Reputation · 4.8", only with real review evidence.
+  if (buddyRep && buddyRep.rating != null) {
+    creds.push({
+      key: "host_reputation",
+      label: "Host Reputation",
+      detail: buddyRep.rating.toFixed(1),
+      tier: "positive",
+    });
+  }
+  // §20 — "Knows <city> well" city expertise from legitimate contribution history.
+  for (const city of reputation?.cityExpertise ?? []) {
+    creds.push({
+      key: `city_expertise_${norm(city)}`,
+      label: `Knows ${city} well`,
+      detail: null,
+      tier: "positive",
+    });
+  }
   return creds;
 }
 
 function mapStamp(s: UnifiedStamp): StampProjection {
   return {
     source: s.source,
+    // TABLE 16 provenance + verification, derived from the live source_type /
+    // verification_level by UnifiedStampService — NOT hard-coded. A self-inserted
+    // v1 stamp (verification_level='unverified') surfaces as "reported" and can
+    // never impersonate a verified travel fact (§12).
+    stampSource: s.stampSource,
     name: s.name,
     city: s.city,
     country: s.country,
     earnedAt: s.earnedAt,
     rarity: s.rarity,
     artworkUrl: s.artworkUrl,
-    // Unified stamps are all system/earned — never a self-reported decorative
-    // badge, so they are safe to present as verified travel facts (§12).
-    verification: "verified",
+    verification: s.verification,
   };
+}
+
+/**
+ * Host/Buddy reputation from the canonical rent_buddy_profiles row (§20). Returns
+ * null when the user offers no buddy service — which both marks the TABLE 12
+ * Buddy domain "Not applicable" and withholds the "Host Reputation" credential.
+ * A rating is surfaced only with real review evidence (review_count > 0): §20
+ * "reputation should reflect usefulness and qualified real-world evidence, not
+ * follower count alone".
+ */
+export interface BuddyReputation {
+  rating: number | null;
+  reviews: number;
+  completedBookings: number;
+}
+async function loadBuddyReputation(sc: SupabaseClient, userId: string): Promise<BuddyReputation | null> {
+  try {
+    const { data } = await sc
+      .from("rent_buddy_profiles")
+      .select("average_rating, review_count, completed_bookings")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (!data) return null;
+    const row = data as any;
+    const reviews = Number(row.review_count ?? 0);
+    const ratingNum = row.average_rating != null ? Number(row.average_rating) : NaN;
+    return {
+      // Only expose a rating backed by at least one real review.
+      rating: reviews > 0 && Number.isFinite(ratingNum) ? ratingNum : null,
+      reviews: Number.isFinite(reviews) ? reviews : 0,
+      completedBookings: Number(row.completed_bookings ?? 0) || 0,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Load passport visibility preferences (best-effort). */
@@ -1308,7 +1460,7 @@ export async function buildPassportProjection(
   }
 
   // 4. Shared canonical reads (in parallel).
-  const [statsRaw, tripCount, unified, quick, prefs, restrictionState] = await Promise.all([
+  const [statsRaw, tripCount, unified, quick, prefs, restrictionState, reputation, buddyRep] = await Promise.all([
     buildStats(sc, userId).catch(() => ({ countries: 0, cities: 0, hiddenGemStamps: 0, totalStamps: 0 } as any)),
     countUserTrips(sc, userId).catch(() => ({ count: 0 })),
     buildUnifiedStamps(sc, userId).catch(() => ({ stamps: [] as UnifiedStamp[], count: 0 } as any)),
@@ -1317,6 +1469,11 @@ export async function buildPassportProjection(
     // The owner's ACTIVE trust restrictions — never throws (degraded reads
     // resolve fail-closed on hosting/messaging inside the service).
     getRestrictionState(sc, userId),
+    // §20 reputation (city expertise + contribution summary) for credentials.
+    buildReputationSummary(sc, userId).catch(() => null),
+    // Buddy/host reputation presence — drives the TABLE 12 Buddy domain
+    // applicability and the §20 "Host Reputation" credential.
+    loadBuddyReputation(sc, userId),
   ]);
 
   const stats: TravelStats = {
@@ -1344,8 +1501,8 @@ export async function buildPassportProjection(
   }
 
   // 6. Trust + credentials.
-  const trust = await buildTrust(sc, userId, context, stats, identity.verified);
-  const credentials = buildCredentials(profile, trust, stats);
+  const trust = await buildTrust(sc, userId, context, stats, identity.verified, buddyRep !== null);
+  const credentials = buildCredentials(profile, trust, stats, reputation, buddyRep);
 
   // 7. Stamps (collection-level visibility + per-item privacy already earned).
   let stamps: StampProjection[] = [];
@@ -1361,6 +1518,8 @@ export async function buildPassportProjection(
     // Per-memory gate for the featured journey's memories (same context the
     // standalone `memories` array uses in step 9).
     callerCtx,
+    // §14/§24 — the Featured Journey's people context is block-filtered vs viewer.
+    viewerId,
   };
   const [featuredJourney, upcomingPlans] = await Promise.all([
     buildFeaturedJourney(sc, userId, journeyPerms).catch(() => null),
