@@ -33,6 +33,14 @@ import { freshToken } from '../services/apiToken.ts';
 type Surface = 'pulse' | 'discovery' | 'events' | 'live_pulse';
 type Outcome = 'tap' | 'save' | 'join' | 'rsvp' | 'attended';
 
+/**
+ * The surface an impression was WRITTEN under — the value a component must be
+ * handed by whoever served the item, never the screen the user is looking at.
+ * Exported so shared components (PlaceCard, PlaceDetailSheet) can take it as a
+ * prop and stay silent when they are rendered somewhere that served nothing.
+ */
+export type RankSurface = Surface;
+
 const API_BASE = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 /**
@@ -71,7 +79,11 @@ export function fireRankOutcome(
  * React hook version.  Provides stable `reportTap`, `reportSave`, `reportJoin`,
  * and `reportRsvp` callbacks that deduplicate within the component lifetime.
  *
- * @param surface  Which feed surface these outcomes belong to.
+ * @param surface  Which feed surface these outcomes belong to.  `null` /
+ *   `undefined` means "this instance was not reached from a served impression"
+ *   (e.g. PlaceDetailSheet on the Layover card) — every report is then a no-op,
+ *   so a shared component can call the hook unconditionally and let its owner
+ *   decide whether there is anything to attribute.
  * @param sessionId  Optional session UUID returned by the feed endpoint (from
  *   the `session_id` field added in spec §7).  Narrows outcome matching when the
  *   same item appeared in multiple feed loads.
@@ -80,7 +92,7 @@ export function useRankOutcome({
   surface,
   sessionId,
 }: {
-  surface: Surface;
+  surface: Surface | null | undefined;
   sessionId?: string | null;
 }) {
   // Per-mount dedup set: once an outcome fires for (itemId, outcome) we skip retries.
@@ -88,6 +100,7 @@ export function useRankOutcome({
 
   const report = useCallback(
     (itemId: string, outcome: Outcome) => {
+      if (!surface) return; // no served context → nothing to attribute the outcome to
       const key = `${itemId}:${outcome}`;
       if (sent.current.has(key)) return;
       sent.current.add(key);
