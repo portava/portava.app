@@ -22,6 +22,7 @@ import { color, space, radius, type as t, shadow, avatar, dot } from '../../them
 import { categoryColor } from './PlaceCard.tsx';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 import { usePlainBottomInset } from '../../hooks/useBottomInset.ts';
+import { useRankOutcome, type RankSurface } from '../../hooks/useRankOutcome.ts';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { useLocationContext } from '../../context/LocationContext.tsx';
@@ -32,6 +33,12 @@ const SHEET_IMAGE_HEIGHT = 180;
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface PlaceDetailSheetProps {
+  /**
+   * The rank_events surface the shown place's impression was written under,
+   * supplied by the surface that served it ('discovery' on the Discover
+   * screen). Absent — e.g. the Layover map card — the sheet reports nothing.
+   */
+  rankSurface?: RankSurface | null;
   place: DiscoveryPlace | null;
   visible: boolean;
   onClose: () => void;
@@ -40,8 +47,12 @@ interface PlaceDetailSheetProps {
   city?: string | null;
 }
 
-export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }: PlaceDetailSheetProps) {
+export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, rankSurface }: PlaceDetailSheetProps) {
   const plainInset = usePlainBottomInset();
+  // Outcome reporting for the ranking loop — same rules as PlaceCard: tap for
+  // Directions / opening the full place page, save for a confirmed bookmark or
+  // a trip-wishlist add; Plan is intent (opens a picker) and is not emitted.
+  const { reportTap, reportSave } = useRankOutcome({ surface: rankSurface ?? null });
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [liveStatus, setLiveStatus]     = useState<PlaceLiveStatus | null>(null);
@@ -198,6 +209,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
 
   const openDirections = () => {
     if (!hasRealCoords) return;
+    reportTap(place.id);
     if (Platform.OS === 'web') {
       // Open in a new tab on web — navigating the current tab to
       // maps.google.com blanks the PWA instead of just launching directions.
@@ -309,10 +321,15 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
               const next = !saved;
               setSaved(next);
               toggleSave('place', place.id, !next)
-                .then(setSaved)
+                .then((nowSaved) => {
+                  setSaved(nowSaved);
+                  // Outcomes follow the API, not the tap: only a CONFIRMED save.
+                  if (next && nowSaved) reportSave(place.id);
+                })
                 .catch(() => setSaved((s) => !s));
             }}
             hitSlop={8}
+            testID="place-sheet-save"
           >
             <Bookmark size={18} color={saved ? color.signal : color.mute} fill={saved ? color.signal : 'none'} />
           </Pressable>
@@ -486,7 +503,10 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             accessibilityRole="button"
             accessibilityLabel="Open the full place page with live signals"
             style={styles.openPlaceBtn}
-            onPress={() => closeThenNavigate(onClose, `/place/${place.canonicalPlaceId}`)}
+            onPress={() => {
+              reportTap(place.id);
+              closeThenNavigate(onClose, `/place/${place.canonicalPlaceId}`);
+            }}
           >
             <Radio size={18} color={color.onInk} />
             <Text style={styles.openPlaceText}>Open place page · live signals</Text>
@@ -496,7 +516,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
         {/* Footer actions */}
         <View style={styles.footer}>
           {hasRealCoords ? (
-            <Pressable style={styles.dirBtn} onPress={openDirections}>
+            <Pressable style={styles.dirBtn} onPress={openDirections} testID="place-sheet-directions">
               <Navigation size={18} color={color.deep} />
               <Text style={styles.dirText}>Directions</Text>
             </Pressable>
@@ -519,7 +539,11 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
         place={place}
         visible={pickerVisible}
         onClose={() => setPickerVisible(false)}
-        onSaved={() => setPickerVisible(false)}
+        onSaved={() => {
+          setPickerVisible(false);
+          // The picker only calls onSaved after the API accepted the add.
+          reportSave(place.id);
+        }}
       />
 
       {canGenerateHeader && (
