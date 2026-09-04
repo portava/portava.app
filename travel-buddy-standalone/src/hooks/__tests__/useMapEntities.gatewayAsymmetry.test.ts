@@ -225,11 +225,15 @@ describe('the §16 trigger that can request crowd_flow', () => {
     return { ...DEFAULT_LAYER_CONTEXT, mode, zoomBand: 'city', tripActive: false };
   }
 
-  test('the §16 layer already carries the kind — it is not the saved/transport trap', () => {
-    // `saved` and `transport` are toggleable layers that can carry nothing, so
-    // "it is already a layer" would be worthless if crowd_flow were one too.
+  test('the §16 layer already carries the kind — it is not the transport trap', () => {
+    // "it is already a layer" would be worthless as a trigger if EVERY layer
+    // carried a kind — so this pins that some do not. `transport` is the
+    // contrast: a toggleable layer that carries nothing. M5 gave the Saved layer
+    // the `saved_place` kind (§16 Saved), so `saved` now carries its own kind
+    // just as crowd_flow does — it is no longer an empty layer; transport still
+    // is. crowd_flow carrying `['crowd_flow']` is the fact this describe relies on.
     assert.deepEqual(kindsForLayer('crowd_flow'), ['crowd_flow']);
-    assert.deepEqual(kindsForLayer('saved'), [], 'guard assumption changed');
+    assert.deepEqual(kindsForLayer('saved'), ['saved_place'], 'M5 §16 Saved carries saved_place');
     assert.deepEqual(kindsForLayer('transport'), [], 'guard assumption changed');
   });
 

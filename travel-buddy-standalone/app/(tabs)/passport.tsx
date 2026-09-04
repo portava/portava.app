@@ -62,7 +62,9 @@ import { MapTab } from '../../src/components/MapTab';
 import { DestinationsTab } from '../../src/components/passport/DestinationsTab';
 import { groupByDestination } from '../../src/utils/destinationGrouping';
 import { useAvailabilityStore } from '../../src/context/AvailabilityStore';
-import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
+import { usePassportProjection } from '../../src/hooks/usePassportProjection.ts';
+import { openAvailabilityEditor } from '../../src/features/passport/passportNav.ts';
+import { usePassportViewedTelemetry } from '../../src/features/passport/usePassportViewedTelemetry.ts';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 export default function PassportScreen() {
@@ -447,17 +449,20 @@ function PassportContent({
   const [passportStats, setPassportStats] = useState<PassportStats | null>(null);
   const [createHubOpen, setCreateHubOpen] = useState(false);
 
-  // Availability chip — read from the store; refresh on focus so it stays in sync
-  // with the backend after the user saves changes on the availability screen.
-  const { availability, quickStatus, refresh: refreshAvailability } = useAvailabilityStore();
-  const ownerChipState = resolveAvailabilityChip({
-    openToMeet: availability.openToMeet,
-    quickStatus: quickStatus ?? null,
-    trips: availability.trips,
-    homeCity: profile.homeCity ?? null,
-    // Show homeCity context if the profile has one (owner always sees their own city).
-    showHomeCity: !!(profile.homeCity),
-  });
+  // The availability store still backs the editor; keep it fresh on focus so
+  // the editor opens on the latest saved state. The header CHIP no longer reads
+  // it — it renders the SERVER-projected §5 traveler state below.
+  const { refresh: refreshAvailability } = useAvailabilityStore();
+
+  // §29 aggregate for the owner's own Passport Home — ONE fetch shared by the
+  // §5 traveler-state chip and the §3 previews band (hookOverride below). The
+  // chip used to be re-derived on the client from the AvailabilityStore, which
+  // duplicated policy the server owns (§4/§30); it now renders
+  // `projection.travelerState` verbatim, with §31 expiry enforced in the chip.
+  const projection = usePassportProjection(profile.id);
+
+  // §32 passport_viewed — the owner opening their own Passport ('self').
+  usePassportViewedTelemetry(profile.id, projection.data?.viewerContext ?? 'self', true);
 
   const handleChangeCover = useCallback(async () => {
     const assets = await pickMedia({
@@ -494,16 +499,19 @@ function PassportContent({
     }
     // These three fetches are lightweight and don't affect scroll position, so
     // they stay unconditional.
-    // Refresh availability so the chip always reflects the latest saved state
-    // (e.g. the user toggled "Open to meet" on the availability screen and saved).
+    // Refresh availability (editor state) and the projection (the §5 chip +
+    // §3 previews) so the header reflects what the user just saved on the
+    // availability screen. The projection hook serves its cache first (§31)
+    // and revalidates, so this never blanks the chip.
     refreshAvailability().catch(() => {});
+    projection.reload();
     getPendingPosts().then((r) => {
       if (r.ok && r.data) setPendingCount(r.data.length);
     }).catch(() => {});
     getMyBuddyProfile().then(res => {
       setBuddyProfile(res.ok ? (res.data.profile ?? null) : null);
     }).catch(() => setBuddyProfile(null));
-  }, [reload, refreshAvailability]));
+  }, [reload, refreshAvailability, projection.reload]));
 
   const navScrollHandler = useNavBarScrollHandler();
   const bottomInset = useLayoverAwareBottomInset();
@@ -517,7 +525,8 @@ function PassportContent({
     setRefreshing(true);
     reload();
     refreshAvailability().catch(() => {});
-  }, [reload, refreshAvailability]);
+    projection.reload();
+  }, [reload, refreshAvailability, projection.reload]);
   // usePassport's `loading` isn't exposed here, so clear the spinner once the
   // shared pipeline stamps a fresh lastLoadedAt (successful reload landed).
   const refreshStartedAt = React.useRef(0);
@@ -725,8 +734,10 @@ function PassportContent({
           onEditProfile={handleEditProfile}
           onSavedPress={() => router.push('/saved' as any)}
           countriesVisited={passportStats?.countries ?? null}
-          availabilityChip={ownerChipState}
-          onAvailabilityChipPress={() => router.push('/availability' as any)}
+          // §5: the server-projected current state (never the AvailabilityStore).
+          travelerState={projection.data?.travelerState ?? null}
+          // F6: the chip and the Quick Links row open the SAME editor.
+          onTravelerStatePress={openAvailabilityEditor}
         />
         <PassportStatsRow
           profile={profile}
@@ -747,7 +758,7 @@ function PassportContent({
              aggregate. Additive + fail-soft: renders nothing until the
              aggregate loads, so the existing owner sections below are
              unaffected. Owner context → no viewer Make-a-Plan / Shared Context. */}
-        <PassportHomePreviews userId={profile.id} isOwner />
+        <PassportHomePreviews userId={profile.id} isOwner hookOverride={projection} />
 
         {/* ── Pending posts ── */}
         {pendingCount > 0 && (

@@ -27,6 +27,7 @@ import { makePassportDb } from "./helpers/fakePassportDb.js";
 const OWNER = "owner-1";
 const VIEWER = "viewer-1";
 const FUTURE = new Date(Date.now() + 6 * 3_600_000).toISOString();
+const PAST = new Date(Date.now() - 2 * 3_600_000).toISOString();
 
 function permsFull(): ViewerPermissions {
   return {
@@ -299,5 +300,221 @@ describe("buildPassportProjection — TABLE 12 domain trust + §20 reputation cr
     const overall = (p.trust?.domains ?? []).find((d) => d.key === "overall")!;
     assert.equal(overall.presentation, "Established");
     assert.equal(p.credentials.find((c) => c.key === "host_reputation"), undefined);
+  });
+});
+
+// ── §5 real-time traveler states: exploring / at_event / with_crew ─────────────
+describe("buildTravelerState — derived §5 activity states with validFrom/validUntil", () => {
+  const baseProfile = {
+    id: OWNER, handle: "wanderer", display_name: "W", name: "W",
+    home_city: "Hanoi", home_country: "Vietnam", current_city: "Hanoi",
+    is_official: false, is_private: false, passport_visibility: "public",
+    show_profile_picture_publicly: true, created_at: "2023-01-01",
+  };
+  const selfRes: ViewerResolution = { context: "self", permissions: permsFull(), sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+
+  it("at_event: an RSVP'd event happening now, bounded by starts_at/ends_at, broad city as context", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      event_rsvps: [{ event_id: "e1", user_id: OWNER, status: "going" }],
+      events: [{ id: "e1", city: "Da Nang", starts_at: PAST, ends_at: FUTURE, state: "started" }],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.travelerState?.state, "at_event");
+    assert.equal(p.travelerState?.validFrom, PAST, "validFrom = event start");
+    assert.equal(p.travelerState?.expiresAt, FUTURE, "expiresAt = event end");
+    assert.equal(p.travelerState?.city, "Da Nang");
+    assert.equal(p.travelerState?.label, "At Event · Da Nang");
+  });
+
+  it("at_event: a public viewer with no location context sees the state but not the event city", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      event_rsvps: [{ event_id: "e1", user_id: OWNER, status: "going" }],
+      events: [{ id: "e1", city: "Da Nang", starts_at: PAST, ends_at: FUTURE, state: "started" }],
+    });
+    const res: ViewerResolution = { context: "public", permissions: permsPublic(), sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+    const p = (await buildPassportProjection(db, OWNER, null, { resolveViewerContext: resolver(res) }))!;
+    assert.equal(p.travelerState?.state, "at_event");
+    assert.equal(p.travelerState?.city, null, "event city gated by location context");
+    assert.equal(p.travelerState?.label, "At Event");
+  });
+
+  it("at_event: a past-ended event is stale and never reads as current (§31)", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      event_rsvps: [{ event_id: "e1", user_id: OWNER, status: "going" }],
+      events: [{ id: "e1", city: "Da Nang", starts_at: PAST, ends_at: PAST, state: "started" }],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.notEqual(p.travelerState?.state, "at_event");
+    assert.equal(p.travelerState?.state, "home");
+  });
+
+  it("with_crew: an active un-expired locate session; never exposes a city", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: null }],
+      locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.travelerState?.state, "with_crew");
+    assert.equal(p.travelerState?.validFrom, PAST);
+    assert.equal(p.travelerState?.expiresAt, FUTURE);
+    assert.equal(p.travelerState?.city, null, "crew presence is purpose-bound — no Passport city");
+    assert.equal(p.travelerState?.label, "With Crew");
+  });
+
+  it("with_crew: a member who has left is not with a crew", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: PAST }],
+      locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.travelerState?.state, "home");
+  });
+
+  it("exploring: arrived at a trip stop within its planned window; validFrom = arrival", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      route_plans: [{ id: "rp1", owner_user_id: OWNER, status: "active" }],
+      route_stops: [{ route_plan_id: "rp1", checkpoint_status: "arrived", arrived_at: PAST, planned_arrival_time: PAST, planned_departure_time: FUTURE }],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.travelerState?.state, "exploring");
+    assert.equal(p.travelerState?.validFrom, PAST, "validFrom = arrived_at");
+    assert.equal(p.travelerState?.expiresAt, FUTURE, "expiresAt = planned departure");
+    assert.equal(p.travelerState?.city, null, "trip-stop location is purpose-bound — no Passport city");
+  });
+
+  it("exploring: a stop whose planned departure has passed is not in progress (§31)", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      route_plans: [{ id: "rp1", owner_user_id: OWNER, status: "active" }],
+      route_stops: [{ route_plan_id: "rp1", checkpoint_status: "arrived", arrived_at: PAST, planned_arrival_time: PAST, planned_departure_time: PAST }],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.travelerState?.state, "home");
+  });
+
+  it("precedence: at_event outranks with_crew outranks exploring", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      event_rsvps: [{ event_id: "e1", user_id: OWNER, status: "going" }],
+      events: [{ id: "e1", city: "Da Nang", starts_at: PAST, ends_at: FUTURE, state: "started" }],
+      locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: null }],
+      locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
+      route_plans: [{ id: "rp1", owner_user_id: OWNER, status: "active" }],
+      route_stops: [{ route_plan_id: "rp1", checkpoint_status: "arrived", arrived_at: PAST, planned_arrival_time: PAST, planned_departure_time: FUTURE }],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.travelerState?.state, "at_event");
+  });
+
+  it("an explicit 'busy' quick-status outranks every derived activity", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      quick_availability_status: [{ user_id: OWNER, status: "busy", expires_at: FUTURE }],
+      locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: null }],
+      locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.travelerState?.state, "unavailable");
+  });
+});
+
+// ── §8 explicit availability windows projected into the aggregate ──────────────
+describe("buildAvailability/buildIntent — §8 explicit windows in the aggregate", () => {
+  const WINDOWS_FLAG = "open_to_plans_windows_enabled";
+  const baseProfile = {
+    id: OWNER, handle: "w", display_name: "W", name: "W",
+    home_city: "Hanoi", home_country: "Vietnam", current_city: "Hanoi",
+    is_official: false, is_private: false, passport_visibility: "public",
+    show_profile_picture_publicly: true, created_at: "2023-01-01",
+    availability_tags: ["Explore"],
+  };
+  function window(over: Record<string, any> = {}) {
+    return {
+      id: "w1", user_id: OWNER, type: "one_time", start_at: PAST, end_at: FUTURE,
+      trip_id: null, open_to_plans: true, intents: ["Nightlife", "Food"],
+      group_preference: "small_group", max_travel_minutes: 20, visibility: "public",
+      source: "explicit", social_availability: "open", expires_at: null,
+      created_at: PAST, updated_at: PAST, ...over,
+    };
+  }
+  const selfRes: ViewerResolution = { context: "self", permissions: permsFull(), sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+
+  it("projects the active explicit window's intents/group/radius when the flag is on (self)", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window()],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.ok(p.availability?.explicitWindow, "explicit window present in aggregate");
+    assert.equal(p.availability?.explicitWindow?.type, "one_time");
+    assert.deepEqual(p.availability?.explicitWindow?.intents, ["Nightlife", "Food"]);
+    assert.equal(p.availability?.explicitWindow?.groupPreference, "small_group");
+    assert.equal(p.availability?.explicitWindow?.maxTravelMinutes, 20);
+    assert.equal(p.availability?.explicitWindow?.expiresAt, FUTURE, "expiry = COALESCE(expiresAt,endAt)");
+    assert.equal(p.availability?.openToPlans, true);
+    assert.equal(p.availability?.socialAvailability, "open");
+    // Intent prefers the window's intents (with its TTL) over profile tags.
+    assert.deepEqual(p.intent?.current, ["Nightlife", "Food"]);
+    assert.equal(p.intent?.ttlExpiresAt, FUTURE);
+    assert.equal(p.intent?.source, "explicit");
+  });
+
+  it("with the windows flag OFF (default), no window is projected; legacy intent tags stand", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      availability_windows: [window()],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.availability?.explicitWindow, null, "flag off ⇒ no window");
+    assert.deepEqual(p.intent?.current, ["Explore"], "falls back to profile availability_tags");
+  });
+
+  it("§7: an inferred (plan_derived) window never enters the aggregate, even for the owner", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window({ source: "plan_derived", visibility: "private" })],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.availability?.explicitWindow, null, "inferred window is not shared availability");
+    assert.deepEqual(p.intent?.current, ["Explore"]);
+  });
+
+  it("§7: a followers-only explicit window shows to a follower but not to the public", async () => {
+    const followerPerms = permsPublic();
+    followerPerms.canSeeAvailability = true;
+    const followerRes: ViewerResolution = { context: "follower", permissions: followerPerms, sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+    const publicPerms = permsPublic();
+    publicPerms.canSeeAvailability = true; // isolate the WINDOW visibility rule, not the availability gate
+    const publicRes: ViewerResolution = { context: "public", permissions: publicPerms, sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+
+    const mkDb = () => makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window({ visibility: "followers" })],
+    });
+
+    const asFollower = (await buildPassportProjection(mkDb(), OWNER, "f1", { resolveViewerContext: resolver(followerRes) }))!;
+    assert.ok(asFollower.availability?.explicitWindow, "follower sees a followers-only window");
+
+    const asPublic = (await buildPassportProjection(mkDb(), OWNER, "p1", { resolveViewerContext: resolver(publicRes) }))!;
+    assert.equal(asPublic.availability?.explicitWindow, null, "public does not see a followers-only window");
+  });
+
+  it("§31: an expired explicit window is never projected as current", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window({ end_at: PAST })],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.availability?.explicitWindow, null, "stale window not rendered as current");
   });
 });

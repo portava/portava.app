@@ -11,6 +11,7 @@ import { render, screen, waitFor } from '@testing-library/react-native';
 jest.mock('../../services/wallApi.ts', () => ({
   fetchWall: jest.fn(),
   fetchLiveForYou: jest.fn(),
+  fetchQuickMedia: jest.fn(),
   setSessionIntent: jest.fn(),
   clearSessionIntent: jest.fn(),
   sendImpression: jest.fn(),
