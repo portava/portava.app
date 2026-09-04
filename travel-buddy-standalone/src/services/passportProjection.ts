@@ -450,7 +450,13 @@ export interface PassportProjectionView {
   restricted: boolean;
 }
 
-const DEFAULT_ACTIONS: PassportViewerActions = {
+/**
+ * The fail-closed viewer-action set: every capability denied. Used as the
+ * projection default AND by the §31 cache to blank capabilities once the cached
+ * projection is past its short (volatile) TTL — a stale "you may follow" must
+ * never survive as current.
+ */
+export const DENIED_VIEWER_ACTIONS: PassportViewerActions = {
   can_follow: false,
   can_message: false,
   can_make_plan: false,
@@ -458,6 +464,7 @@ const DEFAULT_ACTIONS: PassportViewerActions = {
   can_view_availability: false,
   can_view_trust: false,
 };
+const DEFAULT_ACTIONS = DENIED_VIEWER_ACTIONS;
 
 function asString(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
