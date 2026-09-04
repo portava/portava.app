@@ -18,9 +18,11 @@ import { fileURLToPath } from "node:url";
 import {
   applyLiveClaims,
   bboxToCenterRadius,
+  countAdjacentActiveEvents,
   crowdValueToActivity,
   decodeCursor,
   enrichWithLiveClaims,
+  eventAdjacencyLine,
   filterKinds,
   gemPrivacyClass,
   liveSubjectIdFor,
@@ -30,6 +32,7 @@ import {
   projectEvent,
   projectGem,
   projectTraveler,
+  qualifiedMediaLine,
   rankObjects,
   servableOnly,
   travelerPrivacyClass,
@@ -414,6 +417,148 @@ describe("enrichWithLiveClaims", () => {
     const res = await enrichWithLiveClaims(gems(4), async () => [claim()], { max: 0, now: NOW });
     assert.equal(res.enriched, 0);
     assert.equal(res.skipped, 4);
+  });
+});
+
+// ── §9 / Table 7: the contextual evidence lines ───────────────────────────────
+
+describe("§9 provenance — event-adjacency and qualified-media evidence", () => {
+  // Both formatters use Table 7's copy verbatim and emit null (not "") when
+  // their input is absent, so an absent input is indistinguishable from "no
+  // such evidence" at the panel level.
+  describe("the pure line formatters", () => {
+    test("event-adjacency emits Table 7's line only when an active event exists", () => {
+      assert.deepEqual(eventAdjacencyLine({ count: 1 }), { text: "Active event nearby" });
+      assert.deepEqual(eventAdjacencyLine({ count: 4 }), { text: "Active event nearby" });
+      assert.equal(eventAdjacencyLine({ count: 0 }), null);
+      assert.equal(eventAdjacencyLine(null), null);
+      assert.equal(eventAdjacencyLine(undefined), null);
+      assert.equal(eventAdjacencyLine({ count: Number.NaN }), null);
+    });
+
+    test("qualified-media emits Table 7's line only when qualified media exists", () => {
+      assert.deepEqual(qualifiedMediaLine({ count: 2 }), { text: "Recent qualified media" });
+      assert.equal(qualifiedMediaLine({ count: 0 }), null);
+      assert.equal(qualifiedMediaLine(null), null);
+      assert.equal(qualifiedMediaLine(undefined), null);
+    });
+
+    test("neither line ever carries a claim ref — they are not claims", () => {
+      assert.equal("ref" in eventAdjacencyLine({ count: 1 })!, false);
+      assert.equal("ref" in qualifiedMediaLine({ count: 1 })!, false);
+    });
+  });
+
+  describe("countAdjacentActiveEvents", () => {
+    // The gem sits at (16.06, 108.21). Events are placed relative to it.
+    const subject = projectGem(GEM)!;
+    const near = (over: Record<string, unknown>) =>
+      projectEvent({ ...EVENT, ...over }, NOW)!;
+
+    test("counts an active event within the adjacency radius", () => {
+      const events = [near({ id: "a", location_lat: 16.061, location_lng: 108.211 })]; // ~150 m
+      assert.equal(countAdjacentActiveEvents(subject, events, NOW), 1);
+    });
+
+    test("does not count an event outside the radius", () => {
+      const events = [near({ id: "far", location_lat: 16.07, location_lng: 108.22 })]; // ~1.5 km
+      assert.equal(countAdjacentActiveEvents(subject, events, NOW), 0);
+    });
+
+    test("does not count an event that has not started", () => {
+      const events = [near({ id: "later", location_lat: 16.061, location_lng: 108.211, starts_at: "2026-08-31T20:00:00.000Z" })];
+      assert.equal(countAdjacentActiveEvents(subject, events, NOW), 0);
+    });
+
+    test("does not count an event that has already ended", () => {
+      const events = [near({
+        id: "over", location_lat: 16.061, location_lng: 108.211,
+        starts_at: "2026-08-31T10:00:00.000Z", ends_at: "2026-08-31T11:00:00.000Z",
+      })];
+      assert.equal(countAdjacentActiveEvents(subject, events, NOW), 0);
+    });
+
+    test("counts several adjacent active events", () => {
+      const events = [
+        near({ id: "a", location_lat: 16.0605, location_lng: 108.2105 }),
+        near({ id: "b", location_lat: 16.0608, location_lng: 108.2108 }),
+        near({ id: "far", location_lat: 16.07, location_lng: 108.22 }),
+      ];
+      assert.equal(countAdjacentActiveEvents(subject, events, NOW), 2);
+    });
+  });
+
+  describe("applyLiveClaims appends the evidence lines — but only to a real panel", () => {
+    test("event-adjacency and qualified-media lines follow the per-claim lines", () => {
+      const merged = applyLiveClaims(projectGem(GEM)!, [claim()], NOW, {
+        eventNearby: { count: 2 },
+        qualifiedMedia: { count: 1 },
+      });
+      const texts = merged.provenance!.lines.map((l) => l.text);
+      assert.equal(texts[0], merged.provenance!.lines[0].text); // claim line first
+      assert.ok(texts.includes("Active event nearby"));
+      assert.ok(texts.includes("Recent qualified media"));
+      // The claim line still carries its ref; the evidence lines do not.
+      assert.equal(merged.provenance!.lines[0].ref, "snap-1");
+    });
+
+    test("absent evidence adds nothing (the common path is a no-op)", () => {
+      const withEvidence = applyLiveClaims(projectGem(GEM)!, [claim()], NOW, {});
+      const without = applyLiveClaims(projectGem(GEM)!, [claim()], NOW);
+      assert.deepEqual(withEvidence.provenance!.lines, without.provenance!.lines);
+    });
+
+    test("evidence NEVER manufactures a panel when there are no claims (§37)", () => {
+      const obj = projectGem(GEM)!;
+      const merged = applyLiveClaims(obj, [], NOW, { eventNearby: { count: 9 }, qualifiedMedia: { count: 9 } });
+      assert.deepEqual(merged, obj, "no claims ⇒ object untouched, no contextual line invents a claim");
+    });
+
+    test("evidence moves no band, freshness, activity or trend", () => {
+      const bare = applyLiveClaims(projectGem(GEM)!, [claim()], NOW);
+      const withEv = applyLiveClaims(projectGem(GEM)!, [claim()], NOW, { eventNearby: { count: 3 } });
+      assert.equal(withEv.confidence, bare.confidence);
+      assert.equal(withEv.freshness, bare.freshness);
+      assert.equal(withEv.activity, bare.activity);
+      assert.equal(withEv.renderingPriority, bare.renderingPriority);
+    });
+  });
+
+  describe("enrichWithLiveClaims threads the evidence resolver", () => {
+    const events = [projectEvent({ ...EVENT, id: "near", location_lat: 16.061, location_lng: 108.211 }, NOW)!];
+
+    test("an enriched subject with an adjacent active event gets the line", async () => {
+      const res = await enrichWithLiveClaims([projectGem(GEM)!], async () => [claim()], {
+        now: NOW,
+        evidence: (obj) => {
+          const count = countAdjacentActiveEvents(obj, events, NOW);
+          return count > 0 ? { eventNearby: { count } } : null;
+        },
+      });
+      const texts = res.objects[0].provenance!.lines.map((l) => l.text);
+      assert.ok(texts.includes("Active event nearby"));
+    });
+
+    test("the resolver is not consulted for a subject with no claims", async () => {
+      let consulted = 0;
+      const res = await enrichWithLiveClaims([projectGem(GEM)!], async () => [], {
+        now: NOW,
+        evidence: () => { consulted += 1; return { eventNearby: { count: 1 } }; },
+      });
+      assert.equal(consulted, 0, "no claims ⇒ no panel ⇒ the evidence resolver never runs");
+      assert.equal(res.objects[0].provenance, undefined);
+    });
+
+    test("a throwing evidence resolver fails soft — the claim survives, the line does not", async () => {
+      const res = await enrichWithLiveClaims([projectGem(GEM)!], async () => [claim()], {
+        now: NOW,
+        evidence: () => { throw new Error("event read blew up"); },
+      });
+      assert.equal(res.enriched, 1);
+      const texts = res.objects[0].provenance!.lines.map((l) => l.text);
+      assert.equal(texts.includes("Active event nearby"), false);
+      assert.equal(res.objects[0].confidence, "live", "the live claim is untouched by an evidence failure");
+    });
   });
 });
 
