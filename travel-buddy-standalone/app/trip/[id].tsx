@@ -4,7 +4,7 @@ import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet, Alert
 import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronLeft, Pencil, Map as MapIcon, Lock, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2, Bell } from 'lucide-react-native';
+import { ChevronLeft, Pencil, MessageCircle, Calendar, Plane, Users, BookImage, CalendarClock, MapPin, ShieldCheck, Radio, Link2, Bell } from 'lucide-react-native';
 import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
@@ -14,7 +14,7 @@ import type { ReadinessSummary } from '../../src/services/tripIntel';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
   CompassTripBrief, CompassBriefErrorBoundary, TripStamps, TripPostsSection,
-  TripCrewSection, TripCircle,
+  TripCrewSection, TripCircle, TripMapPreview,
 } from '../../src/components/TripPage';
 import { ActiveSafeReturnCard } from '../../src/components/safeReturn/ActiveSafeReturnCard';
 import { TripHeartbeatCard } from '../../src/components/compass/TripHeartbeatCard';
@@ -676,7 +676,7 @@ function TripDetailScreen() {
           <TripHeartbeatCard tripId={id} />
         </CompassBriefErrorBoundary>
         <TripStamps stamps={[]} />
-        <TripMapPlaceholder />
+        <TripMapPreview tripId={trip.id} />
         {live && trip.id ? (
           <TripCrewSection tripId={trip.id} refreshKey={crewRefreshKey} />
         ) : null}
@@ -1094,23 +1094,6 @@ const tm = StyleSheet.create({
   emptyText: { ...t.small, color: color.faint },
 });
 
-function TripMapPlaceholder() {
-  return (
-    <View style={mp.wrap}>
-      <Text style={mp.h}>Trip Map</Text>
-      <View style={mp.card}>
-        <View style={mp.iconWrap}><MapIcon size={26} color={color.deep} /></View>
-        <Text style={mp.title}>Map coming soon</Text>
-        <Text style={mp.sub}>Saved places and trip pins will appear here.</Text>
-        <View style={mp.privacy}>
-          <Lock size={12} color={color.mute} />
-          <Text style={mp.privacyText}>Location sharing is private by default.</Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
 // ── EventsNearTripSection ─────────────────────────────────────────────────────
 
 function formatEventDate(iso: string): string {
@@ -1204,17 +1187,6 @@ const ev = StyleSheet.create({
   cardTitle:   { ...t.small, fontWeight: '700', color: color.ink, fontSize: 12, lineHeight: 16 },
   cardMeta:    { ...t.small, color: color.mute, fontSize: 10, flex: 1 },
   cardLocRow:  { flexDirection: 'row', alignItems: 'center', gap: 3 },
-});
-
-const mp = StyleSheet.create({
-  wrap: { paddingHorizontal: space.lg, marginTop: space.xl, gap: space.md },
-  h: { ...t.title, color: color.ink, fontSize: 18 },
-  card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, borderStyle: 'dashed', padding: space.xl, alignItems: 'center', gap: 6 },
-  iconWrap: { width: avatar.s52, height: avatar.s52, borderRadius: avatar.s52 / 2, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  title: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
-  sub: { ...t.small, color: color.mute, textAlign: 'center' },
-  privacy: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: space.sm, backgroundColor: color.paper, paddingHorizontal: space.md, paddingVertical: 5, borderRadius: radius.pill },
-  privacyText: { ...t.small, color: color.mute, fontSize: 11 },
 });
 
 export default function TripDetail() {

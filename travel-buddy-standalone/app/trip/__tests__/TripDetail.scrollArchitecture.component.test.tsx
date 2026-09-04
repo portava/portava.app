@@ -143,6 +143,7 @@ jest.mock('../../../src/components/TripPage', () => ({
   TripPostsSection:           () => null,
   TripCrewSection:            () => null,
   TripCircle:                 () => null,
+  TripMapPreview:             () => null,
 }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/safeReturn/ActiveSafeReturnCard',  () => ({ ActiveSafeReturnCard:   () => null }));

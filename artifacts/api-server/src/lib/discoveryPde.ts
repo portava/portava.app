@@ -542,13 +542,19 @@ export async function rankForViewer<T extends PdePlace>(
       //
       // A discovery candidate is a PLACE, not authored content. The six
       // author-side checks (blocks, mute, hidden-creator, reported) have no
-      // subject: `creatorId` is null above because the ranked projection does
-      // not select `discovery_places.submitted_by`, and OSM rows have no author
-      // at all. The four content-state checks and `isPrivate` are already
-      // enforced upstream — both candidate queries filter `.eq("status",
-      // "active")` (routes/discovery.ts:840 and :994) — so deriving them from
-      // `status` here would re-encode a filter that already ran. Age and geo
-      // restriction have no columns on either place table.
+      // subject HERE. A community row DOES have a `submitted_by`, and blocking
+      // that person does hide their submission — but that is enforced upstream
+      // as a candidate pre-filter: routes/discovery.ts drops the row inside
+      // queryDbPlaces, so it never becomes a candidate and never reaches this
+      // ranker. That is the shape mapSearch, mediaFeed and the Compass fallback
+      // feed all use, and it is what keeps these inputs constant. `creatorId`
+      // is null above because the author never travels past that query, and OSM
+      // rows have no author at all. The four content-state checks and
+      // `isPrivate` are already enforced upstream — both candidate queries
+      // filter `.eq("status", "active")` (routes/discovery.ts:893 and :1052) —
+      // so deriving them from `status` here would re-encode a filter that
+      // already ran. Age and geo restriction have no columns on either place
+      // table.
       //
       // So the gate cannot return ineligible on this surface. #202 already
       // dropped ITEM_ELIGIBLE everywhere on that reasoning; what remains is
