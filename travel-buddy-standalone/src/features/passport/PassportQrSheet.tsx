@@ -43,6 +43,7 @@ import {
   buildShareUrls,
   type MinimalQrProjection,
 } from './passportQrProjection.ts';
+import { trackPassportShared } from './passportTelemetry.ts';
 
 type Panel = 'qr' | 'bump';
 type BumpState = 'idle' | 'awaiting' | 'confirmed';
@@ -85,11 +86,18 @@ export function PassportQrSheet({
   const payload = username ? buildQrPayload(username) : '';
   const urls = username ? buildShareUrls(username) : null;
 
+  // §32 passport_shared — the native share sheet was opened for this passport.
+  const handleShare = useCallback(() => {
+    trackPassportShared('share_sheet');
+    share();
+  }, [share]);
+
   const handleCopy = useCallback(async () => {
     if (!urls) return;
     try {
       await Clipboard.setStringAsync(urls.webFallback);
       setCopied(true);
+      trackPassportShared('copy');
       setTimeout(() => setCopied(false), 2000);
     } catch {
       /* clipboard unavailable — no-op */
@@ -103,6 +111,8 @@ export function PassportQrSheet({
 
   const confirmBump = useCallback(() => {
     setBump('confirmed');
+    // §32 passport_shared — only after the AFFIRMATIVE Bump confirmation (§25).
+    trackPassportShared('bump');
     onBumpConfirmed?.();
   }, [onBumpConfirmed]);
 
@@ -182,7 +192,7 @@ export function PassportQrSheet({
               <OptionButton label="QR" active={panel === 'qr'} onPress={() => setPanel('qr')}>
                 <QrIcon size={icon.s20} color={panel === 'qr' ? color.paper : color.ink} />
               </OptionButton>
-              <OptionButton label="Share Link" onPress={share}>
+              <OptionButton label="Share Link" onPress={handleShare}>
                 <Share2 size={icon.s20} color={color.ink} />
               </OptionButton>
               <OptionButton label={copied ? 'Copied' : 'Copy Link'} onPress={handleCopy}>
