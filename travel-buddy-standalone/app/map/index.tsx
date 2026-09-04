@@ -82,6 +82,11 @@ import {
   publishManualCheckpoint,
   LOCATE_FRIENDS_PUBLISH_INTERVAL_MS,
 } from '../../src/services/locateFriends.ts';
+import {
+  DEFAULT_LOCATE_FRIENDS_TTL_MINUTES,
+  LOCATE_FRIENDS_TTL_OPTIONS,
+  isTtlWithinBound,
+} from '../../src/features/map/presence/locateFriendsTtl.ts';
 import { useSession } from '../../src/context/SessionContext.tsx';
 import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
 import { countBucket, durationBucketMs } from '../../src/features/map/telemetry/mapTelemetry.ts';
@@ -1757,9 +1762,19 @@ function FullScreenMapScreenInner() {
   // stranding bug the un-gated DELETE route was written to prevent.
   const [locateSessionId, setLocateSessionId] = useState<string | null>(null);
   const [locateStarting, setLocateStarting] = useState(false);
+  // §12 "temporary and auto-expiring": the session's lifetime is CHOSEN here,
+  // not baked in. Defaults to two hours (the length the old frozen chip used)
+  // and every offered option is ≤ the server's 12h cap.
+  const [locateTtlMinutes, setLocateTtlMinutes] = useState<number>(
+    DEFAULT_LOCATE_FRIENDS_TTL_MINUTES,
+  );
 
   const startLocateFriends = useCallback(
     async (scope: { kind: 'trip' | 'circle' | 'event' | 'plan'; id: string }, ttlMinutes: number) => {
+      // Last line of defence before a session is started: a TTL outside the
+      // server's [1, 720]-minute window never reaches the API. There is no
+      // default here — an unusable value is refused, not silently corrected.
+      if (!isTtlWithinBound(ttlMinutes)) return;
       setLocateStarting(true);
       const res = await startLocateFriendsSession({
         groupScopeKind: scope.kind,
@@ -2527,17 +2542,45 @@ function FullScreenMapScreenInner() {
           onEndSession={() => setLocateSessionId(null)}
         />
       ) : machine.mode === 'LOCATE_FRIENDS' && tripId ? (
-        <Pressable
-          style={[s2.optimizeChip, { bottom: insets.bottom + 200 }]}
-          disabled={locateStarting}
-          onPress={() => void startLocateFriends({ kind: 'trip', id: tripId }, 120)}
-          accessibilityRole="button"
-          accessibilityLabel="Start locating friends for two hours"
-        >
-          <Text style={s2.optimizeChipText}>
-            {locateStarting ? 'Starting…' : 'Locate my friends · 2h'}
-          </Text>
-        </Pressable>
+        // §12: the session's bounded lifetime is CHOSEN here rather than baked
+        // in. The chips pick a duration (every one ≤ the server's 12h cap); the
+        // Start control opens the session with the chosen TTL — required and
+        // never defaulted on the wire, so the consent stamp on the membership
+        // row is always a stamp on a bounded session.
+        <View style={[s2.ttlChooser, { bottom: insets.bottom + 200 }]}>
+          <Text style={s2.ttlChooserTitle}>Locate my friends · for how long?</Text>
+          <View style={s2.ttlChooserRow}>
+            {LOCATE_FRIENDS_TTL_OPTIONS.map((opt) => {
+              const selected = opt.minutes === locateTtlMinutes;
+              return (
+                <Pressable
+                  key={opt.minutes}
+                  style={[s2.ttlChip, selected && s2.ttlChipSelected]}
+                  disabled={locateStarting}
+                  onPress={() => setLocateTtlMinutes(opt.minutes)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={opt.accessibilityLabel}
+                >
+                  <Text style={[s2.ttlChipText, selected && s2.ttlChipTextSelected]}>
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Pressable
+            style={[s2.optimizeChip, s2.ttlStart]}
+            disabled={locateStarting}
+            onPress={() => void startLocateFriends({ kind: 'trip', id: tripId }, locateTtlMinutes)}
+            accessibilityRole="button"
+            accessibilityLabel="Start locating friends"
+          >
+            <Text style={s2.optimizeChipText}>
+              {locateStarting ? 'Starting…' : 'Start'}
+            </Text>
+          </Pressable>
+        </View>
       ) : null}
 
       {/* ── §25 Meet Here ───────────────────────────────────────────────────
@@ -2732,6 +2775,54 @@ const s2 = StyleSheet.create({
     color: '#FAF9F6',
     fontSize: 13,
     fontWeight: '700',
+  },
+  ttlChooser: {
+    position: 'absolute',
+    alignSelf: 'center',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 18,
+    backgroundColor: 'rgba(11,16,23,0.94)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(250,249,246,0.14)',
+  },
+  ttlChooserTitle: {
+    color: '#FAF9F6',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  ttlChooserRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  ttlChip: {
+    minWidth: 44,
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(19,26,36,0.96)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(250,249,246,0.14)',
+  },
+  ttlChipSelected: {
+    backgroundColor: 'rgba(10,61,74,0.96)',
+    borderColor: 'rgba(84,183,209,0.85)',
+  },
+  ttlChipText: {
+    color: 'rgba(250,249,246,0.72)',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  ttlChipTextSelected: {
+    color: '#FAF9F6',
+  },
+  ttlStart: {
+    position: 'relative',
+    bottom: undefined,
+    marginTop: 2,
   },
   cacheBannerText: {
     color: 'rgba(250,249,246,0.72)',

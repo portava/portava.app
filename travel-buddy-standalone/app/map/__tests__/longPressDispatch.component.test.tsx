@@ -357,7 +357,9 @@ async function startGroupSession() {
   await waitFor(() => expect(screen.getByTestId('live-pulse-card')).toBeTruthy());
   await act(async () => { pulseMock().__holder.onDeepLink!({ mode: 'LOCATE_FRIENDS' }); });
 
-  const chip = await screen.findByLabelText('Start locating friends for two hours');
+  // §12: the duration is CHOSEN, then Start opens the session. The default
+  // selection is two hours, so pressing Start straight away starts a 2h session.
+  const chip = await screen.findByLabelText('Start locating friends');
   await act(async () => { await fireEvent.press(chip); });
   await waitFor(() => expect(locateMock().startLocateFriendsSession).toHaveBeenCalled());
   return menuMock().__holder.onSelect!;
@@ -468,6 +470,37 @@ describe('§25 long-press — share', () => {
     await select('share', OBJECT_TARGET);
     expect(shareSpy).not.toHaveBeenCalled();
     expect(pushMock()).not.toHaveBeenCalled();
+  });
+});
+
+describe('§12 — the session lifetime is chosen, not baked in', () => {
+  it('starts with the default 2h when Start is pressed straight away', async () => {
+    await render(<FullScreenMapScreen />);
+    await waitFor(() => expect(screen.getByTestId('live-pulse-card')).toBeTruthy());
+    await act(async () => { pulseMock().__holder.onDeepLink!({ mode: 'LOCATE_FRIENDS' }); });
+    const start = await screen.findByLabelText('Start locating friends');
+    await act(async () => { await fireEvent.press(start); });
+    await waitFor(() => expect(locateMock().startLocateFriendsSession).toHaveBeenCalled());
+    expect(locateMock().startLocateFriendsSession).toHaveBeenCalledWith(
+      expect.objectContaining({ ttlMinutes: 120 }),
+    );
+  });
+
+  it('carries the CHOSEN duration to the API, not a frozen constant', async () => {
+    await render(<FullScreenMapScreen />);
+    await waitFor(() => expect(screen.getByTestId('live-pulse-card')).toBeTruthy());
+    await act(async () => { pulseMock().__holder.onDeepLink!({ mode: 'LOCATE_FRIENDS' }); });
+    // Pick the 12h ceiling, then Start.
+    const twelve = await screen.findByLabelText(
+      'Locate my friends for twelve hours, the maximum',
+    );
+    await act(async () => { await fireEvent.press(twelve); });
+    const start = await screen.findByLabelText('Start locating friends');
+    await act(async () => { await fireEvent.press(start); });
+    await waitFor(() => expect(locateMock().startLocateFriendsSession).toHaveBeenCalled());
+    expect(locateMock().startLocateFriendsSession).toHaveBeenCalledWith(
+      expect.objectContaining({ ttlMinutes: 720 }),
+    );
   });
 });
 
