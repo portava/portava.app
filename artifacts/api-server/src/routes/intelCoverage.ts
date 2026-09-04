@@ -19,7 +19,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
-import { computeCoverage, generateMissions, commitAndDispatch, acceptMission } from "../services/intel/CoverageService.js";
+import { computeCoverage, generateMissions, commitAndDispatch, acceptMission, completeMission, declineMission, MISSION_RESULTS, type MissionResult } from "../services/intel/CoverageService.js";
 
 const router = Router();
 
@@ -144,6 +144,42 @@ router.post("/v1/internal/intel/missions/:id/accept", asyncHandler(async (req, r
   if (!out.ok) {
     if (out.reason === "not_acceptable") return sendError(res, "invalid_payload", "mission is not a dispatched, acceptable mission");
     return sendError(res, "db_error", out.reason ?? "accept failed");
+  }
+  res.json({ ok: true });
+}));
+
+// POST /v1/internal/intel/missions/:id/complete — complete an accepted mission
+// (§16). A 'negative' result is a VALID completion (AT-13), not a rejection. The
+// evidence_contract required shape is enforced by the DB CHECK.
+router.post("/v1/internal/intel/missions/:id/complete", asyncHandler(async (req, res) => {
+  const ctx = await requireAdmin(req, res);
+  if (!ctx) return;
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) return sendError(res, "invalid_payload", "mission id (uuid) required");
+  const result = z.enum(MISSION_RESULTS as unknown as [string, ...string[]]).safeParse((req.body ?? {}).result);
+  if (!result.success) return sendError(res, "invalid_payload", "result must be positive | negative | inconclusive");
+  const out = await completeMission(ctx.sc, id.data, result.data as MissionResult);
+  if (!out.ok) {
+    if (out.reason === "not_completable") return sendError(res, "invalid_payload", "mission is not an accepted, completable mission");
+    if (out.reason === "invalid_result") return sendError(res, "invalid_payload", "invalid result");
+    return sendError(res, "db_error", out.reason ?? "complete failed");
+  }
+  res.json({ ok: true });
+}));
+
+// POST /v1/internal/intel/missions/:id/decline — decline/abort WITHOUT penalty
+// (§22). No conduct side effect; records the terminal state + optional reason.
+router.post("/v1/internal/intel/missions/:id/decline", asyncHandler(async (req, res) => {
+  const ctx = await requireAdmin(req, res);
+  if (!ctx) return;
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) return sendError(res, "invalid_payload", "mission id (uuid) required");
+  const reason = z.string().max(500).optional().safeParse((req.body ?? {}).reason);
+  if (!reason.success) return sendError(res, "invalid_payload", "reason must be a string");
+  const out = await declineMission(ctx.sc, id.data, reason.data);
+  if (!out.ok) {
+    if (out.reason === "not_declinable") return sendError(res, "invalid_payload", "mission is not in a declinable state");
+    return sendError(res, "db_error", out.reason ?? "decline failed");
   }
   res.json({ ok: true });
 }));
