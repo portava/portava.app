@@ -545,6 +545,145 @@ test('zoom-band gating can be turned off for an explicitly enabled layer', () =>
   assert.deepEqual(r.kept.map((o) => o.id), ['place']);
 });
 
+// ── "cull, but never to empty" (§17 emptiness guard) ─────────────────────────
+//
+// The owner's ruling: band culling stands, EXCEPT where it would leave a kind
+// the user explicitly asked for with nothing on screen. These tests pin the
+// three edges of that — what it rescues, what it refuses to rescue, and that
+// rescue is not exemption.
+
+test('requestedKinds waives the band gate for a kind culling would empty', () => {
+  const objects = [
+    obj({ id: 'gem', kind: 'hidden_gem' }),
+    obj({ id: 'trip', kind: 'trip_stop', geometry: point(17, 109) }),
+  ];
+  const city: ScreenViewport = { ...VIEWPORT, zoom: 8 };
+
+  const culled = resolveCollisions(objects, { viewport: city });
+  assert.deepEqual(culled.kept.map((o) => o.id), ['trip']);
+  assert.deepEqual(culled.bandWaivedKinds, []);
+
+  const waived = resolveCollisions(objects, { viewport: city, requestedKinds: ['hidden_gem'] });
+  assert.deepEqual(waived.kept.map((o) => o.id).sort(), ['gem', 'trip']);
+  assert.deepEqual(waived.bandWaivedKinds, ['hidden_gem']);
+  assert.equal(waived.dropped.length, 0);
+});
+
+test('the waiver is per kind — an unrequested kind stays culled', () => {
+  const objects = [
+    obj({ id: 'gem', kind: 'hidden_gem' }),
+    obj({ id: 'place', kind: 'place', geometry: point(17, 109) }),
+  ];
+  const r = resolveCollisions(objects, {
+    viewport: { ...VIEWPORT, zoom: 8 },
+    requestedKinds: ['hidden_gem'],
+  });
+  assert.deepEqual(r.kept.map((o) => o.id), ['gem']);
+  assert.deepEqual(r.bandWaivedKinds, ['hidden_gem']);
+  assert.equal(r.dropped.find((d) => d.object.id === 'place')?.reason, 'zoom_band');
+});
+
+test('no waiver while the requested kind still has a survivor', () => {
+  // Both places are in band at zoom 15; one loses the overlap. The kind is not
+  // empty, so the guard has no business firing.
+  //
+  // Structurally this is the same case as "emptied by collision" below — band
+  // gating is all-or-nothing per kind, so "some of this kind survived" can only
+  // arise when the band took none of it. Stated separately because it is the
+  // half of the ruling a reader looks for by name.
+  const here = point(VIEWPORT.center.lat, VIEWPORT.center.lng);
+  const objects = [
+    obj({ id: 'a-place', kind: 'place', geometry: here, distanceKm: 1 }),
+    obj({ id: 'b-place', kind: 'place', geometry: here, distanceKm: 2 }),
+  ];
+  const r = resolveCollisions(objects, { viewport: VIEWPORT, requestedKinds: ['place'] });
+  assert.deepEqual(r.kept.map((o) => o.id), ['a-place']);
+  assert.deepEqual(r.bandWaivedKinds, []);
+  assert.equal(r.collisionDroppedCount, 1);
+});
+
+test('a waived kind still takes its chances in §31 collision', () => {
+  // "Never to empty" is a floor of one, not a licence to stack pins: both gems
+  // come back at city zoom, and then they collide exactly as they would in band.
+  const here = point(VIEWPORT.center.lat, VIEWPORT.center.lng);
+  const objects = [
+    obj({ id: 'a-gem', kind: 'hidden_gem', geometry: here, distanceKm: 1 }),
+    obj({ id: 'b-gem', kind: 'hidden_gem', geometry: here, distanceKm: 2 }),
+  ];
+  const r = resolveCollisions(objects, {
+    viewport: { ...VIEWPORT, zoom: 8 },
+    requestedKinds: ['hidden_gem'],
+  });
+  assert.deepEqual(r.bandWaivedKinds, ['hidden_gem']);
+  assert.deepEqual(r.kept.map((o) => o.id), ['a-gem']);
+  assert.equal(r.collisionDroppedCount, 1);
+  assert.equal(r.dropped[0].occludedBy, 'a-gem');
+});
+
+test('a kind emptied by collision rather than by the band is not waived', () => {
+  // §31's loser is not erased: a higher-priority pin stands in the same spot,
+  // the "N more" chip counts it and the carousel carries it. Waiving a band
+  // that did nothing would only put two pins on one pixel.
+  const here = point(VIEWPORT.center.lat, VIEWPORT.center.lng);
+  const r = resolveCollisions(
+    [obj({ id: 'safety', kind: 'safety_notice', geometry: here }),
+     obj({ id: 'place', kind: 'place', geometry: here })],
+    { viewport: VIEWPORT, requestedKinds: ['place'] },
+  );
+  assert.deepEqual(r.kept.map((o) => o.id), ['safety']);
+  assert.deepEqual(r.bandWaivedKinds, []);
+  assert.equal(r.dropped[0].reason, 'collision');
+});
+
+test('a kind emptied before the band gate is not reported as waived', () => {
+  // `isRenderable` runs first, so an untitled gem never reaches the band check.
+  // Waiving would not bring it back, and claiming the waiver fired would put
+  // the caller's own view of "what is on the map" out of step with this one.
+  const r = resolveCollisions([obj({ id: 'gem', kind: 'hidden_gem', title: '' })], {
+    viewport: { ...VIEWPORT, zoom: 8 },
+    requestedKinds: ['hidden_gem'],
+  });
+  assert.deepEqual(r.kept, []);
+  assert.deepEqual(r.bandWaivedKinds, []);
+  assert.equal(r.dropped[0].reason, 'not_renderable');
+});
+
+test('the guard is silent when zoom bands are not being applied at all', () => {
+  const r = resolveCollisions([obj({ id: 'gem', kind: 'hidden_gem' })], {
+    viewport: { ...VIEWPORT, zoom: 3 },
+    applyZoomBands: false,
+    requestedKinds: ['hidden_gem'],
+  });
+  assert.deepEqual(r.kept.map((o) => o.id), ['gem']);
+  assert.deepEqual(r.bandWaivedKinds, []);
+});
+
+test('conservation survives the waiver: kept + dropped is still the input', () => {
+  const objects = [
+    obj({ id: 'gem-1', kind: 'hidden_gem' }),
+    obj({ id: 'gem-2', kind: 'hidden_gem', geometry: point(17, 109) }),
+    obj({ id: 'place', kind: 'place', geometry: point(18, 110) }),
+  ];
+  const r = resolveCollisions(objects, {
+    viewport: { ...VIEWPORT, zoom: 8 },
+    requestedKinds: ['hidden_gem'],
+  });
+  const seen = [...r.kept.map((o) => o.id), ...r.dropped.map((d) => d.object.id)].sort();
+  assert.deepEqual(seen, ['gem-1', 'gem-2', 'place']);
+  assert.equal(r.droppedCount, r.dropped.length);
+});
+
+test('prepareForRender forwards requestedKinds to the guard', () => {
+  // The screen calls prepareForRender, not resolveCollisions. A guard the
+  // wrapper silently dropped would be untestable from there.
+  const r = prepareForRender([obj({ id: 'gem', kind: 'hidden_gem' })], {
+    viewport: { ...VIEWPORT, zoom: 8 },
+    requestedKinds: ['hidden_gem'],
+  });
+  assert.deepEqual(r.kept.map((o) => o.id), ['gem']);
+  assert.deepEqual(r.bandWaivedKinds, ['hidden_gem']);
+});
+
 test('an explicit band overrides the one derived from zoom', () => {
   const r = resolveCollisions([obj({ id: 'place', kind: 'place' })], {
     viewport: { ...VIEWPORT, zoom: 3 },
