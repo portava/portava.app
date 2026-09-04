@@ -12,7 +12,7 @@
  * city/zone-level by server invariant, exact coordinates are never available
  * here and are never rendered (§23 / TABLE 25: coarse place only).
  */
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { trackMyWorldOpened } from './passportTelemetry.ts';
 import {
   ArrowLeft,
   Globe2,
@@ -197,6 +198,19 @@ export default function MyWorldScreen({ worldOverride }: MyWorldScreenProps = {}
   const world = worldOverride ?? hook.world;
   const loading = worldOverride ? false : hook.loading;
   const error = worldOverride ? null : hook.error;
+
+  // §32 my_world_opened — fire once the world resolves. Counts only, never a
+  // country or city name.
+  const openedRef = useRef(false);
+  useEffect(() => {
+    if (openedRef.current || !world) return;
+    openedRef.current = true;
+    trackMyWorldOpened({
+      countryCount: world.totalCountries,
+      cityCount: world.totalCities,
+      stampCount: world.totalStamps,
+    });
+  }, [world]);
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>

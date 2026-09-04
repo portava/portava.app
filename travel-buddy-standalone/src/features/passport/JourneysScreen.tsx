@@ -21,7 +21,7 @@
  * This screen creates no Trip storage of its own (§34) and does not embed the
  * live Map — it is a pure projection view.
  */
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -49,6 +49,7 @@ import {
   useJourneys,
   type UseJourneysResult,
 } from './useJourneys.ts';
+import { trackJourneyViewed } from './passportTelemetry.ts';
 import type {
   JourneyProjection,
   JourneysProjection,
@@ -408,6 +409,16 @@ export default function JourneysScreen({
     () => !journeys || (journeys.totalJourneys === 0 && journeys.years.length === 0),
     [journeys],
   );
+
+  // §32 journey_viewed — fire once real journeys are shown (not restricted /
+  // empty / loading). Counts + a boolean only, never a place or trip title.
+  const viewedRef = useRef(false);
+  useEffect(() => {
+    if (viewedRef.current) return;
+    if (loading || error || restricted || isEmpty || !journeys) return;
+    viewedRef.current = true;
+    trackJourneyViewed({ journeyCount: journeys.totalJourneys, hasFeatured: featured != null });
+  }, [loading, error, restricted, isEmpty, journeys, featured]);
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
