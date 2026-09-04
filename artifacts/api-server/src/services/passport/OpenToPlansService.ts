@@ -25,14 +25,6 @@ import { logger as rootLogger } from "../../lib/logger.js";
 
 const logger = rootLogger.child({ service: "OpenToPlansService" });
 
-/**
- * Feature flag (CAPABILITY, seeded OFF in migration 2260) gating the §8
- * availability-windows domain. Single source of truth — the availability route
- * and the Passport projection both read it, so a rollout never surfaces windows
- * on one surface and not the other.
- */
-export const OPEN_TO_PLANS_WINDOWS_FLAG = "open_to_plans_windows_enabled";
-
 // ── Closed sets (mirror the CHECK constraints in migration 2260) ───────────────
 
 export const WINDOW_TYPES = ["recurring", "trip", "one_time", "derived"] as const;

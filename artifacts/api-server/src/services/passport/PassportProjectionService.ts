@@ -50,11 +50,17 @@ import {
   projectPublicWindows,
   isActive as isWindowActive,
   effectiveExpiry as windowEffectiveExpiry,
-  OPEN_TO_PLANS_WINDOWS_FLAG,
   type AvailabilityWindow,
   type ViewerRelationship as WindowViewerRelationship,
 } from "./OpenToPlansService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+
+/**
+ * §8 availability-windows capability flag (seeded OFF, migration 2260). A local
+ * literal, matching routes/availability.ts, so check:flag-polarity can resolve
+ * the argument to isFlagEnabled below (it does not follow imported constants).
+ */
+const OPEN_TO_PLANS_WINDOWS_FLAG = "open_to_plans_windows_enabled";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TABLE 5 — viewer context
