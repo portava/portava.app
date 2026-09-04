@@ -4,6 +4,7 @@
  */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import type { DiscoveryEventPost } from '../types/discovery.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -599,6 +600,122 @@ export async function getDiscoveryCategoryCountsBatch(
     return (body.counts ?? {}) as Partial<Record<DiscoveryCategory, number>>;
   } catch {
     return {};
+  }
+}
+
+// ── Unified discovery feed (serve point 7) ─────────────────────────────────────
+//
+// GET /api/discovery/feed — the server-side "unified feed" that merges OSM +
+// discovery_places rows with the viewer's "Live from events" posts and returns
+// one envelope. Unlike getDiscoveryPlaces (GET /discovery) this call is SENT
+// WITH the auth token: the endpoint only resolves a viewer, fetches event posts,
+// and writes its serve-point-7 rank_events impressions when a Bearer token is
+// present (discovery.ts). It returns `sessionId` — the served rank context a
+// caller threads back on POST /rank-events/outcome so a 'discovery' outcome
+// upgrades the exact impression this load wrote.
+
+export interface DiscoveryFeedResult {
+  places: DiscoveryPlace[];
+  posts: DiscoveryEventPost[];
+  nextCursor: string | null;
+  total: number;
+  destination: string | null;
+  sourceSummary: { seededDbCount: number; osmCount: number; userCreatedCount: number };
+  /** Per-load session id from the server; thread it into rank-outcome reporting. */
+  sessionId: string | null;
+}
+
+export interface DiscoveryFeedOptions {
+  destination?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  radiusKm?: number;
+  /** Categories to fan out across; defaults to the server's for_you feed. */
+  categories?: string[];
+  limit?: number;
+  cursor?: string | null;
+  /** Set false to fetch only the event-posts side of the feed (no places). */
+  includePlaces?: boolean;
+  /** Set false to skip the events section. */
+  includeEvents?: boolean;
+}
+
+export async function getDiscoveryFeed(
+  opts: DiscoveryFeedOptions,
+): Promise<{ ok: true; data: DiscoveryFeedResult } | { ok: false; error: string }> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+
+  const { destination, lat, lng, radiusKm, categories, limit, cursor, includePlaces, includeEvents } = opts;
+  if (!destination && (lat == null || lng == null)) {
+    return { ok: false, error: 'city or lat+lng is required' };
+  }
+
+  const params = new URLSearchParams();
+  if (destination) params.set('city', destination);
+  if (lat != null) params.set('lat', String(lat));
+  if (lng != null) params.set('lng', String(lng));
+  if (radiusKm != null) params.set('radiusKm', String(radiusKm));
+  if (categories && categories.length > 0) params.set('categories', categories.join(','));
+  if (limit != null) params.set('limit', String(limit));
+  if (cursor) params.set('cursor', cursor);
+  if (includePlaces === false) params.set('includePlaces', '0');
+  if (includeEvents === false) params.set('includeEvents', '0');
+
+  // The token is optional server-side, but event posts and the serve-point-7
+  // impression only exist when a viewer resolves — so send it whenever signed in.
+  const token = await freshToken();
+
+  try {
+    const res = await fetch(`${base}/api/discovery/feed?${params}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const body = (await res.json()) as Partial<DiscoveryFeedResult>;
+    return {
+      ok: true,
+      data: {
+        places:        Array.isArray(body.places) ? body.places : [],
+        posts:         Array.isArray(body.posts) ? body.posts : [],
+        nextCursor:    body.nextCursor ?? null,
+        total:         typeof body.total === 'number' ? body.total : 0,
+        destination:   body.destination ?? destination ?? null,
+        sourceSummary: body.sourceSummary ?? { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+        sessionId:     body.sessionId ?? null,
+      },
+    };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  }
+}
+
+// ── "Already know it" discovery feedback ────────────────────────────────────────
+//
+// POST /api/discovery/already-known — records an already_known memory-feedback
+// signal for a Discovery-served place (the backend bridges the served id to the
+// canonical discovery_places.id and dedupes). Ownership is enforced server-side
+// from the auth token. Idempotent; a 201 or a repeat both count as recorded.
+
+export async function recordAlreadyKnown(
+  placeId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+  if (!placeId) return { ok: false, error: 'placeId is required' };
+
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not signed in' };
+
+  try {
+    const res = await fetch(`${base}/api/discovery/already-known`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ placeId }),
+    });
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
   }
 }
 

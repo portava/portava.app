@@ -20,6 +20,10 @@ export interface QuickMediaEntry {
   avatarUrl?: string | null;
   /** True for the viewer's own "add" affordance. */
   isSelf?: boolean;
+  /** The canonical post the newest item opens into (spec §24) — null: no route. */
+  postId?: string | null;
+  /** How many unexpired items this person has (folded by useQuickMedia). */
+  mediaCount?: number;
 }
 
 function initialsOf(name: string): string {
@@ -49,7 +53,12 @@ export function QuickMediaRow({
           style={s.item}
           onPress={() => onOpen?.(entry)}
           accessibilityRole="button"
-          accessibilityLabel={entry.label}
+          accessibilityLabel={
+            entry.mediaCount && entry.mediaCount > 1
+              ? `${entry.label}, ${entry.mediaCount} new`
+              : entry.label
+          }
+          testID={`wall-quick-media-${entry.id}`}
         >
           <View style={[s.ring, entry.isSelf && s.ringSelf]}>
             {entry.avatarUrl ? (

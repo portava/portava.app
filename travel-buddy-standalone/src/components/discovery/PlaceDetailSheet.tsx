@@ -10,13 +10,13 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
 import { Platform } from 'react-native';
-import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles, Info, Radio } from 'lucide-react-native';
+import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles, Info, Radio, Check } from 'lucide-react-native';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useSession } from '../../context/SessionContext.tsx';
 import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus, WikidataEnrichment } from '../../services/discovery.ts';
-import { getPlaceLiveStatus, getWikidataEnrichment } from '../../services/discovery.ts';
+import { getPlaceLiveStatus, getWikidataEnrichment, recordAlreadyKnown } from '../../services/discovery.ts';
 import { checkSaved, toggleSave } from '../../services/collections.ts';
 import { color, space, radius, type as t, shadow, avatar, dot } from '../../theme/tokens.ts';
 import { categoryColor } from './PlaceCard.tsx';
@@ -63,6 +63,9 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
   // Wikidata enrichment — description, Wikipedia link, Commons image.
   // Fetched lazily when the sheet opens for a place that has a wikidataId.
   const [wikidataEnrichment, setWikidataEnrichment] = useState<WikidataEnrichment | null>(null);
+  // "Already know it" — optimistic confirmation once the already_known signal
+  // is recorded (or already was: the write is idempotent server-side).
+  const [known, setKnown] = useState(false);
 
   // Feature flag + role guard for the "Generate header image" admin action.
   const { isEnabled } = useFeatureFlags();
@@ -81,6 +84,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
   useEffect(() => {
     setLocalAiHeaderUrl(null);
     setWikidataEnrichment(null);
+    setKnown(false);
   }, [place?.id]);
 
   // Fetch Wikidata enrichment lazily when the sheet opens for a place that
@@ -224,6 +228,18 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
     // business happens to be nearest those coordinates (e.g. "BDO ATM").
     const destination = `${place.lat},${place.lng}(${encodeURIComponent(place.name)})`;
     Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${destination}`).catch(() => {});
+  };
+
+  // "Already know it" — records an already_known memory-feedback signal for this
+  // discovery-served place (drives §7 New-to-Me suppression) AND reports the
+  // discovery rank outcome so the interaction closes the impression→outcome loop
+  // on the surface it was served from. Optimistic: the confirmation shows on tap
+  // and the write is idempotent, so a failure or a repeat both leave it "known".
+  const handleAlreadyKnown = () => {
+    if (!place || known) return;
+    setKnown(true);
+    reportTap(place.id);
+    recordAlreadyKnown(place.id).catch(() => {});
   };
 
   return (
@@ -472,6 +488,29 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
               )}
             </View>
           </View>
+
+          {/* "Already know it" — only for discovery-served places (a served
+              rank context exists), so the outcome always has a surface to
+              attribute to. Feeds §7 New-to-Me novelty suppression. */}
+          {rankSurface ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.alreadyKnownBtn,
+                known && styles.alreadyKnownBtnActive,
+                !known && pressed && { opacity: 0.7 },
+              ]}
+              onPress={handleAlreadyKnown}
+              disabled={known}
+              accessibilityRole="button"
+              accessibilityLabel={known ? 'Marked as already known' : 'I already know this place'}
+              testID="place-sheet-already-known"
+            >
+              <Check size={15} color={known ? color.signal : color.mute} />
+              <Text style={[styles.alreadyKnownText, known && { color: color.signal }]}>
+                {known ? 'Marked as known' : 'I already know it'}
+              </Text>
+            </Pressable>
+          ) : null}
 
           {/* Attribution — events are member-hosted activities, not resolved
               venues, so the OSM attribution (which implies venue data) would
@@ -797,6 +836,27 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textAlign: 'center',
     marginTop: space.md,
+  },
+  alreadyKnownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xs,
+    alignSelf: 'center',
+    marginTop: space.md,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderRadius: radius.pill,
+    backgroundColor: color.haze,
+  },
+  alreadyKnownBtnActive: {
+    backgroundColor: color.signal + '18',
+  },
+  alreadyKnownText: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 12,
+    fontWeight: '600',
   },
   generateHeaderBtn: {
     flexDirection: 'row',

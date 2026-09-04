@@ -130,7 +130,27 @@ export const MINIMAL_QR_FIELDS: ReadonlyArray<keyof MinimalQrProjection> = [
  * rather than carrying a self-contained profile payload.
  */
 export function buildQrPayload(username: string): string {
-  return makeDeepLink(username);
+  return makeQrDeepLink(username);
+}
+
+/**
+ * The query marker the QR image carries so the app can tell a scan from a
+ * tapped link and emit §32 `passport_qr_scanned` (scanner side). It is the
+ * ONLY difference between the QR payload and the plain share link, carries no
+ * data about anyone, and changes nothing about what is shown — the passport
+ * is still re-projected under normal privacy policy (§25).
+ */
+export const QR_SCAN_PARAM = 'via';
+export const QR_SCAN_VALUE = 'qr';
+
+/** The passport deep link with the scan marker appended. */
+export function makeQrDeepLink(username: string): string {
+  return `${makeDeepLink(username)}?${QR_SCAN_PARAM}=${QR_SCAN_VALUE}`;
+}
+
+/** True when a route's `via` param says the app was opened by scanning a Passport QR. */
+export function isQrScanEntry(via: unknown): boolean {
+  return typeof via === 'string' && via === QR_SCAN_VALUE;
 }
 
 /** Deep link + web fallback for the Share Link / Copy Link actions. */

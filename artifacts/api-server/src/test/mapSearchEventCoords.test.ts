@@ -50,6 +50,7 @@ function fakeSc() {
 describe("loadNearbyEvents — show_exact_location redaction", () => {
   it("nulls coordinates of an other-host hidden-location event, keeps visible + own", async () => {
     const out = await loadNearbyEvents(fakeSc() as any, VIEWER, 10.31, 123.91, 25, new Set());
+    assert.ok(out, "a successful read returns rows, not null");
     const by = Object.fromEntries(out.map((e: any) => [e.id, e]));
 
     // Positive controls: a shown-location event and the viewer's OWN hidden event keep coords.
