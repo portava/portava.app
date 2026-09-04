@@ -105,6 +105,9 @@ export interface ProjectViewerContext {
   viewerTripIds: Set<string>;
   /** Creators the viewer already follows — suppresses a redundant follow action. */
   followedCreatorIds?: Set<string>;
+  /** The viewer's current city — the spatial frame for the map Context Thread
+   *  (spec §8/§22). Absent ⇒ no map bridge is offered. */
+  currentCity?: string | null;
   /** Wall Phase 5 (spec §21): when on, a place-linked object may offer an
    *  Ask Compass handoff. Off (default) attaches no Compass action — Compass
    *  never occupies a permanent panel and is opt-in per object. */
@@ -205,10 +208,15 @@ function passesEligibility(c: WallCandidate): boolean {
 function passesVisibility(c: WallCandidate, viewer: ProjectViewerContext): boolean {
   if (POST_LIKE_TYPES.has(c.objectType)) {
     const viewerIsTripMember = !!c.tripId && viewer.viewerTripIds.has(c.tripId);
+    // followers_only is readable by the author's followers: the viewer follows
+    // the author iff the author is in the viewer's followedCreatorIds set (already
+    // loaded for the feed). Absent set ⇒ not a follower ⇒ the tier fails closed.
+    const viewerIsFollower = viewer.followedCreatorIds?.has(c.authorId) ?? false;
     return decidePostReadable(
       { author_id: c.authorId, visibility: c.visibility ?? null, trip_id: c.tripId ?? null },
       viewer.viewerId,
       viewerIsTripMember,
+      viewerIsFollower,
     ).readable;
   }
   // Non-post objects: the caller resolves consent/eligibility. Absent flag ⇒
@@ -467,9 +475,13 @@ export async function attachContextThreads(
       viewerId: viewer.viewerId,
       followedCreatorIds: viewer.followedCreatorIds,
       viewerTripIds: viewer.viewerTripIds,
+      currentCity: viewer.currentCity ?? null,
       liveStripSubjectIds,
       windowSaturated,
       rabEnabled: opts.rabEnabled === true,
+      // §21: the compass bridge is opt-in per object, gated by the same flag that
+      // adds the Ask Compass action (ProjectViewerContext.compassHandoffEnabled).
+      compassHandoffEnabled: viewer.compassHandoffEnabled === true,
       now: opts.now,
     };
 

@@ -20,6 +20,7 @@ import {
   decidePostReadable,
   canReadPost,
   needsTripMembershipCheck,
+  needsFollowerCheck,
 } from "../lib/postVisibility.js";
 
 const AUTHOR = "user-author";
@@ -71,10 +72,44 @@ describe("GET /posts/:postId visibility gate", () => {
   });
 });
 
+describe("followers_only tier (spec §5)", () => {
+  const followersPost = { author_id: AUTHOR, visibility: "followers_only", trip_id: null };
+  const followersRaw = { author_id: AUTHOR, visibility: "followers", trip_id: null };
+
+  it("a FOLLOWER of the author may read a followers_only post", () => {
+    const d = decidePostReadable(followersPost, STRANGER, false, /* viewerIsFollower */ true);
+    assert.equal(d.readable, true, "the tier exists precisely to admit the author's followers");
+    assert.equal(d.reason, "follower");
+  });
+
+  it("a NON-follower may NOT read a followers_only post (used to fail closed to everyone)", () => {
+    const d = decidePostReadable(followersPost, STRANGER, false, /* viewerIsFollower */ false);
+    assert.equal(d.readable, false);
+    assert.equal(d.reason, "followers_only_not_follower");
+  });
+
+  it("absent viewerIsFollower defaults to a refusal (fail-closed)", () => {
+    const d = decidePostReadable(followersPost, STRANGER, false);
+    assert.equal(d.readable, false);
+    assert.equal(d.reason, "followers_only_not_follower");
+  });
+
+  it("the raw `followers` value is the same tier as followers_only", () => {
+    assert.equal(decidePostReadable(followersRaw, STRANGER, false, true).reason, "follower");
+    assert.equal(decidePostReadable(followersRaw, STRANGER, false, false).reason, "followers_only_not_follower");
+  });
+
+  it("the author reads their own followers_only post without being their own follower", () => {
+    const d = decidePostReadable(followersPost, AUTHOR, false, false);
+    assert.equal(d.readable, true);
+    assert.equal(d.reason, "author");
+  });
+});
+
 describe("fail-closed behaviour", () => {
   it("an unrecognised visibility is NOT readable by a stranger", () => {
     const d = decidePostReadable(
-      { author_id: AUTHOR, visibility: "followers_only", trip_id: null },
+      { author_id: AUTHOR, visibility: "some_future_tier", trip_id: null },
       STRANGER,
       false,
     );
@@ -84,7 +119,7 @@ describe("fail-closed behaviour", () => {
 
   it("an unrecognised visibility never locks the author out", () => {
     assert.equal(
-      canReadPost({ author_id: AUTHOR, visibility: "followers_only", trip_id: null }, AUTHOR, false),
+      canReadPost({ author_id: AUTHOR, visibility: "some_future_tier", trip_id: null }, AUTHOR, false),
       true,
     );
   });
@@ -123,6 +158,20 @@ describe("needsTripMembershipCheck — the query is only paid when it is needed"
       needsTripMembershipCheck({ author_id: AUTHOR, visibility: "trip_only", trip_id: null }, STRANGER),
       false,
     );
+  });
+});
+
+describe("needsFollowerCheck — the follow query is only paid when it is needed", () => {
+  it("is true only for a followers_only / followers post viewed by a non-author", () => {
+    assert.equal(needsFollowerCheck({ author_id: AUTHOR, visibility: "followers_only", trip_id: null }, STRANGER), true);
+    assert.equal(needsFollowerCheck({ author_id: AUTHOR, visibility: "followers", trip_id: null }, STRANGER), true);
+  });
+
+  it("is false for the author, public, private and trip_only posts", () => {
+    assert.equal(needsFollowerCheck({ author_id: AUTHOR, visibility: "followers_only", trip_id: null }, AUTHOR), false, "author needs no lookup");
+    assert.equal(needsFollowerCheck(publicPost, STRANGER), false);
+    assert.equal(needsFollowerCheck(privatePost, STRANGER), false);
+    assert.equal(needsFollowerCheck(tripPost, STRANGER), false);
   });
 });
 
