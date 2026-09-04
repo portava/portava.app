@@ -556,17 +556,125 @@ const _envelopeIsLiveClaimLike: (e: LiveClaimEnvelope) => LiveClaimLike = (e) =>
 void _envelopeIsLiveClaimLike;
 
 /**
+ * §9 / Table 7 — the CONTEXTUAL evidence lines, the ones that are not a claim.
+ *
+ * Table 7's "WHY PORTAVA SAYS THIS" panel mixes two kinds of line. Most are
+ * per-claim ("Several recent traveler reports · crowd.level"), and `describeClaim`
+ * above renders those. Two are not about any single claim — they are the
+ * SURROUNDING evidence a reader weighs when deciding whether to believe the live
+ * state at all:
+ *
+ *     • Active event nearby       — something is happening next door, so a busy
+ *                                   reading is more plausible than noise.
+ *     • Recent qualified media     — a photo/video that passed §35 evidence
+ *                                   eligibility exists for this subject.
+ *
+ * They are declared here as an OPTIONAL bundle, `MapClaimEvidence`, threaded into
+ * `applyLiveClaims`. Two rules follow from §37 and hold structurally:
+ *
+ *   1. They NEVER manufacture a claim. `applyLiveClaims` still returns the object
+ *      untouched when there are no claims (see its guard), so an active event
+ *      next to a place with no live state adds no line and no freshness — the
+ *      panel explains a claim that exists, it does not invent one.
+ *   2. They NEVER move confidence, freshness, activity or trend. They are text
+ *      appended to `provenance.lines` only. A paid or adjacent signal cannot buy
+ *      a band; only claims set the band, and only through the fold below.
+ *
+ * The copy is Table 7 VERBATIM ("Active event nearby" / "Recent qualified
+ * media") — this is spec text, not prose invented here — and each formatter
+ * returns `null` (no line) rather than an empty string when its input is absent
+ * or empty, so an absent input is indistinguishable from "no such evidence".
+ */
+export interface EventAdjacencyEvidence {
+  /** How many active events sit within the adjacency radius of the subject. */
+  count: number;
+}
+
+export interface QualifiedMediaEvidence {
+  /** How many §35-eligible media assets back this subject's recent observations. */
+  count: number;
+}
+
+export interface MapClaimEvidence {
+  eventNearby?: EventAdjacencyEvidence | null;
+  qualifiedMedia?: QualifiedMediaEvidence | null;
+}
+
+/** Table 7 "Active event nearby", or null when no active event is adjacent. */
+export function eventAdjacencyLine(
+  e: EventAdjacencyEvidence | null | undefined,
+): MapProvenanceLine | null {
+  if (!e || !Number.isFinite(e.count) || e.count < 1) return null;
+  return { text: "Active event nearby" };
+}
+
+/** Table 7 "Recent qualified media", or null when no qualified media exists. */
+export function qualifiedMediaLine(
+  m: QualifiedMediaEvidence | null | undefined,
+): MapProvenanceLine | null {
+  if (!m || !Number.isFinite(m.count) || m.count < 1) return null;
+  return { text: "Recent qualified media" };
+}
+
+/**
+ * §9 event-adjacency radius. An event whose venue is within ~300 m of a place
+ * is close enough that "there is an event next door" genuinely bears on why the
+ * place is busy; much beyond that and the two are just in the same district.
+ */
+export const EVENT_ADJACENCY_RADIUS_KM = 0.3;
+
+/**
+ * Count the events that are ACTIVE (started and not yet ended) and sit within
+ * `radiusKm` of `subject`. Pure: the route hands it the event objects it has
+ * ALREADY loaded and shaped for this same viewport, so this reconstructs no
+ * intelligence of its own — it reads `payload.hasStarted` (set by projectEvent)
+ * and `expiresAt` (the event's end), and measures great-circle distance.
+ *
+ * An event with no start signal is NOT counted: "active event nearby" is a
+ * statement that something is happening now, and a merely-scheduled event next
+ * week is not that. An event past its `expiresAt` is likewise not active.
+ */
+export function countAdjacentActiveEvents(
+  subject: MapObject,
+  events: readonly MapObject[],
+  now: number = Date.now(),
+  radiusKm: number = EVENT_ADJACENCY_RADIUS_KM,
+): number {
+  const here = centroidOf(subject.geometry);
+  if (!here) return 0;
+  let count = 0;
+  for (const ev of events) {
+    if (!ev || ev.kind !== "event") continue;
+    if ((ev.payload as { hasStarted?: unknown } | undefined)?.hasStarted !== true) continue;
+    if (ev.expiresAt) {
+      const endsMs = Date.parse(ev.expiresAt);
+      if (Number.isFinite(endsMs) && endsMs <= now) continue; // already ended
+    }
+    const there = centroidOf(ev.geometry);
+    if (!there) continue;
+    if (haversineKm(here.lat, here.lng, there.lat, there.lng) <= radiusKm) count += 1;
+  }
+  return count;
+}
+
+/**
  * Pure: fold one subject's live claims onto its object. Exported separately from
  * the I/O wrapper so the merge rules are testable without a database.
  *
  * Never upgrades: if the claims are empty the object is returned untouched, and
  * a claim can only ever ADD freshness/confidence/activity/trend, never overwrite
  * a value the source already asserted with a weaker one.
+ *
+ * `evidence` is the §9/Table 7 contextual bundle (event-adjacency, qualified
+ * media). It only ever APPENDS provenance lines to a panel that already exists —
+ * see the guard: no claims ⇒ no panel ⇒ no evidence line, so contextual evidence
+ * can never manufacture a live claim or move a band (§37).
  */
 export function applyLiveClaims(
   obj: MapObject,
   claims: readonly LiveClaimLike[],
   now: number = Date.now(),
+  evidence?: MapClaimEvidence | null,
 ): MapObject {
   if (!claims || claims.length === 0) return obj;
 
@@ -593,6 +701,18 @@ export function applyLiveClaims(
     text: describeClaim(c),
     ref: c.id,
   }));
+
+  // §9 / Table 7: append the two CONTEXTUAL evidence lines when their inputs
+  // exist. They carry no `ref` — they are not claims — and they follow the
+  // per-claim lines so the panel reads claims-first, context-after. Absent
+  // inputs add nothing (each formatter returns null), so this is a no-op on the
+  // common path where the enrichment supplied no contextual evidence.
+  if (evidence) {
+    const eventLine = eventAdjacencyLine(evidence.eventNearby);
+    if (eventLine) lines.push(eventLine);
+    const mediaLine = qualifiedMediaLine(evidence.qualifiedMedia);
+    if (mediaLine) lines.push(mediaLine);
+  }
 
   // §7 keeps Activity and Trend as SEPARATE axes, and §8's Live Place sheet
   // shows both at once ("Crowd Busy / Trend ↑ Up"). They come from two different
@@ -915,11 +1035,22 @@ export function liveSubjectIdFor(obj: MapObject): string | null {
 /**
  * I/O wrapper. `read` is injected so the route supplies the real
  * `readLiveClaims` and tests supply a fake — this module stays DB-free.
+ *
+ * `opts.evidence` is the §9/Table 7 contextual-evidence resolver: given a
+ * subject object it returns the event-adjacency / qualified-media bundle that
+ * `applyLiveClaims` appends to the provenance panel. It is PURE and injected for
+ * the same reason `read` is — the route derives event-adjacency from the events
+ * it already loaded, and tests supply a fake — and it is only ever consulted for
+ * a subject that actually has claims, so it can never manufacture a panel.
  */
 export async function enrichWithLiveClaims(
   objects: MapObject[],
   read: (subjectId: string) => Promise<readonly LiveClaimLike[]>,
-  opts: { max?: number; now?: number } = {},
+  opts: {
+    max?: number;
+    now?: number;
+    evidence?: (obj: MapObject) => MapClaimEvidence | null | undefined;
+  } = {},
 ): Promise<LiveEnrichmentResult> {
   const max = opts.max ?? LIVE_ENRICHMENT_MAX_SUBJECTS;
   const now = opts.now ?? Date.now();
@@ -945,7 +1076,18 @@ export async function enrichWithLiveClaims(
         return;
       }
       if (claims.length === 0) return;
-      out[i] = applyLiveClaims(out[i], claims, now);
+      // Contextual evidence is derived only for a subject that HAS claims — the
+      // panel it appends to must already exist. A throwing resolver must not
+      // cost the subject its live claims, so it fails soft to "no evidence".
+      let evidence: MapClaimEvidence | null | undefined;
+      if (opts.evidence) {
+        try {
+          evidence = opts.evidence(out[i]);
+        } catch {
+          evidence = null;
+        }
+      }
+      out[i] = applyLiveClaims(out[i], claims, now, evidence);
       enriched += 1;
     }),
   );

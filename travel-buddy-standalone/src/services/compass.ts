@@ -979,6 +979,17 @@ export async function fetchCompassRecommendations(params: {
   startDate?: string;
   endDate?:   string;
   tripId?:    string;
+  /**
+   * §13 TemporaryIntent addend (Table 9). The flattened
+   * IntentRankingContext — intent kind + the two sliders + the horizon the
+   * server re-checks. Send these ONLY for a live intent (build them with
+   * intentToRankingContext, which returns nulls once the intent has expired);
+   * omit them and the server ranks with no intent, exactly as before.
+   */
+  intent?:         string;
+  intentEnergy?:   number;
+  intentNovelty?:  number;
+  intentExpiresAt?: string;
 } = {}): Promise<{ ok: boolean; data?: CompassRecommendationsResponse; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
   try {
@@ -990,6 +1001,10 @@ export async function fetchCompassRecommendations(params: {
     if (params.startDate) qs.set('startDate', params.startDate);
     if (params.endDate)   qs.set('endDate', params.endDate);
     if (params.tripId)    qs.set('tripId', params.tripId);
+    if (params.intent)               qs.set('intent', params.intent);
+    if (params.intentEnergy != null) qs.set('intentEnergy', String(params.intentEnergy));
+    if (params.intentNovelty != null) qs.set('intentNovelty', String(params.intentNovelty));
+    if (params.intentExpiresAt)      qs.set('intentExpiresAt', params.intentExpiresAt);
     qs.set('tzOffsetMinutes', String(deviceTzOffsetMinutes()));
     const r = await authedFetch(`/api/compass/recommendations?${qs.toString()}`);
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
