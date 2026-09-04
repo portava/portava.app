@@ -247,7 +247,10 @@ export function projectPlace(row: PlaceRowLike | null | undefined): MapObject | 
       contributable: true,
     },
     payload: {
-      category,
+      // Explicit `key: value` (never shorthand) so the client's server-mirror
+      // guard — which reads top-level `key:` pairs out of this literal — sees
+      // it, exactly as every sibling key and projectGem's `category` are written.
+      category: category,
       city: row.city ?? null,
       neighborhood: row.neighborhood ?? null,
       countryCode: row.country_code ?? null,

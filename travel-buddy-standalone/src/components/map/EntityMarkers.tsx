@@ -24,6 +24,7 @@ import {
   Plane,
   Heart,
   Stamp,
+  MapPin,
 } from 'lucide-react-native';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
 import type { MapEntity, MapEntityType, ToggleableEntityType } from '../../types/mapTypes.ts';
@@ -34,6 +35,21 @@ import {
   passportCardPayload,
 } from '../../types/mapCardPayloads.ts';
 import { avatar, dot } from '../../theme/tokens.ts';
+
+/**
+ * A `places` entity that came THROUGH the projection — its payload is a
+ * gateway `place` MapObject (Map spec §19).
+ *
+ * Two other things share the legacy `places` entity type and must NOT be drawn
+ * here: the legacy Discovery envelope (`payload` is a `DiscoveryPlace`), which
+ * DiscoveryMapView's own pin loop already renders — drawing it again would
+ * double every pin — and the zone/forecast kinds that `KIND_TO_ENTITY_TYPE`
+ * folds onto `places` for want of a legacy layer, which ActivityZoneLayer draws
+ * as polygons. Only the projected canonical place has no other renderer.
+ */
+export function isProjectedPlaceEntity(entity: MapEntity): boolean {
+  return entity.type === 'places' && objectOf(entity)?.kind === 'place';
+}
 
 // ── Clustering ─────────────────────────────────────────────────────────────────
 
@@ -260,6 +276,26 @@ function GemMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPres
   );
 }
 
+// ── Place marker (projected canonical place) ─────────────────────────────────
+
+/**
+ * §6: "Standard marker | Place". Drawn ONLY for a projected place — see
+ * isProjectedPlaceEntity. It reads nothing off the payload: a place pin is
+ * identity + position, and every live axis (§7) is the Live Place sheet's to
+ * show, with its freshness and confidence beside it, not a glyph's to imply.
+ */
+function PlaceMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
+  const cfg = MAP_LAYER_CONFIG.places;
+  return (
+    <MarkerTouch entity={entity} onPress={onPress} onLongPress={onLongPress}>
+      <View testID="entity-pin-place" style={[pin.wrap, { backgroundColor: cfg.color }]}>
+        <MapPin size={12} color="#fff" />
+      </View>
+      <View style={[pin.dot, { backgroundColor: cfg.color }]} />
+    </MarkerTouch>
+  );
+}
+
 // ── Trip marker ───────────────────────────────────────────────────────────────
 
 function TripMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
@@ -475,6 +511,10 @@ function renderMarkerBody(
       return <FriendMarker entity={entity} {...t} />;
     case 'stamps':
       return <StampMarker entity={entity} {...t} />;
+    case 'places':
+      // Projected places only. The legacy Discovery envelope keeps its own
+      // renderer in DiscoveryMapView, and zone kinds keep ActivityZoneLayer.
+      return isProjectedPlaceEntity(entity) ? <PlaceMarker entity={entity} {...t} /> : null;
     default:
       return null;
   }
@@ -524,8 +564,18 @@ export function EntityMapLayers({
   const filtered = useMemo(
     // 'stamps' is not a ToggleableEntityType (it's never user-toggled) but
     // must still render in passport mode — always pass it through.
+    //
+    // A PROJECTED place is not one either: its layer is §16's `relevant_places`,
+    // and that decision has already been made upstream by the map shell's
+    // layer pipeline (filterByLayers over the projected objects), which removes
+    // the entity from `entities` when the layer is off. What reaches here has
+    // been permitted; gating it on the legacy pin toggles would hide it behind
+    // a switch that does not exist.
     () => entities.filter(
-      (e) => e.type === 'stamps' || enabledLayers.includes(e.type as ToggleableEntityType),
+      (e) =>
+        e.type === 'stamps' ||
+        isProjectedPlaceEntity(e) ||
+        enabledLayers.includes(e.type as ToggleableEntityType),
     ),
     [entities, enabledLayers],
   );

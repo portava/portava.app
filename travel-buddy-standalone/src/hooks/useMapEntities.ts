@@ -141,11 +141,18 @@ export const GATEWAY_KIND_FOR_LAYER: Record<ToggleableEntityType, MapObjectKind>
  */
 export const GATEWAY_KIND_FOR_OPTIONAL_LAYER: Record<string, MapObjectKind> = {
   crowd_flow: 'crowd_flow',
+  // §16 Relevant Places — canonical `public.places` rows, requested on the
+  // `places` option. Not a legacy pin toggle either: the legacy 'places' layer
+  // was a per-screen Discovery fetch (app/map/index.tsx), never a member of
+  // `ToggleableEntityType`, and it is the shell's §16 preference that decides
+  // whether the kind is asked for.
+  relevant_places: 'place',
 };
 
 /** The `sources` name the route pushes for each optional kind. */
 export const GATEWAY_SOURCE_FOR_OPTIONAL_LAYER: Record<string, string> = {
   crowd_flow: 'crowd_flow',
+  relevant_places: 'places',
 };
 
 export const GATEWAY_SOURCE_FOR_LAYER: Record<ToggleableEntityType, string> = {
@@ -328,11 +335,26 @@ export function useMapEntities(opts: {
    * trigger, and §16 says it outranks automatic resolution.
    */
   crowdFlow?: boolean;
+  /**
+   * §16 Relevant Places — canonical places through the gateway (Map spec §19,
+   * server lib/mapProjectPlace.ts), so a place on the map has been through §24
+   * protection, §31 aggregation and §7 enrichment like every other kind.
+   *
+   * GATEWAY ONLY — there is NO rollback fetcher for this kind here, on purpose.
+   * The rollback for places is the map shell's legacy Discovery path
+   * (getDiscoveryPlaces in app/map/index.tsx), which owns its own loading,
+   * error, retry and empty-state UI and renders through DiscoveryMapView's own
+   * pin loop. A second transport in this hook would double-fetch and
+   * double-draw every place on the rollback path. The shell reads `source` to
+   * decide which of the two is live.
+   */
+  places?: boolean;
 }): UseMapEntitiesResult {
   const {
     enabledLayers, city, lat, lng, zoom = 12,
     radiusKm = DEFAULT_VIEWPORT_RADIUS_KM,
     crowdFlow = false,
+    places = false,
   } = opts;
 
   const [objects, setObjects] = useState<MapObject[]>([]);
@@ -382,12 +404,13 @@ export function useMapEntities(opts: {
       pendingRefetch.current = true;
       return;
     }
-    // Crowd Flow is requested independently of `enabledLayers`, so this guard
-    // must consider it. A viewer who switches every legacy pin layer OFF but
-    // Crowd Flow ON would otherwise be swallowed here and see nothing —
-    // and the early return cannot simply be deleted, because passport mode
-    // passes [] deliberately to mean "fetch nothing".
-    if (enabledLayers.length === 0 && !crowdFlow) {
+    // Crowd Flow and Relevant Places are requested independently of
+    // `enabledLayers`, so this guard must consider both. A viewer who switches
+    // every legacy pin layer OFF but either of those ON would otherwise be
+    // swallowed here and see nothing — and the early return cannot simply be
+    // deleted, because passport mode passes [] deliberately to mean "fetch
+    // nothing".
+    if (enabledLayers.length === 0 && !crowdFlow && !places) {
       setObjects([]);
       setEntities([]);
       // No layer is enabled, so no layer went unread. Leaving a stale list here
@@ -410,6 +433,8 @@ export function useMapEntities(opts: {
     // the `crowdFlow` option. kindsForLayer is the §16 model's own mapping, so
     // this cannot drift from the layer definition.
     if (crowdFlow) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.crowd_flow);
+    // §16 Relevant Places ride the same way. Gateway only — see the option.
+    if (places) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.relevant_places);
 
     try {
       // ── 1. Try the gateway ────────────────────────────────────────────────
@@ -509,7 +534,10 @@ export function useMapEntities(opts: {
         void doFetch();
       }
     }
-  }, [enabledLayers, city, lat, lng, zoom, radiusKm]);
+    // `places` is a fetch-key input: the §16 preference it carries loads
+    // asynchronously, and a change that did not refetch would leave the kind
+    // permanently unrequested (or permanently requested) for the session.
+  }, [enabledLayers, city, lat, lng, zoom, radiusKm, places]);
 
   const refresh = useCallback(() => {
     void doFetch();
