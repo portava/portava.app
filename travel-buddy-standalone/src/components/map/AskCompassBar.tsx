@@ -27,7 +27,9 @@ import {
   fetchCompassRecommendations,
   type CompassRecommendation,
 } from '../../services/compass.ts';
-import type { MapEntity, MapEntityType } from '../../types/mapTypes.ts';
+import type { MapEntity } from '../../types/mapTypes.ts';
+import { mapObjectToEntity } from '../../types/mapTypes.ts';
+import { projectCompassResult } from '../../features/map/projection/clientProjection.ts';
 import {
   cellFor,
   clearActiveDecision,
@@ -46,48 +48,27 @@ const PROMPT_CHIPS = [
   'Trips this weekend',
 ];
 
-// ── Compass type → MapEntityType mapping ──────────────────────────────────────
-
-const COMPASS_TYPE_MAP: Record<string, MapEntityType> = {
-  event:      'events',
-  place:      'places',
-  gem:        'gems',
-  hidden_gem: 'gems',
-  buddy:      'buddies',
-  traveler:   'travelers',
-  user:       'travelers',
-  trip:       'trips',
-  friend:     'friends',
-};
 
 /**
- * Map a CompassRecommendation to a MapEntity.
- * Returns null for unsupported types or missing coordinates.
+ * Map a CompassRecommendation to a MapEntity, THROUGH THE PROJECTION.
  *
- * We intentionally do NOT fall back to the user's current location when
- * data.lat/lng is absent: placing un-geocoded results at the user's dot
- * causes the camera "fly-to" in map/index.tsx to target where the user
- * already is, making the camera appear to not move after a city search.
- * Skipping coordinate-less entities is safer — the caller's geocodeAndFly
- * moves the camera to the queried location independently.
+ * This used to hand the raw `CompassRecommendation` straight through as
+ * `entity.payload`, which gave the map cards a third payload shape to guess at —
+ * and two of their reads (`buddy.categories.slice`, `trip.visibility.replace`)
+ * threw outright on it. Compass results now go through `projectCompassResult`
+ * like every other producer, so a card sees exactly one contract.
+ *
+ * Returns null for unsupported types and for results with no real coordinates.
+ * We intentionally do NOT fall back to the user's current location: placing
+ * un-geocoded results at the user's dot causes the camera "fly-to" in
+ * map/index.tsx to target where the user already is, making the camera appear
+ * not to move after a city search. The caller's geocodeAndFly moves the camera
+ * to the queried location independently.
  */
 function toMapEntity(rec: CompassRecommendation): MapEntity | null {
-  const entityType = COMPASS_TYPE_MAP[rec.type ?? ''];
-  if (!entityType) return null;
-
-  const lat = typeof rec.data?.lat === 'number' ? rec.data.lat : null;
-  const lng = typeof rec.data?.lng === 'number' ? rec.data.lng : null;
-
-  // Skip entities with no real coordinates rather than faking them.
-  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-
-  // Populate detailRoute for place entities so map cards navigate to the
-  // canonical detail screen instead of falling back to the Discover stub.
-  const detailRoute = entityType === 'places' && rec.id
-    ? `/place/${encodeURIComponent(rec.id)}`
-    : undefined;
-
-  return { id: rec.id, type: entityType, lat, lng, payload: rec, detailRoute };
+  const obj = projectCompassResult(rec);
+  if (!obj) return null;
+  return mapObjectToEntity(obj);
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────

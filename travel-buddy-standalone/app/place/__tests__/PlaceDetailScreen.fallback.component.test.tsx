@@ -173,13 +173,23 @@ function makeLiving(): PlaceLivingResponse {
     crowdLevel:   null,
     weather:      null,
     directionsUrl: null,
+    // The real `LivingOfficialInfo` shape. This fixture used to carry
+    // `{ name, openingHours, admissionFee, officialTips }` — an older API shape
+    // in which NONE of the four fields PlaceOfficialInfoCard actually reads
+    // (address, hours, priceLevel, isOpenNow) was present. The card's
+    // `hasContent` check was therefore falsy for the wrong reason, and the test
+    // passed by accident. All-null keeps `hasContent` falsy honestly.
     officialInfo: {
-      name: 'Test Waterfall',
+      hours: null,
+      isOpenNow: null,
+      address: null,
       phone: null,
       website: null,
-      openingHours: null,
-      admissionFee: null,
-      officialTips: [],
+      priceLevel: null,
+      rating: null,
+      reviewCount: null,
+      bookingUrl: null,
+      attribution: [],
     },
     aiSummary:    null,
     buckets:      [],

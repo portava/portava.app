@@ -20,6 +20,7 @@
  */
 
 import React from 'react';
+import { View } from 'react-native';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
@@ -70,6 +71,7 @@ jest.mock('../../../hooks/useFollow', () => ({
 // Import router AFTER the mock is registered so we receive the mock instance.
 import { router } from 'expo-router';
 import { WatchItemOverlay } from '../WatchItemOverlay.tsx';
+import type { WatchItemOverlayProps } from '../WatchItemOverlay.tsx';
 import type { MediaFeedItem } from '../../../types/media.ts';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -105,15 +107,22 @@ function makeItem(overrides: Partial<MediaFeedItem> = {}): MediaFeedItem {
   };
 }
 
-const BASE_PROPS = {
+// Typed against the component's real props. Untyped, this object was missing the
+// five REQUIRED stamp props (stampGroupRef, stampVisualIsStamped,
+// stampVisualCount, stampButtonStyle, onStampPress) and carried three the
+// component does not accept at all (isLiked, likeCount, onLike). A JSX spread
+// skips excess-property checking, so neither half was ever reported.
+const BASE_PROPS: Omit<WatchItemOverlayProps, 'item'> = {
   currentUserId: 'other-user',
-  isLiked: false,
   isSaved: false,
-  likeCount: 10,
-  onLike: jest.fn(),
   onComment: jest.fn(),
   onSave: jest.fn(),
   onMore: jest.fn(),
+  stampGroupRef: React.createRef<View>(),
+  stampVisualIsStamped: false,
+  stampVisualCount: 0,
+  stampButtonStyle: undefined,
+  onStampPress: jest.fn(),
 };
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

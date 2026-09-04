@@ -149,6 +149,9 @@ afterEach(() => {
   _resetMapTelemetryForTests();
 });
 
+// `mode` is a MapMode ('LIVE' | 'PLACE_SELECTED' | 'COMPASS' | …). Every site
+// here used to pass 'explore', which is not a member — so nine assertions about
+// telemetry `mode` were made against a value the map can never emit.
 function openMap() {
   emitMapEvent('map_opened', {
     entry: 'tab',

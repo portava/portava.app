@@ -91,8 +91,9 @@ function read(relPath) {
 // is unrunnable changed, and this list must be re-read rather than assumed.
 // ─────────────────────────────────────────────────────────────────────────────
 const BASELINE = [
-  ['A', 'src/components/map/__tests__/MapCarousel.cardHeight.test.tsx'],
-  ['A', 'src/components/map/__tests__/MapEntityActionRow.test.tsx'],
+  // 2026-09-03: MapCarousel.cardHeight and MapEntityActionRow were renamed to
+  // *.component.test.tsx so jest actually runs them. Un-orphaning them exposed
+  // four real failures in MapEntityActionRow, which had never executed once.
   ['A', 'src/services/__tests__/livekitBridge.activeSpeakers.test.tsx'],
   // Class B, found when this guard was widened. Both live under src/test/,
   // which run-node-tests.mjs and jest each exclude wholesale.

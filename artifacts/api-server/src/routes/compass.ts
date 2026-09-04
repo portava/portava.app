@@ -3722,8 +3722,14 @@ router.get("/compass/recommendations", async (req, res) => {
           fil: "Filipino (Tagalog)",
         };
         const destLang = CITY_LANG[effectiveCity.toLowerCase()] ?? null;
+        // `preferredLanguages` — the field CompassProfileService actually
+        // returns (CompassProfileService.ts:237). This read was
+        // `(profile as any).preferred_languages`, so it was always undefined:
+        // `userLangs` was always EMPTY, which made `isEnglishUser` always true
+        // and made `!userLangs.has(destLang)` always true. The language-barrier
+        // nudge therefore ignored the user's actual languages completely.
         const userLangs = new Set(
-          ((profile as any).preferred_languages ?? []).map((l: string) => l.toLowerCase().split("-")[0]),
+          (profile.preferredLanguages ?? []).map((l: string) => l.toLowerCase().split("-")[0]),
         );
         const isEnglishUser = userLangs.size === 0 || userLangs.has("en");
         const isDestEnglish = !destLang || destLang === "en";
@@ -4093,7 +4099,11 @@ router.get("/compass/telegraph", async (req, res) => {
         city:        inner.city ?? inner.data?.city ?? cityContext ?? null,
         category:    inner.category ?? inner.data?.category ?? null,
         description: inner.description ?? inner.data?.description ?? inner.blurb ?? inner.data?.blurb ?? null,
-        imageUrl:    inner.imageUrl ?? inner.image_url ?? inner.data?.imageUrl ?? null,
+        // `data.headerImageUrl` is the key CompassItemHydrator actually writes
+        // (lines 254 and 308). Without it this chain never matched anything the
+        // hydrator produced, so telegraph cards were always imageless.
+        imageUrl:    inner.imageUrl ?? inner.image_url
+                       ?? inner.data?.headerImageUrl ?? inner.data?.imageUrl ?? null,
         // Include public-safe subset of data — no private/exact-location fields
         data: (() => {
           const d: Record<string, unknown> = {};

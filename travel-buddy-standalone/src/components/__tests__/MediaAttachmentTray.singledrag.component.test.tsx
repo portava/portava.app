@@ -31,6 +31,9 @@ function makeItem(id: string, overrides: Partial<MediaItem> = {}): MediaItem {
     uploadProgress: 0,
     uploadedUrl: null,
     uploadError: null,
+    // Required by MediaItem (`'format_unsupported' | null`). Absent from these
+    // defaults, so the factory's return type had it as `| undefined`.
+    uploadErrorKind: null,
     ...overrides,
   };
 }

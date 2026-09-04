@@ -109,17 +109,21 @@ import type { MediaGridItem } from '../../../types/media.ts';
 function makeGridItem(id: string): MediaGridItem {
   return {
     id,
-    mediaType: 'photo',
+    // 'image', not 'photo' — MediaGridItem.mediaType is 'image' | 'video'.
+    mediaType: 'image',
     thumbnailUrl: `https://example.com/${id}.jpg`,
     posterUrl: null,
     width: 1080,
     height: 1440,
     durationMs: null,
+    contentType: 'image/jpeg',
     creatorId: 'creator-1',
     locationLabel: null,
+    placeId: null,
     viewCount: 10,
+    qualifiedViewCount: 0,
     processingStatus: null,
-    createdAt: '2024-01-15T12:00:00Z',
+    videoUrl: null,
   };
 }
 

@@ -210,7 +210,7 @@ describe('CallContext outgoing ring lifecycle', () => {
     result.current.actions.startDirectCall({
       threadId: 't1', calleeId: 'u2',
       contextType: 'telegraph_dm', callType: 'voice',
-      peer: { id: 'u2', name: 'Bo', avatarUrl: null },
+      peer: { id: 'u2', name: 'Bo', handle: 'bo', avatarUrl: null },
     });
     await act(async () => {});
     expect(phase()).toBe('outgoing_ringing');
@@ -271,7 +271,7 @@ describe('CallContext outgoing ring lifecycle', () => {
     result.current.actions.startDirectCall({
       threadId: 't1', calleeId: 'u2',
       contextType: 'telegraph_dm', callType: 'voice',
-      peer: { id: 'u2', name: 'Bo', avatarUrl: null },
+      peer: { id: 'u2', name: 'Bo', handle: 'bo', avatarUrl: null },
     });
     await act(async () => {});
     expect(phase()).toBe('outgoing_ringing');
@@ -325,7 +325,7 @@ describe('CallContext outgoing ring lifecycle', () => {
     result.current.actions.startDirectCall({
       threadId: 't1', calleeId: 'u2',
       contextType: 'telegraph_dm', callType: 'voice',
-      peer: { id: 'u2', name: 'Bo', avatarUrl: null },
+      peer: { id: 'u2', name: 'Bo', handle: 'bo', avatarUrl: null },
     });
     await act(async () => {});
     expect(result.current.state.phase).toBe('outgoing_ringing');

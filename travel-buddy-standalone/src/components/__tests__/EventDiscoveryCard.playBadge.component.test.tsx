@@ -53,6 +53,7 @@ function makeEvent(overrides: {
     id:               'evt-1',
     hostId:           'host-1',
     hostName:         'Jane Host',
+    hostHandle:       'janehost',
     hostAvatarUrl:    null,
     title:            'Test Event',
     description:      null,
