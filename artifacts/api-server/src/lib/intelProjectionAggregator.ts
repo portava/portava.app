@@ -20,10 +20,11 @@
  * RUNTIME EFFECT: NONE on its own. The scheduler (lib/intelProjectionScheduler)
  * drives it, gated by intel_claim_projection_crowd.
  */
-import type { ProjectionInput } from "./intelProjection.js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ProjectionInput, InputClaimVersion, ProjectionCandidateLineage } from "./intelProjection.js";
 import type { ConfidenceComponents, ConfidencePenalties } from "./confidenceScore.js";
 import { PRIVACY_THRESHOLD_V1, PILOT_CLAIMABLE_MODERATION_STATES, CLAIM_TYPES } from "./intelContracts.js";
-import { getPolicy } from "./freshnessPolicy.js";
+import { getPolicy, freshnessFromRatio, mayExtendFreshness, isQualifyingExtensionSource } from "./freshnessPolicy.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { observationsHaveEligibleMediaEvidence } from "./media/mediaEvidenceLink.js";
 import { assessConflict, type ConflictAssessment, type ConflictVote } from "./intelConflict.js";
@@ -88,7 +89,10 @@ export function deriveComponents(ev: ClaimEvidence): ConfidenceComponents {
   const totalConfirmations = ev.agrees + ev.disagrees;
   return {
     presence: PRESENCE_STRENGTH[ev.maxPresenceLevel] ?? 0,
-    freshness: clamp01(1 - ev.ageRatio),
+    // Spec §9: max(0, 1 − (age/ttl)^1.5), not the linear 1 − age/ttl this used
+    // to apply. One curve, owned by lib/freshnessPolicy, replayed from the
+    // stored (age, ttl) by lib/intelReplay.
+    freshness: freshnessFromRatio(ev.ageRatio),
     // More distinct contributors ⇒ more independent corroboration; saturates at
     // the k-anonymity threshold so a barely-publishable aggregate is not also
     // treated as maximally independent.
@@ -118,6 +122,9 @@ export interface ClaimRow {
   value: unknown;
   status: string;
   observed_at: string;
+  /** 2274: bumped by trigger on every UPDATE; null for a row read without the column. */
+  updated_at?: string | null;
+  version?: number | null;
 }
 
 /**
@@ -126,7 +133,7 @@ export interface ClaimRow {
  * and source class, evidence presence, and freshness. All reads are fail-soft —
  * a query error yields a conservative (low) input, never a fabricated high one.
  */
-export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): Promise<ProjectionInput> {
+export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, now: Date): Promise<ProjectionInput> {
   const nowIso = now.toISOString();
 
   // Distinct fresh observers of (subject, claim_type) — the cohort the privacy
@@ -348,27 +355,81 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
     : false; // flag OFF ⇒ EXACTLY false (byte-identical to pre-seam main)
 
   // Freshness clock: the LATEST fresh, consented observation of this
-  // (subject, claim_type) — NOT the promoted anchor claim's frozen observed_at.
+  // (subject, claim_type) that the Table-16 family rule ALLOWS TO EXTEND it —
+  // NOT the promoted anchor claim's frozen observed_at, and not just any
+  // observation either.
+  //
   // The system promotion copies the first observation's observed_at into the
   // claim and never re-anchors, so deriving freshness from claim.observed_at made
   // every key go permanently dark one TTL after its first report even as fresh
   // observations kept arriving. Using the newest observation lets fresh reports
-  // keep a key live. Fall back to the claim's observed_at when no observation
-  // carries a timestamp (should not happen for a promoted claim).
-  const latestObservedAtMs = freshObs.reduce(
-    (max, o) => (o.observed_at ? Math.max(max, new Date(o.observed_at).getTime()) : max),
-    0,
+  // keep a key live — but before I1 ANY fresh observation did, whatever its
+  // source class or author, so one person re-tapping, a hearsay tip or a
+  // sponsored post kept any family alive. Table 16 col. 3 names, per family,
+  // what may extend the clock (lib/freshnessPolicy.mayExtendFreshness): the
+  // anchor observation itself always counts (it IS the claim's own time), and
+  // every other candidate must pass the family rule. A refused candidate still
+  // counts toward the cohort, the value plurality and the privacy gate above —
+  // it just does not make an old claim young. Fall back to the claim's frozen
+  // observed_at when nothing qualifies (the claim then ages honestly).
+  // `anchorMs` is the claim's frozen observed_at, declared with the hard-expiry
+  // ceiling above — the same never-re-anchored instant.
+  // The actor who anchored the claim, looked up over ALL admissible rows (the
+  // anchor may itself have expired out of the fresh set). Null when unknown.
+  const anchorRow = ((obs as any[]) ?? []).find(
+    (o) => o.observed_at && new Date(o.observed_at).getTime() === anchorMs,
   );
+  const anchorActorId: string | null = anchorRow?.actor_id ?? null;
+  // Distinct qualified reporters in the fresh cohort (transit's "2 qualified reports").
+  const qualifiedReporters = new Set(
+    freshObs.filter((o) => isQualifyingExtensionSource(o.source_class) && o.actor_id).map((o) => o.actor_id as string),
+  ).size;
+  let latestObservedAtMs = 0;
+  let freshnessExtenders = 0;
+  for (const o of freshObs) {
+    if (!o.observed_at) continue;
+    const at = new Date(o.observed_at).getTime();
+    if (!Number.isFinite(at)) continue;
+    if (at === anchorMs) { latestObservedAtMs = Math.max(latestObservedAtMs, at); continue; } // the anchor itself
+    const decision = mayExtendFreshness(claim.claim_type, {
+      sourceClass: o.source_class,
+      presenceLevel: o.presence_level,
+      actorId: o.actor_id ?? null,
+      observedAt: at,
+      anchorObservedAt: anchorMs,
+      anchorActorId,
+      qualifiedReporters,
+    });
+    if (!decision.allowed) continue;
+    freshnessExtenders++;
+    if (at > latestObservedAtMs) latestObservedAtMs = at;
+  }
   const effectiveObservedAt = latestObservedAtMs > 0
     ? new Date(latestObservedAtMs).toISOString()
     : claim.observed_at;
 
-  // Freshness: age of the freshest observation relative to the claim TTL.
+  // Freshness: age of the freshest QUALIFYING observation relative to the claim
+  // TTL. Both inputs travel with the ProjectionInput so the persisted replay
+  // record can recompute the curve, not just re-add weighted components.
   const policy = await getPolicy(sc, claim.claim_type);
   const ttl = policy?.ttlSeconds ?? 0;
   const ageSeconds = Math.max(0, (now.getTime() - new Date(effectiveObservedAt).getTime()) / 1000);
   const ageRatio = ttl > 0 ? ageSeconds / ttl : 1;
 
+  // Table 17 lineage: the exact claim row (and its version) this input came from.
+  const inputClaimVersions: InputClaimVersion[] = [{
+    claim_id: claim.id,
+    updated_at: claim.updated_at ?? null,
+    version: typeof claim.version === "number" ? claim.version : null,
+    status: claim.status,
+  }];
+  // §24 candidates before/after each constraint — counts only, no identities.
+  const candidateLineage: ProjectionCandidateLineage = {
+    observations_total: ((obs as any[]) ?? []).length,
+    after_freshness: freshObsAll.length,
+    after_consent: freshObs.length,
+    freshness_extenders: freshnessExtenders,
+  };
   // ── Material conflict (§10, AT-07) — lib/intelConflict ─────────────────────
   // One vote per consented actor (their most recent value), weighted by
   // INDEPENDENCE CLUSTER: a shared group_key is one cluster and carries a
@@ -429,6 +490,10 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
     sensitiveSubject: false,
     components: deriveComponents(evidence),
     penalties: derivePenalties(evidence),
+    // Replay inputs + lineage (I1).
+    freshness: { ageSeconds, ttlSeconds: ttl },
+    inputClaimVersions,
+    candidateLineage,
     // §10 conflict state, persisted on the snapshot (intel_state_snapshots.
     // conflict_state, migration 2275) so the read path can suppress the strong
     // Live label and surface "Reports differ" without recomputing the cohort.

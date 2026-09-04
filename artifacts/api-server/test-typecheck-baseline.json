@@ -6,7 +6,7 @@
     "baseline never sits above reality. Do not hand-edit."
   ],
   "project": "artifacts/api-server/tsconfig.test.json",
-  "total": 894,
+  "total": 880,
   "files": {
     "src/test/accessControl.test.ts": 1,
     "src/test/accountDeletionCascade.test.ts": 1,
@@ -60,14 +60,12 @@
     "src/test/hashtags.test.ts": 14,
     "src/test/hiddenGemCheckin.test.ts": 1,
     "src/test/hiddenGems.test.ts": 1,
-    "src/test/intelProjectionScheduler.test.ts": 2,
     "src/test/intelligence.test.ts": 6,
     "src/test/interactionPermissions.test.ts": 1,
     "src/test/inviteLinkPreview.test.ts": 5,
     "src/test/inviteUpdateFailure.test.ts": 6,
     "src/test/itineraryTimeline.test.ts": 16,
     "src/test/locateFriendsSession.test.ts": 1,
-    "src/test/mediaEvidenceSeam.test.ts": 12,
     "src/test/mediaNoveltyRanking.test.ts": 5,
     "src/test/mediaRankingSimulation.test.ts": 2,
     "src/test/meetupAgeRsvp.test.ts": 1,

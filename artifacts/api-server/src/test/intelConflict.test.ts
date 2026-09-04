@@ -15,6 +15,7 @@
  *     material-conflict penalty in — confidence can only go DOWN.
  *   • the serving cap only ever lowers a (confidence, band) pair.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -321,7 +322,7 @@ function makeDb(cfg: { observations: any[]; evidence?: any[]; flags?: Record<str
       };
       return b;
     },
-  };
+  } as unknown as SupabaseClient;
 }
 
 const obs = (actor: string, group: string | null, level: string, minutesAgo: number) => ({
