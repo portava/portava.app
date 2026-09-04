@@ -44,6 +44,7 @@
  * media — counts and claim ids only.
  */
 import { randomUUID } from "node:crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
 import {
@@ -207,7 +208,7 @@ export function buildReplayRecord(
  * writing anything.
  */
 export async function projectClaim(
-  sc: any,
+  sc: SupabaseClient,
   subjectId: string,
   input: ProjectionInput,
   opts: { zoneId?: string | null; now?: Date } = {},
@@ -292,7 +293,7 @@ export async function projectClaim(
  * untouched: a state we cannot replay is never served.
  */
 export async function projectAndStore(
-  sc: any,
+  sc: SupabaseClient,
   subjectId: string,
   inputs: readonly ProjectionInput[],
   opts: { zoneId?: string | null; now?: Date } = {},

@@ -19,6 +19,7 @@
  * Flag-gated (intel_claim_projection_crowd) and fail-closed; safe to start in
  * index.ts before the flag is on.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
@@ -47,7 +48,7 @@ export interface ProjectionPassResult {
  * for one nobody switched on. Idempotent — snapshots upsert on
  * (subject_id, zone_id, claim_type), so re-running only refreshes.
  */
-export async function runIntelProjectionPass(opts: { client?: any; now?: Date } = {}): Promise<ProjectionPassResult> {
+export async function runIntelProjectionPass(opts: { client?: SupabaseClient | null; now?: Date } = {}): Promise<ProjectionPassResult> {
   const base: ProjectionPassResult = { subjects: 0, written: 0, suppressed: 0, skipped: 0, skippedRun: true, reason: null };
   // Explicit null => "no client"; undefined => use the service client (house pattern).
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();

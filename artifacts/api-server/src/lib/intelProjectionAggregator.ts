@@ -20,6 +20,7 @@
  * RUNTIME EFFECT: NONE on its own. The scheduler (lib/intelProjectionScheduler)
  * drives it, gated by intel_claim_projection_crowd.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ProjectionInput, InputClaimVersion, ProjectionCandidateLineage } from "./intelProjection.js";
 import type { ConfidenceComponents, ConfidencePenalties } from "./confidenceScore.js";
 import { PRIVACY_THRESHOLD_V1, PILOT_CLAIMABLE_MODERATION_STATES, CLAIM_TYPES } from "./intelContracts.js";
@@ -130,7 +131,7 @@ export interface ClaimRow {
  * and source class, evidence presence, and freshness. All reads are fail-soft —
  * a query error yields a conservative (low) input, never a fabricated high one.
  */
-export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): Promise<ProjectionInput> {
+export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, now: Date): Promise<ProjectionInput> {
   const nowIso = now.toISOString();
 
   // Distinct fresh observers of (subject, claim_type) — the cohort the privacy

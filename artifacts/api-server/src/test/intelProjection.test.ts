@@ -7,6 +7,7 @@
  * auditable — but it can never be shown, because the reader filters on that
  * column in the query.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { projectClaim, projectAndStore, PROJECTION_ALGORITHM_VERSION } from "../lib/intelProjection.js";
@@ -42,7 +43,7 @@ function client(opts: { flag?: boolean; upsertError?: boolean; versionError?: bo
       }
       throw new Error(`unexpected table ${table}`);
     },
-  };
+  } as unknown as SupabaseClient & { upserts: typeof upserts; versions: typeof versions };
 }
 
 /** Enough distinct actors/groups to clear the privacy gate. */

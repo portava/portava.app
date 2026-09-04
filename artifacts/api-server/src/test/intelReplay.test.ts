@@ -7,6 +7,7 @@
  * production would persist — not a hand-built fixture asserting a shape the
  * writer never emits.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { projectAndStore, PROJECTION_ALGORITHM_VERSION } from "../lib/intelProjection.js";
@@ -47,7 +48,7 @@ function client(opts: { readError?: boolean } = {}) {
       }
       throw new Error(`unexpected table ${table}`);
     },
-  };
+  } as unknown as SupabaseClient & { versions: typeof versions };
 }
 
 // The freshness component is DERIVED from the same curve the aggregator uses

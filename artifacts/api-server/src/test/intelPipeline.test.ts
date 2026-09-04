@@ -15,6 +15,7 @@
  * suppressed aggregate is written (privacy_eligible=false) and the reader refuses
  * it. Neither side depends on the other being correct.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { projectAndStore } from "../lib/intelProjection.js";
@@ -99,7 +100,7 @@ function makeDb(flags: Record<string, boolean>) {
       }
       throw new Error(`unexpected table ${table}`);
     },
-  };
+  } as unknown as SupabaseClient & { snapshots: typeof snapshots; versions: typeof versions };
 }
 
 const strongEvidence = {
