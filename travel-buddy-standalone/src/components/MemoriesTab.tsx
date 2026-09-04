@@ -23,6 +23,7 @@ import { GlobalPlacePicker } from './selectors/GlobalPlacePicker.tsx';
 import { resolvePickedPlace } from '../lib/location/applyPickedPlace.ts';
 import type { Place } from '../lib/location/placeTypes.ts';
 import { color, space, radius, type as t, avatar, aspect } from '../theme/tokens.ts';
+import { groupMemoriesByTimeline } from '../lib/memoryTimeline.ts';
 
 const CATEGORIES = [
   { key: 'city', label: '🏙 City' },
@@ -767,10 +768,18 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
   const [expanded, setExpanded] = useState(false);
   const [editMemory, setEditMemory] = useState<PassportMemory | null>(null);
   const [viewVideoMemory, setViewVideoMemory] = useState<PassportMemory | null>(null);
+  // §15 Memories views. "All" is the existing grid; "Timeline" groups by month,
+  // newest first, so the Passport reads as a travel story (§15).
+  const [viewMode, setViewMode] = useState<'all' | 'timeline'>('all');
 
   React.useEffect(() => {
     setLocalMemories(memories);
   }, [memories]);
+
+  const timelineSections = React.useMemo(
+    () => groupMemoriesByTimeline(localMemories),
+    [localMemories],
+  );
 
   const handleVisibilityChange = useCallback(async (id: string, vis: MemoryVisibility) => {
     setLocalMemories((prev) => prev.map((m) => m.id === id ? { ...m, visibility: vis } : m));
@@ -902,11 +911,47 @@ export function MemoriesTab({ memories, loading, onReload, collapsed }: Memories
           </Pressable>
         </View>
       ) : (
-        <View style={mt.list}>
-          {localMemories.map((m) => (
-            <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} onViewVideo={handleViewVideo} />
-          ))}
-        </View>
+        <>
+          {/* §15 view switcher — All grid vs. chronological Timeline. */}
+          <View style={mt.viewSwitch} accessibilityRole="tablist">
+            {([['all', 'All'], ['timeline', 'Timeline']] as const).map(([mode, label]) => {
+              const active = viewMode === mode;
+              return (
+                <Pressable
+                  key={mode}
+                  style={[mt.viewSwitchBtn, active && mt.viewSwitchBtnActive]}
+                  onPress={() => setViewMode(mode)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  testID={`memories-view-${mode}`}
+                >
+                  <Text style={[mt.viewSwitchText, active && mt.viewSwitchTextActive]}>{label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {viewMode === 'all' ? (
+            <View style={mt.list} testID="memories-view-all-list">
+              {localMemories.map((m) => (
+                <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} onViewVideo={handleViewVideo} />
+              ))}
+            </View>
+          ) : (
+            <View style={mt.list} testID="memories-view-timeline-list">
+              {timelineSections.map((section) => (
+                <View key={section.key} style={mt.timelineSection}>
+                  <Text style={mt.timelineHeader} testID={`memories-timeline-header-${section.key}`}>
+                    {section.label}
+                  </Text>
+                  {section.memories.map((m) => (
+                    <MemoryCard key={m.id} memory={m} onVisibilityChange={handleVisibilityChange} onEdit={handleEdit} onViewVideo={handleViewVideo} />
+                  ))}
+                </View>
+              ))}
+            </View>
+          )}
+        </>
       )}
 
       <CreateMemoryModal
@@ -1064,6 +1109,19 @@ const mt = StyleSheet.create({
   addBtnLarge: { marginTop: space.sm, borderWidth: 1, borderColor: color.haze, borderRadius: radius.pill, paddingVertical: space.md, paddingHorizontal: space.xl },
   addBtnLargeText: { ...t.bodyStrong, color: color.ink },
   list: { paddingBottom: space.xxxl },
+  viewSwitch: {
+    flexDirection: 'row', gap: 4, alignSelf: 'flex-start',
+    backgroundColor: color.haze, borderRadius: radius.pill, padding: 3, marginBottom: space.md,
+  },
+  viewSwitchBtn: { paddingHorizontal: 14, paddingVertical: 6, borderRadius: radius.pill },
+  viewSwitchBtnActive: { backgroundColor: color.paper },
+  viewSwitchText: { ...t.small, color: color.mute, fontWeight: '600' },
+  viewSwitchTextActive: { color: color.ink, fontWeight: '700' },
+  timelineSection: { marginBottom: space.md },
+  timelineHeader: {
+    ...t.small, color: color.mute, fontWeight: '700',
+    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: space.sm,
+  },
   collapsedWrap: {
     marginHorizontal: space.lg, marginTop: space.md,
     borderRadius: radius.md, borderWidth: 1, borderColor: color.haze,
