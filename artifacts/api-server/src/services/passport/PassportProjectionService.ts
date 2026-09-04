@@ -27,6 +27,7 @@ import {
 } from "../interactionPermissions.js";
 import type { CallerContext } from "./PassportPrivacyGuard.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyGuard.js";
+import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
 import { buildUnifiedStamps, type UnifiedStamp } from "./UnifiedStampService.js";
 import { loadMemories } from "./PassportMemoryService.js";
@@ -458,6 +459,21 @@ export interface OwnerTrustFacts {
   };
 }
 
+/**
+ * Map the owner's live restriction state (the same authoritative read every
+ * action gate uses) onto the capability facts. A degraded read keeps
+ * getRestrictionState's fail-closed posture on hosting/messaging, so a
+ * transient error can never re-light a chip the gate itself would refuse.
+ */
+export function ownerRestrictionsFromState(state: RestrictionState): OwnerTrustFacts["restrictions"] {
+  return {
+    hosting: !state.canHost,
+    privatePlan: !state.canJoinPrivatePlans,
+    messaging: !state.canMessage,
+    locationPlan: !state.canJoinLocationPlans,
+  };
+}
+
 const LEVEL_RANK: Record<string, number> = {
   new_traveler: 0,
   building_trust: 1,
@@ -534,12 +550,58 @@ export function toCallerContext(context: PassportViewerContext, permissions: Vie
   return "public";
 }
 
-function buildIdentity(profile: Record<string, any>, permissions: ViewerPermissions): PassportIdentity {
+/**
+ * The owner's TABLE 24 location opt-outs (§22) from profile_privacy_settings.
+ * Only the columns that exist there are read — nothing is invented.
+ */
+export interface OwnerFieldVisibility {
+  /** profile_privacy_settings.show_home_country — gates identity.homeCountry (+ homeBase). */
+  showHomeCountry: boolean;
+  /** profile_privacy_settings.show_current_city — gates travelerState.city/label. */
+  showCurrentCity: boolean;
+}
+
+const OWNER_FIELDS_HIDDEN: OwnerFieldVisibility = { showHomeCountry: false, showCurrentCity: false };
+
+/**
+ * Load the owner's location opt-outs. The model is show-by-default, so an
+ * absent settings row shows; but a READ ERROR fails CLOSED (hide), since these
+ * guard the known location-after-opt-out privacy class (same posture as the
+ * public-passport reader in routes/follows.ts). The self view never consults
+ * the result — the owner always sees their own data.
+ */
+async function loadOwnerFieldVisibility(sc: SupabaseClient, userId: string): Promise<OwnerFieldVisibility> {
+  try {
+    const { data, error } = await sc
+      .from("profile_privacy_settings")
+      .select("show_home_country, show_current_city")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) return OWNER_FIELDS_HIDDEN;
+    const row = (data as any) ?? null;
+    return {
+      showHomeCountry: row?.show_home_country !== false,
+      showCurrentCity: row?.show_current_city !== false,
+    };
+  } catch {
+    return OWNER_FIELDS_HIDDEN;
+  }
+}
+
+function buildIdentity(
+  profile: Record<string, any>,
+  permissions: ViewerPermissions,
+  visibility: OwnerFieldVisibility,
+): PassportIdentity {
   const isSelf = permissions.relationshipLabel === "self";
   const showAvatar = isSelf || profile.show_profile_picture_publicly !== false;
-  // Home country / base are user-controlled (TABLE 24): shown to self and to
-  // full-profile viewers; coarse country may show publicly, home base does not.
-  const showHomeBase = isSelf || permissions.canViewFullProfile;
+  // Home country / base are user-controlled (TABLE 24, §22). The owner always
+  // sees their own. A non-owner sees the coarse country only while
+  // show_home_country is on, and the home base only with a full-profile
+  // relationship AND that same opt-in — a home base is a strict refinement of
+  // the country ("Hanoi" discloses the country the owner just hid).
+  const showHomeCountry = isSelf || visibility.showHomeCountry;
+  const showHomeBase = isSelf || (permissions.canViewFullProfile && visibility.showHomeCountry);
   return {
     userId: profile.id,
     name: profile.display_name ?? profile.name ?? null,
@@ -548,7 +610,7 @@ function buildIdentity(profile: Record<string, any>, permissions: ViewerPermissi
     coverUrl: profile.cover_photo_url ?? null,
     verified: profile.verified === true || Boolean(profile.verified_at),
     verificationLevel: profile.verification_level ?? null,
-    homeCountry: profile.home_country ?? null,
+    homeCountry: showHomeCountry ? (profile.home_country ?? null) : null,
     homeBase: showHomeBase ? (profile.home_city ?? null) : null,
     isOfficial: profile.is_official === true,
   };
@@ -579,9 +641,14 @@ function buildTravelerState(
   quick: { status: string; expiresAt: string | null } | null,
   activeTripCity: string | null,
   permissions: ViewerPermissions,
+  visibility: OwnerFieldVisibility,
 ): TravelerState {
   const isSelf = permissions.relationshipLabel === "self";
-  const showCity = isSelf || permissions.canSeeLocationContext;
+  // A non-owner needs BOTH a relationship that may see location context AND
+  // the owner's show_current_city opt-in (TABLE 24, §22) — whichever source
+  // the city came from (profile.current_city or the active trip), it is the
+  // owner's current city.
+  const showCity = isSelf || (permissions.canSeeLocationContext && visibility.showCurrentCity);
   const currentCity = norm(profile.current_city);
   const homeCity = norm(profile.home_city);
 
@@ -908,14 +975,18 @@ export async function buildPassportProjection(
   }
   if (!profile) return null;
 
-  // 2. Viewer context + permissions (server-side authority).
+  // 2. Viewer context + permissions (server-side authority), alongside the
+  //    owner's TABLE 24 location opt-outs (the self view ignores them).
   const resolver = opts.resolveViewerContext ?? resolvePassportViewerContext;
-  const resolution = await resolver(sc, userId, viewerId);
+  const [resolution, ownerVisibility] = await Promise.all([
+    resolver(sc, userId, viewerId),
+    loadOwnerFieldVisibility(sc, userId),
+  ]);
   const { context, permissions } = resolution;
   const isSelf = context === "self";
   const callerCtx = toCallerContext(context, permissions);
 
-  const identity = buildIdentity(profile, permissions);
+  const identity = buildIdentity(profile, permissions, ownerVisibility);
 
   // 3. Blocked / unavailable → minimal restricted card (§4/§22/§30).
   if (permissions.isBlocked || permissions.isUnavailable) {
@@ -940,12 +1011,15 @@ export async function buildPassportProjection(
   }
 
   // 4. Shared canonical reads (in parallel).
-  const [statsRaw, tripCount, unified, quick, prefs] = await Promise.all([
+  const [statsRaw, tripCount, unified, quick, prefs, restrictionState] = await Promise.all([
     buildStats(sc, userId).catch(() => ({ countries: 0, cities: 0, hiddenGemStamps: 0, totalStamps: 0 } as any)),
     countUserTrips(sc, userId).catch(() => ({ count: 0 })),
     buildUnifiedStamps(sc, userId).catch(() => ({ stamps: [] as UnifiedStamp[], count: 0 } as any)),
     loadQuickStatus(sc, userId),
     loadVisibilityPrefs(sc, userId),
+    // The owner's ACTIVE trust restrictions — never throws (degraded reads
+    // resolve fail-closed on hosting/messaging inside the service).
+    getRestrictionState(sc, userId),
   ]);
 
   const stats: TravelStats = {
@@ -957,7 +1031,7 @@ export async function buildPassportProjection(
 
   // 5. Traveler state + availability + intent (availability/intent gated).
   const activeTripCity = await loadActiveTripCity(sc, userId);
-  const travelerState = buildTravelerState(profile, quick, activeTripCity, permissions);
+  const travelerState = buildTravelerState(profile, quick, activeTripCity, permissions, ownerVisibility);
 
   let availability: AvailabilityProjection | undefined;
   let intent: IntentProjection | undefined;
@@ -1038,9 +1112,11 @@ export async function buildPassportProjection(
     publicLevel: trust.publicLevel,
     verified: identity.verified,
     buddyVerified: Boolean(profile.buddy_verified_at),
-    // Restrictions are already reflected in the safe summary; we conservatively
-    // treat "no exposed restriction" as unrestricted for capability display.
-    restrictions: { hosting: false, privatePlan: false, messaging: false, locationPlan: false },
+    // The owner's live restriction state (TABLE 14): a restricted owner must
+    // not display a chip ("Host trips", "Share crew location", ...) for an
+    // action the gates would refuse. The safe trust summary flattens these to
+    // messages, so the structured read is threaded here explicitly.
+    restrictions: ownerRestrictionsFromState(restrictionState),
   });
   const capabilities: PassportActionCapabilities = {
     owner: ownerCaps,
