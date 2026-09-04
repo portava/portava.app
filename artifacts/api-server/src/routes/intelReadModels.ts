@@ -24,10 +24,11 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { liveLabelsServable } from "../lib/liveClaimRead.js";
+import { liveLabelsServable, resolvePlaceIntelState } from "../lib/liveClaimRead.js";
 import { confidenceBand, mayCountAsConsensus } from "../lib/intelContracts.js";
 import { sourceCountBucket } from "../lib/liveClaimRead.js";
 import { computeNeighborhoodPulse, type PulseSnapshotInput } from "../lib/intelPulse.js";
+import { shouldPrompt, PROMPT_THROTTLE_WINDOW_MS, type RecentObservation } from "../lib/intelThrottle.js";
 import { logger } from "../lib/logger.js";
 
 const router = Router();
@@ -185,6 +186,61 @@ router.get("/v1/neighborhoods/:id/pulse", asyncHandler(async (req, res) => {
       // Distribution only when exposable — never a per-subject or below-threshold row.
       levels: pulse.exposable ? pulse.levels : {},
     },
+  });
+}));
+
+// ── GET /v1/intel/prompt-eligibility ──────────────────────────────────────────
+// The PRODUCTION caller of lib/intelThrottle.shouldPrompt for the server-known
+// signals (spec §6): the ≤1-unsolicited-prompt-per-45-min throttle (derived from
+// this actor's recent intel_observations for the subject) and the fresh-qualifying-
+// evidence gate (a live/emerging claim ⇒ no need to prompt). The CLIENT folds this
+// with its own local gates — pause (session/category/permanent), Safe Return /
+// emergency, and its own 45-minute throttle. Read-only; never writes an observation.
+router.get("/v1/intel/prompt-eligibility", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const subjectId = z.string().uuid().safeParse(req.query.subjectId);
+  if (!subjectId.success) return sendError(res, "invalid_payload", "subjectId (uuid) required");
+  const followupRequired = req.query.followupRequired === "true" || req.query.followupRequired === "1";
+  const sc = auth.client ?? getServiceClient();
+  if (!sc) return sendError(res, "server_not_configured", "no client");
+
+  const now = new Date();
+  const windowIso = new Date(now.getTime() - PROMPT_THROTTLE_WINDOW_MS).toISOString();
+
+  // This actor's recent observations for this subject — the "recent prompt" signal.
+  const { data: obsData, error: obsErr } = await sc
+    .from("intel_observations")
+    .select("subject_id, observed_at")
+    .eq("subject_id", subjectId.data)
+    .eq("actor_id", auth.user.id)
+    .gte("observed_at", windowIso);
+  if (obsErr) { logger.warn({ err: obsErr }, "prompt-eligibility: observation read failed"); return sendError(res, "db_error", "observation read failed"); }
+  const recentObservations: RecentObservation[] = ((obsData as any[]) ?? []).map((r) => ({
+    subjectId: String(r.subject_id),
+    observedAt: String(r.observed_at),
+  }));
+
+  // Fresh qualifying evidence = a live/emerging claim exists (typical/unknown do NOT
+  // count — a prompt is exactly how a stale/absent live family gets refreshed).
+  const resolved = await resolvePlaceIntelState(sc, subjectId.data, { now });
+  const hasFreshQualifyingEvidence = resolved.state === "live" || resolved.state === "emerging";
+
+  const decision = shouldPrompt({
+    subjectId: subjectId.data,
+    recentObservations,
+    hasFreshQualifyingEvidence,
+    now,
+    state: { followupRequired },
+  });
+
+  res.json({
+    schema_version: SCHEMA_VERSION,
+    subject_id: subjectId.data,
+    prompt: decision.prompt,
+    reason: decision.reason,
+    throttle_window_ms: PROMPT_THROTTLE_WINDOW_MS,
+    generated_at: now.toISOString(),
   });
 }));
 
