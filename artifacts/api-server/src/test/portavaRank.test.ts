@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 import {
   rankCandidates, scoreCandidate, recencyScore, actionabilityScore,
   availabilityFitScore, socialProofScore, diversify, DEFAULT_WEIGHTS,
-  PLACE_ENGAGEMENT_BOOST, PLACE_ENGAGEMENT_BOOST_THRESHOLD,
-  type RankCandidate, type ViewerContext,
+  PLACE_ENGAGEMENT_BOOST, PLACE_ENGAGEMENT_BOOST_THRESHOLD, LOCAL_MOMENTUM_MAX_CONTRIBUTION,
+  type RankCandidate, type ViewerContext, type RankWeights,
 } from '../lib/portavaRank';
 
 const NOW = new Date('2026-07-18T12:00:00Z').getTime();
@@ -220,5 +220,52 @@ describe('expanded candidate pool smoke tests', () => {
     const s1 = scoreCandidate(withCap, ctx()).score;
     const s2 = scoreCandidate(noCap, ctx()).score;
     assert.ok(s1 > s2, 'open plan must score higher than full plan');
+  });
+});
+
+describe('local momentum — a CAPPED modifier (ROADMAP step 7)', () => {
+  const gem = (id: string, over: Partial<RankCandidate> = {}): RankCandidate => ({ id, kind: 'gem', ...over });
+
+  it("absent map, absent id, or a non-finite / negative value ⇒ feature 0 (today's behaviour)", () => {
+    assert.equal(scoreCandidate(gem('a'), ctx()).features.localMomentum, 0);
+    assert.equal(scoreCandidate(gem('a'), ctx({ localMomentum: { b: 1 } })).features.localMomentum, 0);
+    assert.equal(scoreCandidate(gem('a'), ctx({ localMomentum: { a: Number.NaN } })).features.localMomentum, 0);
+    assert.equal(scoreCandidate(gem('a'), ctx({ localMomentum: { a: -3 } })).features.localMomentum, 0);
+  });
+
+  it('THE CAP BINDS: no weight table can push the contribution past LOCAL_MOMENTUM_MAX_CONTRIBUTION', () => {
+    const hot = ctx({ localMomentum: { a: 1 } });
+    const loud: RankWeights = { ...DEFAULT_WEIGHTS, localMomentum: 10 };
+    assert.equal(scoreCandidate(gem('a'), hot, loud).features.localMomentum, LOCAL_MOMENTUM_MAX_CONTRIBUTION);
+    // an over-range input is clamped to 1 BEFORE the weight, so the cap still holds
+    assert.equal(
+      scoreCandidate(gem('a'), ctx({ localMomentum: { a: 50 } }), loud).features.localMomentum,
+      LOCAL_MOMENTUM_MAX_CONTRIBUTION,
+    );
+  });
+
+  it('the default weight IS the cap, and partial momentum scales linearly below it', () => {
+    assert.equal(DEFAULT_WEIGHTS.localMomentum, LOCAL_MOMENTUM_MAX_CONTRIBUTION);
+    const half = scoreCandidate(gem('a'), ctx({ localMomentum: { a: 0.5 } })).features.localMomentum;
+    assert.ok(Math.abs(half - LOCAL_MOMENTUM_MAX_CONTRIBUTION / 2) < 1e-9);
+  });
+
+  it('the cap is below every taste signal: saturated momentum cannot beat ONE interest tag', () => {
+    assert.ok(LOCAL_MOMENTUM_MAX_CONTRIBUTION < DEFAULT_WEIGHTS.interestTag);
+    assert.ok(LOCAL_MOMENTUM_MAX_CONTRIBUTION < DEFAULT_WEIGHTS.categoryAffinity);
+    assert.ok(LOCAL_MOMENTUM_MAX_CONTRIBUTION < DEFAULT_WEIGHTS.cityMatch);
+    const viewer = ctx({ interestTags: new Set(['coffee']), localMomentum: { hot: 1 } });
+    const liked = scoreCandidate(gem('liked', { tags: ['coffee'] }), viewer);
+    const hot   = scoreCandidate(gem('hot',   { tags: ['other'] }),  viewer);
+    assert.ok(hot.features.localMomentum > 0);
+    assert.ok(liked.score > hot.score, `taste must beat momentum: liked=${liked.score} hot=${hot.score}`);
+  });
+
+  it('is a tie-breaker between two places the viewer rates alike — by exactly the cap', () => {
+    const viewer = ctx({ localMomentum: { hot: 1 } });
+    const hot  = scoreCandidate(gem('hot'), viewer);
+    const cold = scoreCandidate(gem('cold'), viewer);
+    assert.ok(hot.score > cold.score);
+    assert.ok(Math.abs((hot.score - cold.score) - LOCAL_MOMENTUM_MAX_CONTRIBUTION) < 1e-9);
   });
 });
