@@ -174,6 +174,59 @@ async function batchPlaces(sc: any, ids: string[]): Promise<Map<string, PublicPl
   return out;
 }
 
+/**
+ * Batch-load the experience time (spec §16 `experienceAt`) for a set of entities
+ * from the canonical media layer. `media_assets.captured_at` (migration 2250) is
+ * WHEN the media was captured — the "Happened last night · 10:15 PM" clock,
+ * distinct from `publishedAt`. The asset is linked to its entity through the
+ * canonical §6.1 `media_attachments` layer (entity_type + entity_id), so this is
+ * the same read model the Media v2 system owns — the Wall does not invent a
+ * second one.
+ *
+ * Per entity we take the COVER asset's captured_at when one is marked, else the
+ * lowest-position asset's; a null captured_at contributes nothing (the entity
+ * simply has no experience time, which is honest — most rows will). Returns a
+ * Map keyed by entity_id; fail-soft to an empty map so a media-layer hiccup only
+ * costs the `experienceAt` annotation, never the object.
+ */
+async function loadCapturedAtByEntity(
+  sc: any,
+  entityType: "postcard" | "shared_moment" | "post",
+  entityIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(entityIds)].filter(Boolean);
+  if (!sc || unique.length === 0) return out;
+  try {
+    const { data } = await sc
+      .from("media_attachments")
+      .select("entity_id, is_cover, position, media_assets(captured_at)")
+      .eq("entity_type", entityType)
+      .in("entity_id", unique.slice(0, 500));
+    // Best attachment per entity: cover wins, else lowest position. Only an
+    // attachment whose asset actually carries a captured_at contributes.
+    const best = new Map<string, { cover: boolean; position: number; capturedAt: string }>();
+    for (const r of (data as any[]) ?? []) {
+      const eid = r?.entity_id ? String(r.entity_id) : "";
+      if (!eid) continue;
+      const asset = Array.isArray(r.media_assets) ? r.media_assets[0] : r.media_assets;
+      const capturedAt = typeof asset?.captured_at === "string" ? asset.captured_at : null;
+      if (!capturedAt) continue;
+      const cover = r.is_cover === true;
+      const position = typeof r.position === "number" ? r.position : 0;
+      const cur = best.get(eid);
+      // Prefer a cover; among equals prefer the earlier position.
+      if (!cur || (cover && !cur.cover) || (cover === cur.cover && position < cur.position)) {
+        best.set(eid, { cover, position, capturedAt });
+      }
+    }
+    for (const [eid, v] of best) out.set(eid, v.capturedAt);
+  } catch (err) {
+    logger.warn({ err, entityType }, "captured_at (experienceAt) read failed — no experience time");
+  }
+  return out;
+}
+
 function actorFrom(prof: AuthorProfile | undefined, authorId: string): PublicActorRef | undefined {
   if (!prof) return undefined;
   return {
@@ -282,10 +335,14 @@ export async function loadPostcardCandidates(
 
   // 1. The discriminator: live passport_postcards rows for followed authors.
   const postcardPostIds = new Set<string>();
+  // post_id → passport_postcard id, so the postcard's media (and its capture
+  // time) can be looked up through the canonical §6.1 attachment layer, which is
+  // keyed by the postcard entity id, not the post id (spec §16).
+  const postcardIdByPostId = new Map<string, string>();
   try {
     let dq = sc
       .from("passport_postcards")
-      .select("post_id, user_id, status, deleted_at, created_at")
+      .select("id, post_id, user_id, status, deleted_at, created_at")
       .in("user_id", followed.slice(0, 500))
       .eq("status", "active")
       .order("created_at", { ascending: false })
@@ -299,7 +356,11 @@ export async function loadPostcardCandidates(
     // Re-checked in memory (status + tombstone) so a row fed past the query
     // filter cannot resurrect a hidden/reported/deleted postcard on the Wall.
     for (const r of (data as any[]) ?? []) {
-      if (isLivePostcardRow(r) && r.post_id) postcardPostIds.add(String(r.post_id));
+      if (isLivePostcardRow(r) && r.post_id) {
+        const pid = String(r.post_id);
+        postcardPostIds.add(pid);
+        if (r.id) postcardIdByPostId.set(pid, String(r.id));
+      }
     }
   } catch (err) {
     logger.warn({ err }, "postcard discriminator read failed — degrading to no postcards");
@@ -362,6 +423,14 @@ export async function loadPostcardCandidates(
     logger.warn({ err }, "postcard media batch read failed — postcards project without media");
   }
 
+  // Experience time (spec §16): the postcard cover media's capture instant, read
+  // through the canonical attachment layer keyed by the postcard entity id.
+  const capturedByPostcardId = await loadCapturedAtByEntity(
+    sc,
+    "postcard",
+    [...postcardIdByPostId.values()],
+  );
+
   const [profiles, places] = await Promise.all([
     batchProfiles(sc, authorIds),
     batchPlaces(sc, placeIds),
@@ -374,6 +443,9 @@ export async function loadPostcardCandidates(
     const prof = profiles.get(authorId);
     const placeRef = r.canonical_place_id ? places.get(String(r.canonical_place_id)) ?? null : null;
     const media = mediaByPost.get(id) ?? [];
+    const publishedAt = String(r.published_at ?? r.created_at);
+    const postcardId = postcardIdByPostId.get(id);
+    const capturedAt = postcardId ? capturedByPostcardId.get(postcardId) : undefined;
 
     out.candidates.push({
       objectType: "postcard",
@@ -381,7 +453,10 @@ export async function loadPostcardCandidates(
       authorId,
       visibility: r.visibility ?? null,
       tripId: r.trip_id ?? null,
-      publishedAt: String(r.published_at ?? r.created_at),
+      publishedAt,
+      // Only when it DIFFERS from publishedAt — a postcard published at the same
+      // instant it was captured carries one clock, not two (spec §16).
+      experienceAt: capturedAt && capturedAt !== publishedAt ? capturedAt : undefined,
       text: r.content ?? null,
       place: placeRef,
       actor: actorFrom(prof, authorId),
@@ -600,9 +675,13 @@ export async function loadSharedMomentCandidates(
   }
 
   const participantIds = [...membersByMoment.values()].flat();
-  const [profiles, places] = await Promise.all([
+  const [profiles, places, capturedByMomentId] = await Promise.all([
     batchProfiles(sc, [...ownerIds, ...participantIds]),
     batchPlaces(sc, placeIds),
+    // Experience time (spec §16): a Shared Moment is a "discovered social memory"
+    // — its media's capture instant is exactly the "happened" clock, read through
+    // the canonical attachment layer keyed by the moment entity id.
+    loadCapturedAtByEntity(sc, "shared_moment", momentIds),
   ]);
 
   const out = emptyLoaded();
@@ -613,12 +692,15 @@ export async function loadSharedMomentCandidates(
     const participants = (membersByMoment.get(id) ?? [])
       .map((uid) => actorFrom(profiles.get(uid), uid))
       .filter((a): a is PublicActorRef => !!a);
+    const publishedAt = String(m.created_at ?? new Date().toISOString());
+    const capturedAt = capturedByMomentId.get(id);
 
     out.candidates.push({
       objectType: "shared_moment",
       canonicalObjectId: id,
       authorId: ownerId,
-      publishedAt: String(m.created_at ?? new Date().toISOString()),
+      publishedAt,
+      experienceAt: capturedAt && capturedAt !== publishedAt ? capturedAt : undefined,
       text: m.title ?? null,
       place: placeRef,
       actor: actorFrom(profiles.get(ownerId), ownerId),

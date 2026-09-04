@@ -590,3 +590,83 @@ describe("mergeLoadedCandidates", () => {
     assert.ok(!byId.has("p2"), "the private post from another author is gated out");
   });
 });
+
+// ── experienceAt from media_assets.captured_at (spec §16) ────────────────────
+
+describe("experienceAt — the second clock, from media_assets.captured_at (spec §16)", () => {
+  const FOLLOWED_E: LoaderViewer = { viewerId: VIEWER, followedCreatorIds: new Set(["author-1"]) };
+  const PUBLISHED = "2026-09-05T12:00:00Z";
+  const CAPTURED = "2026-09-04T22:15:00Z"; // "Happened last night · 10:15 PM"
+
+  const POST = {
+    id: "pc-e", author_id: "author-1", trip_id: null, content: "lanterns", visibility: "public",
+    status: "active", post_status: "published", created_at: PUBLISHED, published_at: PUBLISHED,
+    canonical_place_id: null, has_video: false, media_count: 1, category: "culture",
+    location_city: "Hoi An", location_country: "VN", save_count: 0,
+  };
+  const PPC = { id: "ppc-e", post_id: "pc-e", user_id: "author-1", status: "active", deleted_at: null, created_at: PUBLISHED };
+  const PROFILES_E = [{ id: "author-1", display_name: "Aya", username: "aya", avatar_url: null, account_status: "active" }];
+
+  /** A fake whose media_attachments read honours entity_type + entity_id and
+   *  embeds the joined media_assets(captured_at), like PostgREST. */
+  function client(attachments: any[]) {
+    return tableClient({
+      posts: POST ? [POST] : [],
+      passport_postcards: [PPC],
+      post_media: [],
+      profiles: PROFILES_E,
+      places: [],
+      media_attachments: (ctx) => {
+        if (ctx.eqs["entity_type"] !== "postcard") return [];
+        const ids: string[] = ctx.ins["entity_id"] ?? [];
+        return attachments.filter((a) => ids.includes(a.entity_id));
+      },
+    });
+  }
+
+  it("sets experienceAt to the cover asset's captured_at when it differs from publishedAt", async () => {
+    const loaded = await loadPostcardCandidates(
+      client([{ entity_id: "ppc-e", is_cover: true, position: 0, media_assets: { captured_at: CAPTURED } }]),
+      "for_you",
+      FOLLOWED_E,
+    );
+    assert.equal(loaded.candidates.length, 1);
+    assert.equal(loaded.candidates[0].publishedAt, PUBLISHED);
+    assert.equal(loaded.candidates[0].experienceAt, CAPTURED, "the capture instant becomes the experience clock");
+  });
+
+  it("prefers the COVER attachment's captured_at over a non-cover one", async () => {
+    const loaded = await loadPostcardCandidates(
+      client([
+        { entity_id: "ppc-e", is_cover: false, position: 0, media_assets: { captured_at: "2026-01-01T00:00:00Z" } },
+        { entity_id: "ppc-e", is_cover: true, position: 5, media_assets: { captured_at: CAPTURED } },
+      ]),
+      "for_you",
+      FOLLOWED_E,
+    );
+    assert.equal(loaded.candidates[0].experienceAt, CAPTURED, "cover wins even at a later position");
+  });
+
+  it("leaves experienceAt undefined when captured_at equals publishedAt (one clock, not two)", async () => {
+    const loaded = await loadPostcardCandidates(
+      client([{ entity_id: "ppc-e", is_cover: true, position: 0, media_assets: { captured_at: PUBLISHED } }]),
+      "for_you",
+      FOLLOWED_E,
+    );
+    assert.equal(loaded.candidates[0].experienceAt, undefined);
+  });
+
+  it("leaves experienceAt undefined when the asset carries no captured_at (honest absence)", async () => {
+    const loaded = await loadPostcardCandidates(
+      client([{ entity_id: "ppc-e", is_cover: true, position: 0, media_assets: { captured_at: null } }]),
+      "for_you",
+      FOLLOWED_E,
+    );
+    assert.equal(loaded.candidates[0].experienceAt, undefined);
+  });
+
+  it("leaves experienceAt undefined when there is no attachment at all", async () => {
+    const loaded = await loadPostcardCandidates(client([]), "for_you", FOLLOWED_E);
+    assert.equal(loaded.candidates[0].experienceAt, undefined);
+  });
+});
