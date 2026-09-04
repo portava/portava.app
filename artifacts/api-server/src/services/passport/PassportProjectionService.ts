@@ -640,6 +640,7 @@ function buildTravelerState(
   profile: Record<string, any>,
   quick: { status: string; expiresAt: string | null } | null,
   activeTripCity: string | null,
+  activity: TravelerActivity,
   permissions: ViewerPermissions,
   visibility: OwnerFieldVisibility,
 ): TravelerState {
@@ -654,9 +655,33 @@ function buildTravelerState(
 
   let state: TravelerStateKind = "home";
   let city: string | null = null;
+  // §5: every temporary state carries validFrom + expiration. Defaults null;
+  // each derived state below sets its own bounds from the underlying record.
+  let validFrom: string | null = null;
+  let expiresAt: string | null = quick?.expiresAt ?? null;
 
+  // Precedence (most specific/actionable first). An explicit "busy" always wins
+  // — the traveler has said not to bother them, so no activity overrides it.
+  // Otherwise the concrete real-time activities (§5) rank above the coarse
+  // traveling / open-to-plans reads, which rank above the default home.
   if (quick?.status === "busy") {
     state = "unavailable";
+  } else if (activity.atEvent) {
+    state = "at_event";
+    // Broad event city is ordinary Passport context, still gated below.
+    city = activity.atEvent.city;
+    validFrom = activity.atEvent.startsAt;
+    expiresAt = activity.atEvent.endsAt;
+  } else if (activity.withCrew) {
+    state = "with_crew";
+    // Crew session location is purpose-bound Presence (§23/§25) — never a city here.
+    validFrom = activity.withCrew.startedAt;
+    expiresAt = activity.withCrew.expiresAt;
+  } else if (activity.exploring) {
+    state = "exploring";
+    // Trip-stop coordinates are purpose-bound Presence (§23/§25) — never a city here.
+    validFrom = activity.exploring.arrivedAt;
+    expiresAt = activity.exploring.departsAt;
   } else if (activeTripCity) {
     state = "traveling";
     city = activeTripCity;
@@ -679,7 +704,7 @@ function buildTravelerState(
     traveling: displayCity ? `Traveling · ${displayCity}` : "Traveling",
     exploring: "Exploring",
     open_to_plans: "Open to Plans",
-    at_event: "At Event",
+    at_event: displayCity ? `At Event · ${displayCity}` : "At Event",
     with_crew: "With Crew",
     unavailable: "Unavailable",
   };
@@ -688,8 +713,8 @@ function buildTravelerState(
     state,
     label: labels[state],
     city: displayCity,
-    validFrom: null,
-    expiresAt: quick?.expiresAt ?? null,
+    validFrom,
+    expiresAt,
   };
 }
 
@@ -912,6 +937,148 @@ async function loadActiveTripCity(sc: SupabaseClient, userId: string): Promise<s
   return null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-time traveler-state signals (§5): exploring / at_event / with_crew.
+//
+// §5 requires that Passport separate PERMANENT identity from TEMPORARY traveler
+// state, and that every temporary state carry `validFrom` + expiration semantics.
+// buildTravelerState (below) previously only ever produced home / traveling /
+// open_to_plans / unavailable and always left `validFrom` null. These loaders
+// derive the three activity states from CANONICAL records — never invented, and
+// always time-bounded so a stale activity can never read as "now" (§31):
+//
+//   • exploring  — an active trip stop in progress: a route_stops row the owner
+//                  has ARRIVED at, still within its planned departure window.
+//   • at_event   — an event the owner RSVP'd "going" to that is happening now
+//                  (started, not yet ended, in a live state).
+//   • with_crew  — an active, un-expired Locate/crew session the owner has
+//                  opted into and not left.
+//
+// Location boundary (§23/§25): `at_event` may surface the event's BROAD city as
+// ordinary Passport context (subject to the same show_current_city gate as every
+// other city here). `with_crew` and `exploring` are purpose-bound Presence — the
+// crew session and the trip-stop coordinates belong to Locate/Crew, never to an
+// ordinary Passport read — so those states expose NO city at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The highest-priority real-time activity a traveler is currently engaged in. */
+interface TravelerActivity {
+  atEvent: { city: string | null; startsAt: string | null; endsAt: string } | null;
+  withCrew: { startedAt: string | null; expiresAt: string } | null;
+  exploring: { arrivedAt: string | null; departsAt: string } | null;
+}
+
+const NO_ACTIVITY: TravelerActivity = { atEvent: null, withCrew: null, exploring: null };
+
+/** Event states in which an RSVP'd event is genuinely happening (not draft/cancelled/archived). */
+const LIVE_EVENT_STATES = new Set(["open", "full", "waitlist", "started"]);
+
+/** An event the user RSVP'd "going" to that is happening right now (bounded by ends_at). */
+async function loadActiveRsvpEvent(
+  sc: SupabaseClient,
+  userId: string,
+  nowIso: string,
+): Promise<TravelerActivity["atEvent"]> {
+  const { data: rsvps } = await sc
+    .from("event_rsvps")
+    .select("event_id, status")
+    .eq("user_id", userId)
+    .eq("status", "going");
+  const ids = ((rsvps as any[]) ?? []).map((r) => r.event_id).filter(Boolean);
+  if (ids.length === 0) return null;
+  const { data: events } = await sc
+    .from("events")
+    .select("id, city, starts_at, ends_at, state")
+    .in("id", ids);
+  // Happening now: live state, started, and an explicit end still in the future.
+  // An event with no ends_at cannot be time-bounded, so it never becomes an
+  // unbounded "At Event" — §5 requires expiration semantics.
+  const live = ((events as any[]) ?? []).filter(
+    (e) =>
+      LIVE_EVENT_STATES.has(String(e.state)) &&
+      typeof e.starts_at === "string" && e.starts_at <= nowIso &&
+      typeof e.ends_at === "string" && e.ends_at >= nowIso,
+  );
+  if (live.length === 0) return null;
+  // Prefer the event ending soonest — the most concretely "now".
+  live.sort((a, b) => String(a.ends_at).localeCompare(String(b.ends_at)));
+  const e = live[0];
+  return { city: e.city ?? null, startsAt: e.starts_at ?? null, endsAt: String(e.ends_at) };
+}
+
+/** An active, un-expired Locate/crew session the user has opted into and not left. */
+async function loadActiveCrewSession(
+  sc: SupabaseClient,
+  userId: string,
+  nowIso: string,
+): Promise<TravelerActivity["withCrew"]> {
+  const { data: members } = await sc
+    .from("locate_friends_members")
+    .select("session_id, left_at")
+    .eq("user_id", userId)
+    .is("left_at", null);
+  const ids = ((members as any[]) ?? []).map((m) => m.session_id).filter(Boolean);
+  if (ids.length === 0) return null;
+  const { data: sessions } = await sc
+    .from("locate_friends_sessions")
+    .select("id, started_at, expires_at, ended_at")
+    .in("id", ids)
+    .is("ended_at", null)
+    .gt("expires_at", nowIso);
+  const active = ((sessions as any[]) ?? []).filter((s) => typeof s.expires_at === "string");
+  if (active.length === 0) return null;
+  // Soonest-expiring active session bounds the state.
+  active.sort((a, b) => String(a.expires_at).localeCompare(String(b.expires_at)));
+  const s = active[0];
+  return { startedAt: s.started_at ?? null, expiresAt: String(s.expires_at) };
+}
+
+/** A trip stop the owner has arrived at and is still within the planned departure window. */
+async function loadActiveTripStop(
+  sc: SupabaseClient,
+  userId: string,
+  nowIso: string,
+): Promise<TravelerActivity["exploring"]> {
+  const { data: plans } = await sc
+    .from("route_plans")
+    .select("id, status")
+    .eq("owner_user_id", userId)
+    .eq("status", "active");
+  const planIds = ((plans as any[]) ?? []).map((p) => p.id).filter(Boolean);
+  if (planIds.length === 0) return null;
+  const { data: stops } = await sc
+    .from("route_stops")
+    .select("route_plan_id, checkpoint_status, arrived_at, planned_arrival_time, planned_departure_time")
+    .in("route_plan_id", planIds)
+    .eq("checkpoint_status", "arrived");
+  // In progress now: arrived, still before the planned departure, and (if a
+  // planned arrival exists) already past it. A stop with no planned departure
+  // cannot be bounded, so it never becomes an unbounded "Exploring".
+  const inProgress = ((stops as any[]) ?? []).filter(
+    (s) =>
+      typeof s.planned_departure_time === "string" && s.planned_departure_time >= nowIso &&
+      (s.planned_arrival_time == null || s.planned_arrival_time <= nowIso),
+  );
+  if (inProgress.length === 0) return null;
+  inProgress.sort((a, b) => String(a.planned_departure_time).localeCompare(String(b.planned_departure_time)));
+  const s = inProgress[0];
+  return {
+    arrivedAt: s.arrived_at ?? s.planned_arrival_time ?? null,
+    departsAt: String(s.planned_departure_time),
+  };
+}
+
+/** Load all three activity signals in parallel; any failure degrades to "no signal". */
+async function loadTravelerActivity(sc: SupabaseClient, userId: string): Promise<TravelerActivity> {
+  const nowIso = new Date().toISOString();
+  const [atEvent, withCrew, exploring] = await Promise.all([
+    loadActiveRsvpEvent(sc, userId, nowIso).catch(() => null),
+    loadActiveCrewSession(sc, userId, nowIso).catch(() => null),
+    loadActiveTripStop(sc, userId, nowIso).catch(() => null),
+  ]);
+  return { atEvent, withCrew, exploring };
+}
+
 /** Derive light Travel-DNA signals from unified stamps + stats. */
 function deriveTravelSignals(profile: Record<string, any>, stamps: UnifiedStamp[], stats: TravelStats, hiddenGems: number): TravelIdentitySignals {
   let nightlife = 0;
@@ -1030,8 +1197,11 @@ export async function buildPassportProjection(
   };
 
   // 5. Traveler state + availability + intent (availability/intent gated).
-  const activeTripCity = await loadActiveTripCity(sc, userId);
-  const travelerState = buildTravelerState(profile, quick, activeTripCity, permissions, ownerVisibility);
+  const [activeTripCity, activity] = await Promise.all([
+    loadActiveTripCity(sc, userId),
+    loadTravelerActivity(sc, userId),
+  ]);
+  const travelerState = buildTravelerState(profile, quick, activeTripCity, activity, permissions, ownerVisibility);
 
   let availability: AvailabilityProjection | undefined;
   let intent: IntentProjection | undefined;
