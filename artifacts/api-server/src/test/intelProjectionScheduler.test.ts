@@ -7,8 +7,9 @@
  * snapshots — which stay privacy-suppressed while group data is absent (the gate
  * refuses, it is not weakened).
  */
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
+import { logger } from "../lib/logger.js";
 import { deriveComponents, derivePenalties, assembleClaimInput, type ClaimEvidence, type ClaimRow } from "../lib/intelProjectionAggregator.js";
 import { runIntelProjectionPass } from "../lib/intelProjectionScheduler.js";
 import { invalidateFreshnessPolicyCache } from "../lib/freshnessPolicy.js";
@@ -534,6 +535,32 @@ describe("intelProjection scheduler — runIntelProjectionPass (flag-gated, fail
     const snap = db._snaps.find((s: any) => s.id === "snap-tail");
     assert.ok(snap, "snapshot still present");
     assert.equal(snap.privacy_eligible, true, "snapshot stays servable (privacy_eligible untouched)");
+  });
+
+  // ── I1 / §24: completion status of a correction's invalidation targets ──────
+  it("expires an ORPHANED servable snapshot and emits intel.correction.invalidation.completed naming it (§24 completion status)", async () => {
+    // A servable snapshot whose claim has been superseded (a correction's
+    // invalidation target) — no live-eligible claim stands behind its key.
+    const orphan = { ...tailSnapshot(), id: "snap-orphan", claim_type: "crowd.level" };
+    const db = makeDb({
+      flags: { intel_claim_projection_crowd: true },
+      claims: [{ id: "c-old", subject_id: "subj-recon", zone_id: null, claim_type: "crowd.level", value: { level: "busy" }, status: "superseded", observed_at: OBSERVED }],
+      observations: [], confirmations: [], policies: [],
+      snapshots: [orphan],
+    });
+    const records: any[] = [];
+    const m = mock.method(logger, "info", (obj: unknown) => { records.push(obj); });
+    try {
+      const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+      assert.equal(r.reason, null);
+    } finally { m.mock.restore(); }
+    assert.ok(db._updates.some((u) => u.ids.includes("snap-orphan")), "the orphan is force-expired");
+    const done = records.find((r) => r?.event === "intel.correction.invalidation.completed");
+    assert.ok(done, "a structured completion record is emitted");
+    assert.deepEqual(done.snapshot_ids, ["snap-orphan"]);
+    assert.deepEqual(done.keys, [{ subject_id: "subj-recon", zone_id: "", claim_type: "crowd.level" }]);
+    assert.equal(done.expired, 1);
+    assert.ok(!JSON.stringify(done).includes("actor"), "keys and ids only — no actor in the completion log");
   });
 
   it("aborts reconciliation and expires NOTHING when a live-key page errors (partial read is fail-closed)", async () => {

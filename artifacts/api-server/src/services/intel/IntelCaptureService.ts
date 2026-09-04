@@ -38,6 +38,7 @@ import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
 import { isSharedCrewMember } from "../../lib/tripMembership.js";
 import { resolveActiveCrewId } from "../../lib/activeCrew.js";
 import { hasValidIntelConsent } from "../../lib/intelConsent.js";
+import { logger } from "../../lib/logger.js";
 
 /**
  * Capture surfaces, each gated by its own flag (spec §26 flag registry):
@@ -366,13 +367,44 @@ export async function confirmClaim(
 }
 
 /**
+ * §24 "Correction invalidation targets and completion status" — what one
+ * correction invalidates, and how far the invalidation has got.
+ *
+ * A correction supersedes the prior claim; the dependent read models are the
+ * CURRENT-STATE snapshots keyed to the same (subject, claim_type) — one per
+ * zone — which lib/intelProjectionScheduler either re-derives from the
+ * corrected claim set or force-expires (no live-eligible claim left behind the
+ * key) on its next pass. That pass is the completion; it emits
+ * `intel.correction.invalidation.completed` for the keys it expired. This record
+ * is logged (never persisted with identities — no actor id, no coordinates)
+ * and returned so a caller can show "your correction is propagating".
+ */
+export interface CorrectionInvalidation {
+  prior_claim_id: string;
+  subject_id: string;
+  claim_type: string;
+  /** The correcting observation (append-only; the future claim is proposed from it). */
+  observation_id: string | null;
+  superseded: boolean;
+  /** Current-state snapshots this correction invalidates (dependent read models). */
+  snapshot_targets: Array<{ id: string; zone_id: string; privacy_eligible: boolean }>;
+  completion:
+    /** prior superseded; snapshots await the next projection pass */
+    | "superseded_pending_projection"
+    /** the prior was not supersedable (wrong subject/type, or already superseded/expired) — nothing invalidated */
+    | "prior_not_supersedable"
+    /** the prior was superseded but the target read failed — the pass will still reconcile; targets unknown */
+    | "targets_unreadable";
+}
+
+/**
  * Correct a claim: append a NEW observation (never rewrite) and mark the prior
  * claim superseded. Correction propagation is the spec's central invariant —
  * a value is only ever superseded, never edited in place.
  */
 export async function correctClaim(
   sc: any, actorId: string, priorClaimId: string, input: CaptureInput,
-): Promise<CaptureResult & { supersededPrior?: boolean }> {
+): Promise<CaptureResult & { supersededPrior?: boolean; invalidation?: CorrectionInvalidation }> {
   const written = await writeObservation(sc, actorId, input);
   if (!written.ok) return written;
   // Scope the supersede to the SAME subject + claim_type the correction observes,
@@ -389,5 +421,35 @@ export async function correctClaim(
     .eq("claim_type", input.claimType)
     .in("status", ["active", "conflicting", "candidate"])
     .select("id");
-  return { ...written, supersededPrior: !error && Array.isArray(superseded) && superseded.length > 0 };
+  const supersededPrior = !error && Array.isArray(superseded) && superseded.length > 0;
+
+  // §24: name the invalidation targets. Read-only; the projection pass does the
+  // re-derivation/expiry. A failed read is reported, never hidden as "no targets".
+  const invalidation: CorrectionInvalidation = {
+    prior_claim_id: priorClaimId,
+    subject_id: input.subjectId,
+    claim_type: input.claimType,
+    observation_id: typeof written.observation?.id === "string" ? written.observation.id : null,
+    superseded: supersededPrior,
+    snapshot_targets: [],
+    completion: supersededPrior ? "superseded_pending_projection" : "prior_not_supersedable",
+  };
+  if (supersededPrior) {
+    const { data: snaps, error: snapErr } = await sc
+      .from("intel_state_snapshots")
+      .select("id, zone_id, privacy_eligible")
+      .eq("subject_id", input.subjectId)
+      .eq("claim_type", input.claimType);
+    if (snapErr) {
+      invalidation.completion = "targets_unreadable";
+    } else {
+      invalidation.snapshot_targets = ((snaps as Array<{ id: string; zone_id: string | null; privacy_eligible: boolean }> | null) ?? [])
+        .map((s) => ({ id: s.id, zone_id: s.zone_id ?? "", privacy_eligible: s.privacy_eligible === true }));
+    }
+  }
+  logger.info(
+    { event: "intel.correction.invalidation", ...invalidation, target_count: invalidation.snapshot_targets.length },
+    "intel correction: invalidation targets",
+  );
+  return { ...written, supersededPrior, invalidation };
 }

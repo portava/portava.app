@@ -8,12 +8,13 @@
  * a correction supersedes rather than rewrites; and the §6 throttle suppresses a
  * second unsolicited prompt and anything during a safety state.
  */
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import {
   writeObservation, proposeClaim, approveClaim, confirmClaim, correctClaim,
   resolvePresenceAttestation,
 } from "../services/intel/IntelCaptureService.js";
+import { logger } from "../lib/logger.js";
 import { mapQuickSignal, validateClaimValue } from "../lib/quickSignal.js";
 import { shouldPrompt } from "../lib/intelThrottle.js";
 import { PRESENCE_LEVELS, MIN_PRESENCE_FOR_LIVE_CLAIM } from "../lib/intelContracts.js";
@@ -25,7 +26,7 @@ const OBSERVED = new Date(Date.now() - 5 * 60_000).toISOString(); // clampObserv
 
 /** A fake supabase client sufficient for the capture service's exact chains. */
 function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; consent?: boolean | "withdrawn" } = {}) {
-  const tables: Record<string, any[]> = { intel_observations: [], intel_claims: [], intel_confirmations: [] };
+  const tables: Record<string, any[]> = { intel_observations: [], intel_claims: [], intel_confirmations: [], intel_state_snapshots: [] };
   const places = new Set(opts.places ?? []);
   // Consent defaults to granted so the D4 gate is satisfied for the capture-focused
   // cases; the consent gate itself is exercised explicitly below and in intelConsent.test.
@@ -35,6 +36,7 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
   function from(table: string) {
     let op: "select" | "insert" | "insert_select" | "update" | "update_select" = "select";
     let payload: any = null;
+    let single = false;
     const filters: [string, any, string?][] = [];
     const match = (row: any) =>
       filters.every(([c, v, kind]) => (kind === "in" ? (v as any[]).includes(row[c]) : row[c] === v));
@@ -68,7 +70,8 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
         for (const r of store) if (match(r)) { Object.assign(r, payload); updated.push(r); }
         return { data: op === "update_select" ? updated : null, error: null };
       }
-      return { data: store.filter(match)[0] ?? null, error: null };
+      // A plain awaited select is a LIST (PostgREST shape); maybeSingle/single narrow it.
+      return { data: single ? (store.filter(match)[0] ?? null) : store.filter(match), error: null };
     }
 
     const b: any = {
@@ -77,8 +80,8 @@ function makeDb(flags: Record<string, boolean>, opts: { places?: string[]; conse
       update(patch: any) { op = "update"; payload = patch; return b; },
       eq(c: string, v: any) { filters.push([c, v]); return b; },
       in(c: string, v: any[]) { filters.push([c, v, "in"]); return b; },
-      maybeSingle() { return Promise.resolve(run()); },
-      single() { return Promise.resolve(run()); },
+      maybeSingle() { single = true; return Promise.resolve(run()); },
+      single() { single = true; return Promise.resolve(run()); },
       then(resolve: (r: any) => any) { return Promise.resolve(run()).then(resolve); },
     };
     return b;
@@ -301,6 +304,67 @@ describe("IG-03 — claim lifecycle", () => {
     }
     // 'pending' (unpromoted) still flows in the pilot.
     assert.equal((await proposeClaim(db as any, { ...(written as any).observation, moderation_state: "pending" })).ok, true);
+  });
+});
+
+// ── I1 / §24: correction invalidation targets + completion status ─────────────
+describe("IG-03 correction — §24 invalidation targets are named and logged", () => {
+  /** Capture every logger.info record while `fn` runs; restore afterwards. */
+  async function withInfoLog<T>(fn: () => Promise<T>): Promise<{ result: T; records: any[] }> {
+    const records: any[] = [];
+    const m = mock.method(logger, "info", (obj: unknown) => { records.push(obj); });
+    try { return { result: await fn(), records }; } finally { m.mock.restore(); }
+  }
+
+  it("names the prior claim and every current-state snapshot of the corrected (subject, claim_type), and reports completion as pending projection", async () => {
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
+    const written = await writeObservation(db as any, ACTOR, baseInput() as any);
+    const proposed = await proposeClaim(db as any, (written as any).observation);
+    const claimId = proposed.claim.id;
+    assert.equal((await approveClaim(db as any, claimId)).ok, true);
+    // Two dependent read models: the zone-less snapshot and a zoned one. A
+    // snapshot for a DIFFERENT claim type of the same place is not a target.
+    db._tables.intel_state_snapshots.push(
+      { id: "snap-a", subject_id: PLACE, zone_id: "", claim_type: "crowd.level", privacy_eligible: true },
+      { id: "snap-b", subject_id: PLACE, zone_id: "bar", claim_type: "crowd.level", privacy_eligible: false },
+      { id: "snap-other", subject_id: PLACE, zone_id: "", claim_type: "queue.wait", privacy_eligible: true },
+    );
+
+    const { result: corr, records } = await withInfoLog(() =>
+      correctClaim(db as any, ACTOR, claimId, baseInput({ value: { level: "quiet" }, idempotencyKey: "obs-key-2" }) as any));
+    assert.equal(corr.ok, true);
+    const inv = (corr as any).invalidation;
+    assert.equal(inv.prior_claim_id, claimId);
+    assert.equal(inv.superseded, true);
+    assert.equal(inv.observation_id, db._tables.intel_observations[1].id, "the correcting observation is the lineage root of the replacement claim");
+    assert.deepEqual(
+      inv.snapshot_targets.map((t: any) => t.id).sort(),
+      ["snap-a", "snap-b"],
+      "both snapshots of the corrected key are targets; the other claim type is not",
+    );
+    assert.equal(inv.completion, "superseded_pending_projection");
+
+    const line = records.find((r) => r?.event === "intel.correction.invalidation");
+    assert.ok(line, "one structured intel.correction.invalidation record is emitted");
+    assert.equal(line.target_count, 2);
+    assert.equal(line.prior_claim_id, claimId);
+    assert.ok(!("actor_id" in line) && !JSON.stringify(line).includes(ACTOR), "no actor id in the lineage log (§24: no private data in logs)");
+  });
+
+  it("a correction that supersedes nothing (wrong subject) reports prior_not_supersedable with zero targets", async () => {
+    const PLACE2 = "99999999-9999-4999-8999-999999999999";
+    const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE, PLACE2] });
+    db._tables.intel_claims.push({ id: "victim", subject_id: PLACE2, claim_type: "crowd.level", status: "active" });
+    db._tables.intel_state_snapshots.push({ id: "snap-victim", subject_id: PLACE2, zone_id: "", claim_type: "crowd.level", privacy_eligible: true });
+    const { result: corr, records } = await withInfoLog(() =>
+      correctClaim(db as any, ACTOR, "victim", baseInput({ idempotencyKey: "obs-key-x" }) as any));
+    assert.equal(corr.ok, true);
+    const inv = (corr as any).invalidation;
+    assert.equal(inv.superseded, false);
+    assert.equal(inv.completion, "prior_not_supersedable");
+    assert.deepEqual(inv.snapshot_targets, [], "no target may be named for a claim this correction did not supersede");
+    assert.equal(db._tables.intel_state_snapshots[0].privacy_eligible, true, "the victim snapshot is untouched");
+    assert.ok(records.some((r) => r?.event === "intel.correction.invalidation" && r.target_count === 0));
   });
 });
 

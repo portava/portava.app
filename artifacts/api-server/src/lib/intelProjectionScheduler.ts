@@ -154,7 +154,21 @@ export async function runIntelProjectionPass(opts: { client?: any; now?: Date } 
           await db.from("intel_state_snapshots")
             .update({ privacy_eligible: false, expires_at: now.toISOString() })
             .in("id", orphanIds);
-          logger.info({ expired: orphanIds.length }, "intelProjection pass: expired snapshots whose claim is no longer live-eligible");
+          // §24 completion status: these are the invalidation targets a correction
+          // (IntelCaptureService.correctClaim → `intel.correction.invalidation`)
+          // or a retraction/expiry named; this pass has now expired them. Snapshot
+          // ids and keys only — never an actor.
+          logger.info(
+            {
+              event: "intel.correction.invalidation.completed",
+              expired: orphanIds.length,
+              snapshot_ids: orphanIds,
+              keys: servable
+                .filter((s) => orphanIds.includes(s.id))
+                .map((s) => ({ subject_id: s.subject_id, zone_id: s.zone_id ?? "", claim_type: s.claim_type })),
+            },
+            "intelProjection pass: expired snapshots whose claim is no longer live-eligible",
+          );
         }
       }
     } catch (err) {
