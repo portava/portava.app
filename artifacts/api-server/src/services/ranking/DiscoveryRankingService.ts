@@ -1050,39 +1050,111 @@ const ZERO_COMPONENTS: ScoreComponents = {
   negativeFeedbackPenalty: 0, spamPenalty: 0,
 };
 
-// ── Convenience: upsert content_distribution_stats on impression ──────────────
+// ── Exposure denominator: content_distribution_stats on IMPRESSION ────────────
+//
+// `content_distribution_stats.eligible_impressions` is the exposure denominator
+// the underexposure classification divides by (migration 2059, RPC
+// increment_distribution_stats): once an item has been SERVED p_threshold times
+// its negative-signal rate decides whether it is 'boosting' or 'normal'.
+//
+// THE DEFECT THIS REPLACES (docs/architecture/00_STATUS.md defect 4,
+// docs/fact-layer-20260810/00_VERIFIED_STATE.md §4.6): the only caller of the
+// increment was POST /api/rank-events/outcome, so the column counted
+// CONVERSIONS, not exposures. An item needed 100 taps/saves — not 100 serves —
+// before it was ever classified, and anything normalised by the column
+// returned ≈1.0. The outcome handler no longer touches the counter.
+//
+// SETTLED SEMANTICS: eligible_impressions mirrors the rank_events impression
+// rows written for an item on the ranked-corpus surfaces — one increment per
+// distinct item per impression batch that actually landed:
+//   • lib/rankLog.ts        logImpression        (pulse / discovery / events)
+//   • lib/rankLog.ts        logCompassImpression (compass)
+//   • lib/discoveryServeLog logDiscoveryServe    (the discovery serve points)
+// Not counted: Live Pulse serve rows (urgency-assembled, never ranked), the
+// living_page place_view direct write (a view event, not a serve) and media
+// watch impressions (their own stats pipeline). Negative signals are a
+// separate question this module does not answer: no route reports one today,
+// and the RPC's p_negative_signal is therefore always false here.
 
 const UNDEREXPOSURE_THRESHOLD_IMPRESSIONS = 100;
 const SUPPRESSION_NEGATIVE_SIGNAL_RATE    = 0.3;
 
 /**
- * Update content_distribution_stats when an impression is recorded.
- * Fire-and-forget — never throws.
+ * Upper bound on increment_distribution_stats calls in flight for one batch.
  *
- * Called by the rank_events route when an impression arrives.
+ * The RPC is per-item, and an impression batch can be large — routes/pulse.ts
+ * logs every RANKED candidate (~60), not only the served page — so the batch
+ * is drained through a small worker pool rather than fired all at once.
  */
-export function upsertDistributionStats(
-  db:             SupabaseClient | null,
-  itemId:         string,
-  viewerId:       string,
-  negativeSignal: boolean,
-): void {
-  // Fire-and-forget: MUST NOT throw — a stats side-effect must never break
-  // the calling route's primary response.
-  //
-  // Uses a single RPC that atomically handles both row creation (INSERT … ON
-  // CONFLICT DO UPDATE SET eligible_impressions = eligible_impressions + 1)
-  // and counter increments.  A separate upsert with hardcoded values was
-  // previously here but it reset accumulated counters back to 1 on every
-  // outcome, making the counts non-monotonic — removed.
+const DISTRIBUTION_STATS_CONCURRENCY = 6;
+
+/**
+ * Record one served impression per distinct item against the exposure
+ * denominator. Fire-and-forget: never throws, never rejects.
+ *
+ * Call only for rows that were actually written — a rejected rank_events
+ * insert must not move the counter, or the denominator drifts away from the
+ * impression log it is supposed to mirror.
+ *
+ * Returns a promise so the impression loggers (themselves `void`-called by the
+ * routes) can await it and tests can observe completion; the caller's response
+ * path is never on this promise.
+ */
+export async function recordImpressionDistributionStats(
+  db:       SupabaseClient | null,
+  itemIds:  readonly string[],
+  viewerId: string,
+): Promise<void> {
   try {
-    if (!db) return;
-    void db.rpc("increment_distribution_stats", {
-      p_item_id:          itemId,
-      p_viewer_id:        viewerId,
-      p_negative_signal:  negativeSignal,
-      p_threshold:        UNDEREXPOSURE_THRESHOLD_IMPRESSIONS,
-      p_suppression_rate: SUPPRESSION_NEGATIVE_SIGNAL_RATE,
-    }).then(() => {}, () => {});
-  } catch { /* non-fatal: stats failure must never propagate to the caller */ }
+    if (!db || typeof (db as any).rpc !== "function") return;
+    const unique = [...new Set(
+      itemIds.filter((id): id is string => typeof id === "string" && id.length > 0),
+    )];
+    if (unique.length === 0) return;
+
+    let next = 0;
+    let failures = 0;
+    let firstError: unknown = null;
+    const drain = async (): Promise<void> => {
+      while (next < unique.length) {
+        const itemId = unique[next++]!;
+        try {
+          // Atomic INSERT … ON CONFLICT DO UPDATE SET eligible_impressions + 1
+          // (2059). Never an upsert with literal values — that reset the
+          // counters to 1 on every call once before.
+          //
+          // supabase-js RESOLVES with { error } on a DB error; inspect it so a
+          // rejected increment is visible (one warning per batch, below) instead
+          // of the denominator silently drifting under the impression log.
+          const { error } = await db.rpc("increment_distribution_stats", {
+            p_item_id:          itemId,
+            p_viewer_id:        viewerId,
+            p_negative_signal:  false,
+            p_threshold:        UNDEREXPOSURE_THRESHOLD_IMPRESSIONS,
+            p_suppression_rate: SUPPRESSION_NEGATIVE_SIGNAL_RATE,
+          });
+          if (error) { failures += 1; firstError ??= error; }
+        } catch (err) {
+          // One item's failure must not stop the batch.
+          failures += 1; firstError ??= err;
+        }
+      }
+    };
+
+    const workers = Array.from(
+      { length: Math.min(DISTRIBUTION_STATS_CONCURRENCY, unique.length) },
+      () => drain(),
+    );
+    await Promise.all(workers);
+
+    if (failures > 0) {
+      logger.warn(
+        { err: firstError, failures, count: unique.length },
+        "distributionStats: increment_distribution_stats rejected",
+      );
+    }
+  } catch (err) {
+    // Never throws into the caller — but never silently either.
+    logger.warn({ err }, "distributionStats: recording impressions threw");
+  }
 }
