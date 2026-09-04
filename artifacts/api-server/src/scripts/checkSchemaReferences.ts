@@ -123,11 +123,11 @@ const UNDECLARED_LIVE_COLUMNS = new Set<string>([
  * fails. This list must reach zero.
  */
 const KNOWN_DEAD_REFERENCES: Record<string, { count: number; note: string }> = {
-  "src/lib/inputAssistance/duplicateDetection.ts": {
-    count: 1,
-    note: "places.country — the founding defect, recurred a THIRD time. The table " +
-      "has country_code. Neither existing check scanned src/lib, so nothing saw it.",
-  },
+  // src/lib/inputAssistance/duplicateDetection.ts (places.country, the founding
+  // defect's THIRD recurrence) was struck off: 9e82e8450 moved the read to
+  // `country_code` the same day this ratchet landed, and the two met on main
+  // with the entry still counting 1 — which is exactly the "fixed; delete the
+  // entry" direction of this check firing, on main itself.
   "src/lib/mediaAccess.ts": {
     count: 2,
     note: "close_friends.friend_id and user_follows.id — both reads die whole, " +

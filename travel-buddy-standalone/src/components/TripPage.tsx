@@ -885,8 +885,8 @@ export function TripStamps({ stamps }: { stamps: PassportStamp[] }) {
  */
 export function TripMapPreview({ tripId }: { tripId?: string } = {}) {
   const mapHref = tripId
-    ? `/map?entityTypes=trips&tripId=${encodeURIComponent(tripId)}`
-    : '/map?entityTypes=trips';
+    ? `/map?entityTypes=trips&entry=trip&tripId=${encodeURIComponent(tripId)}`
+    : '/map?entityTypes=trips&entry=trip';
   const openMap = () => router.push(mapHref as any);
   return (
     <View>

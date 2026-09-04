@@ -309,16 +309,41 @@ export type DecisionId = string;
 
 export const MAP_ENTRY_POINTS = [
   'tab',
-  'deeplink',
+  'gems',
+  'circle',
+  'passport',
   'trip',
   'compass',
-  'notification',
   'search',
   'place',
+  'notification',
+  'deeplink',
   'unknown',
 ] as const;
 
 export type MapEntryPoint = (typeof MAP_ENTRY_POINTS)[number];
+
+/**
+ * ── entry and mode are INDEPENDENT DIMENSIONS ────────────────────────────────
+ *
+ *   MapEntryPoint  answers WHERE DID THIS MAP SESSION ORIGINATE?
+ *                  — the acquisition surface the user came from.
+ *   MapMode        answers HOW SHOULD THE MAP BEHAVE AND RENDER?
+ *                  — the presentation the screen adopts once it is open.
+ *
+ * NEITHER MAY EVER BE DERIVED FROM THE OTHER.
+ *
+ * They can share a word without sharing a meaning. `entry=circle, mode=circle`
+ * is a Circle-originated session that also renders in circle mode; `entry=circle`
+ * with a different mode is equally valid, and so is arriving from somewhere else
+ * INTO circle mode. Collapsing them loses the distinction between "where users
+ * come from" and "what they then see", which is the whole of §35's funnel.
+ *
+ * This is not a hypothetical rule. Until 2026-09-04 `entry` was literally
+ * assigned `mode ?? 'direct'`, so every session reported its RENDERING as its
+ * ORIGIN — and published 'circle'/'passport' (map modes) and 'direct' (nothing
+ * at all) into a field whose union contains none of them.
+ */
 
 /**
  * Narrow an untrusted value to a MapEntryPoint.
@@ -364,7 +389,13 @@ export function deriveMapEntryPoint(
   const rawEntry = params.entry;
   const first = Array.isArray(rawEntry) ? rawEntry[0] : rawEntry;
   if (isMapEntryPoint(first)) return first;
-  return Object.keys(params).length > 0 ? 'deeplink' : 'tab';
+  // Present but not a real entry point: someone tried to state an origin and
+  // named something that is not one. That is unknown, not a deep link.
+  if (typeof first === 'string' && first.length > 0) return 'unknown';
+  // Absent entirely. Every internal surface that navigates to /map states its
+  // origin explicitly (see the producer table in the PR), so an unstated origin
+  // is an external or otherwise unattributable deep link.
+  return 'deeplink';
 }
 
 // The §30 modes, from features/map/vocabulary.ts. Declared there rather than

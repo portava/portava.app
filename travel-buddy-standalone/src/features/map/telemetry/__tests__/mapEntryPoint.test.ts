@@ -26,7 +26,11 @@ import {
 describe('isMapEntryPoint', () => {
   test('accepts every member of the union and nothing else', () => {
     for (const e of MAP_ENTRY_POINTS) assert.equal(isMapEntryPoint(e), true, e);
-    for (const bad of ['direct', 'circle', 'passport', 'Tab', '', 'TAB']) {
+    // 'circle' and 'passport' became VALID entry points when explicit
+    // attribution landed — they now mean "came from the Circle/Passport
+    // surface", which is a different claim from the map MODE of the same
+    // name. 'direct' never existed and still does not.
+    for (const bad of ['direct', 'Tab', '', 'TAB', 'wall', 'explore']) {
       assert.equal(isMapEntryPoint(bad), false, `${bad} must not be an entry point`);
     }
   });
@@ -39,8 +43,13 @@ describe('isMapEntryPoint', () => {
 });
 
 describe('deriveMapEntryPoint — the four real production paths', () => {
-  test('a bare tab open is tab', () => {
-    assert.equal(deriveMapEntryPoint({}), 'tab');
+  test('no params at all is an unattributable deep link, NOT a tab', () => {
+    // This asserted 'tab' when the fallback was written. It was wrong: there is
+    // no map tab. app/(tabs) registers index, discovery, media, events, trips,
+    // messages, passport, ai and wall — /map is not among them, so no tab press
+    // can produce this. Every internal surface now states its origin
+    // explicitly, which makes an unstated origin external or unattributable.
+    assert.equal(deriveMapEntryPoint({}), 'deeplink');
   });
 
   test('an in-app push carrying params is a deeplink', () => {
@@ -68,8 +77,12 @@ describe('deriveMapEntryPoint — an explicit entry param', () => {
   test('an arbitrary deep-link string is NOT published', () => {
     // An enumerated telemetry dimension fed from a user-controllable query
     // param is unbounded cardinality unless it is narrowed at the boundary.
-    assert.equal(deriveMapEntryPoint({ entry: 'zzz-injected' }), 'deeplink');
-    assert.equal(deriveMapEntryPoint({ entry: 'direct' }), 'deeplink');
+    //
+    // The rejected value resolves to 'unknown', not 'deeplink': something DID
+    // state an origin and named a non-origin. That is "cannot be determined",
+    // which is a different fact from "arrived without attribution".
+    assert.equal(deriveMapEntryPoint({ entry: 'zzz-injected' }), 'unknown');
+    assert.equal(deriveMapEntryPoint({ entry: 'direct' }), 'unknown');
   });
 
   test('every derived value is a member of the union, whatever the input', () => {
