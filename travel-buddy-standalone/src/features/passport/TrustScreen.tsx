@@ -23,7 +23,7 @@
  * is never the only status indicator — every state carries text + iconography
  * (§27).
  */
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -33,6 +33,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { router } from 'expo-router';
+import { trackTrustSummaryViewed } from './passportTelemetry.ts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft,
@@ -257,6 +258,16 @@ export default function TrustScreen({
   const error = projectionOverride ? null : hook.error;
 
   const view: TrustView | null = projection ? deriveTrustView(projection) : null;
+
+  // §32 trust_summary_viewed — fire once the trust summary is actually shown.
+  // Ids/enums only: the viewed user's id (when not self) and whether a numeric
+  // score was exposed — never the score itself or any report/moderation data.
+  const viewedRef = useRef(false);
+  useEffect(() => {
+    if (viewedRef.current || !view || !view.hasTrust) return;
+    viewedRef.current = true;
+    trackTrustSummaryViewed({ ...(userId ? { subjectId: userId } : {}), hasScore: view.hasScore });
+  }, [view, userId]);
 
   // §20 contribution reputation. Prefer the dedicated reputation route; fall
   // back to the contribution-relevant credentials the projection already

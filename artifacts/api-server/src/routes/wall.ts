@@ -42,6 +42,12 @@ import {
   type ProjectViewerContext,
 } from "../services/wall/WallProjectionService.js";
 import {
+  loadPostcardCandidates,
+  loadVideoMediaCandidates,
+  loadSharedMomentCandidates,
+  mergeLoadedCandidates,
+} from "../services/wall/WallCandidateLoaders.js";
+import {
   applyFeedDiversity,
   DEFAULT_FEED_DIVERSITY_POLICY,
 } from "../services/wall/WallDiversityService.js";
@@ -598,7 +604,32 @@ router.get(
       snapshotAtIso: forYouCursor?.snapshotAt,
       discoveryEnabled,
     });
-    const steered = applyIntentSteer(loaded.candidates, sessionIntent);
+
+    // ── Supplementary object types (spec §6): Postcards (§10), video/media (§11)
+    //    and Shared Moments (§12). Each loader is independent and fail-soft
+    //    (spec §34): it degrades to an empty set on any failure, so it costs the
+    //    feed one object TYPE, never the feed. They fetch OTHER canonical rows
+    //    (or the same posts with real media) and are merged + deduped into the
+    //    Post spine, which is left untouched. Every merged candidate still runs
+    //    through the SAME eligibility → block → visibility gate below.
+    const loaderViewer = { viewerId: user.id, followedCreatorIds: viewer.followedCreatorIds };
+    const [postcardsLoaded, mediaLoaded, momentsLoaded] = await Promise.all([
+      loadPostcardCandidates(sc, mode, loaderViewer).catch((err) => {
+        logger.warn({ err }, "wall: postcard loader threw — no postcards");
+        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+      }),
+      loadVideoMediaCandidates(sc, user.id).catch((err) => {
+        logger.warn({ err }, "wall: video/media loader threw — no media objects");
+        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+      }),
+      loadSharedMomentCandidates(sc, user.id).catch((err) => {
+        logger.warn({ err }, "wall: shared moment loader threw — no moments");
+        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+      }),
+    ]);
+    const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded);
+
+    const steered = applyIntentSteer(merged.candidates, sessionIntent);
 
     // ── Gate + project (eligibility/block/visibility BEFORE ordering, §23/§24).
     const projectViewer: ProjectViewerContext = {
@@ -635,7 +666,7 @@ router.get(
       const built = await rankForYou(sc, projections, rankViewer, {
         limit,
         cursor: forYouCursor,
-        signals: loaded.signals,
+        signals: merged.signals,
       });
       items = built.items;
       nextCursor = built.nextCursor ? encodeForYouCursor(built.nextCursor) : undefined;
@@ -653,7 +684,7 @@ router.get(
     const feedSubjectIds = new Set<string>();
     const liveCandidates: LiveForYouCandidate[] = [];
     for (const it of items) {
-      const placeRef = it.place ?? loaded.placeByObject.get(it.canonicalObjectId);
+      const placeRef = it.place ?? merged.placeByObject.get(it.canonicalObjectId);
       if (placeRef) {
         feedSubjectIds.add(placeRef.placeId);
         liveCandidates.push({ subjectId: placeRef.placeId, liveObjectType: "place_state", subject: placeRef });

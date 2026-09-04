@@ -18,12 +18,16 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react-nativ
 import TravelIdentityScreen from '../TravelIdentityScreen.tsx';
 import { getTravelIdentity } from '../../../services/passportProjection.ts';
 
-// NOTE: intentional stub — the real service reaches Supabase auth + the API
-// server, neither available in jest-expo. getTravelIdentity is the seam under
-// test; the type-only exports are erased at runtime so this factory is complete.
+// NOTE: intentional stub — getTravelIdentity + putTravelDna reach Supabase auth
+// + the API server. They are the seams under test and the type-only exports are
+// erased at runtime, so this factory is complete. putTravelDna echoes the state
+// so an optimistic toggle reconciles to the same value (persist succeeds).
 jest.mock('../../../services/passportProjection', () => ({
   getTravelIdentity: jest.fn(),
   getPassportJourneys: jest.fn(),
+  putTravelDna: jest.fn((input: { key: string; kind: string; state: string }) =>
+    Promise.resolve({ ok: true, data: { userId: 'me-123', ...input } }),
+  ),
   _setTestAuthToken: jest.fn(),
 }));
 
