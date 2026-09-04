@@ -52,7 +52,6 @@ import {
   type OutcomeAttribution,
 } from "../services/intel/RewardOracle.js";
 import { evaluateRewardEligibility } from "./rewardEligibility.js";
-import { ATTRIBUTION_FLAG } from "./intelAttributionScheduler.js";
 
 const REWARDS_FLAG = "intel_rewards";
 // After promotion (2m) + projection (3m) so served snapshots for freshly promoted
@@ -192,7 +191,9 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
     // 3b. The honest oracle input: with the closed loop ON, read this pass's
     //     candidates' attribution rows and classify each observation; OFF ⇒ every
     //     candidate is `not_required` and nothing here is read.
-    const honest = await isFlagEnabled(db, ATTRIBUTION_FLAG);
+    // Flag literal inlined (ATTRIBUTION_FLAG in intelAttributionScheduler.ts) so the
+    // flag-polarity guard can resolve the name at this call site; keep the two in sync.
+    const honest = await isFlagEnabled(db, "intel_outcome_attribution_enabled");
     const attributionByObs = new Map<string, AttributionRow[]>();
     if (honest) {
       const rows = await fetchIn<AttributionRow>(
