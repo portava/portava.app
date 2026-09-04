@@ -350,3 +350,122 @@ export async function readLiveClaimEnvelopes(
   const claims = await readLiveClaims(sc, subjectId, opts);
   return claims.map(toLiveClaimEnvelope);
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// IG-05 'typical' FALLBACK (spec §5 degradation order Live → … → Historical → …)
+// ══════════════════════════════════════════════════════════════════════════════
+/**
+ * The degradation order the place card owes is Live → Likely current → Historical
+ * → Official → Unknown. `readLiveClaims`/`readLiveClaimEnvelopes` cover the top
+ * (live/emerging) and return [] otherwise. THIS is the next rung down: when no live
+ * observation exists, a `historical_pattern` from intel_historical_patterns (§12)
+ * answers "what is it TYPICALLY like right now?" — a 'typical' claim, NEVER a Live
+ * one. Below it there is only 'unknown' (silence), which is the empty array.
+ *
+ * TRUTH BOUNDARY. A typical claim carries sourceClass 'historical_pattern', and
+ * mayRenderAsLive('historical_pattern') is false — so even if one ever reached the
+ * live path it would be dropped before a Live label. The client's liveState() maps
+ * this class to 'Typical' and its own distinct colour, never 'Live'. This function
+ * is the ONE producer of a 'typical' envelope; it does not touch the live gates
+ * (a typical answer is available even when the Live pilot is off), and it fails
+ * closed to [] on any error, so the honest fallback of last resort is 'unknown'.
+ */
+function padHour(h: number): string {
+  return `hour_${String(h).padStart(2, "0")}`;
+}
+
+export async function readTypicalPatterns(
+  sc: any,
+  subjectId: string | null | undefined,
+  opts: { claimTypes?: readonly string[]; now?: Date } = {},
+): Promise<LiveClaimEnvelope[]> {
+  if (!sc || !subjectId) return [];
+  const now = opts.now ?? new Date();
+  const dow = now.getUTCDay();
+  const timeBand = padHour(now.getUTCHours());
+  try {
+    let q = sc
+      .from("intel_historical_patterns")
+      .select("id, zone_id, claim_family, pattern_kind, time_band, dow, value_json, confidence, cohort_size, window_days, is_invalidation, computed_at")
+      .eq("subject_id", subjectId)
+      .eq("time_band", timeBand)
+      .eq("dow", dow)
+      .order("computed_at", { ascending: false });
+    if (opts.claimTypes && opts.claimTypes.length > 0) {
+      q = q.in("claim_family", opts.claimTypes);
+    }
+    const { data, error } = await q;
+    if (error || !data) {
+      logger.warn({ err: error }, "liveClaimRead: pattern read failed");
+      return [];
+    }
+    // Latest row per (zone, claim_family, pattern_kind) — the append-only store
+    // supersedes by newer row. A tombstone (is_invalidation) that is the latest
+    // row means "no typical pattern" for that scope, so it is skipped, not served.
+    const seen = new Set<string>();
+    const out: LiveClaimEnvelope[] = [];
+    for (const row of data as any[]) {
+      const scope = `${row.zone_id ?? ""}|${row.claim_family}|${row.pattern_kind}`;
+      if (seen.has(scope)) continue; // an older row for a scope we already resolved
+      seen.add(scope);
+      if (row.is_invalidation === true) continue; // latest is a tombstone ⇒ no pattern
+      const confidence = typeof row.confidence === "number" ? row.confidence : null;
+      const computedAt = String(row.computed_at);
+      const windowDays = typeof row.window_days === "number" ? row.window_days : 0;
+      const validUntil = new Date(Date.parse(computedAt) + windowDays * 24 * 60 * 60 * 1000).toISOString();
+      out.push({
+        id: String(row.id),
+        claimType: String(row.claim_family),
+        value: row.value_json,
+        confidence,
+        band: confidenceBand(confidence),
+        // A pattern is always historical_pattern — the client renders it 'Typical'.
+        sourceClass: "historical_pattern",
+        // A pattern is a cohort aggregate over many independent contributors, so a
+        // cohort badge is honest (mayCountAsConsensus true). The exact count stays
+        // withheld — only the coarse bucket leaves.
+        sourceCountBucket: mayCountAsConsensus("historical_pattern")
+          ? sourceCountBucket(typeof row.cohort_size === "number" ? row.cohort_size : 0)
+          : null,
+        observedAt: computedAt,
+        validUntil,
+        state: "typical",
+      });
+    }
+    return out;
+  } catch (err) {
+    logger.warn({ err }, "liveClaimRead: pattern read threw");
+    return [];
+  }
+}
+
+/** The resolved intel state for a place, in the spec's degradation order. */
+export interface PlaceIntelState {
+  /** 'live'/'emerging' if a live claim exists, else 'typical' if a pattern does, else 'unknown'. */
+  state: LiveState;
+  /** The claims backing `state` (live/emerging envelopes, or typical envelopes, or []). */
+  claims: LiveClaimEnvelope[];
+}
+
+/**
+ * Resolve a place's intel state along the degradation order: LIVE/EMERGING first
+ * (the gated projection), then TYPICAL (a §12 pattern for the current weekday/hour),
+ * then UNKNOWN (empty). One place composes the two reads so a caller cannot get the
+ * order wrong — a typical answer is NEVER returned when a live one exists, and a
+ * live answer is never downgraded to typical.
+ */
+export async function resolvePlaceIntelState(
+  sc: any,
+  subjectId: string | null | undefined,
+  opts: { claimTypes?: readonly string[]; now?: Date } = {},
+): Promise<PlaceIntelState> {
+  const live = await readLiveClaimEnvelopes(sc, subjectId, opts);
+  if (live.length > 0) {
+    // 'live' if any claim is live-qualified, else 'emerging'.
+    const anyLive = live.some((c) => c.state === "live");
+    return { state: anyLive ? "live" : "emerging", claims: live };
+  }
+  const typical = await readTypicalPatterns(sc, subjectId, opts);
+  if (typical.length > 0) return { state: "typical", claims: typical };
+  return { state: "unknown", claims: [] };
+}
