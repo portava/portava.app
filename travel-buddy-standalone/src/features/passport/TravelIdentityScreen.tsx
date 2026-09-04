@@ -201,12 +201,15 @@ function TraitCard({
   trait,
   state,
   onChange,
+  editable,
 }: {
   trait: TravelTrait;
   state: TravelDnaState;
   onChange: (next: TravelDnaState) => void;
+  /** Owner-only: the Show/Hide/Not-Me control + private-state note (§19/§30). */
+  editable: boolean;
 }) {
-  const dimmed = state !== 'shown';
+  const dimmed = editable && state !== 'shown';
   return (
     <View style={[s.card, dimmed && s.cardDimmed]}>
       <View style={s.traitHead}>
@@ -219,8 +222,12 @@ function TraitCard({
         </View>
       </View>
       <Evidence evidence={trait.evidence} />
-      <StateNote state={state} />
-      <StateControl itemKey={trait.key} state={state} onChange={onChange} />
+      {editable ? (
+        <>
+          <StateNote state={state} />
+          <StateControl itemKey={trait.key} state={state} onChange={onChange} />
+        </>
+      ) : null}
     </View>
   );
 }
@@ -231,12 +238,15 @@ function DimensionCard({
   dim,
   state,
   onChange,
+  editable,
 }: {
   dim: TravelDimension;
   state: TravelDnaState;
   onChange: (next: TravelDnaState) => void;
+  /** Owner-only: the Show/Hide/Not-Me control + private-state note (§19/§30). */
+  editable: boolean;
 }) {
-  const dimmed = state !== 'shown';
+  const dimmed = editable && state !== 'shown';
   return (
     <View style={[s.card, dimmed && s.cardDimmed]}>
       <View style={s.dimHead}>
@@ -245,8 +255,12 @@ function DimensionCard({
       </View>
       {dim.poles ? <SpectrumBar position={dim.position} poles={dim.poles} /> : null}
       <Evidence evidence={dim.evidence} />
-      <StateNote state={state} />
-      <StateControl itemKey={dim.key} state={state} onChange={onChange} />
+      {editable ? (
+        <>
+          <StateNote state={state} />
+          <StateControl itemKey={dim.key} state={state} onChange={onChange} />
+        </>
+      ) : null}
     </View>
   );
 }
@@ -278,6 +292,13 @@ function ErrorView({ message, onRetry }: { message: string; onRetry: () => void 
 // ── Screen ─────────────────────────────────────────────────────────────────────
 
 export interface TravelIdentityScreenProps {
+  /**
+   * The traveler whose Travel Identity to show (a UUID or @handle). Omitted →
+   * the signed-in owner's own, editable view. When present the surface is a
+   * VIEWER projection: the Show/Hide/Not-Me controls are hidden (a viewer may
+   * not rewrite another traveler's DNA prefs — §19/§30).
+   */
+  targetUserId?: string | null;
   /** Test seam: inject a prebuilt projection to bypass the data hook. */
   identityOverride?: TravelIdentityProjection;
   /** Test seam: inject the Travel-DNA writer (defaults to putTravelDna). */
@@ -293,12 +314,15 @@ function splitScopedKey(scopedKey: string): { kind: TravelDnaKind; key: string }
 }
 
 export default function TravelIdentityScreen({
+  targetUserId,
   identityOverride,
   persistTravelDna,
 }: TravelIdentityScreenProps = {}) {
   const insets = useSafeAreaInsets();
-  const hook: UseTravelIdentityResult = useTravelIdentity();
+  const hook: UseTravelIdentityResult = useTravelIdentity(targetUserId);
   const persist = persistTravelDna ?? putTravelDna;
+  // Owner's own view (no target) is editable; a viewer projection is read-only.
+  const editable = !(typeof targetUserId === 'string' && targetUserId.trim().length > 0);
 
   const identity = identityOverride ?? hook.identity;
   const loading = identityOverride ? false : hook.loading;
@@ -418,8 +442,9 @@ export default function TravelIdentityScreen({
             <View style={s.explainer}>
               <Sparkles size={icon.s14} color={color.warn} />
               <Text style={s.explainerText}>
-                These readings are inferred, never certain. Every one shows why it
-                was inferred, and you can Show, Hide or mark it &ldquo;Not me&rdquo;.
+                {editable
+                  ? 'These readings are inferred, never certain. Every one shows why it was inferred, and you can Show, Hide or mark it “Not me”.'
+                  : 'These readings are inferred, never certain — each one shows why. This traveler controls which are shown.'}
               </Text>
             </View>
 
@@ -439,6 +464,7 @@ export default function TravelIdentityScreen({
                     trait={tr}
                     state={states[`trait:${tr.key}`] ?? tr.state}
                     onChange={(next) => applyState(`trait:${tr.key}`, next)}
+                    editable={editable}
                   />
                 ))}
               </View>
@@ -453,6 +479,7 @@ export default function TravelIdentityScreen({
                   dim={d}
                   state={states[`dim:${d.key}`] ?? d.state}
                   onChange={(next) => applyState(`dim:${d.key}`, next)}
+                  editable={editable}
                 />
               ))}
             </View>

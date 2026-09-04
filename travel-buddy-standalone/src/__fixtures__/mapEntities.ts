@@ -38,7 +38,7 @@ import type { TripRow } from '../services/trips.ts';
 import type { CircleMemberLocation } from '../services/map.ts';
 import type { HiddenGem } from '../services/hiddenGems.ts';
 import type { EventListItem } from '../services/events.ts';
-import type { MapObject } from '../types/mapObjects.ts';
+import { KIND_DEFAULT_PRIORITY, type MapObject } from '../types/mapObjects.ts';
 import type { MapEntity } from '../types/mapTypes.ts';
 import { mapObjectToEntity } from '../types/mapTypes.ts';
 import {
@@ -220,6 +220,43 @@ export function eventObject(
   return projectEventLocal({ ...eventDto, ...over }, now)!;
 }
 
+/**
+ * A canonical place AS THE GATEWAY SERVES IT. This is the one fixture in this
+ * file that is a literal rather than a projector's output, because the client
+ * has no projector for `place` on purpose (see PlaceCardPayload): the only
+ * producer is artifacts/api-server/src/lib/mapProjectPlace.ts. The literal is
+ * pinned to that producer's payload keys by serverMirror.test.ts, so it cannot
+ * drift into a shape the server never sends.
+ */
+export const PLACE_ID = 'dddddddd-0000-0000-0000-0000000000p1';
+
+export function placeObject(over: Partial<MapObject> = {}): MapObject {
+  return {
+    id: `place:${PLACE_ID}`,
+    kind: 'place',
+    geometry: { type: 'Point', coordinates: [108.202233, 16.054412] },
+    title: 'Han Market',
+    subtitle: 'night market · Hai Chau',
+    privacyClass: 'place_level',
+    renderingPriority: KIND_DEFAULT_PRIORITY.place,
+    interaction: {
+      actions: ['view', 'save', 'share', 'navigate', 'add_to_trip', 'ask_compass', 'meet_here', 'report'],
+      detailRoute: `/place/${PLACE_ID}`,
+      opensSheet: true,
+      contributable: true,
+    },
+    payload: {
+      category: 'night_market',
+      city: 'Da Nang',
+      neighborhood: 'Hai Chau',
+      countryCode: 'VN',
+      canonicalPlaceId: PLACE_ID,
+      discoveryId: `db/${PLACE_ID}`,
+    },
+    ...over,
+  };
+}
+
 // ── Projected MapEntities (what a card actually receives) ─────────────────────
 
 /** The one downcast the app performs, applied to a projected object. */
@@ -246,4 +283,7 @@ export function eventEntity(
   now: number = FIXTURE_NOW,
 ): MapEntity<MapObject> {
   return toEntity(eventObject(over, now));
+}
+export function placeEntity(over: Partial<MapObject> = {}): MapEntity<MapObject> {
+  return toEntity(placeObject(over));
 }

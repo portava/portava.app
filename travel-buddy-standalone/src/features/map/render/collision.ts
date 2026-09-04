@@ -260,7 +260,7 @@ const BAND_INTRODUCES: Record<ZoomBand, readonly MapObjectKind[]> = {
   // "Neighborhoods, activity zones, major events, major flow, key Compass recommendations."
   city: ['activity_zone', 'crowd_flow', 'prediction', 'event'],
   // "Live places, events, gems, social opportunities, Trip objects."
-  district: ['place', 'hidden_gem', 'social_zone', 'buddy_zone'],
+  district: ['place', 'hidden_gem', 'social_zone', 'buddy_zone', 'saved_place'],
   // "Individual places, entrances, authorized crew, meeting points, route context."
   street: ['crew_member', 'meeting_point'],
   // "Stages, entrances, checkpoints, food, toilets…, group members, meeting zones."

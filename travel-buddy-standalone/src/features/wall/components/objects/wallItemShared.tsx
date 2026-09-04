@@ -100,6 +100,9 @@ export function resolveActionRoute(
     case 'open_object':
       if (projection.objectType === 'shared_moment') return '/shared-moments';
       if (projection.objectType === 'video') return `/media-viewer/${objId}`;
+      // A Postcard opens the canonical Postcard viewer, not the post detail —
+      // its story presentation is preserved through the open (§10/§24).
+      if (projection.objectType === 'postcard') return `/postcard/${objId}`;
       return `/post/${objId}`;
     case 'see_place':
       return placeId ? `/place/${placeId}` : null;

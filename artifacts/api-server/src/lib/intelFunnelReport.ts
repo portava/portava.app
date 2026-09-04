@@ -76,6 +76,7 @@ import { evaluateDensityGate, type DensityGateResult, type PilotDensityMetrics }
 export interface ObservationRow {
   actor_id?: string | null;
   subject_id?: string | null;
+  zone_id?: string | null;
   claim_type?: string | null;
   moderation_state?: string | null;
   observed_at?: string | null;
@@ -104,6 +105,20 @@ export interface ConfirmationRow {
   stance?: string | null;
 }
 
+/**
+ * A finalized intel OUTCOME (spec Table 21 / §14). Read from canonical_events
+ * whose payload carries an `intel` envelope (the I4a contract:
+ * payload.intel = { snapshot_id, claim_id, subject_id, outcome, experience_rating?,
+ * served_at }). This is the after-proof source — an outcome referencing the
+ * snapshot it followed forms one after-proof PAIR.
+ */
+export interface OutcomeRow {
+  subject_id?: string | null;
+  snapshot_id?: string | null;    // payload.intel.snapshot_id — the served state it followed
+  outcome?: string | null;        // payload.intel.outcome
+  occurred_at?: string | null;
+}
+
 export interface FunnelRows {
   /** Observations for the flow tallies (§1-§4) — legitimately windowed by observed_at. */
   observations: readonly ObservationRow[];
@@ -117,6 +132,9 @@ export interface FunnelRows {
   claims: readonly ClaimRow[];
   snapshots: readonly SnapshotRow[];
   confirmations: readonly ConfirmationRow[];
+  /** Finalized outcome events (canonical_events with an intel payload). Optional —
+   *  absent ⇒ outcome-derived density inputs read as 0 (fail-closed, not "clear"). */
+  outcomes?: readonly OutcomeRow[];
 }
 
 // ── The tally shapes ──────────────────────────────────────────────────────────
@@ -181,6 +199,28 @@ export interface IntelFunnel {
   };
   /** Re-derived, read-only — see the header note on why this is not read from snapshots. */
   suppression: SuppressionTally;
+  /**
+   * §26 density-gate inputs INSTRUMENTED from the intel rows (previously
+   * UNINSTRUMENTED and forced fail-closed). Each is derived read-only:
+   *   • contributorsPerCluster — distinct actors per key cluster (zone). An
+   *     UPPER BOUND: reliability is not modelled, so this over-counts "reliable"
+   *     contributors exactly as the citywide figure does.
+   *   • independentSourcesPerKeyVenueNight — distinct independent groups per
+   *     (subject, calendar-night among FRESH grouped observations). This is
+   *     precisely the "independent sources per key venue/night" the gate wants.
+   *   • outcomeConfirmations — count of finalized intel outcome events.
+   *   • afterProofPairs — outcomes that reference the snapshot they followed
+   *     (an after-proof pair). Reported so an operator sees whether calibration
+   *     evidence is accumulating; crowd-calibration ACCURACY stays uninstrumented
+   *     because the outcome payload carries a satisfaction judgment, not the crowd
+   *     after-proof value a directional-accuracy score needs.
+   */
+  density: {
+    contributorsPerCluster: number[];             // one per key cluster (zone), sorted asc
+    independentSourcesPerKeyVenueNight: number[]; // one per key venue/night, sorted asc
+    outcomeConfirmations: number;
+    afterProofPairs: number;
+  };
   /**
    * The independent-group signal (V1). Distinguishes the two operationally
    * different reasons a claim can fail the ≥5-group requirement — the owner's
@@ -389,6 +429,43 @@ export function tallyIntelFunnel(rows: FunnelRows, now: Date): IntelFunnel {
     }
   }
 
+  // ── §26 density instrumentation (previously uninstrumented, now real readers) ─
+  // Cluster = zone. Contributors per cluster = distinct actors observed in that
+  // zone (UPPER BOUND — reliability not modelled). Key venue/night = (subject,
+  // UTC calendar-night); independent sources = distinct group_key among FRESH
+  // grouped observations for that venue-night. Both derived from the same rows the
+  // tally already holds, so no extra fetch and no double truth.
+  const actorsByCluster = new Map<string, Set<string>>();
+  for (const o of rows.observations) {
+    if (!o.actor_id) continue;
+    // Prefer an explicit zone as the cluster key when present, else the subject.
+    const key = o.zone_id ?? (o.subject_id ? String(o.subject_id) : "");
+    if (!key) continue;
+    let s = actorsByCluster.get(String(key));
+    if (!s) { s = new Set(); actorsByCluster.set(String(key), s); }
+    s.add(o.actor_id);
+  }
+  const contributorsPerCluster = [...actorsByCluster.values()].map((s) => s.size).sort((a, b) => a - b);
+
+  // Independent groups per (subject, night) among FRESH grouped observations.
+  const groupsByVenueNight = new Map<string, Set<string>>();
+  for (const o of freshSet) {
+    if (!o.subject_id || !isFresh(o.expires_at, nowMs)) continue;
+    if (o.moderation_state != null && !isPilotClaimable(o.moderation_state)) continue;
+    if (o.group_key == null || o.group_key === "") continue;
+    const night = o.observed_at ? String(o.observed_at).slice(0, 10) : "?";
+    const key = `${o.subject_id}|${night}`;
+    let s = groupsByVenueNight.get(key);
+    if (!s) { s = new Set(); groupsByVenueNight.set(key, s); }
+    s.add(o.group_key);
+  }
+  const independentSourcesPerKeyVenueNight = [...groupsByVenueNight.values()].map((s) => s.size).sort((a, b) => a - b);
+
+  // Outcomes + after-proof pairs (an outcome referencing the snapshot it followed).
+  const outcomes = rows.outcomes ?? [];
+  let afterProofPairs = 0;
+  for (const o of outcomes) if (o.snapshot_id != null && o.snapshot_id !== "") afterProofPairs += 1;
+
   return {
     observations: { tally: obsTally, eligibleForClaim, pilotClaimable },
     claims: { tally: claimTally, liveEligible },
@@ -408,6 +485,12 @@ export function tallyIntelFunnel(rows: FunnelRows, now: Date): IntelFunnel {
     },
     contributor,
     suppression: { evaluatedClaims, publishable, byReason },
+    density: {
+      contributorsPerCluster,
+      independentSourcesPerKeyVenueNight,
+      outcomeConfirmations: outcomes.length,
+      afterProofPairs,
+    },
     groupSignal: {
       partyTally,
       groupEligibleObservations,
@@ -435,11 +518,22 @@ export const DENSITY_INPUT_STATUS = {
   activeReliableContributorsCitywide: "UPPER_BOUND", // reliability is not modelled; distinct actors over-counts it
   qualifyingWeeklyObservations: "MEASURED",
   criticalPrivacyIncidents: "MEASURED",              // none are recorded anywhere; 0 is truthful
-  minContributorsPerCluster: "UNINSTRUMENTED",       // key clusters are not defined
-  minIndependentSourcesPerKeyVenueNight: "UNINSTRUMENTED",
-  outcomeConfirmations: "UNINSTRUMENTED",            // outcome telemetry does not exist yet
-  crowdCalibrationAccuracy: "UNINSTRUMENTED",        // no after-proof pairs collected
-  expiryCorrectness: "UNINSTRUMENTED",               // serve-time expiry is not sampled
+  // INSTRUMENTED (this unit): key cluster = zone; distinct actors per zone. Still an
+  // UPPER BOUND because reliability is not modelled, so it is never trusted to clear.
+  minContributorsPerCluster: "UPPER_BOUND",
+  // INSTRUMENTED (this unit): distinct independent group_key per (subject, night) —
+  // exactly the metric, so MEASURED.
+  minIndependentSourcesPerKeyVenueNight: "MEASURED",
+  // INSTRUMENTED (this unit): count of finalized intel outcome events (canonical_events
+  // with an intel payload). MEASURED — a real reader now exists.
+  outcomeConfirmations: "MEASURED",
+  // STILL UNINSTRUMENTED: after-proof PAIRS are now counted, but a directional
+  // calibration ACCURACY needs the crowd after-proof value, which the outcome payload
+  // (a satisfaction judgment) does not carry. Honest fail-closed until it does.
+  crowdCalibrationAccuracy: "UNINSTRUMENTED",
+  // STILL UNINSTRUMENTED: there is no serve-time log, so "was a Live label ever shown
+  // stale?" cannot be sampled from stored state. Left fail-closed rather than faked.
+  expiryCorrectness: "UNINSTRUMENTED",
 } as const;
 
 export interface DensityGateAssessment {
@@ -470,10 +564,14 @@ export function assessDensityGate(
   const raw: RawPilotCounts = {
     // Upper bound: every distinct actor, not only the "reliable" ones (unmodelled).
     activeReliableContributorsCitywide: funnel.contributor.distinctActors,
-    contributorsPerCluster: [],                 // uninstrumented → min 0 → fails
+    // INSTRUMENTED: distinct actors per key cluster (still an UPPER BOUND, so a
+    // "cleared" value is not proven — see the certifiable check below).
+    contributorsPerCluster: funnel.density.contributorsPerCluster,
     qualifyingWeeklyObservations: opts.qualifyingWeeklyObservations,
-    independentSourcesPerKeyVenueNight: [],     // uninstrumented → min 0 → fails
-    outcomeConfirmations: 0,                    // uninstrumented → fails (< 100)
+    // INSTRUMENTED: distinct independent groups per key venue/night (MEASURED).
+    independentSourcesPerKeyVenueNight: funnel.density.independentSourcesPerKeyVenueNight,
+    // INSTRUMENTED: finalized intel outcome events (MEASURED).
+    outcomeConfirmations: funnel.density.outcomeConfirmations,
     calibrationPairs: [],                       // uninstrumented (empty → accuracy 1.0, but unproven)
     expirySamples: [],                          // uninstrumented (empty → 1.0, but unproven)
     criticalPrivacyIncidents: opts.criticalPrivacyIncidents ?? 0,

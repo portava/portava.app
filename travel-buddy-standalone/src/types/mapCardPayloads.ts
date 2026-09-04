@@ -149,6 +149,37 @@ export interface FriendCardPayload {
   country: string | null;
 }
 
+/**
+ * Canonical place. MIRRORS the server's `projectPlace` payload
+ * (artifacts/api-server/src/lib/mapProjectPlace.ts) exactly — pinned by
+ * src/features/map/projection/__tests__/serverMirror.test.ts.
+ *
+ * There is deliberately NO client-side projector for this kind. A canonical
+ * place reaches the map only through the gateway, where §24 protection, §31
+ * aggregation and §7 enrichment act on it; when the gateway is unavailable the
+ * map shell keeps its legacy Discovery path, which hands the cards a
+ * `DiscoveryPlace` envelope and never a `MapObject`. A client projector would
+ * be a second producer of `place` objects that skips all three stages.
+ */
+export interface PlaceCardPayload {
+  category: string | null;
+  city: string | null;
+  neighborhood: string | null;
+  countryCode: string | null;
+  /**
+   * `public.places.id` — the live-claim subject (intel_state_snapshots
+   * .subject_id → places.id). Never a Discovery or OSM id.
+   */
+  canonicalPlaceId: string;
+  /**
+   * The Discovery-SERVED id, `db/<places.id>`: the key the bookmark / wishlist
+   * flow and placeIdBridge accept, so a place saved from a projected pin lands
+   * under the SAME key the legacy Discovery path used. Saving under the bare
+   * uuid or the `place:` object id would split one place into two saves.
+   */
+  discoveryId: string;
+}
+
 // ── Runtime guards ────────────────────────────────────────────────────────────
 //
 // `kind` alone is not enough: it says which projector SHOULD have produced the
@@ -240,6 +271,23 @@ export function friendCardPayload(obj: MapObject | null): FriendCardPayload | nu
     avatarUrl: asStr(p.avatarUrl),
     city: asStr(p.city),
     country: asStr(p.country),
+  };
+}
+
+export function placeCardPayload(obj: MapObject | null): PlaceCardPayload | null {
+  if (!obj || obj.kind !== 'place') return null;
+  const p = payloadObject(obj);
+  // Both ids are load-bearing: one keys live claims, the other keys saves. An
+  // object missing either is not a gateway place and gets the reduced card.
+  if (!p || typeof p.canonicalPlaceId !== 'string' || p.canonicalPlaceId === '') return null;
+  if (typeof p.discoveryId !== 'string' || p.discoveryId === '') return null;
+  return {
+    category: asStr(p.category),
+    city: asStr(p.city),
+    neighborhood: asStr(p.neighborhood),
+    countryCode: asStr(p.countryCode),
+    canonicalPlaceId: p.canonicalPlaceId,
+    discoveryId: p.discoveryId,
   };
 }
 

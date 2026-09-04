@@ -3,6 +3,7 @@
  *
  *   GET    /api/wall?mode=&cursor=&session_intent=&limit=
  *   GET    /api/wall/live?limit=
+ *   GET    /api/wall/quick-media?limit=
  *   POST   /api/wall/session-intent   { text }
  *   DELETE /api/wall/session-intent
  *   POST   /api/wall/impression       { objectId, objectType, session? }
@@ -22,6 +23,7 @@
 import { isSupabaseConfigured } from '../../../lib/supabase.ts';
 import { freshToken } from '../../../services/apiToken.ts';
 import type {
+  QuickMediaItem,
   StructuredIntent,
   WallMode,
   WallProjection,
@@ -58,6 +60,10 @@ export type FetchWallResult =
 
 export type FetchLiveResult =
   | { ok: true; liveForYou: LiveForYouItem[]; degraded: boolean }
+  | { ok: false; error: string };
+
+export type FetchQuickMediaResult =
+  | { ok: true; items: QuickMediaItem[]; degraded: boolean }
   | { ok: false; error: string };
 
 export type SessionIntentResult =
@@ -165,6 +171,48 @@ export async function fetchLiveForYou(opts: {
     return {
       ok: true,
       liveForYou: Array.isArray(body.liveForYou) ? body.liveForYou : [],
+      degraded: false,
+    };
+  } catch (err: any) {
+    if (err?.name === 'AbortError') return { ok: false, error: 'aborted' };
+    return { ok: false, error: err?.message ?? 'Network error' };
+  }
+}
+
+// ── GET /wall/quick-media (spec §18) ─────────────────────────────────────────
+
+/**
+ * The Stories / Quick Media row's data source. Same fail-soft contract as the
+ * live strip: "not configured / not signed in / feature disabled" is an empty,
+ * degraded row — never an error the feed has to show.
+ */
+export async function fetchQuickMedia(opts: {
+  limit?: number;
+  signal?: AbortSignal;
+} = {}): Promise<FetchQuickMediaResult> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: true, items: [], degraded: true };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: true, items: [], degraded: true };
+
+  const params = new URLSearchParams();
+  if (opts.limit != null) params.set('limit', String(opts.limit));
+
+  try {
+    const res = await fetch(`${apiBase()}/api/wall/quick-media?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: opts.signal,
+    });
+    if (!res.ok) {
+      const code = await readErrorCode(res);
+      if (code === 'feature_disabled') return { ok: true, items: [], degraded: true };
+      return { ok: false, error: code };
+    }
+    const body = (await res.json()) as { items?: QuickMediaItem[] };
+    return {
+      ok: true,
+      items: Array.isArray(body.items) ? body.items : [],
       degraded: false,
     };
   } catch (err: any) {

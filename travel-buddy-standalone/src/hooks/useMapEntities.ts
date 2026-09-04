@@ -141,11 +141,44 @@ export const GATEWAY_KIND_FOR_LAYER: Record<ToggleableEntityType, MapObjectKind>
  */
 export const GATEWAY_KIND_FOR_OPTIONAL_LAYER: Record<string, MapObjectKind> = {
   crowd_flow: 'crowd_flow',
+  // §16 Relevant Places — canonical `public.places` rows, requested on the
+  // `places` option. Not a legacy pin toggle either: the legacy 'places' layer
+  // was a per-screen Discovery fetch (app/map/index.tsx), never a member of
+  // `ToggleableEntityType`, and it is the shell's §16 preference that decides
+  // whether the kind is asked for.
+  relevant_places: 'place',
+  // ── M5 §16 layers (none is a legacy pin toggle) ───────────────────────────
+  // Each is a §16 layer served by the gateway (routes/mapProjection.ts wantKind
+  // gates) but NOT a member of `ToggleableEntityType`, so — exactly like
+  // crowd_flow and relevant_places above — it rides beside `enabledLayers` on
+  // its own hook option, resolved by the shell from the §16 preferences. Until
+  // each was listed here the server produced them and no client asked: the
+  // §19 asymmetry the guard below exists to catch.
+  //
+  // §16 Saved (default on): the viewer's own saved places. The on-by-default
+  // twin of relevant_places — requested unless the Saved layer is switched off.
+  saved: 'saved_place',
+  // §16 Memories (default off): the viewer's own memory pins. Requested only on
+  // an explicit opt-in, so it never rides a default-on load.
+  memories: 'memory',
+  // §5/§24 Safety (always on): a hazard notice cannot be switched off, so it is
+  // requested on every non-passport load.
+  safety: 'safety_notice',
+  // §11/§16 Trip meeting points (trip layer, contextual): the viewer's own trip
+  // meeting context, requested when a trip is on the map.
+  meeting_point: 'meeting_point',
 };
 
 /** The `sources` name the route pushes for each optional kind. */
 export const GATEWAY_SOURCE_FOR_OPTIONAL_LAYER: Record<string, string> = {
   crowd_flow: 'crowd_flow',
+  relevant_places: 'places',
+  // The route pushes these exact names (routes/mapProjection.ts): meeting_point
+  // reports as "meeting_points", the rest under their §16 layer name.
+  saved: 'saved',
+  memories: 'memories',
+  safety: 'safety',
+  meeting_point: 'meeting_points',
 };
 
 export const GATEWAY_SOURCE_FOR_LAYER: Record<ToggleableEntityType, string> = {
@@ -328,11 +361,53 @@ export function useMapEntities(opts: {
    * trigger, and §16 says it outranks automatic resolution.
    */
   crowdFlow?: boolean;
+  /**
+   * §16 Relevant Places — canonical places through the gateway (Map spec §19,
+   * server lib/mapProjectPlace.ts), so a place on the map has been through §24
+   * protection, §31 aggregation and §7 enrichment like every other kind.
+   *
+   * GATEWAY ONLY — there is NO rollback fetcher for this kind here, on purpose.
+   * The rollback for places is the map shell's legacy Discovery path
+   * (getDiscoveryPlaces in app/map/index.tsx), which owns its own loading,
+   * error, retry and empty-state UI and renders through DiscoveryMapView's own
+   * pin loop. A second transport in this hook would double-fetch and
+   * double-draw every place on the rollback path. The shell reads `source` to
+   * decide which of the two is live.
+   */
+  places?: boolean;
+  /**
+   * §16 Saved (default on) — the viewer's own saved places through the gateway.
+   * The on-by-default twin of `places`: requested unless the viewer switched
+   * the Saved layer off. GATEWAY ONLY — no rollback fetcher here.
+   */
+  saved?: boolean;
+  /**
+   * §16 Memories (default off) — the viewer's own memory pins. Off by default,
+   * so it is requested only on an explicit opt-in and never rides a default-on
+   * load. GATEWAY ONLY.
+   */
+  memories?: boolean;
+  /**
+   * §5/§24 Safety (always on) — hazard and access notices, which cannot be
+   * switched off. Requested on every non-passport load. GATEWAY ONLY.
+   */
+  safety?: boolean;
+  /**
+   * §11/§16 Trip meeting points (trip layer, contextual) — the viewer's own
+   * meeting context, scoped server-side to trips they belong to. Requested when
+   * a trip is on the map; the §16 pipeline owns final visibility. GATEWAY ONLY.
+   */
+  meetingPoints?: boolean;
 }): UseMapEntitiesResult {
   const {
     enabledLayers, city, lat, lng, zoom = 12,
     radiusKm = DEFAULT_VIEWPORT_RADIUS_KM,
     crowdFlow = false,
+    places = false,
+    saved = false,
+    memories = false,
+    safety = false,
+    meetingPoints = false,
   } = opts;
 
   const [objects, setObjects] = useState<MapObject[]>([]);
@@ -382,12 +457,17 @@ export function useMapEntities(opts: {
       pendingRefetch.current = true;
       return;
     }
-    // Crowd Flow is requested independently of `enabledLayers`, so this guard
-    // must consider it. A viewer who switches every legacy pin layer OFF but
-    // Crowd Flow ON would otherwise be swallowed here and see nothing —
-    // and the early return cannot simply be deleted, because passport mode
-    // passes [] deliberately to mean "fetch nothing".
-    if (enabledLayers.length === 0 && !crowdFlow) {
+    // The optional §16 layers (Crowd Flow, Relevant Places, Saved, Memories,
+    // Safety, Trip meeting points) are requested independently of
+    // `enabledLayers`, so this guard must consider them all. A viewer who
+    // switches every legacy pin layer OFF but any of these ON would otherwise be
+    // swallowed here and see nothing — and the early return cannot simply be
+    // deleted, because passport mode passes [] deliberately to mean "fetch
+    // nothing".
+    if (
+      enabledLayers.length === 0 &&
+      !crowdFlow && !places && !saved && !memories && !safety && !meetingPoints
+    ) {
       setObjects([]);
       setEntities([]);
       // No layer is enabled, so no layer went unread. Leaving a stale list here
@@ -410,6 +490,15 @@ export function useMapEntities(opts: {
     // the `crowdFlow` option. kindsForLayer is the §16 model's own mapping, so
     // this cannot drift from the layer definition.
     if (crowdFlow) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.crowd_flow);
+    // §16 Relevant Places ride the same way. Gateway only — see the option.
+    if (places) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.relevant_places);
+    // The remaining §16 layers ride beside enabledLayers the same way — each on
+    // its own option, resolved by the shell from the §16 preferences. Gateway
+    // only; none has a rollback fetcher in this hook.
+    if (saved) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.saved);
+    if (memories) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.memories);
+    if (safety) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.safety);
+    if (meetingPoints) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.meeting_point);
 
     try {
       // ── 1. Try the gateway ────────────────────────────────────────────────
@@ -509,7 +598,11 @@ export function useMapEntities(opts: {
         void doFetch();
       }
     }
-  }, [enabledLayers, city, lat, lng, zoom, radiusKm]);
+    // `places` and the other optional §16 flags are fetch-key inputs: each
+    // carries a §16 preference that loads asynchronously, and a change that did
+    // not refetch would leave the kind permanently unrequested (or permanently
+    // requested) for the session.
+  }, [enabledLayers, city, lat, lng, zoom, radiusKm, places, saved, memories, safety, meetingPoints]);
 
   const refresh = useCallback(() => {
     void doFetch();
