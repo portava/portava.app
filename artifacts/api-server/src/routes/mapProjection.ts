@@ -123,6 +123,7 @@ import { readMemoryPins } from "../lib/mapProducers/memoryProducer.js";
 import { readSafetyNotices } from "../lib/mapProducers/safetyNoticeProducer.js";
 import { readSavedPlacePins } from "../lib/mapProducers/savedPlaceProducer.js";
 import { deriveEventCauseHypotheses } from "../lib/mapProducers/eventContextProducer.js";
+import { loadViewportPlaceRows, projectPlace } from "../lib/mapProjectPlace.js";
 
 /**
  * Compile-time pin for the flag literal used at the crowd-flow call site.
@@ -429,6 +430,7 @@ router.get(
         liveEnrichment: null,
         crowdFlow: null,
         producers: null,
+        places: null,
         generatedAt,
       });
       return;
@@ -478,6 +480,7 @@ router.get(
         liveEnrichment: null,
         crowdFlow: null,
         producers: null,
+        places: null,
         generatedAt,
       });
       return;
@@ -678,6 +681,33 @@ router.get(
       );
     }
 
+    // Canonical places (lib/mapProjectPlace). A public venue has no
+    // privacy-complete reader to route through — `places` holds no user column
+    // — so the viewport read IS the source; §24, §31 and enrichment all happen
+    // in the shared pipeline below, exactly as for every other kind. A read
+    // failure leaves the layer out of `sources` (not an empty layer), and a
+    // capped read is REPORTED via `places.truncated` rather than served as the
+    // whole viewport.
+    const placesReport: { report: { rows: number; projected: number; truncated: boolean } | null } = {
+      report: null,
+    };
+    if (wantKind("place")) {
+      tasks.push(
+        (async () => {
+          const read = await loadViewportPlaceRows(sc, bbox).catch(() => null);
+          if (read === null) return;
+          let projected = 0;
+          for (const row of read.rows) {
+            const obj = projectPlace(row);
+            if (obj) projected += 1;
+            collected.push(obj);
+          }
+          placesReport.report = { rows: read.rows.length, projected, truncated: read.truncated };
+          sources.push("places");
+        })(),
+      );
+    }
+
     // §10 Crowd Flow. The producer and the consumer both already existed and
     // nothing could ask for them: `deriveCrowdFlow` and `produceZoneTransitions`
     // had no caller in src/routes at all, so a fully-gated, fully-tested map
@@ -844,6 +874,7 @@ router.get(
         liveEnrichment: null,
         crowdFlow: null,
         producers: null,
+        places: null,
         generatedAt,
       });
       return;
@@ -905,6 +936,10 @@ router.get(
       // Per-producer refusals + pre-gate counts for the four M5 kinds. See
       // ProducerReports: null per entry when that kind was not requested.
       producers,
+      // Null when the layer was not requested or could not be read (then it is
+      // also absent from `sources`). Otherwise the row count and whether the
+      // bounded read was a SAMPLE of the viewport — see lib/mapProjectPlace.
+      places: placesReport.report,
       generatedAt,
     });
   }),

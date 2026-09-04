@@ -102,6 +102,21 @@ const READERS: Record<string, { approved: Record<string, string> }> = {
       "routes/mapProjection.ts": "the gateway (§19)",
     },
   },
+  loadViewportPlaceRows: {
+    approved: {
+      "lib/mapProjectPlace.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+      // NOTE ON WHAT THIS ONE PROTECTS. `places` holds no user column, so the
+      // rows are not a privacy leak in themselves — but they ARE raw database
+      // rows, and §19's first sentence is "Never place raw database rows
+      // directly on the map." A surface that called this and served the rows
+      // would draw a canonical place standing inside a §24 protected zone at
+      // full precision (the audit's HIGH finding), skip §31 aggregation (an
+      // unranked POI wall at city zoom, §37) and skip the §7 enrichment that
+      // is the only source of a place's live axes. The gateway is the one
+      // caller precisely so those three stages cannot be bypassed.
+    },
+  },
   readBuddyMapPins: {
     approved: {
       "lib/buddyMapRead.ts": "defines it",

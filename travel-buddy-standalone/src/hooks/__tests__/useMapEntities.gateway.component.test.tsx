@@ -23,6 +23,7 @@
 import { renderHook, waitFor } from '@testing-library/react-native';
 import { useMapEntities } from '../useMapEntities.ts';
 import type { MapObject } from '../../types/mapObjects.ts';
+import { placeObject, PLACE_ID } from '../../__fixtures__/mapEntities.ts';
 
 // NOTE: exhaustive by design. useMapEntities imports exactly `fetchMapProjection`
 // and `bboxFromCenter` from this module; requireActual would drag in the API
@@ -439,4 +440,63 @@ describe('§16 crowd flow', () => {
   // The property that MATTERS is covered above: crowd flow alone still reaches
   // the gateway. The mutation proof for the guard itself lives in
   // useMapEntities.gatewayAsymmetry.test.ts.
+});
+
+// ── §16 Relevant Places — canonical places through the gateway ───────────────
+//
+// `place` is served by the gateway (server lib/mapProjectPlace.ts) and, like
+// crowd_flow, is not a ToggleableEntityType: the legacy 'places' layer was a
+// per-screen Discovery fetch in app/map/index.tsx, never a pin toggle. The
+// shell asks for it on the `places` option from its §16 preference.
+//
+// There is deliberately NO rollback fetcher for the kind in this hook — the
+// shell's legacy Discovery path is the rollback, and it owns its own loading /
+// error / retry UI. A second transport here would double-fetch and double-draw.
+describe('§16 relevant places', () => {
+  it('is NOT requested unless the shell asks for it', async () => {
+    await load(['events']);
+    expect(requestedKinds()).not.toContain('place');
+  });
+
+  it('IS requested on the places option', async () => {
+    await load(['events'], { places: true });
+    expect(requestedKinds()).toContain('place');
+  });
+
+  // Same trap as crowd_flow: the empty-layers early return must not swallow a
+  // viewer who has every legacy pin layer off but Relevant Places on.
+  it('reaches the gateway with every pin layer off but places on', async () => {
+    await load([], { places: true });
+    expect(fetchMapProjection).toHaveBeenCalled();
+    expect(requestedKinds()).toEqual(['place']);
+  });
+
+  it('renders the gateway place as a places entity carrying the projected object', async () => {
+    const served = placeObject();
+    fetchMapProjection.mockResolvedValue(envelope([served], ['places']));
+    const { result } = await load([], { places: true });
+
+    expect(result.current.source).toBe('gateway');
+    expect(result.current.objects.map((o) => o.kind)).toEqual(['place']);
+    const [entity] = result.current.entities;
+    // The legacy view keeps the projected object whole on `payload`: the
+    // marker, the card and the §8 sheet all recover it from there.
+    expect(entity.type).toBe('places');
+    expect(entity.id).toBe(`place:${PLACE_ID}`);
+    expect(entity.payload).toBe(served);
+    expect(entity.detailRoute).toBe(`/place/${PLACE_ID}`);
+    // GeoJSON [lng, lat] → the envelope's lat/lng, verbatim.
+    expect(entity.lat).toBe(16.054412);
+    expect(entity.lng).toBe(108.202233);
+    // Never re-derived on the device: what the server withheld stays absent.
+    expect(result.current.objects[0].freshness).toBeUndefined();
+    expect(result.current.objects[0].confidence).toBeUndefined();
+  });
+
+  it('has no rollback transport of its own — the flag-off path yields no place objects', async () => {
+    fetchMapProjection.mockResolvedValue(DISABLED);
+    const { result } = await load(['events'], { places: true });
+    expect(result.current.source).toBe('legacy');
+    expect(result.current.objects.some((o) => o.kind === 'place')).toBe(false);
+  });
 });

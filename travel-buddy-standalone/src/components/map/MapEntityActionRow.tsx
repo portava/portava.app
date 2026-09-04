@@ -65,6 +65,7 @@ import {
   isMapObject,
   objectOf,
   tripCardPayload,
+  placeCardPayload,
 } from '../../types/mapCardPayloads.ts';
 import {
   countBucket,
@@ -207,6 +208,14 @@ function getEntitySubjectId(entity: MapEntity): string {
       case 'crew_member': {
         const p = friendCardPayload(obj);
         if (p) return p.userId;
+        break;
+      }
+      case 'place': {
+        // The Discovery-SERVED id (`db/<places.id>`): the same key the legacy
+        // DiscoveryPlace envelope below saves under, so a place saved from a
+        // projected pin and one saved from the legacy path are ONE save.
+        const p = placeCardPayload(obj);
+        if (p) return p.discoveryId;
         break;
       }
       default:
