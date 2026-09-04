@@ -85,6 +85,7 @@ import { useSession } from '../../src/context/SessionContext.tsx';
 import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
 import { countBucket, durationBucketMs } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { deriveMapEntryPoint } from '../../src/features/map/telemetry/mapTelemetry.ts';
+import { firstParam } from '../../src/lib/routeParams.ts';
 import type { MapEntryPoint } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
 import {
@@ -240,22 +241,6 @@ function parseCoord(v: string | string[] | undefined): number | null {
   if (!raw) return null;
   const n = parseFloat(raw);
   return Number.isFinite(n) ? n : null;
-}
-
-/**
- * First value of a query param, preserving the runtime shape expo-router can
- * actually return (a repeated param arrives as an array) WITHOUT laundering the
- * type.
- *
- * `Array.isArray(params.x) ? params.x[0] : params.x` — the idiom this replaces —
- * looks equivalent and is not: when `params.x` is `string | undefined`,
- * Array.isArray narrows it to an array type and the index yields `any`. Every
- * param read that way became `any`, which is why `entry: mode ?? 'direct'`
- * compiled against a MapEntryPoint union that contains no 'direct'.
- */
-function firstParam(v: string | string[] | undefined): string | null {
-  if (Array.isArray(v)) return v[0] ?? null;
-  return v ?? null;
 }
 
 function parseZoom(v: string | string[] | undefined): number {
@@ -657,7 +642,7 @@ function parseCategory(v: string | string[] | undefined): DiscoveryCategory {
  */
 export default function FullScreenMapScreen() {
   const params = useLocalSearchParams<{ mode?: string }>();
-  const mode = Array.isArray(params.mode) ? params.mode[0] : (params.mode ?? null);
+  const mode = firstParam(params.mode);
 
   // Pre-select enabled layers based on mode so MapStoreProvider gets the right
   // initial value — circle mode pre-selects friends only.
@@ -762,11 +747,11 @@ function FullScreenMapScreenInner() {
   const paramLat = parseCoord(params.lat);
   const paramLng = parseCoord(params.lng);
   const paramZoom = parseZoom(params.zoom);
-  const title = Array.isArray(params.title) ? params.title[0] : (params.title ?? null);
-  const entityTypes = Array.isArray(params.entityTypes) ? params.entityTypes[0] : (params.entityTypes ?? '');
+  const title = firstParam(params.title);
+  const entityTypes = firstParam(params.entityTypes) ?? '';
   const category = parseCategory(params.category);
   /** focusId: if set, carousel + camera will snap to the matching entity on first load. */
-  const focusId = Array.isArray(params.focusId) ? params.focusId[0] : (params.focusId ?? null);
+  const focusId = firstParam(params.focusId);
   /** mode: 'passport' | 'circle' | undefined — controls layer presets and UI. */
   const mode = firstParam(params.mode);
 
@@ -979,7 +964,7 @@ function FullScreenMapScreenInner() {
   // from the area label would be exactly the §23 violation that design prevents.
   // The others have no reachable source on this screen today. They are left out
   // rather than faked; tripToMapObjects omits any section it is not given.
-  const tripId = Array.isArray(params.tripId) ? params.tripId[0] : (params.tripId ?? null);
+  const tripId = firstParam(params.tripId);
   const [tripStops, setTripStops] = useState<TripStop[]>([]);
   const [proposal, setProposal] = useState<OptimizeProposal | null>(null);
 
