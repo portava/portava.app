@@ -91,7 +91,9 @@ export function WallScreen({
       />
       <LiveForYouStrip
         items={live.items}
-        onSeeLive={() => router.push('/map' as never)}
+        // §35 entry: the Wall is not a member of MapEntryPoint, so the origin is
+        // stated as unknown rather than mislabelled as a tab or a deep link.
+        onSeeLive={() => router.push('/map?entry=unknown' as never)}
       />
     </>
   );

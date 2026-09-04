@@ -307,15 +307,96 @@ export function durationBucketMs(ms: number | null | undefined): DurationBucket 
 export type MapSessionId = string;
 export type DecisionId = string;
 
-export type MapEntryPoint =
-  | 'tab'
-  | 'deeplink'
-  | 'trip'
-  | 'compass'
-  | 'notification'
-  | 'search'
-  | 'place'
-  | 'unknown';
+export const MAP_ENTRY_POINTS = [
+  'tab',
+  'gems',
+  'circle',
+  'passport',
+  'trip',
+  'compass',
+  'search',
+  'place',
+  'notification',
+  'deeplink',
+  'unknown',
+] as const;
+
+export type MapEntryPoint = (typeof MAP_ENTRY_POINTS)[number];
+
+/**
+ * ── entry and mode are INDEPENDENT DIMENSIONS ────────────────────────────────
+ *
+ *   MapEntryPoint  answers WHERE DID THIS MAP SESSION ORIGINATE?
+ *                  — the acquisition surface the user came from.
+ *   MapMode        answers HOW SHOULD THE MAP BEHAVE AND RENDER?
+ *                  — the presentation the screen adopts once it is open.
+ *
+ * NEITHER MAY EVER BE DERIVED FROM THE OTHER.
+ *
+ * They can share a word without sharing a meaning. `entry=circle, mode=circle`
+ * is a Circle-originated session that also renders in circle mode; `entry=circle`
+ * with a different mode is equally valid, and so is arriving from somewhere else
+ * INTO circle mode. Collapsing them loses the distinction between "where users
+ * come from" and "what they then see", which is the whole of §35's funnel.
+ *
+ * This is not a hypothetical rule. Until 2026-09-04 `entry` was literally
+ * assigned `mode ?? 'direct'`, so every session reported its RENDERING as its
+ * ORIGIN — and published 'circle'/'passport' (map modes) and 'direct' (nothing
+ * at all) into a field whose union contains none of them.
+ */
+
+/**
+ * Narrow an untrusted value to a MapEntryPoint.
+ *
+ * Exists because the map screen derives `entry` from the URL, and
+ * `useLocalSearchParams()` returns `any` — so nothing the compiler does can
+ * stop a query string from publishing an arbitrary entry value. Verified
+ * 2026-09-04: every one of the four production paths into /map emitted a value
+ * OUTSIDE this union ('circle', 'passport', and 'direct' for the rest), and the
+ * `any` at the seam is exactly why no typecheck ever said so.
+ *
+ * Mirrors `isMapMode` in features/map/vocabulary.ts, and for the same reason:
+ * an enumerated telemetry dimension fed from user-controllable input is
+ * unbounded cardinality unless something narrows it at the boundary.
+ */
+export function isMapEntryPoint(value: unknown): value is MapEntryPoint {
+  return typeof value === 'string' && (MAP_ENTRY_POINTS as readonly string[]).includes(value);
+}
+
+/**
+ * Decide `map_opened.entry` from the map screen's route params.
+ *
+ * Lives here, beside the union, rather than inline in the screen: this is a
+ * vocabulary decision, and inline it was untestable without the whole screen
+ * harness — which is why the previous expression (`mode ?? 'direct'`) had no
+ * test at all and shipped an entry point that does not exist.
+ *
+ * Rules, in order:
+ *   1. An explicit `entry` param, but only if it is a real MapEntryPoint. A
+ *      query param is user-controllable, and an enumerated telemetry dimension
+ *      fed from one is unbounded cardinality unless it is narrowed here.
+ *   2. Otherwise `deeplink` when the URL carried anything at all — every
+ *      in-app `router.push('/map?…')` is exactly that.
+ *   3. Otherwise `tab`, the bare open.
+ *
+ * `mode` is deliberately NOT consulted: 'circle' and 'passport' are §30 map
+ * modes, a different vocabulary, and the payload already reports the real mode
+ * from the state machine.
+ */
+export function deriveMapEntryPoint(
+  params: Readonly<Record<string, string | string[] | undefined>>,
+): MapEntryPoint {
+  const rawEntry = params.entry;
+  const first = Array.isArray(rawEntry) ? rawEntry[0] : rawEntry;
+  if (isMapEntryPoint(first)) return first;
+  // Present but not a real entry point: someone tried to state an origin and
+  // named something that is not one. That is unknown, not a deep link.
+  if (typeof first === 'string' && first.length > 0) return 'unknown';
+  // Absent entirely. Every internal surface that navigates to /map states its
+  // origin explicitly (see the producer table in the PR), so an unstated origin
+  // is an external or otherwise unattributable deep link.
+  return 'deeplink';
+}
 
 // The §30 modes, from features/map/vocabulary.ts. Declared there rather than
 // here so telemetry reports the SAME mode value the state machine is actually

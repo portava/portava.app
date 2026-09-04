@@ -384,7 +384,7 @@ export default function GemsScreen() {
           {activeTab === 'Discover' && (
             <TouchableOpacity
               style={styles.viewToggle}
-              onPress={() => router.push('/map?entityTypes=gems' as any)}
+              onPress={() => router.push('/map?entityTypes=gems&entry=gems' as any)}
               accessibilityLabel="View gems on the map"
             >
               <Ionicons name="map-outline" size={20} color="#4C8BF5" />
