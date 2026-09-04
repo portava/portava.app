@@ -45,6 +45,16 @@ import {
   type TravelIdentityProjection,
   type TravelIdentitySignals,
 } from "./PassportTravelIdentityService.js";
+import {
+  listWindows,
+  projectPublicWindows,
+  isActive as isWindowActive,
+  effectiveExpiry as windowEffectiveExpiry,
+  OPEN_TO_PLANS_WINDOWS_FLAG,
+  type AvailabilityWindow,
+  type ViewerRelationship as WindowViewerRelationship,
+} from "./OpenToPlansService.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TABLE 5 — viewer context
@@ -152,11 +162,36 @@ export interface TravelerState {
   expiresAt: string | null;
 }
 
+/**
+ * The §8 explicit availability window (TABLE 8) currently active for the owner
+ * and visible to this viewer. Projected from `availability_windows` via
+ * OpenToPlansService, so it is EXPLICIT-only and expiry-checked on read (§7/§31).
+ */
+export interface ActiveAvailabilityWindow {
+  type: string;
+  startAt: string;
+  endAt: string;
+  intents: string[];
+  groupPreference: string | null;
+  maxTravelMinutes: number | null;
+  /** TABLE 10 SocialAvailability the owner set on this window, if any. */
+  socialAvailability: "open" | "maybe" | "crew_only" | "following_only" | "not_open" | null;
+  /** COALESCE(expiresAt, endAt): the instant this window stops being current. */
+  expiresAt: string;
+}
+
 export interface AvailabilityProjection {
   openToPlans: boolean;
   socialAvailability: "open" | "maybe" | "crew_only" | "following_only" | "not_open";
-  /** Current explicit window, filtered to non-expired (§31 "never render stale"). */
+  /** Current quick-status window, filtered to non-expired (§31 "never render stale"). */
   currentWindow: { status: string; expiresAt: string | null } | null;
+  /**
+   * The §8 explicit availability window active now (TABLE 8), if the windows
+   * feature is on and one is visible to this viewer under §7 rules. Distinct
+   * from the legacy quick status + weekly grid — it carries intents, group
+   * preference and travel radius, and expires on read.
+   */
+  explicitWindow: ActiveAvailabilityWindow | null;
   weekly: Record<string, string[]>;
   expiresAt: string | null;
 }
@@ -718,10 +753,74 @@ function buildTravelerState(
   };
 }
 
+/** TABLE 5 viewer context → the §7 window visibility relationship. */
+export function toWindowViewerRelationship(context: PassportViewerContext): WindowViewerRelationship {
+  switch (context) {
+    case "self": return "self";
+    case "follower": return "follower";
+    case "following": return "following";
+    // Trip crew/host are the "crew" relationship for window visibility.
+    case "trip_crew":
+    case "trip_host": return "crew";
+    // Buddy/event/public relationships get only public windows.
+    default: return "public";
+  }
+}
+
+/**
+ * The §8 explicit availability window active NOW for the owner and visible to
+ * this viewer, or null. Gated by the windows feature flag (fail-closed): when
+ * off, the aggregate carries no window and the legacy quick-status/grid still
+ * apply. §7 (explicit-only, visibility) and §31 (expiry-on-read) are enforced by
+ * OpenToPlansService — for a non-self viewer via projectPublicWindows (explicit
+ * + visible + non-expired), for the owner via their own active windows.
+ */
+async function loadActiveExplicitWindow(
+  sc: SupabaseClient,
+  userId: string,
+  context: PassportViewerContext,
+): Promise<ActiveAvailabilityWindow | null> {
+  try {
+    if (!(await isFlagEnabled(sc, OPEN_TO_PLANS_WINDOWS_FLAG))) return null;
+    const nowMs = Date.now();
+    const relationship = toWindowViewerRelationship(context);
+    let candidates: AvailabilityWindow[];
+    if (relationship === "self") {
+      // The owner sees their own active windows regardless of visibility, but
+      // the aggregate is EXPLICIT-only (§7): an inferred (plan_derived) window is
+      // a private "Free tonight?" prompt, never the owner's shared availability.
+      const own = await listWindows(sc, userId, { includeExpired: false, nowMs });
+      candidates = own.filter((w) => w.source === "explicit" && isWindowActive(w, nowMs));
+    } else {
+      // projectPublicWindows already applies §7 (explicit-only + visibility) and
+      // §31 (non-expired); narrow to those actually active (already started).
+      const visible = await projectPublicWindows(sc, userId, relationship, nowMs);
+      candidates = visible.filter((w) => isWindowActive(w, nowMs));
+    }
+    if (candidates.length === 0) return null;
+    // Soonest-ending active window is the current one.
+    candidates.sort((a, b) => windowEffectiveExpiry(a) - windowEffectiveExpiry(b));
+    const w = candidates[0];
+    return {
+      type: w.type,
+      startAt: w.startAt,
+      endAt: w.endAt,
+      intents: Array.isArray(w.intents) ? w.intents.slice(0, 8) : [],
+      groupPreference: w.groupPreference,
+      maxTravelMinutes: w.maxTravelMinutes,
+      socialAvailability: w.socialAvailability,
+      expiresAt: new Date(windowEffectiveExpiry(w)).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function buildAvailability(
   sc: SupabaseClient,
   userId: string,
   quick: { status: string; expiresAt: string | null } | null,
+  explicitWindow: ActiveAvailabilityWindow | null,
 ): Promise<AvailabilityProjection> {
   let weekly: Record<string, string[]> = {};
   let openToMeet = false;
@@ -734,18 +833,43 @@ async function buildAvailability(
   } catch {
     /* tolerate */
   }
-  const openToPlans = openToMeet || (quick != null && quick.status !== "busy");
-  const social: AvailabilityProjection["socialAvailability"] = openToPlans ? "open" : "not_open";
+  // An active explicit window is the strongest signal (§8): its openToPlans and
+  // socialAvailability override the coarse legacy reads when present.
+  const openToPlans = explicitWindow != null || openToMeet || (quick != null && quick.status !== "busy");
+  const social: AvailabilityProjection["socialAvailability"] =
+    explicitWindow?.socialAvailability ?? (openToPlans ? "open" : "not_open");
+  // The aggregate expiry is the SOONEST of the quick-status and window expiries —
+  // never render either as current past its horizon (§31).
+  const expiryCandidates = [quick?.expiresAt ?? null, explicitWindow?.expiresAt ?? null].filter(
+    (x): x is string => typeof x === "string",
+  );
+  const expiresAt = expiryCandidates.length
+    ? expiryCandidates.reduce((a, b) => (a <= b ? a : b))
+    : null;
   return {
     openToPlans,
     socialAvailability: social,
     currentWindow: quick,
+    explicitWindow,
     weekly,
-    expiresAt: quick?.expiresAt ?? null,
+    expiresAt,
   };
 }
 
-function buildIntent(profile: Record<string, any>, quick: { status: string; expiresAt: string | null } | null): IntentProjection | undefined {
+function buildIntent(
+  profile: Record<string, any>,
+  quick: { status: string; expiresAt: string | null } | null,
+  explicitWindow: ActiveAvailabilityWindow | null,
+): IntentProjection | undefined {
+  // §8: an explicit window's intents are the current temporary intent and carry
+  // the window's TTL. They take precedence over the profile's availability_tags.
+  if (explicitWindow && explicitWindow.intents.length > 0) {
+    return {
+      current: explicitWindow.intents.slice(0, 8),
+      ttlExpiresAt: explicitWindow.expiresAt,
+      source: "explicit",
+    };
+  }
   const tags: string[] = Array.isArray(profile.availability_tags) ? profile.availability_tags.filter(Boolean) : [];
   if (tags.length === 0) return undefined;
   return {
@@ -1206,8 +1330,11 @@ export async function buildPassportProjection(
   let availability: AvailabilityProjection | undefined;
   let intent: IntentProjection | undefined;
   if (isSelf || permissions.canSeeAvailability) {
-    availability = await buildAvailability(sc, userId, quick);
-    intent = buildIntent(profile, quick);
+    // §8: an explicit availability window (visible to this viewer under §7) is
+    // projected into the aggregate alongside the legacy quick-status/grid.
+    const explicitWindow = await loadActiveExplicitWindow(sc, userId, context);
+    availability = await buildAvailability(sc, userId, quick, explicitWindow);
+    intent = buildIntent(profile, quick, explicitWindow);
   }
 
   // 6. Trust + credentials.

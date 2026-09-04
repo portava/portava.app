@@ -339,3 +339,98 @@ describe("buildTravelerState — derived §5 activity states with validFrom/vali
     assert.equal(p.travelerState?.state, "unavailable");
   });
 });
+
+// ── §8 explicit availability windows projected into the aggregate ──────────────
+describe("buildAvailability/buildIntent — §8 explicit windows in the aggregate", () => {
+  const WINDOWS_FLAG = "open_to_plans_windows_enabled";
+  const baseProfile = {
+    id: OWNER, handle: "w", display_name: "W", name: "W",
+    home_city: "Hanoi", home_country: "Vietnam", current_city: "Hanoi",
+    is_official: false, is_private: false, passport_visibility: "public",
+    show_profile_picture_publicly: true, created_at: "2023-01-01",
+    availability_tags: ["Explore"],
+  };
+  function window(over: Record<string, any> = {}) {
+    return {
+      id: "w1", user_id: OWNER, type: "one_time", start_at: PAST, end_at: FUTURE,
+      trip_id: null, open_to_plans: true, intents: ["Nightlife", "Food"],
+      group_preference: "small_group", max_travel_minutes: 20, visibility: "public",
+      source: "explicit", social_availability: "open", expires_at: null,
+      created_at: PAST, updated_at: PAST, ...over,
+    };
+  }
+  const selfRes: ViewerResolution = { context: "self", permissions: permsFull(), sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+
+  it("projects the active explicit window's intents/group/radius when the flag is on (self)", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window()],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.ok(p.availability?.explicitWindow, "explicit window present in aggregate");
+    assert.equal(p.availability?.explicitWindow?.type, "one_time");
+    assert.deepEqual(p.availability?.explicitWindow?.intents, ["Nightlife", "Food"]);
+    assert.equal(p.availability?.explicitWindow?.groupPreference, "small_group");
+    assert.equal(p.availability?.explicitWindow?.maxTravelMinutes, 20);
+    assert.equal(p.availability?.explicitWindow?.expiresAt, FUTURE, "expiry = COALESCE(expiresAt,endAt)");
+    assert.equal(p.availability?.openToPlans, true);
+    assert.equal(p.availability?.socialAvailability, "open");
+    // Intent prefers the window's intents (with its TTL) over profile tags.
+    assert.deepEqual(p.intent?.current, ["Nightlife", "Food"]);
+    assert.equal(p.intent?.ttlExpiresAt, FUTURE);
+    assert.equal(p.intent?.source, "explicit");
+  });
+
+  it("with the windows flag OFF (default), no window is projected; legacy intent tags stand", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      availability_windows: [window()],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.availability?.explicitWindow, null, "flag off ⇒ no window");
+    assert.deepEqual(p.intent?.current, ["Explore"], "falls back to profile availability_tags");
+  });
+
+  it("§7: an inferred (plan_derived) window never enters the aggregate, even for the owner", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window({ source: "plan_derived", visibility: "private" })],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.availability?.explicitWindow, null, "inferred window is not shared availability");
+    assert.deepEqual(p.intent?.current, ["Explore"]);
+  });
+
+  it("§7: a followers-only explicit window shows to a follower but not to the public", async () => {
+    const followerPerms = permsPublic();
+    followerPerms.canSeeAvailability = true;
+    const followerRes: ViewerResolution = { context: "follower", permissions: followerPerms, sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+    const publicPerms = permsPublic();
+    publicPerms.canSeeAvailability = true; // isolate the WINDOW visibility rule, not the availability gate
+    const publicRes: ViewerResolution = { context: "public", permissions: publicPerms, sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+
+    const mkDb = () => makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window({ visibility: "followers" })],
+    });
+
+    const asFollower = (await buildPassportProjection(mkDb(), OWNER, "f1", { resolveViewerContext: resolver(followerRes) }))!;
+    assert.ok(asFollower.availability?.explicitWindow, "follower sees a followers-only window");
+
+    const asPublic = (await buildPassportProjection(mkDb(), OWNER, "p1", { resolveViewerContext: resolver(publicRes) }))!;
+    assert.equal(asPublic.availability?.explicitWindow, null, "public does not see a followers-only window");
+  });
+
+  it("§31: an expired explicit window is never projected as current", async () => {
+    const db = makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window({ end_at: PAST })],
+    });
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(selfRes) }))!;
+    assert.equal(p.availability?.explicitWindow, null, "stale window not rendered as current");
+  });
+});

@@ -30,6 +30,7 @@ import {
   listWindows,
   updateWindow,
   clearWindow,
+  OPEN_TO_PLANS_WINDOWS_FLAG,
 } from "../services/passport/OpenToPlansService.js";
 
 const router = Router();
@@ -40,7 +41,7 @@ const router = Router();
  * explicitly-disabled envelope and store nothing; the §6 grid / quick-status
  * routes above are NOT gated by it.
  */
-const OPEN_TO_PLANS_FLAG = "open_to_plans_windows_enabled";
+const OPEN_TO_PLANS_FLAG = OPEN_TO_PLANS_WINDOWS_FLAG;
 
 const WEEKDAYS = ["mon","tue","wed","thu","fri","sat","sun"] as const;
 const BLOCKS   = ["morning","afternoon","evening","late"] as const;
