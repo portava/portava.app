@@ -226,9 +226,22 @@ export function usePassportPlans({ targetUserId, viewerUserId }: UsePassportPlan
     plansRef.current = next;
     setVm((s) => ({ ...s, plans: next }));
 
-    const result = await updateTrip(tripId, { visibility });
-    if (result === null) {
-      // Revert on failure.
+    // Persist. updateTrip() returns null on an ok:false response, but a NETWORK
+    // failure (offline) THROWS from fetch rather than returning null — so BOTH a
+    // null result and a thrown error must revert the optimistic change and
+    // surface the error (mirrors TravelIdentityScreen.applyState, which handles
+    // the ok:false and the thrown-error cases alike). Catching here also means
+    // this async writer never rejects, so the fire-and-forget caller
+    // (PlansScreen's VisibilityControl onPress) can't leak an unhandled
+    // rejection while the control still shows the un-saved value.
+    let ok = false;
+    try {
+      ok = (await updateTrip(tripId, { visibility })) !== null;
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      // Revert on failure (null result OR thrown network error).
       plansRef.current = prev;
       setVm((s) => ({ ...s, plans: prev }));
       setMutationError('Could not update visibility');

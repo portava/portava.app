@@ -134,12 +134,19 @@ export function useWallFeed(
           setError(res.error);
         }
       } finally {
+        // Guard BOTH the loading resets AND the in-flight release by generation:
+        // a superseded (stale-gen) request that resolves must not clear
+        // inFlightRef while a NEWER request is still running — doing so would let
+        // a refresh in that window supersede the newer request and strand
+        // `loading` true (a permanent spinner instead of the empty state). Only
+        // the latest request (gen === genRef.current) releases the guard; the
+        // effect-cleanup path resets inFlightRef for a genuinely new session.
         if (gen === genRef.current) {
           if (reason === 'initial') setLoading(false);
           else if (reason === 'refresh') setRefreshing(false);
           else setLoadingMore(false);
+          inFlightRef.current = false;
         }
-        inFlightRef.current = false;
       }
     },
     [mode, normalizedIntent],
