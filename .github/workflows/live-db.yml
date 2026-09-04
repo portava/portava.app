@@ -696,11 +696,30 @@ jobs:
   # production unconditionally. There is no variable that points it at
   # production. The production apply is a separate, deliberate operator action.
   # ───────────────────────────────────────────────────────────────────────────
+  # ── ORDERED AFTER schema-drift, deliberately ────────────────────────────────
+  #
+  # schema-drift APPLIES MIGRATIONS when `github.ref == 'refs/heads/main'` —
+  # real DDL against the shared project. This job and live-db-security-suites
+  # read and assert schema state (RLS policies, grants, column shapes). Running
+  # them alongside in-flight DDL is not merely a lock-contention risk: a suite
+  # that enumerates policies WHILE a migration adds or drops one can observe a
+  # half-applied schema and report a confident, wrong result. That is the same
+  # failure mode this whole workflow exists to eliminate — a check that verifies
+  # something other than what it claims.
+  #
+  # Cost, measured on run 33834367778: schema-drift takes ~55s and the DB jobs
+  # ran 5m45s wall-clock in parallel. Serializing ONLY this edge makes it ~6m40s
+  # (+55s), versus 8m37s for fully serializing all four. The narrow edge is worth
+  # 55s; the wide one is not, and is not needed — see the audit in
+  # docs/ci/README.md.
+  #
+  # On PR runs schema-drift applies nothing (the apply/certify steps are gated on
+  # main), so this ordering costs a read-only job's duration and nothing else.
   post-media-revocation-rehearsal:
     name: post-media revocation · before-proof, apply, after-proof
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [preflight, live-db-slot]
+    needs: [preflight, live-db-slot, schema-drift]
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -826,11 +845,30 @@ jobs:
   # above is the primary defence; the per-suite output assertions below are the
   # second. Do not remove either.
   # ───────────────────────────────────────────────────────────────────────────
+  # ── ORDERED AFTER schema-drift, deliberately ────────────────────────────────
+  #
+  # schema-drift APPLIES MIGRATIONS when `github.ref == 'refs/heads/main'` —
+  # real DDL against the shared project. This job and live-db-security-suites
+  # read and assert schema state (RLS policies, grants, column shapes). Running
+  # them alongside in-flight DDL is not merely a lock-contention risk: a suite
+  # that enumerates policies WHILE a migration adds or drops one can observe a
+  # half-applied schema and report a confident, wrong result. That is the same
+  # failure mode this whole workflow exists to eliminate — a check that verifies
+  # something other than what it claims.
+  #
+  # Cost, measured on run 33834367778: schema-drift takes ~55s and the DB jobs
+  # ran 5m45s wall-clock in parallel. Serializing ONLY this edge makes it ~6m40s
+  # (+55s), versus 8m37s for fully serializing all four. The narrow edge is worth
+  # 55s; the wide one is not, and is not needed — see the audit in
+  # docs/ci/README.md.
+  #
+  # On PR runs schema-drift applies nothing (the apply/certify steps are gated on
+  # main), so this ordering costs a read-only job's duration and nothing else.
   live-db-security-suites:
     name: live DB · RLS + role/is_official write boundaries (needs credentials)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: [preflight, live-db-slot]
+    needs: [preflight, live-db-slot, schema-drift]
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

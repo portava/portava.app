@@ -163,6 +163,34 @@ describe("CI architecture — concurrency cannot cancel unrelated work", () => {
       );
     }
   });
+
+  it("orders schema-mutating DDL ahead of the jobs that assert schema state", () => {
+    // schema-drift applies real migrations when github.ref == refs/heads/main.
+    // A suite that enumerates RLS policies WHILE a migration adds or drops one
+    // can observe a half-applied schema and report a confident, wrong result —
+    // the same class of failure this workflow exists to eliminate.
+    //
+    // Only this edge is serialized. api-server-check-all stays parallel (it is
+    // read-only apart from an INSERT probe that aborts by construction), which
+    // is why this asserts the narrow ordering and not a full chain.
+    for (const job of ["post-media-revocation-rehearsal", "live-db-security-suites"]) {
+      const i = liveDb.indexOf(`\n  ${job}:\n`);
+      assert.ok(i > 0, `job ${job} not found`);
+      assert.match(
+        liveDb.slice(i, i + 1400), /needs:\s*\[[^\]]*schema-drift/,
+        `${job} asserts schema state but does not wait for schema-drift, so it can ` +
+          "run against a database mid-migration",
+      );
+    }
+    // The read-only job must NOT be dragged into the chain — that would cost
+    // wall-clock for no isolation gain (measured: +55s narrow vs +2m52s wide).
+    const k = liveDb.indexOf("\n  api-server-check-all:\n");
+    assert.ok(
+      !/needs:\s*\[[^\]]*schema-drift/.test(liveDb.slice(k, k + 600)),
+      "api-server-check-all was serialized behind schema-drift; it is read-only " +
+        "apart from a self-aborting probe, so this costs time and buys nothing",
+    );
+  });
 });
 
 describe("CI architecture — an unexecuted certification is not a pass", () => {
