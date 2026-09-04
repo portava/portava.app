@@ -110,6 +110,8 @@ import {
 } from "../lib/intelContracts.js";
 import { writeObservation, type CaptureInput } from "../services/intel/IntelCaptureService.js";
 import { attachMediaEvidence } from "../lib/intelEvidenceCapture.js";
+import { haversineKm } from "../lib/mapSearch.js";
+import { KM_PER_DEGREE_LAT } from "../lib/mapAggregation.js";
 
 const router = Router();
 
@@ -166,12 +168,19 @@ export const MEDIA_KINDS = ["photo", "video"] as const;
 // `intel_observations.subject_id` FKs `public.places`, so an id that is not a
 // place is refused as `unknown_subject` no matter what kind the body claims.
 //
-// Consequence worth stating plainly: today only place-shaped subjects
-// (place / hidden_gem / trip_stop, and events that exist as places) can be
-// contributed to. Zone kinds — activity_zone, social_zone, crowd_flow — are
-// listed here because §22 allows their prompts, but they are not rows in
-// `places`, so a zone contribution resolves to `unknown_subject` until the
-// intel subject space grows beyond places. That is a refusal, never a mis-file.
+// ZONE KINDS RESOLVE TO AN ANCHOR PLACE (§22, Table 12). activity_zone,
+// social_zone and crowd_flow are AREAS, not rows in `places`, so their
+// `objectId` is a `geo_zones.id`, not a place id — and handed straight to the
+// subject check it always failed as `unknown_subject`, silently discarding
+// every zone contribution §22 explicitly allows (crowd_direction on a flow, a
+// vibe on a social zone). `resolveZoneAnchorSubject` closes that: it reads the
+// geo_zone, finds the nearest active place inside it, and observes AGAINST that
+// place (`subject_id`) while recording the zone (`zone_id`) the contribution
+// came from. It FAILS CLOSED — `unknown_subject`, never a mis-file — when the
+// zone is unknown, has no usable geometry, or contains no place to anchor to.
+// A person-, service-, safety- or forecast-kind subject still takes no prompt
+// at all (KIND_PROMPTS below), so this path is reachable only for the three
+// zone kinds §22 names.
 export const KIND_PROMPTS: Record<MapObjectKind, readonly MapContributionKind[]> = {
   place: ["crowd_level", "queue", "entry_access", "vibe", "closure", "media"],
   hidden_gem: ["crowd_level", "queue", "entry_access", "vibe", "closure", "media"],
@@ -550,6 +559,155 @@ function reject(reason: string, detail?: string): MapIngestResult {
   return { ok: false, reason, code: REASON_CODE[reason] ?? "invalid_payload", detail };
 }
 
+// ── §22 zone-kind subject resolution ──────────────────────────────────────────
+//
+// The three §22 zone kinds. A contribution to any of these carries a
+// `geo_zones.id` as its `objectId`, not a place id — see the KIND_PROMPTS note.
+
+export const ZONE_SUBJECT_KINDS = ["activity_zone", "social_zone", "crowd_flow"] as const;
+
+export function isZoneSubjectKind(kind: MapObjectKind): boolean {
+  return (ZONE_SUBJECT_KINDS as readonly string[]).includes(kind);
+}
+
+/**
+ * Search radius when the geo_zone declares no `radius_meters` (polygon / city /
+ * neighborhood zones). 500 m is one block: close enough that the anchor place is
+ * plausibly "in" the zone, far enough that a small circle zone still finds one.
+ */
+export const ZONE_ANCHOR_DEFAULT_RADIUS_M = 500;
+
+/**
+ * Ceiling on the search radius, INCLUDING an explicit `radius_meters`. A `city`
+ * zone can be kilometres across; anchoring a crowd-direction observation to a
+ * place 8 km away would attribute it to somewhere the contributor never was.
+ * 3 km is generous for a neighbourhood and still local.
+ */
+export const ZONE_ANCHOR_MAX_RADIUS_M = 3_000;
+
+/** How many candidate places the bbox pre-filter may return before we pick the nearest. */
+const ZONE_ANCHOR_CANDIDATE_LIMIT = 200;
+
+type ZoneAnchorResult =
+  | { ok: true; subjectId: string; zoneId: string }
+  | { ok: false; detail: string };
+
+/** The zone's anchor point: its declared centre, else its polygon centroid. */
+function zoneAnchorPoint(zone: {
+  center_lat?: unknown;
+  center_lng?: unknown;
+  polygon_geojson?: unknown;
+}): { lat: number; lng: number } | null {
+  // `== null` first: Number(null) is 0 (finite), so a null centre would
+  // silently anchor the whole zone at (0, 0) in the Gulf of Guinea.
+  const cLat = zone.center_lat == null ? NaN : Number(zone.center_lat);
+  const cLng = zone.center_lng == null ? NaN : Number(zone.center_lng);
+  if (Number.isFinite(cLat) && Number.isFinite(cLng)) return { lat: cLat, lng: cLng };
+
+  // Polygon fallback: the mean of the outer ring's vertices. A centroid, not a
+  // bounding-box centre, so a concave zone still anchors inside its own mass.
+  const poly = zone.polygon_geojson as { coordinates?: unknown } | null | undefined;
+  const outer = Array.isArray(poly?.coordinates) ? (poly!.coordinates as unknown[])[0] : null;
+  if (!Array.isArray(outer) || outer.length === 0) return null;
+  let sumLat = 0;
+  let sumLng = 0;
+  let n = 0;
+  for (const p of outer) {
+    if (!Array.isArray(p) || p.length < 2) continue;
+    const lng = Number(p[0]);
+    const lat = Number(p[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    sumLat += lat;
+    sumLng += lng;
+    n += 1;
+  }
+  return n === 0 ? null : { lat: sumLat / n, lng: sumLng / n };
+}
+
+/**
+ * Resolve a §22 zone contribution to the place it should be observed against.
+ *
+ * `intel_observations.subject_id` FKs `public.places`, and a zone is not a
+ * place. This reads the `geo_zones` row named by `zoneObjectId`, finds the
+ * NEAREST active place within the zone's radius, and returns that place as the
+ * subject plus the zone id to record alongside it.
+ *
+ * FAIL-CLOSED, every branch: an unreadable/absent zone, a zone with no usable
+ * geometry, an unreadable place list, or no place within range all return
+ * `ok:false`. The caller maps that to `unknown_subject` — a refusal, never a
+ * guess. It never widens the FK or invents a subject.
+ */
+export async function resolveZoneAnchorSubject(
+  sc: any,
+  zoneObjectId: string,
+): Promise<ZoneAnchorResult> {
+  let zoneRow: any = null;
+  try {
+    const { data, error } = await sc
+      .from("geo_zones")
+      .select("id, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
+      .eq("id", zoneObjectId)
+      .maybeSingle();
+    if (error) return { ok: false, detail: `geo_zone read failed for ${zoneObjectId}` };
+    zoneRow = data;
+  } catch {
+    return { ok: false, detail: `geo_zone read threw for ${zoneObjectId}` };
+  }
+  if (!zoneRow) return { ok: false, detail: `no geo_zone ${zoneObjectId}` };
+
+  const anchor = zoneAnchorPoint(zoneRow);
+  if (!anchor) return { ok: false, detail: `geo_zone ${zoneObjectId} has no usable geometry` };
+
+  const declared = Number(zoneRow.radius_meters);
+  const radiusM = Math.min(
+    ZONE_ANCHOR_MAX_RADIUS_M,
+    Number.isFinite(declared) && declared > 0 ? declared : ZONE_ANCHOR_DEFAULT_RADIUS_M,
+  );
+  const radiusKm = radiusM / 1000;
+
+  // A bbox pre-filter around the anchor keeps the scan bounded; the nearest is
+  // then chosen by true great-circle distance and re-checked against the radius,
+  // so a corner of the bbox that lies outside the circle cannot anchor.
+  const dLat = radiusKm / KM_PER_DEGREE_LAT;
+  const cosLat = Math.max(0.01, Math.cos((anchor.lat * Math.PI) / 180));
+  const dLng = radiusKm / (KM_PER_DEGREE_LAT * cosLat);
+
+  let placeRows: any[] | null = null;
+  try {
+    const { data, error } = await sc
+      .from("places")
+      .select("id, latitude, longitude")
+      .eq("status", "active")
+      .is("merged_into_place_id", null)
+      .gte("latitude", anchor.lat - dLat)
+      .lte("latitude", anchor.lat + dLat)
+      .gte("longitude", anchor.lng - dLng)
+      .lte("longitude", anchor.lng + dLng)
+      .limit(ZONE_ANCHOR_CANDIDATE_LIMIT);
+    if (error || !Array.isArray(data)) return { ok: false, detail: `place read failed near geo_zone ${zoneObjectId}` };
+    placeRows = data as any[];
+  } catch {
+    return { ok: false, detail: `place read threw near geo_zone ${zoneObjectId}` };
+  }
+
+  let bestId: string | null = null;
+  let bestKm = Infinity;
+  for (const r of placeRows) {
+    const lat = Number(r?.latitude);
+    const lng = Number(r?.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || typeof r?.id !== "string") continue;
+    const km = haversineKm(anchor.lat, anchor.lng, lat, lng);
+    if (km <= radiusKm && km < bestKm) {
+      bestKm = km;
+      bestId = r.id;
+    }
+  }
+  if (bestId === null) {
+    return { ok: false, detail: `no active place within ${radiusM}m of geo_zone ${zoneObjectId}` };
+  }
+  return { ok: true, subjectId: bestId, zoneId: String(zoneRow.id) };
+}
+
 /**
  * Record one map contribution as an intel observation.
  *
@@ -615,16 +773,33 @@ export async function ingestMapContribution(
     return reject("unsupported_kind", `${c.kind} cannot be recorded yet: ${why}`);
   }
 
+  // §22 zone kinds are AREAS, not places. Resolve the geo_zone in `objectId` to
+  // the nearest active place inside it, and observe against THAT place while
+  // recording the zone. Fail-closed (unknown_subject) when the zone cannot be
+  // anchored — never widen the FK, never guess a subject. Place-shaped kinds
+  // pass straight through: their objectId already IS the place id.
+  let subjectId = c.objectId;
+  let zoneId: string | null = null;
+  if (isZoneSubjectKind(c.objectKind)) {
+    const anchored = await resolveZoneAnchorSubject(sc, c.objectId);
+    if (!anchored.ok) return reject("unknown_subject", anchored.detail);
+    subjectId = anchored.subjectId;
+    zoneId = anchored.zoneId;
+  }
+
+  // The idempotency key is derived from the CLIENT's objectId (the zone), not
+  // the resolved anchor place, so two travellers reporting the same zone from
+  // the same tap do not collide: dedup is per (actor, their own contribution).
   const idempotencyKey = isValidIdempotencyKey(opts.idempotencyKey)
     ? opts.idempotencyKey
     : deriveIdempotencyKey(c.objectId, c.kind, c.value, c.observedAt);
 
   const input: CaptureInput = {
-    subjectId: c.objectId,
+    subjectId,
     // The subject kind the intel system stores. `experience` is the service's
     // own default; the map's own object kind is not a subject kind.
     subjectKind: "experience",
-    zoneId: null,
+    zoneId,
     claimType: mapped.claimType,
     value: mapped.value,
     observedAt: c.observedAt,
