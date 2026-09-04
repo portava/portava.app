@@ -179,7 +179,7 @@ function getEntityName(entity: MapEntity): string {
     case 'events':  return p.title ?? 'Event';
     case 'gems':    return p.name ?? 'Hidden Gem';
     case 'trips':   return p.title ?? 'Trip';
-    case 'friends': return p.name ?? 'Friend';
+    case 'friends': return p.name ?? 'Circle member';
     default:        return 'Place';
   }
 }

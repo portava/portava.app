@@ -34,18 +34,106 @@ The root tree partially overlaps with both the canonical and legacy chains and c
 
 The frozen-dir guard (run in CI via `check:frozen-dir` and at startup of `audit:schema`) ensures no one silently adds new files to the root tree.
 
+## The migration ledger
+
+`public.schema_migration_ledger` (created by
+`2254_schema_migration_ledger.sql`) records which migration files have been
+applied to a given database. `pnpm run check:migration-ledger`
+(`src/scripts/checkMigrationLedger.ts`) diffs `src/migrations/` against it and
+fails when the database has not seen what the branch contains.
+
+### Why it exists
+
+On 2026-08-31 five migrations — `2220`, `2223`, `2224`, `2250`, `2252` — were
+merged to `main` and never applied to the CI database (`portava-ci`, ref
+`hwokxgbmezheskbzskfr`). Nothing in the merge path applies migrations, so
+`CI (live DB)` went red **on main itself** and stayed red until an unrelated PR
+tripped over it. It surfaced as `check:missing-live-columns` naming individual
+columns: true, and several steps removed from the cause. Nobody reads
+"`media_assets.canonical_key` is missing" and concludes "main has five migrations
+this database has never seen". The ledger makes that sentence sayable, and the
+gate says it — naming **files**, in apply order.
+
+### Shape
+
+| Column | Type | Meaning |
+|---|---|---|
+| `filename` | `text` PRIMARY KEY | e.g. `2224_route_hop_signal.sql` |
+| `checksum` | `text NOT NULL` | sha256 of the file's bytes at apply time, or the literal `backfill` |
+| `applied_at` | `timestamptz NOT NULL DEFAULT now()` | |
+| `applied_by` | `text NOT NULL` | `'ci'` \| `'manual'` \| `'backfill'` (CHECK-constrained) |
+| `notes` | `text` | |
+
+Service-role writes only: RLS is enabled with **no policies**, and `anon` /
+`authenticated` hold no grants. A ledger a client can write is not a ledger.
+
+### What a backfilled row claims — and what it does not
+
+No ledger had ever existed, and which of the ~380 pre-`2254` files actually ran
+cannot be reconstructed. Object inspection is a guess: objects can arrive from a
+later file, a hand-run statement, or the baseline dump. A wrong guess in either
+direction is worse than an admission — marking an unapplied file "applied" hides
+the exact failure this table exists to catch.
+
+So `2254` seeded **every file that was on disk when it ran**, including itself,
+as `applied_by = 'backfill'`, and such a row asserts exactly one thing:
+
+> **This filename existed in `src/migrations/` at the moment `2254` ran.** It is
+> *not* evidence that the file was ever applied to this database, and nothing
+> verified that it was.
+
+Their `checksum` is the literal string `backfill`, not a real hash. Hashing
+today's bytes would produce a genuine sha256 of the wrong thing, and a
+64-hex-character value in a column called `checksum` reads as "this is what ran".
+The gate treats any checksum that is not 64 lowercase hex characters as
+**unverifiable** and declines to compare it, rather than reporting ~380 false
+mismatches on its first run — and it prints how many it skipped, so the silence
+is visible.
+
+**The ledger is authoritative from `2254` forwards, and only forwards.** In
+particular the five unapplied migrations listed above are *inside* the backfill
+set, because they are on disk; this gate will not catch them.
+`check:missing-live-columns` remains the instrument for pre-ledger drift.
+
+### What the gate reports
+
+| Finding | Meaning | Exit |
+|---|---|---|
+| File on disk, no ledger row | An unapplied migration. The database does not represent this branch. | 1 |
+| Ledger row, no file on disk | A renumber, rename or deletion after apply — the database ran something the branch cannot show you. `2220` was renumbered to `2253` on 2026-08-31, so this is not hypothetical. Fix by **updating** the row's filename, not deleting it. | 1 |
+| Checksum mismatch | An **applied migration that was edited afterwards**. The database ran the old content; nothing will ever run the difference. Not a pending migration — re-applying an edited file may not be safe. | 1 |
+| `schema_migration_ledger` absent | `2254` has not been applied to this database. | 1 |
+| Missing credentials / API error | Cannot establish a result. It fails closed; there is no skip path. | 2 |
+
+The gate imports `src/lib/ciSupabaseGuard.mjs` (the **strict** door) as its first
+import, so it runs against the sanctioned CI project or exits 2. It deliberately
+does *not* take `ciProdReadOnlyAuditGuard.mjs` even though everything it sends is
+a `SELECT`: that capability is granted only to files listed in
+`READ_ONLY_AUDIT_ENTRY_POINTS` in `scripts/check-guard-coverage.mjs`, and taking
+it without adding the entry is the "import nobody notices" that list exists to
+prevent. The cost is stated in the script's header: it cannot be pointed at
+production.
+
 ## Prefix collisions
 
 Migration files are applied in lexicographic order, so two files sharing a
 numeric prefix have no defined order relative to each other. `check:migration-prefixes`
 fails on any collision.
 
-**There is no `schema_migrations` table.** Verified 2026-08-09: no table matching
-`%migration%` exists in `public` or `supabase_migrations`. Nothing records what
-has been applied, so the only way to know whether a migration ran is to check
-whether the objects it creates exist in the live database. **Never renumber a
-migration without doing that check first** — renaming a file that has already
-been applied does not change the database, it only makes the record wrong.
+**Which file is applied is now answerable — see [The migration ledger](#the-migration-ledger).**
+Ask `pnpm run check:migration-ledger` first. A `public.schema_migration_ledger`
+row with `applied_by` `'ci'` or `'manual'` settles it outright; a row with
+`applied_by = 'backfill'` does **not** — those were seeded by migration `2254`
+and assert only that the filename existed before the ledger did. For a pre-`2254`
+file the ledger has nothing to say, and the older method still applies: check
+whether the objects the file creates exist in the live database. **Never renumber
+a migration without settling this first** — renaming a file that has already been
+applied does not change the database, it only makes the record wrong.
+
+*(Superseded, kept because everything above `2254` still rests on it: verified
+2026-08-09, no table matching `%migration%` existed in `public` or
+`supabase_migrations`. Nothing recorded what had been applied, and object
+inspection was the only available evidence.)*
 
 ### `2059` — both files applied; documented, not renumbered
 
@@ -80,9 +168,11 @@ becomes visible after the second merge.
 
 **Both verified applied BEFORE documenting**, because the rule this repo prints
 is *"renumber the one that has NOT been applied"*, and documenting instead of
-renumbering is only correct when both have been. With no `schema_migrations`
-table, the filename is the only record that a migration ran; renaming an applied
-one would make that record wrong.
+renumbering is only correct when both have been. At the time, with no ledger, the
+filename was the only record that a migration ran; renaming an applied one would
+make that record wrong. `public.schema_migration_ledger` is that record now, but
+only for what happened after `2254`, so for this pre-ledger pair the filename is
+still it.
 
 The collision is harmless on replay: the two files touch entirely unrelated
 objects — an RLS policy on `storage.objects` versus a `CHECK` constraint on
@@ -356,9 +446,12 @@ but what was applied differs from what the file now says, and the file has since
 drifted from it. Replaying 0026 today errors on the first policy.
 
 **Do not "fix" 0026.** It is an applied migration; rewriting it would make the
-record less accurate, not more, and there is no `schema_migrations` table here to
-distinguish "applied" from "applied in an earlier form" (see *Prefix collisions*
-for the same reasoning). The live objects are correct as they stand:
+record less accurate, not more, and nothing here can distinguish "applied" from
+"applied in an earlier form" — `0026` predates the ledger, so its only row is a
+`'backfill'` row, which asserts file existence and nothing else (see *Prefix
+collisions* and *The migration ledger* for the same reasoning). For files applied
+*after* `2254` this exact question is what the ledger's `checksum` column answers:
+a mismatch means the file was edited after it ran. The live objects are correct as they stand:
 `users_view_highlight_replies` is superseded by `hreplies_select` (2033 creates
 it and then drops it again in the same file), and the two surviving policies key
 on `replier_id`. Recorded here so the next person to consider a replay knows it

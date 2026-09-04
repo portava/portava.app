@@ -19,6 +19,8 @@
     "backfill:stamps": "tsx ./src/backfill-stamps.ts",
     "backfill:stamps:apply": "tsx ./src/backfill-stamps.ts --apply",
     "refresh:live-columns": "tsx ./src/refresh-live-columns.ts",
+    "db:apply-migrations": "tsx ./src/apply-migrations.ts",
+    "db:apply-migrations:dry-run": "tsx ./src/apply-migrations.ts --dry-run",
     "check:rent-buddy-contract": "tsx ./src/rentBuddyContractCheck.ts",
     "test:cross-tree-paths": "node --import tsx/esm --test ./src/cross-tree-paths.test.ts"
   },
