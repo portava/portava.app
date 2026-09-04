@@ -1,0 +1,39 @@
+{
+  // Test-suite typecheck. Kept separate from tsconfig.json so the JEST GLOBALS
+  // (`describe`, `it`, `expect`, the `jest` namespace) are visible to test files
+  // ONLY.  Installing @types/jest makes those globals ambient for every program
+  // whose tsconfig does not pin `types` — which is why tsconfig.json now pins an
+  // explicit `types` array that omits "jest".  Verified 2026-09-03: an app-scope
+  // file calling `describe(...)` compiles clean without that pin and errors
+  // TS2593 with it.
+  //
+  // Two runners share this program, deliberately:
+  //   - node:test files (`import { test } from "node:test"`)  — 260 files
+  //   - jest files (bare `describe`/`it`/`expect` globals)      — 410 files
+  // They coexist because node:test is an explicit import that shadows the jest
+  // global of the same name; only "jest" contributes ambient names here.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // Distinct from tsconfig.json's ".tsbuildinfo" — two programs over
+    // overlapping files must not share one incremental cache.
+    "tsBuildInfoFile": ".test.tsbuildinfo",
+    "types": [
+      "node",
+      "jest",
+      "react",
+      "react-dom"
+    ]
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ],
+  // Resets tsconfig.json's exclude list: the test files and __mocks__ it drops
+  // are exactly what this program exists to compile.
+  "exclude": [
+    "node_modules"
+  ]
+}
