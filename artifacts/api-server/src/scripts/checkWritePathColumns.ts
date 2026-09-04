@@ -124,6 +124,24 @@ const ALLOWLIST = new Set<string>([
   // alongside a kind='incorrect' signal). Written by the passport/remembers
   // correct route; remove this entry once 2213 is applied to the live schema.
   "memory_feedback.corrected_value",
+  //
+  // intel_state_snapshots.{confidence_components, algorithm_version,
+  // input_claim_versions, conflict_state} — added by
+  // 2273_intel_replayable_projection.sql (IG unit I1, Table-17 lineage) and
+  // written by lib/intelProjection.projectAndStore. Applied to the CI project
+  // on merge to main; remove these four entries once that apply is certified.
+  "intel_state_snapshots.confidence_components",
+  "intel_state_snapshots.algorithm_version",
+  "intel_state_snapshots.input_claim_versions",
+  "intel_state_snapshots.conflict_state",
+  //
+  // intel_claims.{observation_id, source_label, lineage} — added by
+  // 2274_intel_claim_observation_model.sql (IG unit I1, Table 5) and written by
+  // IntelCaptureService.proposeClaim. Applied to the CI project on merge to
+  // main; remove these three entries once that apply is certified.
+  "intel_claims.observation_id",
+  "intel_claims.source_label",
+  "intel_claims.lineage",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
@@ -131,6 +149,11 @@ const ALLOWLIST = new Set<string>([
 const SKIP_TABLES = new Set<string>([
   // Add entries here only for tables whose migration is intentionally pending
   // live application. Remove immediately after verification.
+  //
+  // intel_state_snapshot_versions — created by 2273_intel_replayable_projection.sql
+  // (IG unit I1). Written by lib/intelProjection, read by lib/intelReplay.
+  // Remove once 2273 is applied to the live schema.
+  "intel_state_snapshot_versions",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

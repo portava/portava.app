@@ -7085,6 +7085,336 @@ export type Database = {
         }
         Relationships: []
       }
+      intel_claims: {
+        Row: {
+          asserted_confidence: number | null
+          claim_type: string
+          confidence: number | null
+          confidence_band: string | null
+          created_at: string
+          expires_at: string | null
+          hard_expires_at: string | null
+          id: string
+          lineage: Json | null
+          observation_id: string | null
+          observed_at: string
+          promotion_source: string | null
+          qualifiers_json: Json | null
+          schema_version: number
+          source_count: number
+          source_label: string | null
+          status: string
+          subject_id: string
+          subject_kind: string
+          superseded_by: string | null
+          updated_at: string
+          value: Json
+          version: number
+          zone_id: string | null
+        }
+        Insert: {
+          asserted_confidence?: number | null
+          claim_type: string
+          confidence?: number | null
+          confidence_band?: string | null
+          created_at?: string
+          expires_at?: string | null
+          hard_expires_at?: string | null
+          id?: string
+          lineage?: Json | null
+          observation_id?: string | null
+          observed_at: string
+          promotion_source?: string | null
+          qualifiers_json?: Json | null
+          schema_version?: number
+          source_count?: number
+          source_label?: string | null
+          status?: string
+          subject_id: string
+          subject_kind: string
+          superseded_by?: string | null
+          updated_at?: string
+          value: Json
+          version?: number
+          zone_id?: string | null
+        }
+        Update: {
+          asserted_confidence?: number | null
+          claim_type?: string
+          confidence?: number | null
+          confidence_band?: string | null
+          created_at?: string
+          expires_at?: string | null
+          hard_expires_at?: string | null
+          id?: string
+          lineage?: Json | null
+          observation_id?: string | null
+          observed_at?: string
+          promotion_source?: string | null
+          qualifiers_json?: Json | null
+          schema_version?: number
+          source_count?: number
+          source_label?: string | null
+          status?: string
+          subject_id?: string
+          subject_kind?: string
+          superseded_by?: string | null
+          updated_at?: string
+          value?: Json
+          version?: number
+          zone_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intel_claims_observation_id_fkey"
+            columns: ["observation_id"]
+            isOneToOne: false
+            referencedRelation: "intel_observations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intel_claims_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "places"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intel_claims_superseded_by_fkey"
+            columns: ["superseded_by"]
+            isOneToOne: false
+            referencedRelation: "intel_claims"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      intel_observations: {
+        Row: {
+          actor_id: string | null
+          capture_surface: string
+          captured_at: string | null
+          claim_type: string
+          commercial_disclosure: string
+          created_at: string
+          expires_at: string | null
+          group_key: string | null
+          id: string
+          idempotency_key: string
+          lifecycle_state: string
+          moderation_state: string
+          observed_at: string
+          party_size_bucket: string | null
+          presence_attestation: Json | null
+          presence_level: string
+          received_at: string
+          schema_version: number
+          source_class: string
+          subject_id: string
+          subject_kind: string
+          value: Json
+          visibility: string
+          zone_id: string | null
+        }
+        Insert: {
+          actor_id?: string | null
+          capture_surface: string
+          captured_at?: string | null
+          claim_type: string
+          commercial_disclosure?: string
+          created_at?: string
+          expires_at?: string | null
+          group_key?: string | null
+          id?: string
+          idempotency_key: string
+          lifecycle_state?: string
+          moderation_state?: string
+          observed_at: string
+          party_size_bucket?: string | null
+          presence_attestation?: Json | null
+          presence_level?: string
+          received_at?: string
+          schema_version?: number
+          source_class: string
+          subject_id: string
+          subject_kind: string
+          value: Json
+          visibility?: string
+          zone_id?: string | null
+        }
+        Update: {
+          actor_id?: string | null
+          capture_surface?: string
+          captured_at?: string | null
+          claim_type?: string
+          commercial_disclosure?: string
+          created_at?: string
+          expires_at?: string | null
+          group_key?: string | null
+          id?: string
+          idempotency_key?: string
+          lifecycle_state?: string
+          moderation_state?: string
+          observed_at?: string
+          party_size_bucket?: string | null
+          presence_attestation?: Json | null
+          presence_level?: string
+          received_at?: string
+          schema_version?: number
+          source_class?: string
+          subject_id?: string
+          subject_kind?: string
+          value?: Json
+          visibility?: string
+          zone_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intel_observations_actor_id_fkey"
+            columns: ["actor_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "intel_observations_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "places"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      intel_state_snapshot_versions: {
+        Row: {
+          algorithm_version: string
+          claim_type: string
+          confidence: number | null
+          confidence_band: string | null
+          confidence_components: Json
+          conflict_state: string | null
+          distinct_actors: number | null
+          expires_at: string
+          generated_at: string
+          id: string
+          input_claim_versions: Json
+          observed_at: string
+          privacy_eligible: boolean
+          privacy_reason: string | null
+          source_count: number
+          subject_id: string
+          value: Json
+          zone_id: string
+        }
+        Insert: {
+          algorithm_version: string
+          claim_type: string
+          confidence?: number | null
+          confidence_band?: string | null
+          confidence_components: Json
+          conflict_state?: string | null
+          distinct_actors?: number | null
+          expires_at: string
+          generated_at?: string
+          id?: string
+          input_claim_versions?: Json
+          observed_at: string
+          privacy_eligible?: boolean
+          privacy_reason?: string | null
+          source_count?: number
+          subject_id: string
+          value: Json
+          zone_id?: string
+        }
+        Update: {
+          algorithm_version?: string
+          claim_type?: string
+          confidence?: number | null
+          confidence_band?: string | null
+          confidence_components?: Json
+          conflict_state?: string | null
+          distinct_actors?: number | null
+          expires_at?: string
+          generated_at?: string
+          id?: string
+          input_claim_versions?: Json
+          observed_at?: string
+          privacy_eligible?: boolean
+          privacy_reason?: string | null
+          source_count?: number
+          subject_id?: string
+          value?: Json
+          zone_id?: string
+        }
+        Relationships: []
+      }
+      intel_state_snapshots: {
+        Row: {
+          algorithm_version: string | null
+          claim_type: string
+          computed_at: string
+          confidence: number | null
+          confidence_band: string | null
+          confidence_components: Json | null
+          conflict_state: string | null
+          distinct_actors: number | null
+          expires_at: string
+          id: string
+          input_claim_versions: Json | null
+          observed_at: string
+          privacy_eligible: boolean
+          source_count: number
+          subject_id: string
+          value: Json
+          zone_id: string
+        }
+        Insert: {
+          algorithm_version?: string | null
+          claim_type: string
+          computed_at?: string
+          confidence?: number | null
+          confidence_band?: string | null
+          confidence_components?: Json | null
+          conflict_state?: string | null
+          distinct_actors?: number | null
+          expires_at: string
+          id?: string
+          input_claim_versions?: Json | null
+          observed_at: string
+          privacy_eligible?: boolean
+          source_count?: number
+          subject_id: string
+          value: Json
+          zone_id?: string
+        }
+        Update: {
+          algorithm_version?: string | null
+          claim_type?: string
+          computed_at?: string
+          confidence?: number | null
+          confidence_band?: string | null
+          confidence_components?: Json | null
+          conflict_state?: string | null
+          distinct_actors?: number | null
+          expires_at?: string
+          id?: string
+          input_claim_versions?: Json | null
+          observed_at?: string
+          privacy_eligible?: boolean
+          source_count?: number
+          subject_id?: string
+          value?: Json
+          zone_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intel_state_snapshots_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "places"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       job_health: {
         Row: {
           job: string
