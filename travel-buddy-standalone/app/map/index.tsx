@@ -1174,6 +1174,23 @@ function FullScreenMapScreenInner() {
     return () => sub.remove();
   }, [machine, dispatchMapEvent]);
 
+  // ── §30 END_NAVIGATION on return from external routing ───────────────────────
+  // Navigate hands off to the device's maps app (see handleMapAction), which
+  // backgrounds Portava. There is no in-app turn-by-turn to "finish", so the
+  // honest end of the navigation framing is the moment the user comes BACK: the
+  // app returns to the foreground. This listener is mounted ONLY while a
+  // navigation is active, so a plain background/foreground with nothing routing
+  // dispatches nothing, and END_NAVIGATION on a null navigation is a machine
+  // no-op regardless. On return the destination pin's §5 promotion is released.
+  const hasNavigation = machine.navigation !== null;
+  useEffect(() => {
+    if (!hasNavigation) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') dispatchMapEvent({ type: 'END_NAVIGATION' });
+    });
+    return () => sub.remove();
+  }, [hasNavigation, dispatchMapEvent]);
+
   // ── Compass search override ─────────────────────────────────────────────────
   // When a Compass query is active, compassOverrideEntities replaces defaultEntities
   // for both the marker layers and the carousel.  Cleared via the ✕ dismiss button.
@@ -1507,6 +1524,17 @@ function FullScreenMapScreenInner() {
         setActiveIndex(focusIndex);
         carouselRef.current?.scrollToIndex(focusIndex);
         const entity = entities[focusIndex];
+        // §30 FOCUS_OBJECT — frame the deep-linked object WITHOUT selecting it.
+        // This snap centres the camera on a focusId without opening its sheet
+        // (a marker tap does that via SELECT_OBJECT), so the machine's framing
+        // event is FOCUS_OBJECT: camera → the kind's framing, cameraTargetId →
+        // the object, selection untouched. Kind comes off the entity's own
+        // MapObject; the reducer no-ops on a malformed kind, so a payload-less
+        // entity simply leaves the machine framing where it was.
+        const focusObj = objectOf(entity);
+        if (focusObj) {
+          dispatchMapEvent({ type: 'FOCUS_OBJECT', objectId: focusObj.id, objectKind: focusObj.kind });
+        }
         if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
           cameraRef.current.easeTo({
             center: [entity.lng, entity.lat],
@@ -1911,6 +1939,18 @@ function FullScreenMapScreenInner() {
       const c = centroidOf(obj.geometry);
       switch (action) {
         case 'navigate':
+          // §30 START_NAVIGATION — §5 gives active navigation standing camera
+          // precedence, so the machine enters FOCUS_ROUTE and promotes THIS
+          // object's pin (renderResult reads navigation.destinationObjectId).
+          // Routing itself is the device's maps app (openInMaps), which has no
+          // in-app session to observe; END_NAVIGATION fires when the user
+          // returns to Portava (the AppState effect below). routeId must be a
+          // non-empty string for the reducer to accept it.
+          dispatchMapEvent({
+            type: 'START_NAVIGATION',
+            routeId: `route:${rawObjectId(obj.id)}`,
+            destinationObjectId: obj.id,
+          });
           if (c) openInMaps(c.lat, c.lng);
           return;
         case 'contribute':
@@ -2171,6 +2211,10 @@ function FullScreenMapScreenInner() {
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
         onCameraChange={handleCameraChange}
+        // §30: a user drag/pinch hands the camera to the machine (FREE_EXPLORE).
+        // Gated inside DiscoveryMapView on the SDK's userInteraction flag, so a
+        // programmatic easeTo (recenter, carousel, focus) never lands here.
+        onUserPan={() => dispatchMapEvent({ type: 'USER_PANNED' })}
         filterRowOffset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT + 8}
         onLongPressMap={handleMapLongPress}
       />
@@ -2206,6 +2250,9 @@ function FullScreenMapScreenInner() {
         title={null}
         topInset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT}
         onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'LAYERS' })}
+        // §30 RECENTER — return camera control to the machine (FOLLOW_USER).
+        // The button's own easeTo does the move; this records the intent.
+        onRecenter={() => dispatchMapEvent({ type: 'RECENTER' })}
       />
 
       {/* Places loading indicator — small spinner overlay while getDiscoveryPlaces

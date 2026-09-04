@@ -149,6 +149,24 @@ export interface DiscoveryMapViewProps {
    */
   onCameraChange?: (camera: { zoom: number; center: { lat: number; lng: number } }) => void;
   /**
+   * §30 USER_PANNED. Fired when the region change was a USER gesture, so the
+   * shell can hand manual control of the camera to the state machine
+   * (FREE_EXPLORE).
+   *
+   * GATED ON THE SDK'S `userInteraction` FLAG, and that gate is the whole point:
+   * a programmatic camera move — Recenter's easeTo, a carousel swipe's easeTo, a
+   * FOCUS_OBJECT snap — also fires onRegionDidChange, and reporting THOSE as
+   * pans would drop the camera to FREE_EXPLORE the instant the shell tried to
+   * frame something, yanking the viewport straight back out from under it (the
+   * machine's D4 warns of exactly this: "an SDK-driven animation never mistakes
+   * itself for a user gesture"). MapLibre reports `userInteraction: false` for
+   * animated/programmatic changes, so only a real drag/pinch reaches here.
+   *
+   * Omitted ⇒ no pan dispatch, which every non-shell surface (ForYouTab,
+   * DiscoveryCategoryTab, LayoverMapCard) wants — they have no state machine.
+   */
+  onUserPan?: () => void;
+  /**
    * §25 long-press. Fired for a press-and-hold anywhere on the base map.
    *
    * The map SDK is the only thing that can answer "where is this on the
@@ -263,6 +281,7 @@ export function DiscoveryMapView({
   selectedEntityId,
   filterRowOffset,
   onCameraChange,
+  onUserPan,
   onLongPressMap,
 }: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
@@ -413,6 +432,13 @@ export function DiscoveryMapView({
   // feeds the travelers fetch so panning to a new city loads its travelers, and
   // onCameraChange hands both to the parent's render pipeline.
   const handleRegionChange = (e: any) => {
+    // §30 USER_PANNED — reported before (and independently of) the throttled
+    // camera report: a gesture must hand the camera to the machine promptly,
+    // and the machine's USER_PANNED is idempotent (a second one is a no-op), so
+    // it is not worth throttling. Only a real user gesture qualifies; a
+    // programmatic move carries userInteraction: false and is ignored.
+    if (e?.nativeEvent?.userInteraction === true) onUserPan?.();
+
     const now = Date.now();
     if (now - zoomAt.current <= 250) return;
     zoomAt.current = now;
