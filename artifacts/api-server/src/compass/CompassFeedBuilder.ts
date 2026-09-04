@@ -26,7 +26,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile, CompassContext } from "./types.js";
-import type { PipelineResult, PipelineTestOverrides } from "./CompassPipeline.js";
+import type { PipelineLiveConstraintsSummary, PipelineResult, PipelineTestOverrides } from "./CompassPipeline.js";
 import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import { runPipeline } from "./CompassPipeline.js";
@@ -97,6 +97,8 @@ export interface FeedPage {
     blockedCount:  number;
     rejectedCount: number;
     passedCount:   number;
+    /** IG-07 — live-constraint decision exposure (exclusions, demotions, Plan B). */
+    liveConstraints?: PipelineLiveConstraintsSummary;
   };
 }
 
@@ -306,6 +308,8 @@ interface FeedPipelineOutput {
     blockedCount:  number;
     rejectedCount: number;
     passedCount:   number;
+    /** IG-07 — live-constraint decision exposure (exclusions, demotions, Plan B). */
+    liveConstraints?: PipelineLiveConstraintsSummary;
   };
 }
 
@@ -332,7 +336,7 @@ async function runFeedPipeline(
   const enrichedContext: CompassContext = { ...context, placeAffinities };
 
   // ── Phase 2 pipeline ────────────────────────────────────────────────────────
-  const { results, inputCount, blockedCount, rejectedCount, passedCount } =
+  const { results, inputCount, blockedCount, rejectedCount, passedCount, liveConstraints } =
     await runPipeline(items, profile, enrichedContext, db, _overrides);
 
   // ── Active-user reward boosts ──────────────────────────────────────────────
@@ -559,7 +563,7 @@ async function runFeedPipeline(
 
   return {
     sectionMap,
-    pipelineMeta: { inputCount, blockedCount, rejectedCount, passedCount },
+    pipelineMeta: { inputCount, blockedCount, rejectedCount, passedCount, liveConstraints },
   };
 }
 
