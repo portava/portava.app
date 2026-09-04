@@ -15,6 +15,7 @@
  * suppressed aggregate is written (privacy_eligible=false) and the reader refuses
  * it. Neither side depends on the other being correct.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { projectAndStore } from "../lib/intelProjection.js";
@@ -40,8 +41,10 @@ function makeDb(flags: Record<string, boolean>) {
   // it per db so a fixed test clock never serves a prior test's promoted set.
   _clearPromotedScopeCache();
   const snapshots: any[] = [];
+  const versions: any[] = [];
   return {
     snapshots,
+    versions,
     from(table: string) {
       if (table === "freshness_policies") return { select: async () => ({ data: POLICIES, error: null }) };
       if (table === "intel_live_promoted_scopes") {
@@ -68,6 +71,10 @@ function makeDb(flags: Record<string, boolean>) {
           return { data: flag in flags ? { enabled: flags[flag] } : null, error: null };
         } }) }) };
       }
+      if (table === "intel_state_snapshot_versions") {
+        // I1: the writer appends an immutable version row before every upsert.
+        return { insert: async (row: any) => { versions.push(row); return { error: null }; } };
+      }
       if (table === "intel_state_snapshots") {
         const q: any = {
           _subject: null as string | null, _types: null as string[] | null, _after: null as string | null,
@@ -93,7 +100,7 @@ function makeDb(flags: Record<string, boolean>) {
       }
       throw new Error(`unexpected table ${table}`);
     },
-  };
+  } as unknown as SupabaseClient & { snapshots: typeof snapshots; versions: typeof versions };
 }
 
 const strongEvidence = {

@@ -98,8 +98,33 @@ export const DISCOVERY_ENDPOINT_POINTS: ReadonlySet<number> = new Set([
   DiscoveryServePoint.COLD_FETCH_LEGACY_RANK,
 ]);
 
-/** Serve points on which a ranker ran during the request itself. */
-export const RANKED_POINTS: ReadonlySet<number> = new Set([
+/**
+ * Serve points on which a ranker runs UNDER LEGACY MODE, by construction.
+ *
+ * THIS SET IS A FALLBACK, NOT THE ARITHMETIC. Read the trap before using it.
+ *
+ * It used to be called RANKED_POINTS and it used to BE the arithmetic: the D5
+ * ranked share was `countOn(tally, {5, 6}) / countOn(tally, 1-6)`. That was
+ * correct for exactly as long as "which serve point" and "did a ranker run"
+ * were the same question — and D5=B ended that. Under mode `pde` the cache-A
+ * serve points 1/2/3 rank the cached candidates per request
+ * (routes/discovery.ts, `serveCachedPlaces`, the `pdeScoredById` branch), and
+ * they log those impressions with `rankedInRequest: true` on the SAME serve
+ * point number they always had. A static set keyed on the point would have
+ * reported the first pde-ranked cache hit as unranked, pushing the measured
+ * ranked share DOWN by precisely the serves the new engine added — the report
+ * would have looked most like "ranking is starved" at the moment ranking
+ * started reaching traffic. docs/discovery/serve-point-report-20260828.md
+ * named that trap in advance; `rankedInRequest()` below is what closes it.
+ *
+ * So ranked-ness is read from the ROW — `features.rankedInRequest`, which both
+ * writers set (`discoveryServeLog.ts`, and the `logImpression` extra features
+ * on serve point 6 and the pde cache-A branch). This set is consulted only for
+ * a row that carries no such key at all, which means it was written by a
+ * writer older than Stage 0's marker, and those rows are counted apart
+ * (`rankedUnrecorded`) so the fallback can never silently become the measure.
+ */
+export const LEGACY_RANKED_POINTS: ReadonlySet<number> = new Set([
   DiscoveryServePoint.COMPASS_FRESH_RANK,
   DiscoveryServePoint.COLD_FETCH_LEGACY_RANK,
 ]);
@@ -113,9 +138,56 @@ export const CACHE_A_POINTS: ReadonlySet<number> = new Set([
 
 /** Minimal shape this module needs from a `rank_events` row. */
 export interface ServeRow {
-  features?: { servePoint?: unknown; engineMode?: unknown; modeReason?: unknown } | null;
+  features?: {
+    servePoint?: unknown;
+    engineMode?: unknown;
+    modeReason?: unknown;
+    /** Written by every serve-point writer since Stage 0. See `rankedInRequest()`. */
+    rankedInRequest?: unknown;
+  } | null;
   session_id?: string | null;
   served_at?: string | null;
+}
+
+/**
+ * What a single row says about whether a ranker ran during its request.
+ *
+ *   ranked      the writer said so (`features.rankedInRequest === true`)
+ *   unranked    the writer said not (`=== false`) — including serve point 4,
+ *               which REPLAYS a stored Compass order and is deliberately false
+ *   unrecorded  the row carries no such key; the writer predates the marker
+ */
+export type RankedVerdict = "ranked" | "unranked" | "unrecorded";
+
+/**
+ * Ranked-ness of one row, read from the row itself.
+ *
+ * The serve point is NOT consulted here. Under mode `pde`, serve points 1/2/3
+ * rank per request and say so on the row; under `legacy` the same points say
+ * false. Only the row knows which happened, and the row wins over any static
+ * belief about its serve point — a writer that reports point 6 as unranked is
+ * reporting a fact this reader has no standing to overrule.
+ */
+export function rankedInRequest(row: ServeRow): RankedVerdict {
+  const raw = row?.features?.rankedInRequest;
+  if (raw === true) return "ranked";
+  if (raw === false) return "unranked";
+  return "unrecorded";
+}
+
+/**
+ * Whether a row counts as ranked for the D5 arithmetic.
+ *
+ * Row marker first; the legacy serve-point set ONLY for a row that carries no
+ * marker at all. The second case is reported separately by the tally so a
+ * window classified mostly by fallback is visibly a window the marker did not
+ * cover, not a measurement of the engine.
+ */
+export function isRankedRow(row: ServeRow, servePoint: number): boolean {
+  const verdict = rankedInRequest(row);
+  if (verdict === "ranked") return true;
+  if (verdict === "unranked") return false;
+  return LEGACY_RANKED_POINTS.has(servePoint);
 }
 
 export interface ServePointTally {
@@ -127,6 +199,20 @@ export interface ServePointTally {
   byPoint: Map<number, number>;
   /** servePoint → distinct session ids. */
   sessionsByPoint: Map<number, Set<string>>;
+  /**
+   * servePoint → rows on which a ranker ran during the request, judged per row
+   * (`isRankedRow`). This is what the D5 ranked share is computed from. A
+   * cache-A point with a non-zero entry here is a pde-ranked cache hit — the
+   * exact row the old static set would have misreported as unranked.
+   */
+  rankedByPoint: Map<number, number>;
+  /**
+   * Marked rows that carried NO `rankedInRequest` key and were classified by
+   * `LEGACY_RANKED_POINTS` instead. Reported apart so that a window classified
+   * by fallback reads as "the marker did not cover this window", never as a
+   * measurement of which engine ran.
+   */
+  rankedUnrecorded: number;
   /**
    * Rows with NO `servePoint` key at all. These genuinely predate Stage 0 —
    * nothing wrote the key then.
@@ -158,7 +244,7 @@ export function assertLabelsCoverEnum(): void {
     throw new Error(
       `discoveryServePointReport: DiscoveryServePoint has member(s) ${missing.join(", ")} ` +
         `with no label. Add them to SERVE_POINT_LABEL, and decide whether each belongs ` +
-        `in DISCOVERY_ENDPOINT_POINTS / RANKED_POINTS before quoting any number.`,
+        `in DISCOVERY_ENDPOINT_POINTS / LEGACY_RANKED_POINTS before quoting any number.`,
     );
   }
 }
@@ -167,9 +253,11 @@ export function assertLabelsCoverEnum(): void {
 export function tallyServePoints(rows: readonly ServeRow[]): ServePointTally {
   const byPoint = new Map<number, number>();
   const sessionsByPoint = new Map<number, Set<string>>();
+  const rankedByPoint = new Map<number, number>();
   const unknownValues = new Set<string>();
   let noMarker = 0;
   let unknownMarker = 0;
+  let rankedUnrecorded = 0;
 
   const known = new Set(ALL_SERVE_POINTS);
 
@@ -194,6 +282,11 @@ export function tallyServePoints(rows: readonly ServeRow[]): ServePointTally {
       if (!sessionsByPoint.has(sp)) sessionsByPoint.set(sp, new Set());
       sessionsByPoint.get(sp)!.add(r.session_id);
     }
+
+    // Ranked-ness is a property of the ROW, not of the serve point. See
+    // LEGACY_RANKED_POINTS for why the static set is only a fallback.
+    if (rankedInRequest(r) === "unrecorded") rankedUnrecorded += 1;
+    if (isRankedRow(r, sp)) rankedByPoint.set(sp, (rankedByPoint.get(sp) ?? 0) + 1);
   }
 
   const marked = [...byPoint.values()].reduce((a, b) => a + b, 0);
@@ -202,6 +295,8 @@ export function tallyServePoints(rows: readonly ServeRow[]): ServePointTally {
     marked,
     byPoint,
     sessionsByPoint,
+    rankedByPoint,
+    rankedUnrecorded,
     noMarker,
     unknownMarker,
     unknownValues,
@@ -213,6 +308,30 @@ export function countOn(tally: ServePointTally, points: ReadonlySet<number>): nu
   let n = 0;
   for (const sp of points) n += tally.byPoint.get(sp) ?? 0;
   return n;
+}
+
+/**
+ * Sum the rows on a given set of serve points on which a ranker ran during the
+ * request — judged per row. THIS, not `countOn(tally, LEGACY_RANKED_POINTS)`,
+ * is the D5 numerator.
+ */
+export function countRankedOn(tally: ServePointTally, points: ReadonlySet<number>): number {
+  let n = 0;
+  for (const sp of points) n += tally.rankedByPoint.get(sp) ?? 0;
+  return n;
+}
+
+/**
+ * Serve points OUTSIDE the legacy ranked set that nevertheless produced ranked
+ * rows in this window — i.e. pde-ranked cache hits. Ascending. Reported so a
+ * reader can see the engine reaching traffic rather than inferring it from a
+ * share moving.
+ */
+export function rankedOutsideLegacyPoints(tally: ServePointTally): number[] {
+  return [...tally.rankedByPoint.entries()]
+    .filter(([sp, n]) => n > 0 && !LEGACY_RANKED_POINTS.has(sp))
+    .map(([sp]) => sp)
+    .sort((a, b) => a - b);
 }
 
 /** Distinct serve points that actually produced rows, ascending. */

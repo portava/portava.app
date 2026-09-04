@@ -19,6 +19,7 @@
  * Flag-gated (intel_claim_projection_crowd) and fail-closed; safe to start in
  * index.ts before the flag is on.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
@@ -48,7 +49,7 @@ export interface ProjectionPassResult {
  * for one nobody switched on. Idempotent — snapshots upsert on
  * (subject_id, zone_id, claim_type), so re-running only refreshes.
  */
-export async function runIntelProjectionPass(opts: { client?: any; now?: Date } = {}): Promise<ProjectionPassResult> {
+export async function runIntelProjectionPass(opts: { client?: SupabaseClient | null; now?: Date } = {}): Promise<ProjectionPassResult> {
   const base: ProjectionPassResult = { subjects: 0, written: 0, suppressed: 0, skipped: 0, skippedRun: true, reason: null };
   // Explicit null => "no client"; undefined => use the service client (house pattern).
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
@@ -59,7 +60,8 @@ export async function runIntelProjectionPass(opts: { client?: any; now?: Date } 
   try {
     const { data, error } = await db
       .from("intel_claims")
-      .select("id, subject_id, zone_id, claim_type, value, status, observed_at")
+      // updated_at + version (2274) are what Table 17's input_claim_versions cites.
+      .select("id, subject_id, zone_id, claim_type, value, status, observed_at, updated_at, version")
       .in("status", LIVE_ELIGIBLE_CLAIM_STATUSES as unknown as string[])
       .limit(MAX_CLAIMS_PER_PASS);
     if (error) {
@@ -165,7 +167,21 @@ export async function runIntelProjectionPass(opts: { client?: any; now?: Date } 
           await db.from("intel_state_snapshots")
             .update({ privacy_eligible: false, expires_at: now.toISOString() })
             .in("id", orphanIds);
-          logger.info({ expired: orphanIds.length }, "intelProjection pass: expired snapshots whose claim is no longer live-eligible");
+          // §24 completion status: these are the invalidation targets a correction
+          // (IntelCaptureService.correctClaim → `intel.correction.invalidation`)
+          // or a retraction/expiry named; this pass has now expired them. Snapshot
+          // ids and keys only — never an actor.
+          logger.info(
+            {
+              event: "intel.correction.invalidation.completed",
+              expired: orphanIds.length,
+              snapshot_ids: orphanIds,
+              keys: servable
+                .filter((s) => orphanIds.includes(s.id))
+                .map((s) => ({ subject_id: s.subject_id, zone_id: s.zone_id ?? "", claim_type: s.claim_type })),
+            },
+            "intelProjection pass: expired snapshots whose claim is no longer live-eligible",
+          );
           // An orphan of a subject we did NOT project this pass went dark and
           // its subject is not in priorStates/post: emit its state.changed here
           // (subjects we DID project have their eligibility flip caught by the

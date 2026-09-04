@@ -21,13 +21,16 @@
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import {
   CLAIM_TYPES,
+  COMMERCIAL_DISCLOSURES,
   MODERATION_STATES,
   VISIBILITIES,
   PRESENCE_LEVELS,
   MIN_PRESENCE_FOR_LIVE_CLAIM,
   clampObservedAt,
+  disclosureSourceClass,
   isValidIdempotencyKey,
   isPilotClaimable,
+  type CommercialDisclosure,
   type Visibility,
   type PresenceLevel,
   type PartySizeBucket,
@@ -101,6 +104,11 @@ export interface CaptureInput {
   presenceLevel?: string;         // from a presence attestation; default 'P0'
   presenceAttestation?: Record<string, unknown> | null;
   captureSurface?: CaptureSurface; // default 'quick_signal'
+  // §22 Table 30 commercial disclosure. Optional; omitted/unknown ⇒ 'none'
+  // (fail-closed). A non-'none' disclosure records the observation under a
+  // NON_INDEPENDENT source class (disclosureSourceClass) so a disclosed-commercial
+  // report never counts as independent community consensus.
+  commercialDisclosure?: CommercialDisclosure;
   // V1 independent-group signal (§privacy). partySize is the raw "who are you here
   // with?" answer; partyId is the observer's active Trip Crew id (validated here).
   // Both optional → group_key resolves to null (fail-closed) for older clients.
@@ -369,6 +377,17 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   }
   const groupKey = deriveGroupKey(input.subjectId, groupIdentity);
 
+  // §22 Table 30 commercial disclosure. Fail-closed: an unknown/omitted value is
+  // 'none'. A DISCLOSED commercial relationship (non-'none') records the
+  // observation under the NON_INDEPENDENT `sponsored` source class
+  // (disclosureSourceClass), which is the "official/community separation" that
+  // keeps a disclosed-commercial report out of independent community consensus —
+  // it never overwrites confidence, only its epistemic standing.
+  const commercialDisclosure: CommercialDisclosure =
+    input.commercialDisclosure && (COMMERCIAL_DISCLOSURES as readonly string[]).includes(input.commercialDisclosure)
+      ? input.commercialDisclosure
+      : "none";
+
   const row = {
     actor_id: actorId,
     subject_kind: input.subjectKind ?? "experience",
@@ -376,11 +395,11 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     zone_id: input.zoneId ?? null,
     claim_type: input.claimType,
     value: input.value,
-    source_class: "firsthand_unverified",
+    source_class: disclosureSourceClass(commercialDisclosure),
     capture_surface: surface,
     visibility,
     moderation_state: "pending",
-    commercial_disclosure: "none",
+    commercial_disclosure: commercialDisclosure,
     presence_level: presence.presenceLevel,
     presence_attestation: presence.attestation,
     observed_at: clamped.observedAt,
@@ -410,8 +429,43 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   return { ok: true, observation: data, deduped: false };
 }
 
-/** Create a CANDIDATE claim from an approved observation (moment approval step 1). */
-export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boolean; claim?: any; reason?: string }> {
+/**
+ * Table 5 `source_label` for a claim proposed from an observation of a given
+ * source class. Registry: official | verified_firsthand | consensus |
+ * historical | prediction | sponsored | unverified. A single proposal is never
+ * "consensus" — that label is earned by the projection over a cohort, not
+ * asserted at propose time. Unknown/malformed → 'unverified' (fail-closed).
+ */
+export const SOURCE_LABEL_BY_CLASS: Readonly<Record<string, string>> = {
+  official_signed: "official",
+  verified_firsthand: "verified_firsthand",
+  firsthand_unverified: "unverified",
+  hearsay: "unverified",
+  imported_owned: "unverified",
+  sponsored: "sponsored",
+  historical_pattern: "historical",
+  portava_prediction: "prediction",
+};
+
+export function sourceLabelFor(sourceClass: unknown): string {
+  return (typeof sourceClass === "string" && SOURCE_LABEL_BY_CLASS[sourceClass]) || "unverified";
+}
+
+export type ProposeResult =
+  | { ok: true; claim: any; deduped: boolean }
+  | { ok: false; reason: string; claim?: undefined };
+
+/**
+ * Create a CANDIDATE claim from an approved observation (moment approval step 1).
+ *
+ * IDEMPOTENT per (observation, claim_type) — migration 2274's partial unique
+ * index intel_claims_one_per_observation_type. A replay (double press, retried
+ * request, re-run job) hits 23505 and the STORED candidate is returned with
+ * `deduped: true`; before 2274 every call inserted another candidate row
+ * (routes/intel.ts header). Table 5: the claim carries its lineage root
+ * (observation_id), its registry source_label and a lineage record.
+ */
+export async function proposeClaim(sc: any, observation: any): Promise<ProposeResult> {
   const surface: CaptureSurface = (observation.capture_surface as CaptureSurface) ?? "quick_signal";
   if (!(await surfaceFlagEnabled(sc, surface))) return { ok: false, reason: "disabled" };
   // Moderation (owner pilot ruling): explicitly-invalidated content
@@ -423,6 +477,7 @@ export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boo
   if (mustAggregate(observation.claim_type)) return { ok: false, reason: "must_aggregate" };
   const ttl = ttlFor(observation.claim_type);
   const base = new Date(observation.observed_at).getTime();
+  const observationId: string | null = typeof observation.id === "string" && observation.id.length > 0 ? observation.id : null;
   const claim = {
     subject_kind: observation.subject_kind,
     subject_id: observation.subject_id,
@@ -434,10 +489,40 @@ export async function proposeClaim(sc: any, observation: any): Promise<{ ok: boo
     observed_at: observation.observed_at,
     expires_at: ttl ? new Date(base + ttl.ttlSeconds * 1000).toISOString() : null,
     hard_expires_at: ttl ? new Date(base + ttl.hardExpirySeconds * 1000).toISOString() : null,
+    // Table 5 (2274). observation_id is the lineage root and the idempotency key.
+    observation_id: observationId,
+    source_label: sourceLabelFor(observation.source_class),
+    // Table 5 lineage: "observation, evidence, confirmations, algorithm and
+    // correction ancestry". At propose time only the observation is known; the
+    // rest is filled by the pipeline stages that produce it (evidence links,
+    // confirmations, the projection's algorithm_version, a correction's
+    // superseded_by). Ids and classes only — no actor, no coordinates.
+    lineage: {
+      observation_id: observationId,
+      capture_surface: surface,
+      source_class: observation.source_class ?? null,
+      presence_level: observation.presence_level ?? null,
+      moderation_state_at_propose: observation.moderation_state ?? null,
+      evidence: [],
+      confirmations: [],
+      algorithm_version: null,
+      correction_of: null,
+    },
   };
   const { data, error } = await sc.from("intel_claims").insert(claim).select().single();
-  if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
-  return { ok: true, claim: data };
+  if (error) {
+    // 23505 on (observation_id, claim_type) → idempotent replay: return the
+    // stored candidate. Any other 23505 (e.g. 2174's one-live-per-key index)
+    // finds no row here and is reported as the error it is.
+    if (String((error as any).code) === "23505" && observationId) {
+      const { data: existing } = await sc
+        .from("intel_claims").select("*")
+        .eq("observation_id", observationId).eq("claim_type", observation.claim_type).maybeSingle();
+      if (existing) return { ok: true, claim: existing, deduped: true };
+    }
+    return { ok: false, reason: String((error as any).message ?? "db_error") };
+  }
+  return { ok: true, claim: data, deduped: false };
 }
 
 /**
@@ -481,13 +566,44 @@ export async function confirmClaim(
 }
 
 /**
+ * §24 "Correction invalidation targets and completion status" — what one
+ * correction invalidates, and how far the invalidation has got.
+ *
+ * A correction supersedes the prior claim; the dependent read models are the
+ * CURRENT-STATE snapshots keyed to the same (subject, claim_type) — one per
+ * zone — which lib/intelProjectionScheduler either re-derives from the
+ * corrected claim set or force-expires (no live-eligible claim left behind the
+ * key) on its next pass. That pass is the completion; it emits
+ * `intel.correction.invalidation.completed` for the keys it expired. This record
+ * is logged (never persisted with identities — no actor id, no coordinates)
+ * and returned so a caller can show "your correction is propagating".
+ */
+export interface CorrectionInvalidation {
+  prior_claim_id: string;
+  subject_id: string;
+  claim_type: string;
+  /** The correcting observation (append-only; the future claim is proposed from it). */
+  observation_id: string | null;
+  superseded: boolean;
+  /** Current-state snapshots this correction invalidates (dependent read models). */
+  snapshot_targets: Array<{ id: string; zone_id: string; privacy_eligible: boolean }>;
+  completion:
+    /** prior superseded; snapshots await the next projection pass */
+    | "superseded_pending_projection"
+    /** the prior was not supersedable (wrong subject/type, or already superseded/expired) — nothing invalidated */
+    | "prior_not_supersedable"
+    /** the prior was superseded but the target read failed — the pass will still reconcile; targets unknown */
+    | "targets_unreadable";
+}
+
+/**
  * Correct a claim: append a NEW observation (never rewrite) and mark the prior
  * claim superseded. Correction propagation is the spec's central invariant —
  * a value is only ever superseded, never edited in place.
  */
 export async function correctClaim(
   sc: any, actorId: string, priorClaimId: string, input: CaptureInput,
-): Promise<CaptureResult & { supersededPrior?: boolean }> {
+): Promise<CaptureResult & { supersededPrior?: boolean; invalidation?: CorrectionInvalidation }> {
   const written = await writeObservation(sc, actorId, input);
   if (!written.ok) return written;
   // Scope the supersede to the SAME subject + claim_type the correction observes,
@@ -504,5 +620,35 @@ export async function correctClaim(
     .eq("claim_type", input.claimType)
     .in("status", ["active", "conflicting", "candidate"])
     .select("id");
-  return { ...written, supersededPrior: !error && Array.isArray(superseded) && superseded.length > 0 };
+  const supersededPrior = !error && Array.isArray(superseded) && superseded.length > 0;
+
+  // §24: name the invalidation targets. Read-only; the projection pass does the
+  // re-derivation/expiry. A failed read is reported, never hidden as "no targets".
+  const invalidation: CorrectionInvalidation = {
+    prior_claim_id: priorClaimId,
+    subject_id: input.subjectId,
+    claim_type: input.claimType,
+    observation_id: typeof written.observation?.id === "string" ? written.observation.id : null,
+    superseded: supersededPrior,
+    snapshot_targets: [],
+    completion: supersededPrior ? "superseded_pending_projection" : "prior_not_supersedable",
+  };
+  if (supersededPrior) {
+    const { data: snaps, error: snapErr } = await sc
+      .from("intel_state_snapshots")
+      .select("id, zone_id, privacy_eligible")
+      .eq("subject_id", input.subjectId)
+      .eq("claim_type", input.claimType);
+    if (snapErr) {
+      invalidation.completion = "targets_unreadable";
+    } else {
+      invalidation.snapshot_targets = ((snaps as Array<{ id: string; zone_id: string | null; privacy_eligible: boolean }> | null) ?? [])
+        .map((s) => ({ id: s.id, zone_id: s.zone_id ?? "", privacy_eligible: s.privacy_eligible === true }));
+    }
+  }
+  logger.info(
+    { event: "intel.correction.invalidation", ...invalidation, target_count: invalidation.snapshot_targets.length },
+    "intel correction: invalidation targets",
+  );
+  return { ...written, supersededPrior, invalidation };
 }

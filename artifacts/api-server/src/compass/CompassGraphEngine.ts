@@ -4,12 +4,16 @@
  * The proprietary intelligence layer:
  *
  *   1. Graph substrate — persistent typed nodes/edges connecting
- *      People–Places–Events–Trips–Time–Vibe–Behavior–Outcomes, populated by
- *      batch builders from data the app ALREADY collects (user_stamps, trips,
- *      events, compass_served_recommendations, compass_outcome_events,
- *      rank_events). Cross-trip relationships persist: a person returning to
- *      the same city accumulates observed_count on the visited edge and gets
- *      an explicit `returned_to` edge once a second trip is seen.
+ *      People–Places–Events–Trips–Time–Vibe–Behavior–Outcomes–Circles–
+ *      Experiences, populated by batch builders from data the app ALREADY
+ *      collects (user_stamps, trips, events, compass_outcome_events,
+ *      rank_events, circles, memories). Cross-trip relationships persist: a
+ *      person returning to the same city accumulates observed_count on the
+ *      visited edge and gets an explicit `returned_to` edge once a second trip
+ *      is seen. The admitted node kinds are GRAPH_NODE_KINDS below — the
+ *      TypeScript mirror of the CHECK on compass_graph_nodes.node_type
+ *      (20260730 + 2290). `trail` is not among them by ruling
+ *      (docs/discovery/ROADMAP.md: Trails as a peer system is STALE).
  *
  *   2. Destination World Model — per-city time-sliced activity profiles
  *      (day-of-week × daypart, plus monthly/seasonal buckets) derived from
@@ -419,6 +423,23 @@ export interface GraphRebuildReport {
   strongestCity: string | null;
 }
 
+// ── Node kinds ────────────────────────────────────────────────────────────────
+
+/**
+ * Every node_type the builders may emit — the mirror of the CHECK constraint
+ * on compass_graph_nodes.node_type (20260730_compass_intelligence_graph.sql,
+ * widened by 2290_intelligence_graph_node_kinds.sql). A builder that emits a
+ * kind outside this list writes rows the database rejects, silently, inside
+ * the fail-soft upsert; the test that pins this list to the migration is what
+ * makes that failure visible at build time instead.
+ */
+export const GRAPH_NODE_KINDS = [
+  "person", "place", "event", "trip", "city", "time_slice", "vibe", "behavior", "outcome",
+  // 2290 — docs/architecture/05_Graph_Engine.md
+  "circle", "experience",
+] as const;
+export type GraphNodeKind = (typeof GRAPH_NODE_KINDS)[number];
+
 // ── Internal accumulator ──────────────────────────────────────────────────────
 
 interface NodeRec { node_type: string; node_key: string; city?: string | null; attrs?: Record<string, unknown> }
@@ -434,9 +455,22 @@ class GraphBatch {
   nodes = new Map<string, NodeRec>();
   edges = new Map<string, { rec: EdgeObs; count: number; first: string | null; last: string | null }>();
 
-  node(node_type: string, node_key: string, city?: string | null, attrs?: Record<string, unknown>) {
+  /**
+   * Register a node. Order-independent: a builder that only knows a node by
+   * reference (an event's circle_id, say) may register it before the builder
+   * that reads the node's own row, so a later call fills a city the first one
+   * lacked and merges attrs the first one did not carry. Nothing already
+   * recorded is overwritten.
+   */
+  node(node_type: GraphNodeKind, node_key: string, city?: string | null, attrs?: Record<string, unknown>) {
     const k = `${node_type}|${node_key}`;
-    if (!this.nodes.has(k)) this.nodes.set(k, { node_type, node_key, city: city ?? null, attrs: attrs ?? {} });
+    const cur = this.nodes.get(k);
+    if (!cur) {
+      this.nodes.set(k, { node_type, node_key, city: city ?? null, attrs: attrs ?? {} });
+      return;
+    }
+    if (cur.city == null && city) cur.city = city;
+    if (attrs) cur.attrs = { ...attrs, ...(cur.attrs ?? {}) };
   }
 
   edge(obs: EdgeObs) {
@@ -541,7 +575,7 @@ export async function buildGraphFromSources(
   try {
     const { data } = await db
       .from("events")
-      .select("id, city, category, starts_at, location_lat, location_lng")
+      .select("id, city, category, starts_at, location_lat, location_lng, circle_id")
       .limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
       const city = normCity(r.city);
@@ -552,6 +586,12 @@ export async function buildGraphFromSources(
       batch.node("event", String(r.id), city, { category });
       batch.node("city", city, city);
       batch.edge({ src_type: "event", src_key: String(r.id), dst_type: "city", dst_key: city, edge_type: "in_city", at });
+      // An event hosted by a circle (events.circle_id) — the circle node itself
+      // is built in §6 from public.circles; here only the edge is recorded.
+      if (r.circle_id) {
+        batch.node("circle", String(r.circle_id));
+        batch.edge({ src_type: "event", src_key: String(r.id), dst_type: "circle", dst_key: String(r.circle_id), edge_type: "hosted_by", at });
+      }
       batch.node("vibe", category.toLowerCase());
       batch.edge({ src_type: "event", src_key: String(r.id), dst_type: "vibe", dst_key: category.toLowerCase(), edge_type: "has_vibe", at });
       if (at) {
@@ -599,6 +639,85 @@ export async function buildGraphFromSources(
         dst_type: "place", dst_key: String(r.item_id),
         edge_type: `behavior:${r.outcome}`, at, attrs: { item_kind: r.item_kind ?? null },
       });
+    }
+  } catch { /* fail-soft */ }
+
+  // 6. Circles (2290) → person —owns_circle→ circle —in_city→ city
+  //
+  // public.circles is the circle entity 05_Graph_Engine names: an owner, an
+  // optional home city, a visibility. The node carries the visibility and the
+  // canonical city ONLY — never the name or description, which are member-
+  // authored content (the same rule person nodes follow). circle_memberships
+  // is a person↔person pairing with no circle_id and is not read here: a
+  // person-to-person edge is a social fact the read-time privacy guards were
+  // never designed to aggregate over.
+  try {
+    const { data } = await db
+      .from("circles")
+      .select("id, owner_id, city, visibility, created_at")
+      .limit(BUILD_LIMIT);
+    for (const r of (data as any[]) ?? []) {
+      if (!r.id || !r.owner_id) continue;
+      const city = normCity(r.city);
+      const at = r.created_at ? String(r.created_at) : null;
+      batch.node("person", String(r.owner_id));
+      batch.node("circle", String(r.id), city, { visibility: normStr(r.visibility) ?? "public" });
+      batch.edge({ src_type: "person", src_key: String(r.owner_id), dst_type: "circle", dst_key: String(r.id), edge_type: "owns_circle", at });
+      if (city) {
+        batch.node("city", city, city);
+        batch.edge({ src_type: "circle", src_key: String(r.id), dst_type: "city", dst_key: city, edge_type: "in_city", at });
+      }
+    }
+  } catch { /* fail-soft */ }
+
+  // 7. Experiences (2290) → person —experienced→ experience —at_place/at_event/
+  //    during_trip/in_city→ … (+ time-slice observation)
+  //
+  // public.memories is the experience record 05_Graph_Engine names: a person's
+  // own account of being somewhere, anchored to a place, a trip and/or an
+  // event, with a location and a time. Only PUBLISHED memories are read, and
+  // never `only_me` ones — that visibility is the owner's explicit choice and
+  // the graph does not override it, even under service_role. The node carries
+  // WHICH anchors exist, never the title, caption or media.
+  try {
+    const { data } = await db
+      .from("memories")
+      .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
+      .eq("state", "published")
+      .neq("visibility", "only_me")
+      .limit(BUILD_LIMIT);
+    for (const r of (data as any[]) ?? []) {
+      if (!r.id || !r.owner_id) continue;
+      if (r.state !== "published" || r.visibility === "only_me") continue;   // belt and braces over the filter
+      const city = normCity(r.location_city);
+      const at = r.starts_at ? String(r.starts_at) : r.created_at ? String(r.created_at) : null;
+      const key = String(r.id);
+      registerCityCoordinates(city, r.location_lat, r.location_lng);
+      batch.node("person", String(r.owner_id));
+      batch.node("experience", key, city, {
+        has_place: Boolean(r.place_id), has_trip: Boolean(r.trip_id), has_event: Boolean(r.event_id),
+        country: r.location_country ?? null,
+      });
+      batch.edge({ src_type: "person", src_key: String(r.owner_id), dst_type: "experience", dst_key: key, edge_type: "experienced", at });
+      if (r.place_id) {
+        batch.edge({ src_type: "experience", src_key: key, dst_type: "place", dst_key: String(r.place_id), edge_type: "at_place", at });
+      }
+      if (r.trip_id) {
+        batch.edge({ src_type: "experience", src_key: key, dst_type: "trip", dst_key: String(r.trip_id), edge_type: "during_trip", at });
+      }
+      if (r.event_id) {
+        batch.edge({ src_type: "experience", src_key: key, dst_type: "event", dst_key: String(r.event_id), edge_type: "at_event", at });
+      }
+      if (city) {
+        batch.node("city", city, city, { country: r.location_country ?? null });
+        batch.edge({ src_type: "experience", src_key: key, dst_type: "city", dst_key: city, edge_type: "in_city", at });
+        if (at) {
+          const slice = timeSliceKey(new Date(at), city, { lat: r.location_lat, lng: r.location_lng });
+          batch.node("time_slice", `${city}|${slice}`, city, { slice });
+          batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_during:experience", at });
+          batch.edge({ src_type: "person", src_key: String(r.owner_id), dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_in", at });
+        }
+      }
     }
   } catch { /* fail-soft */ }
 

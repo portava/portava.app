@@ -20,7 +20,20 @@
  */
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
-import type { QuickSignalContext, Visibility, ConfirmStance, PartySizeBucket } from '../lib/intel/contracts.ts';
+import type { Visibility, ConfirmStance } from '../lib/intel/contracts.ts';
+import {
+  buildObservationBody,
+  quickSignalInput,
+  walkInInput,
+  musicInput,
+  trailMovementInput,
+  type ObservationInput,
+  type QuickSignalArgs,
+  type WalkInArgs,
+  type MusicArgs,
+  type TrailMovementArgs,
+} from './intelCaptureShape.ts';
+export type { ObservationInput } from './intelCaptureShape.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 const INTEL_BASE = '/api/v1/intel';
@@ -84,62 +97,6 @@ async function readError(res: Response): Promise<{ code?: string; error?: string
   }
 }
 
-// ── The write payload ────────────────────────────────────────────────────────
-export interface ObservationInput {
-  subjectId: string;
-  subjectKind?: string;
-  zoneId?: string | null;
-  /** Defaults to now at call time if omitted. */
-  observedAt?: string;
-  capturedAt?: string | null;
-  visibility?: Visibility;
-  presenceLevel?: string;
-  /** Quick Signal form: a context + a chosen option, mapped server-side. */
-  context?: QuickSignalContext;
-  option?: string;
-  /** Direct form: an already-canonical Phase-1 claim. */
-  claimType?: string;
-  value?: Record<string, unknown>;
-  /**
-   * V1 independent-group signal: the "who are you here with?" answer. The server
-   * derives a privacy-safe group_key from it; omitting it is fail-closed (null
-   * group_key, no credit toward the independent-group floor). Only sent for
-   * label-eligible captures.
-   */
-  partySize?: PartySizeBucket;
-  /**
-   * The observer's active Trip Crew id, if the client already knows it. Optional
-   * and normally omitted — the server resolves the active crew itself and
-   * VALIDATES membership before honouring any value here.
-   */
-  partyId?: string | null;
-  /** Reused across retries of the same logical write. Minted if omitted. */
-  idempotencyKey?: string;
-}
-
-function buildBody(input: ObservationInput): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    subjectId: input.subjectId,
-    observedAt: input.observedAt ?? new Date().toISOString(),
-  };
-  if (input.subjectKind) body.subjectKind = input.subjectKind;
-  if (input.zoneId !== undefined) body.zoneId = input.zoneId;
-  if (input.capturedAt !== undefined) body.capturedAt = input.capturedAt;
-  if (input.visibility) body.visibility = input.visibility;
-  if (input.presenceLevel) body.presenceLevel = input.presenceLevel;
-  if (input.context && input.option) {
-    body.context = input.context;
-    body.option = input.option;
-  } else if (input.claimType && input.value) {
-    body.claimType = input.claimType;
-    body.value = input.value;
-  }
-  // Independent-group signal — omitted entirely when unset (server fail-closes).
-  if (input.partySize) body.partySize = input.partySize;
-  if (input.partyId) body.partyId = input.partyId;
-  return body;
-}
-
 /** POST /api/v1/intel/observations — the one capture write. */
 export async function submitObservation(input: ObservationInput): Promise<CaptureResult> {
   if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
@@ -148,7 +105,7 @@ export async function submitObservation(input: ObservationInput): Promise<Captur
     const res = await authedFetch(`${INTEL_BASE}/observations`, {
       method: 'POST',
       headers: { 'Idempotency-Key': key },
-      body: JSON.stringify(buildBody(input)),
+      body: JSON.stringify(buildObservationBody(input)),
     });
     if (!res.ok) return { ok: false, ...(await readError(res)) };
     const data = await res.json();
@@ -159,40 +116,33 @@ export async function submitObservation(input: ObservationInput): Promise<Captur
 }
 
 /** Convenience: a Quick Signal (context + option). */
-export function submitQuickSignal(args: {
-  subjectId: string;
-  context: QuickSignalContext;
-  option: string;
-  visibility?: Visibility;
-  zoneId?: string | null;
-  subjectKind?: string;
-  /** V1 independent-group signal for label-eligible captures. */
-  partySize?: PartySizeBucket;
-  partyId?: string | null;
-  idempotencyKey?: string;
-}): Promise<CaptureResult> {
-  return submitObservation(args);
+export function submitQuickSignal(args: QuickSignalArgs): Promise<CaptureResult> {
+  return submitObservation(quickSignalInput(args));
 }
 
 /** Convenience: the direct Phase-1 walk-in claim (access.walk_in). */
-export function submitWalkIn(args: {
-  subjectId: string;
-  accepted: boolean;
-  visibility?: Visibility;
-  /** V1 independent-group signal — walk-in is a label-eligible access signal. */
-  partySize?: PartySizeBucket;
-  partyId?: string | null;
-  idempotencyKey?: string;
-}): Promise<CaptureResult> {
-  return submitObservation({
-    subjectId: args.subjectId,
-    claimType: 'access.walk_in',
-    value: { accepted: args.accepted },
-    visibility: args.visibility,
-    partySize: args.partySize,
-    partyId: args.partyId,
-    idempotencyKey: args.idempotencyKey,
-  });
+export function submitWalkIn(args: WalkInArgs): Promise<CaptureResult> {
+  return submitObservation(walkInInput(args));
+}
+
+/**
+ * Convenience: the direct Phase-1 music.current claim (§29 Included). `genre` is a
+ * canonical MUSIC_GENRES value — the composer sends no free text, only a genre.
+ */
+export function submitMusic(args: MusicArgs): Promise<CaptureResult> {
+  return submitObservation(musicInput(args));
+}
+
+/**
+ * Convenience: the IG-06 Trail "where next?" movement follow-up. Sends the
+ * `trail` capture surface with `context: 'movement'` and a COARSE destination
+ * area (an existing neighborhood/area name — never coordinates, never free text),
+ * which the server maps to experience.next_move. The observation is captured
+ * PRIVATE and is aggregate-only (never a single-user published claim); the exit
+ * reason is deliberately NOT sent — experience.exit_reason is not yet contracted.
+ */
+export function submitTrailMovement(args: TrailMovementArgs): Promise<CaptureResult> {
+  return submitObservation(trailMovementInput(args));
 }
 
 // ── Claim lifecycle ───────────────────────────────────────────────────────────

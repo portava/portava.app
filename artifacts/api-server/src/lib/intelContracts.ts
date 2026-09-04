@@ -217,6 +217,29 @@ export const COMMERCIAL_DISCLOSURES = [
 ] as const;
 export type CommercialDisclosure = (typeof COMMERCIAL_DISCLOSURES)[number];
 
+/** True when a disclosure declares a commercial relationship to the subject (§22 Table 30). */
+export function isCommercialDisclosure(d: CommercialDisclosure): boolean {
+  return d !== "none";
+}
+
+/**
+ * §22 Table 30 "Venue brigading → Affiliation disclosure … official/community
+ * separation": a contributor who has DISCLOSED a commercial relationship to the
+ * subject (employee/owner/hosted/complimentary/affiliate/paid) is not an
+ * independent community reporter about it. Recording the observation under the
+ * `sponsored` source class — a NON_INDEPENDENT_SOURCE_CLASS — is that separation:
+ * mayCountAsConsensus() is false for it, so a disclosed-commercial report can
+ * never present a community-consensus / cohort badge, and it carries lower
+ * SOURCE_RELIABILITY in the confidence model. An undisclosed ('none') report keeps
+ * the honest Phase-1 default, firsthand_unverified.
+ *
+ * This is the ONE place the disclosure → epistemic-standing rule lives, so the
+ * capture path and any test read the same mapping.
+ */
+export function disclosureSourceClass(d: CommercialDisclosure): SourceClass {
+  return isCommercialDisclosure(d) ? "sponsored" : "firsthand_unverified";
+}
+
 // ── Crowd level and trajectory ───────────────────────────────────────────────
 // Six values. Note hidden_gems.crowd_level carries a different, narrower legacy
 // vocabulary; that surface is reconciled when it is next touched, not here.
@@ -309,6 +332,64 @@ export type ClosureState = (typeof CLOSURE_STATES)[number];
  * corroborated source, which this capture surface is not.
  */
 export const STRUCTURAL_CLOSURE_STATES: readonly ClosureState[] = ["permanently_closed"] as const;
+
+// ── §4 Table 6 controlled value spaces for the remaining Phase-1 registry ─────
+/**
+ * The controlled enums for the claim types whose value is (or contains) a single
+ * canonical descriptor. These are the value spaces lib/quickSignal.VALUE_VALIDATORS
+ * checks, byte-for-byte, so a stored value is always one the reader can interpret.
+ * They live HERE — next to the claim-type registry that gives each a TTL — for the
+ * same reason vibe/event/closure/direction do (see that section header): the
+ * option IS the value, so the option list is the canonical value domain.
+ *
+ * NOTE ON SCOPE. Having a validator (and a value space) is NOT the same as being
+ * capturable in Phase 1. quickSignal.PHASE1_CAPTURE_CLAIM_TYPES — the quick_signal
+ * capture surface — is a deliberately smaller, explicit list (§29 Included, with a
+ * producer). These vocabularies also validate direct-form {claimType,value} writes
+ * and corrections, and stand ready for the surface to widen once each family has a
+ * safe, no-free-text producer.
+ */
+
+/** access.reservation (Table 6): required, recommended, not_needed, unknown. */
+export const RESERVATION_STATES = ["required", "recommended", "not_needed", "unknown"] as const;
+export type ReservationState = (typeof RESERVATION_STATES)[number];
+
+/**
+ * crowd.mix (Table 6): "local/traveler/expat/mixed distribution bands".
+ * Phase-1 models the DOMINANT composition as one controlled descriptor, not a
+ * per-person distribution — "no identity inference" (Table 6) is honoured by
+ * construction because no individual is classified, only the room's overall read.
+ */
+export const CROWD_MIX_CATEGORIES = ["local", "traveler", "expat", "mixed"] as const;
+export type CrowdMixCategory = (typeof CROWD_MIX_CATEGORIES)[number];
+
+/**
+ * music.current (Table 6): "controlled genre set + confidence … copyright-safe
+ * metadata only". A closed, copyright-safe genre vocabulary — never a track,
+ * artist or lyric. 'other' is the honest catch-all so the picker never forces a
+ * wrong genre, and 'none' records silence/no music.
+ */
+export const MUSIC_GENRES = [
+  "none",
+  "house",
+  "techno",
+  "hip_hop",
+  "latin",
+  "pop",
+  "rock",
+  "jazz",
+  "live_band",
+  "other",
+] as const;
+export type MusicGenre = (typeof MUSIC_GENRES)[number];
+
+/** inventory.status (Table 6): available / limited / sold_out for an item or service. */
+export const INVENTORY_STATUSES = ["available", "limited", "sold_out"] as const;
+export type InventoryStatus = (typeof INVENTORY_STATUSES)[number];
+
+/** transit.condition (Table 6): normal / delayed / disrupted / closed for a route or mode. */
+export const TRANSIT_CONDITIONS = ["normal", "delayed", "disrupted", "closed"] as const;
+export type TransitCondition = (typeof TRANSIT_CONDITIONS)[number];
 
 // ── Presence ladder ──────────────────────────────────────────────────────────
 export const PRESENCE_LEVELS = ["P0", "P1", "P2", "P3", "P4"] as const;

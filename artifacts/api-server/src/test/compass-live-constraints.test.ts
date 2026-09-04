@@ -142,6 +142,10 @@ function envelope(over: Partial<LiveClaimEnvelope> & { claimType: string; value:
     observedAt: over.observedAt ?? iso(NOW_MS - minutes(5)),
     validUntil: over.validUntil ?? iso(NOW_MS + minutes(25)),
     state: over.state ?? (band === "live" || band === "strong" ? "live" : "emerging"),
+    // §10 conflict fields (2275/I2): production's liveClaimRead always sets both;
+    // default to a no-conflict envelope so a fixture opts in only when it tests conflict.
+    conflictState: over.conflictState ?? "none",
+    conflict: over.conflict ?? null,
   };
 }
 

@@ -21,6 +21,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
 import { useSafeReturnActive } from './useSafeReturnActive.ts';
 import { INTEL_FLAGS, type VenueCategory } from '../lib/intel/contracts.ts';
+import { resolveConflictReask, type ConflictReask, type ConflictReaskCandidate } from '../lib/intel/conflict.ts';
 import {
   cachedPromptPause,
   loadPromptPause,
@@ -52,6 +53,17 @@ export interface UseIntelPromptsResult {
   canPrompt: (category?: VenueCategory | 'general') => boolean;
   /** Why a prompt is suppressed for this category (or null if it is allowed). */
   suppressReason: (category?: VenueCategory | 'general') => SuppressReason;
+  /**
+   * §10 contradiction-resolution opportunity. Given the claims served for the
+   * subject the viewer is at, the re-ask to offer (same claim family, reason
+   * 'conflict') — or null when no claim is in material conflict, the family is
+   * not re-askable, or a prompt may not be shown at all (`canPrompt(category)`:
+   * flag off / Safe Return / paused — the same suppression every prompt obeys).
+   */
+  conflictReask: (
+    claims: ReadonlyArray<ConflictReaskCandidate>,
+    category?: VenueCategory | 'general',
+  ) => ConflictReask | null;
   pauseSession: () => void;
   resumeSession: () => void;
   pauseCategory: (category: VenueCategory | 'general', paused: boolean) => void;
@@ -98,6 +110,12 @@ export function useIntelPrompts(): UseIntelPromptsResult {
     [suppressReason],
   );
 
+  const conflictReask = useCallback(
+    (claims: ReadonlyArray<ConflictReaskCandidate>, category?: VenueCategory | 'general') =>
+      resolveConflictReask(claims, canPrompt(category)),
+    [canPrompt],
+  );
+
   const pauseSession = useCallback(() => {
     setSessionPaused(true);
     setSessionPausedState(true);
@@ -139,6 +157,7 @@ export function useIntelPrompts(): UseIntelPromptsResult {
     sessionPaused,
     canPrompt,
     suppressReason,
+    conflictReask,
     pauseSession,
     resumeSession,
     pauseCategory,

@@ -18,6 +18,7 @@
  * deriveComponents, scoreConfidence and recordEarnedReward are all the shipping
  * implementations.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
@@ -163,7 +164,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
     return b;
   }
 
-  return { from, _tables: tables, _writes: writes };
+  return { from, _tables: tables, _writes: writes } as unknown as SupabaseClient & { _tables: typeof tables; _writes: typeof writes };
 }
 
 /** Every gate open: both flags on, the place exists, consent granted. */
