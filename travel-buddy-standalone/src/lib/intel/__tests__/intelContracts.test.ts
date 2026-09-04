@@ -22,6 +22,11 @@ import {
   PARTY_SIZE_BUCKETS,
   PARTY_SIZE_OPTIONS,
   PARTY_SIZE_LABELS,
+  MUSIC_GENRES,
+  MUSIC_GENRE_LABELS,
+  COMMERCIAL_DISCLOSURES,
+  COMMERCIAL_DISCLOSURE_OPTIONS,
+  COMMERCIAL_DISCLOSURE_LABELS,
 } from '../contracts.ts';
 import {
   confidenceBand,
@@ -70,9 +75,51 @@ describe('option → canonical value (corrections)', () => {
     assert.deepEqual(optionToClaimValue('access.walk_in', 'accepted'), { accepted: true });
     assert.deepEqual(optionToClaimValue('access.walk_in', 'turned away'), { accepted: false });
   });
-  it('offers correction options only for the Phase-1 claim types', () => {
+  it('maps music.current genre options to the canonical value (no free text)', () => {
+    assert.deepEqual(optionToClaimValue('music.current', 'house'), { genre: 'house' });
+    assert.deepEqual(optionToClaimValue('music.current', 'live_band'), { genre: 'live_band' });
+    assert.equal(optionToClaimValue('music.current', 'dubstep'), null, 'off-vocabulary genre refused');
+  });
+  it('offers correction options for the wired Phase-1 claim types, null otherwise', () => {
     assert.ok(correctionOptionsFor('crowd.level'));
-    assert.equal(correctionOptionsFor('music.current'), null);
+    assert.deepEqual(correctionOptionsFor('music.current'), MUSIC_GENRES);
+    assert.equal(correctionOptionsFor('access.reservation'), null, 'not yet a wired correction family');
+  });
+});
+
+describe('commercial disclosure vocabulary (§22 Table 30)', () => {
+  it('mirrors the seven canonical values with none first', () => {
+    assert.deepEqual([...COMMERCIAL_DISCLOSURES], ['none', 'employee', 'owner', 'hosted', 'complimentary', 'affiliate', 'paid']);
+  });
+  it('the control offers every value EXCEPT the none default', () => {
+    assert.equal(COMMERCIAL_DISCLOSURE_OPTIONS.includes('none' as never), false, "'none' is the default, never an offered pill");
+    for (const d of COMMERCIAL_DISCLOSURES) {
+      if (d === 'none') continue;
+      assert.ok(COMMERCIAL_DISCLOSURE_OPTIONS.includes(d), `${d} should be offered`);
+    }
+  });
+  it('has a label for every value', () => {
+    for (const d of COMMERCIAL_DISCLOSURES) {
+      assert.equal(typeof COMMERCIAL_DISCLOSURE_LABELS[d], 'string');
+      assert.ok(COMMERCIAL_DISCLOSURE_LABELS[d].length > 0);
+    }
+  });
+});
+
+describe('music.current family (§29 Included)', () => {
+  it('is wired to submit in the nightlife arrival set with a controlled genre picker', () => {
+    const music = VENUE_QUESTION_SETS.nightlife.arrival.find((q) => q.id === 'music');
+    assert.ok(music, 'nightlife arrival set includes the music question');
+    assert.equal(music!.kind, 'music');
+    assert.equal(music!.phase1, true, 'music.current is a Phase-1-backed write');
+    assert.deepEqual([...music!.options], [...MUSIC_GENRES]);
+  });
+  it('offers a friendly label for every canonical genre, and no free-text field', () => {
+    const music = VENUE_QUESTION_SETS.nightlife.arrival.find((q) => q.id === 'music')!;
+    for (const g of MUSIC_GENRES) {
+      assert.equal(typeof MUSIC_GENRE_LABELS[g], 'string');
+      assert.ok(music.labelFor && music.labelFor(g).length > 0);
+    }
   });
 });
 

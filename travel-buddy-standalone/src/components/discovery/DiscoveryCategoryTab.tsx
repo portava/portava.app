@@ -628,6 +628,9 @@ export function DiscoveryCategoryTab({
               onAddToPlan={() => onAddToPlan(item)}
               onAddToRoute={onAddToRoute}
               showDistance={filters.sortBy === 'nearest'}
+              // Served by GET /discovery, whose impression rows are written
+              // under surface 'discovery' (lib/rankLog.ts, lib/discoveryServeLog.ts).
+              rankSurface="discovery"
             />
           )}
           contentContainerStyle={listTopInset > 0 ? [styles.list, { paddingTop: listTopInset }] : styles.list}

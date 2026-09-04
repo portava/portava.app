@@ -92,6 +92,39 @@ export function decidePostReadable(
   return { readable: false, reason: "unknown_visibility" };
 }
 
+/**
+ * Delayed-publish gate — is this post PUBLISHED, i.e. servable to anyone but
+ * its author?
+ *
+ * `posts.post_status` is the publication state machine (enum
+ * delayed_post_status: draft / private / pending_location_exit / pending_delay /
+ * pending_safety_review / published / canceled / expired). POST /posts inserts a
+ * delayed-geotag post with `status = 'active'` and a PENDING post_status, and
+ * a sweeper flips it to 'published' later. `status = 'active'` is therefore NOT
+ * enough to serve a post: every feed reader must also gate on post_status, or
+ * it serves a post whose author asked for it to stay hidden until they had
+ * left the place (§23 / §37).
+ *
+ * This is the SAME predicate the canonical readers already apply —
+ * lib/mediaEligibility (`if (postStatus && postStatus !== "published")`),
+ * GET /posts/:postId (`!post.post_status || post.post_status === "published"`)
+ * and POST /media/feed/view — lifted here so the Wall readers use the one
+ * definition instead of each restating it. Absent is treated as published: the
+ * column is NOT NULL DEFAULT 'published' in the schema, so absence only ever
+ * means a legacy row or a caller that did not select the column, never a
+ * pending post. The DB-side form is `.eq("post_status", "published")` (the
+ * Following / global feeds in routes/posts.ts); callers apply that on the
+ * query AND this in memory, so a row fed past the query filter cannot leak.
+ *
+ * Deliberately separate from decidePostReadable: that decides WHO may read a
+ * post given its visibility (and admits the author to their own pending post);
+ * this decides whether the post is published at all. The Wall never shows a
+ * viewer their own posts, so it applies both.
+ */
+export function isPostPublished(post: { post_status?: string | null }): boolean {
+  return !post.post_status || post.post_status === "published";
+}
+
 /** Convenience boolean for call sites that do not need the reason. */
 export function canReadPost(
   post: ReadablePost,

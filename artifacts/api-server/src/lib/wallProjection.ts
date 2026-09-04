@@ -338,6 +338,12 @@ export interface LiveForYouItem {
   confidence?: number | null;
   /** 'live' only when the evidence qualifies; otherwise 'emerging' (§ liveClaimRead). */
   state: "live" | "emerging";
+  /**
+   * IG §10 conflict state of the claim behind the item. 'material' ⇒ `state`
+   * is 'emerging' (never 'live') and the client renders "Reports differ"
+   * instead of an Emerging/Live label. Absent ⇒ 'none'.
+   */
+  conflictState?: "none" | "minor" | "material";
   observedAt: string;
   /** Freshness horizon — after this the client degrades to unknown (spec §31). */
   validUntil: string;
