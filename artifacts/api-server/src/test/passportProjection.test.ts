@@ -219,6 +219,90 @@ describe("buildPassportProjection — blocked viewer", () => {
   });
 });
 
+describe("buildPassportProjection — TABLE 12 domain trust + §20 reputation credentials", () => {
+  function repSeed() {
+    return makePassportDb({
+      profiles: [{
+        id: OWNER, handle: "host", display_name: "Host", name: "Host",
+        verified: true, verified_at: "2024-01-01", verification_level: "id_verified",
+        is_official: false, is_private: false, passport_visibility: "public",
+        show_profile_picture_publicly: true, created_at: "2023-01-01",
+      }],
+      trust_profiles: [{
+        user_id: OWNER, overall_score: 82, public_level: "highly_trusted",
+        plan_attendance: 88, host_quality: 55, communication: 70, respect_safety: 90,
+        location_honesty: 84, content_quality: 92, community_value: 90, guide_accuracy: 88, passport_authenticity: 80,
+      }],
+      rent_buddy_profiles: [{ user_id: OWNER, average_rating: 4.8, review_count: 12, completed_bookings: 9 }],
+      passport_contribution_events: [
+        { user_id: OWNER, event_type: "pulse_contribution", metadata: { city: "Bangkok", category: "nightlife" }, created_at: "2026-01-01" },
+        { user_id: OWNER, event_type: "city_visit_verified", metadata: { city: "Bangkok", category: "food" }, created_at: "2026-01-02" },
+        { user_id: OWNER, event_type: "hidden_gem_verified", metadata: { city: "Bangkok", category: "events" }, created_at: "2026-01-03" },
+      ],
+    });
+  }
+
+  it("projects per-domain presentations with NO raw score, and Buddy applicable for a buddy", async () => {
+    const res: ViewerResolution = { context: "self", permissions: permsFull(), sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+    const p = (await buildPassportProjection(repSeed(), OWNER, OWNER, { resolveViewerContext: resolver(res) }))!;
+
+    const domains = p.trust?.domains ?? [];
+    const byKey = Object.fromEntries(domains.map((d) => [d.key, d]));
+    assert.ok(byKey.overall && byKey.traveler && byKey.trip_guest && byKey.trip_host && byKey.contributor && byKey.buddy, "all six TABLE 12 domains present");
+    // Presentation words, never numbers.
+    for (const d of domains) {
+      assert.equal(typeof d.presentation, "string");
+      assert.ok(!/\d/.test(d.presentation), `domain ${d.key} presentation must carry no raw number`);
+    }
+    // host_quality 55 → "Established"; content/community/guide high → Contributor "Excellent".
+    assert.equal(byKey.trip_host.presentation, "Established");
+    assert.equal(byKey.contributor.presentation, "Excellent");
+    // This owner IS a buddy → Buddy domain applicable.
+    assert.equal(byKey.buddy.applicable, true);
+    assert.notEqual(byKey.buddy.presentation, "Not applicable");
+  });
+
+  it("surfaces the §20 Host Reputation + Knows-<city>-well credentials", async () => {
+    const res: ViewerResolution = { context: "self", permissions: permsFull(), sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+    const p = (await buildPassportProjection(repSeed(), OWNER, OWNER, { resolveViewerContext: resolver(res) }))!;
+
+    const host = p.credentials.find((c) => c.key === "host_reputation");
+    assert.ok(host, "host reputation credential present");
+    assert.equal(host!.label, "Host Reputation");
+    assert.equal(host!.detail, "4.8");
+
+    const city = p.credentials.find((c) => c.key.startsWith("city_expertise_"));
+    assert.ok(city, "city expertise credential present");
+    assert.equal(city!.label, "Knows Bangkok well");
+  });
+
+  it("marks the Buddy domain Not applicable and omits Host Reputation for a non-buddy", async () => {
+    const db = makePassportDb({
+      profiles: [{
+        id: OWNER, handle: "trav", display_name: "Trav", name: "Trav",
+        verified: false, is_official: false, is_private: false,
+        passport_visibility: "public", show_profile_picture_publicly: true, created_at: "2023-01-01",
+      }],
+      trust_profiles: [{
+        user_id: OWNER, overall_score: 50, public_level: "reliable_traveler",
+        plan_attendance: 50, host_quality: 50, communication: 50, respect_safety: 50,
+        location_honesty: 50, content_quality: 50, community_value: 50, guide_accuracy: 50, passport_authenticity: 50,
+      }],
+      rent_buddy_profiles: [], // not a buddy
+    });
+    const res: ViewerResolution = { context: "self", permissions: permsFull(), sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
+    const p = (await buildPassportProjection(db, OWNER, OWNER, { resolveViewerContext: resolver(res) }))!;
+
+    const buddy = (p.trust?.domains ?? []).find((d) => d.key === "buddy")!;
+    assert.equal(buddy.applicable, false);
+    assert.equal(buddy.presentation, "Not applicable");
+    // Neutral 50 everywhere reads "Established" — non-stigmatizing (§10).
+    const overall = (p.trust?.domains ?? []).find((d) => d.key === "overall")!;
+    assert.equal(overall.presentation, "Established");
+    assert.equal(p.credentials.find((c) => c.key === "host_reputation"), undefined);
+  });
+});
+
 // ── §5 real-time traveler states: exploring / at_event / with_crew ─────────────
 describe("buildTravelerState — derived §5 activity states with validFrom/validUntil", () => {
   const baseProfile = {

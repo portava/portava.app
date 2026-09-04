@@ -71,5 +71,27 @@ describe("buildReputationSummary — §20 reputation projection", () => {
     assert.equal(r.level, 1);
     assert.equal(r.levelLabel, "New Contributor");
     assert.deepEqual(r.topExpertise, []);
+    assert.deepEqual(r.cityExpertise, []);
+  });
+
+  it("derives 'Knows <city> well' only from repeated qualified contributions (§20)", async () => {
+    const db = makePassportDb({
+      passport_contribution_events: [
+        // 3 qualified contributions in Bangkok → clears the threshold.
+        { user_id: USER, event_type: "pulse_contribution", metadata: { city: "Bangkok" }, created_at: "2026-03-01" },
+        { user_id: USER, event_type: "city_visit_verified", metadata: { city: "Bangkok" }, created_at: "2026-03-02" },
+        { user_id: USER, event_type: "hidden_gem_verified", metadata: { city: "Bangkok" }, created_at: "2026-03-03" },
+        // Only 1 qualified contribution in Tokyo → below threshold, not surfaced.
+        { user_id: USER, event_type: "pulse_contribution", metadata: { city: "Tokyo" }, created_at: "2026-03-04" },
+        // Da Nang would clear the threshold BUT the events are paid → excluded.
+        { user_id: USER, event_type: "pulse_contribution", metadata: { city: "Da Nang", paid: true }, created_at: "2026-03-05" },
+        { user_id: USER, event_type: "pulse_contribution", metadata: { city: "Da Nang", sponsored: true }, created_at: "2026-03-06" },
+        { user_id: USER, event_type: "pulse_contribution", metadata: { city: "Da Nang", source: "paid" }, created_at: "2026-03-07" },
+      ],
+    });
+    const r = await buildReputationSummary(db, USER);
+    assert.deepEqual(r.cityExpertise, ["Bangkok"], "only Bangkok clears the qualified threshold");
+    assert.ok(!r.cityExpertise.includes("Tokyo"), "a single visit is not expertise");
+    assert.ok(!r.cityExpertise.includes("Da Nang"), "paid contributions never confer expertise");
   });
 });
