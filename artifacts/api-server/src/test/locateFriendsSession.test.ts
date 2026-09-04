@@ -1220,3 +1220,81 @@ describe("attribution — every membership and position write is recorded", () =
     assert.equal(db._tables[POSITIONS_TABLE].length, 0);
   });
 });
+
+// ══ G. §25/§37 "Share permitted location" — the channel is the session ════════
+//
+// The §25 long-press share opens onto a §12 session: publishing the shared point
+// is `publishPosition`, and the session's own expiry + a leave are what bound it.
+// So the two properties the share channel must have are properties of the session
+// under test here, not a second mechanism — expiry stops it, and a leave revokes
+// it, both enforced server-side on the request rather than by a sweep.
+
+describe("(g) the permitted-location share channel expires and is revocable", () => {
+  it("stops ACCEPTING a share the instant the session has expired", async () => {
+    // An expired session is the channel closing: a new share cannot be opened on
+    // it, checked at nowMs with no reference to any status column.
+    const expired = session({ expires_at: iso(NOW - 1) });
+    const db = makeDb({ sessions: [expired], members: [member(ALICE)] });
+    const outcome = await publishPosition(
+      db as any,
+      ALICE,
+      SESSION,
+      { rung: "network_location", precision: "precise", lat: 16.05, lng: 108.2, observedAt: NOW - 30_000 },
+      NOW,
+    );
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.ok === false && outcome.code, "gone");
+    assert.equal(db._tables[POSITIONS_TABLE].length, 0, "nothing is stored on a closed channel");
+  });
+
+  it("stops SERVING an already-shared point once the session expires", async () => {
+    // A point shared while the channel was open must vanish the moment it
+    // closes, even though the row is still on disk (no sweep has run).
+    const db = makeDb({
+      sessions: [session({ expires_at: iso(NOW + 60_000) })],
+      members: [member(ALICE), member(BOB)],
+      positions: [position(BOB)],
+      profiles: [{ id: BOB, display_name: "Bob" }],
+    });
+    // Open: Alice sees Bob's shared point.
+    const open = await readSessionForViewer(db as any, SESSION, ALICE, NOW);
+    assert.equal(open.status, "ok");
+    assert.equal(open.members.length, 1);
+
+    // Past expiry: the same read is the one opaque "expired", members empty —
+    // the shared point is gone from the group view though its row still exists.
+    const closed = await readSessionForViewer(db as any, SESSION, ALICE, NOW + 60_001);
+    assert.equal(closed.status, "expired");
+    assert.deepEqual(closed.members, []);
+    assert.ok(db._tables[POSITIONS_TABLE].length > 0, "the row is still on disk — read-time expiry, not a sweep");
+  });
+
+  it("is revoked by a leave: the shared point is DELETED, not left for a sweep", async () => {
+    const db = makeDb({
+      sessions: [session()],
+      members: [member(ALICE), member(BOB)],
+      positions: [position(BOB)],
+      profiles: [{ id: BOB, display_name: "Bob" }],
+    });
+    const leave = await leaveSession(db as any, SESSION, BOB, NOW + 1_000);
+    assert.equal(leave.outcome, "left");
+    // The share is gone because the row is gone.
+    assert.equal(db._tables[POSITIONS_TABLE].length, 0);
+    const after = await readSessionForViewer(db as any, SESSION, ALICE, NOW + 1_001);
+    assert.deepEqual(after.members, [], "the revoked share is gone from the very next read");
+  });
+
+  it("revocation is not gated by the flag — a leave works whatever the capability says", async () => {
+    // The share channel is the session, and the session's leave is the one route
+    // that ignores locate_friends_enabled — so a share can always be pulled back.
+    const db = makeDb({
+      sessions: [session()],
+      members: [member(BOB)],
+      positions: [position(BOB)],
+      flags: { locate_friends_enabled: false },
+    });
+    const leave = await leaveSession(db as any, SESSION, BOB, NOW + 1_000);
+    assert.equal(leave.outcome, "left");
+    assert.equal(db._tables[POSITIONS_TABLE].length, 0);
+  });
+});

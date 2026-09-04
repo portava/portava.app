@@ -92,6 +92,9 @@ jest.mock('../../../src/services/locateFriends', () => ({
   startLocateFriendsSession: jest.fn(() =>
     Promise.resolve({ ok: true, data: { session: { id: 'sess-1' }, requestedClass: 'approximate' } }),
   ),
+  sharePermittedLocation: jest.fn(() =>
+    Promise.resolve({ ok: true, data: { enabled: true, stored: true, storedPrecision: 'approximate', refusal: null } }),
+  ),
   LOCATE_FRIENDS_PUBLISH_INTERVAL_MS: 30_000,
 }));
 

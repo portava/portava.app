@@ -80,6 +80,7 @@ import { LocateFriendsPanel } from '../../src/components/map/LocateFriendsPanel.
 import {
   startLocateFriendsSession,
   publishManualCheckpoint,
+  sharePermittedLocation,
   LOCATE_FRIENDS_PUBLISH_INTERVAL_MS,
 } from '../../src/services/locateFriends.ts';
 import {
@@ -99,6 +100,7 @@ import {
   objectTarget,
   coordinateOf,
   describeTarget,
+  resolveShareBound,
   type LongPressTarget,
 } from '../../src/features/map/interaction/longPress.ts';
 import { longPressTargetAt } from '../../src/features/map/interaction/pressTarget.ts';
@@ -2487,7 +2489,14 @@ function FullScreenMapScreenInner() {
         target={longPress?.target ?? null}
         visible={longPress != null}
         anchor={longPress?.anchor}
-        context={{ checkpointScopeId: locateSessionId, now: Date.now() }}
+        context={{
+          checkpointScopeId: locateSessionId,
+          // §25 "Share permitted location" opens onto the active §12 session —
+          // the bounded, expiring, revocable channel. Same value as the
+          // checkpoint scope: with no live session, neither row has anywhere to go.
+          shareChannelSessionId: locateSessionId,
+          now: Date.now(),
+        }}
         onClose={() => setLongPress(null)}
         onSelect={(action, target) => {
           setLongPress(null);
@@ -2515,14 +2524,36 @@ function FullScreenMapScreenInner() {
             void dropCheckpoint(target);
             return;
           }
-          // §25 `share` is NEVER routed here. The row says "Share permitted
-          // location" and carries a §23 rung and a TTL on its second line; the
-          // only share this screen owns is §8's `shareMapObject`, which sends a
-          // link to a place and expires never. Handing this slug to it would
-          // answer a bounded location share with a permanent link — so the menu
-          // refuses the row outright instead (longPress.ts
-          // `BOUNDED_SHARE_CHANNEL_EXISTS`) and nothing arrives here to route.
-          if (action === 'share') return;
+          // §25 "Share permitted location" opens a bounded, expiring share on
+          // the live §12 session — NEVER §8's permanent link (`shareMapObject` /
+          // `Share.share`). The bound is recomputed with `resolveShareBound` so
+          // the publish is capped on the same numbers the menu was gated on. The
+          // menu only enabled this row when a session channel exists, so a null
+          // session here would be a contradiction — but it is still checked, and
+          // a refusal is reported rather than faked as a success.
+          if (action === 'share') {
+            const bound = resolveShareBound(target, {
+              shareChannelSessionId: locateSessionId,
+              now: Date.now(),
+            });
+            const pt = coordinateOf(target);
+            if (!bound || !pt || !locateSessionId) return;
+            void sharePermittedLocation({ sessionId: locateSessionId, point: pt, bound })
+              .then((res) => {
+                if (res.ok && res.data.stored) {
+                  Alert.alert(
+                    'Location shared with your group',
+                    'They can see it until the session ends. Leave the session to stop sharing.',
+                  );
+                } else {
+                  Alert.alert('Could not share your location', 'Please try again.');
+                }
+              })
+              .catch(() => {
+                Alert.alert('Could not share your location', 'Please try again.');
+              });
+            return;
+          }
           // `save` and `add_to_trip` reach the flows the rail already owns —
           // the wishlist picker and the detail-surface handoff — rather than a
           // second copy of either. Both need a place record, so the menu

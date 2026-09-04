@@ -764,6 +764,59 @@ export async function publishEventCachedLocation(
   );
 }
 
+/** What a §25 "Share permitted location" needs to open a share on the channel. */
+export interface SharePermittedLocationInput {
+  /** The active §12 session that IS the bounded, expiring, revocable channel. */
+  sessionId: string;
+  /** The pressed point being shared. */
+  point: GeoPoint;
+  /**
+   * The §37 bound `longPress.resolveShareBound` computed for this press. Its
+   * `privacyClass` caps the publish so the share can never exceed what §23/§37
+   * permit for a map long-press (≤ place_level) — passed as an extra ceiling,
+   * so it can only tighten what the ladder already allows.
+   */
+  bound: { privacyClass: PrivacyClass };
+  grant?: PrecisionGrant | null;
+  capabilities?: PresenceCapabilities;
+  now?: number;
+}
+
+/**
+ * §25 "Share permitted location" — publish the pressed point into the bounded
+ * §12 session that is the share channel.
+ *
+ * This is NOT §8's permanent link and NOT the moving trip-crew stream: it is one
+ * position on an EXISTING, expiring, revocable session, capped at the resolved
+ * §37 bound. The session's ≤12h expiry and §23's 60-minute position decay bound
+ * how long it lasts; leaving the session deletes it at once. It goes through the
+ * same `publishLocateFriendsPosition` path as every other rung, so the coordinate
+ * is coarsened away below `precise_temporary` exactly as §23 requires — the group
+ * sees a bounded, permitted presence, never an exact pin the map was told to draw.
+ */
+export async function sharePermittedLocation(
+  input: SharePermittedLocationInput,
+  transport?: Partial<LocateFriendsTransport> | null,
+): Promise<LocateFriendsResult<PublishOutcome>> {
+  const now = input.now ?? Date.now();
+  return publishLocateFriendsPosition(
+    {
+      sessionId: input.sessionId,
+      // A deliberate, current share of the viewer's location; rung 1 is the only
+      // rung whose ceiling could ever carry a coordinate, and the bound + purpose
+      // narrow it to the permitted rung from there.
+      rung: 'network_location',
+      observedAt: now,
+      position: input.point,
+      sessionCeiling: input.bound.privacyClass,
+      grant: input.grant ?? null,
+      capabilities: input.capabilities,
+      now,
+    },
+    transport,
+  );
+}
+
 /**
  * Read the group.
  *
