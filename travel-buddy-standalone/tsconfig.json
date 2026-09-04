@@ -5,6 +5,11 @@
     "tsBuildInfoFile": ".tsbuildinfo",
     "baseUrl": ".",
     "strict": true,
+    "types": [
+      "node",
+      "react",
+      "react-dom"
+    ],
     "allowImportingTsExtensions": true,
     "paths": {
       "@/*": [

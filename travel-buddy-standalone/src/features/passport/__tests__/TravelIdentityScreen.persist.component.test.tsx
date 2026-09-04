@@ -15,6 +15,11 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import TravelIdentityScreen from '../TravelIdentityScreen.tsx';
+import type {
+  ApiResult,
+  TravelDnaPref,
+  TravelDnaPrefInput,
+} from '../../../services/passportProjection.ts';
 
 // NOTE: intentional stub — TravelIdentityScreen imports putTravelDna +
 // getTravelIdentity from this module, which reaches Supabase auth + the API
@@ -77,8 +82,9 @@ function makeIdentity() {
 
 describe('TravelIdentityScreen — Travel-DNA persistence (F6)', () => {
   it('persists a Hide via the write endpoint and keeps the optimistic state', async () => {
-    const persist = jest.fn((input: { key: string; kind: string; state: string }) =>
-      Promise.resolve({ ok: true as const, data: { userId: 'me-123', ...input } }),
+    const persist = jest.fn(
+      (input: TravelDnaPrefInput): Promise<{ ok: true; data: TravelDnaPref }> =>
+        Promise.resolve({ ok: true as const, data: { userId: 'me-123', ...input } }),
     );
 
     await render(
@@ -116,8 +122,9 @@ describe('TravelIdentityScreen — Travel-DNA persistence (F6)', () => {
   });
 
   it('persists a dimension control with kind "dimension"', async () => {
-    const persist = jest.fn((input: { key: string; kind: string; state: string }) =>
-      Promise.resolve({ ok: true as const, data: { userId: 'me-123', ...input } }),
+    const persist = jest.fn(
+      (input: TravelDnaPrefInput): Promise<{ ok: true; data: TravelDnaPref }> =>
+        Promise.resolve({ ok: true as const, data: { userId: 'me-123', ...input } }),
     );
 
     await render(
@@ -140,11 +147,12 @@ describe('TravelIdentityScreen — Travel-DNA persistence (F6)', () => {
   // write apply its outcome; an older response resolving last must be ignored,
   // so the control never ends on a stale server value.
   it('applies only the latest write when an older response resolves last (same dimension)', async () => {
-    const resolvers: Record<string, (r: unknown) => void> = {};
-    const persist = jest.fn((input: { key: string; kind: string; state: string }) =>
-      new Promise((resolve) => {
-        resolvers[input.state] = resolve;
-      }),
+    const resolvers: Record<string, (r: ApiResult<TravelDnaPref>) => void> = {};
+    const persist = jest.fn(
+      (input: TravelDnaPrefInput): Promise<ApiResult<TravelDnaPref>> =>
+        new Promise((resolve) => {
+          resolvers[input.state] = resolve;
+        }),
     );
 
     await render(

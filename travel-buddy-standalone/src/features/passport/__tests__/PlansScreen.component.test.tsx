@@ -82,13 +82,20 @@ function makeIdentity(userId: string, name: string, handle: string) {
 
 // §3 Home-preview fields the Plans screen does not consume — empty defaults so
 // the fixtures satisfy the extended PassportProjectionView contract.
-const EMPTY_HOME_PREVIEW = {
+// Annotated against the contract rather than frozen with `as const`: `as const`
+// made recentStamps and memories `readonly []`, which is not assignable to the
+// mutable arrays PassportProjectionView declares. The annotation also checks
+// these five fields against the real shape instead of just widening a literal.
+const EMPTY_HOME_PREVIEW: Pick<
+  PassportProjectionView,
+  'stats' | 'recentStamps' | 'featuredJourney' | 'memories' | 'sharedContext'
+> = {
   stats: { countries: 0, cities: 0, stamps: 0, trips: 0 },
   recentStamps: [],
   featuredJourney: null,
   memories: [],
   sharedContext: null,
-} as const;
+};
 
 function selfProjection(plans: PlanProjection[]): PassportProjectionView {
   return {
