@@ -481,7 +481,7 @@ before(async () => {
   await new Promise<void>((resolve) => {
     // Bind loopback explicitly: a host-less listen(0) binds [::] and a foreign
     // IPv4 listener can then answer the request.
-    server = app.listen(0, "127.0.0.1", resolve);
+    server = app.listen(0, "127.0.0.1", () => resolve());
   });
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });

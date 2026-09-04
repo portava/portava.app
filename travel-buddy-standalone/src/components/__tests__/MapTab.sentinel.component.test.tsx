@@ -36,14 +36,17 @@ jest.mock('../../hooks/useHighlightRingState.ts', () => ({
 // ── Component under test ──────────────────────────────────────────────────────
 
 import { MapTab } from '../MapTab';
+import type { MapTabProps } from '../MapTab';
 
 // ── Shared props ──────────────────────────────────────────────────────────────
 
-const BASE_PROPS = {
+// Typed rather than `as const`: `as const` made `postcards` a `readonly []`,
+// which is not assignable to MapTabProps' `PassportPostcard[]`.
+const BASE_PROPS: Omit<MapTabProps, 'sentinel'> = {
   postcards: [],
   currentCity: null,
   currentUserId: null,
-} as const;
+};
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 

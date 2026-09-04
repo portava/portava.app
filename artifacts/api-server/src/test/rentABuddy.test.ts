@@ -19,7 +19,8 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import rentABuddyRouter, { POLICY_TEXT } from "../routes/rentABuddy.js";
+import rentABuddyRouter, { POLICY_TEXT, toPublicBuddyReview } from "../routes/rentABuddy.js";
+import { toLedgerEntryView } from "../routes/rentABuddyMarketplace.js";
 import { specAliasRewrite } from "../lib/specAliasRewrite.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
@@ -131,6 +132,17 @@ const FIRE_AND_FORGET_TABLES = new Set([
   "buddy_booking_events",
 ]);
 
+/**
+ * The fake's buddy-profile table. `FakeState.buddyProfiles` is optional because
+ * not every setup seeds it, but every test below runs `setupState()` first,
+ * which does. Asserting that here states the precondition once instead of
+ * reading through a possible `undefined` in each assertion.
+ */
+function buddyProfiles(): Record<string, any> {
+  assert.ok(state.buddyProfiles, "setupState() must have seeded buddyProfiles");
+  return state.buddyProfiles;
+}
+
 function makeClient(userId: string, role = "user") {
   const inserted: any[] = [];
 
@@ -180,7 +192,6 @@ function makeClient(userId: string, role = "user") {
       like(col: string, val: any) { this._filters.push(["like", col, val]); return this; },
       ilike(col: string, val: any) { this._filters.push(["ilike", col, val]); return this; },
       contains(col: string, val: any) { this._filters.push(["contains", col, val]); return this; },
-      neq(col: string, val: any) { this._filters.push(["neq", col, val]); return this; },
       or(expr: string) { return this; },
       is(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       limit(n: number) { this._limit = n; return this; },
@@ -691,7 +702,7 @@ before(async () => {
   app.use("/api", rentABuddyRouter);
 
   await new Promise<void>((resolve) => {
-    server = app.listen(0, "127.0.0.1", resolve);
+    server = app.listen(0, "127.0.0.1", () => resolve());
   });
   const addr = server.address() as { port: number };
   base = `http://127.0.0.1:${addr.port}`;
@@ -817,8 +828,8 @@ describe("search proximity", () => {
     setupState();
     // Second Tokyo buddy pinned in Shibuya (~ the queried origin), while the
     // default buddy falls back to Tokyo's city-centre seed coordinates.
-    state.buddyProfiles["buddy-prof-pinned"] = {
-      ...state.buddyProfiles[BUDDY_PROF],
+    buddyProfiles()["buddy-prof-pinned"] = {
+      ...buddyProfiles()[BUDDY_PROF],
       id: "buddy-prof-pinned", user_id: "buddy-user-pinned",
       meetup_base_lat: 35.6595, meetup_base_lng: 139.7005,
     };
@@ -842,19 +853,19 @@ describe("meetup base pin", () => {
     const r = await req("PATCH", "/api/rent-a-buddy/me/profile",
       { meetupBaseLat: 35.66, meetupBaseLng: 139.7 }, BUDDY_TOKEN);
     assert.equal(r.status, 200);
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lat, 35.66);
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lng, 139.7);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lat, 35.66);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lng, 139.7);
   });
 
   it("clears the pin when both coordinates are null", async () => {
     setupState();
-    state.buddyProfiles[BUDDY_PROF].meetup_base_lat = 35.66;
-    state.buddyProfiles[BUDDY_PROF].meetup_base_lng = 139.7;
+    buddyProfiles()[BUDDY_PROF].meetup_base_lat = 35.66;
+    buddyProfiles()[BUDDY_PROF].meetup_base_lng = 139.7;
     const r = await req("PATCH", "/api/rent-a-buddy/me/profile",
       { meetupBaseLat: null, meetupBaseLng: null }, BUDDY_TOKEN);
     assert.equal(r.status, 200);
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lat, null);
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lng, null);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lat, null);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lng, null);
   });
 
   it("rejects out-of-range or partial coordinates", async () => {
@@ -869,7 +880,7 @@ describe("meetup base pin", () => {
       assert.equal(r.status, 400, `expected 400 for ${JSON.stringify(body)}`);
       assert.equal(r.body.error, "invalid_meetup_base");
     }
-    assert.equal(state.buddyProfiles[BUDDY_PROF].meetup_base_lat ?? null, null);
+    assert.equal(buddyProfiles()[BUDDY_PROF].meetup_base_lat ?? null, null);
   });
 });
 
@@ -1408,7 +1419,12 @@ describe("review display (ID domain regression)", () => {
     // Should find the review because BUDDY_PROF.user_id = BUDDY_USER
     assert.equal(r.body.total, 1,
       "Review should be returned when filtering by buddy user_id via profile lookup");
-    assert.equal(r.body.reviews[0].reviewee_id, BUDDY_USER);
+    // `buddyId`, not `reviewee_id`: this endpoint now maps rows to the camelCase
+    // shape the app's `BuddyReview` type declares instead of returning
+    // `select("*")` output. Reading the raw column here was the same coupling
+    // that made the app render "Invalid Date" for every review.
+    assert.equal(r.body.reviews[0].buddyId, BUDDY_USER);
+    assert.equal(r.body.reviews[0].reviewee_id, undefined, "raw columns must not leak");
   });
 });
 
@@ -4586,5 +4602,139 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
       `notification recipient must be the traveler (${USER_ID}), got: ${note.user_id}`);
     assert.notEqual(note.user_id, BUDDY_USER,
       "notification must not target the buddy who raised the change request");
+  });
+});
+
+// ── Row → view mappings ───────────────────────────────────────────────────────
+//
+// Both of these endpoints used to return raw snake_case rows while the app's
+// types declared camelCase. Nothing failed to compile on either side, because a
+// route's response is `any` on the way out and the app's type is an assertion on
+// the way in — so the mismatch could only ever show up at runtime, and it did:
+// the earnings ledger THREW on its first row, and every buddy review rendered
+// its date as "Invalid Date".
+
+describe("toLedgerEntryView", () => {
+  const ROW = {
+    id: "led-1",
+    booking_id: "bk-1",
+    pricing_type: "hourly",
+    total_booking_usd: 120,
+    addons_usd: 20,
+    tip_usd: 10,
+    platform_fee_percent: 22,
+    platform_fee_amount: 26.4,
+    traveler_service_fee_amount: 8,
+    buddy_gross_amount: 120,
+    buddy_net_estimated_amount: 93.6,
+    deposit_amount: 30,
+    in_app_amount_collected: 30,
+    cash_balance_due: 90,
+    cash_balance_confirmed: false,
+    is_estimated: true,
+    created_at: "2026-09-01T10:00:00.000Z",
+    // Present on the row, deliberately not part of the view.
+    buddy_user_id: "u-1",
+    traveler_id: "u-2",
+    note: "internal",
+  };
+
+  it("maps every numeric field the ledger screen calls .toFixed() on", () => {
+    const v = toLedgerEntryView(ROW);
+    // These four are the reads that threw: `undefined.toFixed(2)`.
+    assert.equal(v.buddyNetEstimatedAmount, ROW.buddy_net_estimated_amount);
+    assert.equal(v.totalBookingUsd, ROW.total_booking_usd);
+    assert.equal(v.platformFeeAmount, ROW.platform_fee_amount);
+    assert.equal(v.tipUsd, ROW.tip_usd);
+    for (const k of ["buddyNetEstimatedAmount", "totalBookingUsd", "platformFeeAmount", "tipUsd"]) {
+      assert.equal(typeof (v as any)[k], "number", `${k} must be a number, not undefined`);
+    }
+  });
+
+  it("maps the remaining declared fields", () => {
+    const v = toLedgerEntryView(ROW);
+    assert.equal(v.id, ROW.id);
+    assert.equal(v.bookingId, ROW.booking_id);
+    assert.equal(v.pricingType, ROW.pricing_type);
+    assert.equal(v.addonsUsd, ROW.addons_usd);
+    assert.equal(v.platformFeePercent, ROW.platform_fee_percent);
+    assert.equal(v.travelerServiceFeeAmount, ROW.traveler_service_fee_amount);
+    assert.equal(v.buddyGrossAmount, ROW.buddy_gross_amount);
+    assert.equal(v.depositAmount, ROW.deposit_amount);
+    assert.equal(v.inAppAmountCollected, ROW.in_app_amount_collected);
+    assert.equal(v.cashBalanceDue, ROW.cash_balance_due);
+    assert.equal(v.cashBalanceConfirmed, ROW.cash_balance_confirmed);
+    assert.equal(v.isEstimated, ROW.is_estimated);
+    assert.equal(v.createdAt, ROW.created_at);
+  });
+
+  it("emits NO snake_case key — the raw row must not leak through", () => {
+    // The bug was a `{ ...row }` spread. This is the assertion that catches a
+    // re-introduced spread even if every camelCase field is also present.
+    const v = toLedgerEntryView(ROW) as Record<string, unknown>;
+    const snake = Object.keys(v).filter((k) => k.includes("_"));
+    assert.deepEqual(snake, [], `raw columns leaked: ${snake.join(", ")}`);
+  });
+
+  it("warns only while the payout is an estimate", () => {
+    assert.ok(toLedgerEntryView(ROW).warning);
+    assert.equal(toLedgerEntryView({ ...ROW, is_estimated: false }).warning, undefined);
+  });
+});
+
+describe("toPublicBuddyReview", () => {
+  const ROW = {
+    id: "rv-1",
+    booking_id: "bk-1",
+    reviewer_id: "u-2",
+    reviewee_id: "u-1",
+    rating: 5,
+    body: "Great day out",
+    photos: ["https://cdn.example/1.jpg"],
+    is_public: true,
+    created_at: "2026-09-01T10:00:00.000Z",
+    updated_at: "2026-09-01T10:00:00.000Z",
+    // Columns select("*") used to hand out with the rest.
+    private_admin_note: "flagged by moderator",
+    moderation_status: "approved",
+    punctuality_score: 4,
+    communication_score: 5,
+    safety_score: 5,
+    blind_until: null,
+    role: "traveler",
+  };
+
+  it("maps createdAt — the read that rendered every review as Invalid Date", () => {
+    const v = toPublicBuddyReview(ROW);
+    assert.equal(v.createdAt, ROW.created_at);
+    assert.equal(Number.isNaN(new Date(v.createdAt).getTime()), false);
+  });
+
+  it("maps the reviewee onto buddyId, and the rest of the declared shape", () => {
+    const v = toPublicBuddyReview(ROW);
+    assert.equal(v.buddyId, ROW.reviewee_id);
+    assert.equal(v.reviewerId, ROW.reviewer_id);
+    assert.equal(v.bookingId, ROW.booking_id);
+    assert.equal(v.rating, ROW.rating);
+    assert.equal(v.body, ROW.body);
+    assert.deepEqual(v.photos, ROW.photos);
+    assert.equal(v.isPublic, ROW.is_public);
+    assert.equal(v.updatedAt, ROW.updated_at);
+  });
+
+  it("never forwards the private moderation columns", () => {
+    // An allowlist, not a redaction: a column added to rent_buddy_reviews
+    // cannot start leaking just because nobody remembered to exclude it.
+    const v = toPublicBuddyReview(ROW) as Record<string, unknown>;
+    // Both sides sorted, so the assertion is about the SET of keys and cannot
+    // fail on the order I happened to type them in.
+    assert.deepEqual(Object.keys(v).sort(), [
+      "body", "bookingId", "buddyId", "createdAt", "id",
+      "isPublic", "photos", "rating", "reviewerId", "updatedAt",
+    ].sort());
+  });
+
+  it("a null photos column becomes an empty array, never null", () => {
+    assert.deepEqual(toPublicBuddyReview({ ...ROW, photos: null }).photos, []);
   });
 });

@@ -49,6 +49,15 @@ const SRC = resolve(__dir, "..");
 
 const READER = join(SRC, "lib", "buddyMapRead.ts");
 const GUARD = join(SRC, "scripts", "checkWritePathColumns.ts");
+/**
+ * The AST extraction — including `resolveSelectString`, whose inability to
+ * follow an import is the entire reason the allowlist exception below exists —
+ * MOVED out of checkWritePathColumns.ts into this shared module, so the static
+ * `check:schema-references` could reuse it without the live-credential guard.
+ * The invariant is unchanged; only its address is. Asserting against the old
+ * file would silently stop checking anything.
+ */
+const EXTRACTOR = join(SRC, "scripts", "lib", "schemaReferenceExtract.ts");
 
 /** The allowlist keys whose justification this file pins. */
 const DEPENDENT_ALLOWLIST_KEYS = [
@@ -119,7 +128,10 @@ describe("the allowlist exception's justification still holds", () => {
     // The whole exception exists because resolveSelectString cannot follow an
     // import. If it ever learns to, the seven sites resolve on their own and
     // the allowlist entries should be dropped rather than left standing.
-    const guard = readFileSync(GUARD, "utf8");
+    //
+    // Reads the EXTRACTOR, not the guard: the resolution logic moved there when
+    // the static check began sharing it. The property is the same one.
+    const guard = readFileSync(EXTRACTOR, "utf8");
     assert.match(
       guard,
       /findInitializer\(\s*expr\.text\s*,\s*sf\s*,/,

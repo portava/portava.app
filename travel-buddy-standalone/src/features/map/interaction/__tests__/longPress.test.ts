@@ -17,6 +17,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   MAP_OBJECT_KINDS,
@@ -79,7 +81,18 @@ function obj(over: Partial<MapObject> = {}): MapObject {
  */
 function WITH_PAGE(over: Partial<MapObject> = {}): MapObject {
   const base = obj(over);
-  return { ...base, interaction: { ...(base.interaction ?? {}), detailRoute: `/place/${base.id}` } };
+  return {
+    ...base,
+    interaction: {
+      ...(base.interaction ?? {}),
+      // `actions` is required on MapInteractionConfig and every projection
+      // producer emits it. Empty is the honest value here: longPress reads an
+      // object's `detailRoute`, never its action list (see the module header),
+      // so an unannotated object must still afford everything its rung allows.
+      actions: base.interaction?.actions ?? [],
+      detailRoute: `/place/${base.id}`,
+    },
+  };
 }
 
 const COORD = coordinateTarget(DA_NANG_LAT, DA_NANG_LNG);
@@ -173,8 +186,13 @@ describe('§25 · shape', () => {
     // Read as TEXT, not imported: MapBottomActions.tsx pulls in react-native,
     // which the node:test transform cannot handle. This is the pin that stops
     // the two lists from drifting.
+    // A path string, not a `new URL(...)`: the ambient DOM `URL` this program
+    // sees is not `node:url`'s, so node's fs overloads reject it.
     const src = readFileSync(
-      new URL('../../../../components/map/MapBottomActions.tsx', import.meta.url),
+      resolvePath(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../components/map/MapBottomActions.tsx',
+      ),
       'utf8',
     );
     const block = /export const LONG_PRESS_ACTIONS[^=]*=\s*\[([\s\S]*?)\];/.exec(src);
@@ -501,7 +519,7 @@ describe('§25 · the Add to Trip handoff', () => {
 
   test('a blank route is no route', () => {
     for (const detailRoute of ['', '   ']) {
-      const target = objectTarget(obj({ interaction: { detailRoute } }));
+      const target = objectTarget(obj({ interaction: { actions: [], detailRoute } }));
       assert.equal(itemFor(target, 'add_to_trip').enabled, false, JSON.stringify(detailRoute));
     }
   });

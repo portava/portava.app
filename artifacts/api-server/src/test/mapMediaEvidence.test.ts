@@ -486,7 +486,8 @@ describe("the evidence arrow passes the same gates, not around them", () => {
   });
 
   it("is refused without valid intel consent, and refused after withdrawal (D4)", async () => {
-    for (const consent of [{}, { [ACTOR]: "withdrawn" as const }]) {
+    const CONSENTS: Record<string, boolean | "withdrawn">[] = [{}, { [ACTOR]: "withdrawn" }];
+    for (const consent of CONSENTS) {
       const obs = await seeded();
       const db = makeDb({ map_contributions_enabled: true, intel_capture_quick_signal: true },
         { places: [PLACE], consent });

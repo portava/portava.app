@@ -44,6 +44,8 @@ function baseSettings(): PrivacySettings {
     allow_profile_discovery: true,
     delayed_posting_default: false,
     precise_location_visible: false,
+    show_profile_picture_publicly: true,
+    show_real_name: true,
   };
 }
 

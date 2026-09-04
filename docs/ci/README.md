@@ -893,182 +893,85 @@ is complete enough to run repeatedly have **never been verified** — they have
 only ever been run by hand, against whatever project the developer had
 configured. Expect to iterate on the first few runs.
 
-### Concurrency: runs are evicted, not queued
+### Concurrency: the shared database is a queue, not a race
 
-Because these jobs share one database, `live-db.yml` uses a single **global**
-concurrency group (`live-db-shared-supabase-project`) with
-`cancel-in-progress: false`. An in-flight run is never cancelled mid-fixture, and
-two runs never race on each other's fixtures.
+`live-db.yml`'s jobs share one non-production Supabase project, so only one run
+may certify at a time. **How that exclusion is enforced changed on 2026-09-04**,
+because the previous mechanism was losing verdicts.
 
-**They do not queue.** An earlier version of this document said they did; that
-was wrong, and it mattered. GitHub keeps at most **one in-progress** run and at
-most **one pending** run per concurrency group. When a third run arrives, the run
-that was pending is **cancelled** and the newcomer takes its place. Because the
-group is not keyed on `github.ref`, that eviction crosses refs: a push to branch
-B can cancel branch A's pending live-DB run.
+#### What it used to do, and what that cost
 
-That trade is deliberate — never racing two runs against one shared database is
-worth more than guaranteeing every commit gets a slot — but its consequences are
-stated rather than papered over:
+A single **global** concurrency group (`live-db-shared-supabase-project`,
+`cancel-in-progress: false`) for every ref. GitHub concurrency does not queue: it
+keeps at most one in-progress run and one pending run per group, and a third
+arrival **evicts** the pending one. With a global group that eviction crossed
+refs — a push to branch B cancelled branch A's certification.
 
-- **An evicted run is `cancelled`, never `success`.** GitHub renders it as
-  cancelled, and a cancelled run does not satisfy a required status check.
-  Eviction cannot produce a false green.
-- **It can leave a commit with no live-DB verdict at all.** For this workflow,
-  "not red" is not "verified". If a commit you care about was evicted, re-run it
-  (Actions → Re-run all jobs) once the in-progress run finishes.
-- **`live-db-verdict` closes the ambiguity that can be closed.** It runs with
-  `if: always()` and fails unless every other job in the run reported `success`,
-  so a job cancelled mid-run, or skipped because a `needs` failed, becomes an
-  explicit red with a message naming the job. The residual it cannot cover is a
-  run evicted while still *pending*: no job of that run ever starts, so nothing
-  can execute for it. GitHub renders that run as cancelled.
+Measured over 100 consecutive live-DB runs before the change:
 
-If you would rather have per-ref parallelism than a serialized shared database,
-key the group on `${{ github.ref }}` — but then two refs can run these fixtures
-against the same project simultaneously, and that is a correctness problem, not a
-scheduling one. Do not change it without deciding which you want.
+| outcome | runs |
+| --- | --- |
+| cancelled | 64 |
+| failure | 23 |
+| success | 12 |
 
----
+63% of commits enqueued **two** runs (both `push: ['**']` and
+`pull_request: ['**']` fired), 23 branches contended for one slot, and **45% of
+commits received no live-DB verdict at all**. That is a correctness problem, not
+a slow pipeline: a commit with no verdict is indistinguishable, in GitHub's check
+list, from one that passed. PR #339 showed 20/20 green with zero live-DB entries,
+and `places.country` reached `main` while the guard that catches it was being
+cancelled two runs in three.
 
-## How the "skip is not a pass" problem is handled
+#### What it does now
 
-This is the subtle part, and it is the reason `run-live-suite.sh` exists.
+1. **One certification per SHA.** `pull_request` certifies the PR head
+   (pre-merge); `push: [main]` certifies the merged commit (post-merge, which no
+   pre-merge run can do because the merge commit does not exist yet).
+   Feature-branch pushes no longer start a DB run. `ci.yml` and
+   `unwired-checks.yml` still run on every push — only the DB lane narrowed.
+2. **Concurrency is keyed per PR**
+   (`live-db-${{ github.event.pull_request.number || github.ref }}`,
+   `cancel-in-progress: true`). A newer commit supersedes only its **own** PR's
+   obsolete run. Nothing another branch does can take a verdict away.
+3. **Exclusion is a wait, not a cancellation.**
+   `.github/scripts/live-db-acquire-slot.sh` blocks until this run is the oldest
+   active run of the workflow — a total order over a shrinking set, so exactly
+   one waiter is eligible and it cannot deadlock. Timing out exits 75 and the
+   run reports NOT EXECUTED.
+4. **Three verdict states.** `.github/scripts/live-db-verdict.sh` classifies the
+   run PASS / FAIL / **NOT_EXECUTED**. Cancelled, skipped, starved, or an
+   unrecognised job state all land on NOT_EXECUTED and exit non-zero. Absence of
+   evidence is never a pass.
 
-The three live-DB suites are **allowlisted, not registered**, and that was the
-right call. The curated `test` script pins `SUPABASE_URL=http://127.0.0.1:9`
-inline, so registering them there would bury a permanent skip inside a green
-suite. They were correctly kept out and given their own `test:*` scripts.
+`src/test/ciWorkflowArchitecture.test.ts` holds all four properties as a ratchet,
+and unit-tests the verdict classifier's behaviour rather than grepping the YAML
+for the word — an earlier version did grep, and a mutation that collapsed
+NOT_EXECUTED into FAIL survived it.
 
-But all three do this:
+#### Known limitation, stated rather than hidden
 
-```ts
-const CREDS_AVAILABLE = Boolean(SUPABASE_URL && SERVICE_ROLE_KEY && ANON_KEY);
-describe("…", { skip: !CREDS_AVAILABLE }, () => { … })
+Within a single run, `api-server-check-all`, `schema-drift`,
+`post-media-revocation-rehearsal` and `live-db-security-suites` all declare only
+`needs: [preflight, live-db-slot]` and therefore run **concurrently against the
+same database**. The old global group never prevented that either — it serialized
+runs, not database access — so this is pre-existing, not introduced. Serializing
+those four would roughly quadruple wall-clock for every run; that trade has not
+been made, and is a separate decision.
+
+#### Observing the lane
+
+No new infrastructure. Queue wait and slot outcome are written to the step
+summary and a `live-db-slot-<run>-<attempt>` artifact; everything else (queued /
+started / cancelled / passed / failed, and durations) is already derivable from
+the Actions API:
+
+```bash
+gh run list --workflow "CI (live DB)" --limit 100 \
+  --json headSha,event,status,conclusion,createdAt,startedAt
 ```
 
-None of them sets `process.exitCode`. **Without credentials they skip every
-test and exit 0.** `rlsHardening.test.ts`'s own header states that "All tests
-are skipped when credentials are absent so CI still passes without a live
-Supabase connection" — the failure mode, written down as a feature. Two of the
-three at least print a banner saying "A skip is not a pass"; `rlsHardening`
-prints nothing at all.
-
-So the exit code of those three scripts is **not a usable signal on its own**.
-Three defences, all required:
-
-1. **Preflight (primary).** Every credential job's *first* step asserts each
-   secret it needs is non-empty and fails with a message naming the missing
-   one. It runs before checkout and before install.
-2. **Output contract (secondary).** `run-live-suite.sh` fails the step if the
-   suite reports `pass == 0`, any `skipped != 0`, a non-zero `fail` count, an
-   unparseable summary, `tests != pass`, or prints the no-live-credentials
-   banner. Every `skip:` in those three files is gated on `!CREDS_AVAILABLE`, so
-   with credentials present the expected skipped count is exactly 0.
-
-   **That the wrapper is USED is now asserted, not just that it exists.** The
-   preflight required `run-live-suite.sh` to be present and said nothing about
-   whether anything called it. Rewriting the three steps to
-   `bash .github/scripts/pnpm-run.sh …` — a one-word edit each, leaving the
-   workflow looking identical and every other assertion satisfied — returned all
-   three suites to **exit-code-only** scoring, which is precisely the scoring
-   that reports a credential-less skip as a pass. Reproduced: the preflight
-   exited 0 and said nothing. It now records *which* wrapper each call site uses
-   and requires `run-live-suite.sh`, in run position, for each of the three
-   suites by name; invoking one through `pnpm-run.sh` is a named failure.
-3. **What is deliberately absent.** No `if: ${{ secrets.X != '' }}` on any job.
-   That renders a missing secret as a grey **skip** on the PR, which reads as
-   fine. Missing credentials must be red.
-
-The deeper fix — making the suites themselves fail closed rather than skip —
-requires editing `artifacts/api-server/src`, which was out of scope for this
-work. It is the same class of fix as `run_gate`'s grep, and it is worth doing.
-
----
-
-## Fork pull requests
-
-The workflows assume PRs come from the same repository. State of play if a fork
-PR ever arrives:
-
-GitHub does not expose repository or environment secrets to workflows triggered
-by `pull_request` from a fork. The secret expands to the empty string.
-
-- `ci.yml` — **fully unaffected.** It reads no secrets, so every job runs
-  normally and means exactly what it means on a same-repo PR.
-- `unwired-checks.yml` — **fully unaffected**, same reason.
-- `live-db.yml` — its credential-free `preflight` job (script existence) passes
-  normally, and **every credential job goes red at its own secrets preflight**,
-  after which `live-db-verdict` goes red too. That is the intended outcome.
-  Without those preflights, the three live-DB suites would have gone **green
-  having asserted nothing** — the exact green-by-absence this effort exists to
-  eliminate. A fork PR that cannot be fully verified must say so loudly.
-  (`CI_SUPABASE_PROJECT_REF` supplied as a repository *variable* IS visible to
-  fork PRs, unlike a secret — but `SUPABASE_URL` and the keys are not, so the
-  secrets preflight fails first and the allowlist is never the deciding check.)
-
-`docs/eas-runbook.md` (line ~347) documents an older intent: "Job skipped with
-`::warning::` annotation | Fork PR — repository secrets unavailable | Expected;
-check runs on merge to main where secrets are present." **That is the
-skip-as-success pattern and it was not adopted.** If some fork accommodation is
-ever wanted, it must be a visible, named, non-green state.
-
-**Do not reach for `pull_request_target`** to hand secrets to fork code. That
-executes untrusted PR code with secret access.
-
----
-
-## What CI deliberately does NOT cover
-
-**Anything requiring a physical device, an emulator, or a native toolchain.**
-
-`travel-buddy-standalone` runs fully headless in CI, and that is not an
-accident — it is how the repo is already set up:
-
-- `pnpm test` → `node --import tsx/esm --test`. Plain Node. Files that genuinely
-  need a native runtime are explicitly excluded via `KNOWN_BROKEN` in
-  `scripts/run-node-tests.mjs`, with reasons recorded in the source (e.g.
-  `expo-modules-core@3.0.30 requires native sweet/setUpJsLogger.fx — not in
-  Node`, and the `react-native@0.81.5` esbuild "Unexpected typeof" wall).
-- `pnpm test:component` → jest with `preset: 'jest-expo'` (react-test-renderer,
-  no device) and then `jest-expo/web` (jsdom + react-dom).
-  `jest.config.js`'s `moduleNameMapper` stubs every native module that would
-  otherwise demand a device: maplibre, Sentry, async-storage,
-  draggable-flatlist, lucide-react-native, expo-router.
-
-So: no Android SDK, no Xcode, no emulator, no Maestro. Specifically excluded:
-
-- **The E2EE native verification** described in `docs/handover-2026-08-08.md`,
-  which needs "A physical device, or an emulator on a KVM host." Its tests are
-  in `KNOWN_BROKEN`. This is a manual bar and remains one.
-- **`e2e/maestro/saved_places_filter_reset.yaml`.** A real Maestro flow that no
-  package.json script invokes. Left alone.
-- **EAS builds.** `EXPO_TOKEN` is not configured or used here.
-
-Also not covered:
-
-- **`scripts/pre-release-check.sh`** — 600 lines aggregating 9 checks (was 12 until the three sync-standalone drift checks retired with `artifacts/travel-buddy` on 2026-08-14), invoked
-  by nothing. It is *not* reused, because it soft-skips exactly the way this
-  effort forbids: its own comments say engagement-indexes is "Skipped
-  gracefully (warning only, not failure) when neither `SUPABASE_PROJECT_TOKEN`
-  nor `SUPABASE_ACCESS_TOKEN` is set", and schema-audit "Soft-skips (warning
-  only, exit 0) when no token … so a network blip or a developer without
-  credentials is not blocked." Those are green-by-absence by design. Its
-  valuable part (`audit:schema`) is invoked directly in `live-db.yml` instead,
-  behind a preflight. **If you ever wire this script into CI, you must assert
-  the secrets are present first, because it will happily return 0 without
-  them.**
-- **`@workspace/scripts` `test:db-triggers` and `test:engagement-indexes`** —
-  both reference `SUPABASE` in their source, so they belong in the credential
-  tier. Their exit contracts were not read, so they were not wired blind.
-- **`src/scripts/checkAdminGuard.ts` and
-  `src/scripts/check-media-bucket-privacy.ts`** — orphans with zero references
-  repo-wide, no package.json script, unknown exit contracts. Not wired blind.
-  **Both deserve a human's attention**, especially the admin guard.
-
----
-
-## Known gaps this CI reports but cannot fix
+That query is how the 64/100 figure above was measured.
 
 ### Test files that no runner CI invokes will execute
 

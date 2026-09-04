@@ -488,9 +488,17 @@ describe("atomicity — one transaction per migration, ledger row inside it", ()
   });
 
   it("emits exactly one top-level BEGIN and one top-level COMMIT", () => {
+    // Classification is a union and only the applicable arms carry a `body`.
+    // Reading it unnarrowed would have handed buildApplyStatement `undefined`
+    // for a refused migration and still counted the wrapper's own BEGIN/COMMIT.
+    const classified = classifyMigration(WRAPPED, "2300_a.sql");
+    assert.ok(
+      classified.kind !== "refuse",
+      `WRAPPED must be applicable: ${JSON.stringify(classified)}`,
+    );
     const stmt = buildApplyStatement({
       filename: "2300_a.sql",
-      body: classifyMigration(WRAPPED, "2300_a.sql").body,
+      body: classified.body,
       checksum: "abc",
       appliedBy: "ci",
       notes: "n",
