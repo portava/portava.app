@@ -221,6 +221,24 @@ export function sharedCount(a: readonly string[], b: readonly string[]): number 
 }
 
 /**
+ * Case-insensitive overlap LABELS between two string lists, taken (and
+ * de-duplicated) from `b` so the returned casing is the owner's canonical form.
+ * `sharedItems(a, b).length === sharedCount(a, b)`.
+ */
+export function sharedItems(a: readonly string[], b: readonly string[]): string[] {
+  const sa = normSet(a);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of b) {
+    const key = String(raw).trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    if (sa.has(key)) out.push(String(raw).trim());
+  }
+  return out;
+}
+
+/**
  * Bounded weight for EXPLICIT current-intent overlap. Returns 0 unless an
  * explicit window is active, so applying this boost changes ordering ONLY when
  * an explicit availability window exists (§8).
@@ -282,6 +300,33 @@ async function loadVisibleActiveWindows(
   } catch {
     return [];
   }
+}
+
+/** Explicit current-intent read (§8): the intents a viewer may see + whether an
+ *  active, open-to-plans explicit window backs them. `hasActiveWindow` gates the
+ *  §8 weighting so ordering changes ONLY when an explicit window exists. */
+export interface ExplicitIntentRead {
+  intents: string[];
+  ttlExpiresAt: string | null;
+  hasActiveWindow: boolean;
+}
+
+/**
+ * Read `ownerId`'s EXPLICIT current intent as visible to `context` (§7/§8/§31).
+ * Reuses the same visibility-scoped, expiry-on-read window projection the
+ * discovery_card variant uses, so a consumer weighting on explicit intent reads
+ * exactly what that consumer would display. Never throws.
+ */
+export async function readVisibleExplicitIntent(
+  sc: SupabaseClient,
+  ownerId: string,
+  context: PassportViewerContext,
+  nowMs: number = Date.now(),
+): Promise<ExplicitIntentRead> {
+  const windows = await loadVisibleActiveWindows(sc, ownerId, context, nowMs);
+  const openWindows = windows.filter((w) => w.openToPlans);
+  const { intents, ttlExpiresAt } = intentFromWindows(windows);
+  return { intents, ttlExpiresAt, hasActiveWindow: openWindows.length > 0 };
 }
 
 /** Union of intents across active windows, and the soonest expiry among them. */
