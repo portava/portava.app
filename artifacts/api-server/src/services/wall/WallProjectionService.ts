@@ -202,10 +202,15 @@ function passesEligibility(c: WallCandidate): boolean {
 function passesVisibility(c: WallCandidate, viewer: ProjectViewerContext): boolean {
   if (POST_LIKE_TYPES.has(c.objectType)) {
     const viewerIsTripMember = !!c.tripId && viewer.viewerTripIds.has(c.tripId);
+    // followers_only is readable by the author's followers: the viewer follows
+    // the author iff the author is in the viewer's followedCreatorIds set (already
+    // loaded for the feed). Absent set ⇒ not a follower ⇒ the tier fails closed.
+    const viewerIsFollower = viewer.followedCreatorIds?.has(c.authorId) ?? false;
     return decidePostReadable(
       { author_id: c.authorId, visibility: c.visibility ?? null, trip_id: c.tripId ?? null },
       viewer.viewerId,
       viewerIsTripMember,
+      viewerIsFollower,
     ).readable;
   }
   // Non-post objects: the caller resolves consent/eligibility. Absent flag ⇒
