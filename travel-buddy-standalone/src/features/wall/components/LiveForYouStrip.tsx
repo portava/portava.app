@@ -17,6 +17,7 @@ import { trackLiveOpen, trackLiveShown } from '../services/wallAnalytics.ts';
 import { runWallAction } from './objects/wallItemShared.tsx';
 import type { LiveForYouItem } from '../types/liveForYou.ts';
 import type { WallProjection } from '../types/wallProjection.ts';
+import { CONFLICT_LABEL, normalizeConflictState } from '../../../lib/intel/conflict.ts';
 
 const MAX_ITEMS = 4;
 
@@ -34,6 +35,9 @@ function liveActionCarrier(item: LiveForYouItem): WallProjection {
 }
 
 function stateLabel(item: LiveForYouItem): string {
+  // §10: a materially-conflicted claim never carries a Live label — it says so
+  // in TEXT (spec §36), wherever Live now / Emerging would have rendered.
+  if (normalizeConflictState(item.conflictState) === 'material') return CONFLICT_LABEL;
   return item.state === 'live' ? 'Live now' : 'Emerging';
 }
 
