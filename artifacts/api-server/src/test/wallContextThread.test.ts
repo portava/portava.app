@@ -445,3 +445,86 @@ describe("buildContextThread — behind wall_context_threads_enabled", () => {
     assert.equal(out, undefined);
   });
 });
+
+// ── map / memory / compass bridge producers (spec §8/§21/§22/§24) ────────────
+
+describe("map Context Thread (spec §22)", () => {
+  it("offers a map bridge only when the place is in the viewer's current city", async () => {
+    const inCity: ContextThreadViewerContext = { viewerId: "viewer-1", currentCity: "Bangkok", now: VIEWER.now };
+    const cand = await _internal.readMapCandidate(tableClient({}), projectionWithPlace("place-1", "Bangkok"), inCity);
+    assert.ok(cand, "a place in the viewer's city earns a map bridge");
+    assert.equal(cand!.thread.kind, "map");
+    assert.equal(cand!.thread.action?.type, "open_map");
+  });
+
+  it("no map bridge when the place is in a different city (spatial frame not relevant)", async () => {
+    const elsewhere: ContextThreadViewerContext = { viewerId: "viewer-1", currentCity: "Tokyo", now: VIEWER.now };
+    assert.equal(await _internal.readMapCandidate(tableClient({}), projectionWithPlace("place-1", "Bangkok"), elsewhere), null);
+  });
+
+  it("no map bridge when the viewer has no current city", async () => {
+    assert.equal(await _internal.readMapCandidate(tableClient({}), projectionWithPlace("place-1", "Bangkok"), VIEWER), null);
+  });
+});
+
+describe("memory Context Thread (spec §8/§24 — Memory as a canonical input)", () => {
+  it("surfaces 'you've been here' from the viewer's OWN passport_memories for the place", async () => {
+    const sc = tableClient({ passport_memories: [{ id: "mem-1", title: "Sunset here", earned_at: "2026-06-01T00:00:00Z", created_at: "2026-06-01T00:00:00Z" }] });
+    const cand = await _internal.readMemoryCandidate(sc, projectionWithPlace("place-1"), VIEWER);
+    assert.ok(cand, "an existing memory for this place earns a memory thread");
+    assert.equal(cand!.thread.kind, "memory");
+    assert.equal(cand!.thread.action?.type, "open_object");
+    assert.equal(cand!.thread.action?.targetType, "memory");
+    assert.equal(cand!.thread.action?.targetId, "mem-1");
+  });
+
+  it("no memory thread when the viewer has no memory at the place", async () => {
+    assert.equal(await _internal.readMemoryCandidate(tableClient({ passport_memories: [] }), projectionWithPlace("place-1"), VIEWER), null);
+  });
+
+  it("fail-soft: a memory read error yields no candidate, never throws", async () => {
+    const sc = tableClient({ passport_memories: [{ id: "mem-1" }] }, { errorTables: ["passport_memories"] });
+    assert.equal(await _internal.readMemoryCandidate(sc, projectionWithPlace("place-1"), VIEWER), null);
+  });
+});
+
+describe("compass Context Thread (spec §21 — opt-in per object)", () => {
+  it("offers Ask Compass only when the handoff flag is on", async () => {
+    const on: ContextThreadViewerContext = { viewerId: "viewer-1", compassHandoffEnabled: true, now: VIEWER.now };
+    const cand = await _internal.readCompassCandidate(tableClient({}), projectionWithPlace("place-1"), on);
+    assert.ok(cand, "the flag on + a real place earns a compass bridge");
+    assert.equal(cand!.thread.kind, "compass");
+    assert.equal(cand!.thread.action?.type, "ask_compass");
+  });
+
+  it("no compass thread when the handoff flag is off (Compass is never a permanent panel)", async () => {
+    assert.equal(await _internal.readCompassCandidate(tableClient({}), projectionWithPlace("place-1"), VIEWER), null);
+  });
+});
+
+describe("selection priority — the new bridges never outrank a live/social fact", () => {
+  it("a live_place fact beats a memory bridge for the single slot", () => {
+    const memory: ContextThreadCandidate = {
+      thread: { kind: "memory", label: "You've been here before" },
+      gate: { ...PASS, expectedUtility: 0.65 },
+    };
+    const live: ContextThreadCandidate = {
+      thread: { kind: "live_place", label: "Busy right now" },
+      gate: { ...PASS, expectedUtility: 0.85 },
+    };
+    const chosen = selectContextThread([memory, live]);
+    assert.equal(chosen?.kind, "live_place", "the higher-utility live fact wins the compact slot");
+  });
+
+  it("a compass bridge is the lowest-priority survivor (loses a tie on kind priority)", () => {
+    const compass: ContextThreadCandidate = {
+      thread: { kind: "compass", label: "Ask Compass" },
+      gate: { ...PASS, expectedUtility: 0.6 },
+    };
+    const map: ContextThreadCandidate = {
+      thread: { kind: "map", label: "See it on the map" },
+      gate: { ...PASS, expectedUtility: 0.6 },
+    };
+    assert.equal(selectContextThread([compass, map])?.kind, "map", "map outranks compass on a utility tie");
+  });
+});

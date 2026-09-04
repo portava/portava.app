@@ -73,6 +73,9 @@ import {
 } from "../services/wall/FollowingFeedService.js";
 import {
   buildLiveForYou,
+  buildGemLiveCandidates,
+  buildSocialPresenceLiveCandidates,
+  buildBuddyLiveCandidates,
   MAX_LIVE_FOR_YOU,
   type LiveForYouCandidate,
 } from "../services/wall/LiveForYouService.js";
@@ -155,7 +158,7 @@ function recordWallEvent(
 
 // ── Viewer context ────────────────────────────────────────────────────────────
 
-interface WallViewerContext {
+export interface WallViewerContext {
   followedCreatorIds: Set<string>;
   viewerTripIds: Set<string>;
   currentCity: string | null;
@@ -295,6 +298,29 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
     logger.warn({ err }, "wall: second-degree follow read failed");
   }
   return ctx;
+}
+
+/**
+ * Build the For You rank viewer (spec §13/§14) from the loaded viewer context.
+ *
+ * loadViewerContext already resolves the viewer's interests and preferred/home
+ * cities, but the rank viewer used to be built inline WITHOUT them, so
+ * WallRankingService.toViewerContext fed the ranker empty travelStyles /
+ * preferredCities — InterestFit and DestinationFit then collapsed to their
+ * neutral floor on every request. The viewer's interest tokens ARE the ranker's
+ * travelStyles (interest slugs) and the preferred/home cities ARE its
+ * preferredCities; both are already lowercased in loadViewerContext. Exported as
+ * a pure seam so the mapping is directly testable without an HTTP round-trip.
+ */
+export function buildForYouRankViewer(viewer: WallViewerContext, viewerId: string): WallRankViewer {
+  return {
+    viewerId,
+    currentCity: viewer.currentCity,
+    currentCountry: viewer.currentCountry,
+    followedCreatorIds: viewer.followedCreatorIds,
+    travelStyles: [...viewer.interests],
+    preferredCities: [...viewer.preferredCities],
+  };
 }
 
 // ── Candidate loading ──────────────────────────────────────────────────────────
@@ -591,6 +617,51 @@ async function buildLiveStrip(
   }
 }
 
+/**
+ * Assemble the FULL multi-kind Live For You candidate set for a bounded set of
+ * viewer-relevant places (spec §4 / TABLE 0). place_state (and event_state) come
+ * from the intel projection inside buildLiveForYou (a bare candidate ⇒ the
+ * envelope read); the other kinds come from their own canonical readers here so
+ * LiveForYouService.actionFor's per-kind mapping binds:
+ *   • hidden_gem      — buildGemLiveCandidates (public/approximate, fresh state)
+ *   • social_presence — buildSocialPresenceLiveCandidates (k-anonymity floor)
+ *   • buddy           — buildBuddyLiveCandidates (behind the RAB flag, city-area)
+ * Each producer is fail-soft; a resolved candidate wins the per-subject slot over
+ * a bare place_state one inside buildLiveForYou. event_state and trip_signal have
+ * no existing canonical live reader and are deliberately not produced here.
+ */
+async function assembleLiveCandidates(
+  sc: any,
+  viewer: WallViewerContext,
+  viewerId: string,
+  placeRefs: PublicPlaceRef[],
+  rabEnabled: boolean,
+): Promise<LiveForYouCandidate[]> {
+  const placeState: LiveForYouCandidate[] = placeRefs.map((p) => ({
+    subjectId: p.placeId,
+    liveObjectType: "place_state" as const,
+    subject: p,
+  }));
+  const [gems, social, buddies] = await Promise.all([
+    buildGemLiveCandidates(sc, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: gem live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildSocialPresenceLiveCandidates(sc, viewerId, viewer.followedCreatorIds, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: social presence live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildBuddyLiveCandidates(sc, placeRefs, { rabEnabled }).catch((err) => {
+      logger.warn({ err }, "wall: buddy live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+  ]);
+  // Resolved kinds first so, on a per-subject collision, the concrete fact wins
+  // the slot over a speculative place_state intel read (buildLiveForYou prefers a
+  // resolved candidate anyway; this ordering makes the intent explicit).
+  return [...social, ...gems, ...buddies, ...placeState];
+}
+
 // ── Schemas ────────────────────────────────────────────────────────────────
 
 const wallQuerySchema = z.object({
@@ -651,8 +722,16 @@ router.get(
     // ── Session intent (spec §17). A per-request `session_intent` query param is
     //    a TEMPORARY steer (parsed fresh, not persisted); otherwise the stored
     //    intent applies. Both are ignored unless the phase flag is on.
+    //
+    //    FOR YOU ONLY (spec §5 / TABLE 1). Following is the strict-chronology
+    //    trust anchor: "No relevance reordering. Apply only safety/visibility
+    //    filters." An intent steer is a relevance filter, so it must never touch
+    //    Following — resolving it here would also echo an active `sessionIntent`
+    //    in the Following response and let a steer that dropped the tail make
+    //    `caughtUp` claim "all caught up" over a filtered subset. So the intent is
+    //    resolved (and later steered + echoed) ONLY in For You.
     let sessionIntent: StructuredIntent | undefined;
-    if (inputIntelEnabled) {
+    if (inputIntelEnabled && mode === "for_you") {
       try {
         if (session_intent && session_intent.trim()) {
           sessionIntent = await parseIntent(sc, user.id, session_intent, {
@@ -687,11 +766,17 @@ router.get(
     //    Post spine, which is left untouched. Every merged candidate still runs
     //    through the SAME eligibility → block → visibility gate below.
     const loaderViewer = { viewerId: user.id, followedCreatorIds: viewer.followedCreatorIds };
-    // Freeze the supplementary loaders to the SAME For You created-at horizon as
-    // the Post spine (loadCandidates, above) so a postcard/video/moment published
-    // mid-session cannot enter the candidate set and drift ranks across pages
-    // (§28). Following mode has no horizon (forYouCursor is null) and is unaffected.
-    const loaderOpts = { snapshotAtIso: forYouCursor?.snapshotAt };
+    // Give the supplementary loaders the SAME created-at horizon as the Post spine
+    // (loadCandidates, above) so their pages line up with it (§28). For You freezes
+    // to the rank-session snapshot (nothing published mid-session enters the set);
+    // Following slides the window down to the cursor's publishedAt so postcards /
+    // moments OLDER than the newest LOADER_FETCH stay reachable on later pages and
+    // keep their distinct identity (rather than reappearing as plain posts via the
+    // spine). Exactly one of the two is set, per mode.
+    const loaderOpts =
+      mode === "for_you"
+        ? { snapshotAtIso: forYouCursor?.snapshotAt }
+        : { followingCursorPublishedAt: followingCursor?.publishedAt };
     // RAB contextual opportunities (§19) are For You only: Following is the
     // strict-chronology trust anchor of followed PEOPLE's content (TABLE 1) and
     // an availability signal is not a post. The loader re-reads BOTH flags
@@ -725,13 +810,19 @@ router.get(
     ]);
     const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded);
 
-    const steered = applyIntentSteer(merged.candidates, sessionIntent);
+    // Steer For You only (spec §5). `sessionIntent` is already undefined outside
+    // For You (resolved above only in that mode); the explicit mode guard keeps
+    // the invariant local and obvious: Following candidates are never filtered by
+    // a relevance steer.
+    const steered =
+      mode === "for_you" ? applyIntentSteer(merged.candidates, sessionIntent) : merged.candidates;
 
     // ── Gate + project (eligibility/block/visibility BEFORE ordering, §23/§24).
     const projectViewer: ProjectViewerContext = {
       viewerId: user.id,
       viewerTripIds: viewer.viewerTripIds,
       followedCreatorIds: viewer.followedCreatorIds,
+      currentCity: viewer.currentCity,
       compassHandoffEnabled,
     };
     let projections: WallProjection[] = [];
@@ -759,12 +850,7 @@ router.get(
       caughtUp = built.caughtUp;
       nextCursor = built.nextCursor ? encodeFollowingCursor(built.nextCursor) : undefined;
     } else {
-      const rankViewer: WallRankViewer = {
-        viewerId: user.id,
-        currentCity: viewer.currentCity,
-        currentCountry: viewer.currentCountry,
-        followedCreatorIds: viewer.followedCreatorIds,
-      };
+      const rankViewer = buildForYouRankViewer(viewer, user.id);
       const built = await rankForYou(sc, projections, rankViewer, {
         limit,
         cursor: forYouCursor,
@@ -782,21 +868,25 @@ router.get(
       items = diversified.items;
     }
 
-    // ── Live For You strip: bounded, deduped against the feed's places (§4).
-    const feedSubjectIds = new Set<string>();
-    const liveCandidates: LiveForYouCandidate[] = [];
+    // ── Live For You strip: bounded, multi-kind, from the feed's places (§4).
+    //    The §4 "do not repeat a live signal that already appears in the strip"
+    //    rule is enforced on the FEED side — attachContextThreads (below) dedups
+    //    context threads against the strip's subjects (liveStripSubjectIds). The
+    //    strip itself is therefore built from the feed's relevant places WITHOUT
+    //    self-deduping against them (self-dedup would empty it, since every
+    //    candidate subject is by construction a feed place).
+    const feedPlaceRefs: PublicPlaceRef[] = [];
+    const seenFeedPlaces = new Set<string>();
     for (const it of items) {
       const placeRef = it.place ?? merged.placeByObject.get(it.canonicalObjectId);
-      if (placeRef) {
-        feedSubjectIds.add(placeRef.placeId);
-        liveCandidates.push({ subjectId: placeRef.placeId, liveObjectType: "place_state", subject: placeRef });
+      if (placeRef && !seenFeedPlaces.has(placeRef.placeId)) {
+        seenFeedPlaces.add(placeRef.placeId);
+        feedPlaceRefs.push(placeRef);
       }
     }
-    // Dedup the live strip against subjects ALREADY shown as feed objects (§4:
-    // do not repeat a live signal that already appears in the feed).
+    const liveCandidates = await assembleLiveCandidates(sc, viewer, user.id, feedPlaceRefs, rabEnabled);
     const liveForYou = await buildLiveStrip(sc, liveEnabled, liveCandidates, {
       limit: MAX_LIVE_FOR_YOU,
-      dedupeSubjectIds: feedSubjectIds,
     });
 
     // ── Context Threads (spec §8/§9): attach an OPTIONAL compact bridge beneath
@@ -850,15 +940,19 @@ router.get(
 
     // Live-strip candidates are the places from the viewer's recent followed
     // content — a viewer-relevant, bounded set, NOT a city-wide scan (spec §4).
+    // The strip is multi-kind (§4/TABLE 0): place_state from the intel projection
+    // plus hidden_gem / social_presence / buddy from their own canonical readers.
     const viewer = await loadViewerContext(sc, user.id);
+    const rabEnabled = await isFlagEnabled(sc, "wall_rab_integration_enabled");
     const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
     const seen = new Set<string>();
-    const candidates: LiveForYouCandidate[] = [];
+    const placeRefs: PublicPlaceRef[] = [];
     for (const [, placeRef] of loaded.placeByObject) {
       if (seen.has(placeRef.placeId)) continue;
       seen.add(placeRef.placeId);
-      candidates.push({ subjectId: placeRef.placeId, liveObjectType: "place_state", subject: placeRef });
+      placeRefs.push(placeRef);
     }
+    const candidates = await assembleLiveCandidates(sc, viewer, user.id, placeRefs, rabEnabled);
 
     const liveForYou = await buildLiveStrip(sc, liveEnabled, candidates, { limit });
     res.status(200).json({ liveForYou, generatedAt: new Date().toISOString() });

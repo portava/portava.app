@@ -102,6 +102,13 @@ export function useWallFeed(
   const inFlightRef = useRef(false);
 
   const normalizedIntent = sessionIntent ?? null;
+  // spec §5/§17 / TABLE 1: a session-intent steer is a RELEVANCE filter and must
+  // never touch Following, the strict-chronology trust anchor. The server ignores
+  // it in Following; the client refrains from sending it too — and, because the
+  // effective value is what the fetch depends on, changing the steer while in
+  // Following does not restart the Following session (only For You re-sessions on
+  // an intent change).
+  const effectiveIntent = mode === 'for_you' ? normalizedIntent : null;
 
   const doFetch = useCallback(
     async (reason: FetchReason) => {
@@ -125,7 +132,7 @@ export function useWallFeed(
         const res = await fetchWall({
           mode,
           cursor,
-          sessionIntent: normalizedIntent,
+          sessionIntent: effectiveIntent,
           limit: PAGE_LIMIT,
         });
         // A newer session started while this was in flight — drop the result.
@@ -191,7 +198,7 @@ export function useWallFeed(
         }
       }
     },
-    [mode, normalizedIntent],
+    [mode, effectiveIntent],
   );
 
   // Start a fresh session whenever mode / sessionIntent changes.
