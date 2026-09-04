@@ -59,6 +59,7 @@ import {
   assertLabelsCoverEnum,
   countOn,
   countRankedOn,
+  fetchDiscoveryServeRows,
   isRankedRow,
   observedPoints,
   rankedInRequest,
@@ -66,6 +67,7 @@ import {
   resolveReportWindow,
   tallyServePoints,
   unexercisedPoints,
+  type DiscoveryServeQueryClient,
   type ServeRow,
 } from "../lib/discoveryServePointReport.js";
 
@@ -465,5 +467,163 @@ describe("resolveReportWindow — refuses rather than guessing", () => {
         ReportWindowError,
       );
     }
+  });
+});
+
+// ── fetchDiscoveryServeRows — a converted serve is STILL a serve ──────────────
+//
+// The corpus fetch once read `.eq("surface","discovery").eq("outcome",
+// "impression")`. But rank_events is mutable state: when the funnel records a
+// tap/save/join/rsvp/attended, routes/rankEvents.ts UPDATES that served row's
+// `outcome` column IN PLACE (impression → tap → …) and leaves `features` — the
+// servePoint marker — untouched. So a served item the user then acted on is
+// still a serve, but its outcome is no longer 'impression'. The old filter
+// dropped every such row, understating serve-point coverage DIFFERENTIALLY by
+// conversion: the ranked points (5/6, and pde-ranked cache hits) convert best,
+// so the D5 ranked share was biased toward "ranking is starved" by exactly the
+// serves that reached a ranker.
+//
+// The corpus predicate is `event_type IS NULL` (lib/rankLog.ts, migration 0197):
+// the analytics-sentinel rows the outcome route also inserts carry a non-null
+// event_type and outcome='analytics', have no servePoint marker, and are NOT
+// serves. Restoring the outcome filter turns the first test below RED.
+
+interface RankEventFixtureRow {
+  surface: string;
+  outcome: string;
+  event_type: string | null;
+  served_at: string;
+  session_id: string | null;
+  features: ServeRow["features"];
+}
+
+interface FakeRankEventsBuilder {
+  select(columns: string): FakeRankEventsBuilder;
+  eq(col: string, val: unknown): FakeRankEventsBuilder;
+  is(col: string, val: unknown): FakeRankEventsBuilder;
+  gte(col: string, val: unknown): FakeRankEventsBuilder;
+  lte(col: string, val: unknown): FakeRankEventsBuilder;
+  then<T>(onFulfilled: (value: { data: RankEventFixtureRow[]; error: null }) => T): Promise<T>;
+}
+
+/**
+ * A fake PostgREST builder that records the filters it is asked for and applies
+ * them in-memory, so a test can assert BOTH what fetchDiscoveryServeRows selects
+ * and which rows survive — without a live database.
+ */
+function fakeRankEventsClient(rows: RankEventFixtureRow[]): {
+  client: DiscoveryServeQueryClient;
+  filters: Array<{ op: string; col: string; val: unknown }>;
+} {
+  const filters: Array<{ op: string; col: string; val: unknown }> = [];
+  const preds: Array<(r: RankEventFixtureRow) => boolean> = [];
+
+  const cell = (r: RankEventFixtureRow, col: string): unknown =>
+    (r as unknown as Record<string, unknown>)[col];
+
+  const builder: FakeRankEventsBuilder = {
+    select(_columns: string) { return builder; },
+    eq(col: string, val: unknown) {
+      filters.push({ op: "eq", col, val });
+      preds.push((r) => cell(r, col) === val);
+      return builder;
+    },
+    is(col: string, val: unknown) {
+      filters.push({ op: "is", col, val });
+      preds.push((r) => {
+        const c = cell(r, col);
+        return val === null ? c === null || c === undefined : c === val;
+      });
+      return builder;
+    },
+    gte(col: string, val: unknown) {
+      filters.push({ op: "gte", col, val });
+      preds.push((r) => String(cell(r, col)) >= String(val));
+      return builder;
+    },
+    lte(col: string, val: unknown) {
+      filters.push({ op: "lte", col, val });
+      preds.push((r) => String(cell(r, col)) <= String(val));
+      return builder;
+    },
+    then<T>(onFulfilled: (value: { data: RankEventFixtureRow[]; error: null }) => T): Promise<T> {
+      const data = rows.filter((r) => preds.every((p) => p(r)));
+      return Promise.resolve({ data, error: null as null }).then(onFulfilled);
+    },
+  };
+
+  const client: DiscoveryServeQueryClient = { from(_table: string) { return builder; } };
+  return { client, filters };
+}
+
+describe("fetchDiscoveryServeRows — a converted serve is still a serve", () => {
+  const WINDOW = { since: "2026-09-01T00:00:00.000Z", until: null };
+  const inWindow = "2026-09-02T10:00:00.000Z";
+
+  const impressionServe: RankEventFixtureRow = {
+    surface: "discovery", outcome: "impression", event_type: null, served_at: inWindow,
+    session_id: "sess-impression",
+    features: { servePoint: 6, rankedInRequest: true },
+  };
+  // The SAME serve point, but the user saved it: the outcome route upgraded
+  // outcome to 'save' IN PLACE, leaving features (servePoint) intact.
+  const savedServe: RankEventFixtureRow = {
+    surface: "discovery", outcome: "save", event_type: null, served_at: inWindow,
+    session_id: "sess-saved",
+    features: { servePoint: 6, rankedInRequest: true },
+  };
+  // The additive analytics row the outcome route inserts: event_type set,
+  // outcome='analytics', no servePoint marker. NOT a serve.
+  const analyticsSentinel: RankEventFixtureRow = {
+    surface: "discovery", outcome: "analytics", event_type: "item_saved", served_at: inWindow,
+    session_id: "sess-saved", features: {},
+  };
+  const otherSurface: RankEventFixtureRow = {
+    surface: "pulse", outcome: "impression", event_type: null, served_at: inWindow,
+    session_id: "sess-pulse", features: { servePoint: 6 },
+  };
+
+  it("keeps BOTH the impressed and the saved serve; drops the analytics sentinel and other surfaces", async () => {
+    const { client } = fakeRankEventsClient([impressionServe, savedServe, analyticsSentinel, otherSurface]);
+    const { rows, error } = await fetchDiscoveryServeRows(client, WINDOW);
+
+    assert.equal(error, null);
+    // Two serves, NOT one. `.eq("outcome","impression")` returned only the
+    // impressed row and dropped the saved one — the defect this test pins.
+    assert.equal(rows.length, 2, "the saved serve must survive alongside the impressed one");
+    assert.ok(rows.every((r) => r.features?.servePoint === 6));
+
+    // And both tally onto serve point 6, so coverage reflects real serves.
+    const t = tallyServePoints(rows);
+    assert.equal(t.marked, 2);
+    assert.equal(t.byPoint.get(DiscoveryServePoint.COLD_FETCH_LEGACY_RANK), 2);
+  });
+
+  it("selects the serve corpus by event_type IS NULL, never by outcome", async () => {
+    const { client, filters } = fakeRankEventsClient([impressionServe, savedServe]);
+    await fetchDiscoveryServeRows(client, WINDOW);
+
+    assert.ok(
+      filters.some((f) => f.op === "is" && f.col === "event_type" && f.val === null),
+      "must select the serve corpus by event_type IS NULL",
+    );
+    assert.ok(
+      filters.some((f) => f.op === "eq" && f.col === "surface" && f.val === "discovery"),
+      "must still restrict to surface='discovery'",
+    );
+    assert.ok(
+      !filters.some((f) => f.col === "outcome"),
+      "must NOT filter on outcome — that is what dropped every converted serve",
+    );
+  });
+
+  it("bounds the top only when --until was given", async () => {
+    const bounded = fakeRankEventsClient([impressionServe]);
+    await fetchDiscoveryServeRows(bounded.client, { since: WINDOW.since, until: "2026-09-03T00:00:00.000Z" });
+    assert.ok(bounded.filters.some((f) => f.op === "lte" && f.col === "served_at"));
+
+    const open = fakeRankEventsClient([impressionServe]);
+    await fetchDiscoveryServeRows(open.client, { since: WINDOW.since, until: null });
+    assert.ok(!open.filters.some((f) => f.op === "lte"), "an open window must not bound the top");
   });
 });

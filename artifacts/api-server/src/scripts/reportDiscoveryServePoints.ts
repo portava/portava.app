@@ -127,6 +127,7 @@ import {
   assertLabelsCoverEnum,
   countOn,
   countRankedOn,
+  fetchDiscoveryServeRows,
   observedPoints,
   rankedOutsideLegacyPoints,
   resolveReportWindow,
@@ -169,26 +170,17 @@ async function main(): Promise<void> {
   console.log(`Window: ${window.description}`);
   console.log("");
 
-  let query = sc
-    .from("rank_events")
-    .select("features, session_id, served_at")
-    .eq("surface", "discovery")
-    .eq("outcome", "impression")
-    .gte("served_at", window.since);
-
-  // Only bound the top when one was asked for. An unconditional `.lte(now)`
-  // would look harmless and would quietly exclude rows written between the
-  // query being built and the query being served.
-  if (window.until !== null) query = query.lte("served_at", window.until);
-
-  const { data, error } = await query;
+  // A serve is every surface='discovery' row with event_type NULL, whatever its
+  // current outcome rung — NOT only outcome='impression'. The funnel upgrades a
+  // served row's outcome IN PLACE (routes/rankEvents.ts), so filtering on
+  // 'impression' silently dropped every converted serve and biased the D5 share
+  // down by the serves that converted. See fetchDiscoveryServeRows.
+  const { rows, error } = await fetchDiscoveryServeRows(sc, window);
 
   if (error) {
     console.error("Query failed:", error.message);
     process.exit(2);
   }
-
-  const rows = (data as any[]) ?? [];
 
   // ── Tally ──────────────────────────────────────────────────────────────────
   const tally = tallyServePoints(rows as ServeRow[]);
@@ -274,7 +266,7 @@ async function main(): Promise<void> {
   if (marked === 0) {
     console.log("── VERDICT: NOT ESTABLISHED ──");
     if (rows.length === 0) {
-      console.log("  No surface='discovery' impression rows at all in this window.");
+      console.log("  No surface='discovery' serve rows at all in this window.");
       console.log("  This script CANNOT distinguish 'the flag was off' from 'the surface");
       console.log("  was unreachable' from 'nobody visited'. Check");
       console.log("  discovery_serve_log_enabled before reading anything into it.");

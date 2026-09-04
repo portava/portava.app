@@ -477,3 +477,74 @@ export function resolveReportWindow(argv: readonly string[], nowMs: number): Rep
     description: `last ${days} day(s), served_at >= ${since}`,
   };
 }
+
+// ── Fetching the serve corpus ─────────────────────────────────────────────────
+//
+// WHAT COUNTS AS A SERVE, AND WHY IT IS NOT `outcome = 'impression'`.
+//
+// This lived in the script as `.eq("surface","discovery").eq("outcome",
+// "impression")`, and the second clause was wrong for the same reason the
+// exposure denominator was wrong before it (00_STATUS defect 4): it confused a
+// serve with an unconverted serve.
+//
+// A serve is written as an `impression` row — but `rank_events` is a
+// mutable-state table. When the funnel records a tap/save/join/rsvp/attended,
+// routes/rankEvents.ts UPDATES that same row's `outcome` column IN PLACE
+// (impression → tap → …), leaving `features` — and therefore the `servePoint`
+// marker — untouched. So a served item the user then acted on is STILL a serve,
+// but its outcome is no longer 'impression'. Filtering on outcome='impression'
+// silently dropped every converted serve, and it did so differentially: the
+// ranked serve points (5/6, and pde-ranked cache hits) are the ones that convert
+// best, so the D5 ranked share was biased DOWN by exactly the serves that reached
+// a ranker — the report read most like "ranking is starved" precisely where
+// ranking was working.
+//
+// The corpus predicate is `event_type IS NULL`. That is the documented ranked/
+// impression corpus (lib/rankLog.ts, migration 0197): the analytics-sentinel
+// rows the outcome route also inserts carry a non-null `event_type` and
+// outcome='analytics', have no `servePoint` marker, and must NOT be counted as
+// serves. `event_type IS NULL` keeps every serve regardless of how far down the
+// funnel it later travelled, and keeps only serves.
+
+/**
+ * The minimal query surface {@link fetchDiscoveryServeRows} needs.
+ *
+ * Structural on purpose: the real `SupabaseClient` satisfies it, and a test can
+ * pass a fake builder that records the filters it was asked for.
+ */
+export interface DiscoveryServeQueryClient {
+  from(table: string): {
+    select(columns: string): any;
+  };
+}
+
+/**
+ * Fetch the discovery SERVE rows for a window — every `surface='discovery'`
+ * `rank_events` row with `event_type IS NULL`, regardless of its current outcome
+ * rung. See the section header above for why this is not `outcome='impression'`.
+ *
+ * Returns `{ rows, error }`; `error` is the PostgREST error (never thrown) so the
+ * caller can decide how to surface it.
+ */
+export async function fetchDiscoveryServeRows(
+  sc: DiscoveryServeQueryClient,
+  window: { since: string; until: string | null },
+): Promise<{ rows: ServeRow[]; error: { message: string } | null }> {
+  let query = sc
+    .from("rank_events")
+    .select("features, session_id, served_at")
+    .eq("surface", "discovery")
+    // NOT .eq("outcome","impression") — that drops every converted serve. See
+    // the section header: a serve keeps its servePoint marker after the funnel
+    // upgrades its outcome in place, and event_type IS NULL is the serve corpus.
+    .is("event_type", null)
+    .gte("served_at", window.since);
+
+  // Only bound the top when one was asked for. An unconditional `.lte(now)`
+  // would look harmless and would quietly exclude rows written between the
+  // query being built and the query being served.
+  if (window.until !== null) query = query.lte("served_at", window.until);
+
+  const { data, error } = await query;
+  return { rows: (data as ServeRow[] | null) ?? [], error: error ?? null };
+}
