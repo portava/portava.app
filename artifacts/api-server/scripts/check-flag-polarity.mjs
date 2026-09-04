@@ -393,6 +393,16 @@ const CLASSIFIED = [
       '`disabled` and books nothing. Cash transfer is a separate, unbuilt switch; cash_amount=0 is enforced by the table.',
   },
   {
+    flag: 'intel_pattern_learning',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` runs the IG §12 nightly pattern PRODUCER (lib/intelPatternScheduler.ts): derives recurring cohort ' +
+      'patterns from FINALIZED intel outcomes into intel_historical_patterns (Table 18/19 minimums enforced) and ' +
+      'writes invalidation tombstones on correction/withdrawal. False-on-error is correct and is the design: ' +
+      'runPatternLearningPass returns {skipped:true, reason:"disabled"} and writes nothing, so the scheduler is an ' +
+      'inert no-op. The store exists regardless (migration 2279); this gates only the writer. Nothing client-facing; no cash.',
+  },
+  {
     flag: 'intel_live_label_crowd',
     kind: 'CAPABILITY',
     reason:
