@@ -13,7 +13,7 @@
  */
 
 import React from 'react';
-import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { CachedImage } from '../../../../components/CachedImage.tsx';
 import { router } from 'expo-router';
 import {
@@ -197,9 +197,15 @@ export function WallImage({
       </View>
     );
   }
+  // post-media is a PRIVATE Supabase bucket: a stored value is a bare
+  // <bucket>/<path> reference or a legacy public URL, and NEITHER loads in a bare
+  // RN <Image> (it renders dead whitespace). CachedImage runs useHydratedMedia to
+  // turn either into a signed URL, and shows a visible fallback on a null resolve
+  // rather than blank space (spec §34/§35). Same private-bucket concern the avatar
+  // and QuickMediaRow already route through CachedImage.
   return (
     <View style={frameStyle}>
-      <Image source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      <CachedImage source={{ uri }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
     </View>
   );
 }
