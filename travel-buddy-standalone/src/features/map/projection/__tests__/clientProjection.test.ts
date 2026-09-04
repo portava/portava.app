@@ -26,6 +26,7 @@ import {
   FRIEND_PRIVACY_CLASS,
   TRIP_PRIVACY_CLASS,
   projectBuddy,
+  projectCompassResult,
   projectEventLocal,
   projectFriend,
   projectGemLocal,
@@ -499,5 +500,71 @@ describe('the rollback projectors mirror the server field for field', () => {
     const payload = projectBuddy({ ...BUDDY, distanceKm: 2.4 })!.payload as Record<string, unknown>;
     assert.ok(!('distanceKm' in payload));
     assert.equal(payload.displayName, 'Mika', 'the rest of the DTO must survive the strip');
+  });
+});
+
+// ── Compass results ───────────────────────────────────────────────────────────
+//
+// AskCompassBar used to hand the raw `CompassRecommendation` through as
+// `entity.payload` — a THIRD shape the map cards had to guess at, and the one
+// that made a Compass buddy or trip result hit `categories.slice` /
+// `visibility.replace` and take the card down. It goes through a projector now,
+// like every other producer.
+
+describe('projectCompassResult', () => {
+  const REC = {
+    id: 'rec-1',
+    type: 'buddy',
+    category: 'city',
+    title: 'Mika',
+    reason: 'Speaks your languages',
+    city: 'Bangkok',
+    data: { lat: 13.75, lng: 100.5 },
+  };
+
+  test('a Compass result becomes a contract object, not a raw recommendation', () => {
+    const obj = projectCompassResult(REC)!;
+    assert.equal(obj.kind, 'buddy_zone');
+    assert.equal(obj.title, 'Mika');
+    assert.equal(obj.subtitle, 'Speaks your languages · Bangkok');
+    assert.ok(isRenderable(obj));
+  });
+
+  test('it carries no payload — Compass sends no per-kind detail', () => {
+    // A card must therefore render from title/subtitle alone rather than
+    // reaching for fields a recommendation was never going to have.
+    assert.equal(projectCompassResult(REC)!.payload, undefined);
+  });
+
+  test('it invents no intelligence (spec §37)', () => {
+    const obj = projectCompassResult(REC)!;
+    assert.equal(obj.confidence, undefined);
+    assert.equal(obj.freshness, undefined);
+    assert.equal(obj.activity, undefined);
+    assert.equal(obj.provenance, undefined);
+  });
+
+  test('coordinates are never invented', () => {
+    assert.equal(projectCompassResult({ ...REC, data: {} }), null);
+    assert.equal(projectCompassResult({ ...REC, data: { lat: 1 } }), null);
+    assert.equal(projectCompassResult({ ...REC, data: null }), null);
+  });
+
+  test('an unmapped Compass type is dropped, never rendered as an untyped dot', () => {
+    assert.equal(projectCompassResult({ ...REC, type: 'weather' }), null);
+    assert.equal(projectCompassResult({ ...REC, type: null }), null);
+  });
+
+  test('person-shaped kinds fail closed to a non-identifying rung', () => {
+    // §23: nothing here may render at a precision Compass never stated.
+    assert.equal(projectCompassResult(REC)!.privacyClass, 'approximate');
+    assert.equal(projectCompassResult({ ...REC, type: 'traveler' })!.privacyClass, 'aggregate_only');
+    assert.equal(mayRenderIdentity('aggregate_only'), false);
+  });
+
+  test('a title is always present — isRenderable drops empty ones', () => {
+    const obj = projectCompassResult({ ...REC, title: null })!;
+    assert.equal(obj.title, REC.category);
+    assert.ok(isRenderable(projectCompassResult({ ...REC, title: null, category: null })!));
   });
 });

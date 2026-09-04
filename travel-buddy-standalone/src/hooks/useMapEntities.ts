@@ -82,6 +82,12 @@ import { listEvents } from '../services/events.ts';
 import { listGems } from '../services/hiddenGems.ts';
 import { listMyTrips } from '../services/trips.ts';
 import { listVisibleCircleLocations } from '../services/map.ts';
+// Typed so the projector call sites are checked too: an untyped row is how
+// `buddy.headline`, `trip.destination` and `loc.displayName` — three fields that
+// do not exist — reached the projectors without a compile error.
+import type { CircleMemberLocation } from '../services/map.ts';
+import type { HiddenGem } from '../services/hiddenGems.ts';
+import type { TripRow } from '../services/trips.ts';
 import { bboxFromCenter, fetchMapProjection } from '../services/mapProjection.ts';
 import {
   projectBuddy,
@@ -201,7 +207,7 @@ async function fetchEvents(lat: number, lng: number, now: number): Promise<MapOb
 }
 
 async function fetchGems(city: string): Promise<MapObject[]> {
-  let gems: any[];
+  let gems: HiddenGem[];
   try {
     gems = await listGems({ city, limit: 100 });
   } catch {
@@ -216,7 +222,7 @@ async function fetchGems(city: string): Promise<MapObject[]> {
 }
 
 async function fetchTrips(): Promise<MapObject[]> {
-  let trips: any[];
+  let trips: TripRow[];
   try {
     trips = await listMyTrips();
   } catch {
@@ -233,7 +239,7 @@ async function fetchTrips(): Promise<MapObject[]> {
 }
 
 async function fetchFriends(): Promise<MapObject[]> {
-  let locs: any[];
+  let locs: CircleMemberLocation[];
   try {
     locs = await listVisibleCircleLocations();
   } catch {

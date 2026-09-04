@@ -26,6 +26,7 @@ import path from 'path';
 import { MapStoreProvider } from '../../../stores/mapStore.tsx';
 import { MapCarousel } from '../MapCarousel.tsx';
 import type { MapEntity } from '../../../types/mapTypes.ts';
+import { buddyEntity, eventEntity } from '../../../__fixtures__/mapEntities.ts';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -132,6 +133,14 @@ const CARD_AREA_HEIGHT = cardAreaHeightMatch
   : NaN;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
+//
+// PRODUCED BY THE REAL PROJECTORS (src/__fixtures__/mapEntities.ts).
+//
+// These used to be hand-written `payload` object literals in the raw service-DTO
+// shape. That is what let this file stay green after the producers switched to
+// emitting `MapObject`: the card bodies read fields that were no longer there
+// (two of them threw), and the fixtures kept supplying the old shape so nothing
+// noticed. A fixture that builds its own DTO proves nothing about the app.
 
 /**
  * Worst-case buddy entity: all four chips present in BuddyCardBody —
@@ -141,33 +150,8 @@ const CARD_AREA_HEIGHT = cardAreaHeightMatch
  *   chip 4: Available status chip (always rendered)
  * Plus Book + Message action capabilities.
  */
-const buddyEntity: MapEntity = {
-  id: 'buddy:height-test',
-  type: 'buddies',
-  lat: 10,
-  lng: 20,
-  payload: {
-    id: 'buddy:height-test',
-    userId: 'user-ht',
-    displayName: 'Ana Costa',
-    tagline: 'Lisbon local',
-    bio: null,
-    languages: ['Portuguese', 'English'],
-    city: 'Lisbon',
-    country: 'Portugal',
-    categories: ['food', 'culture'],
-    hourlyRateUsd: 45,
-    status: 'active',
-    verified: true,
-    verifiedAt: '2024-01-01T00:00:00Z',
-    averageRating: 4.8,
-    reviewCount: 22,
-    responseTimeH: 1,
-    coverPhotoUrl: null,
-    galleryUrls: [],
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
+const buddyFixture: MapEntity = {
+  ...buddyEntity({ id: 'height-test', city: 'Lisbon', hourlyRateUsd: 45, averageRating: 4.8 }),
   actionCapabilities: ['book', 'message'],
   permissions: {
     canMessage: true,
@@ -180,21 +164,8 @@ const buddyEntity: MapEntity = {
 /**
  * Worst-case event entity: Join + Share + Report action buttons.
  */
-const eventEntity: MapEntity = {
-  id: 'event:height-test',
-  type: 'events',
-  lat: 10,
-  lng: 20,
-  payload: {
-    id: 'event:height-test',
-    title: 'Evening Jazz at Alfama',
-    startsAt: '2026-08-01T20:00:00Z',
-    endsAt: '2026-08-01T23:00:00Z',
-    goingCount: 42,
-    priceType: 'paid',
-    hostName: 'Alfama Jazz Club',
-    coverUrl: null,
-  },
+const eventFixture: MapEntity = {
+  ...eventEntity({ id: 'height-test' }),
   actionCapabilities: ['join', 'share', 'report'],
   permissions: {
     canMessage: false,
@@ -229,7 +200,7 @@ describe('MapCarousel card height guard', () => {
   it('buddy card: rating chip (4.8) is rendered', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[buddyEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[buddyFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByText('4.8')).toBeTruthy();
@@ -238,7 +209,7 @@ describe('MapCarousel card height guard', () => {
   it('buddy card: city chip (Lisbon) is rendered', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[buddyEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[buddyFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByText('Lisbon')).toBeTruthy();
@@ -247,7 +218,7 @@ describe('MapCarousel card height guard', () => {
   it('buddy card: hourly-rate chip ($45/hr) is rendered', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[buddyEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[buddyFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByText('$45/hr')).toBeTruthy();
@@ -256,7 +227,7 @@ describe('MapCarousel card height guard', () => {
   it('buddy card: Available status chip is rendered', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[buddyEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[buddyFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByText('Available')).toBeTruthy();
@@ -267,7 +238,7 @@ describe('MapCarousel card height guard', () => {
   it('buddy card: Book action button is rendered', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[buddyEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[buddyFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByTestId('map-action-book')).toBeTruthy();
@@ -276,7 +247,7 @@ describe('MapCarousel card height guard', () => {
   it('buddy card: Message action button is rendered', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[buddyEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[buddyFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByTestId('map-action-message')).toBeTruthy();
@@ -287,7 +258,7 @@ describe('MapCarousel card height guard', () => {
   it('event card: Join action button is rendered', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[eventEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[eventFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByTestId('map-action-join')).toBeTruthy();
@@ -296,7 +267,7 @@ describe('MapCarousel card height guard', () => {
   it('event card: Share action button is rendered', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[eventEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[eventFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByTestId('map-action-share')).toBeTruthy();
@@ -305,7 +276,7 @@ describe('MapCarousel card height guard', () => {
   it('event card: Report action button is rendered', async () => {
     await render(
       <MapStoreProvider>
-        <MapCarousel entities={[eventEntity]} activeIndex={0} onIndexChange={jest.fn()} />
+        <MapCarousel entities={[eventFixture]} activeIndex={0} onIndexChange={jest.fn()} />
       </MapStoreProvider>,
     );
     expect(screen.getByTestId('map-action-report')).toBeTruthy();

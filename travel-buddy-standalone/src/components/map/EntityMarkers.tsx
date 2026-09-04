@@ -26,12 +26,13 @@ import {
   Stamp,
 } from 'lucide-react-native';
 import { MAP_LAYER_CONFIG } from '../../types/mapTypes.ts';
-import type { MapEntity, MapEntityType, ToggleableEntityType, PassportCountryPayload } from '../../types/mapTypes.ts';
-import type { BuddyProfile } from '../../services/rentABuddy.ts';
-import type { EventListItem } from '../../services/events.ts';
-import type { HiddenGem } from '../../services/hiddenGems.ts';
-import type { TripRow } from '../../services/trips.ts';
-import type { CircleMemberLocation } from '../../services/map.ts';
+import type { MapEntity, MapEntityType, ToggleableEntityType } from '../../types/mapTypes.ts';
+import {
+  buddyCardPayload,
+  friendCardPayload,
+  objectOf,
+  passportCardPayload,
+} from '../../types/mapCardPayloads.ts';
 import { avatar, dot } from '../../theme/tokens.ts';
 
 // ── Clustering ─────────────────────────────────────────────────────────────────
@@ -209,14 +210,19 @@ function MarkerTouch({
 
 // ── Buddy marker ──────────────────────────────────────────────────────────────
 
-function BuddyMarker({ entity, onPress, onLongPress }: { entity: MapEntity<BuddyProfile>; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
+function BuddyMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
   const cfg = MAP_LAYER_CONFIG.buddies;
-  const buddy = entity.payload;
+  // `entity.payload` is the projected MapObject, not a BuddyProfile — the cover
+  // photo is one level deeper, on the payload the projector chose. This used to
+  // read `entity.payload.coverPhotoUrl` behind an `as MapEntity<BuddyProfile>`
+  // cast at the dispatch site, so it was always undefined and every buddy pin
+  // drew the generic glyph.
+  const coverPhotoUrl = buddyCardPayload(objectOf(entity))?.coverPhotoUrl ?? null;
   return (
     <MarkerTouch entity={entity} onPress={onPress} onLongPress={onLongPress}>
       <View style={[pin.wrap, { backgroundColor: cfg.color }]}>
-        {buddy.coverPhotoUrl ? (
-          <CachedImage source={{ uri: buddy.coverPhotoUrl }} style={pin.avatarImg} fallbackLabel="" />
+        {coverPhotoUrl ? (
+          <CachedImage source={{ uri: coverPhotoUrl }} style={pin.avatarImg} fallbackLabel="" />
         ) : (
           <Users size={12} color="#fff" />
         )}
@@ -228,7 +234,7 @@ function BuddyMarker({ entity, onPress, onLongPress }: { entity: MapEntity<Buddy
 
 // ── Event marker ──────────────────────────────────────────────────────────────
 
-function EventMarker({ entity, onPress, onLongPress }: { entity: MapEntity<EventListItem>; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
+function EventMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
   const cfg = MAP_LAYER_CONFIG.events;
   return (
     <MarkerTouch entity={entity} onPress={onPress} onLongPress={onLongPress}>
@@ -242,7 +248,7 @@ function EventMarker({ entity, onPress, onLongPress }: { entity: MapEntity<Event
 
 // ── Gem marker ────────────────────────────────────────────────────────────────
 
-function GemMarker({ entity, onPress, onLongPress }: { entity: MapEntity<HiddenGem>; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
+function GemMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
   const cfg = MAP_LAYER_CONFIG.gems;
   return (
     <MarkerTouch entity={entity} onPress={onPress} onLongPress={onLongPress}>
@@ -256,7 +262,7 @@ function GemMarker({ entity, onPress, onLongPress }: { entity: MapEntity<HiddenG
 
 // ── Trip marker ───────────────────────────────────────────────────────────────
 
-function TripMarker({ entity, onPress, onLongPress }: { entity: MapEntity<TripRow>; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
+function TripMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
   const cfg = MAP_LAYER_CONFIG.trips;
   return (
     <MarkerTouch entity={entity} onPress={onPress} onLongPress={onLongPress}>
@@ -270,14 +276,18 @@ function TripMarker({ entity, onPress, onLongPress }: { entity: MapEntity<TripRo
 
 // ── Friend marker ─────────────────────────────────────────────────────────────
 
-function FriendMarker({ entity, onPress, onLongPress }: { entity: MapEntity<CircleMemberLocation>; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
+function FriendMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
   const cfg = MAP_LAYER_CONFIG.friends;
-  const loc = entity.payload;
+  // Same shape as BuddyMarker: the avatar is on the projected payload, not on
+  // the envelope. An avatar is the whole point of a friend pin — §23 puts these
+  // at `approximate`, the rung where mayRenderIdentity() permits a face — so
+  // this read being silently undefined blanked exactly the thing that matters.
+  const avatarUrl = friendCardPayload(objectOf(entity))?.avatarUrl ?? null;
   return (
     <MarkerTouch entity={entity} onPress={onPress} onLongPress={onLongPress}>
       <View style={[pin.avatarWrap, { borderColor: cfg.color }]}>
-        {loc.avatarUrl ? (
-          <CachedImage source={{ uri: loc.avatarUrl }} style={pin.friendImg} fallbackLabel="" />
+        {avatarUrl ? (
+          <CachedImage source={{ uri: avatarUrl }} style={pin.friendImg} fallbackLabel="" />
         ) : (
           <View style={[pin.friendFallback, { backgroundColor: cfg.color }]}>
             <Heart size={11} color="#fff" />
@@ -367,9 +377,11 @@ const pin = StyleSheet.create({
 
 // ── Stamp marker (passport mode) ──────────────────────────────────────────────
 
-function StampMarker({ entity, onPress, onLongPress }: { entity: MapEntity<PassportCountryPayload>; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
+function StampMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
   const cfg = MAP_LAYER_CONFIG.stamps;
-  const { stampCount } = entity.payload;
+  // Passport pins are NOT projected — buildPassportEntities in app/map/index.tsx
+  // builds this payload directly — so this one is read through its own guard.
+  const stampCount = passportCardPayload(entity.payload)?.stampCount ?? 0;
   const isDouble = stampCount >= 10;
   return (
     <MarkerTouch entity={entity} onPress={onPress} onLongPress={onLongPress}>
@@ -452,17 +464,17 @@ function renderMarkerBody(
   const t = { onPress, onLongPress };
   switch (entity.type) {
     case 'buddies':
-      return <BuddyMarker entity={entity as MapEntity<BuddyProfile>} {...t} />;
+      return <BuddyMarker entity={entity} {...t} />;
     case 'events':
-      return <EventMarker entity={entity as MapEntity<EventListItem>} {...t} />;
+      return <EventMarker entity={entity} {...t} />;
     case 'gems':
-      return <GemMarker entity={entity as MapEntity<HiddenGem>} {...t} />;
+      return <GemMarker entity={entity} {...t} />;
     case 'trips':
-      return <TripMarker entity={entity as MapEntity<TripRow>} {...t} />;
+      return <TripMarker entity={entity} {...t} />;
     case 'friends':
-      return <FriendMarker entity={entity as MapEntity<CircleMemberLocation>} {...t} />;
+      return <FriendMarker entity={entity} {...t} />;
     case 'stamps':
-      return <StampMarker entity={entity as MapEntity<PassportCountryPayload>} {...t} />;
+      return <StampMarker entity={entity} {...t} />;
     default:
       return null;
   }

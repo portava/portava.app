@@ -37,6 +37,7 @@ import { MapStoreProvider, useMapStore } from '../../stores/mapStore.tsx';
 import type { MapStoreContextValue } from '../../stores/mapStore.tsx';
 import { MapEntityCard } from '../map/MapCarousel.tsx';
 import type { MapEntity } from '../../types/mapTypes.ts';
+import { gemEntity } from '../../__fixtures__/mapEntities.ts';
 
 // ── Module mocks ───────────────────────────────────────────────────────────────
 
@@ -129,44 +130,21 @@ jest.mock('../ReportSheet.tsx', () => {
 });
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
+//
+// Built by the REAL projector — see src/__fixtures__/mapEntities.ts. A
+// hand-written raw-DTO payload proves nothing about a card whose producer emits
+// MapObject.
 
-const gemEntity: MapEntity = {
-  id: 'gem:carousel-1',
-  type: 'gems',
-  lat: 10,
-  lng: 20,
-  payload: {
-    id: 'gem:carousel-1',
-    name: 'Rooftop Terrace',
-    category: 'viewpoint',
-    city: 'Rome',
-    country: 'Italy',
-    neighborhood: 'Trastevere',
-    description: 'A quiet rooftop with views over the city.',
-    lat: 10,
-    lng: 20,
-    coordsPrecision: 'exact',
-    vibeTags: ['scenic', 'quiet'],
-    priceRange: '€€',
-    safetyNotes: null,
-    bestTimeToGo: 'Sunset',
-    localEtiquette: null,
-    layoverSafe: false,
-    minimumLayoverMinutes: null,
-    sensitivityLevel: 'public',
-    verificationLevel: 'unverified',
-    status: 'active',
-    submittedBy: null,
-    saveCount: 7,
-    visitCount: 21,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-  },
-  actionCapabilities: ['save', 'share', 'directions'],
-};
+const gemFixture: MapEntity = gemEntity({
+  id: 'carousel-1',
+  name: 'Rooftop Terrace',
+  category: 'viewpoint',
+  city: 'Rome',
+  country: 'Italy',
+});
 
 const noCapEntity: MapEntity = {
-  ...gemEntity,
+  ...gemFixture,
   id: 'gem:no-caps',
   actionCapabilities: [],
 };
@@ -209,21 +187,21 @@ async function renderCard(entity: MapEntity, storeRef: React.RefObject<StoreHand
 describe('MapCarousel action row — medium detent (default)', () => {
   it('renders map-action-row when entity has actionCapabilities', async () => {
     const storeRef = React.createRef<StoreHandle>();
-    const { getByTestId } = await renderCard(gemEntity, storeRef);
+    const { getByTestId } = await renderCard(gemFixture, storeRef);
 
     expect(getByTestId('map-action-row')).toBeTruthy();
   });
 
   it('renders Save button when save capability is declared', async () => {
     const storeRef = React.createRef<StoreHandle>();
-    const { getByTestId } = await renderCard(gemEntity, storeRef);
+    const { getByTestId } = await renderCard(gemFixture, storeRef);
 
     expect(getByTestId('map-action-save')).toBeTruthy();
   });
 
   it('renders Share and Directions buttons when declared', async () => {
     const storeRef = React.createRef<StoreHandle>();
-    const { getByTestId } = await renderCard(gemEntity, storeRef);
+    const { getByTestId } = await renderCard(gemFixture, storeRef);
 
     expect(getByTestId('map-action-share')).toBeTruthy();
     expect(getByTestId('map-action-directions')).toBeTruthy();
@@ -231,7 +209,7 @@ describe('MapCarousel action row — medium detent (default)', () => {
 
   it('does not render Join button when capability is absent', async () => {
     const storeRef = React.createRef<StoreHandle>();
-    const { queryByTestId } = await renderCard(gemEntity, storeRef);
+    const { queryByTestId } = await renderCard(gemFixture, storeRef);
 
     expect(queryByTestId('map-action-join')).toBeNull();
   });
@@ -249,7 +227,7 @@ describe('MapCarousel action row — medium detent (default)', () => {
 describe('MapCarousel action row — full detent', () => {
   it('renders map-action-row when store detent is set to full', async () => {
     const storeRef = React.createRef<StoreHandle>();
-    const { getByTestId } = await renderCard(gemEntity, storeRef);
+    const { getByTestId } = await renderCard(gemFixture, storeRef);
 
     await act(async () => {
       storeRef.current!.store.setPreviewDetent('full');
@@ -264,7 +242,7 @@ describe('MapCarousel action row — full detent', () => {
 describe('MapCarousel action row — collapsed detent', () => {
   it('hides map-action-row when store detent is set to collapsed', async () => {
     const storeRef = React.createRef<StoreHandle>();
-    const { queryByTestId } = await renderCard(gemEntity, storeRef);
+    const { queryByTestId } = await renderCard(gemFixture, storeRef);
 
     await act(async () => {
       storeRef.current!.store.setPreviewDetent('collapsed');
@@ -275,7 +253,7 @@ describe('MapCarousel action row — collapsed detent', () => {
 
   it('re-shows map-action-row when detent returns from collapsed to medium', async () => {
     const storeRef = React.createRef<StoreHandle>();
-    const { getByTestId, queryByTestId } = await renderCard(gemEntity, storeRef);
+    const { getByTestId, queryByTestId } = await renderCard(gemFixture, storeRef);
 
     await act(async () => {
       storeRef.current!.store.setPreviewDetent('collapsed');
