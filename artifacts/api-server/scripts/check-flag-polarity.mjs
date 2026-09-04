@@ -335,10 +335,13 @@ const CLASSIFIED = [
     kind: 'CAPABILITY',
     reason:
       '`true` runs the IG-06 going-next Trail follow-up capture surface (captureSurface:trail in ' +
-      'services/intel/IntelCaptureService.ts; lib/trailFollowup.ts). False-on-error is correct and is the ' +
-      'design: the trail write path returns `disabled` and stores nothing, and no follow-up prompt is ' +
-      'issued. experience.next_move stays aggregate-only regardless of this flag (proposeClaim refuses a ' +
-      'single-user movement claim), and the §13 privacy threshold + 0.65 confidence floor gate publication.',
+      'services/intel/IntelCaptureService.ts, reachable via routes/intel.ts `captureSurface`; lib/trailFollowup.ts) ' +
+      'and the admin-only internal cohort read of its aggregate (lib/trailServe.ts via routes/intel.ts). ' +
+      'False-on-error is correct and is the design: the trail write path returns `disabled` and stores ' +
+      'nothing, no follow-up prompt is issued, and the internal read refuses with `flag_off` and reads nothing. ' +
+      'experience.next_move stays aggregate-only regardless of this flag (proposeClaim refuses a ' +
+      'single-user movement claim), and the §13 privacy threshold + 0.65 confidence floor gate publication, ' +
+      'which no route performs (intel_movement_prediction is seeded off).',
   },
   {
     flag: 'intel_missions',
