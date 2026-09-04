@@ -17,8 +17,8 @@ with no production caller". **That claim is correct.** It was verified at
 
 | Piece | Where | State |
 |---|---|---|
-| Write adapter `linkMediaEvidence` | `artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:97` | implemented, 13 tests, **no production caller** |
-| Read adapter `observationsHaveEligibleMediaEvidence` | same file, `:206` | implemented **and wired** |
+| Write adapter `linkMediaEvidence` | `artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:119` | implemented, 13 tests, **no production caller** |
+| Read adapter `observationsHaveEligibleMediaEvidence` | same file, `:228` | implemented **and wired** |
 | Aggregator consumption | `artifacts/api-server/src/lib/intelProjectionAggregator.ts:294-301` | live in the projection path |
 | §35 eligibility gate `isEvidenceEligible` | `artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts` | implemented, consumed by both halves |
 | Storage: `intel_evidence.media_asset_id` + partial unique index | `artifacts/api-server/src/migrations/2255_media_evidence_seam.sql` | applied-ready |
