@@ -27,6 +27,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, X as XIcon } from 'lucide-react-native';
 import { color, space, radius, type as t, icon, avatar } from '../../src/theme/tokens.ts';
 import { MapTopControls } from '../../src/components/map/MapTopControls.tsx';
+import { MapFloatingControls } from '../../src/components/map/MapFloatingControls.tsx';
 import { AskCompassBar } from '../../src/components/map/AskCompassBar.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
 import { getDiscoveryPlaces } from '../../src/services/discovery.ts';
@@ -2253,6 +2254,15 @@ function FullScreenMapScreenInner() {
         // §30 RECENTER — return camera control to the machine (FOLLOW_USER).
         // The button's own easeTo does the move; this records the intent.
         onRecenter={() => dispatchMapEvent({ type: 'RECENTER' })}
+      />
+
+      {/* §3 floating controls: zoom in/out + orientation reset (compass → N).
+          Steps from activeZoom — the camera's REAL zoom — so a tap is one level
+          from where the map actually is, not from a stale commanded value. */}
+      <MapFloatingControls
+        cameraRef={cameraRef}
+        zoom={activeZoom}
+        bottomInset={insets.bottom + 220}
       />
 
       {/* Places loading indicator — small spinner overlay while getDiscoveryPlaces
