@@ -20,6 +20,7 @@ import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import SharedContextScreen from '../SharedContextScreen.tsx';
 import { getSharedContext } from '../../../services/passportSharedContext.ts';
+import { getPassportProjection } from '../../../services/passportProjection.ts';
 import { router } from 'expo-router';
 
 // NOTE: intentional stub — the real service reaches Supabase auth + the API
@@ -27,6 +28,15 @@ import { router } from 'expo-router';
 // is the seam under test; _setTestAuthToken is a no-op so imports don't crash.
 jest.mock('../../../services/passportSharedContext', () => ({
   getSharedContext: jest.fn(),
+  _setTestAuthToken: jest.fn(),
+}));
+
+// NOTE: intentional stub — useSharedContext now also reads the passport
+// projection for the server-owned can_make_plan capability (§30). The real
+// module reaches Supabase auth + the API server; getPassportProjection is the
+// only member the hook touches, so this exhaustive factory is complete.
+jest.mock('../../../services/passportProjection', () => ({
+  getPassportProjection: jest.fn(),
   _setTestAuthToken: jest.fn(),
 }));
 
@@ -44,7 +54,13 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 const mockGetSharedContext = getSharedContext as jest.Mock;
+const mockGetPassportProjection = getPassportProjection as jest.Mock;
 const mockPush = router.push as jest.Mock;
+
+/** Minimal projection whose only field the hook reads is can_make_plan. */
+function projectionWithMakePlan(canMakePlan: boolean) {
+  return { ok: true, data: { actions: { can_make_plan: canMakePlan } } };
+}
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -93,7 +109,11 @@ function emptyPayload() {
 
 beforeEach(() => {
   mockGetSharedContext.mockReset();
+  mockGetPassportProjection.mockReset();
   mockPush.mockReset();
+  // Default: the server permits a make-plan (can_make_plan true). Individual
+  // tests override to prove the CTA is gated on the SERVER capability (§30).
+  mockGetPassportProjection.mockResolvedValue(projectionWithMakePlan(true));
 });
 
 describe('SharedContextScreen', () => {
@@ -144,6 +164,21 @@ describe('SharedContextScreen', () => {
     expect(arg.params.prefillMessage.length).toBeGreaterThan(0);
     // The permitted seed (coarse city) flows into the Compass prompt.
     expect(arg.params.prefillMessage).toContain('Da Nang');
+  });
+
+  it('withholds the make-plan CTA when the server capability can_make_plan is false (§30)', async () => {
+    // Overlap is present AND the Compass handoff is eligible, but the SERVER
+    // says this viewer may not make a plan. The action must NOT be offered — the
+    // client never recreates the policy from the fact set (§30).
+    mockGetSharedContext.mockResolvedValue({ ok: true, data: overlapPayload() });
+    mockGetPassportProjection.mockResolvedValue(projectionWithMakePlan(false));
+
+    await render(<SharedContextScreen userId="them" otherName="Mai" />);
+
+    // The overlap still renders…
+    await waitFor(() => expect(screen.getByText('Strong travel overlap')).toBeTruthy());
+    // …but the make-plan CTA is withheld because the capability is false.
+    expect(screen.queryByText('See What You Could Do')).toBeNull();
   });
 
   it('shows the empty-overlap state with no CTA when there are no shared facts', async () => {

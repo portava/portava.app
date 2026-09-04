@@ -21,8 +21,16 @@
  * rather than in the ranker or the route.
  *
  * The service is pure over its inputs plus ONE batched block read; it does not
- * fetch candidates (the route does) and it does not rank or order them (the
- * ranking / following services do).
+ * fetch candidates (the route/candidate loaders do) and it does not rank or order
+ * them (the ranking / following services do).
+ *
+ * It DOES own one more purely-projection decision: when several loaders each
+ * produce a candidate for the SAME canonical object (a postcard is a `posts` row
+ * that the media loader would otherwise emit as a plain video/photo), which
+ * PROJECTION of that object wins. `dedupeCandidates` encodes that precedence
+ * (a distinct Postcard/Shared-Moment presentation outranks a plain post; a
+ * media-populated candidate outranks a media-less one) so the feed shows one
+ * richest projection per object. See services/wall/WallCandidateLoaders.ts.
  */
 import type {
   DisplayMedia,
@@ -318,6 +326,57 @@ export async function projectObjects(
   return out;
 }
 
+// ── Candidate precedence (which projection of one canonical object wins) ─────
+
+/**
+ * Presentation precedence per object type (spec §6/§10/§12). Higher wins when
+ * two loaders describe the SAME canonical object. A Postcard / Shared Moment has
+ * a DISTINCT presentation the spec forbids collapsing into a plain post (§10:
+ * "never a Post with a badge"), so it outranks the generic social/video shape the
+ * Post/Media loaders would otherwise emit for the same row. Discovery keeps its
+ * own outside-graph rank; it never collides with the in-graph loaders.
+ */
+const CANDIDATE_TYPE_RANK: Record<WallObjectType, number> = {
+  shared_moment: 6,
+  contextual_opportunity: 6,
+  postcard: 5,
+  video: 4,
+  discovery: 4,
+  social_post: 3,
+  social_update: 2,
+};
+
+/** Richness of a candidate: its type precedence, then a media tiebreak so a
+ *  media-populated projection beats an otherwise-equal media-less one. */
+function candidateRichness(c: WallCandidate): number {
+  const base = CANDIDATE_TYPE_RANK[c.objectType] ?? 3;
+  const hasMedia = (c.media?.length ?? 0) > 0 ? 1 : 0;
+  return base * 2 + hasMedia;
+}
+
+/**
+ * Collapse candidates that share a `canonicalObjectId` down to the single
+ * richest projection (see CANDIDATE_TYPE_RANK), preserving first-seen order so a
+ * superseding projection keeps the original object's position in the feed. Pure;
+ * never throws. This is the projection-layer half of merging multiple candidate
+ * loaders — the loaders module unions the ranking/place side-maps around it.
+ */
+export function dedupeCandidates(candidates: WallCandidate[]): WallCandidate[] {
+  const best = new Map<string, WallCandidate>();
+  const order: string[] = [];
+  for (const c of candidates) {
+    const id = c.canonicalObjectId;
+    const existing = best.get(id);
+    if (!existing) {
+      best.set(id, c);
+      order.push(id);
+      continue;
+    }
+    if (candidateRichness(c) > candidateRichness(existing)) best.set(id, c);
+  }
+  return order.map((id) => best.get(id)!);
+}
+
 // ── Context Thread attachment (spec §8/§9) ───────────────────────────────────
 
 export interface AttachContextThreadsOptions {
@@ -395,4 +454,4 @@ export async function attachContextThreads(
 }
 
 // Test seam — pure helpers exercised directly by the projection privacy tests.
-export const _internal = { mapVisibility, passesEligibility, passesVisibility, buildActions };
+export const _internal = { mapVisibility, passesEligibility, passesVisibility, buildActions, candidateRichness };

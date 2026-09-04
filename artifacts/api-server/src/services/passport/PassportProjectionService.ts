@@ -602,9 +602,14 @@ function buildTravelerState(
     state = "open_to_plans";
   }
 
+  // City is projected only when the viewer may see location context (§5/§23).
+  // The human-readable label must honor the SAME gate — otherwise a viewer with
+  // the structured `city` field nulled would still read "Traveling · Da Nang".
+  const displayCity = showCity ? city : null;
+
   const labels: Record<TravelerStateKind, string> = {
     home: "Home",
-    traveling: city ? `Traveling · ${city}` : "Traveling",
+    traveling: displayCity ? `Traveling · ${displayCity}` : "Traveling",
     exploring: "Exploring",
     open_to_plans: "Open to Plans",
     at_event: "At Event",
@@ -615,7 +620,7 @@ function buildTravelerState(
   return {
     state,
     label: labels[state],
-    city: showCity ? city : null,
+    city: displayCity,
     validFrom: null,
     expiresAt: quick?.expiresAt ?? null,
   };

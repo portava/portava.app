@@ -49,6 +49,7 @@ import { PassportHighlightsStrip } from '../../src/components/passport/PassportH
 import { PassportAboutSection } from '../../src/components/passport/PassportAboutSection';
 import { PassportSafetySection } from '../../src/components/passport/PassportSafetySection';
 import { PassportTravelInfoSection } from '../../src/components/passport/PassportTravelInfoSection';
+import { PassportQuickLinks } from '../../src/components/passport/PassportQuickLinks.tsx';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { PassportSectionReorderSheet } from '../../src/components/passport/PassportSectionReorderSheet';
@@ -765,6 +766,13 @@ function PassportContent({
         <ProfileCompletionCard profile={profile} onOpenSettings={() => openSettings('profile')} />
         <CompassStatusCard />
         <CompassPassportSuggestions isOwner />
+
+        {/* ── Passport detail-surface entry points (§3 / §28) ──
+             Navigation into the standalone Passport surfaces (My World, Trust,
+             Travel Identity, Journeys, Plans, Availability) + the Share/QR
+             sheet, which are route-registered but were previously unreachable
+             from this tab. */}
+        <PassportQuickLinks onShare={() => router.push('/passport/share' as any)} />
 
         {/* ── Buddy Profile card ── */}
         {buddyProfile != null && buddyProfile.status !== 'rejected' && (
