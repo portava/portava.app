@@ -520,10 +520,13 @@ describe("coarsening only ever reduces precision", () => {
       observedAt: "2026-08-31T00:00:00.000Z",
       expiresAt: "2026-08-31T01:00:00.000Z",
       sourceRefs: ["obs-1", "obs-2"],
-      provenance: { lines: [{ text: "3 travelers confirmed", ref: "snap-1" }], confidence: "high" },
+      provenance: { lines: [{ text: "3 travelers confirmed", ref: "snap-1" }], confidence: "strong" },
       distanceKm: 0.4,
     });
     const after = coarsenForZone(before, "approximate", circleZone());
+    // `as const` keys the loop to real MapObject fields, so a renamed or
+    // removed field fails to compile instead of silently asserting `undefined`
+    // about a key the type no longer has.
     for (const k of [
       "activity",
       "trend",
@@ -534,8 +537,8 @@ describe("coarsening only ever reduces precision", () => {
       "expiresAt",
       "sourceRefs",
       "provenance",
-    ]) {
-      assert.equal((after as Record<string, unknown>)[k], undefined, `${k} must be dropped`);
+    ] as const) {
+      assert.equal(after[k], undefined, `${k} must be dropped`);
     }
     assert.equal(after.distanceKm, null);
   });
@@ -843,6 +846,7 @@ describe("§24 — a coarsened object does not keep a live rank", () => {
     const promoted = { ...obj({ id: "p2" }), renderingPriority: RENDERING_PRIORITY.high_confidence_live_zone };
     const { objects } = applyProtection([promoted], [circleZone({ category: "medical_facility" })]);
     const out = objects.find((o) => o.id === "p2");
+    assert.ok(out, "the object should be coarsened, not suppressed");
     assert.equal(typeof out.renderingPriority, "number");
     assert.ok(out.renderingPriority > 0);
   });

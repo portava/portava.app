@@ -16,6 +16,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import TravelIdentityScreen from '../TravelIdentityScreen.tsx';
 import type {
+  ApiResult,
   TravelDnaPref,
   TravelDnaPrefInput,
 } from '../../../services/passportProjection.ts';
@@ -146,11 +147,12 @@ describe('TravelIdentityScreen — Travel-DNA persistence (F6)', () => {
   // write apply its outcome; an older response resolving last must be ignored,
   // so the control never ends on a stale server value.
   it('applies only the latest write when an older response resolves last (same dimension)', async () => {
-    const resolvers: Record<string, (r: unknown) => void> = {};
-    const persist = jest.fn((input: { key: string; kind: string; state: string }) =>
-      new Promise((resolve) => {
-        resolvers[input.state] = resolve;
-      }),
+    const resolvers: Record<string, (r: ApiResult<TravelDnaPref>) => void> = {};
+    const persist = jest.fn(
+      (input: TravelDnaPrefInput): Promise<ApiResult<TravelDnaPref>> =>
+        new Promise((resolve) => {
+          resolvers[input.state] = resolve;
+        }),
     );
 
     await render(

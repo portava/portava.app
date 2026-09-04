@@ -186,7 +186,8 @@ describe('§22 — a photo is evidence, so it carries nothing a claim would', ()
     const r = fake();
     await runWholeAct(r);
 
-    const media = r.posted[1] as Record<string, unknown>;
+    const media = r.posted[1];
+    assert.ok(media, 'the media contribution must have been posted');
     assert.deepEqual(
       Object.keys(media).sort(),
       ['kind', 'mediaUri', 'objectId', 'objectKind', 'observationId', 'observedAt', 'value'],
@@ -212,8 +213,10 @@ describe('§22 — a photo is evidence, so it carries nothing a claim would', ()
     await runWholeAct(r);
 
     assert.equal(seen.length, 1);
+    const asset = seen[0];
+    assert.ok(asset, 'the upload seam must have been handed an asset');
     for (const forbidden of ['lat', 'lng', 'latitude', 'longitude', 'coords', 'location']) {
-      assert.ok(!(forbidden in (seen[0] as Record<string, unknown>)));
+      assert.ok(!(forbidden in asset));
     }
   });
 });

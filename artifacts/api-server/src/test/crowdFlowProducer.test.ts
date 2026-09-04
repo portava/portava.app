@@ -519,6 +519,8 @@ describe("§10 observed movement and inferred cause are kept apart", () => {
       { zoneId: "zone-B", cause: "Riverside concert ends around now", basis: ["event:1234"] },
     ]);
     const [flow] = deriveCrowdFlow(transitions, { now: NOW }).flows;
+    // `payload` is optional on MapObject<T>; a published crowd flow must have one.
+    assert.ok(flow?.payload, "the producer must publish a flow payload");
     assert.equal(flow.payload.observed.cohortSize, 20);
     assert.deepEqual(flow.payload.observed.signalFamilies, ["arrival", "next_stop_contribution"]);
     assert.equal(flow.payload.inferred?.cause, "Riverside concert ends around now");
@@ -529,6 +531,7 @@ describe("§10 observed movement and inferred cause are kept apart", () => {
 
   it("a transition with no hypothesis has no inferred half at all", () => {
     const [flow] = deriveCrowdFlow(derive(publishableCohort()).transitions, { now: NOW }).flows;
+    assert.ok(flow?.payload, "the producer must publish a flow payload");
     assert.equal(flow.payload.inferred, null);
   });
 
@@ -819,9 +822,11 @@ describe("readCrowdFlowSignals — the single I/O seam", () => {
 
     const result = deriveCrowdFlow(transitions, { now: NOW });
     assert.equal(result.flows.length, 1, JSON.stringify(result.rejected));
-    assert.equal(result.flows[0].payload.observed.cohortSize, 20);
+    const published = result.flows[0]?.payload;
+    assert.ok(published, "the producer must publish a flow payload");
+    assert.equal(published.observed.cohortSize, 20);
     assert.deepEqual(
-      result.flows[0].payload.observed.signalFamilies,
+      published.observed.signalFamilies,
       ["accepted_plan", "next_stop_contribution"],
     );
     // Two families cap the band at `provisional` — see the residual-correlation

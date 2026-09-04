@@ -37,7 +37,6 @@ function collector() {
   const events: MapTelemetryBatch['events'] = [];
   setMapTelemetryTransport(async (batch) => {
     events.push(...batch.events);
-    return { ok: true };
   });
   return {
     events,
@@ -70,7 +69,7 @@ beforeEach(() => {
 describe('a refused Meet Here', () => {
   test('emits meet_here_refused and NOT meet_here_created', async () => {
     const c = collector();
-    emitMapEvent('map_opened', { entry: 'direct', mode: 'LIVE', hasTripContext: false, hasCrewContext: false });
+    emitMapEvent('map_opened', { entry: 'tab', mode: 'LIVE', hasTripContext: false, hasCrewContext: false });
     emitMapEvent('meet_here_refused', {
       ref: describeMapObject(obj()),
       reason: 'aggregate_subject',
@@ -192,7 +191,7 @@ describe('decision continuity', () => {
 
   test('the outcome chain shares one decision from ask to contribution', async () => {
     const c = collector();
-    emitMapEvent('map_opened', { entry: 'direct', mode: 'LIVE', hasTripContext: false, hasCrewContext: false });
+    emitMapEvent('map_opened', { entry: 'tab', mode: 'LIVE', hasTripContext: false, hasCrewContext: false });
     emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'LIVE' });
     const decision = currentDecisionId();
 
@@ -213,7 +212,7 @@ describe('decision continuity', () => {
 
   test('every event in one session shares one mapSessionId', async () => {
     const c = collector();
-    emitMapEvent('map_opened', { entry: 'direct', mode: 'LIVE', hasTripContext: false, hasCrewContext: false });
+    emitMapEvent('map_opened', { entry: 'tab', mode: 'LIVE', hasTripContext: false, hasCrewContext: false });
     emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'LIVE' });
     emitMapEvent('alternative_requested', { reason: 'not_interested', round: 1 });
     await c.flush();
