@@ -26,10 +26,12 @@ import { color, space } from '../../../theme/tokens.ts';
 import { WallObjectRenderer } from './WallObjectRenderer.tsx';
 import { CaughtUpState } from './CaughtUpState.tsx';
 import { NotInterestedControl } from './objects/wallItemShared.tsx';
+import { WallItemVisibilityProvider } from '../hooks/useWallItemVisibility.tsx';
 import { trackCaughtUp, trackImpression } from '../services/wallAnalytics.ts';
 import type { WallMode, WallProjection } from '../types/wallProjection.ts';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 55 };
+const EMPTY_VISIBLE: ReadonlySet<string> = new Set();
 
 export function WallFeed({
   items,
@@ -57,15 +59,24 @@ export function WallFeed({
 }) {
   // De-dup impressions across the session — record each projection once.
   const seenImpressions = React.useRef<Set<string>>(new Set());
+  // The set of currently-viewable projectionIds, shared with the item renderers
+  // so inline video autoplays only while on-screen and pauses when scrolled away
+  // (spec §11). `setVisibleIds` is a stable identity, so capturing it once in the
+  // ref callback keeps `onViewableItemsChanged` stable across renders (RN warns
+  // when that callback's identity changes).
+  const [visibleIds, setVisibleIds] = React.useState<ReadonlySet<string>>(EMPTY_VISIBLE);
   const onViewableItemsChanged = React.useRef(
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      const nextVisible = new Set<string>();
       for (const token of viewableItems) {
         const projection = token.item as WallProjection | undefined;
         if (!projection || !token.isViewable) continue;
+        nextVisible.add(projection.projectionId);
         if (seenImpressions.current.has(projection.projectionId)) continue;
         seenImpressions.current.add(projection.projectionId);
         trackImpression(projection);
       }
+      setVisibleIds(nextVisible);
     },
   );
 
@@ -93,6 +104,7 @@ export function WallFeed({
   );
 
   return (
+    <WallItemVisibilityProvider visibleIds={visibleIds}>
     <FlatList
       testID="wall-feed"
       data={items}
@@ -127,6 +139,7 @@ export function WallFeed({
       }
       showsVerticalScrollIndicator={false}
     />
+    </WallItemVisibilityProvider>
   );
 }
 
