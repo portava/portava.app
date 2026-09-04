@@ -881,6 +881,29 @@ function FullScreenMapScreenInner() {
    */
   const placesWanted = mode !== 'passport' && layerPrefs.relevant_places !== 'off';
 
+  // ── §34 live camera ──────────────────────────────────────────────────────────
+  // Where the camera actually SETTLED, reported by DiscoveryMapView through its
+  // onCameraChange prop. Declared above useMapEntities because the hook now
+  // takes it as the §34 re-query source: it used to be kept out of the fetch
+  // key because "a float that changes on every pinch would refetch the
+  // projection continuously" — the hook now QUANTISES it to a zoom band + a
+  // coarse centre grid and only re-queries after the §34 settle debounce, so a
+  // pan inside the viewport never re-queries and crossing into a new area does
+  // exactly once. It still also drives §17 bands and the §31 collision viewport
+  // (activeZoom / zoomBand, below).
+  const [liveCamera, setLiveCamera] =
+    useState<{ zoom: number; lat: number; lng: number } | null>(null);
+  const handleCameraChange = useCallback(
+    (cam: { zoom: number; center: { lat: number; lng: number } }) => {
+      setLiveCamera((prev) =>
+        prev && prev.zoom === cam.zoom && prev.lat === cam.center.lat && prev.lng === cam.center.lng
+          ? prev
+          : { zoom: cam.zoom, lat: cam.center.lat, lng: cam.center.lng },
+      );
+    },
+    [],
+  );
+
   // passportEntities — React hooks cannot be called conditionally.
   const {
     entities: defaultEntities,
@@ -895,6 +918,10 @@ function FullScreenMapScreenInner() {
     lat: fallbackLat,
     lng: fallbackLng,
     zoom: cameraZoom ?? paramZoom,
+    // §34: once the camera settles, the viewport intelligence is fetched for
+    // where the user is actually looking, not where the shell last aimed. Null
+    // in passport mode, which fetches nothing regardless.
+    camera: mode === 'passport' ? null : liveCamera,
     // §16 explicit choice only. Passport mode asks for nothing at all, so it
     // must not smuggle a flow request past that intent.
     crowdFlow: mode !== 'passport' && layerPrefs.crowd_flow === 'on',
@@ -1288,29 +1315,12 @@ function FullScreenMapScreenInner() {
   // Declared here rather than beside the render pipeline below because the
   // MARKERS need it too: `filterByLayers` was imported and never called, so the
   // Layers sheet wrote preferences that could not reach a drawn pin.
-  // `liveCamera` is the camera DiscoveryMapView actually has, reported through
-  // its onCameraChange prop. It is held HERE rather than pushed into mapStore's
-  // cameraZoom because that value is part of useMapEntities' fetch key above —
-  // a float that changes on every pinch would refetch the projection
-  // continuously. What needs the live camera is this pipeline (§17 bands, the
-  // §31 collision viewport), not the fetch.
   //
-  // It takes precedence over cameraZoom/cameraCenter: those are written when
-  // the screen COMMANDS a camera move (a carousel swipe, a marker tap), so they
-  // describe where the camera was sent, and liveCamera describes where it
-  // ended up. When the two disagree the camera is the authority.
-  const [liveCamera, setLiveCamera] =
-    useState<{ zoom: number; lat: number; lng: number } | null>(null);
-  const handleCameraChange = useCallback(
-    (cam: { zoom: number; center: { lat: number; lng: number } }) => {
-      setLiveCamera((prev) =>
-        prev && prev.zoom === cam.zoom && prev.lat === cam.center.lat && prev.lng === cam.center.lng
-          ? prev
-          : { zoom: cam.zoom, lat: cam.center.lat, lng: cam.center.lng },
-      );
-    },
-    [],
-  );
+  // `liveCamera` (declared above, before useMapEntities) is where the camera
+  // ENDED UP. It takes precedence over cameraZoom/cameraCenter, which are
+  // written when the screen COMMANDS a camera move (a carousel swipe, a marker
+  // tap) and describe where the camera was SENT. When the two disagree the
+  // camera is the authority.
   const activeZoom = liveCamera?.zoom ?? cameraZoom ?? paramZoom;
   const zoomBand = zoomRenderBand(activeZoom);
 
