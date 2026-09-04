@@ -13,13 +13,18 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react-native';
 
 const mockPush = jest.fn();
+// NOTE: intentionally exhaustive — expo-router needs native navigation modules; only router.push is asserted.
 jest.mock('expo-router', () => ({ router: { push: (...a: unknown[]) => mockPush(...a) } }));
 
 // Heavy children reach media capture / the API — stub to inert nodes; the link
 // wiring under test does not depend on them.
+// NOTE: intentionally exhaustive — StampAdmireBlock fetches admirers from the API; irrelevant to the link wiring under test.
 jest.mock('../StampAdmireBlock.tsx', () => ({ StampAdmireBlock: () => null }));
+// NOTE: intentionally exhaustive — StampArtwork renders SVG/canvas artwork; irrelevant to the link wiring under test.
 jest.mock('../../StampArtwork.tsx', () => ({ StampArtwork: () => null }));
+// NOTE: intentionally exhaustive — StampShareCard is the off-screen capture card; irrelevant to the link wiring under test.
 jest.mock('../../StampShareCard.tsx', () => ({ StampShareCard: () => null }));
+// NOTE: intentionally exhaustive — useStampShare drives native share/capture; returned inert so the sheet renders.
 jest.mock('../../../hooks/useStampShare.ts', () => ({
   useStampShare: () => ({ cardRef: { current: null }, share: jest.fn(), sharing: false, error: null, onArtworkSettled: jest.fn() }),
 }));

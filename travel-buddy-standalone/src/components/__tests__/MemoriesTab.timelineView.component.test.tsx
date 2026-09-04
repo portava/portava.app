@@ -19,19 +19,22 @@ jest.mock('react-native', () => {
       if (prop === 'Modal') {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const R = require('react') as typeof import('react');
-        return ({ children, visible }: { children: R.ReactNode; visible?: boolean }) =>
+        return ({ children, visible }: { children?: React.ReactNode; visible?: boolean }) =>
           visible ? R.createElement(target.View as React.ComponentType, null, children) : null;
       }
       return Reflect.get(target, prop, receiver);
     },
   });
 });
+// NOTE: intentionally exhaustive — expo-image-picker pulls native camera/permission modules unavailable in jest-expo; the picker is not exercised here.
 jest.mock('expo-image-picker', () => ({
   requestMediaLibraryPermissionsAsync: jest.fn().mockResolvedValue({ granted: true }),
   launchImageLibraryAsync: jest.fn().mockResolvedValue({ canceled: true, assets: [] }),
   MediaTypeOptions: { Images: 'Images' },
 }));
+// NOTE: intentionally exhaustive — media.ts calls the API server + Supabase; not exercised by the view switcher under test.
 jest.mock('../../services/media', () => ({ uploadMedia: jest.fn() }));
+// NOTE: intentionally exhaustive — passportStamps reaches the API server + Supabase; only updatePassportMemory is touched (visibility change) and is stubbed.
 jest.mock('../../services/passportStamps', () => ({
   createPassportMemory: jest.fn(),
   updatePassportMemory: jest.fn(async () => ({ ok: true })),
@@ -46,9 +49,13 @@ jest.mock('../ui/KeyboardSafeView', () => {
   const { View } = jest.requireActual('react-native');
   return { KeyboardSafeView: ({ children }: { children: unknown }) => R.createElement(View, null, children) };
 });
+// NOTE: intentionally exhaustive — SharedVideoPlayer wraps expo-av (native AV); rendered inert here.
 jest.mock('../ui/SharedVideoPlayer', () => ({ SharedVideoPlayer: () => null }));
+// NOTE: intentionally exhaustive — VideoThumbnail decodes video frames via native modules; rendered inert here.
 jest.mock('../ui/VideoThumbnail', () => ({ VideoThumbnail: () => null }));
+// NOTE: intentionally exhaustive — MediaSourceSheet opens native camera/library pickers; rendered inert here.
 jest.mock('../ui/MediaSourceSheet', () => ({ MediaSourceSheet: () => null }));
+// NOTE: intentionally exhaustive — GlobalPlacePicker starts location work + safe-area reads on mount; rendered inert here.
 jest.mock('../selectors/GlobalPlacePicker', () => ({ GlobalPlacePicker: () => null }));
 
 import { MemoriesTab } from '../MemoriesTab.tsx';

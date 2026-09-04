@@ -31,7 +31,7 @@ function view(): PassportProjectionView {
     featuredJourney: null,
     upcomingPlans: [],
     memories: [],
-    sharedContext: { facts: [], summary: 'x', handoffEligible: true } as PassportProjectionView['sharedContext'],
+    sharedContext: { summaryLabel: 'Strong overlap', factCount: 0, facts: [], handoffEligible: true },
     actions: { can_follow: true, can_message: true, can_make_plan: true, can_invite_trip: true, can_view_availability: true, can_view_trust: true },
     interests: ['Nightlife'],
     restricted: false,

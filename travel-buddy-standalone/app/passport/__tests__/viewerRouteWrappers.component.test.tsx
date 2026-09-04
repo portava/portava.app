@@ -10,6 +10,7 @@ import React from 'react';
 import { render } from '@testing-library/react-native';
 
 const params = { current: {} as { userId?: string; username?: string } };
+// NOTE: intentionally exhaustive — expo-router needs native navigation modules; only useLocalSearchParams is used.
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => params.current,
 }));
@@ -17,14 +18,17 @@ jest.mock('expo-router', () => ({
 const mockTrustProps = jest.fn();
 const mockJourneysProps = jest.fn();
 const mockTravelIdentityProps = jest.fn();
+// NOTE: intentionally exhaustive — the real screen fetches a projection; replaced with a prop-capturing stub to assert wiring.
 jest.mock('../../../src/features/passport/TrustScreen.tsx', () => ({
   __esModule: true,
   default: (p: unknown) => { mockTrustProps(p); return null; },
 }));
+// NOTE: intentionally exhaustive — the real screen fetches journeys; replaced with a prop-capturing stub to assert wiring.
 jest.mock('../../../src/features/passport/JourneysScreen.tsx', () => ({
   __esModule: true,
   default: (p: unknown) => { mockJourneysProps(p); return null; },
 }));
+// NOTE: intentionally exhaustive — the real screen fetches a projection; replaced with a prop-capturing stub to assert wiring.
 jest.mock('../../../src/features/passport/TravelIdentityScreen.tsx', () => ({
   __esModule: true,
   default: (p: unknown) => { mockTravelIdentityProps(p); return null; },

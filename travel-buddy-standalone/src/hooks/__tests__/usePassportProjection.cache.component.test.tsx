@@ -16,6 +16,7 @@ const DENIED = {
   can_follow: false, can_message: false, can_make_plan: false,
   can_invite_trip: false, can_view_availability: false, can_view_trust: false,
 };
+// NOTE: intentionally exhaustive — the real service reaches Supabase/the API; the hook only needs getPassportProjection + DENIED_VIEWER_ACTIONS.
 jest.mock('../../services/passportProjection.ts', () => ({
   getPassportProjection: (id: string) => mockGet(id),
   DENIED_VIEWER_ACTIONS: DENIED,

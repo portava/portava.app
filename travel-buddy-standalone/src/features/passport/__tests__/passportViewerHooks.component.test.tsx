@@ -10,6 +10,7 @@
 import { renderHook, waitFor } from '@testing-library/react-native';
 
 const mockSessionUserId = { current: 'owner-1' as string | null };
+// NOTE: intentionally exhaustive — SessionContext imports the real Supabase client at module load; only userId is needed here.
 jest.mock('../../../context/SessionContext.tsx', () => ({
   useSession: () => ({ userId: mockSessionUserId.current }),
 }));
@@ -22,6 +23,7 @@ const mockGetTravelIdentity = jest.fn(async (_userId: string) => ({
   ok: true as const,
   data: { dimensions: [], traits: [] },
 }));
+// NOTE: intentionally exhaustive — the real service reaches Supabase/the API; the two fetchers under test are the only members used.
 jest.mock('../../../services/passportProjection.ts', () => ({
   getPassportJourneys: (id: string) => mockGetJourneys(id),
   getTravelIdentity: (id: string) => mockGetTravelIdentity(id),
