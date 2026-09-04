@@ -333,7 +333,7 @@ describe('layerForKind', () => {
       );
     }
     // Belt and braces: the kind list itself must not have shrunk silently.
-    assert.equal(MAP_OBJECT_KINDS.length, 13);
+    assert.equal(MAP_OBJECT_KINDS.length, 14);
   });
 
   it('places each kind on the layer §16/§11 puts it on', () => {
@@ -351,6 +351,7 @@ describe('layerForKind', () => {
       safety_notice: 'safety',
       memory: 'memories',
       prediction: 'live_activity',
+      saved_place: 'saved',
     };
     for (const kind of MAP_OBJECT_KINDS) {
       assert.equal(layerForKind(kind), expected[kind], `wrong layer for '${kind}'`);

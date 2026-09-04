@@ -17,6 +17,20 @@ import { resolveCountry } from "../../lib/stamps/countryLookup.js";
 import { resolveCountryWithGeocoding } from "../../lib/stamps/countryGeocoder.js";
 import { criteriaGate } from "../../lib/stamps/criteria/index.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { recordPassportEvent } from "../../lib/passportTelemetry.js";
+
+/**
+ * §12/TABLE 16 provenance tier for a StampAwardEngine award. Everything the
+ * engine awards is server-derived (trip/event/contribution/system/admin/…) and
+ * therefore a VERIFIED travel fact — never a client self-reported decorative
+ * badge, which flows through a different path. Only an explicitly self-reported
+ * source is downgraded to 'reported'. Drives whether a `stamp_verified` §32
+ * event fires alongside `stamp_issued`.
+ */
+const SELF_REPORTED_SOURCES = new Set(["self_reported", "self", "decorative"]);
+function stampVerificationTier(sourceType: string): "verified" | "reported" {
+  return SELF_REPORTED_SOURCES.has(String(sourceType).trim().toLowerCase()) ? "reported" : "verified";
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -573,6 +587,36 @@ async function _awardStampCore(
       }));
     }
   }).catch(() => {});
+
+  // §32 telemetry: the stamp was issued (and, for a verified-provenance award,
+  // verified). Fire-and-forget through the server telemetry sink — flag-gated
+  // OFF, payload allow-listed, and it can never block or fail the award. Emitted
+  // only on a genuine fresh award (this return), never on the already-earned /
+  // recovery no-op paths above. `void` so the award result is not awaited on it.
+  {
+    const tier = stampVerificationTier(sourceType);
+    const evtPayload = {
+      source: sourceType,
+      verification: tier,
+      stamp_type: (definition as any).stamp_type ?? null,
+      city: city ?? null,
+      country: country ?? null,
+    };
+    void recordPassportEvent(sc, {
+      event: "stamp_issued",
+      actorId: userId,
+      subjectId: newStampId,
+      payload: evtPayload,
+    });
+    if (tier === "verified") {
+      void recordPassportEvent(sc, {
+        event: "stamp_verified",
+        actorId: userId,
+        subjectId: newStampId,
+        payload: evtPayload,
+      });
+    }
+  }
 
   return {
     awarded: true,

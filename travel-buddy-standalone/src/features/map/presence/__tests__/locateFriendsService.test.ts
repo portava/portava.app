@@ -24,14 +24,17 @@ import {
   leaveLocateFriendsSession,
   memberSnapshotToState,
   precisionToPublish,
+  publishEventCachedLocation,
   publishLocateFriendsPosition,
   publishManualCheckpoint,
   readLocateFriendsSession,
+  sharePermittedLocation,
   startLocateFriendsSession,
   toLocateSession,
   type LocateFriendsMemberSnapshot,
   type LocateFriendsTransport,
 } from '../../../../services/locateFriends.ts';
+import { cacheEventCheckInLocation } from '../eventCachedLocation.ts';
 import {
   LOCATE_SIGNAL_RUNGS,
   RUNG_POLICY,
@@ -920,5 +923,130 @@ describe('the server snapshot becomes the model, without re-deriving it', () => 
     };
     const built = toLocateSession(envelope, 'me', NOW);
     assert.equal(built.ok, false);
+  });
+});
+
+// ── §12 rung 2 · the event_cached_location producer ──────────────────────────
+
+describe('§12 rung 2 · publishEventCachedLocation goes through the model', () => {
+  const DA_NANG = { lat: 16.047079, lng: 108.220518 };
+
+  function cache(over: Partial<Parameters<typeof cacheEventCheckInLocation>[0]> = {}) {
+    const r = cacheEventCheckInLocation({
+      lat: DA_NANG.lat,
+      lng: DA_NANG.lng,
+      venueLabel: 'Main Stage',
+      consent: true,
+      now: NOW,
+      ...over,
+    });
+    assert.ok(r.ok);
+    return r.cache;
+  }
+
+  test('it publishes at the event_cached_location rung and the raw coordinate never leaves the device', async () => {
+    const { impl, calls } = stubFetch([
+      { body: { enabled: true, stored: true, storedPrecision: 'approximate', rung: 'event_cached_location' } },
+    ]);
+    const res = await publishEventCachedLocation(
+      { sessionId: SESSION_ID, cache: cache(), now: NOW + 60_000 },
+      transportFor(impl),
+    );
+    assert.ok(res.ok);
+    if (!res.ok) return;
+    assert.equal(res.data.stored, true);
+    assert.equal(calls.length, 1);
+    const sent = calls[0].body;
+    assert.equal(sent.rung, 'event_cached_location');
+    // "names a venue, not a point": the cached coordinate is coarsened away by
+    // the rung's approximate ceiling; only the venue label survives.
+    assert.equal(sent.lat, null);
+    assert.equal(sent.lng, null);
+    assert.equal(sent.checkpointLabel, 'Main Stage');
+    assert.notEqual(sent.precision, 'precise');
+  });
+
+  test('an expired cache declines without touching the network (not a retry-able error)', async () => {
+    const short = cache({ ttlMs: 60_000 });
+    const { impl, calls } = stubFetch([{ body: {} }]);
+    const res = await publishEventCachedLocation(
+      { sessionId: SESSION_ID, cache: short, now: short.expiresAt + 1 },
+      transportFor(impl),
+    );
+    assert.ok(res.ok);
+    if (!res.ok) return;
+    assert.equal(res.data.stored, false);
+    assert.equal(calls.length, 0, 'a dead cache must not hit the wire');
+  });
+
+  test('a null cache declines the same way', async () => {
+    const { impl, calls } = stubFetch([{ body: {} }]);
+    const res = await publishEventCachedLocation(
+      { sessionId: SESSION_ID, cache: null, now: NOW },
+      transportFor(impl),
+    );
+    assert.ok(res.ok);
+    if (!res.ok) return;
+    assert.equal(res.data.stored, false);
+    assert.equal(calls.length, 0);
+  });
+});
+
+// ── §25/§37 · the bounded permitted-location share channel ───────────────────
+
+describe('§25 · sharePermittedLocation is a bounded, expiring, revocable share', () => {
+  const DA_NANG = { lat: 16.047079, lng: 108.220518 };
+
+  test('publishes the pressed point into the session, capped at the §37 bound', async () => {
+    const { impl, calls } = stubFetch([
+      { body: { enabled: true, stored: true, storedPrecision: 'approximate' } },
+    ]);
+    const res = await sharePermittedLocation(
+      { sessionId: SESSION_ID, point: DA_NANG, bound: { privacyClass: 'place_level' }, now: NOW },
+      transportFor(impl),
+    );
+    assert.ok(res.ok);
+    if (!res.ok) return;
+    assert.equal(res.data.stored, true);
+    // The channel is the SESSION — the publish lands on its position endpoint.
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, new RegExp(`/sessions/${SESSION_ID}/position$`));
+    // §37: the pressed coordinate is coarsened away below precise_temporary —
+    // the bound + purpose narrow it, so no raw point leaves the device.
+    assert.equal(calls[0].body.lat, null);
+    assert.equal(calls[0].body.lng, null);
+    assert.notEqual(calls[0].body.precision, 'precise');
+  });
+
+  test('the bound can only tighten — it never widens what the ladder allows', async () => {
+    // Asking to share at a WIDER class than §37 permits cannot raise the result:
+    // the purpose ceiling and the bound both cap it, and the narrower wins.
+    const { impl, calls } = stubFetch([{ body: { enabled: true, stored: true, storedPrecision: 'presence_only' } }]);
+    await sharePermittedLocation(
+      { sessionId: SESSION_ID, point: DA_NANG, bound: { privacyClass: 'aggregate_only' }, now: NOW },
+      transportFor(impl),
+    );
+    // aggregate_only ⇒ presence_only request, never a coordinate.
+    assert.equal(calls[0].body.lat, null);
+    assert.equal(calls[0].body.precision, 'presence_only');
+  });
+
+  test('the channel is revocable — leaving deletes the share, unconditionally', async () => {
+    const { impl, calls } = stubFetch([{ body: { ok: true, left: true } }]);
+    const res = await leaveLocateFriendsSession(SESSION_ID, transportFor(impl));
+    assert.ok(res.ok);
+    assert.equal(res.ok && res.data.left, true);
+    assert.equal(calls[0].method, 'DELETE');
+    assert.match(calls[0].url, new RegExp(`/sessions/${SESSION_ID}/membership$`));
+  });
+
+  test('the channel expires — reading an ended session is the one opaque unavailable', async () => {
+    const { impl } = stubFetch([{ body: { enabled: true, status: 'unavailable', session: null, members: [] } }]);
+    const res = await readLocateFriendsSession(SESSION_ID, transportFor(impl));
+    assert.ok(res.ok);
+    if (!res.ok) return;
+    assert.equal(res.data.status, 'unavailable');
+    assert.equal(res.data.session, null);
+    assert.deepEqual(res.data.members, []);
   });
 });
