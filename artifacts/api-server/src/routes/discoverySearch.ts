@@ -217,6 +217,76 @@ const GEM_POSITION_DENIED: ReadonlySet<SensitivityLevel> = new Set<SensitivityLe
  */
 export const GEM_SEARCHABLE_STATUSES = ["active"] as const;
 
+// ── Status predicates for the remaining enum-typed emitters ──────────────────
+//
+// Same defect class as the gem filter above, and the same reason it survived:
+// an unknown enum literal is a HARD ERROR (22P02), PostgREST returns 400, and
+// `if (error || !data) return []` turns the 400 into an empty result set. Three
+// more emitters were in that state — searchTrips, searchPlans' trips sub-query
+// and searchPosts — each filtering on a label its enum has never had.
+//
+// The rule for the constants below: name only real labels, and adopt the
+// predicate an existing surface already uses for the same question rather than
+// inventing one. `trip_plan_items.status` is deliberately absent — it is a
+// `text` column, not an enum, so a wrong literal there is a harmless non-match
+// rather than a 400. Enum-typed is what makes this class fatal.
+//
+// `trip_status` gets TWO of them, because search asks two different questions
+// about a trip — "may the public see this?" and "is this the caller's own?" —
+// and the repo already answers each somewhere. Adopting both rather than
+// flattening them into one is the difference between a fix and a behaviour
+// change; see searchPlans.
+
+/**
+ * Statuses nobody searches — the trip is abandoned or put away. This is
+ * PassportRemembersService's rule for the owner's own trips ("Exclude
+ * cancelled/archived"), which CompassTripContext agrees with by listing every
+ * other label including `draft`.
+ */
+export const TRIP_RETIRED_STATUSES = ["cancelled", "archived"] as const;
+
+/**
+ * Statuses a PUBLIC trip search must not return: the retired ones plus `draft`,
+ * because an unpublished trip is not public content. This is wellKnownShare's
+ * public-unfurl gate verbatim ("draft/cancelled/archived trips are not
+ * shareable content even when the owner left visibility=public on them"), so a
+ * search row and a shared trip link agree about which trips are public.
+ *
+ * Strictly WIDER than the broken filter's apparent intent: the old
+ * `.neq("status","cancelled")` would have surfaced unpublished drafts and
+ * archived trips had it ever run.
+ *
+ * Derived from TRIP_RETIRED_STATUSES so the public gate cannot drift away from
+ * the owner one — the public rule is "the owner's rule, plus draft".
+ *
+ * Both are exported so a test can hold them against the real enum instead of
+ * against a fixture's invented value.
+ */
+export const TRIP_UNSEARCHABLE_STATUSES = ["draft", ...TRIP_RETIRED_STATUSES] as const;
+
+/**
+ * `post_status` labels a public post search may return. The enum's full label
+ * set is `active | hidden | reported | deleted`; "banned" is not among them.
+ *
+ * `active` is the whole allowlist, which is `posts_select_policy`'s own rule
+ * (`status = 'active' AND (visibility = 'public' OR …)`). That RLS policy does
+ * NOT protect this path — every emitter here runs on the service-role client,
+ * which bypasses RLS — so this filter is the only thing standing between the
+ * moderation queue and public search. Dropping just the bogus "banned" literal
+ * and keeping `.neq("status","deleted")` would have left `hidden` and
+ * `reported` posts searchable: a moderation bypass, not a fix.
+ */
+export const POST_SEARCHABLE_STATUSES = ["active"] as const;
+
+/**
+ * PostgREST's negated-set literal for `.not(col, "in", …)` — `("a","b","c")`.
+ * Derived from the exported array rather than written out beside it, so the
+ * constant a test checks and the string that reaches the wire cannot drift.
+ */
+function notInList(values: readonly string[]): string {
+  return `(${values.map((v) => `"${v}"`).join(",")})`;
+}
+
 export interface GemSearchPosition extends MetadataPosition {
   /** "approximate" when a centroid is emitted; "hidden" when nothing is. Never "exact". */
   coordsPrecision: "approximate" | "hidden";
@@ -699,9 +769,17 @@ async function searchTrips(
       .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
       .eq("visibility", "public")
       .eq("show_in_discovery", true)
-      .neq("status", "cancelled")
-      .neq("status", "deleted")
-      .neq("status", "banned")
+      // `trip_status` is an ENUM: draft | planning | upcoming | active |
+      // completed | cancelled | archived. "deleted" and "banned" are NOT
+      // labels, and Postgres rejects an unknown enum literal outright (22P02)
+      // rather than matching nothing — so `.neq("status","deleted")` made every
+      // trip search error out and fall into the `return []` below.
+      //
+      // See TRIP_UNSEARCHABLE_STATUSES: this is wellKnownShare's public-unfurl
+      // gate, so a search row and a shared trip link agree about which trips
+      // are public content. It also drops the draft and archived trips the
+      // broken filter would have surfaced.
+      .not("status", "in", notInList(TRIP_UNSEARCHABLE_STATUSES))
       .order("start_date", { ascending: true });
     // Apply time-intent date bounds to trip start_date when present
     if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
@@ -776,15 +854,27 @@ async function searchPlans(
       .from("trips")
       .select("id, visibility, show_in_discovery, owner_id, status, start_date")
       .in("id", tripIds)
-      .neq("status", "deleted")
-      .neq("status", "cancelled")
-      .neq("status", "banned");
+      // Identical 22P02 defect to searchTrips above ("deleted"/"banned" are not
+      // trip_status labels), but NOT the identical predicate.
+      //
+      // This emitter serves two audiences: public discoverable trips, and the
+      // caller's OWN trips regardless of visibility (see the filter below —
+      // that owner branch is the whole reason it reads trips at all). A draft
+      // trip is not public content, but it is very much the owner's, so `draft`
+      // is excluded per-branch below rather than here. Only the retired
+      // statuses — abandoned or put away — are out of the index for everyone.
+      .not("status", "in", notInList(TRIP_RETIRED_STATUSES));
 
     const allowedTrips = (trips ?? []).filter(
       (t: any) =>
-        // Public trips: also require show_in_discovery so owners who opted out are excluded.
-        // Caller-owned trips are always visible regardless of the flag.
-        (((t.visibility as string) === "public" && t.show_in_discovery === true) ||
+        // Public trips: also require show_in_discovery so owners who opted out are excluded,
+        // and exclude `draft` — an unpublished trip is not public content (this is the half
+        // of TRIP_UNSEARCHABLE_STATUSES the query above deliberately left to this branch;
+        // the retired statuses were already dropped there, for both branches).
+        // Caller-owned trips are always visible regardless of the flag, drafts included:
+        // a trip you are still writing is still yours to find.
+        (((t.visibility as string) === "public" && t.show_in_discovery === true
+          && (t.status as string) !== "draft") ||
           (t.owner_id as string) === userId) &&
         !blockedSet.has(t.owner_id as string) &&
         !ageRestrictedSet.has(t.owner_id as string) &&
@@ -1037,8 +1127,17 @@ async function searchPosts(
       .select("id, content, author_id, media_urls, created_at, like_count")
       .ilike("content", pat)
       .eq("visibility", "public")
-      .neq("status", "deleted")
-      .neq("status", "banned")
+      // `post_status` is an ENUM: active | hidden | reported | deleted.
+      // "banned" is NOT a label, and Postgres rejects an unknown enum literal
+      // outright (22P02) rather than matching nothing — so this emitter errored
+      // on every query and fell into the `return []` below.
+      //
+      // See POST_SEARCHABLE_STATUSES. `deleted` was the one real label here, so
+      // the tempting minimal fix is to drop "banned" and keep the `.neq`. That
+      // would be wrong: it leaves `hidden` and `reported` posts searchable, and
+      // this client is service-role, so posts_select_policy's own
+      // `status = 'active'` rule is not enforcing anything on this path.
+      .in("status", POST_SEARCHABLE_STATUSES)
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 

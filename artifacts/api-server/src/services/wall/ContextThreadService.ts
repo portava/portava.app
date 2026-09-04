@@ -492,6 +492,10 @@ async function readHiddenGemCandidate(
       // PGRST100, so `if (error || !data) return null` fired on every call and
       // this branch has never produced a candidate in production. The columns
       // below are each verified present in the live schema.
+      //
+      // The two derivations below still default those signals (`?? null`, `?? 0`).
+      // To make them real, derive from `hidden_gem_verifications` (the
+      // confirmations table) rather than adding denormalised counters here.
       .select(
         "id, sensitivity_level, verification_level, status, crowd_level, " +
           "save_count, visit_count, updated_at, canonical_place_id, " +
