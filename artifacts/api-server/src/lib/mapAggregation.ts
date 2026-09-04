@@ -578,6 +578,7 @@ const KIND_NOUNS: Partial<Record<MapObjectKind, string>> = {
   hidden_gem: "places",
   trip_stop: "places",
   memory: "places",
+  saved_place: "places",
   event: "events",
   prediction: "signals",
 };
@@ -995,6 +996,17 @@ export interface ZoneTransition {
 }
 
 /**
+ * The label every inferred cause carries, verbatim. §10 says the inferred half
+ * must be SEPARATELY represented and §37 says a guess must never look like an
+ * observation; a renderer that shows `payload.inferred.cause` as a sentence
+ * needs a word that says which of the two it is drawing, and it must not have
+ * to invent that word (or forget to). So the label is part of the payload, set
+ * by this module on every inferred cause, never by the producer that proposed
+ * the hypothesis.
+ */
+export const INFERRED_CAUSE_LABEL = "Possible cause — inferred, not observed";
+
+/**
  * §10: "Observed movement and inferred cause must be separately represented."
  * They are two fields, never merged into one sentence, and `inferred` is null
  * whenever no cause was supplied.
@@ -1011,7 +1023,13 @@ export interface CrowdFlowPayload {
     windowMinutes: number;
     observedAt: string;
   };
-  inferred: { cause: string; confidence: ConfidenceState; basis: string[] } | null;
+  inferred: {
+    /** Always INFERRED_CAUSE_LABEL — the renderer's "this is a guess" word. */
+    label: string;
+    cause: string;
+    confidence: ConfidenceState;
+    basis: string[];
+  } | null;
 }
 
 export type CrowdFlowRejectionReason =
@@ -1187,6 +1205,7 @@ export function deriveCrowdFlow(
     const inferred =
       t.inferredCause && typeof t.inferredCause.text === "string" && t.inferredCause.text.trim() !== ""
         ? {
+            label: INFERRED_CAUSE_LABEL,
             cause: t.inferredCause.text,
             confidence:
               t.inferredCause.confidence && CONFIDENCE_STATES.includes(t.inferredCause.confidence)

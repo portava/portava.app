@@ -36,7 +36,7 @@ const router = Router();
 /** Exported for testing: coordinate redaction must survive a refactor. */
 export async function loadNearbyEvents(
   sc: any, viewerId: string, lat: number, lng: number, radiusKm: number, blockedSet: Set<string>,
-): Promise<any[]> {
+): Promise<any[] | null> {
   const latDelta = radiusKm / 111;
   const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
   const { data, error } = await sc
@@ -51,7 +51,10 @@ export async function loadNearbyEvents(
     .gte("location_lat", lat - latDelta).lte("location_lat", lat + latDelta)
     .gte("location_lng", lng - lngDelta).lte("location_lng", lng + lngDelta)
     .limit(60);
-  if (error || !Array.isArray(data)) return [];
+  // A read FAILURE is not an empty neighbourhood: return null so a caller that
+  // needs the distinction (the §10 inferred-cause path reports eventsReadFailed)
+  // can tell them apart. Callers that don't care coalesce null to [].
+  if (error || !Array.isArray(data)) return null;
   const out: any[] = [];
   for (const ev of data as any[]) {
     if (blockedSet.has(ev.host_id)) continue;
@@ -132,7 +135,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
   })());
 
   if (want("event")) tasks.push((async () => {
-    const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => []);
+    const events = (await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null)) ?? [];
     for (const ev of events) results.push(normalizeEvent(ev));
   })());
 
