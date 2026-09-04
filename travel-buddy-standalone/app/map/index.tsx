@@ -1199,7 +1199,30 @@ function FullScreenMapScreenInner() {
   // Declared here rather than beside the render pipeline below because the
   // MARKERS need it too: `filterByLayers` was imported and never called, so the
   // Layers sheet wrote preferences that could not reach a drawn pin.
-  const activeZoom = cameraZoom ?? paramZoom;
+  // `liveCamera` is the camera DiscoveryMapView actually has, reported through
+  // its onCameraChange prop. It is held HERE rather than pushed into mapStore's
+  // cameraZoom because that value is part of useMapEntities' fetch key above —
+  // a float that changes on every pinch would refetch the projection
+  // continuously. What needs the live camera is this pipeline (§17 bands, the
+  // §31 collision viewport), not the fetch.
+  //
+  // It takes precedence over cameraZoom/cameraCenter: those are written when
+  // the screen COMMANDS a camera move (a carousel swipe, a marker tap), so they
+  // describe where the camera was sent, and liveCamera describes where it
+  // ended up. When the two disagree the camera is the authority.
+  const [liveCamera, setLiveCamera] =
+    useState<{ zoom: number; lat: number; lng: number } | null>(null);
+  const handleCameraChange = useCallback(
+    (cam: { zoom: number; center: { lat: number; lng: number } }) => {
+      setLiveCamera((prev) =>
+        prev && prev.zoom === cam.zoom && prev.lat === cam.center.lat && prev.lng === cam.center.lng
+          ? prev
+          : { zoom: cam.zoom, lat: cam.center.lat, lng: cam.center.lng },
+      );
+    },
+    [],
+  );
+  const activeZoom = liveCamera?.zoom ?? cameraZoom ?? paramZoom;
   const zoomBand = zoomRenderBand(activeZoom);
 
   const layerContext = useMemo(
@@ -1491,8 +1514,8 @@ function FullScreenMapScreenInner() {
           viewport: {
             zoom: activeZoom,
             center: {
-              lat: cameraCenter?.lat ?? fallbackLat ?? 0,
-              lng: cameraCenter?.lng ?? fallbackLng ?? 0,
+              lat: liveCamera?.lat ?? cameraCenter?.lat ?? fallbackLat ?? 0,
+              lng: liveCamera?.lng ?? cameraCenter?.lng ?? fallbackLng ?? 0,
             },
             width: windowWidth,
             height: windowHeight,
@@ -1512,6 +1535,7 @@ function FullScreenMapScreenInner() {
     [
       objects,
       activeZoom,
+      liveCamera,
       cameraCenter,
       fallbackLat,
       fallbackLng,
@@ -1522,6 +1546,29 @@ function FullScreenMapScreenInner() {
     ],
   );
   const hiddenByCollision = renderResult.collisionDroppedCount ?? 0;
+
+  // NOT filtered to `renderResult.kept` here, deliberately. This branch used to
+  // hand the marker layer a kept-filtered list; main's own
+  // layerFilteredMarkers.component.test.tsx rules the other way and is the
+  // merged, tested design:
+  //
+  //   "Filtering to the pipeline's KEPT set would delete every one of them and
+  //    blank the surface outright, which is exactly why the filter drops by an
+  //    explicit HIDDEN set instead."
+  //
+  // Concretely, filtering to `kept` also applies §17 band culling at the marker
+  // layer, and hidden_gem is not introduced until the `district` band (zoom 12).
+  // At the default zoom of 11 every gem pin disappeared — which is the exact
+  // blanking that file's "THE anti-blanking assertion" exists to catch. It broke
+  // four of its tests.
+  //
+  // What this branch DOES change is the zoom that decision is made at: activeZoom
+  // now follows the real camera instead of a constant, so the band logic finally
+  // sees the zoom the user is actually at.
+  //
+  // STILL OPEN, and a product call rather than a merge call: `hiddenByCollision`
+  // above feeds a "+N more nearby" chip that counts markers §31 dropped, while
+  // the marker layer still draws them. One of the two has to give.
 
   // ── §8 the selected MapObject, and its §30 overlays ─────────────────────────
   const selectedObject = useMemo(
@@ -1903,6 +1950,7 @@ function FullScreenMapScreenInner() {
         enabledEntityLayers={enabledLayers}
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
+        onCameraChange={handleCameraChange}
         filterRowOffset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT + 8}
         onLongPressMap={handleMapLongPress}
       />
@@ -2097,13 +2145,18 @@ function FullScreenMapScreenInner() {
           onPress={() => {
             // easeTo is the v11 replacement for setCamera; guard its existence
             // so a future API change fails soft rather than throwing.
+            //
+            // Steps up from `activeZoom` — the camera's REAL zoom — not from
+            // the store's commanded one. This chip's whole promise is "zoom in
+            // to see them", and off the stale value a user already pinched to
+            // 16 would be eased to 12.5: a zoom OUT that hides more, not less.
             const cam = cameraRef.current;
-            const lat = cameraCenter?.lat ?? fallbackLat;
-            const lng = cameraCenter?.lng ?? fallbackLng;
+            const lat = liveCamera?.lat ?? cameraCenter?.lat ?? fallbackLat;
+            const lng = liveCamera?.lng ?? cameraCenter?.lng ?? fallbackLng;
             if (cam && typeof cam.easeTo === 'function' && lat != null && lng != null) {
               cam.easeTo({
                 center: [lng, lat],
-                zoom: Math.min((cameraZoom ?? paramZoom) + 1.5, 18),
+                zoom: Math.min(activeZoom + 1.5, 18),
                 duration: 400,
               });
             }

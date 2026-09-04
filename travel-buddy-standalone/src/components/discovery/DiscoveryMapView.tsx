@@ -133,6 +133,22 @@ export interface DiscoveryMapViewProps {
    */
   filterRowOffset?: number;
   /**
+   * The REAL camera, reported once on mount and then whenever the map settles
+   * (throttled to the same 250 ms as the internal zoom/centre tracking).
+   *
+   * This component has tracked its own camera zoom since the travelers layer
+   * landed, but the value never left the file: no prop exposed it, so the /map
+   * screen fell back to the `zoom` query param — a constant, 11 by default —
+   * for §17 band culling and for the §31 collision viewport. Pinching the map
+   * therefore changed which pins MapLibre drew and never changed which pins
+   * Portava DECIDED to draw: at the stuck value, "individual places only from
+   * district in" was evaluated at city zoom forever.
+   *
+   * `center` is in {lat, lng}, not MapLibre's [lng, lat], because every
+   * consumer of this callback is Portava code that speaks the former.
+   */
+  onCameraChange?: (camera: { zoom: number; center: { lat: number; lng: number } }) => void;
+  /**
    * §25 long-press. Fired for a press-and-hold anywhere on the base map.
    *
    * The map SDK is the only thing that can answer "where is this on the
@@ -246,6 +262,7 @@ export function DiscoveryMapView({
   onSelectEntity,
   selectedEntityId,
   filterRowOffset,
+  onCameraChange,
   onLongPressMap,
 }: DiscoveryMapViewProps) {
   // Lazy initialiser reads the module-level memory cache synchronously so
@@ -375,8 +392,26 @@ export function DiscoveryMapView({
     }
   };
 
+  // Report the camera the map actually OPENS at, exactly once.
+  //
+  // Without this the parent has to guess until the user first pans, and the
+  // guess drives §17 band culling — so the map would open having decided which
+  // kinds are legible at a zoom it is not at. `initialViewState` below is
+  // computed from the same `vp`, so this reports the truth rather than a
+  // prediction. The ref guard is what keeps it to one report: `vp` is a fresh
+  // object every render and `onCameraChange` may be an inline arrow, so the
+  // dependency list alone would re-fire it and clobber a live zoom with the
+  // mount-time one.
+  const reportedInitialCamera = useRef(false);
+  useEffect(() => {
+    if (reportedInitialCamera.current || !vp || !onCameraChange) return;
+    reportedInitialCamera.current = true;
+    onCameraChange({ zoom: vp.zoom, center: { lat: vp.center[1], lng: vp.center[0] } });
+  }, [vp, onCameraChange]);
+
   // Throttled camera tracking (250ms): zoom feeds cluster bucketing, centre
-  // feeds the travelers fetch so panning to a new city loads its travelers.
+  // feeds the travelers fetch so panning to a new city loads its travelers, and
+  // onCameraChange hands both to the parent's render pipeline.
   const handleRegionChange = (e: any) => {
     const now = Date.now();
     if (now - zoomAt.current <= 250) return;
@@ -384,11 +419,19 @@ export function DiscoveryMapView({
     const z = e?.nativeEvent?.zoom;
     if (typeof z === 'number') setZoom(z);
     const c = e?.nativeEvent?.center;
+    let next: [number, number] | null = null;
     if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') {
-      setMapCenter((prev) => {
-        const next: [number, number] = [Math.round(c[0] * 100) / 100, Math.round(c[1] * 100) / 100];
-        return prev && prev[0] === next[0] && prev[1] === next[1] ? prev : next;
-      });
+      next = [Math.round(c[0] * 100) / 100, Math.round(c[1] * 100) / 100];
+      setMapCenter((prev) =>
+        prev && prev[0] === next![0] && prev[1] === next![1] ? prev : next!,
+      );
+    }
+    // Read off the EVENT, not off the `zoom` / `mapCenter` state this handler
+    // just set: those are a render behind, and the parent's §31 collision
+    // viewport should not lag the camera by a frame.
+    if (typeof z === 'number' && onCameraChange) {
+      const centre = next ?? mapCenter ?? (vp ? vp.center : null);
+      if (centre) onCameraChange({ zoom: z, center: { lat: centre[1], lng: centre[0] } });
     }
   };
 
