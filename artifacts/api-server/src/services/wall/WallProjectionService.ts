@@ -88,6 +88,9 @@ export interface WallCandidate {
   participants?: PublicActorRef[];
   /** contextual_opportunity kind (spec §19). */
   opportunityKind?: "buddy_dispatch" | "buddy_around" | "event" | "trip_signal";
+  /** contextual_opportunity: the COARSE approved area (a city / service zone
+   *  label) the opportunity is about — never a coordinate (spec §19). */
+  opportunityArea?: string | null;
   /**
    * For non-post objects (shared_moment / contextual_opportunity) whose
    * visibility the CALLER has already resolved (membership / service eligibility).
@@ -246,6 +249,22 @@ function buildActions(c: WallCandidate, viewer: ProjectViewerContext): WallActio
         targetId: c.place.placeId,
       });
     }
+  }
+  // A Buddy opportunity (spec §19) leads into the canonical RAB surface — one
+  // "See Buddy" action carrying only the coarse approved area, never a
+  // coordinate. The candidate loader already ran the consolidated booking gate,
+  // so an action here is one the viewer can actually take.
+  if (
+    c.objectType === "contextual_opportunity" &&
+    (c.opportunityKind === "buddy_dispatch" || c.opportunityKind === "buddy_around")
+  ) {
+    actions.push({
+      type: "book_buddy",
+      label: "See Buddy",
+      targetType: "buddy",
+      targetId: c.canonicalObjectId,
+      ...(c.opportunityArea ? { params: { area: c.opportunityArea } } : {}),
+    });
   }
   // Discovery objects reaching outside the follow graph may offer a follow, only
   // when the viewer does not already follow the actor (spec §13).

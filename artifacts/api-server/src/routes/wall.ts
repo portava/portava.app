@@ -46,6 +46,9 @@ import {
   loadPostcardCandidates,
   loadVideoMediaCandidates,
   loadSharedMomentCandidates,
+  loadContextualOpportunityCandidates,
+  loadQuickMediaItems,
+  MAX_QUICK_MEDIA_ITEMS,
   mergeLoadedCandidates,
 } from "../services/wall/WallCandidateLoaders.js";
 import {
@@ -774,21 +777,38 @@ router.get(
       mode === "for_you"
         ? { snapshotAtIso: forYouCursor?.snapshotAt }
         : { followingCursorPublishedAt: followingCursor?.publishedAt };
-    const [postcardsLoaded, mediaLoaded, momentsLoaded] = await Promise.all([
+    // RAB contextual opportunities (§19) are For You only: Following is the
+    // strict-chronology trust anchor of followed PEOPLE's content (TABLE 1) and
+    // an availability signal is not a post. The loader re-reads BOTH flags
+    // itself (fail-closed); the route's `rabEnabled` short-circuits the call.
+    const opportunityViewer = {
+      ...loaderViewer,
+      currentCity: viewer.currentCity,
+      upcomingTripCities: viewer.upcomingTripCities,
+      interests: viewer.interests,
+    };
+    const emptyLoad = () => ({ candidates: [], signals: new Map(), placeByObject: new Map() });
+    const [postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded] = await Promise.all([
       loadPostcardCandidates(sc, mode, loaderViewer, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: postcard loader threw — no postcards");
-        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+        return emptyLoad();
       }),
       loadVideoMediaCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: video/media loader threw — no media objects");
-        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+        return emptyLoad();
       }),
       loadSharedMomentCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: shared moment loader threw — no moments");
-        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+        return emptyLoad();
       }),
+      mode === "for_you" && rabEnabled
+        ? loadContextualOpportunityCandidates(sc, opportunityViewer, loaderOpts).catch((err) => {
+            logger.warn({ err }, "wall: RAB opportunity loader threw — no buddy opportunities");
+            return emptyLoad();
+          })
+        : Promise.resolve(emptyLoad()),
     ]);
-    const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded);
+    const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded);
 
     // Steer For You only (spec §5). `sessionIntent` is already undefined outside
     // For You (resolved above only in that mode); the explicit mode guard keeps
@@ -1071,6 +1091,44 @@ router.post(
     const eventType = ACTION_EVENT[parsed.data.action] ?? RankingEvent.ITEM_OPENED;
     recordWallEvent(sc, eventType, parsed.data.objectId, parsed.data.objectType, user.id, parsed.data.session ?? null);
     res.status(202).json({ ok: true });
+  }),
+);
+
+// ── GET /wall/quick-media ────────────────────────────────────────────────────
+
+/**
+ * Stories / Quick Media data source (spec §18): the followed people's
+ * short-lived media (media_assets within 24 h), visibility- and block-filtered
+ * by the canonical post policy. Items carry stored storage references; the
+ * client signs private-bucket bytes through its existing hydration path.
+ *
+ * Fails soft to an empty row (§34) — a broken source must never block the feed.
+ */
+router.get(
+  "/wall/quick-media",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client: sc, user } = auth;
+
+    if (!(await isFlagEnabled(sc, "wall_enabled"))) {
+      sendError(res, "feature_disabled", "The Wall is not enabled");
+      return;
+    }
+
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw)
+      ? Math.max(1, Math.min(Math.trunc(limitRaw), MAX_QUICK_MEDIA_ITEMS))
+      : MAX_QUICK_MEDIA_ITEMS;
+
+    let items: Awaited<ReturnType<typeof loadQuickMediaItems>> = [];
+    try {
+      items = await loadQuickMediaItems(sc, user.id, { limit });
+    } catch (err) {
+      logger.warn({ err }, "wall: quick media load threw — degrading to an empty row");
+      items = [];
+    }
+    res.status(200).json({ items, generatedAt: new Date().toISOString() });
   }),
 );
 

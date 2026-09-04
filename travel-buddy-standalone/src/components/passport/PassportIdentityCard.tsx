@@ -14,7 +14,7 @@ import Svg, { Circle, Path, Rect, Text as SvgText } from 'react-native-svg';
 import {
   ShieldCheck, Globe, MapPin, Camera,
   UserPlus, UserCheck, MoreHorizontal,
-  Briefcase, Users, Stamp, PenLine, MessageCircle,
+  Briefcase, Users, Stamp, PenLine, MessageCircle, CalendarPlus,
 } from 'lucide-react-native';
 import type { OwnProfile, PublicProfile } from '../../types/models.ts';
 import { resolveAvatarUrl, fallbackInitials, truncateDisplayName } from '../../utils/identity.ts';
@@ -29,6 +29,8 @@ import type { PassportStats } from '../../services/passportStamps.ts';
 import { PP } from '../../theme/passportTokens.ts';
 import { AvailabilityChip } from './AvailabilityChip.tsx';
 import type { AvailabilityChipState } from '../../lib/availabilityChip.ts';
+import { TravelerStateChip } from './TravelerStateChip.tsx';
+import type { TravelerStateView } from '../../services/passportProjection.ts';
 import { avatar } from '../../theme/tokens.ts';
 
 type AnyProfile = OwnProfile | PublicProfile;
@@ -65,10 +67,31 @@ interface Props {
   /** Distinct countries visited — powers the faded WORLD TRAVELER stamp
       (shown at 5+). Owner: passport stats; public: derived from postcards. */
   countriesVisited?: number | null;
-  /** Resolved chip state from resolveAvailabilityChip(); null = hide chip */
+  /**
+   * LEGACY chip state from resolveAvailabilityChip(); null = hide chip.
+   * Ignored whenever `travelerState` is supplied (see below).
+   */
   availabilityChip?: AvailabilityChipState | null;
-  /** Called when the chip is pressed (owner → /availability; public → meet-up action) */
+  /** Called when the legacy chip is pressed. */
   onAvailabilityChipPress?: () => void;
+  /**
+   * §5 Current Traveler State from the SERVER projection
+   * (`projection.travelerState`). When this prop is present — even as null —
+   * the card renders the TravelerStateChip and never the legacy
+   * AvailabilityStore-derived chip, so a screen that has the projection cannot
+   * accidentally show both or fall back to client-derived policy (§4/§30).
+   * `undefined` (prop omitted) keeps the legacy chip for callers without a
+   * projection.
+   */
+  travelerState?: TravelerStateView | null;
+  /** Owner: opens the ONE availability editor (F6). Viewer: read-only status. */
+  onTravelerStatePress?: () => void;
+  /**
+   * Viewer: "Invite to trip" (§3 / TABLE 29 `can_invite_trip`). Rendered only
+   * when provided — the screen resolves the capability from the projection and
+   * omits the handler when the server says no (§30).
+   */
+  onInviteTripPress?: () => void;
 }
 
 const AVATAR_SIZE  = 76;
@@ -109,27 +132,57 @@ function PortavaBrandStamp() {
 
 // ─── Trust Score bar ──────────────────────────────────────────────────────────
 
-function TrustScoreBar({ score, onPress }: { score: number | null; onPress?: () => void }) {
-  // null = account has no trust score yet — still show the pill (honest empty
-  // state) so the trust system is always visible on the owner's passport.
+function TrustScoreBar({
+  score,
+  label,
+  onPress,
+}: {
+  score: number | null;
+  /**
+   * Server-projected qualitative label (§9/§10 — "Strong", "New Traveler ·
+   * Verified"). A viewer's projection carries the label but usually NOT the
+   * number (the score is exposed only where the server chose to, §9), so the
+   * label is what is rendered when `score` is null. Verbatim: the client
+   * never re-derives a standing from a number (§11).
+   */
+  label?: string | null;
+  onPress?: () => void;
+}) {
+  // null score + no label = account has no trust score yet — still show the
+  // pill (honest empty state) so the trust system is always visible on the
+  // owner's passport.
   const pct = score != null ? Math.min(100, Math.max(0, score)) : 0;
   return (
-    <Pressable style={s.trustCard} onPress={onPress} disabled={!onPress} hitSlop={8}>
+    <Pressable
+      style={s.trustCard}
+      onPress={onPress}
+      disabled={!onPress}
+      hitSlop={8}
+      testID="passport-trust-bar"
+      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityLabel={
+        score != null ? `Trust score ${Math.round(score)} of 100` : label ? `Trust: ${label}` : 'Trust score not yet rated'
+      }
+    >
       <View style={s.trustCardRow}>
         <ShieldCheck size={14} color={GREEN_STAMP} strokeWidth={2.5} />
-        <Text style={s.trustCardLabel}>TRUST SCORE</Text>
+        <Text style={s.trustCardLabel}>{score != null ? 'TRUST SCORE' : 'TRUST'}</Text>
         {score != null ? (
           <>
             <Text style={s.trustCardScore}>{Math.round(score)}</Text>
             <Text style={s.trustCardTotal}>/100</Text>
           </>
+        ) : label ? (
+          <Text style={s.trustCardScore} numberOfLines={1} testID="passport-trust-label">{label}</Text>
         ) : (
           <Text style={s.trustCardTotal}>Not yet rated</Text>
         )}
       </View>
-      <View style={s.trustBarBg}>
-        <View style={[s.trustBarFill, { width: `${pct}%` as any }]} />
-      </View>
+      {score != null ? (
+        <View style={s.trustBarBg}>
+          <View style={[s.trustBarFill, { width: `${pct}%` as any }]} />
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -265,6 +318,7 @@ export function PassportIdentityCard({
   isFollowing, followLoading, onFollowPress, onMessagePress,
   onEditBio, onEditProfile, onSavedPress, countriesVisited,
   availabilityChip, onAvailabilityChipPress,
+  travelerState, onTravelerStatePress, onInviteTripPress,
 }: Props) {
   const username      = 'username' in profile ? profile.username : null;
   const identity      = {
@@ -396,17 +450,26 @@ export function PassportIdentityCard({
                 <Text style={s.handle}>{handleSubline}</Text>
               ) : null}
 
-              {/* Availability chip — below handle, above trust/tags/actions */}
-              <AvailabilityChip
-                chipState={availabilityChip ?? null}
-                onPress={onAvailabilityChipPress}
-              />
+              {/* §5 Current traveler state — below handle, above trust/tags/actions.
+                  When the screen has the server projection it passes
+                  `travelerState` (possibly null) and ONLY the projection chip
+                  renders; the legacy AvailabilityStore-derived chip is reserved
+                  for callers with no projection at all. */}
+              {travelerState !== undefined ? (
+                <TravelerStateChip state={travelerState} onPress={onTravelerStatePress} />
+              ) : (
+                <AvailabilityChip
+                  chipState={availabilityChip ?? null}
+                  onPress={onAvailabilityChipPress}
+                />
+              )}
 
-              {/* Trust Score — compact, inside identity area.
-                  Always visible for the owner (honest "Not yet rated" state);
-                  public profiles only show it once a score exists. */}
-              {trustScore != null || isOwner ? (
-                <TrustScoreBar score={trustScore ?? null} onPress={onTrustInfo} />
+              {/* Trust — compact, inside identity area (§3 "concise score/label
+                  with drill-down"). Always visible for the owner (honest "Not
+                  yet rated" state); for a viewer it renders whatever the server
+                  projected: the number where permitted, else the label. */}
+              {trustScore != null || !!trustLabel || isOwner ? (
+                <TrustScoreBar score={trustScore ?? null} label={trustLabel ?? null} onPress={onTrustInfo} />
               ) : null}
 
               {/* Interests tags */}
@@ -431,39 +494,59 @@ export function PassportIdentityCard({
                   reachable via the ⋯ menu (OwnerActionMenu), so no
                   functionality is lost. */}
 
-              {/* Public: Follow pill — hidden when no handler is provided (e.g. private profiles
-                   where PrivateProfileWall owns the CTA; an undefined handler means a no-op press) */}
-              {!isOwner && onFollowPress !== undefined ? (
+              {/* Viewer actions (§3 "Follow, Make a Plan, Message, More"). Each
+                  pill is INDEPENDENTLY gated on its own handler, and the screen
+                  supplies a handler only when the server projection's
+                  capabilities.actions permits it (F7 / §30). A private profile's
+                  PrivateProfileWall owns the CTA, so it passes none of these. */}
+              {!isOwner && (onFollowPress !== undefined || !!onMessagePress || !!onInviteTripPress) ? (
                 <View style={s.publicActions}>
-                  <Pressable
-                    style={[s.followPill, isFollowing && s.followPillActive]}
-                    onPress={onFollowPress}
-                    disabled={followLoading}
-                    hitSlop={8}
-                  >
-                    {followLoading ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : isFollowing ? (
-                      <>
-                        <UserCheck size={14} color="#fff" strokeWidth={2} />
-                        <Text style={s.followPillText}>Following</Text>
-                      </>
-                    ) : (
-                      <>
-                        <UserPlus size={14} color="#fff" strokeWidth={2} />
-                        <Text style={s.followPillText}>Follow</Text>
-                      </>
-                    )}
-                  </Pressable>
+                  {onFollowPress !== undefined ? (
+                    <Pressable
+                      style={[s.followPill, isFollowing && s.followPillActive]}
+                      onPress={onFollowPress}
+                      disabled={followLoading}
+                      hitSlop={8}
+                      testID="passport-follow-pill"
+                    >
+                      {followLoading ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : isFollowing ? (
+                        <>
+                          <UserCheck size={14} color="#fff" strokeWidth={2} />
+                          <Text style={s.followPillText}>Following</Text>
+                        </>
+                      ) : (
+                        <>
+                          <UserPlus size={14} color="#fff" strokeWidth={2} />
+                          <Text style={s.followPillText}>Follow</Text>
+                        </>
+                      )}
+                    </Pressable>
+                  ) : null}
                   {onMessagePress ? (
                     <Pressable
                       style={s.messagePill}
                       onPress={onMessagePress}
                       hitSlop={8}
                       accessibilityLabel="Message"
+                      testID="passport-message-pill"
                     >
                       <MessageCircle size={14} color={PP.ink} strokeWidth={2} />
                       <Text style={s.messagePillText}>Message</Text>
+                    </Pressable>
+                  ) : null}
+                  {onInviteTripPress ? (
+                    <Pressable
+                      style={s.messagePill}
+                      onPress={onInviteTripPress}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel="Invite to trip"
+                      testID="passport-invite-trip-pill"
+                    >
+                      <CalendarPlus size={14} color={PP.ink} strokeWidth={2} />
+                      <Text style={s.messagePillText}>Invite to trip</Text>
                     </Pressable>
                   ) : null}
                 </View>
@@ -735,6 +818,7 @@ const s = StyleSheet.create({
   /* Public follow */
   publicActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginTop: 4,
   },
