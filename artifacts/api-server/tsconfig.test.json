@@ -19,6 +19,12 @@
     // Distinct from tsconfig.json's ".tsbuildinfo" — two programs over
     // overlapping files must not share one incremental cache.
     "tsBuildInfoFile": ".test.tsbuildinfo",
+    // tsconfig.json pins rootDir to "src" so the shipped build's layout is
+    // fixed. The SUITE legitimately reaches outside it — migrationApplyOrder
+    // imports scripts/src/apply-migrations.ts, the very script it exists to
+    // test — and TS enforces rootDir even under noEmit. Widened to the repo
+    // root here only; nothing is emitted from this project.
+    "rootDir": "../..",
     "types": [
       "node"
     ]

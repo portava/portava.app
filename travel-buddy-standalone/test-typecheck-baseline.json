@@ -6,7 +6,7 @@
     "baseline never sits above reality. Do not hand-edit."
   ],
   "project": "travel-buddy-standalone/tsconfig.test.json",
-  "total": 248,
+  "total": 238,
   "files": {
     "app/__tests__/discover.followRollback.component.test.tsx": 1,
     "app/__tests__/following.socialVersion.component.test.tsx": 1,
@@ -75,9 +75,7 @@
     "src/context/__tests__/CallContext.resilience.component.test.tsx": 1,
     "src/context/__tests__/CallContext.ringLifecycle.component.test.tsx": 3,
     "src/features/map/intent/__tests__/intentModel.test.ts": 2,
-    "src/features/map/interaction/__tests__/longPress.test.ts": 1,
     "src/features/map/state/__tests__/mapMachine.test.ts": 2,
-    "src/features/map/telemetry/__tests__/mapTelemetry.test.ts": 9,
     "src/features/map/time/__tests__/timeMachine.test.ts": 2,
     "src/features/passport/__tests__/TrustScreen.component.test.tsx": 4,
     "src/hooks/__tests__/TripSavedPlacesSection.component.test.tsx": 2,
