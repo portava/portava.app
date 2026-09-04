@@ -13,7 +13,7 @@
  * touched. render() is awaited (RNTL 14 + React 19 + jest-expo).
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import TravelIdentityScreen from '../TravelIdentityScreen.tsx';
 
 // NOTE: intentional stub — TravelIdentityScreen imports putTravelDna +
@@ -133,5 +133,53 @@ describe('TravelIdentityScreen — Travel-DNA persistence (F6)', () => {
 
     await waitFor(() => expect(persist).toHaveBeenCalledTimes(1));
     expect(persist).toHaveBeenCalledWith({ key: 'rhythm', kind: 'dimension', state: 'not_me' });
+  });
+
+  // D9 — concurrent PUTs on the SAME dimension (Hide then Not-Me, fast) whose
+  // responses land OUT OF ORDER. A per-key write token must let ONLY the newest
+  // write apply its outcome; an older response resolving last must be ignored,
+  // so the control never ends on a stale server value.
+  it('applies only the latest write when an older response resolves last (same dimension)', async () => {
+    const resolvers: Record<string, (r: unknown) => void> = {};
+    const persist = jest.fn((input: { key: string; kind: string; state: string }) =>
+      new Promise((resolve) => {
+        resolvers[input.state] = resolve;
+      }),
+    );
+
+    await render(
+      <TravelIdentityScreen identityOverride={makeIdentity()} persistTravelDna={persist} />,
+    );
+
+    await waitFor(() => screen.getByLabelText('Visibility control for rhythm'));
+
+    // Two rapid presses on the SAME dimension: Hide (older), then Not me (newer).
+    fireEvent.press(
+      within(screen.getByLabelText('Visibility control for rhythm')).getByText('Hide'),
+    );
+    fireEvent.press(
+      within(screen.getByLabelText('Visibility control for rhythm')).getByText('Not me'),
+    );
+
+    await waitFor(() => expect(persist).toHaveBeenCalledTimes(2));
+
+    // Responses arrive OUT OF ORDER: the NEWER write (Not me) resolves first…
+    await act(async () => {
+      resolvers.not_me({
+        ok: true,
+        data: { userId: 'me-123', key: 'rhythm', kind: 'dimension', state: 'not_me' },
+      });
+    });
+    // …then the STALE older write (Hide) resolves last.
+    await act(async () => {
+      resolvers.hidden({
+        ok: true,
+        data: { userId: 'me-123', key: 'rhythm', kind: 'dimension', state: 'hidden' },
+      });
+    });
+
+    // The control must reflect the NEWER write (Not me), never the stale Hide.
+    expect(screen.getByText(/Marked .Not me/)).toBeTruthy();
+    expect(screen.queryByText(/Hidden from your Passport/i)).toBeNull();
   });
 });

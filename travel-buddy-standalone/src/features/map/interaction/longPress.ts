@@ -34,7 +34,15 @@
  *   2. its kind decides whether it stands for PEOPLE rather than a place;
  *   3. `report` is gated by `contributionPromptsFor` (truth/liveTruth.ts),
  *      which is where the projection's own explicit `interaction.contributable`
- *      gate is honoured.
+ *      gate is honoured;
+ *   4. its `interaction.detailRoute` is the surface `add_to_trip` hands off to.
+ *
+ * Three of the seven do need an object to exist at all — `save`, `add_to_trip`
+ * and `report` write or open something ABOUT a thing, and a press is not one
+ * (see `NO_PLACE_TO_SAVE`). That is still subtraction, not the rail's rule in
+ * disguise: what is read is that an object is THERE, never its
+ * `interaction.actions` list, so an object the projection forgot to annotate
+ * still affords everything its rung allows.
  *
  * Every rule below is subtractive. Nothing here can make an action available
  * that the target's privacy class did not already allow — combining rules can
@@ -86,8 +94,10 @@ export interface LongPressObjectTarget {
  * Note that this coordinate is the USER'S OWN CHOICE of a point on the base
  * map. It is not anybody's presence, so it carries no `privacyClass`: there is
  * no §23 rung to record, because no one's location was reduced to produce it.
- * That is why a coordinate can be pinned and saved while an `aggregate_only`
- * object cannot — the object stands for people, the pressed point does not.
+ * That is why a coordinate can be PINNED — met at, checkpointed — while an
+ * `aggregate_only` object cannot: the object stands for people, the pressed
+ * point does not. It still cannot be SAVED, but for an unrelated reason that
+ * has nothing to do with privacy — see `NO_PLACE_TO_SAVE` below.
  */
 export interface LongPressCoordinateTarget {
   kind: 'coordinate';
@@ -164,6 +174,56 @@ export const MIN_PRECISION_FOR_PINNING: PrivacyClass = 'place_level';
 export const MIN_PRECISION_FOR_PLACE_USE: PrivacyClass = 'approximate';
 
 /**
+ * ...AND THEY ALSO NEED A PLACE. The rung above is necessary, not sufficient.
+ *
+ * "Save location" and "Add to Trip" do not publish a point, they write a PLACE
+ * RECORD: `AddToTripPayload.id` is documented as "Stable unique identifier for
+ * the place (OSM ID, DB UUID, or stable slug)", and `getSavedListIds(id)` uses
+ * that id to decide whether the thing is already saved. A bare coordinate has
+ * neither an id nor a name, and the only ones available would be minted from
+ * the gesture itself — a key derived from the press point makes two presses on
+ * the same cafe two different "places", so "Already saved" never matches and
+ * the second press silently duplicates the row.
+ *
+ * This is NOT a §23 refusal. The pressed point carries no privacy bar at all
+ * (see `LongPressCoordinateTarget`) — it is the user's own choice of a spot.
+ * The refusal is that there is nothing here to save AS. "Meet here" and
+ * "Create checkpoint" stay available on empty map for exactly the reason these
+ * two do not: they publish a POINT, which a press is, rather than a record of
+ * a place that exists.
+ *
+ * The wording says "no place HERE" rather than "long-press a place", because
+ * the user may well have long-pressed something that looks exactly like one:
+ * the map draws legacy Discovery place pins alongside §18 objects, and
+ * app/map/index.tsx says so itself — "discovery places, passport stamps and raw
+ * Compass results, none of which have a MapObject here at all". Telling
+ * somebody to do the thing they just did would be the menu blaming them for the
+ * shell's own missing projection.
+ */
+const NO_PLACE_TO_SAVE = 'No place here to save — just a spot on the map';
+const NO_PLACE_FOR_TRIP = 'No place here to put on a trip — just a spot on the map';
+
+/**
+ * "Add to Trip" carries one bar `save` does not: a detail surface to hand off
+ * to.
+ *
+ * The itinerary is §20's, not the map's, and the map screen says so — its
+ * `add_to_trip` pushes `interaction.detailRoute` and lets the plan picker there
+ * own the add, because "a fake confirmation here would be worse than the
+ * handoff". An object with no detail route has nothing to hand off TO, so the
+ * entry states that instead of pushing nowhere.
+ *
+ * `save` needs no such route: it writes a self-contained wishlist row built
+ * from the object itself — id, title, kind, centroid — and never navigates.
+ */
+const NO_TRIP_HANDOFF = 'There is no page to add this to a trip from';
+
+function hasDetailRoute(obj: MapObject): boolean {
+  const route = obj.interaction?.detailRoute;
+  return typeof route === 'string' && route.trim() !== '';
+}
+
+/**
  * Kinds whose geometry stands for PEOPLE rather than for a place: a crew
  * member is a person; a social zone is an aggregate of strangers; a buddy zone
  * is where somebody is offering their time.
@@ -214,6 +274,41 @@ export const SHARE_PRECISION_CEILING: PrivacyClass = 'place_level';
 
 /** The §23 row a map long-press share is opened under, when the caller says nothing. */
 export const DEFAULT_SHARE_PURPOSE: PresencePurpose = 'shared_moment';
+
+/**
+ * §25 "Share permitted location", deliberately left CLOSED.
+ *
+ * The BOUNDS are computable and are computed: `resolveShareBound` below is the
+ * §23/§37 answer, it is exported, and it is what the caller must open a share
+ * with on the day one exists. What does not exist is that caller — nothing in
+ * this app or on the server opens a location share that EXPIRES:
+ *
+ *   • `/api/trips/:id/crew/live-share/*` (services/tripCrewLocation.ts) streams
+ *     the viewer's OWN MOVING POSITION to named trip crew. That is §23's
+ *     `trip_crew` row, a different purpose and a different subject; it cannot
+ *     carry the point under the finger.
+ *   • "Shared moments" (services/sharedMoments.ts) is a photo album — invites,
+ *     contributions, a feed. It shares no location at all.
+ *   • The platform share sheet is the only other thing in reach, and a
+ *     coordinate pasted into a message never expires. That is the exact
+ *     sentence §37 forbids: "Do not create permanent exact-location sharing."
+ *
+ * So the row would state a TTL the app has no way to honour. Offering it is a
+ * promise that cannot be kept, and quietly resolving it to §8's `share` — "send
+ * a link to this place", which app/map/index.tsx does have — would be a
+ * different action wearing this one's label and this one's bound.
+ *
+ * It therefore stays disabled WITH ITS REASON (§25 disables, never hides) until
+ * an expiring, purpose-bound share exists, at which point this becomes a real
+ * check on that channel instead of a constant.
+ *
+ * Annotated `boolean` rather than left as the literal `false` so the branch
+ * below reads as a check and not as dead code.
+ */
+export const BOUNDED_SHARE_CHANNEL_EXISTS: boolean = false;
+
+/** Said on the row when §23 would permit the share but nothing can open it. */
+export const NO_SHARE_CHANNEL_REASON = 'A location share that expires is not available yet';
 
 /** The §37 hard stop. A caller may ask for less; it may never ask for more. */
 export const SHARE_MAX_TTL_MS = 60 * 60 * 1000;
@@ -437,19 +532,31 @@ function resolveOne(
     }
 
     case 'save':
+      if (!obj) return disabledItem(action, NO_PLACE_TO_SAVE);
       if (cls && !meetsPrecision(cls, MIN_PRECISION_FOR_PLACE_USE)) {
         return disabledItem(action, 'This shows people, not a place — there is nothing to save');
       }
       return enabledItem(action);
 
     case 'add_to_trip':
+      if (!obj) return disabledItem(action, NO_PLACE_FOR_TRIP);
       if (cls && !meetsPrecision(cls, MIN_PRECISION_FOR_PLACE_USE)) {
         return disabledItem(action, 'This shows people, not a place — it cannot go on a trip');
       }
+      // The privacy floor first, then the handoff: an aggregate WITH a page is
+      // still refused for the §23 reason, which is the more permanent of the two.
+      if (!hasDetailRoute(obj)) return disabledItem(action, NO_TRIP_HANDOFF);
       return enabledItem(action);
 
     case 'share': {
       const bound = resolveShareBound(target, ctx);
+      // A bound means §23 and §37 permit this share. Whether anything can OPEN
+      // one is a separate question, and today the answer is no — so the row is
+      // refused here rather than at the call site, because a menu that renders
+      // the bound and then does nothing has promised the bound.
+      if (bound && !BOUNDED_SHARE_CHANNEL_EXISTS) {
+        return disabledItem(action, NO_SHARE_CHANNEL_REASON);
+      }
       if (bound) return { action, enabled: true, shareBound: bound };
       if (obj && standsForPeople(obj.kind)) {
         return disabledItem(action, 'You can only share your own location, never someone else’s');

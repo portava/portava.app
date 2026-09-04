@@ -30,7 +30,9 @@ import {
 import type { PrecisionGrant } from '../../presence/presenceLadder.ts';
 import {
   AGGREGATE_AREA_LABEL,
+  BOUNDED_SHARE_CHANNEL_EXISTS,
   COORDINATE_LABEL_DECIMALS,
+  NO_SHARE_CHANNEL_REASON,
   DEFAULT_SHARE_PURPOSE,
   LONG_PRESS_ACTION_ORDER,
   MIN_PRECISION_FOR_PINNING,
@@ -67,6 +69,17 @@ function obj(over: Partial<MapObject> = {}): MapObject {
     renderingPriority: over.renderingPriority ?? 40,
     ...over,
   } as MapObject;
+}
+
+/**
+ * The same fixture WITH a detail surface. `add_to_trip` hands off to the plan
+ * picker on the object's own page, so an object with no page cannot offer it —
+ * every projected kind that lists `add_to_trip` (gems, events, trip ideas,
+ * Compass picks) carries a `detailRoute`, and this is that object.
+ */
+function WITH_PAGE(over: Partial<MapObject> = {}): MapObject {
+  const base = obj(over);
+  return { ...base, interaction: { ...(base.interaction ?? {}), detailRoute: `/place/${base.id}` } };
 }
 
 const COORD = coordinateTarget(DA_NANG_LAT, DA_NANG_LNG);
@@ -174,11 +187,22 @@ describe('§25 · shape', () => {
 // ── §25 · The action × target matrix ──────────────────────────────────────────
 
 describe('§25 · bare coordinate (the empty-map case)', () => {
-  test('Meet here, Save, Add to Trip, Ask Compass, Share and Checkpoint are all legal', () => {
+  test('the actions that publish a POINT are legal — a press is a point', () => {
     assert.deepEqual(
       [...enabledSet(resolveLongPressActions(COORD, IN_GROUP))].sort(),
-      ['add_to_trip', 'ask_compass', 'create_checkpoint', 'meet_here', 'save', 'share'].sort(),
+      ['ask_compass', 'create_checkpoint', 'meet_here'].sort(),
     );
+  });
+
+  test('Save and Add to Trip are not — a press is not a PLACE RECORD', () => {
+    // Not §23: the pressed point is the user's own choice and carries no rung.
+    // There is simply no id and no name to write a place row with, and minting
+    // one from the gesture would make two presses on the same cafe two places.
+    for (const action of ['save', 'add_to_trip'] as const) {
+      const item = itemFor(COORD, action);
+      assert.equal(item.enabled, false, action);
+      assert.match(item.reason ?? '', /no place here/i, action);
+    }
   });
 
   test('Report is not offered — a coordinate is not an observable object', () => {
@@ -208,11 +232,14 @@ describe('§25 · bare coordinate (the empty-map case)', () => {
 });
 
 describe('§25 · object target', () => {
-  test('a place-level place affords everything except nothing — all seven', () => {
-    const target = objectTarget(obj({ kind: 'place', privacyClass: 'place_level' }));
+  test('a place-level place with its own page affords all six that can be opened', () => {
+    // Six, not seven: `share` is the one §25 action with nothing behind it
+    // (see the §37 channel suite below), and it is refused for that rather
+    // than for anything about this target.
+    const target = objectTarget(WITH_PAGE({ kind: 'place', privacyClass: 'place_level' }));
     assert.deepEqual(
       [...enabledSet(resolveLongPressActions(target, IN_GROUP))].sort(),
-      [...LONG_PRESS_ACTION_ORDER].sort(),
+      LONG_PRESS_ACTION_ORDER.filter((a) => a !== 'share').sort(),
     );
   });
 
@@ -254,7 +281,9 @@ describe('§25 · object target', () => {
   test('place-treating actions hold the approximate floor (§23 identity line)', () => {
     for (const privacyClass of PRIVACY_CLASSES) {
       if (privacyClass === 'none') continue;
-      const target = objectTarget(obj({ kind: 'place', privacyClass }));
+      // With a page, so `add_to_trip`'s handoff bar is out of the way and the
+      // only thing under test here is the §23 floor.
+      const target = objectTarget(WITH_PAGE({ kind: 'place', privacyClass }));
       const allowed = precisionRank(privacyClass) >= precisionRank(MIN_PRECISION_FOR_PLACE_USE);
       for (const action of ['save', 'add_to_trip'] as const) {
         assert.equal(itemFor(target, action).enabled, allowed, `${action}/${privacyClass}`);
@@ -458,6 +487,84 @@ describe('§37 · share bound', () => {
         assert.match(item.reason ?? '', /your own location/i);
       }
     }
+  });
+});
+
+// ── §25 · "Add to Trip" needs somewhere to hand off to ────────────────────────
+
+describe('§25 · the Add to Trip handoff', () => {
+  test('an object with no page cannot offer it, and says so', () => {
+    const item = itemFor(objectTarget(obj({ privacyClass: 'place_level' })), 'add_to_trip');
+    assert.equal(item.enabled, false);
+    assert.match(item.reason ?? '', /no page/i);
+  });
+
+  test('a blank route is no route', () => {
+    for (const detailRoute of ['', '   ']) {
+      const target = objectTarget(obj({ interaction: { detailRoute } }));
+      assert.equal(itemFor(target, 'add_to_trip').enabled, false, JSON.stringify(detailRoute));
+    }
+  });
+
+  test('a page makes it available', () => {
+    assert.equal(itemFor(objectTarget(WITH_PAGE()), 'add_to_trip').enabled, true);
+  });
+
+  test('Save carries no such bar — it writes a row, it does not navigate', () => {
+    // The asymmetry is the point: `save` builds a self-contained wishlist entry
+    // out of the object itself, so a page it would never open cannot gate it.
+    assert.equal(itemFor(objectTarget(obj({ privacyClass: 'place_level' })), 'save').enabled, true);
+  });
+
+  test('the §23 floor still wins over the handoff — the privacy reason is the one shown', () => {
+    const target = objectTarget(WITH_PAGE({ kind: 'social_zone', privacyClass: 'aggregate_only' }));
+    const item = itemFor(target, 'add_to_trip');
+    assert.equal(item.enabled, false);
+    assert.match(item.reason ?? '', /people, not a place/i);
+  });
+});
+
+// ── §37 · The share is permitted and still cannot be opened ───────────────────
+
+describe('§37 · share channel', () => {
+  const targets: LongPressTarget[] = [
+    COORD,
+    ...MAP_OBJECT_KINDS.flatMap((kind) =>
+      PRIVACY_CLASSES.map((privacyClass) => objectTarget(WITH_PAGE({ kind, privacyClass }))),
+    ),
+  ];
+
+  test('no target enables it while nothing can open a share that expires', () => {
+    assert.equal(BOUNDED_SHARE_CHANNEL_EXISTS, false);
+    for (const target of targets) {
+      const item = longPressItemFor(resolveLongPressActions(target, IN_GROUP), 'share');
+      assert.ok(item);
+      assert.equal(item.enabled, false);
+      assert.equal(item.shareBound, undefined);
+    }
+  });
+
+  test('the reason names the missing channel, not a refusal the user could fix', () => {
+    const item = itemFor(COORD, 'share');
+    assert.equal(item.reason, NO_SHARE_CHANNEL_REASON);
+  });
+
+  test('the §37 bound is still computed — it is the offer that is withheld, not the rule', () => {
+    // The day a channel exists this is what it must open the share with, so the
+    // computation stays live and tested rather than rotting behind the gate.
+    const bound = resolveShareBound(COORD, IN_GROUP);
+    assert.ok(bound);
+    assert.equal(bound.privacyClass, SHARE_PRECISION_CEILING);
+    assert.equal(bound.ttlMs, SHARE_MAX_TTL_MS);
+  });
+
+  test('a privacy refusal still reads as a privacy refusal, not as a missing channel', () => {
+    // §23 is permanent and §37's channel is temporary; the user is told the one
+    // that will still be true tomorrow.
+    const person = objectTarget(obj({ kind: 'crew_member', privacyClass: 'place_level' }));
+    assert.match(itemFor(person, 'share').reason ?? '', /your own location/i);
+    const aggregate = objectTarget(obj({ kind: 'place', privacyClass: 'aggregate_only' }));
+    assert.match(itemFor(aggregate, 'share').reason ?? '', /aggregated/i);
   });
 });
 

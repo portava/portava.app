@@ -198,21 +198,51 @@ async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerC
     logger.warn({ err }, "wall: trip membership read failed");
   }
   try {
-    const { data } = await sc
+    // `current_country` DOES NOT EXIST on profiles — it is a column of
+    // compass_user_profiles (migration 0051). Selecting it here failed the
+    // WHOLE read with PGRST100, and the catch below swallowed that, so
+    // BOTH fields were null on every request since this shipped: the Wall has
+    // never known the viewer's city either.
+    //
+    // profiles carries current_city, country, location_country, home_country —
+    // but no "current country". Rather than substitute one of those and assert
+    // a fact the schema does not record, the country stays null and says so.
+    // If the Wall needs it, the honest source is compass_user_profiles, which
+    // is a different read with its own privacy posture.
+    const { data, error } = await sc
       .from("profiles")
-      .select("current_city, current_country, home_city, interests")
+      .select("current_city, home_city, interests")
       .eq("id", viewerId)
       .maybeSingle();
+    // A missing row is normal and silent. A rejected query is not — that is how
+    // this was invisible for the life of the feature.
+    if (error) {
+      logger.warn(
+        { err: error, code: (error as any)?.code, viewerId },
+        "wall: viewer location read failed; the Wall will not know the viewer's city",
+      );
+    }
     ctx.currentCity = (data as any)?.current_city ?? null;
-    ctx.currentCountry = (data as any)?.current_country ?? null;
+    // Both sides of this merge wanted more from this read. main added home_city
+    // and interests; this branch had removed current_country because it DOES
+    // NOT EXIST on profiles (it belongs to compass_user_profiles, migration
+    // 0051). Verified again against the live schema during this merge:
+    // current_city, home_city and interests are all real; current_country is
+    // not.
+    //
+    // Keeping main's version verbatim would have kept the whole read failing
+    // with PGRST100 — and made it worse, because four fields would then be
+    // null instead of two. So main's INTENT is kept in full and only the
+    // column that breaks the query is dropped.
+    ctx.currentCountry = null;
     for (const c of [(data as any)?.current_city, (data as any)?.home_city]) {
       if (c) ctx.preferredCities.add(String(c).trim().toLowerCase());
     }
     for (const i of ((data as any)?.interests as unknown[] | undefined) ?? []) {
       if (typeof i === "string" && i.trim()) ctx.interests.add(i.trim().toLowerCase());
     }
-  } catch {
-    /* non-fatal */
+  } catch (err) {
+    logger.warn({ err }, "wall: viewer location read threw");
   }
   // Upcoming/active trip destination cities — a real-world discovery signal
   // (spec §13). Reads only the viewer's OWN trips, so nothing else leaks.

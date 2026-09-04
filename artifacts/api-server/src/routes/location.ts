@@ -10,6 +10,7 @@
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase.js";
+import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { coarsenPosition, effectiveDiscoveryVisibility } from "../lib/mapTravelers.js";
@@ -454,176 +455,19 @@ router.get("/me/circle-locations", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  // Emergency stop: disable_location_sharing must also halt the SERVE path, not
-  // just writes — otherwise engaging the kill switch stops new location writes
-  // but this endpoint keeps serving everyone's last-known location. Fail-CLOSED
-  // (an unreadable flag engages the stop), consistent with the write path.
-  if (await isKillSwitchEngaged(sc, 'disable_location_sharing')) {
-    res.status(200).json({ ok: true, locations: [] });
+  // The whole privacy decision — kill switch, circle membership, location
+  // preferences, per-user privacy settings, block filtering and coarsening —
+  // lives in lib/circleLocationsRead.ts, because the map projection (§19) has
+  // to make the SAME decision. Two implementations of "who may see whose
+  // position" is the defect this extraction exists to prevent; this endpoint
+  // and the gateway now share one.
+  const result = await readCircleLocations(sc, user.id);
+  if (!result.ok) {
+    req.log.error({ stage: result.stage }, "circle-locations read failed");
+    sendError(res, "db_error", result.message);
     return;
   }
-
-  // 1. Resolve caller's circle members
-  const { data: memberRows, error: memberErr } = await sc
-    .from("circle_memberships")
-    .select("other_id")
-    .eq("user_id", user.id);
-
-  if (memberErr) {
-    req.log.error({ err: memberErr }, "circle-locations: circle lookup failed");
-    sendError(res, "db_error", memberErr.message);
-    return;
-  }
-
-  const memberIdsRaw: string[] = (memberRows ?? []).map((r: any) => r.other_id as string);
-
-  // Bidirectional block filter (server-enforced, fail-closed): a blocked
-  // member's approximate area must not be returned in either direction. If the
-  // block list can't be read, return nothing rather than risk a leak — same
-  // contract as the discovery/crew maps.
-  const blockedSet = await fetchBlockedSet(sc, user.id);
-  if (blockedSet === null) {
-    res.status(200).json({ ok: true, locations: [] });
-    return;
-  }
-  const memberIds: string[] = memberIdsRaw.filter((id) => !blockedSet.has(id));
-
-  if (memberIds.length === 0) {
-    res.status(200).json({ ok: true, locations: [] });
-    return;
-  }
-
-  // 2. Identify members who consented to circle location sharing; also capture
-  //    visibility prefs for coarsening. A member is shared to the circle ONLY
-  //    with an EXPLICIT trusted_circle_share = true. A missing prefs row is NOT
-  //    consent — the settings read path (routes/locationPreferences.ts) and the
-  //    app UI both default a member with no row to trustedCircleShare=false, so
-  //    treating "no row" as consented here leaked the location of members who
-  //    believe they are not sharing. Fail-closed on absence.
-  //
-  //    The circle share flag (trusted_circle_share) is NOT the whole story: the
-  //    master location-sharing switch lives in user_privacy_settings
-  //    .allow_location_sharing. When a member turns location sharing OFF that
-  //    flag goes false and they must disappear from the circle map entirely,
-  //    exactly as listMapTravelers (lib/mapTravelers.ts) excludes them. Fetch
-  //    both in parallel and fail-closed on either error.
-  const [prefsRes, upsRes] = await Promise.all([
-    sc
-      .from("location_preferences")
-      .select("user_id, trusted_circle_share, location_mode, sharing_paused, discovery_visibility")
-      .in("user_id", memberIds),
-    sc
-      .from("user_privacy_settings")
-      .select("user_id, allow_location_sharing")
-      .in("user_id", memberIds),
-  ]);
-
-  if (prefsRes.error) {
-    req.log.error({ err: prefsRes.error }, "circle-locations: prefs lookup failed");
-    sendError(res, "db_error", prefsRes.error.message);
-    return;
-  }
-  if (upsRes.error) {
-    req.log.error({ err: upsRes.error }, "circle-locations: privacy settings lookup failed");
-    sendError(res, "db_error", upsRes.error.message);
-    return;
-  }
-
-  // Master switch OFF → exclude (mirrors upsExcluded in listMapTravelers).
-  const locationSharingDisabled = new Set<string>(
-    (upsRes.data ?? [])
-      .filter((r: any) => r.allow_location_sharing === false)
-      .map((r: any) => r.user_id as string),
-  );
-
-  // Consent is affirmative: only members with an explicit trusted_circle_share
-  // === true are shared. Members with no prefs row (not in prefsRes.data) or a
-  // false value are omitted.
-  const consentedToCircleShare = new Set<string>();
-  const prefsByMemberId = new Map<string, { location_mode?: string | null; sharing_paused?: boolean | null; discovery_visibility?: string | null }>();
-  for (const r of prefsRes.data ?? []) {
-    const row = r as any;
-    if (row.trusted_circle_share === true) consentedToCircleShare.add(row.user_id as string);
-    prefsByMemberId.set(row.user_id as string, row);
-  }
-  // The caller always sees their OWN entry (it is their own data, not a share to
-  // anyone else), so self bypasses the consent/master-switch gates; every OTHER
-  // member needs an explicit opt-in and the master switch on.
-  const visibleIds = memberIds.filter(
-    (id) => id === user.id || (consentedToCircleShare.has(id) && !locationSharingDisabled.has(id)),
-  );
-
-  if (visibleIds.length === 0) {
-    res.status(200).json({ ok: true, locations: [] });
-    return;
-  }
-
-  // 3. Fetch location state + profile display info for visible members in parallel.
-  const [locationRes, profileRes] = await Promise.all([
-    sc
-      .from("user_location_state")
-      .select("user_id, lat, lng, city, country, updated_at")
-      .in("user_id", visibleIds),
-    sc
-      .from("profiles")
-      .select("id, name, avatar_url")
-      .in("id", visibleIds),
-  ]);
-
-  if (locationRes.error) {
-    req.log.error({ err: locationRes.error }, "circle-locations: location state read failed");
-    sendError(res, "db_error", locationRes.error.message);
-    return;
-  }
-
-  const profileMap = new Map(
-    (profileRes.data ?? []).map((p: any) => [p.id as string, p])
-  );
-
-  // Universal display-name rule: members show real names only when opted in.
-  const allowedLocNames = await nameVisibilitySet(sc, visibleIds);
-
-  const locations = (locationRes.data ?? []).map((row: any) => {
-    const uid = row.user_id as string;
-
-    // effectiveDiscoveryVisibility()===null means the member is in a
-    // sharing-OFF state (sharing_paused, location_mode='off', or
-    // discovery_visibility='no_location'). listMapTravelers treats that as
-    // EXCLUDE — so must this endpoint: emit NOTHING for them, not a coarsened
-    // city_only fallback (which would still leak city/country/updated_at).
-    // A member with no prefs row keeps today's default-share behaviour because
-    // effectiveDiscoveryVisibility(null) === 'city_only' (non-null).
-    const prefs = prefsByMemberId.get(uid) ?? null;
-    const vis = effectiveDiscoveryVisibility(prefs);
-    if (vis === null) return null;
-
-    const profile = profileMap.get(uid);
-    const nameOk = uid === user.id || allowedLocNames.has(uid);
-
-    // Raw coordinates must never leave the server — every entry is coarsened,
-    // including the caller's own row if it appears in the circle.
-    // Mirrors the same contract as listMapTravelers.
-    let lat: number | null = row.lat != null ? Number(row.lat) : null;
-    let lng: number | null = row.lng != null ? Number(row.lng) : null;
-    if (lat != null && lng != null) {
-      const coarsened = coarsenPosition(uid, lat, lng, vis);
-      lat = coarsened.lat;
-      lng = coarsened.lng;
-    }
-
-    return {
-      userId:    uid,
-      name:      nameOk ? ((profile?.name as string | null) ?? null) : null,
-      avatarUrl: (profile?.avatar_url as string | null) ?? null,
-      lat,
-      lng,
-      city:      (row.city as string | null) ?? null,
-      country:   (row.country as string | null) ?? null,
-      updatedAt: (row.updated_at as string | null) ?? null,
-    };
-  }).filter((x): x is NonNullable<typeof x> => x !== null);
-
-  res.status(200).json({ ok: true, locations });
+  res.status(200).json({ ok: true, locations: result.locations });
 });
 
 export default router;

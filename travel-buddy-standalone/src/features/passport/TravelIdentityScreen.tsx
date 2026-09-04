@@ -309,6 +309,13 @@ export default function TravelIdentityScreen({
   // Mirrors `states` so the async writer reads the pre-press value without a
   // stale closure (used to REVERT on a failed persist).
   const statesRef = React.useRef<Record<string, TravelDnaState>>({});
+  // Per-key monotonic write token. Rapid presses on the SAME dimension (e.g.
+  // Hide then Not-Me) fire concurrent PUTs whose responses can land out of
+  // order; only the LATEST write for a key may apply its outcome (success
+  // reconcile OR failure revert). A stale in-flight write whose response
+  // resolves after a newer one is ignored, so the control can never be left
+  // showing an older server value than the user's most recent press (§19).
+  const writeSeqRef = React.useRef<Record<string, number>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -331,10 +338,20 @@ export default function TravelIdentityScreen({
       setStates(optimistic);
       setSaveError(null);
 
-      // 2. Persist server-side (§19). Reconcile on success; revert on failure.
+      // 2. Claim the latest write token for this key. Only a response that is
+      //    still the newest write may touch state below.
+      const myGen = (writeSeqRef.current[scopedKey] ?? 0) + 1;
+      writeSeqRef.current[scopedKey] = myGen;
+      const isLatest = () => writeSeqRef.current[scopedKey] === myGen;
+
+      // 3. Persist server-side (§19). Reconcile on success; revert on failure —
+      //    but ONLY while this is still the latest write for the key, so an
+      //    older PUT whose response arrives last can't clobber a newer press
+      //    (and its revert can't restore a now-stale `prev`).
       const { kind, key } = splitScopedKey(scopedKey);
       void persist({ key, kind, state: next })
         .then((res) => {
+          if (!isLatest()) return;
           if (res.ok) {
             const reconciled = { ...statesRef.current, [scopedKey]: res.data.state };
             statesRef.current = reconciled;
@@ -347,6 +364,7 @@ export default function TravelIdentityScreen({
           }
         })
         .catch(() => {
+          if (!isLatest()) return;
           const reverted = { ...statesRef.current, [scopedKey]: prev };
           statesRef.current = reverted;
           setStates(reverted);

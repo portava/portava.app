@@ -111,6 +111,20 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "memories",
   "memory_likes",
   "memory_saves",
+  // Passport / Wall owner-scoped tables (migrations 2260 / 2261 / 2271), each
+  // keyed by user_id REFERENCES profiles(id) ON DELETE CASCADE. That cascade
+  // never fires under the tombstone profile — the same mistake 2172/2170/2187
+  // made for consent/reward-ledger/derived-memory — so the rows would survive
+  // deletion as orphaned personal data (wall_session_intents even stores a
+  // raw_text echo of typed input). Erased explicitly by AccountDeletionService's
+  // `delete_availability_windows` / `delete_travel_dna_prefs` /
+  // `delete_wall_session_intent` steps (direct scoped deletes keyed by user_id;
+  // none is append-only). service_role already holds DELETE on all three (2260
+  // and 2271 grant it explicitly; 2261 inherits it from Supabase default
+  // privileges — verified against CI), so no grant migration was needed.
+  "availability_windows",
+  "passport_travel_dna_prefs",
+  "wall_session_intents",
   // Derived memory (migrations 2183-2191). Erased explicitly by
   // AccountDeletionService's `erase_derived_memory` step, which calls the
   // SECURITY DEFINER erase_memory_for_user in one atomic, idempotent statement.
@@ -422,6 +436,11 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // IG mission candidates, added by migration 2167 (post-baseline). Classified
   // in ANONYMISED_FK_NULLED (accepted_by is NULLed, the row is kept).
   "intel_mission_candidates",
+  // Passport / Wall owner-scoped tables (migrations 2260 / 2261 / 2271,
+  // post-baseline). Classified in ERASED_BY_CASCADE above.
+  "availability_windows",
+  "passport_travel_dna_prefs",
+  "wall_session_intents",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",
