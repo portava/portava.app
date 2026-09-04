@@ -386,6 +386,8 @@ function EmptyView() {
 // ── Screen ─────────────────────────────────────────────────────────────────────
 
 export interface JourneysScreenProps {
+  /** The traveler whose journeys to show (a UUID or @handle). Omitted → owner's own. */
+  targetUserId?: string | null;
   /** Test seam: inject a prebuilt projection to bypass the data hook. */
   journeysOverride?: JourneysProjection;
   /** Test seam: force the restricted (blocked/unavailable) state. */
@@ -393,11 +395,12 @@ export interface JourneysScreenProps {
 }
 
 export default function JourneysScreen({
+  targetUserId,
   journeysOverride,
   restrictedOverride,
 }: JourneysScreenProps = {}) {
   const insets = useSafeAreaInsets();
-  const hook: UseJourneysResult = useJourneys();
+  const hook: UseJourneysResult = useJourneys(targetUserId);
 
   const journeys = journeysOverride ?? hook.journeys;
   const restricted = restrictedOverride ?? hook.restricted;

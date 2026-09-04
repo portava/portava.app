@@ -176,6 +176,10 @@ export const KIND_PROMPTS: Record<MapObjectKind, readonly MapContributionKind[]>
   place: ["crowd_level", "queue", "entry_access", "vibe", "closure", "media"],
   hidden_gem: ["crowd_level", "queue", "entry_access", "vibe", "closure", "media"],
   trip_stop: ["crowd_level", "queue", "entry_access", "vibe", "closure", "media"],
+  // A saved place is a venue the viewer chose (§16 Saved layer); the same
+  // public observations a place takes apply to it. Mirrors the client's
+  // liveTruth.ts entry — src/test/mapContributionClaimTypes.test.ts pins them.
+  saved_place: ["crowd_level", "queue", "entry_access", "vibe", "closure", "media"],
   event: ["crowd_level", "queue", "entry_access", "vibe", "event_status", "crowd_direction", "media"],
   activity_zone: ["crowd_level", "crowd_direction"],
   social_zone: ["crowd_level", "vibe", "crowd_direction"],

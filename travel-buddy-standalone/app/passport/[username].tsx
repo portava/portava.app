@@ -34,8 +34,18 @@ import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/comp
 import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
 import { space, radius, dot } from '../../src/theme/tokens';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
-import { resolveAvailabilityChip } from '../../src/lib/availabilityChip';
 import type { PublicProfile } from '../../src/types/models';
+import { resolveViewerActions } from '../../src/features/passport/viewerActions.ts';
+import { usePassportViewedTelemetry } from '../../src/features/passport/usePassportViewedTelemetry.ts';
+import {
+  trackFollowFromPassport,
+  trackMessageFromPassport,
+  trackPassportQrScanned,
+} from '../../src/features/passport/passportTelemetry.ts';
+import { isQrScanEntry } from '../../src/features/passport/passportQrProjection.ts';
+import { trustHref } from '../../src/features/passport/passportNav.ts';
+import { TripInvitePickerSheet } from '../../src/features/passport/TripInvitePickerSheet.tsx';
+import { useCurrentTravelerState } from '../../src/components/passport/TravelerStateChip.tsx';
 
 // New passport design components
 import { PublicStampShowcaseSection } from '../../src/components/stamps/PublicStampShowcaseSection';
@@ -60,8 +70,22 @@ export default function PassportDeepLinkScreen() {
 }
 
 function PassportDocumentScreenInner() {
-  const { username: rawUsername } = useLocalSearchParams<{ username: string }>();
+  const { username: rawUsername, via } = useLocalSearchParams<{ username: string; via?: string }>();
   const username = (rawUsername ?? '').replace(/^@/, '');
+
+  // §32 passport_qr_scanned — the QR image encodes the passport deep link with
+  // a `via=qr` marker (passportQrProjection.buildQrPayload), so arriving here
+  // through that link IS the scan. Emitted once per screen mount, before any
+  // fetch: the scan happened whether or not the passport then loads. The
+  // marker never changes what is shown — the projection is re-fetched under
+  // normal privacy policy (§25 "Scanning a QR never bypasses privacy policy").
+  const qrEmittedRef = React.useRef(false);
+  useEffect(() => {
+    if (qrEmittedRef.current) return;
+    if (!isQrScanEntry(via)) return;
+    qrEmittedRef.current = true;
+    trackPassportQrScanned();
+  }, [via]);
 
   const {
     profile, postcards, loading, error, isPrivate, isFriend, friendRequestPending,
@@ -93,17 +117,26 @@ function PassportDocumentScreenInner() {
   // null/own id makes it a no-op. Called before any early return (Rules of Hooks).
   const projection = usePassportProjection(profile?.id ?? null);
 
-  // Availability chip — computed from public profile fields when the API returns them.
-  // homeCity visibility: show only when the profile makes it public (homeCity present).
-  const publicChipState = profile
-    ? resolveAvailabilityChip({
-        openToMeet: profile.openToMeet ?? false,
-        quickStatus: (profile.quickStatus as any) ?? null,
-        trips: [],           // trip windows are not exposed in the public profile API
-        homeCity: profile.homeCity ?? null,
-        showHomeCity: !!(profile.homeCity),
-      })
-    : null;
+  // F7 / §30: which viewer actions this Passport may OFFER comes from the
+  // server projection's capabilities.actions — never from `isAuthed`. Fail
+  // closed: no projection (anonymous, loading, failed) offers nothing.
+  const viewerActions = resolveViewerActions(projection.data, { isOwner });
+
+  // §5 / §31: the §5 state as the SERVER projected it for this viewer, with
+  // expiry-on-read — the read-only status sheet must never show a lapsed
+  // state as current either. (The card's chip runs the same hook.)
+  const currentTravelerState = useCurrentTravelerState(projection.data?.travelerState ?? null);
+
+  // §32 passport_viewed — once the projection is in, so the event carries the
+  // server-decided viewerContext. Owners viewing themselves via this route are
+  // counted by the owner tab, not here.
+  usePassportViewedTelemetry(
+    profile?.id ?? null,
+    projection.data?.viewerContext ?? null,
+    !isOwner && !!profile && !!projection.data,
+  );
+
+  const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
 
   // Fetch the public showcase after profile is resolved.
   // Reset to null immediately so switching between users never shows stale stamps.
@@ -124,12 +157,23 @@ function PassportDocumentScreenInner() {
     setStatsIconOnly(e.nativeEvent.contentOffset.y > 60);
   }, [navBarScrollHandler]);
 
+  // §32 follow_from_passport — a follow (not an unfollow) initiated here.
+  const handleFollowPress = useCallback(async () => {
+    if (!profile) return false;
+    const wasFollowing = follow.isFollowing;
+    const ok = await follow.toggle();
+    if (ok && !wasFollowing) trackFollowFromPassport(profile.id);
+    return ok;
+  }, [profile, follow]);
+
   const handleMessagePress = useCallback(async () => {
     if (!profile || messageStarting) return;
     setMessageStarting(true);
     try {
       const res = await openDirectThread(profile.id);
       if (res.ok && res.data) {
+        // §32 message_from_passport — the thread opened; the message was initiated here.
+        trackMessageFromPassport(profile.id);
         const displayName = truncateDisplayName(resolveDisplayName(profile));
         const params = new URLSearchParams({
           threadType: 'direct',
@@ -428,13 +472,27 @@ function PassportDocumentScreenInner() {
           hasHighlights={ringState?.hasActive}
           allHighlightsViewed={ringState?.allViewed}
           onHighlightRingPress={ringState?.hasActive ? () => setHighlightViewerOpen(true) : undefined}
-          isFollowing={isAuthed ? follow.isFollowing : undefined}
-          followLoading={isAuthed ? (follow.loading || follow.toggling) : undefined}
-          onFollowPress={isAuthed ? follow.toggle : undefined}
-          onMessagePress={isAuthed ? handleMessagePress : undefined}
+          // F7 / §30: every viewer action is gated on the SERVER projection's
+          // capabilities.actions (resolveViewerActions), never on isAuthed.
+          isFollowing={viewerActions.canFollow ? follow.isFollowing : undefined}
+          followLoading={viewerActions.canFollow ? (follow.loading || follow.toggling) : undefined}
+          onFollowPress={viewerActions.canFollow ? handleFollowPress : undefined}
+          onMessagePress={viewerActions.canMessage ? handleMessagePress : undefined}
+          onInviteTripPress={viewerActions.canInviteTrip ? () => setInviteSheetOpen(true) : undefined}
+          // §3 / §9: the trust summary the server projected FOR THIS VIEWER —
+          // the number only where the server exposed it, else the label; the
+          // drill-down opens Trust & Credentials for this traveler (§2 viewer nav).
+          trustScore={projection.data?.trust?.score ?? undefined}
+          trustLabel={projection.data?.trust?.label ?? undefined}
+          onTrustInfo={
+            viewerActions.canViewTrust && projection.data?.trust
+              ? () => router.push(trustHref(profile.id) as never)
+              : undefined
+          }
           countriesVisited={countries}
-          availabilityChip={publicChipState}
-          onAvailabilityChipPress={publicChipState ? () => setAvailStatusSheetOpen(true) : undefined}
+          // §5: the server-projected current state (never client-derived).
+          travelerState={projection.data?.travelerState ?? null}
+          onTravelerStatePress={currentTravelerState ? () => setAvailStatusSheetOpen(true) : undefined}
         />
         <PassportStatsRow
           profile={profile}
@@ -530,22 +588,38 @@ function PassportDocumentScreenInner() {
         onClose={() => setHighlightViewerOpen(false)}
       />
 
-      {/* ── Read-only availability status sheet (public view) ── */}
+      {/* ── §3 viewer action: Invite to trip (mounted only when the server
+           projection said can_invite_trip — see onInviteTripPress above) ── */}
+      {viewerActions.canInviteTrip ? (
+        <TripInvitePickerSheet
+          visible={inviteSheetOpen}
+          onClose={() => setInviteSheetOpen(false)}
+          subjectId={profile.id}
+          subjectName={truncateDisplayName(resolveDisplayName(profile))}
+          viewerUserId={viewerUserId ?? null}
+        />
+      ) : null}
+
+      {/* ── Read-only §5 traveler-state sheet (public view) — the SERVER-projected
+           state, expiry-on-read; never a client-derived status. ── */}
       <Modal
-        visible={availStatusSheetOpen}
+        visible={availStatusSheetOpen && !!currentTravelerState}
         transparent
         animationType="fade"
         onRequestClose={() => setAvailStatusSheetOpen(false)}
       >
         <Pressable style={vs.sheetBackdrop} onPress={() => setAvailStatusSheetOpen(false)}>
-          <View style={vs.sheetCard}>
+          <View style={vs.sheetCard} testID="traveler-state-sheet">
             <View style={vs.sheetDot} />
             <View style={{ flex: 1 }}>
               <Text style={vs.sheetPrimary}>
-                {publicChipState?.primary ?? 'Open to meet'}
+                {currentTravelerState?.label ?? ''}
               </Text>
-              {publicChipState?.secondary ? (
-                <Text style={vs.sheetSecondary}>{publicChipState.secondary}</Text>
+              {currentTravelerState?.city ? (
+                <Text style={vs.sheetSecondary}>{currentTravelerState.city}</Text>
+              ) : null}
+              {projection.data?.availability?.openToPlans ? (
+                <Text style={vs.sheetSecondary}>Open to plans</Text>
               ) : null}
             </View>
             <Pressable onPress={() => setAvailStatusSheetOpen(false)} hitSlop={8}>

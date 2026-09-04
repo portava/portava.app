@@ -216,3 +216,28 @@ export interface WallResponse {
   caughtUp?: boolean;
   generatedAt: string;
 }
+
+// ── Stories / Quick Media (spec §18) ─────────────────────────────────────────
+
+/**
+ * One short-lived media item from a followed person (GET /wall/quick-media).
+ * `media.url` is the STORED storage reference — private-bucket bytes are
+ * signed by the existing hydration path (CachedImage → useHydratedMedia), so
+ * the row never binds it to a bare image. `postId` is the canonical post the
+ * item opens into (the projection is never the object, spec §24).
+ */
+export interface QuickMediaItem {
+  id: string;
+  ownerUserId: string;
+  actor: PublicActorRef;
+  media: DisplayMedia;
+  postId: string;
+  createdAt: string;
+  /** Past this instant the item is gone (24 h from createdAt, §18). */
+  expiresAt: string;
+}
+
+export interface QuickMediaResponse {
+  items: QuickMediaItem[];
+  generatedAt: string;
+}
