@@ -71,6 +71,13 @@ export type MapGeometry = PointGeometry | PolygonGeometry | LineStringGeometry;
  * declared here so the renderer, the priority ladder and the aggregation layer
  * are written against the full contract from the start, rather than being
  * retrofitted when Phases 4-5 land.
+ *
+ * `saved_place` (fourteenth): §16's "Saved" layer, §31's "Saved Place" tier and
+ * §6's gold marker all name a saved place; the thirteen spec kinds gave it none
+ * (`memory` is the separately-toggled Memories layer, `place` the generic POI).
+ * Mirrors the server contract; the drift test compares the two lists in order.
+ * KEEP THIS ARRAY LITERAL COMMENT-FREE: the server's mirror test extracts it
+ * textually, and a quoted word inside a comment reads as a kind.
  */
 export const MAP_OBJECT_KINDS = [
   'place',
@@ -86,6 +93,7 @@ export const MAP_OBJECT_KINDS = [
   'safety_notice',
   'memory',
   'prediction',
+  'saved_place',
 ] as const;
 
 export type MapObjectKind = (typeof MAP_OBJECT_KINDS)[number];
@@ -386,6 +394,7 @@ export const KIND_DEFAULT_PRIORITY: Record<MapObjectKind, number> = {
   social_zone: RENDERING_PRIORITY.social_opportunity,
   buddy_zone: RENDERING_PRIORITY.social_opportunity,
   memory: RENDERING_PRIORITY.saved_place,
+  saved_place: RENDERING_PRIORITY.saved_place,
 };
 
 // ── Interaction (spec §18, §25) ────────────────────────────────────────────────

@@ -439,6 +439,7 @@ export const LAYER_FOR_KIND: Record<MapObjectKind, MapLayerId> = {
   safety_notice: 'safety',
   memory: 'memories',
   prediction: 'live_activity',
+  saved_place: 'saved',
 };
 
 export function layerForKind(kind: MapObjectKind): MapLayerId {

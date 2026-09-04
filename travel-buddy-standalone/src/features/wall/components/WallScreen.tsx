@@ -30,7 +30,9 @@ import { QuickMediaRow, type QuickMediaEntry } from './QuickMediaRow.tsx';
 import { useWallFeed } from '../hooks/useWallFeed.ts';
 import { useLiveForYou } from '../hooks/useLiveForYou.ts';
 import { useWallSessionIntent } from '../hooks/useWallSessionIntent.ts';
+import { useQuickMedia } from '../hooks/useQuickMedia.ts';
 import { trackFeedOpen, trackModeSelect } from '../services/wallAnalytics.ts';
+import type { ResolvedWallIntent } from '../services/wallSessionIntent.ts';
 import type { StructuredIntent, WallMode } from '../types/wallProjection.ts';
 
 function intentLabelOf(intent: StructuredIntent | null, fallback: string | null): string | null {
@@ -44,7 +46,10 @@ export interface WallScreenProps {
   topInset?: number;
   /** Live For You feature gate — the strip idles when false (spec §4/§34). */
   liveEnabled?: boolean;
-  /** Optional quick-media (stories) entries; empty renders nothing (spec §18). */
+  /**
+   * Optional quick-media (stories) OVERRIDE. When omitted the row is fed by
+   * useQuickMedia (GET /wall/quick-media, spec §18); empty renders nothing.
+   */
   quickMedia?: QuickMediaEntry[];
 }
 
@@ -52,13 +57,15 @@ export function WallScreen({
   city,
   topInset = 0,
   liveEnabled = true,
-  quickMedia = [],
+  quickMedia,
 }: WallScreenProps) {
   const [mode, setMode] = React.useState<WallMode>('for_you');
 
   const intent = useWallSessionIntent();
   const feed = useWallFeed(mode, intent.intentText);
   const live = useLiveForYou({ enabled: liveEnabled });
+  const quick = useQuickMedia({ enabled: quickMedia === undefined });
+  const quickEntries = quickMedia ?? quick.entries;
 
   // Feed open (once).
   React.useEffect(() => {
@@ -77,8 +84,10 @@ export function WallScreen({
   );
 
   const handleSetIntent = React.useCallback(
-    (text: string) => {
-      void intent.setIntent(text);
+    (resolved: ResolvedWallIntent) => {
+      // Steer with the resolved text; a canonical entity seeds a structured
+      // filter client-side so the chip is structured, not a raw string (§17).
+      void intent.setIntent(resolved.text, resolved.filter);
     },
     [intent],
   );
@@ -86,8 +95,13 @@ export function WallScreen({
   const header = (
     <>
       <QuickMediaRow
-        entries={quickMedia}
-        onOpen={() => router.push('/media' as never)}
+        entries={quickEntries}
+        // Open lands in the canonical media viewer for the person's newest
+        // item (the projection is never the object, spec §24); an entry with
+        // no canonical post falls back to the media home.
+        onOpen={(entry) =>
+          router.push((entry.postId ? `/media-viewer/${entry.postId}` : '/media') as never)
+        }
       />
       <LiveForYouStrip
         items={live.items}
@@ -118,6 +132,8 @@ export function WallScreen({
         refreshing={feed.refreshing}
         loadingMore={feed.loadingMore}
         caughtUp={feed.caughtUp}
+        stale={feed.stale}
+        cachedAt={feed.cachedAt}
         onEndReached={feed.loadMore}
         onRefresh={feed.refresh}
         onHide={feed.hide}

@@ -92,6 +92,9 @@ jest.mock('../../../src/services/locateFriends', () => ({
   startLocateFriendsSession: jest.fn(() =>
     Promise.resolve({ ok: true, data: { session: { id: 'sess-1' }, requestedClass: 'approximate' } }),
   ),
+  sharePermittedLocation: jest.fn(() =>
+    Promise.resolve({ ok: true, data: { enabled: true, stored: true, storedPrecision: 'approximate', refusal: null } }),
+  ),
   LOCATE_FRIENDS_PUBLISH_INTERVAL_MS: 30_000,
 }));
 
@@ -279,12 +282,13 @@ describe('FullScreenMapScreen — §12 Locate My Friends capability', () => {
 
     await deepLinkTo('LOCATE_FRIENDS');
 
-    const chip = await screen.findByText('Locate my friends · 2h');
-    await act(async () => { fireEvent.press(chip); });
+    const start = await screen.findByLabelText('Start locating friends');
+    await act(async () => { fireEvent.press(start); });
 
-    // The call that had no reachable caller in the whole app.
+    // The call that had no reachable caller in the whole app. The lifetime is
+    // the chosen one (defaulting to 2h), required on the wire and never absent.
     expect(locateSession()).toHaveBeenCalledWith(
-      expect.objectContaining({ groupScopeKind: 'trip', groupScopeId: 'trip-1' }),
+      expect.objectContaining({ groupScopeKind: 'trip', groupScopeId: 'trip-1', ttlMinutes: 120 }),
     );
   });
 
@@ -298,7 +302,7 @@ describe('FullScreenMapScreen — §12 Locate My Friends capability', () => {
 
     await deepLinkTo('LOCATE_FRIENDS');
 
-    expect(screen.queryByText('Locate my friends · 2h')).toBeNull();
+    expect(screen.queryByLabelText('Start locating friends')).toBeNull();
     expect(locateSession()).not.toHaveBeenCalled();
   });
 
@@ -310,7 +314,7 @@ describe('FullScreenMapScreen — §12 Locate My Friends capability', () => {
 
     await deepLinkTo('LOCATE_FRIENDS');
 
-    expect(screen.queryByText('Locate my friends · 2h')).toBeNull();
+    expect(screen.queryByLabelText('Start locating friends')).toBeNull();
   });
 
   it('refuses the mode when nobody is signed in', async () => {
@@ -321,7 +325,7 @@ describe('FullScreenMapScreen — §12 Locate My Friends capability', () => {
 
     await deepLinkTo('LOCATE_FRIENDS');
 
-    expect(screen.queryByText('Locate my friends · 2h')).toBeNull();
+    expect(screen.queryByLabelText('Start locating friends')).toBeNull();
   });
 });
 

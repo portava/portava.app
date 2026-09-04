@@ -18,6 +18,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react-nativ
 jest.mock('../../services/wallApi.ts', () => ({
   fetchWall: jest.fn(),
   fetchLiveForYou: jest.fn(),
+  fetchQuickMedia: jest.fn(),
   setSessionIntent: jest.fn(),
   clearSessionIntent: jest.fn(),
   sendImpression: jest.fn(),
@@ -55,7 +56,9 @@ const items: WallProjection[] = [
     visibility: 'public',
     text: 'Sunset from the rooftop',
     place: { placeId: 'pl-1', name: 'Sky Bar', city: 'Da Nang' },
-    actions: [],
+    // The server only issues `ask_compass` when wall_compass_handoff_enabled is
+    // on (WallProjectionService.buildActions); the chip is gated on it (§21).
+    actions: [{ type: 'ask_compass', label: 'Ask Compass', targetType: 'place', targetId: 'pl-1' }],
   },
   {
     projectionId: 'p2',
@@ -70,6 +73,18 @@ const items: WallProjection[] = [
       label: 'Curious about this spot?',
       reason: 'Compass can interpret what you saw',
     },
+  },
+  {
+    // A place-linked post WITHOUT the server-issued ask_compass action: the
+    // handoff flag is off, so no chip may appear (server-authoritative, §7/§21).
+    projectionId: 'p3',
+    canonicalObjectId: 'c-p3',
+    objectType: 'social_post',
+    publishedAt: NOW,
+    visibility: 'public',
+    text: 'Quiet morning',
+    place: { placeId: 'pl-3', name: 'An Bang Beach', city: 'Da Nang' },
+    actions: [],
   },
 ];
 
@@ -130,5 +145,14 @@ describe('Wall → Compass handoff (§21)', () => {
 
     expect(events.some((e) => e.type === 'wall_context_acted' && e.kind === 'compass')).toBe(true);
     expect(events.some((e) => e.type === 'wall_handoff' && e.surface === 'compass')).toBe(true);
+  });
+
+  it('renders the Ask Compass chip ONLY on the post the server gave the ask_compass action', async () => {
+    await render(<WallScreen />);
+    // p1 carries the server-issued ask_compass action → chip present.
+    await waitFor(() => expect(screen.getByTestId('wall-ask-compass-p1')).toBeTruthy());
+    // p3 is place-linked but the server withheld the action (flag off) → no chip,
+    // even though it has a place line. Client never surfaces Compass server-side gated off.
+    expect(screen.queryByTestId('wall-ask-compass-p3')).toBeNull();
   });
 });

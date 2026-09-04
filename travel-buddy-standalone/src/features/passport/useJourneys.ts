@@ -27,8 +27,17 @@ export interface UseJourneysResult {
   reload: () => Promise<void>;
 }
 
-export function useJourneys(): UseJourneysResult {
-  const { userId } = useSession();
+/**
+ * @param targetUserId  the traveler whose journeys to load (a UUID or @handle),
+ *   for the viewer-side surface. Omitted / null loads the signed-in owner's own
+ *   journeys. The endpoint (`GET /passport/:userId/journeys`) does the per-viewer
+ *   privacy projection either way, so this only chooses WHOSE journeys to ask for.
+ */
+export function useJourneys(targetUserId?: string | null): UseJourneysResult {
+  const { userId: sessionUserId } = useSession();
+  const userId = (typeof targetUserId === 'string' && targetUserId.trim().length > 0)
+    ? targetUserId.trim()
+    : sessionUserId;
   const [journeys, setJourneys] = useState<JourneysProjection | null>(null);
   const [restricted, setRestricted] = useState(false);
   const [loading, setLoading] = useState(true);
