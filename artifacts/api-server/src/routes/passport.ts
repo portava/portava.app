@@ -1527,6 +1527,8 @@ router.get("/passport/:userId/journeys", async (req, res) => {
       // Per-memory visibility gate for the memories attached to each journey
       // (§29 step 9) — a public trip must not leak its private memories.
       callerCtx: toCallerContext(resolution.context, resolution.permissions),
+      // §14/§24 — block-filter journey people in both directions vs the viewer.
+      viewerId,
     });
     res.status(200).json({ journeys, viewerContext: resolution.context });
   } catch (e: any) {

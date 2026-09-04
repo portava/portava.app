@@ -19,6 +19,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories, type CallerContext } from "./PassportPrivacyGuard.js";
+import { fetchBlockedSet } from "../../lib/blocks.js";
 
 export interface JourneyMemory {
   id: string;
@@ -37,6 +38,18 @@ export interface JourneyStamp {
   earnedAt: string | null;
 }
 
+/**
+ * A person who shared this Trip (§14 "people context"). Coarse identity only —
+ * id, name, handle, avatar — never location, dates or contact detail. Mirrors
+ * the client's forward-compatible JourneyPerson so "Who was there" renders.
+ */
+export interface JourneyPerson {
+  id: string;
+  name: string | null;
+  handle: string | null;
+  avatarUrl: string | null;
+}
+
 /** One Trip projected into the Journeys view. */
 export interface JourneyProjection {
   tripId: string;
@@ -53,6 +66,8 @@ export interface JourneyProjection {
   stampCount: number;
   memories: JourneyMemory[];
   stamps: JourneyStamp[];
+  /** Coarse, block-filtered companions on this Trip (§14). */
+  people: JourneyPerson[];
   featured: boolean;
 }
 
@@ -88,6 +103,12 @@ export interface JourneyPermissions {
    * canSeeRestricted so the journey path can never over-expose.
    */
   callerCtx?: CallerContext;
+  /**
+   * The viewer's user id (null for an unauthenticated/public viewer). Used to
+   * block-filter journey people in BOTH directions relative to the viewer — a
+   * companion the viewer blocked, or who blocked the viewer, is never shown.
+   */
+  viewerId?: string | null;
 }
 
 /**
@@ -208,11 +229,12 @@ function norm(s: unknown): string {
   return typeof s === "string" ? s.trim().toLowerCase() : "";
 }
 
-/** Project one trip row + its memories/stamps into a JourneyProjection. */
+/** Project one trip row + its memories/stamps/people into a JourneyProjection. */
 function projectTrip(
   trip: any,
   memories: JourneyMemory[],
   stamps: JourneyStamp[],
+  people: JourneyPerson[],
   perms: JourneyPermissions,
 ): JourneyProjection {
   const showDates = perms.isSelf || trip.show_exact_dates !== false;
@@ -232,8 +254,125 @@ function projectTrip(
     stampCount: stamps.length,
     memories,
     stamps,
+    people,
     featured: false,
   };
+}
+
+/**
+ * Build the coarse, block-filtered people-context for a set of trips (§14).
+ *
+ * People are the OTHER accepted members of each Trip (trip_members) plus accepted
+ * members of Shared Moments rooted to the Trip (shared_moment_memberships →
+ * shared_moments.trip_id). The passport owner and the viewer themselves are never
+ * listed as companions.
+ *
+ * Blocking propagates in BOTH directions (§24): a companion blocked-either-way
+ * with the viewer OR with the owner is dropped. Block reads are fail-closed — if
+ * either block set is unreadable, NO people are returned rather than risk leaking
+ * a blocked relationship. Only coarse identity (id, name, handle, avatar) is
+ * projected; a companion who hides their photo has avatarUrl nulled.
+ */
+async function loadTripPeople(
+  sc: SupabaseClient,
+  ownerId: string,
+  tripIds: string[],
+  viewerId: string | null | undefined,
+): Promise<Map<string, JourneyPerson[]>> {
+  const empty = new Map<string, JourneyPerson[]>();
+  if (tripIds.length === 0) return empty;
+
+  // tripId → set of candidate companion user ids.
+  const perTrip = new Map<string, Set<string>>();
+  const addCandidate = (tripId: string, uid: string) => {
+    if (!tripId || !uid || uid === ownerId) return;
+    const set = perTrip.get(tripId) ?? new Set<string>();
+    set.add(uid);
+    perTrip.set(tripId, set);
+  };
+
+  try {
+    // Co-members of the trips.
+    const { data: members } = await sc
+      .from("trip_members")
+      .select("trip_id, user_id, status")
+      .in("trip_id", tripIds)
+      .eq("status", "accepted");
+    for (const r of ((members as any[]) ?? [])) addCandidate(r.trip_id, r.user_id);
+
+    // Shared Moments rooted to these trips + their accepted members.
+    const { data: moments } = await sc
+      .from("shared_moments")
+      .select("id, trip_id")
+      .in("trip_id", tripIds);
+    const momentToTrip = new Map<string, string>();
+    for (const m of ((moments as any[]) ?? [])) if (m.id && m.trip_id) momentToTrip.set(m.id, m.trip_id);
+    if (momentToTrip.size > 0) {
+      const { data: sm } = await sc
+        .from("shared_moment_memberships")
+        .select("moment_id, user_id, status")
+        .in("moment_id", [...momentToTrip.keys()])
+        .eq("status", "accepted");
+      for (const r of ((sm as any[]) ?? [])) {
+        const tripId = momentToTrip.get(r.moment_id);
+        if (tripId) addCandidate(tripId, r.user_id);
+      }
+    }
+  } catch {
+    return empty;
+  }
+
+  const allIds = new Set<string>();
+  for (const set of perTrip.values()) for (const id of set) allIds.add(id);
+  if (allIds.size === 0) return empty;
+
+  // §24 block propagation — fail-closed. Uncertain block state ⇒ show nobody.
+  const [viewerBlocks, ownerBlocks] = await Promise.all([
+    viewerId ? fetchBlockedSet(sc, viewerId) : Promise.resolve(new Set<string>()),
+    fetchBlockedSet(sc, ownerId),
+  ]);
+  if (viewerBlocks === null || ownerBlocks === null) return empty;
+
+  const excluded = (uid: string): boolean =>
+    uid === viewerId || viewerBlocks.has(uid) || ownerBlocks.has(uid);
+
+  const visibleIds = [...allIds].filter((id) => !excluded(id));
+  if (visibleIds.length === 0) return empty;
+
+  // Coarse profile fetch for the survivors.
+  const profiles = new Map<string, JourneyPerson>();
+  try {
+    const { data } = await sc
+      .from("profiles")
+      .select("id, display_name, name, username, handle, avatar_url, show_profile_picture_publicly")
+      .in("id", visibleIds);
+    for (const p of ((data as any[]) ?? [])) {
+      profiles.set(p.id, {
+        id: p.id,
+        name: p.display_name ?? p.name ?? null,
+        handle: p.handle ?? p.username ?? null,
+        avatarUrl: p.show_profile_picture_publicly === false ? null : (p.avatar_url ?? null),
+      });
+    }
+  } catch {
+    return empty;
+  }
+
+  const out = new Map<string, JourneyPerson[]>();
+  for (const [tripId, ids] of perTrip) {
+    const list: JourneyPerson[] = [];
+    for (const id of ids) {
+      if (excluded(id)) continue;
+      const person = profiles.get(id);
+      if (person) list.push(person);
+    }
+    if (list.length > 0) {
+      // Coarse: stable by handle/name, capped.
+      list.sort((a, b) => (a.name ?? a.handle ?? "").localeCompare(b.name ?? b.handle ?? ""));
+      out.set(tripId, list.slice(0, 12));
+    }
+  }
+  return out;
 }
 
 /**
@@ -259,7 +398,9 @@ export async function buildJourneys(
   // §29 step 9: gate EACH memory by its own visibility before it is attached to a
   // trip — a public trip must not leak its private/circle_only/trip_crew memories.
   const memMap = memoriesByTrip(filterMemories(allMemories as any[], effectiveCallerCtx(perms)) as any[]);
-  const journeys = visible.map((t) => projectTrip(t, memMap.get(t.id) ?? [], stampMap.get(t.id) ?? [], perms));
+  // §14 people context — coarse, block-filtered companions on the visible trips.
+  const peopleMap = await loadTripPeople(sc, userId, visible.map((t) => t.id), perms.viewerId ?? null);
+  const journeys = visible.map((t) => projectTrip(t, memMap.get(t.id) ?? [], stampMap.get(t.id) ?? [], peopleMap.get(t.id) ?? [], perms));
 
   // Newest first.
   journeys.sort((a, b) => {
@@ -269,7 +410,7 @@ export async function buildJourneys(
   });
 
   // Featured pick uses full (unfiltered-date) weight from the raw trips.
-  const featured = pickFeatured(visible, memMap, stampMap, perms);
+  const featured = pickFeatured(visible, memMap, stampMap, peopleMap, perms);
   if (featured) {
     const match = journeys.find((j) => j.tripId === featured.tripId);
     if (match) match.featured = true;
@@ -298,7 +439,8 @@ export async function buildFeaturedJourney(
   // Same per-memory visibility gate as buildJourneys — the featured trip's private
   // memories must not reach a non-owner viewer either.
   const memMap = memoriesByTrip(filterMemories(allMemories as any[], effectiveCallerCtx(perms)) as any[]);
-  return pickFeatured(visible, memMap, stampMap, perms);
+  const peopleMap = await loadTripPeople(sc, userId, visible.map((t) => t.id), perms.viewerId ?? null);
+  return pickFeatured(visible, memMap, stampMap, peopleMap, perms);
 }
 
 /**
@@ -309,6 +451,7 @@ function pickFeatured(
   trips: any[],
   memMap: Map<string, JourneyMemory[]>,
   stampMap: Map<string, JourneyStamp[]>,
+  peopleMap: Map<string, JourneyPerson[]>,
   perms: JourneyPermissions,
 ): JourneyProjection | null {
   let best: { trip: any; weight: number } | null = null;
@@ -326,7 +469,7 @@ function pickFeatured(
     if (!best || weight > best.weight) best = { trip: t, weight };
   }
   if (!best) return null;
-  const j = projectTrip(best.trip, memMap.get(best.trip.id) ?? [], stampMap.get(best.trip.id) ?? [], perms);
+  const j = projectTrip(best.trip, memMap.get(best.trip.id) ?? [], stampMap.get(best.trip.id) ?? [], peopleMap.get(best.trip.id) ?? [], perms);
   j.featured = true;
   return j;
 }

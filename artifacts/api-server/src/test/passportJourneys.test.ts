@@ -158,3 +158,102 @@ describe("buildJourneys — per-memory visibility (D1)", () => {
     assert.deepEqual(featured!.memories.map((m) => m.id).sort(), ["m-pub"], "featured leaks no private memory");
   });
 });
+
+// ── §14/§24 — journey people context: coarse companions, block-filtered ────────
+const VIEWER = "viewer-p";
+const FRIEND = "friend-p";     // trip co-member
+const MATE = "mate-p";         // shared-moment member
+const BLOCKED_BY_VIEWER = "blk-viewer-p";
+const BLOCKED_BY_OWNER = "blk-owner-p";
+const INVITEE = "invitee-p";   // invited, not accepted
+
+function dbWithPeople(
+  blocks: Array<{ blocker_id: string; blocked_id: string }> = [],
+  includeBlockCandidates = true,
+) {
+  return makePassportDb({
+    trip_members: [
+      { trip_id: T_VN, user_id: OWNER, role: "owner", status: "accepted" },
+      { trip_id: T_VN, user_id: FRIEND, role: "member", status: "accepted" },
+      ...(includeBlockCandidates ? [
+        { trip_id: T_VN, user_id: BLOCKED_BY_VIEWER, role: "member", status: "accepted" },
+        { trip_id: T_VN, user_id: BLOCKED_BY_OWNER, role: "member", status: "accepted" },
+      ] : []),
+      { trip_id: T_VN, user_id: INVITEE, role: "member", status: "invited" },
+    ],
+    trips: [
+      { id: T_VN, owner_id: OWNER, title: "30 Days in Vietnam", destination_city: "Da Nang", destination_country: "Vietnam", start_date: "2025-03-01", end_date: "2025-03-30", status: "completed", visibility: "public", show_on_profile: true, show_exact_dates: true },
+    ],
+    passport_memories: [],
+    user_stamps: [],
+    shared_moments: [{ id: "sm-1", trip_id: T_VN }],
+    shared_moment_memberships: [
+      { moment_id: "sm-1", user_id: MATE, status: "accepted" },
+      { moment_id: "sm-1", user_id: "declined-p", status: "declined" },
+    ],
+    profiles: [
+      { id: FRIEND, display_name: "Friend F", name: "Friend", username: "friendf", handle: "friendf", avatar_url: "https://x/f.png", show_profile_picture_publicly: true },
+      { id: MATE, display_name: null, name: "Mate M", username: "matem", handle: "matem", avatar_url: "https://x/m.png", show_profile_picture_publicly: false },
+      { id: BLOCKED_BY_VIEWER, display_name: "Blk V", name: "Blk", username: "blkv", handle: "blkv", avatar_url: null, show_profile_picture_publicly: true },
+      { id: BLOCKED_BY_OWNER, display_name: "Blk O", name: "Blk", username: "blko", handle: "blko", avatar_url: null, show_profile_picture_publicly: true },
+      { id: "declined-p", display_name: "Declined", name: "D", username: "dec", handle: "dec", avatar_url: null, show_profile_picture_publicly: true },
+    ],
+    blocks,
+  });
+}
+
+function peopleOfTVN(r: Awaited<ReturnType<typeof buildJourneys>>) {
+  const j = r.years.flatMap((y) => y.countries).flatMap((c) => c.cities).flatMap((c) => c.journeys).find((jj) => jj.tripId === T_VN)!;
+  return j.people;
+}
+
+describe("buildJourneys — §14 people context", () => {
+  it("attaches coarse companions from trip members AND shared moments", async () => {
+    const r = await buildJourneys(dbWithPeople([], false), OWNER, { isSelf: false, canSeeTrips: true, canSeeRestricted: true, viewerId: VIEWER });
+    const people = peopleOfTVN(r);
+    const ids = people.map((p) => p.id).sort();
+    assert.deepEqual(ids, [FRIEND, MATE].sort(), "trip member + shared-moment member, owner/viewer/invitee excluded");
+
+    // Coarse fields only, name falls back name→display, avatar honours photo privacy.
+    const friend = people.find((p) => p.id === FRIEND)!;
+    assert.equal(friend.name, "Friend F");
+    assert.equal(friend.handle, "friendf");
+    assert.equal(friend.avatarUrl, "https://x/f.png");
+    const mate = people.find((p) => p.id === MATE)!;
+    assert.equal(mate.name, "Mate M", "falls back to name when display_name is null");
+    assert.equal(mate.avatarUrl, null, "a companion who hides their photo has avatarUrl nulled");
+
+    // Coarse: no dates/location/contact fields leak onto a person.
+    assert.deepEqual(Object.keys(friend).sort(), ["avatarUrl", "handle", "id", "name"]);
+    // Invited-but-not-accepted member never appears.
+    assert.ok(!ids.includes(INVITEE));
+  });
+
+  it("block-filters people in BOTH directions (viewer-blocked and owner-blocked) — §24", async () => {
+    const r = await buildJourneys(
+      dbWithPeople([
+        { blocker_id: VIEWER, blocked_id: BLOCKED_BY_VIEWER },
+        { blocker_id: OWNER, blocked_id: BLOCKED_BY_OWNER },
+      ]),
+      OWNER,
+      { isSelf: false, canSeeTrips: true, canSeeRestricted: true, viewerId: VIEWER },
+    );
+    const ids = peopleOfTVN(r).map((p) => p.id);
+    assert.ok(!ids.includes(BLOCKED_BY_VIEWER), "a companion the viewer blocked is hidden");
+    assert.ok(!ids.includes(BLOCKED_BY_OWNER), "a companion the owner blocked is hidden");
+    assert.ok(ids.includes(FRIEND), "un-blocked companions remain");
+  });
+
+  it("fails CLOSED — an unreadable block list yields NO people, never a leak", async () => {
+    const base = dbWithPeople();
+    const guarded: any = {
+      from(table: string) {
+        if (table === "blocks") throw new Error("blocks unavailable");
+        return base.from(table);
+      },
+      auth: base.auth,
+    };
+    const r = await buildJourneys(guarded, OWNER, { isSelf: false, canSeeTrips: true, canSeeRestricted: true, viewerId: VIEWER });
+    assert.deepEqual(peopleOfTVN(r), [], "uncertain block state ⇒ show nobody");
+  });
+});

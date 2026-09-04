@@ -1215,6 +1215,8 @@ export async function buildPassportProjection(
     // Per-memory gate for the featured journey's memories (same context the
     // standalone `memories` array uses in step 9).
     callerCtx,
+    // §14/§24 — the Featured Journey's people context is block-filtered vs viewer.
+    viewerId,
   };
   const [featuredJourney, upcomingPlans] = await Promise.all([
     buildFeaturedJourney(sc, userId, journeyPerms).catch(() => null),
