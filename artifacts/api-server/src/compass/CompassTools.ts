@@ -42,6 +42,20 @@ import {
   sharesSocialContext,
   type GroupMemberPrefs,
 } from "./CompassSocialEngine.js";
+// §8 (Open to Plans and Intent): Compass weights EXPLICIT current intent above
+// generic interests. The explicit-intent read + bounded weight live in the ONE
+// Passport consumer-projection module so Compass and Discovery share the exact
+// same §7/§8/§31 window semantics rather than re-implementing them.
+import {
+  readVisibleExplicitIntent,
+  explicitIntentBoost,
+  sharedItems,
+} from "../services/passport/PassportConsumerProjections.js";
+import {
+  resolvePassportViewerContext,
+  type PassportViewerContext,
+} from "../services/passport/PassportProjectionService.js";
+import { getActiveWindows } from "../services/passport/OpenToPlansService.js";
 
 // ── Tool definitions (OpenAI function schemas) ────────────────────────────────
 
@@ -825,17 +839,53 @@ async function toolTravelCompatibility(
     { interests: b.interests, travelStyles: b.travelStyles, budgetStyle: b.budgetStyle, travelPace: b.travelPace, languages: Array.isArray((target as any).spoken_languages) ? (target as any).spoken_languages.map(String) : [] },
   );
 
+  // §8 explicit current-intent weighting. Both travelers' EXPLICIT availability
+  // windows (OpenToPlansService — explicit-only, expiry re-evaluated on read) are
+  // read through the ONE Passport projection layer; a shared current intent
+  // ("both want Nightlife tonight") outweighs a generic long-term interest match
+  // and lifts the score ABOVE a generic-only pair — but ONLY when the target has
+  // an active explicit window, so ordering is unchanged for travelers who have
+  // not declared explicit intent. Fail-safe: any read error yields no boost, so
+  // the base compatibility (and existing ordering) is preserved.
+  let sharedIntents: string[] = [];
+  let intentBoost = 0;
+  try {
+    const nowMs = Date.now();
+    // The target's explicit intent is read at the caller's PERMITTED visibility
+    // (§7): a private/crew window the caller may not see never reaches the score.
+    let targetContext: PassportViewerContext = "public";
+    try {
+      targetContext = (await resolvePassportViewerContext(sc, targetId, userId)).context;
+    } catch { /* fall back to the least-privileged (public) visibility */ }
+    const [targetIntent, myWindows] = await Promise.all([
+      readVisibleExplicitIntent(sc, targetId, targetContext, nowMs),
+      getActiveWindows(sc, userId, nowMs),
+    ]);
+    const myIntents = myWindows.filter((w) => w.openToPlans).flatMap((w) => w.intents.map(String));
+    sharedIntents = sharedItems(myIntents, targetIntent.intents);
+    intentBoost = explicitIntentBoost(sharedIntents.length, targetIntent.hasActiveWindow);
+  } catch { /* explicit-intent weighting is best-effort — never blocks the answer */ }
+
+  const score = Math.max(0, Math.min(100, result.score + intentBoost));
+  const factors = intentBoost > 0
+    ? [`shared current intent: ${sharedIntents.slice(0, 5).join(", ")}`, ...result.factors]
+    : result.factors;
+
   // Only the overlap is revealed — never the other person's full preference lists.
   return {
     compatibility: {
       handle: `@${(target as any).handle}`,
-      score: result.score,
+      score,
       sharedInterests: result.sharedInterests,
       sharedStyles: result.sharedStyles,
       sharedLanguages: result.sharedLanguages,
+      // §8: shared EXPLICIT current intent (empty unless the target has an active
+      // explicit window the caller may see) — weighted above generic interests.
+      sharedIntents,
+      intentBoosted: intentBoost > 0,
       budgetAlignment: result.budgetAlignment,
       paceAlignment: result.paceAlignment,
-      factors: result.factors,
+      factors,
     },
   };
 }
