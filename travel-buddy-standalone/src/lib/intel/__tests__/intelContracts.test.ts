@@ -24,6 +24,9 @@ import {
   PARTY_SIZE_LABELS,
   MUSIC_GENRES,
   MUSIC_GENRE_LABELS,
+  COMMERCIAL_DISCLOSURES,
+  COMMERCIAL_DISCLOSURE_OPTIONS,
+  COMMERCIAL_DISCLOSURE_LABELS,
 } from '../contracts.ts';
 import {
   confidenceBand,
@@ -81,6 +84,25 @@ describe('option → canonical value (corrections)', () => {
     assert.ok(correctionOptionsFor('crowd.level'));
     assert.deepEqual(correctionOptionsFor('music.current'), MUSIC_GENRES);
     assert.equal(correctionOptionsFor('access.reservation'), null, 'not yet a wired correction family');
+  });
+});
+
+describe('commercial disclosure vocabulary (§22 Table 30)', () => {
+  it('mirrors the seven canonical values with none first', () => {
+    assert.deepEqual([...COMMERCIAL_DISCLOSURES], ['none', 'employee', 'owner', 'hosted', 'complimentary', 'affiliate', 'paid']);
+  });
+  it('the control offers every value EXCEPT the none default', () => {
+    assert.equal(COMMERCIAL_DISCLOSURE_OPTIONS.includes('none' as never), false, "'none' is the default, never an offered pill");
+    for (const d of COMMERCIAL_DISCLOSURES) {
+      if (d === 'none') continue;
+      assert.ok(COMMERCIAL_DISCLOSURE_OPTIONS.includes(d), `${d} should be offered`);
+    }
+  });
+  it('has a label for every value', () => {
+    for (const d of COMMERCIAL_DISCLOSURES) {
+      assert.equal(typeof COMMERCIAL_DISCLOSURE_LABELS[d], 'string');
+      assert.ok(COMMERCIAL_DISCLOSURE_LABELS[d].length > 0);
+    }
   });
 });
 

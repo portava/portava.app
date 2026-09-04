@@ -25,7 +25,7 @@ import {
   type CaptureResult,
   type ObservationEnvelope,
 } from '../../services/intelCapture.ts';
-import type { PromptQuestion, Visibility, PartySizeBucket } from '../../lib/intel/contracts.ts';
+import type { PromptQuestion, Visibility, PartySizeBucket, CommercialDisclosure } from '../../lib/intel/contracts.ts';
 
 export interface PromptBlockProps {
   subjectId: string;
@@ -38,10 +38,15 @@ export interface PromptBlockProps {
    * Undefined when the traveler skipped it — the server then fail-closes.
    */
   partySize?: PartySizeBucket;
+  /**
+   * §22 commercial disclosure the traveler declared once at the screen level.
+   * Attached to every write from this block; 'none'/undefined sends nothing.
+   */
+  commercialDisclosure?: CommercialDisclosure;
   onSent?: (question: PromptQuestion, option: string, observation?: ObservationEnvelope) => void;
 }
 
-export function PromptBlock({ subjectId, question, visibility, zoneId, partySize, onSent }: PromptBlockProps) {
+export function PromptBlock({ subjectId, question, visibility, zoneId, partySize, commercialDisclosure, onSent }: PromptBlockProps) {
   const [busyOption, setBusyOption] = useState<string | null>(null);
   const [sentOption, setSentOption] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,9 +65,9 @@ export function PromptBlock({ subjectId, question, visibility, zoneId, partySize
 
       let res: CaptureResult;
       if (question.kind === 'walkIn') {
-        res = await submitWalkIn({ subjectId, accepted: option === 'accepted', visibility, partySize, idempotencyKey });
+        res = await submitWalkIn({ subjectId, accepted: option === 'accepted', visibility, partySize, commercialDisclosure, idempotencyKey });
       } else if (question.kind === 'music') {
-        res = await submitMusic({ subjectId, genre: option, visibility, zoneId, partySize, idempotencyKey });
+        res = await submitMusic({ subjectId, genre: option, visibility, zoneId, partySize, commercialDisclosure, idempotencyKey });
       } else {
         res = await submitQuickSignal({
           subjectId,
@@ -71,6 +76,7 @@ export function PromptBlock({ subjectId, question, visibility, zoneId, partySize
           visibility,
           zoneId,
           partySize,
+          commercialDisclosure,
           idempotencyKey,
         });
       }
@@ -92,7 +98,7 @@ export function PromptBlock({ subjectId, question, visibility, zoneId, partySize
         );
       }
     },
-    [question, subjectId, visibility, zoneId, partySize, onSent],
+    [question, subjectId, visibility, zoneId, partySize, commercialDisclosure, onSent],
   );
 
   return (

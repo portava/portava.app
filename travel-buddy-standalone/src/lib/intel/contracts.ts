@@ -121,6 +121,34 @@ export const PARTY_SIZE_OPTIONS: readonly PartySizeOption[] = PARTY_SIZE_BUCKETS
   label: PARTY_SIZE_LABELS[value],
 }));
 
+// ── Commercial disclosure (§22 Table 30) ─────────────────────────────────────
+/**
+ * Mirror of the api-server COMMERCIAL_DISCLOSURES. The traveler declares any
+ * commercial relationship to the place; a non-'none' answer makes the server
+ * record the report under a NON_INDEPENDENT source class, so it never counts as
+ * independent community consensus. Default 'none' — the honest, no-relationship
+ * answer — is never sent, so an untouched control changes nothing.
+ */
+export const COMMERCIAL_DISCLOSURES = ['none', 'employee', 'owner', 'hosted', 'complimentary', 'affiliate', 'paid'] as const;
+export type CommercialDisclosure = (typeof COMMERCIAL_DISCLOSURES)[number];
+
+/** The disclosure the control offers the traveler (everything except the 'none' default). */
+export const COMMERCIAL_DISCLOSURE_OPTIONS: readonly CommercialDisclosure[] = ['employee', 'owner', 'hosted', 'complimentary', 'affiliate', 'paid'];
+
+/** Traveler-facing labels for the disclosure pills. */
+export const COMMERCIAL_DISCLOSURE_LABELS: Record<CommercialDisclosure, string> = {
+  none: 'No connection',
+  employee: 'I work here',
+  owner: 'I own/run it',
+  hosted: 'Hosted / comped',
+  complimentary: 'Given free',
+  affiliate: 'I earn from it',
+  paid: 'Paid to post',
+};
+
+/** The prompt copy shown above the disclosure control. */
+export const COMMERCIAL_DISCLOSURE_PROMPT = 'Any connection to this place?';
+
 // ── Venue-specific prompt sets (§6) ──────────────────────────────────────────
 export const VENUE_CATEGORIES = ['nightlife', 'restaurant', 'event', 'transit', 'hotel'] as const;
 export type VenueCategory = (typeof VENUE_CATEGORIES)[number];
