@@ -335,10 +335,13 @@ const CLASSIFIED = [
     kind: 'CAPABILITY',
     reason:
       '`true` runs the IG-06 going-next Trail follow-up capture surface (captureSurface:trail in ' +
-      'services/intel/IntelCaptureService.ts; lib/trailFollowup.ts). False-on-error is correct and is the ' +
-      'design: the trail write path returns `disabled` and stores nothing, and no follow-up prompt is ' +
-      'issued. experience.next_move stays aggregate-only regardless of this flag (proposeClaim refuses a ' +
-      'single-user movement claim), and the §13 privacy threshold + 0.65 confidence floor gate publication.',
+      'services/intel/IntelCaptureService.ts, reachable via routes/intel.ts `captureSurface`; lib/trailFollowup.ts) ' +
+      'and the admin-only internal cohort read of its aggregate (lib/trailServe.ts via routes/intel.ts). ' +
+      'False-on-error is correct and is the design: the trail write path returns `disabled` and stores ' +
+      'nothing, no follow-up prompt is issued, and the internal read refuses with `flag_off` and reads nothing. ' +
+      'experience.next_move stays aggregate-only regardless of this flag (proposeClaim refuses a ' +
+      'single-user movement claim), and the §13 privacy threshold + 0.65 confidence floor gate publication, ' +
+      'which no route performs (intel_movement_prediction is seeded off).',
   },
   {
     flag: 'intel_missions',
@@ -348,6 +351,17 @@ const CLASSIFIED = [
       'routes/intelCoverage.ts). False-on-error is correct and is the design: generateMissions/commitAndDispatch ' +
       'return `disabled` and do nothing, so no mission is created or dispatched. Coverage read and accept of an ' +
       'already-dispatched commitment are intentionally ungated. Missions are non-cash (table CHECK cash_amount=0).',
+  },
+  {
+    flag: 'intel_presence_verification_enabled',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` lets services/intel/PresenceVerifier confirm a live-grade presence level (P2 geofence+dwell/' +
+      'interaction, P3 +receipt, P4 +mission nonce) from SERVER-HELD evidence, read once per live-grade capture ' +
+      'by IntelCaptureService.resolvePresenceForCapture. False-on-error is correct and is the design: OFF ' +
+      'means the pre-2276 clamp (every P2+ claim stored as P1) and no verifier read or audit write at all — ' +
+      'spec §30 Table 38 "presence off by default". Verification only ever LOWERS a claim; an unreadable flag ' +
+      'therefore leaves the system at its most conservative, never at a higher level.',
   },
   {
     flag: 'intel_coverage',

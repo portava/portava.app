@@ -96,6 +96,27 @@ export function validateTrailClaimValue(claimType: string, value: unknown): bool
 }
 
 /**
+ * The claim types the `trail` capture surface may STORE (IntelCaptureService
+ * SURFACE_CLAIMS.trail).
+ *
+ * Spec §29 Phase-1 "Included" lists "experience.next_move input capture". That
+ * capture is realised HERE, on the Trail surface behind `intel_trail_followup`
+ * (the §26 flag for the Trail follow-up), and deliberately NOT by adding
+ * next_move to quickSignal.PHASE1_CAPTURE_CLAIM_TYPES: that list defines what
+ * `intel_capture_quick_signal` alone may store, and listing next_move there
+ * would let a movement declaration bypass the Trail flag and break the
+ * surface-isolation invariant ("surfaces cannot emit each other's claims").
+ *
+ * experience.exit_reason is deliberately ABSENT. It is not in the §4 claim
+ * registry, has no freshness_policies row (2128 seeds only next_move for this
+ * family) and therefore no TTL — storing it would silently mint an observation
+ * with no expiry. mapTrailSignal still maps the §6 exit prompt to it so the
+ * vocabulary is stable; contracting it is an owner ruling (a §4 row plus a TTL
+ * migration), not a capture-surface change.
+ */
+export const PHASE1_TRAIL_CAPTURE_CLAIM_TYPES: readonly TrailClaimType[] = ["experience.next_move"];
+
+/**
  * True iff this claim type may NEVER be published as a single-user claim and must
  * instead pass through the movement aggregate. Enforced at propose time so a
  * next_move can be captured but never surfaces one person's live destination.
