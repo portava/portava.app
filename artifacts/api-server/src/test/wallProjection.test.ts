@@ -99,13 +99,28 @@ describe("WallProjectionService gate", () => {
     assert.deepEqual(out.map((p) => p.canonicalObjectId), ["ok"]);
   });
 
-  it("drops objects from banned/suspended authors and deleted objects", async () => {
-    const banned = post({ canonicalObjectId: "x1", authorId: "a", authorAccountStatus: "banned" });
-    const suspended = post({ canonicalObjectId: "x2", authorId: "b", authorAccountStatus: "suspended" });
-    const deleted = post({ canonicalObjectId: "x3", authorId: "c", isDeleted: true });
-    const live = post({ canonicalObjectId: "x4", authorId: "d" });
-    const out = await projectObjects(blocksClient([]), [banned, suspended, deleted, live], viewerCtx());
-    assert.deepEqual(out.map((p) => p.canonicalObjectId), ["x4"]);
+  it("author eligibility is an ALLOWLIST: only account_status 'active' passes (D3)", async () => {
+    // The real profiles CHECK constraint allows active / deactivated /
+    // pending_deletion / deleted. The old gate was a denylist of 'banned' and
+    // 'suspended' — values the constraint FORBIDS — so it could never drop an
+    // author and every non-active account's posts flowed onto the Wall.
+    const deactivated = post({ canonicalObjectId: "x1", authorId: "a", authorAccountStatus: "deactivated" });
+    const pendingDeletion = post({ canonicalObjectId: "x2", authorId: "b", authorAccountStatus: "pending_deletion" });
+    const deleted = post({ canonicalObjectId: "x3", authorId: "c", authorAccountStatus: "deleted" });
+    // Still dropped: any value that is not 'active', including the legacy denylist words.
+    const banned = post({ canonicalObjectId: "x4", authorId: "d", authorAccountStatus: "banned" });
+    const suspended = post({ canonicalObjectId: "x5", authorId: "e", authorAccountStatus: "suspended" });
+    const tombstoned = post({ canonicalObjectId: "x6", authorId: "f", isDeleted: true });
+    const live = post({ canonicalObjectId: "x7", authorId: "g", authorAccountStatus: "active" });
+    // Absent reads as 'active' (lib/http requireUser / circleLocationsRead gate 7):
+    // the column is NOT NULL, so absence only means the loader's fail-soft default.
+    const absent = post({ canonicalObjectId: "x8", authorId: "h" });
+    const out = await projectObjects(
+      blocksClient([]),
+      [deactivated, pendingDeletion, deleted, banned, suspended, tombstoned, live, absent],
+      viewerCtx(),
+    );
+    assert.deepEqual(out.map((p) => p.canonicalObjectId), ["x7", "x8"]);
   });
 
   it("fails CLOSED: an unreadable blocks table drops every candidate", async () => {
