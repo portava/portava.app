@@ -152,7 +152,7 @@ function recordWallEvent(
 
 // ── Viewer context ────────────────────────────────────────────────────────────
 
-interface WallViewerContext {
+export interface WallViewerContext {
   followedCreatorIds: Set<string>;
   viewerTripIds: Set<string>;
   currentCity: string | null;
@@ -292,6 +292,29 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
     logger.warn({ err }, "wall: second-degree follow read failed");
   }
   return ctx;
+}
+
+/**
+ * Build the For You rank viewer (spec §13/§14) from the loaded viewer context.
+ *
+ * loadViewerContext already resolves the viewer's interests and preferred/home
+ * cities, but the rank viewer used to be built inline WITHOUT them, so
+ * WallRankingService.toViewerContext fed the ranker empty travelStyles /
+ * preferredCities — InterestFit and DestinationFit then collapsed to their
+ * neutral floor on every request. The viewer's interest tokens ARE the ranker's
+ * travelStyles (interest slugs) and the preferred/home cities ARE its
+ * preferredCities; both are already lowercased in loadViewerContext. Exported as
+ * a pure seam so the mapping is directly testable without an HTTP round-trip.
+ */
+export function buildForYouRankViewer(viewer: WallViewerContext, viewerId: string): WallRankViewer {
+  return {
+    viewerId,
+    currentCity: viewer.currentCity,
+    currentCountry: viewer.currentCountry,
+    followedCreatorIds: viewer.followedCreatorIds,
+    travelStyles: [...viewer.interests],
+    preferredCities: [...viewer.preferredCities],
+  };
 }
 
 // ── Candidate loading ──────────────────────────────────────────────────────────
@@ -758,21 +781,7 @@ router.get(
       caughtUp = built.caughtUp;
       nextCursor = built.nextCursor ? encodeFollowingCursor(built.nextCursor) : undefined;
     } else {
-      const rankViewer: WallRankViewer = {
-        viewerId: user.id,
-        currentCity: viewer.currentCity,
-        currentCountry: viewer.currentCountry,
-        followedCreatorIds: viewer.followedCreatorIds,
-        // loadViewerContext already resolved these (§13/§14) but the rank viewer
-        // was built without them, so WallRankingService.toViewerContext fed the
-        // ranker empty travelStyles / preferredCities and InterestFit +
-        // DestinationFit collapsed to their neutral floor on every request. The
-        // viewer's interest tokens are the ranker's travelStyles (interest slugs);
-        // preferred/home cities are its preferredCities. Both are already
-        // lowercased in loadViewerContext.
-        travelStyles: [...viewer.interests],
-        preferredCities: [...viewer.preferredCities],
-      };
+      const rankViewer = buildForYouRankViewer(viewer, user.id);
       const built = await rankForYou(sc, projections, rankViewer, {
         limit,
         cursor: forYouCursor,
