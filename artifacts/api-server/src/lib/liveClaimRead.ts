@@ -41,6 +41,13 @@ import {
   type SourceClass,
 } from "./intelContracts.js";
 import { logger } from "./logger.js";
+import {
+  normalizeConflictState,
+  capForConflict,
+  conflictBlock,
+  type ConflictState,
+  type ConflictBlock,
+} from "./intelConflict.js";
 
 export interface LiveClaim {
   /** Snapshot id — the provenance reference the "why" surface points at. */
@@ -60,6 +67,17 @@ export interface LiveClaim {
   sourceCount: number;
   observedAt: string;
   expiresAt: string;
+  /**
+   * §10 conflict state of the cohort behind this snapshot (2275). When
+   * 'material' the `confidence`/`band` above are ALREADY capped below the live
+   * band by readLiveClaims — a strong Live label is never derivable from this
+   * object. Pre-2275 rows read as 'none'. Optional so a LiveClaim built by
+   * hand still compiles; toLiveClaimEnvelope normalises an absent value to
+   * 'none'.
+   */
+  conflictState?: ConflictState;
+  /** ISO — when the snapshot (and so its conflict state) was last recomputed. */
+  conflictUpdatedAt?: string;
 }
 
 /**
@@ -108,6 +126,14 @@ export interface LiveClaimEnvelope {
   /** expires_at — the freshness horizon the client uses to degrade to unknown. */
   validUntil: string;
   state: LiveState;
+  /**
+   * §10 conflict state. 'material' ⇒ `state` is never 'live' and `band` is at
+   * most likely_current (capped in readLiveClaims): the client renders
+   * "Reports differ" wherever it would have rendered a Live label.
+   */
+  conflictState: ConflictState;
+  /** Counts-only conflict block ({state, sidesCount, lastUpdated}); null when 'none'. */
+  conflict: ConflictBlock | null;
 }
 
 /**
@@ -149,6 +175,9 @@ function compareLiveClaims(a: LiveClaim, b: LiveClaim): number {
 
 /** Shape a live claim into the client-facing envelope (derived fields only). */
 export function toLiveClaimEnvelope(c: LiveClaim): LiveClaimEnvelope {
+  // Re-normalised here so a LiveClaim built by hand (tests, future callers)
+  // without the field reads as 'none' rather than as an undefined state.
+  const conflictState = normalizeConflictState(c.conflictState);
   return {
     id: c.id,
     claimType: c.claimType,
@@ -166,7 +195,12 @@ export function toLiveClaimEnvelope(c: LiveClaim): LiveClaimEnvelope {
     // 'live' ONLY when the evidence qualifies (band live/strong); a claim that
     // cleared the serve floor but not the live band is 'emerging'. readLiveClaims
     // already dropped anything below the serve floor and anything expired.
-    state: c.band === "live" || c.band === "strong" ? "live" : "emerging",
+    // A MATERIAL conflict is never 'live' (§10 "suppress strong Live label") —
+    // readLiveClaims already capped the band, and this guard makes the rule
+    // hold for any LiveClaim built by hand too.
+    state: conflictState !== "material" && (c.band === "live" || c.band === "strong") ? "live" : "emerging",
+    conflictState,
+    conflict: conflictBlock(conflictState, typeof c.conflictUpdatedAt === "string" ? c.conflictUpdatedAt : c.observedAt),
   };
 }
 
@@ -263,7 +297,7 @@ export async function readLiveClaims(
   try {
     let q = sc
       .from("intel_state_snapshots")
-      .select("id, zone_id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible")
+      .select("id, zone_id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible, conflict_state, computed_at")
       .eq("subject_id", subjectId)
       .eq("privacy_eligible", true)
       .gt("expires_at", now.toISOString());
@@ -282,8 +316,17 @@ export async function readLiveClaims(
       // Per-scope gate: only serve snapshots whose (zone, claim) scope is promoted.
       const scopeKey = `${(row.zone_id ?? "")}|${row.claim_type}`;
       if (!promotedScopes.has(scopeKey)) continue;
-      const confidence = typeof row.confidence === "number" ? row.confidence : null;
-      const band = confidenceBand(confidence);
+      // §10 material conflict (2275): cap the served (confidence, band) BELOW the
+      // live band before anything else looks at it, so no consumer of this read
+      // — envelope, wall strip, map projection, Compass context — can derive a
+      // strong Live label from a materially-conflicted cohort. Only ever lowers;
+      // a pre-2275 row (no column) reads as 'none' and is untouched. The capped
+      // band still clears the serve floor, so the value continues to serve, as
+      // 'emerging' with a "Reports differ" block — visible, not silently averaged.
+      const conflictState = normalizeConflictState(row.conflict_state);
+      const capped = capForConflict(conflictState, typeof row.confidence === "number" ? row.confidence : null, confidenceBand(typeof row.confidence === "number" ? row.confidence : null));
+      const confidence = capped.confidence;
+      const band = capped.band;
       // Below the live floor a claim is not shown as live at all.
       if (CONFIDENCE_BAND_FLOOR[band] < CONFIDENCE_BAND_FLOOR[MIN_BAND_FOR_LIVE_STATE]) continue;
       // Truth boundary (intelContracts.mayRenderAsLive): a class that is a
@@ -304,6 +347,10 @@ export async function readLiveClaims(
         sourceCount: typeof row.source_count === "number" ? row.source_count : 0,
         observedAt: String(row.observed_at),
         expiresAt: String(row.expires_at),
+        conflictState,
+        // computed_at is when the projection last (re)assessed the cohort; fall
+        // back to observed_at for a row that somehow lacks it.
+        conflictUpdatedAt: typeof row.computed_at === "string" ? row.computed_at : String(row.observed_at),
       });
     }
     // Deterministic, best/current first.
@@ -328,6 +375,11 @@ export async function readLiveCrowdLevel(
   const claims = await readLiveClaims(sc, subjectId, { claimTypes: ["crowd.level"], now: opts.now });
   const crowd = claims.find((c) => c.claimType === "crowd.level");
   if (!crowd) return null;
+  // A bare string cannot carry a "Reports differ" marker, so serving the
+  // plurality value here under a MATERIAL conflict would be exactly the silent
+  // averaging §1 forbids. The rich envelope (readLiveClaimEnvelopes) still
+  // serves the value WITH its conflict block; this legacy string is null.
+  if (crowd.conflictState === "material") return null;
   const v = crowd.value as any;
   const level = typeof v === "string" ? v : v?.level;
   return typeof level === "string" && level.length > 0 ? level : null;
@@ -430,6 +482,9 @@ export async function readTypicalPatterns(
         observedAt: computedAt,
         validUntil,
         state: "typical",
+        // A historical pattern has no live cohort, so no §10 conflict to surface.
+        conflictState: "none",
+        conflict: null,
       });
     }
     return out;
