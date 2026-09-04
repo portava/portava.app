@@ -70,6 +70,9 @@ import {
 } from "../services/wall/FollowingFeedService.js";
 import {
   buildLiveForYou,
+  buildGemLiveCandidates,
+  buildSocialPresenceLiveCandidates,
+  buildBuddyLiveCandidates,
   MAX_LIVE_FOR_YOU,
   type LiveForYouCandidate,
 } from "../services/wall/LiveForYouService.js";
@@ -611,6 +614,51 @@ async function buildLiveStrip(
   }
 }
 
+/**
+ * Assemble the FULL multi-kind Live For You candidate set for a bounded set of
+ * viewer-relevant places (spec §4 / TABLE 0). place_state (and event_state) come
+ * from the intel projection inside buildLiveForYou (a bare candidate ⇒ the
+ * envelope read); the other kinds come from their own canonical readers here so
+ * LiveForYouService.actionFor's per-kind mapping binds:
+ *   • hidden_gem      — buildGemLiveCandidates (public/approximate, fresh state)
+ *   • social_presence — buildSocialPresenceLiveCandidates (k-anonymity floor)
+ *   • buddy           — buildBuddyLiveCandidates (behind the RAB flag, city-area)
+ * Each producer is fail-soft; a resolved candidate wins the per-subject slot over
+ * a bare place_state one inside buildLiveForYou. event_state and trip_signal have
+ * no existing canonical live reader and are deliberately not produced here.
+ */
+async function assembleLiveCandidates(
+  sc: any,
+  viewer: WallViewerContext,
+  viewerId: string,
+  placeRefs: PublicPlaceRef[],
+  rabEnabled: boolean,
+): Promise<LiveForYouCandidate[]> {
+  const placeState: LiveForYouCandidate[] = placeRefs.map((p) => ({
+    subjectId: p.placeId,
+    liveObjectType: "place_state" as const,
+    subject: p,
+  }));
+  const [gems, social, buddies] = await Promise.all([
+    buildGemLiveCandidates(sc, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: gem live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildSocialPresenceLiveCandidates(sc, viewerId, viewer.followedCreatorIds, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: social presence live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildBuddyLiveCandidates(sc, placeRefs, { rabEnabled }).catch((err) => {
+      logger.warn({ err }, "wall: buddy live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+  ]);
+  // Resolved kinds first so, on a per-subject collision, the concrete fact wins
+  // the slot over a speculative place_state intel read (buildLiveForYou prefers a
+  // resolved candidate anyway; this ordering makes the intent explicit).
+  return [...social, ...gems, ...buddies, ...placeState];
+}
+
 // ── Schemas ────────────────────────────────────────────────────────────────
 
 const wallQuerySchema = z.object({
@@ -800,21 +848,25 @@ router.get(
       items = diversified.items;
     }
 
-    // ── Live For You strip: bounded, deduped against the feed's places (§4).
-    const feedSubjectIds = new Set<string>();
-    const liveCandidates: LiveForYouCandidate[] = [];
+    // ── Live For You strip: bounded, multi-kind, from the feed's places (§4).
+    //    The §4 "do not repeat a live signal that already appears in the strip"
+    //    rule is enforced on the FEED side — attachContextThreads (below) dedups
+    //    context threads against the strip's subjects (liveStripSubjectIds). The
+    //    strip itself is therefore built from the feed's relevant places WITHOUT
+    //    self-deduping against them (self-dedup would empty it, since every
+    //    candidate subject is by construction a feed place).
+    const feedPlaceRefs: PublicPlaceRef[] = [];
+    const seenFeedPlaces = new Set<string>();
     for (const it of items) {
       const placeRef = it.place ?? merged.placeByObject.get(it.canonicalObjectId);
-      if (placeRef) {
-        feedSubjectIds.add(placeRef.placeId);
-        liveCandidates.push({ subjectId: placeRef.placeId, liveObjectType: "place_state", subject: placeRef });
+      if (placeRef && !seenFeedPlaces.has(placeRef.placeId)) {
+        seenFeedPlaces.add(placeRef.placeId);
+        feedPlaceRefs.push(placeRef);
       }
     }
-    // Dedup the live strip against subjects ALREADY shown as feed objects (§4:
-    // do not repeat a live signal that already appears in the feed).
+    const liveCandidates = await assembleLiveCandidates(sc, viewer, user.id, feedPlaceRefs, rabEnabled);
     const liveForYou = await buildLiveStrip(sc, liveEnabled, liveCandidates, {
       limit: MAX_LIVE_FOR_YOU,
-      dedupeSubjectIds: feedSubjectIds,
     });
 
     // ── Context Threads (spec §8/§9): attach an OPTIONAL compact bridge beneath
@@ -868,15 +920,19 @@ router.get(
 
     // Live-strip candidates are the places from the viewer's recent followed
     // content — a viewer-relevant, bounded set, NOT a city-wide scan (spec §4).
+    // The strip is multi-kind (§4/TABLE 0): place_state from the intel projection
+    // plus hidden_gem / social_presence / buddy from their own canonical readers.
     const viewer = await loadViewerContext(sc, user.id);
+    const rabEnabled = await isFlagEnabled(sc, "wall_rab_integration_enabled");
     const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
     const seen = new Set<string>();
-    const candidates: LiveForYouCandidate[] = [];
+    const placeRefs: PublicPlaceRef[] = [];
     for (const [, placeRef] of loaded.placeByObject) {
       if (seen.has(placeRef.placeId)) continue;
       seen.add(placeRef.placeId);
-      candidates.push({ subjectId: placeRef.placeId, liveObjectType: "place_state", subject: placeRef });
+      placeRefs.push(placeRef);
     }
+    const candidates = await assembleLiveCandidates(sc, viewer, user.id, placeRefs, rabEnabled);
 
     const liveForYou = await buildLiveStrip(sc, liveEnabled, candidates, { limit });
     res.status(200).json({ liveForYou, generatedAt: new Date().toISOString() });
