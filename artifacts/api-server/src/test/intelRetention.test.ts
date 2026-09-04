@@ -6,6 +6,7 @@ import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   runIntelRetentionSweep, startIntelRetentionScheduler, stopIntelRetentionScheduler,
+  INTERVAL_MS, INTEL_RETENTION_SWEEP_INTERVAL_SECONDS,
 } from "../lib/intelRetentionScheduler.js";
 
 function client(opts: { flag: boolean | null; purged?: number | string; rpcError?: boolean }) {
@@ -92,5 +93,14 @@ describe("intel retention scheduler — lifecycle", () => {
     startIntelRetentionScheduler();
     stopIntelRetentionScheduler();
     stopIntelRetentionScheduler();
+  });
+});
+
+describe("intel retention scheduler — expiry-sweep cadence (spec §21: every minute)", () => {
+  it("defaults to a 60-second interval when INTEL_RETENTION_SWEEP_INTERVAL_SECONDS is unset", () => {
+    // The CI test harness does not set the override, so the module-load default
+    // applies. Spec §21 requires the expiry sweep to run every minute.
+    assert.equal(INTEL_RETENTION_SWEEP_INTERVAL_SECONDS, 60, "default cadence is 60 seconds");
+    assert.equal(INTERVAL_MS, 60_000, "60 seconds expressed in ms");
   });
 });
