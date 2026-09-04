@@ -7,7 +7,7 @@ import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 const postsLogger = rootLogger.child({ route: "posts" });
 import { nameVisibilitySet, sanitizeIdentity, presentedName } from "../lib/publicIdentity";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
-import { decidePostReadable, needsTripMembershipCheck } from "../lib/postVisibility.js";
+import { decidePostReadable, needsTripMembershipCheck, needsFollowerCheck } from "../lib/postVisibility.js";
 import {
   requireUser,
   sendError,
@@ -1799,7 +1799,24 @@ router.get("/posts/:postId", async (req, res) => {
     ? await isAcceptedTripMember(client, post.trip_id, user.id)
     : false;
 
-  const decision = decidePostReadable(post, user.id, viewerIsTripMember);
+  // followers_only posts are readable by the author's followers. Resolve the
+  // follow relationship only when the tier actually needs it (needsFollowerCheck)
+  // — author/public/private/trip_only reads cost no extra round trip. The USER
+  // client is used (matching the membership check) so the follow row is read
+  // under the viewer's own RLS rather than bypassed.
+  const viewerIsFollower = needsFollowerCheck(post, user.id)
+    ? await (async () => {
+        const { data: followRow } = await client
+          .from("user_follows")
+          .select("follower_id")
+          .eq("follower_id", user.id)
+          .eq("following_id", post.author_id)
+          .maybeSingle();
+        return !!followRow;
+      })()
+    : false;
+
+  const decision = decidePostReadable(post, user.id, viewerIsTripMember, viewerIsFollower);
   if (!decision.readable) {
     req.log.info(
       { postId, viewerId: user.id, reason: decision.reason },

@@ -182,6 +182,9 @@ export interface ContextThreadViewerContext {
   windowSaturated?: boolean;
   /** wall_rab_integration_enabled — gates the buddy candidate reader. */
   rabEnabled?: boolean;
+  /** wall_compass_handoff_enabled — gates the compass candidate reader (§21:
+   *  Compass is opt-in per object, never a permanent panel). */
+  compassHandoffEnabled?: boolean;
   now?: Date;
 }
 
@@ -636,6 +639,159 @@ async function readBuddyCandidate(
   }
 }
 
+/**
+ * map — the object's place can be opened on the canonical Map (spec §22: Wall
+ * objects may link into canonical Map and Place surfaces; the Wall must not
+ * implement a second place-state system, so this only NAVIGATES). It earns its
+ * place only when the SPATIAL frame is relevant to the viewer: the place is in
+ * the viewer's current city, so "see it on the map" locates it relative to where
+ * they are — otherwise the generic see_place action on the object already
+ * suffices. A low-utility bridge that never dominates a live/social/trip fact.
+ */
+async function readMapCandidate(
+  sc: any,
+  projection: WallProjection,
+  viewer: ContextThreadViewerContext,
+): Promise<ContextThreadCandidate | null> {
+  const place = projection.place;
+  if (!place?.placeId || !place.city) return null;
+  const here = (viewer.currentCity ?? "").trim().toLowerCase();
+  if (!here || here !== place.city.trim().toLowerCase()) return null; // spatial frame not relevant
+  const action: WallAction = {
+    type: "open_map",
+    label: "See on map",
+    targetType: "place",
+    targetId: place.placeId,
+  };
+  return {
+    thread: {
+      kind: "map",
+      label: `${place.name} · see it on the map`,
+      // A structural navigation affordance about a canonical place — no live fact.
+      freshness: "recent",
+      confidence: 0.9,
+      reason: "On the map",
+      action,
+    },
+    gate: {
+      viewerAuthorized: true, // public place identity + the viewer's own city
+      contextRelevant: true,
+      confidence: 0.9,
+      freshnessAgeMs: 0,
+      sensitiveDisclosure: false,
+      duplicatesLiveStrip: false,
+      visualOverload: false,
+      // Deliberately modest — it must lose to any live/social/trip/gem fact and
+      // only surface when nothing more decision-relevant is present.
+      expectedUtility: 0.55,
+    },
+  };
+}
+
+/**
+ * memory — the viewer has been to this place before (spec §8 memory kind; §24
+ * Memory as a canonical input). Reads the viewer's OWN passport_memories for the
+ * place (user_id = viewer), so nothing about anyone else is disclosed — it is the
+ * viewer's private record surfaced back to them ("You've been here before"). The
+ * Memory system OWNS the fact; this only reads it and offers to reopen it.
+ */
+async function readMemoryCandidate(
+  sc: any,
+  projection: WallProjection,
+  viewer: ContextThreadViewerContext,
+): Promise<ContextThreadCandidate | null> {
+  const place = projection.place;
+  if (!place?.placeId || !sc) return null;
+  try {
+    const { data, error } = await sc
+      .from("passport_memories")
+      .select("id, title, earned_at, created_at")
+      .eq("user_id", viewer.viewerId)
+      .eq("place_id", place.placeId)
+      .eq("status", "active")
+      .order("earned_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return null;
+    const row = data as any;
+    const memoryId = row.id ? String(row.id) : null;
+    const action: WallAction = memoryId
+      ? { type: "open_object", label: "Revisit", targetType: "memory", targetId: memoryId }
+      : { type: "see_place", label: "See place", targetType: "place", targetId: place.placeId };
+    return {
+      thread: {
+        kind: "memory",
+        label: "You've been here before",
+        // The viewer's own record — structurally "fresh" as a fact about them,
+        // regardless of how long ago the visit was.
+        freshness: "recent",
+        confidence: 0.95,
+        reason: "From your memories",
+        action,
+      },
+      gate: {
+        viewerAuthorized: true, // the viewer's OWN memory
+        contextRelevant: true,
+        confidence: 0.95,
+        freshnessAgeMs: 0,
+        sensitiveDisclosure: false,
+        duplicatesLiveStrip: false,
+        visualOverload: false,
+        // A personal "you were here" is a warm, useful bridge — above the map
+        // affordance but below a live/social fact.
+        expectedUtility: 0.65,
+      },
+    };
+  } catch (err) {
+    logger.warn({ err }, "contextThread: memory read failed");
+    return null;
+  }
+}
+
+/**
+ * compass — an Ask Compass handoff from a place-linked object (spec §21). Behind
+ * wall_compass_handoff_enabled (opt-in per object; Compass is never a permanent
+ * panel). It never asserts inference as fact — it only offers to ASK. The lowest-
+ * priority, lowest-utility bridge: it surfaces only when the flag is on and no
+ * live/social/trip/gem/buddy/map/memory fact earned the single slot.
+ */
+async function readCompassCandidate(
+  sc: any,
+  projection: WallProjection,
+  viewer: ContextThreadViewerContext,
+): Promise<ContextThreadCandidate | null> {
+  if (!viewer.compassHandoffEnabled) return null;
+  const place = projection.place;
+  if (!place?.placeId || !place.city) return null; // a real place to ask about
+  const action: WallAction = {
+    type: "ask_compass",
+    label: "Ask Compass",
+    targetType: "place",
+    targetId: place.placeId,
+  };
+  return {
+    thread: {
+      kind: "compass",
+      label: `Ask Compass about ${place.name}`,
+      freshness: "recent",
+      confidence: 0.7,
+      reason: "Ask Compass",
+      action,
+    },
+    gate: {
+      viewerAuthorized: true,
+      contextRelevant: true,
+      confidence: 0.7,
+      freshnessAgeMs: 0,
+      sensitiveDisclosure: false,
+      duplicatesLiveStrip: false,
+      visualOverload: false,
+      // At the utility floor: the last-resort bridge, never a dominant thread.
+      expectedUtility: 0.5,
+    },
+  };
+}
+
 // ── Orchestrator ──────────────────────────────────────────────────────────────
 
 /**
@@ -654,8 +810,9 @@ export async function gatherContextThread(
   policy: ContextThreadPolicy = DEFAULT_CONTEXT_THREAD_POLICY,
 ): Promise<ContextThread | undefined> {
   if (!sc) return undefined;
-  // An object with no place cannot carry any of the place-anchored threads and
-  // the surface has no non-place threads yet, so short-circuit before any read.
+  // Every thread kind is place-anchored (live/trip/social/gem/buddy AND the
+  // map/memory/compass bridges all key off the object's place), so an object with
+  // no place can carry none — short-circuit before any read.
   if (!projection.place?.placeId) return undefined;
 
   const settled = await Promise.allSettled([
@@ -664,6 +821,9 @@ export async function gatherContextThread(
     readSocialPresenceCandidate(sc, projection, viewer),
     readHiddenGemCandidate(sc, projection, viewer),
     readBuddyCandidate(sc, projection, viewer),
+    readMapCandidate(sc, projection, viewer),
+    readMemoryCandidate(sc, projection, viewer),
+    readCompassCandidate(sc, projection, viewer),
   ]);
   const candidates: ContextThreadCandidate[] = [];
   for (const r of settled) {
@@ -704,5 +864,8 @@ export const _internal = {
   readSocialPresenceCandidate,
   readHiddenGemCandidate,
   readBuddyCandidate,
+  readMapCandidate,
+  readMemoryCandidate,
+  readCompassCandidate,
   PROTECTED_GEM_SENSITIVITY,
 };
