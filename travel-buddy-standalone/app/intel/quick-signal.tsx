@@ -74,6 +74,8 @@ export default function QuickSignalScreen() {
     venue?: string;
     context?: string;
     zoneId?: string;
+    /** 'conflict' when opened as a §10 contradiction-resolution re-ask. */
+    reason?: string;
   }>();
 
   const subjectId = typeof params.subjectId === 'string' ? params.subjectId : undefined;
@@ -81,6 +83,7 @@ export default function QuickSignalScreen() {
   const zoneId = typeof params.zoneId === 'string' ? params.zoneId : null;
   const venue = asVenue(params.venue);
   const context = asContext(params.context);
+  const conflictReask = params.reason === 'conflict';
 
   const { captureEnabled, safeReturnActive, trailEnabled } = useIntelPrompts();
 
@@ -161,7 +164,11 @@ export default function QuickSignalScreen() {
   }
 
   const title = venue ? `${VENUE_LABELS[venue]} · Quick Signal` : 'Quick Signal';
-  const subtitle = subjectName ?? 'Share what it’s like right now';
+  // §10 re-ask: say WHY we are asking again — recent reports disagree — so the
+  // prompt reads as a request to settle a difference, not a random nudge.
+  const subtitle = conflictReask
+    ? `${subjectName ? `${subjectName} · ` : ''}Reports differ right now — what do you see?`
+    : (subjectName ?? 'Share what it’s like right now');
 
   // ── Suppression / guards ────────────────────────────────────────────────
   let body: React.ReactNode;
