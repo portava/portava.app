@@ -129,6 +129,8 @@ export function WallScreen({
         refreshing={feed.refreshing}
         loadingMore={feed.loadingMore}
         caughtUp={feed.caughtUp}
+        stale={feed.stale}
+        cachedAt={feed.cachedAt}
         onEndReached={feed.loadMore}
         onRefresh={feed.refresh}
         onHide={feed.hide}
