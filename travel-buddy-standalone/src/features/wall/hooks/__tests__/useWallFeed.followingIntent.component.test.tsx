@@ -13,8 +13,9 @@ import { fetchWall } from '../../services/wallApi.ts';
 import type { FetchWallResult } from '../../services/wallApi.ts';
 import type { WallMode } from '../../types/wallProjection.ts';
 
-// Intentional stub — wallApi loads the native supabase client + API token seam
-// at module load; fetchWall is the only member useWallFeed touches.
+// NOTE: intentional stub — wallApi imports the native supabase client + the API
+// token seam at module load. fetchWall is the only member useWallFeed touches and
+// is the seam under test, so this exhaustive factory is complete.
 jest.mock('../../services/wallApi', () => ({
   fetchWall: jest.fn(),
 }));
