@@ -525,6 +525,16 @@ export const CROWD_DIRECTION_LABELS: Record<CrowdDirection, string> = {
   holding: 'Staying put',
 };
 
+/**
+ * §22's "Current photo/video" asset types.
+ *
+ * A VOCABULARY OF ASSET TYPES, NOT OF CLAIM VALUES. The other seven prompts'
+ * options are propositions — "busy", "at capacity", "closed" — each of which
+ * becomes a claim the projection can confirm, contradict and expire. `photo`
+ * and `video` are neither: they say what KIND of artifact was captured, not
+ * what is true of the place. Media mints no claim type here or on the server,
+ * and this array must never be treated as one.
+ */
 export const MEDIA_KINDS = ['photo', 'video'] as const;
 export type MediaKind = (typeof MEDIA_KINDS)[number];
 export const MEDIA_LABELS: Record<MediaKind, string> = {
@@ -582,7 +592,25 @@ export type MapContribution =
   | (MapContributionBase & { kind: 'event_status'; value: EventStatusState })
   | (MapContributionBase & { kind: 'closure'; value: ClosureState })
   | (MapContributionBase & { kind: 'crowd_direction'; value: CrowdDirection })
-  | (MapContributionBase & { kind: 'media'; value: MediaKind; mediaUri: string });
+  // The media member carries two fields the other seven do not, and both are
+  // REQUIRED — see `createContribution` for why neither is optional here.
+  | (MapContributionBase & {
+      kind: 'media';
+      value: MediaKind;
+      /**
+       * A reference to an object already uploaded through the app's media
+       * path, NOT a device URI. The server proves the reference is ours and
+       * this contributor's before it stores anything, so a `file://` path is
+       * refused rather than stored.
+       */
+      mediaUri: string;
+      /**
+       * The observation this artifact supports. §21 orders Observation before
+       * Evidence and `intel_evidence.observation_id` is NOT NULL, so a photo
+       * can only ever be attached to an observation that ALREADY exists.
+       */
+      observationId: string;
+    });
 
 /**
  * Which prompts each object kind can legally take.
@@ -699,7 +727,7 @@ export function createContribution(
   obj: (ContributionCandidate & Pick<MapObject, 'id'>) | null | undefined,
   kind: MapContributionKind,
   value: string,
-  opts?: { now?: Date | number; mediaUri?: string },
+  opts?: { now?: Date | number; mediaUri?: string; observationId?: string },
 ): MapContribution | null {
   if (!obj || !obj.id) return null;
   if (!isContributionAllowed(obj, kind)) return null;
@@ -715,7 +743,17 @@ export function createContribution(
     // A media contribution without an asset is not an observation of anything.
     const mediaUri = opts?.mediaUri;
     if (typeof mediaUri !== 'string' || mediaUri.trim() === '') return null;
-    return { ...base, kind: 'media', value: value as MediaKind, mediaUri };
+    // ...and one without an observation is not a §22 contribution at all.
+    //
+    // §21 orders Observation -> Evidence, and the server refuses a bare photo
+    // with the ruling as the reason ("a photo is evidence, not a claim"). That
+    // refusal is the authority; this check is the same rule made STRUCTURAL on
+    // the client, so a caller that skipped the observation cannot even build
+    // the payload to send. It is the media twin of the per-kind rules above:
+    // an ineligible contribution is not constructible, so it is not sendable.
+    const observationId = opts?.observationId;
+    if (typeof observationId !== 'string' || observationId.trim() === '') return null;
+    return { ...base, kind: 'media', value: value as MediaKind, mediaUri, observationId };
   }
 
   return { ...base, kind, value } as MapContribution;

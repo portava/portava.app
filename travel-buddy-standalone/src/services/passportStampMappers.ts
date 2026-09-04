@@ -4,7 +4,47 @@
  * unit-tested in Node directly.
  */
 import type { StampDefinition, PassportStampNew } from './passportStamps.ts';
-import type { PassportStamp } from '../types/models.ts';
+import type { PassportStamp, StampVerification } from '../types/models.ts';
+
+/**
+ * Stamp sources that constitute CANONICAL provenance (§12 / TABLE 16). A stamp
+ * from one of these is a verified travel fact — the server issued it from a real
+ * event, trip, contribution or partner, not from an editable profile field.
+ */
+const CANONICAL_VERIFIED_SOURCES = new Set([
+  'system',
+  'system_observed',
+  'trip_derived',
+  'event_verified',
+  'contribution_earned',
+  'buddy_derived',
+  'partner_verified',
+  'admin_issued',
+]);
+
+/** Sources that are a traveler's own claim — reported, never verified (§12). */
+const SELF_REPORTED_SOURCES = new Set(['self_reported', 'self', 'profile', 'user']);
+
+/** Verification levels that do NOT amount to a real verification. */
+const UNVERIFIED_LEVELS = new Set(['', 'unverified', 'none', 'self', 'self_reported', 'pending']);
+
+/**
+ * Derive the §12 verification treatment from a stamp's provenance. Verified
+ * requires canonical provenance (a genuine verification level OR a canonical
+ * source); a self-reported source is 'reported'; anything else is 'decorative'
+ * so a stamp with unknown provenance can never impersonate a verified one.
+ */
+export function deriveStampVerification(
+  sourceType: string | null | undefined,
+  verificationLevel: string | null | undefined,
+): StampVerification {
+  const src = (sourceType ?? '').trim().toLowerCase();
+  const lvl = (verificationLevel ?? '').trim().toLowerCase();
+  if (lvl && !UNVERIFIED_LEVELS.has(lvl)) return 'verified';
+  if (CANONICAL_VERIFIED_SOURCES.has(src)) return 'verified';
+  if (SELF_REPORTED_SOURCES.has(src)) return 'reported';
+  return 'decorative';
+}
 
 /**
  * Convert a v2 PassportStampNew into the legacy PassportStamp shape used by
@@ -32,6 +72,7 @@ export function toLegacyStamp(s: PassportStampNew): PassportStamp {
     sublabel: sub.join(' · ') || undefined,
     earnedAt: s.earnedAt,
     locked: s.isRevoked,
+    verification: deriveStampVerification(s.sourceType, s.verificationLevel),
     universalArtworkUrl: s.definition?.universalArtworkUrl ?? undefined,
     city: s.city ?? null,
   };

@@ -217,8 +217,13 @@ function discoveryPlace(id: string, name: string, city = "Da Nang") {
 
 function hiddenGem(id: string, name: string, submittedBy: string, city = "Son Tra") {
   return {
+    // `hidden_gem_status` is an ENUM (pending|active|hidden|merged) and
+    // `hidden_gem_sensitivity` is one too (public|approximate|reveal_after_save|
+    // reveal_after_acceptance|protected). "approved" was neither a label nor a
+    // value any row can hold — Postgres rejects it with 22P02.
     id, name, city, country: "Vietnam", submitted_by: submittedBy,
-    category: "viewpoint", status: "approved", created_at: "2026-01-01T00:00:00Z",
+    category: "viewpoint", status: "active", sensitivity_level: "public",
+    created_at: "2026-01-01T00:00:00Z",
   };
 }
 

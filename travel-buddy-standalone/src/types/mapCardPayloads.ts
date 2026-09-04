@@ -82,6 +82,8 @@ export interface GemCardPayload {
   thumbnailUrl: string | null;
   verificationLevel: string | null;
   coordsPrecision: string | null;
+  /** The canonical place a gem reconciles to — the live-claim subject id. */
+  canonicalPlaceId: string | null;
 }
 
 /** Event. MIRRORS the server's `projectEvent` payload exactly. */
@@ -104,9 +106,9 @@ export interface EventCardPayload {
  * serve `buddy_zone` yet), so this shape is `projectBuddy`'s to define.
  */
 export interface BuddyCardPayload {
-  /** The buddy LISTING id — the detail route and save payload key. Never the
-   *  prefixed object id (`buddy:…`), which is the map's id, not the domain's. */
-  buddyId: string;
+  /** The buddy LISTING id — the save payload key. Never the prefixed object id
+   *  (`buddy:…`), which is the map's id, not the domain's. */
+  buddyId: string | null;
   /** The buddy's user id, for message / follow / block. */
   userId: string | null;
   categories: string[];
@@ -123,12 +125,11 @@ export interface BuddyCardPayload {
 
 /** A trip pin. Client-side projection only. */
 export interface TripCardPayload {
-  tripId: string;
   destinationCity: string | null;
   destinationCountry: string | null;
   startDate: string | null;
   endDate: string | null;
-  coverUrl: string | null;
+  status: string | null;
   visibility: string | null;
 }
 
@@ -137,8 +138,15 @@ export interface FriendCardPayload {
   /** Required for the Message CTA: /messages/[id] takes a THREAD id, which is
    *  resolved from this user id. */
   userId: string;
+  /**
+   * Null means "has not opted into showing a real name" — the circle-locations
+   * reader gates this behind each member's name-visibility setting. A card must
+   * fall back to a generic label, never to a handle the server withheld.
+   */
+  name: string | null;
   avatarUrl: string | null;
   city: string | null;
+  country: string | null;
 }
 
 // ── Runtime guards ────────────────────────────────────────────────────────────
@@ -153,8 +161,8 @@ function payloadObject(obj: MapObject): Record<string, unknown> | null {
   return p != null && typeof p === 'object' ? (p as Record<string, unknown>) : null;
 }
 
-export function gemCardPayload(obj: MapObject): GemCardPayload | null {
-  if (obj.kind !== 'hidden_gem') return null;
+export function gemCardPayload(obj: MapObject | null): GemCardPayload | null {
+  if (!obj || obj.kind !== 'hidden_gem') return null;
   const p = payloadObject(obj);
   if (!p || !('category' in p)) return null;
   return {
@@ -163,11 +171,12 @@ export function gemCardPayload(obj: MapObject): GemCardPayload | null {
     thumbnailUrl: asStr(p.thumbnailUrl),
     verificationLevel: asStr(p.verificationLevel),
     coordsPrecision: asStr(p.coordsPrecision),
+    canonicalPlaceId: asStr(p.canonicalPlaceId),
   };
 }
 
-export function eventCardPayload(obj: MapObject): EventCardPayload | null {
-  if (obj.kind !== 'event') return null;
+export function eventCardPayload(obj: MapObject | null): EventCardPayload | null {
+  if (!obj || obj.kind !== 'event') return null;
   const p = payloadObject(obj);
   if (!p || typeof p.hasStarted !== 'boolean') return null;
   return {
@@ -179,12 +188,16 @@ export function eventCardPayload(obj: MapObject): EventCardPayload | null {
   };
 }
 
-export function buddyCardPayload(obj: MapObject): BuddyCardPayload | null {
-  if (obj.kind !== 'buddy_zone') return null;
+export function buddyCardPayload(obj: MapObject | null): BuddyCardPayload | null {
+  if (!obj || obj.kind !== 'buddy_zone') return null;
   const p = payloadObject(obj);
-  if (!p || typeof p.buddyId !== 'string') return null;
+  // `projectBuddy` passes the public buddy DTO through (minus the
+  // marketplace-only `distanceKm`), so `categories` is the field that is always
+  // present and always this layer's — a good discriminator without pinning the
+  // guard to a field the projector might legitimately drop.
+  if (!p || !('categories' in p)) return null;
   return {
-    buddyId: p.buddyId,
+    buddyId: asStr(p.id),
     userId: asStr(p.userId),
     categories: asStrArray(p.categories),
     city: asStr(p.city),
@@ -199,29 +212,34 @@ export function buddyCardPayload(obj: MapObject): BuddyCardPayload | null {
   };
 }
 
-export function tripCardPayload(obj: MapObject): TripCardPayload | null {
-  if (obj.kind !== 'trip_stop') return null;
+export function tripCardPayload(obj: MapObject | null): TripCardPayload | null {
+  if (!obj || obj.kind !== 'trip_stop') return null;
   const p = payloadObject(obj);
-  if (!p || typeof p.tripId !== 'string') return null;
+  // The six fields `projectTrip` emits, deliberately narrower than TripRow so a
+  // card cannot render on the rollback path something the gateway cannot supply.
+  // NOTE there is no trip id here — the detail route comes from
+  // `interaction.detailRoute`, which the projector already built.
+  if (!p || !('visibility' in p)) return null;
   return {
-    tripId: p.tripId,
     destinationCity: asStr(p.destinationCity),
     destinationCountry: asStr(p.destinationCountry),
     startDate: asStr(p.startDate),
     endDate: asStr(p.endDate),
-    coverUrl: asStr(p.coverUrl),
+    status: asStr(p.status),
     visibility: asStr(p.visibility),
   };
 }
 
-export function friendCardPayload(obj: MapObject): FriendCardPayload | null {
-  if (obj.kind !== 'crew_member') return null;
+export function friendCardPayload(obj: MapObject | null): FriendCardPayload | null {
+  if (!obj || obj.kind !== 'crew_member') return null;
   const p = payloadObject(obj);
   if (!p || typeof p.userId !== 'string') return null;
   return {
     userId: p.userId,
+    name: asStr(p.name),
     avatarUrl: asStr(p.avatarUrl),
     city: asStr(p.city),
+    country: asStr(p.country),
   };
 }
 

@@ -328,6 +328,7 @@ async function batchLoadFatiguedCreators(
   db: SupabaseClient | null,
   viewerId: string,
   creatorIds: string[],
+  nowMs: number,
 ): Promise<Set<string>> {
   const result = new Set<string>();
   if (!db || creatorIds.length === 0) return result;
@@ -338,7 +339,7 @@ async function batchLoadFatiguedCreators(
       .select("creator_id")
       .eq("viewer_id", viewerId)
       .in("creator_id", unique)
-      .gt("expires_at", new Date().toISOString());
+      .gt("expires_at", new Date(nowMs).toISOString());
     for (const row of (data as any[]) ?? []) {
       result.add(row.creator_id as string);
     }
@@ -375,10 +376,21 @@ async function loadRankingFlags(db: SupabaseClient | null): Promise<Record<strin
 
 // ── Score component calculators ───────────────────────────────────────────────
 
-/** Time-decay freshness (0–max). Score halves every halfLifeDays days. */
-function calcFreshness(createdAt: string | null, halfLifeDays: number, max: number): number {
+/**
+ * Time-decay freshness (0–max). Score halves every halfLifeDays days.
+ *
+ * `nowMs` is the caller's evaluation instant, NOT the wall clock: a surface that
+ * pages one ranked set has to score every page at the same moment or this decay
+ * moves under it between calls (see RankItemsOptions.nowMs).
+ */
+function calcFreshness(
+  createdAt: string | null,
+  halfLifeDays: number,
+  max: number,
+  nowMs: number,
+): number {
   if (!createdAt) return max * 0.5;
-  const ageDays = (Date.now() - new Date(createdAt).getTime()) / 86_400_000;
+  const ageDays = (nowMs - new Date(createdAt).getTime()) / 86_400_000;
   return Math.max(0, max * Math.pow(2, -ageDays / halfLifeDays));
 }
 
@@ -525,9 +537,10 @@ function calcReturningUserBoost(
   lastActiveAt: string | null,
   relevanceScore: number,
   maxBoost: number,
+  nowMs: number,
 ): number {
   if (!lastActiveAt) return 0;
-  const daysSince = (Date.now() - new Date(lastActiveAt).getTime()) / 86_400_000;
+  const daysSince = (nowMs - new Date(lastActiveAt).getTime()) / 86_400_000;
   if (daysSince < 14) return 0;
   // Relevance-constrained: only high-relevance items get the returning boost
   const relevanceFraction = Math.min(1, relevanceScore / 20);
@@ -700,6 +713,23 @@ export interface RankItemsOptions {
    * fire only when something actually happened.
    */
   emitPerCandidateAnalytics?: boolean;
+
+  /**
+   * The instant this ranking is evaluated AT, in epoch ms. Defaults to
+   * Date.now(), which is right for a one-shot ranked request.
+   *
+   * A surface that PAGES one ranked set must pass the same value for every page
+   * of the session. Ranking is not a pure function of the candidate set: the
+   * freshness half-life decays continuously and creator-fatigue cooldowns
+   * expire, so two calls seconds apart score the same items differently. The
+   * full set is re-ranked per page and sliced at an offset, so any pair of items
+   * whose scores cross between two calls swaps across the slice boundary — and
+   * an item that crosses the boundary itself is then served twice, or skipped.
+   *
+   * This does NOT pin observability timestamps (served_at, debug samples): those
+   * record when a row was written, and pinning them would falsify the log.
+   */
+  nowMs?: number;
 }
 
 /**
@@ -749,6 +779,12 @@ export async function rankItems(
   // wrote before and only a surface that opts out changes behaviour.
   const emitPerCandidateAnalytics = options.emitPerCandidateAnalytics ?? true;
 
+  // ONE evaluation instant for the whole call. Read once, never per item: the
+  // clock ticks mid-loop otherwise, and two items with identical createdAt get
+  // different freshness purely from where the millisecond boundary fell.
+  // Defaults to now, so a caller that does not page is unaffected.
+  const nowMs = options.nowMs ?? Date.now();
+
   // ── Step 1: load flags + config in parallel ───────────────────────────────
   const [flags, weights, penalties, activityParams] = await Promise.all([
     _overrides.flags != null
@@ -788,7 +824,7 @@ export async function rankItems(
       : Promise.resolve(_overrides.underexposureStatus ?? new Map<string, string>()),
     _overrides.fatiguedCreators != null
       ? Promise.resolve(_overrides.fatiguedCreators)
-      : batchLoadFatiguedCreators(db, viewer.viewerId, creatorIds),
+      : batchLoadFatiguedCreators(db, viewer.viewerId, creatorIds, nowMs),
   ]);
 
   // ── Step 3: surface weight profile ────────────────────────────────────────
@@ -873,7 +909,7 @@ export async function rankItems(
     const viewerRelevance      = calcViewerRelevance(input.tags, input.languageCode, viewer, wRelevance);
     const contentRelevance     = calcContentRelevance(input.tags, input.category, viewer, wContent);
     const geographicRelevance  = calcGeographicRelevance(input.distanceKm, input.city, viewer, wGeo);
-    const freshness            = calcFreshness(input.createdAt, FRESHNESS_HALF_LIFE, wFreshness);
+    const freshness            = calcFreshness(input.createdAt, FRESHNESS_HALF_LIFE, wFreshness, nowMs);
     const contentQuality       = calcContentQuality(input, wQuality);
     const qualityEngagement    = calcQualityEngagementScore(input, wEngagement);
     const relationshipRel      = calcRelationshipRelevance(input, viewer, wRelationship);
@@ -893,7 +929,7 @@ export async function rankItems(
       : 0;
 
     const returningUserBoost = returningUserEnabled
-      ? calcReturningUserBoost(viewer.lastActiveAt, viewerRelevance, activityParams.maxBoost * 0.5)
+      ? calcReturningUserBoost(viewer.lastActiveAt, viewerRelevance, activityParams.maxBoost * 0.5, nowMs)
       : 0;
 
     const underexposureBoost = underexposureEnabled && underexposureStatus === "boosting"

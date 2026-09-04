@@ -382,6 +382,17 @@ export type StampKind =
   | 'host'        // hosted an experience
   | 'perk';       // unlocked a perk
 
+/**
+ * Provenance treatment of a stamp (spec §12 / TABLE 16).
+ *   'verified'   — derived from canonical provenance (system/trip/event/partner/
+ *                  admin). Only these may wear the verified treatment.
+ *   'reported'   — a self-reported claim by the traveler; not verified.
+ *   'decorative' — cosmetic / no provenance. Never impersonates verification.
+ * §12 hard rule: reported/decorative stamps must never visually impersonate a
+ * verified stamp, so the default when provenance is unknown is 'decorative'.
+ */
+export type StampVerification = 'decorative' | 'reported' | 'verified';
+
 export interface PassportStamp {
   id: ID;
   kind: StampKind;
@@ -389,6 +400,12 @@ export interface PassportStamp {
   sublabel?: string;    // "PH · 2026", "x3"
   earnedAt: ISODate;
   locked?: boolean;     // show as not-yet-earned (faint)
+  /**
+   * Provenance treatment (§12). Omitted on legacy stamps with no known
+   * provenance — the UI treats an absent value as 'decorative' so an
+   * unverified stamp can never accidentally read as verified.
+   */
+  verification?: StampVerification;
   /** AI-generated universal stamp artwork image URL (from the stamp definition). */
   universalArtworkUrl?: string;
   /**

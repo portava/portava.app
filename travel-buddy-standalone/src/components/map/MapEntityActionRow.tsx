@@ -201,12 +201,7 @@ function getEntitySubjectId(entity: MapEntity): string {
     switch (obj.kind) {
       case 'buddy_zone': {
         const p = buddyCardPayload(obj);
-        if (p) return p.buddyId;
-        break;
-      }
-      case 'trip_stop': {
-        const p = tripCardPayload(obj);
-        if (p) return p.tripId;
+        if (p?.buddyId) return p.buddyId;
         break;
       }
       case 'crew_member': {
@@ -217,8 +212,9 @@ function getEntitySubjectId(entity: MapEntity): string {
       default:
         break;
     }
-    // Gems and events do not carry a bare id on `payload`, but the namespaced
-    // object id is `<source>:<domain id>` by construction — see the projectors.
+    // Gems, events and trips do not carry a bare id on `payload`, but the
+    // namespaced object id is `<source>:<domain id>` by construction — see the
+    // projectors.
     const sep = obj.id.indexOf(':');
     return sep >= 0 ? obj.id.slice(sep + 1) : obj.id;
   }

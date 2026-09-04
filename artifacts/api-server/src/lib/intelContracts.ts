@@ -245,6 +245,71 @@ export const TRAJECTORIES = [
 ] as const;
 export type Trajectory = (typeof TRAJECTORIES)[number];
 
+// ── Crowd DIRECTION — a different axis from trajectory ───────────────────────
+/**
+ * Which way the crowd is MOVING at a subject. This is deliberately NOT
+ * TRAJECTORIES, and the two must never be collapsed:
+ *
+ *   trajectory  the INTENSITY of the crowd over time — "it is building"
+ *   direction   the FLOW of the crowd through the place — "people are arriving"
+ *
+ * They are independent. A packed room can be 'holding' (nobody moving) while
+ * its trajectory is 'declining'; a thin crowd can be 'arriving' fast. And
+ * 'passing_through' has no trajectory value at all — it says the crowd is not
+ * accumulating here, which is neither building nor declining nor stable.
+ * Storing one as the other publishes an inference the contributor never made,
+ * which is the single defect the §22 → claim mapping exists to prevent.
+ */
+export const CROWD_DIRECTIONS = ["arriving", "dispersing", "passing_through", "holding"] as const;
+export type CrowdDirection = (typeof CROWD_DIRECTIONS)[number];
+
+// ── Vibe, event lifecycle and closure ────────────────────────────────────────
+/**
+ * WHY THESE THREE VOCABULARIES LIVE IN THE CONTRACTS MODULE AND QUEUE/ENTRY DO
+ * NOT. `queue` and `entry_access` are map PROMPT vocabularies that are
+ * translated into a differently-shaped canonical value (minutes; a boolean), so
+ * the prompt's option list is a UI concern and stays with the route. For vibe,
+ * event status, closure and crowd direction the prompt option IS the claim's
+ * value — the mapping is the identity — so the option list IS the canonical
+ * value domain and belongs here, next to the claim-type registry that gives it
+ * a TTL. The route re-exports these so the client-facing names stay in one
+ * place, and lib/quickSignal validates against exactly these arrays: the server
+ * accepts precisely what the client's liveTruth.ts can emit, no more and no
+ * less.
+ */
+export const VIBE_STATES = ["dead", "chill", "social", "high_energy", "going_off"] as const;
+export type VibeState = (typeof VIBE_STATES)[number];
+
+export const EVENT_STATUS_STATES = [
+  "not_started",
+  "starting_soon",
+  "under_way",
+  "winding_down",
+  "ended",
+  "cancelled",
+] as const;
+export type EventStatusState = (typeof EVENT_STATUS_STATES)[number];
+
+export const CLOSURE_STATES = [
+  "open",
+  "temporarily_closed",
+  "closed_for_private_event",
+  "permanently_closed",
+] as const;
+export type ClosureState = (typeof CLOSURE_STATES)[number];
+
+/**
+ * Closure values that assert an IRREVERSIBLE structural fact about a business.
+ * A TTL cannot make this one safe: unlike every other value in these
+ * vocabularies, 'permanently_closed' is a statement that does not decay — if it
+ * is believed once it is believed forever, and if it is wrong it removes a
+ * living business from the map. It is captured (refusing it would break the
+ * client round-trip and lose a real report) but it is never a live label and
+ * never a structural correction on its own; that promotion needs an official or
+ * corroborated source, which this capture surface is not.
+ */
+export const STRUCTURAL_CLOSURE_STATES: readonly ClosureState[] = ["permanently_closed"] as const;
+
 // ── Presence ladder ──────────────────────────────────────────────────────────
 export const PRESENCE_LEVELS = ["P0", "P1", "P2", "P3", "P4"] as const;
 export type PresenceLevel = (typeof PRESENCE_LEVELS)[number];
@@ -300,7 +365,9 @@ export const MIN_BAND_FOR_LIVE_STATE: ConfidenceBand = "likely_current";
 // ── Claim-type registry ──────────────────────────────────────────────────────
 /**
  * The thirteen Phase-1 claim types, with the TTL after which a claim stops being
- * live and the hard expiry beyond which it can never be extended.
+ * live and the hard expiry beyond which it can never be extended. The §22
+ * map-contribution types added later live in MAP_CONTRIBUTION_CLAIM_TYPES
+ * below; CLAIM_TYPES is the two concatenated and is what every reader uses.
  *
  * The dotted namespace (`family.type`) is deliberate and REPLACES the four flat
  * types seeded by migration 2122 (`crowd`, `vibe`, `price`, `structural`).
@@ -316,7 +383,7 @@ export interface ClaimTypeSpec {
   note: string;
 }
 
-export const CLAIM_TYPES: readonly ClaimTypeSpec[] = [
+export const PHASE1_CLAIM_TYPES: readonly ClaimTypeSpec[] = [
   { claimType: "crowd.level",           ttlSeconds: 2700,    hardExpirySeconds: 7200,     note: "How busy it is — 45 min, hard 120 min." },
   { claimType: "crowd.trajectory",      ttlSeconds: 2700,    hardExpirySeconds: 5400,     note: "Direction of change — 45 min, hard 90 min." },
   { claimType: "queue.wait",            ttlSeconds: 1200,    hardExpirySeconds: 2700,     note: "Queue wait — 20 min, hard 45 min." },
@@ -332,8 +399,156 @@ export const CLAIM_TYPES: readonly ClaimTypeSpec[] = [
   { claimType: "experience.next_move",  ttlSeconds: 1800,    hardExpirySeconds: 5400,     note: "Aggregate next-stop movement — 30 min. Cohort-gated." },
 ] as const;
 
+/**
+ * The claim types added for the §22 map-contribution prompts, seeded by
+ * migration 2220. They are a SEPARATE list, not appended to the thirteen above,
+ * for one mechanical reason: PHASE1_CLAIM_TYPES is mirrored by migration 2128
+ * and MAP_CONTRIBUTION_CLAIM_TYPES by 2220, and each list is pinned against its
+ * own migration text by a test. One combined literal would leave neither
+ * assertion able to say which migration owed which row.
+ *
+ * THE TTLs, AND WHY NONE OF THEM IS 15 MINUTES
+ * ============================================
+ * The default that would be wrong is "everything decays like crowd level". A
+ * TTL is a claim about how fast the WORLD changes for that fact, and these four
+ * facts change at four different speeds:
+ *
+ *   crowd.direction   15 min / hard 45 min.
+ *       The fastest fact on the map. Flow is strictly more volatile than
+ *       intensity — a crowd that is 'arriving' is 'holding' twenty minutes
+ *       later by definition, because arriving is what stops when everyone has
+ *       arrived. It therefore must NOT outlive crowd.level (45 min); it gets
+ *       the blueprint's original 15-minute crowd default, and a hard ceiling at
+ *       exactly one crowd.level TTL.
+ *
+ *   vibe.state        30 min / hard 90 min.
+ *       The blueprint's own answer for atmosphere (SEED_FRESHNESS_POLICIES
+ *       'vibe' = 1800s), kept deliberately rather than re-litigated: a vibe
+ *       changes over a sitting, not over a song. Hard expiry at three TTLs —
+ *       ninety minutes on, it is a different room and a different crowd, and no
+ *       amount of re-confirmation should keep the ORIGINAL report alive.
+ *
+ *   event.status      60 min / hard 6 h.
+ *       Bound to the event, and this is the honest part: it CANNOT literally be
+ *       bound to the event, because the §22 payload carries no event schedule
+ *       and intel_observations.subject_id FKs public.places, not an events
+ *       table. So this is a conservative fixed proxy for "one phase of an
+ *       event": a 'starting_soon' that is three hours old is not merely stale,
+ *       it is actively misleading, and the hard ceiling is about as long as a
+ *       long event runs. When an event subject with a real schedule exists, the
+ *       TTL for this type should be derived from it and this row retired.
+ *
+ *   closure.state     6 h / hard 24 h.
+ *       Nearly structural, and deliberately NOT given a structural TTL. Both
+ *       error directions hurt — a wrong 'temporarily_closed' turns people away
+ *       from an open business, a wrong 'open' sends them to a shut one — and
+ *       unlike crowd level nobody re-taps a closure every quarter hour to
+ *       correct it. Expiry is the only self-healing mechanism this claim has,
+ *       so it is set to about a business day's operational span, with a 24-hour
+ *       ceiling past which the map must simply stop asserting anything rather
+ *       than keep repeating a day-old report. (Compare the flat 'structural'
+ *       policy at 180 days: that TTL is for hours-of-operation supplied by an
+ *       owner or an official source, not for a stranger's single tap.)
+ */
+export const MAP_CONTRIBUTION_CLAIM_TYPES: readonly ClaimTypeSpec[] = [
+  { claimType: "crowd.direction", ttlSeconds: 900,   hardExpirySeconds: 2700,  note: "Direction of crowd FLOW (not intensity) — 15 min, hard 45 min." },
+  { claimType: "vibe.state",      ttlSeconds: 1800,  hardExpirySeconds: 5400,  note: "Venue atmosphere — 30 min, hard 90 min." },
+  { claimType: "event.status",    ttlSeconds: 3600,  hardExpirySeconds: 21600, note: "Event lifecycle phase — 60 min, hard 6 h. Fixed proxy until an event subject carries a schedule." },
+  { claimType: "closure.state",   ttlSeconds: 21600, hardExpirySeconds: 86400, note: "Open / closed operational state — 6 h, hard 24 h. Never a structural permanent-closure fact." },
+] as const;
+
+/**
+ * Every canonical claim type. This is what ttlFor() and the projection's
+ * hard-expiry ceiling read, so a claim type absent from here silently gets NO
+ * expiry at all — which is why a new type is added to one of the two lists
+ * above and never only to a validator.
+ */
+export const CLAIM_TYPES: readonly ClaimTypeSpec[] = [
+  ...PHASE1_CLAIM_TYPES,
+  ...MAP_CONTRIBUTION_CLAIM_TYPES,
+];
+
 /** The flat claim types seeded by 2122, kept for readers that still use them. */
 export const LEGACY_CLAIM_TYPES = ["crowd", "vibe", "price", "structural"] as const;
+
+// ── Live-label eligibility, per claim type ───────────────────────────────────
+/**
+ * WHICH CLAIMS MAY EVER REACH A "LIVE" LABEL AT ALL.
+ *
+ * mayRenderAsLive() above answers this for the SOURCE (a prediction is never an
+ * observation). It does not answer it for the SUBJECT MATTER, and the two are
+ * different questions. A firsthand observation is a firsthand observation
+ * whether it is about the vibe or about a business being shut — but only one of
+ * those two, said once by a stranger and rendered as LIVE, can take a living
+ * business off the map.
+ *
+ * THE RULE. A claim whose answers assert the NON-AVAILABILITY of a business or
+ * an event may not carry a live label from unverified crowd capture. It is
+ * still captured, still evidence, and still able to reach the lower confidence
+ * bands where the UI says "2 travellers report it closed" — a corroboration
+ * request, which is true — rather than "Live: closed", which asserts a fact
+ * nobody verified.
+ *
+ * THIS IS A RULING RECORDED AS DATA, in the same spirit as PRIVACY_THRESHOLD_V1
+ * — the live-label reader is not in this unit, and this module applies nothing.
+ * The ruling is three-valued on purpose: 'unruled' is NOT a synonym for either
+ * answer. This unit ruled on the four claim types it introduced and did not
+ * re-open the thirteen that ship today (crowd.level's live label exists and is
+ * gated by intel_live_label_crowd), so a reader must decide what to do with
+ * 'unruled' rather than be handed a default that quietly re-rules them.
+ */
+export type LiveLabelRuling = "eligible" | "never" | "unruled";
+
+export const CLAIM_TYPE_LIVE_LABEL_RULING: Readonly<Record<string, "eligible" | "never">> = {
+  // Present-tense observations of an ongoing state. Subjectivity (vibe) and
+  // volatility (direction) are handled by the agreement and freshness
+  // components of the confidence score, not by banning the label.
+  "vibe.state": "eligible",
+  "crowd.direction": "eligible",
+  "event.status": "eligible",
+  // Both directions of error are costly and nothing self-corrects a closure the
+  // way a stream of crowd taps self-corrects a crowd level. Capture it, score
+  // it, show the count — never label it live.
+  "closure.state": "never",
+};
+
+/**
+ * Individual VALUES that may never back a live label even where their claim
+ * type may. 'cancelled' is event.status's non-availability answer and carries
+ * exactly the harm closure.state is barred for; the other five phases are
+ * ordinary present-tense observations.
+ */
+export const NEVER_LIVE_CLAIM_VALUES: Readonly<Record<string, readonly string[]>> = {
+  "event.status": ["cancelled"],
+};
+
+/** Extract the single scalar a map-contribution claim value carries, if any. */
+function scalarOf(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  for (const key of ["state", "status", "direction", "level", "trajectory"]) {
+    if (typeof v[key] === "string") return v[key] as string;
+  }
+  return null;
+}
+
+/**
+ * The live-label ruling for a claim type, narrowed by its value where a value
+ * carries its own bar. Returns 'unruled' for anything this unit did not rule
+ * on — the caller must decide, and must not read 'unruled' as 'eligible'.
+ */
+export function claimTypeLiveLabelRuling(claimType: string, value?: unknown): LiveLabelRuling {
+  const ruling = CLAIM_TYPE_LIVE_LABEL_RULING[claimType];
+  if (ruling === undefined) return "unruled";
+  if (ruling === "never") return "never";
+  const barred = NEVER_LIVE_CLAIM_VALUES[claimType];
+  if (barred) {
+    const scalar = scalarOf(value);
+    if (scalar !== null && barred.includes(scalar)) return "never";
+  }
+  return "eligible";
+}
 
 // ── Temporal contract ────────────────────────────────────────────────────────
 /**

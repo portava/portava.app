@@ -45,7 +45,9 @@ import {
 } from "../lib/protectedLocations.js";
 import {
   PRIVACY_CLASSES,
+  KIND_DEFAULT_PRIORITY,
   RENDERING_PRIORITY,
+  SOURCE_CLASSES,
   point,
   precisionRank,
   type MapObject,
@@ -512,28 +514,95 @@ describe("coarsening only ever reduces precision", () => {
     const before = obj({
       activity: "busy",
       trend: "getting_busier",
+      sourceClass: "verified_firsthand",
       count: 12,
       freshness: "live",
       observedAt: "2026-08-31T00:00:00.000Z",
       expiresAt: "2026-08-31T01:00:00.000Z",
       sourceRefs: ["obs-1", "obs-2"],
-      provenance: { lines: [{ text: "3 travelers confirmed", ref: "snap-1" }], confidence: "high" },
+      provenance: { lines: [{ text: "3 travelers confirmed", ref: "snap-1" }], confidence: "strong" },
       distanceKm: 0.4,
     });
     const after = coarsenForZone(before, "approximate", circleZone());
+    // `as const` keys the loop to real MapObject fields, so a renamed or
+    // removed field fails to compile instead of silently asserting `undefined`
+    // about a key the type no longer has.
     for (const k of [
       "activity",
       "trend",
+      "sourceClass",
       "count",
       "freshness",
       "observedAt",
       "expiresAt",
       "sourceRefs",
       "provenance",
-    ]) {
-      assert.equal((after as Record<string, unknown>)[k], undefined, `${k} must be dropped`);
+    ] as const) {
+      assert.equal(after[k], undefined, `${k} must be dropped`);
     }
     assert.equal(after.distanceKm, null);
+  });
+
+  /**
+   * THE LOAD-BEARING ONE.
+   *
+   * `sourceClass` is an epistemic label, so it is tempting to file it with the
+   * harmless metadata. It is not harmless. `verified_firsthand` means "a
+   * presence-verified person observed this place", and that survives the removal
+   * of the coordinate, every timestamp, the freshness, the provenance and every
+   * back-reference. A coarsened medical-facility pin that still carried it would
+   * publish exactly the §24 fact — someone is here right now — with all the
+   * supporting detail stripped and the disclosure intact.
+   *
+   * The assertion is on the SERIALIZED BYTES rather than on a property read,
+   * because a property read of `undefined` cannot distinguish "deleted" from
+   * "present and undefined", and only the former is actually absent from the
+   * wire in every serializer. The sentinel is a string that cannot occur
+   * anywhere else in this object, so a hit is unambiguous.
+   *
+   * MUTATION PROOF: deleting the `delete out.sourceClass` line in
+   * lib/protectedLocations must fail this test.
+   */
+  it("§24: a coarsened object carries NO sourceClass — proven on the serialized bytes", () => {
+    const SENTINEL = "SENTINEL_SOURCE_CLASS_7f3a";
+    const before = obj({
+      sourceClass: SENTINEL as unknown as MapObject["sourceClass"],
+      activity: "busy",
+      freshness: "live",
+      observedAt: "2026-08-31T00:00:00.000Z",
+    });
+    const after = coarsenForZone(
+      before,
+      "approximate",
+      circleZone({ category: "medical_facility" } as Partial<ProtectedZone>),
+    );
+
+    const wire = JSON.stringify(after);
+    assert.ok(
+      !wire.includes(SENTINEL),
+      `the source class survived coarsening and reached the wire: ${wire}`,
+    );
+    assert.ok(
+      !wire.includes("sourceClass"),
+      `the attribution key survived coarsening: ${wire}`,
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(after, "sourceClass"),
+      false,
+      "the key must be deleted, not merely set to undefined",
+    );
+
+    // The input is a caller's object and must come back untouched, or the gate
+    // would be corrupting the very list it is filtering.
+    assert.equal(before.sourceClass as unknown as string, SENTINEL);
+  });
+
+  it("§24: a real class is stripped for every source class the wire declares", () => {
+    for (const cls of SOURCE_CLASSES) {
+      const after = coarsenForZone(obj({ sourceClass: cls }), "approximate", circleZone());
+      assert.equal(after.sourceClass, undefined, `${cls} survived coarsening`);
+      assert.ok(!JSON.stringify(after).includes(cls), `${cls} appeared in the serialized object`);
+    }
   });
 
   it("never mutates the input object", () => {
@@ -740,3 +809,46 @@ describe("kind policy is disjoint and deliberate", () => {
     }
   });
 });
+
+// ── Coarsening must reset the rank it never touched ──────────────────────────
+//
+// coarsenForZone deletes activity, trend, sourceClass, count, provenance,
+// sourceRefs and the timestamps — precisely because each of them betrays that
+// someone is there right now. It did not touch renderingPriority.
+//
+// applyLiveClaims promotes a place with qualifying live evidence to
+// RENDERING_PRIORITY.high_confidence_live_zone, so a coarsened protected place
+// kept OUTRANKING its neighbours. A protected location that sorts above
+// everything around it IS the disclosure, whatever its payload says — the same
+// signal, delivered through §31 instead of through a field.
+//
+// It is RESET rather than deleted: renderingPriority is required on a
+// MapObject, so the object still renders, in the position an uncorroborated
+// object of its kind would occupy.
+describe("§24 — a coarsened object does not keep a live rank", () => {
+  it("loses a high-confidence-live promotion", () => {
+    const promoted = { ...obj({ id: "promoted" }), renderingPriority: RENDERING_PRIORITY.high_confidence_live_zone };
+    assert.ok(
+      promoted.renderingPriority > KIND_DEFAULT_PRIORITY[promoted.kind],
+      "precondition: it must actually be promoted, or this test proves nothing",
+    );
+    const { objects } = applyProtection([promoted], [circleZone({ category: "medical_facility" })]);
+    const out = objects.find((o) => o.id === "promoted");
+    assert.ok(out, "the object should be coarsened, not suppressed");
+    assert.equal(
+      out.renderingPriority,
+      KIND_DEFAULT_PRIORITY[out.kind],
+      "a coarsened protected object must rank as an ordinary one of its kind",
+    );
+  });
+
+  it("still renders — the rank is reset, not removed", () => {
+    const promoted = { ...obj({ id: "p2" }), renderingPriority: RENDERING_PRIORITY.high_confidence_live_zone };
+    const { objects } = applyProtection([promoted], [circleZone({ category: "medical_facility" })]);
+    const out = objects.find((o) => o.id === "p2");
+    assert.ok(out, "the object should be coarsened, not suppressed");
+    assert.equal(typeof out.renderingPriority, "number");
+    assert.ok(out.renderingPriority > 0);
+  });
+});
+
