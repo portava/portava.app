@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { stampOverlayCol, feedVariantCol } from "../lib/postMediaOverlay";
@@ -17,6 +18,7 @@ import { countStampsReceived } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../lib/tripCounts.js";
 import {
   buildPassportProjection,
+  buildProjectionCachePolicy,
   resolvePassportViewerContext,
   toCallerContext,
 } from "../services/passport/PassportProjectionService.js";
@@ -1453,6 +1455,14 @@ async function resolveProjectionUserId(sc: any, param: string): Promise<string |
 }
 
 // GET /api/passport/:userId/projection — the full §29 aggregate for a viewer.
+//
+// §31 caching: the response carries a Cache-Control max-age equal to the SHORTEST
+// TTL among the sections actually present (so it is never cached past its most
+// volatile part — availability/state/trust), plus a per-section `cache.sections`
+// map so the client can tier its own cache (identity/stamps for an hour, dynamic
+// sections every 30s). A weak ETag over the projection enables 304 revalidation.
+// The response is `private` for an authenticated viewer (it is viewer-specific)
+// and `public` for the anonymous view (identical for every anonymous caller).
 router.get("/passport/:userId/projection", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
@@ -1462,7 +1472,20 @@ router.get("/passport/:userId/projection", async (req, res) => {
     const viewerId = await getOptionalViewerId(sc, req);
     const projection = await buildPassportProjection(sc, targetId, viewerId);
     if (!projection) { sendError(res, "not_found", "User not found"); return; }
-    res.status(200).json({ projection });
+
+    const cache = buildProjectionCachePolicy(projection);
+    const scope = viewerId ? "private" : "public";
+    // Weak ETag over the projection body (the cache policy derives from it).
+    const etag = `W/"${createHash("sha1").update(JSON.stringify(projection)).digest("hex")}"`;
+    res.setHeader("Cache-Control", `${scope}, max-age=${cache.maxAge}`);
+    res.setHeader("ETag", etag);
+    // A conditional request whose validator still matches → 304, no body.
+    const inm = req.headers["if-none-match"];
+    if (typeof inm === "string" && inm.split(",").some((t) => t.trim() === etag)) {
+      res.status(304).end();
+      return;
+    }
+    res.status(200).json({ projection, cache });
   } catch (e: any) {
     req.log.error({ err: e }, "passport projection failed");
     sendError(res, "db_error", e?.message ?? "Projection failed");

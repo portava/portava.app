@@ -27,6 +27,7 @@ import { useSession } from '../../src/context/SessionContext';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
+import { useMemoryViewedTelemetry } from '../../src/features/passport/useMemoryViewedTelemetry.ts';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -86,6 +87,10 @@ export default function MemoryDetailScreen() {
   }, [id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // §32 memory_viewed — once per memory, once it has actually loaded (every
+  // entry path to a memory lands on this screen, so this is the single count).
+  useMemoryViewedTelemetry(id ?? null, memory != null && memory.id === id);
 
   // ── Owner actions menu ──────────────────────────────────────────────────────
 

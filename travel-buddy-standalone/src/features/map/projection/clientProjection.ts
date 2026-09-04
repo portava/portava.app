@@ -230,6 +230,7 @@ const COMPASS_PRIVACY: Record<MapObjectKind, PrivacyClass> = {
   safety_notice: 'place_level',
   memory: 'aggregate_only',
   prediction: 'aggregate_only',
+  saved_place: 'place_level',
 };
 
 /** The fields of a Compass recommendation this projector reads. */

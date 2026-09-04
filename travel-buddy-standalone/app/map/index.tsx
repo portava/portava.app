@@ -87,8 +87,14 @@ import { LocateFriendsPanel } from '../../src/components/map/LocateFriendsPanel.
 import {
   startLocateFriendsSession,
   publishManualCheckpoint,
+  sharePermittedLocation,
   LOCATE_FRIENDS_PUBLISH_INTERVAL_MS,
 } from '../../src/services/locateFriends.ts';
+import {
+  DEFAULT_LOCATE_FRIENDS_TTL_MINUTES,
+  LOCATE_FRIENDS_TTL_OPTIONS,
+  isTtlWithinBound,
+} from '../../src/features/map/presence/locateFriendsTtl.ts';
 import { useSession } from '../../src/context/SessionContext.tsx';
 import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
 import { countBucket, durationBucketMs } from '../../src/features/map/telemetry/mapTelemetry.ts';
@@ -101,6 +107,7 @@ import {
   objectTarget,
   coordinateOf,
   describeTarget,
+  resolveShareBound,
   type LongPressTarget,
 } from '../../src/features/map/interaction/longPress.ts';
 import { longPressTargetAt } from '../../src/features/map/interaction/pressTarget.ts';
@@ -906,6 +913,19 @@ function FullScreenMapScreenInner() {
     // must not smuggle a flow request past that intent.
     crowdFlow: mode !== 'passport' && layerPrefs.crowd_flow === 'on',
     places: placesWanted,
+    // §16 Saved (default on): requested unless the viewer switched it off — the
+    // on-by-default twin of `places`.
+    saved: mode !== 'passport' && layerPrefs.saved !== 'off',
+    // §16 Memories (default off): explicit opt-in only.
+    memories: mode !== 'passport' && layerPrefs.memories === 'on',
+    // §5/§24 Safety (always on): a hazard notice cannot be switched off, so it
+    // is requested on every non-passport load. The §16 pipeline still force-
+    // resolves the layer visible; this is only the REQUEST.
+    safety: mode !== 'passport',
+    // §11/§16 Trip meeting points (trip layer, contextual): requested when a
+    // trip is on the map — trip mode, or the legacy Trips pin that seeds the
+    // §16 trip layer on. Downstream §16 filtering owns final visibility.
+    meetingPoints: mode !== 'passport' && (machine.mode === 'TRIP' || enabledLayers.includes('trips')),
   });
 
   // ── Places: projected through the gateway, or the legacy Discovery fetch ───
@@ -1871,9 +1891,19 @@ function FullScreenMapScreenInner() {
   // stranding bug the un-gated DELETE route was written to prevent.
   const [locateSessionId, setLocateSessionId] = useState<string | null>(null);
   const [locateStarting, setLocateStarting] = useState(false);
+  // §12 "temporary and auto-expiring": the session's lifetime is CHOSEN here,
+  // not baked in. Defaults to two hours (the length the old frozen chip used)
+  // and every offered option is ≤ the server's 12h cap.
+  const [locateTtlMinutes, setLocateTtlMinutes] = useState<number>(
+    DEFAULT_LOCATE_FRIENDS_TTL_MINUTES,
+  );
 
   const startLocateFriends = useCallback(
     async (scope: { kind: 'trip' | 'circle' | 'event' | 'plan'; id: string }, ttlMinutes: number) => {
+      // Last line of defence before a session is started: a TTL outside the
+      // server's [1, 720]-minute window never reaches the API. There is no
+      // default here — an unusable value is refused, not silently corrected.
+      if (!isTtlWithinBound(ttlMinutes)) return;
       setLocateStarting(true);
       const res = await startLocateFriendsSession({
         groupScopeKind: scope.kind,
@@ -2610,7 +2640,14 @@ function FullScreenMapScreenInner() {
         target={longPress?.target ?? null}
         visible={longPress != null}
         anchor={longPress?.anchor}
-        context={{ checkpointScopeId: locateSessionId, now: Date.now() }}
+        context={{
+          checkpointScopeId: locateSessionId,
+          // §25 "Share permitted location" opens onto the active §12 session —
+          // the bounded, expiring, revocable channel. Same value as the
+          // checkpoint scope: with no live session, neither row has anywhere to go.
+          shareChannelSessionId: locateSessionId,
+          now: Date.now(),
+        }}
         onClose={() => setLongPress(null)}
         onSelect={(action, target) => {
           setLongPress(null);
@@ -2638,14 +2675,36 @@ function FullScreenMapScreenInner() {
             void dropCheckpoint(target);
             return;
           }
-          // §25 `share` is NEVER routed here. The row says "Share permitted
-          // location" and carries a §23 rung and a TTL on its second line; the
-          // only share this screen owns is §8's `shareMapObject`, which sends a
-          // link to a place and expires never. Handing this slug to it would
-          // answer a bounded location share with a permanent link — so the menu
-          // refuses the row outright instead (longPress.ts
-          // `BOUNDED_SHARE_CHANNEL_EXISTS`) and nothing arrives here to route.
-          if (action === 'share') return;
+          // §25 "Share permitted location" opens a bounded, expiring share on
+          // the live §12 session — NEVER §8's permanent link (`shareMapObject` /
+          // `Share.share`). The bound is recomputed with `resolveShareBound` so
+          // the publish is capped on the same numbers the menu was gated on. The
+          // menu only enabled this row when a session channel exists, so a null
+          // session here would be a contradiction — but it is still checked, and
+          // a refusal is reported rather than faked as a success.
+          if (action === 'share') {
+            const bound = resolveShareBound(target, {
+              shareChannelSessionId: locateSessionId,
+              now: Date.now(),
+            });
+            const pt = coordinateOf(target);
+            if (!bound || !pt || !locateSessionId) return;
+            void sharePermittedLocation({ sessionId: locateSessionId, point: pt, bound })
+              .then((res) => {
+                if (res.ok && res.data.stored) {
+                  Alert.alert(
+                    'Location shared with your group',
+                    'They can see it until the session ends. Leave the session to stop sharing.',
+                  );
+                } else {
+                  Alert.alert('Could not share your location', 'Please try again.');
+                }
+              })
+              .catch(() => {
+                Alert.alert('Could not share your location', 'Please try again.');
+              });
+            return;
+          }
           // `save` and `add_to_trip` reach the flows the rail already owns —
           // the wishlist picker and the detail-surface handoff — rather than a
           // second copy of either. Both need a place record, so the menu
@@ -2665,17 +2724,45 @@ function FullScreenMapScreenInner() {
           onEndSession={() => setLocateSessionId(null)}
         />
       ) : machine.mode === 'LOCATE_FRIENDS' && tripId ? (
-        <Pressable
-          style={[s2.optimizeChip, { bottom: insets.bottom + 200 }]}
-          disabled={locateStarting}
-          onPress={() => void startLocateFriends({ kind: 'trip', id: tripId }, 120)}
-          accessibilityRole="button"
-          accessibilityLabel="Start locating friends for two hours"
-        >
-          <Text style={s2.optimizeChipText}>
-            {locateStarting ? 'Starting…' : 'Locate my friends · 2h'}
-          </Text>
-        </Pressable>
+        // §12: the session's bounded lifetime is CHOSEN here rather than baked
+        // in. The chips pick a duration (every one ≤ the server's 12h cap); the
+        // Start control opens the session with the chosen TTL — required and
+        // never defaulted on the wire, so the consent stamp on the membership
+        // row is always a stamp on a bounded session.
+        <View style={[s2.ttlChooser, { bottom: insets.bottom + 200 }]}>
+          <Text style={s2.ttlChooserTitle}>Locate my friends · for how long?</Text>
+          <View style={s2.ttlChooserRow}>
+            {LOCATE_FRIENDS_TTL_OPTIONS.map((opt) => {
+              const selected = opt.minutes === locateTtlMinutes;
+              return (
+                <Pressable
+                  key={opt.minutes}
+                  style={[s2.ttlChip, selected && s2.ttlChipSelected]}
+                  disabled={locateStarting}
+                  onPress={() => setLocateTtlMinutes(opt.minutes)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={opt.accessibilityLabel}
+                >
+                  <Text style={[s2.ttlChipText, selected && s2.ttlChipTextSelected]}>
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Pressable
+            style={[s2.optimizeChip, s2.ttlStart]}
+            disabled={locateStarting}
+            onPress={() => void startLocateFriends({ kind: 'trip', id: tripId }, locateTtlMinutes)}
+            accessibilityRole="button"
+            accessibilityLabel="Start locating friends"
+          >
+            <Text style={s2.optimizeChipText}>
+              {locateStarting ? 'Starting…' : 'Start'}
+            </Text>
+          </Pressable>
+        </View>
       ) : null}
 
       {/* ── §25 Meet Here ───────────────────────────────────────────────────
@@ -2870,6 +2957,54 @@ const s2 = StyleSheet.create({
     color: '#FAF9F6',
     fontSize: 13,
     fontWeight: '700',
+  },
+  ttlChooser: {
+    position: 'absolute',
+    alignSelf: 'center',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 18,
+    backgroundColor: 'rgba(11,16,23,0.94)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(250,249,246,0.14)',
+  },
+  ttlChooserTitle: {
+    color: '#FAF9F6',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  ttlChooserRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  ttlChip: {
+    minWidth: 44,
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(19,26,36,0.96)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(250,249,246,0.14)',
+  },
+  ttlChipSelected: {
+    backgroundColor: 'rgba(10,61,74,0.96)',
+    borderColor: 'rgba(84,183,209,0.85)',
+  },
+  ttlChipText: {
+    color: 'rgba(250,249,246,0.72)',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  ttlChipTextSelected: {
+    color: '#FAF9F6',
+  },
+  ttlStart: {
+    position: 'relative',
+    bottom: undefined,
+    marginTop: 2,
   },
   cacheBannerText: {
     color: 'rgba(250,249,246,0.72)',

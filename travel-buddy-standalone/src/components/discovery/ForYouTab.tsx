@@ -35,6 +35,7 @@ import { postCompassFrontloadEvent, postCompassContext } from '../../services/co
 import { CompassPicksSection } from '../compass/CompassPicksSection.tsx';
 import { CompassTravelerRow } from '../compass/CompassTravelerRow.tsx';
 import { CompassOnboardingCard } from '../compass/CompassOnboardingCard.tsx';
+import { DiscoveryEventPostsRail } from './DiscoveryEventPostsRail.tsx';
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -423,6 +424,9 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             Card is self-managing: it checks onboarding_completed on mount
             and hides itself when already done. Gate is auth-only. */}
         {isAuthed && <CompassOnboardingCard />}
+
+        {/* ── Live from events — serve point 7 (GET /discovery/feed) ── */}
+        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} />
 
         {/* ── Compass Picks section — horizontal card strip ── */}
         <CompassPicksSection

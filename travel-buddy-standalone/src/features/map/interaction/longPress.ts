@@ -276,39 +276,48 @@ export const SHARE_PRECISION_CEILING: PrivacyClass = 'place_level';
 export const DEFAULT_SHARE_PURPOSE: PresencePurpose = 'shared_moment';
 
 /**
- * §25 "Share permitted location", deliberately left CLOSED.
+ * §25 "Share permitted location" — the channel now EXISTS.
  *
- * The BOUNDS are computable and are computed: `resolveShareBound` below is the
- * §23/§37 answer, it is exported, and it is what the caller must open a share
- * with on the day one exists. What does not exist is that caller — nothing in
- * this app or on the server opens a location share that EXPIRES:
+ * The channel is a §12 Locate My Friends session: a bounded-TTL, group-scoped,
+ * revocable location share is exactly what §12 already builds, and a session IS
+ * that channel. Every §37 constraint the row needs is a property of the session,
+ * not a promise this menu makes:
  *
- *   • `/api/trips/:id/crew/live-share/*` (services/tripCrewLocation.ts) streams
- *     the viewer's OWN MOVING POSITION to named trip crew. That is §23's
- *     `trip_crew` row, a different purpose and a different subject; it cannot
- *     carry the point under the finger.
- *   • "Shared moments" (services/sharedMoments.ts) is a photo album — invites,
- *     contributions, a feed. It shares no location at all.
- *   • The platform share sheet is the only other thing in reach, and a
- *     coordinate pasted into a message never expires. That is the exact
- *     sentence §37 forbids: "Do not create permanent exact-location sharing."
+ *   TEMPORARY   the session carries a required, ≤12h `expires_at`, re-checked on
+ *               every read; a member's position also decays inside 60 minutes.
+ *   PURPOSE     the share is opened under a named §23 purpose (`shared_moment`)
+ *               and capped at `place_level` — services/locateFriends.ts's
+ *               `sharePermittedLocation` narrows to the resolved bound.
+ *   REVOCABLE   leaving the session deletes the shared position at once
+ *               (DELETE .../membership, the one un-flag-gated route).
  *
- * So the row would state a TTL the app has no way to honour. Offering it is a
- * promise that cannot be kept, and quietly resolving it to §8's `share` — "send
- * a link to this place", which app/map/index.tsx does have — would be a
- * different action wearing this one's label and this one's bound.
+ * The earlier blockers named here are gone: this no longer resolves to §8's
+ * permanent link (`Share.share`), and it no longer streams a moving position to
+ * trip crew — it publishes the pressed point into a bounded session and lets the
+ * session's own expiry and the §23 decay bound it.
  *
- * It therefore stays disabled WITH ITS REASON (§25 disables, never hides) until
- * an expiring, purpose-bound share exists, at which point this becomes a real
- * check on that channel instead of a constant.
+ * The row is still only OFFERED when there is a channel to open it on — an
+ * active session in `ctx.shareChannelSessionId`. With no session there is nobody
+ * the share could reach, so the row is disabled (with `NO_SHARE_CHANNEL_TARGET_REASON`),
+ * exactly as "Create checkpoint" is without a group. That is availability, not a
+ * §37 gate: the bound is what §37 governs and it is computed regardless.
  *
- * Annotated `boolean` rather than left as the literal `false` so the branch
- * below reads as a check and not as dead code.
+ * Annotated `boolean` rather than the literal `true` so the branch below reads
+ * as a check, and so flipping it back is a one-line kill switch if the channel
+ * ever needs to be withdrawn.
  */
-export const BOUNDED_SHARE_CHANNEL_EXISTS: boolean = false;
+export const BOUNDED_SHARE_CHANNEL_EXISTS: boolean = true;
 
-/** Said on the row when §23 would permit the share but nothing can open it. */
+/** Said on the row if the bounded-share channel is ever withdrawn (kill switch). */
 export const NO_SHARE_CHANNEL_REASON = 'A location share that expires is not available yet';
+
+/**
+ * Said on the row when §23/§37 permit the share but there is no group session to
+ * open it on. Names something the user can DO (start or join a group map),
+ * because — unlike a §23 refusal — it is a state they can change.
+ */
+export const NO_SHARE_CHANNEL_TARGET_REASON =
+  'Start or join a group map to share your location here';
 
 /** The §37 hard stop. A caller may ask for less; it may never ask for more. */
 export const SHARE_MAX_TTL_MS = 60 * 60 * 1000;
@@ -330,6 +339,13 @@ export interface LongPressContext {
    * nobody it could reach, so this is required and fails closed when absent.
    */
   checkpointScopeId?: string | null;
+  /**
+   * The active §12 session the "Share permitted location" row opens onto — the
+   * bounded, expiring, revocable channel. A bounded-TTL session IS the channel;
+   * with none, there is nobody the share could reach, so the row is disabled.
+   * Required for `share`, and fails closed when absent.
+   */
+  shareChannelSessionId?: string | null;
   /** §23 purpose for the share. Defaults to `shared_moment`. */
   sharePurpose?: PresencePurpose;
   /** A live precision grant, if the viewer holds one. May only narrow the rung. */
@@ -550,14 +566,22 @@ function resolveOne(
 
     case 'share': {
       const bound = resolveShareBound(target, ctx);
-      // A bound means §23 and §37 permit this share. Whether anything can OPEN
-      // one is a separate question, and today the answer is no — so the row is
-      // refused here rather than at the call site, because a menu that renders
-      // the bound and then does nothing has promised the bound.
+      // A bound means §23 and §37 permit this share. Two more gates before it is
+      // OFFERED, and both are refused HERE rather than at the call site — a menu
+      // that renders the bound and then does nothing has promised the bound:
+      //   1. the channel capability must exist (kill switch), and
+      //   2. there must be an active session to open it on — a bounded-TTL
+      //      session IS the channel; with none there is nobody it could reach.
       if (bound && !BOUNDED_SHARE_CHANNEL_EXISTS) {
         return disabledItem(action, NO_SHARE_CHANNEL_REASON);
       }
-      if (bound) return { action, enabled: true, shareBound: bound };
+      if (bound) {
+        const channel = ctx.shareChannelSessionId;
+        if (typeof channel !== 'string' || channel.trim() === '') {
+          return disabledItem(action, NO_SHARE_CHANNEL_TARGET_REASON);
+        }
+        return { action, enabled: true, shareBound: bound };
+      }
       if (obj && standsForPeople(obj.kind)) {
         return disabledItem(action, 'You can only share your own location, never someone else’s');
       }
