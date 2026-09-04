@@ -133,3 +133,61 @@ export async function acceptMission(
   if (!data) return { ok: false, reason: "not_acceptable" };
   return minted ? { ok: true, nonce: minted.token } : { ok: true };
 }
+
+/** A mission outcome (§16). 'negative' is a fully VALID completion, never a failure. */
+export type MissionResult = "positive" | "negative" | "inconclusive";
+export const MISSION_RESULTS: readonly MissionResult[] = ["positive", "negative", "inconclusive"];
+
+/**
+ * Complete an accepted mission (§16, AT-13). UNGATED — like accept, honoring a
+ * commitment must survive the flag being off. Guarded on status='accepted'. A
+ * `negative` result is accepted exactly like any other: the DB CHECK requires a
+ * result on completion but never forbids negative. The evidence_contract's
+ * required shape is enforced at the DB (a mission cannot reach 'completed' without
+ * `required_evidence`), so a contributor who satisfied a negative-result contract
+ * is completed and (once funded) paid.
+ *
+ * Reads the mission NONCE if the column exists (unit I3 owns it), but never writes
+ * it — this only advances the lifecycle state.
+ */
+export async function completeMission(
+  sc: any, missionId: string, result: MissionResult,
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!MISSION_RESULTS.includes(result)) return { ok: false, reason: "invalid_result" };
+  const { data, error } = await sc
+    .from("intel_mission_candidates")
+    .update({ status: "completed", result, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("id", missionId)
+    .eq("status", "accepted")
+    .select()
+    .maybeSingle();
+  if (error) {
+    // A DB CHECK rejection (e.g. evidence_contract missing required_evidence) is a
+    // contract failure, surfaced distinctly from an infra error so the caller can
+    // tell "your mission is not completable yet" from "the write broke".
+    return { ok: false, reason: String((error as any).message ?? "db_error") };
+  }
+  if (!data) return { ok: false, reason: "not_completable" };
+  return { ok: true };
+}
+
+/**
+ * Decline (or abort) a mission WITHOUT PENALTY (§22 "Contributors may decline or
+ * abort unsafe work without conduct penalty"). Allowed from 'dispatched' or
+ * 'accepted'. There is no conduct/penalty side effect anywhere — the absence of
+ * one is the guarantee; this only records the terminal state + optional reason.
+ */
+export async function declineMission(
+  sc: any, missionId: string, reason?: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  const { data, error } = await sc
+    .from("intel_mission_candidates")
+    .update({ status: "declined", declined_at: new Date().toISOString(), decline_reason: reason ?? null, updated_at: new Date().toISOString() })
+    .eq("id", missionId)
+    .in("status", ["dispatched", "accepted"])
+    .select()
+    .maybeSingle();
+  if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
+  if (!data) return { ok: false, reason: "not_declinable" };
+  return { ok: true };
+}
