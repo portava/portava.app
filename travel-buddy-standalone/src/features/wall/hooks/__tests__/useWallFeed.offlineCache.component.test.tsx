@@ -16,6 +16,9 @@ import type { FetchWallResult } from '../../services/wallApi.ts';
 import { clearFirstPageCache, writeFirstPageCache } from '../../services/wallPrefetch.ts';
 import type { WallProjection } from '../../types/wallProjection.ts';
 
+// NOTE: intentional stub — wallApi imports the native supabase client + the API
+// token seam at module load. fetchWall is the only member useWallFeed touches;
+// this exhaustive factory is complete for that seam.
 jest.mock('../../services/wallApi', () => ({
   fetchWall: jest.fn(),
 }));
