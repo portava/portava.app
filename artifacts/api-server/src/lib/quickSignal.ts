@@ -32,6 +32,7 @@ import {
   type CrowdLevel,
   type Trajectory,
 } from "./intelContracts.js";
+import { mapTrailSignal } from "./trailFollowup.js";
 
 // ── Quick Signal contexts (§6) ───────────────────────────────────────────────
 export const QUICK_SIGNAL_CONTEXTS = ["arrival", "inside", "entrance", "exit", "movement"] as const;
@@ -86,8 +87,13 @@ const ENTRANCE_TO_QUEUE: Record<string, { minMinutes: number; maxMinutes: number
 
 /**
  * Map a (context, option) selection to a canonical claim_type + value.
- * Returns null for an option that is not in the Phase-1 cut or is unrecognised —
- * the caller rejects a null (fail-closed), never invents a claim.
+ * Returns null for an unrecognised option — the caller rejects a null
+ * (fail-closed), never invents a claim.
+ *
+ * This maps VOCABULARY only. Which capture SURFACE may store the mapped claim is
+ * decided by IntelCaptureService's SURFACE_CLAIMS (quick_signal →
+ * PHASE1_CAPTURE_CLAIM_TYPES below; trail → PHASE1_TRAIL_CAPTURE_CLAIM_TYPES in
+ * lib/trailFollowup), so a mapping here never widens a surface on its own.
  */
 export function mapQuickSignal(context: QuickSignalContext, option: string): MappedClaim | null {
   switch (context) {
@@ -108,7 +114,18 @@ export function mapQuickSignal(context: QuickSignalContext, option: string): Map
       if (!wait) return null;
       return { claimType: "queue.wait", value: { ...wait } };
     }
-    // exit / movement feed IG-06 Trail follow-up, not the Phase-1 capture cut.
+    // exit / movement are the IG-06 Trail follow-up contexts (§6 Exit /
+    // Movement). ONE mapping owns them — lib/trailFollowup.mapTrailSignal — so
+    // the route never has to know which module answers a context:
+    //   movement → experience.next_move  (§4 registry, §13 going-next signal;
+    //              TTL row in 2128; stored only on the `trail` surface)
+    //   exit     → experience.exit_reason (§6 vocabulary, NOT a §4 claim; no
+    //              TTL row; refused by every surface until contracted)
+    // Before 2026-09-04 both returned null here, which is why the Trail sheet
+    // was unreachable over HTTP.
+    case "exit":
+    case "movement":
+      return mapTrailSignal(context, option);
     default:
       return null;
   }
