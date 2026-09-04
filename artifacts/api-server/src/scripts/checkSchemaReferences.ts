@@ -249,10 +249,6 @@ if (regressions.length > 0) {
     console.error(`  ${f.table}.${f.column}`);
     for (const w of f.where) console.error(`      ${w}`);
   }
-  for (const f of findings) {
-    console.error(`  ${f.table}.${f.column}`);
-    for (const w of f.where) console.error(`      ${w}`);
-  }
   console.error(
     "\nEach of these fails the WHOLE query at runtime — a missing select-list " +
       "column fails the read with PGRST100, and a missing write column is " +

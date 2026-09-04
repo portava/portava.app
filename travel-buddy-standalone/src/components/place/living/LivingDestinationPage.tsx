@@ -54,6 +54,7 @@ import {
   Award,
   CalendarDays,
   Radio,
+  AlertTriangle,
 } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { CachedImage } from '../../CachedImage.tsx';
@@ -296,12 +297,29 @@ function categoryToVenue(category?: string | null): 'nightlife' | 'restaurant' |
 }
 
 function PlaceInfoStrip({ living, placeName, category }: PlaceInfoStripProps) {
-  const { captureEnabled, liveLabelEnabled, safeReturnActive } = useIntelPrompts();
+  const { captureEnabled, liveLabelEnabled, safeReturnActive, conflictReask } = useIntelPrompts();
   // The rich decision-exposure chips own the crowd display when live labels are
   // on and there is a live crowd claim — so we hide the plain crowd chip then to
   // avoid showing crowd twice.
   const richLiveClaims = liveLabelEnabled ? buildLiveClaims(living) : [];
   const richHasCrowd = richLiveClaims.some((c) => c.claimType === 'crowd.level');
+  const venue = categoryToVenue(category);
+  // §10 contradiction-resolution opportunity: when a served claim is in MATERIAL
+  // conflict and a prompt may be shown here (flag on, no Safe Return, not
+  // paused), offer a re-ask of that same claim family. null ⇒ nothing offered.
+  const reask = conflictReask(richLiveClaims, venue ?? 'general');
+  const openConflictReask = () => {
+    if (!reask) return;
+    router.push({
+      pathname: '/intel/quick-signal' as any,
+      params: {
+        subjectId: living.placeId,
+        subjectName: placeName ?? '',
+        context: reask.context,
+        reason: reask.reason,
+      },
+    });
+  };
 
   const chips: React.ReactNode[] = [];
 
@@ -355,7 +373,6 @@ function PlaceInfoStrip({ living, placeName, category }: PlaceInfoStripProps) {
   }
 
   const showShare = captureEnabled && !safeReturnActive;
-  const venue = categoryToVenue(category);
 
   if (chips.length === 0 && richLiveClaims.length === 0 && !showShare) return null;
 
@@ -373,7 +390,29 @@ function PlaceInfoStrip({ living, placeName, category }: PlaceInfoStripProps) {
       ) : null}
 
       {/* Live intelligence decision-exposure chips (intel_live_label_crowd). */}
-      <DecisionExposureChips living={living} enabled={liveLabelEnabled} />
+      <DecisionExposureChips
+        living={living}
+        enabled={liveLabelEnabled}
+        onResolveConflict={reask ? openConflictReask : undefined}
+      />
+
+      {/* §10: "Reports differ" re-ask — the contradiction-resolution opportunity,
+          shown only when a prompt may be shown at all (useIntelPrompts). */}
+      {reask ? (
+        <View style={strip.shareWrap}>
+          <Pressable
+            testID="intel-conflict-reask-entry"
+            accessibilityRole="button"
+            accessibilityLabel="Reports differ here. Share what it's like now"
+            onPress={openConflictReask}
+            style={({ pressed }) => [strip.shareBtn, strip.reaskBtn, pressed && { opacity: 0.85 }]}
+          >
+            <AlertTriangle size={14} color={color.warn} />
+            <Text style={strip.shareText}>Reports differ — what’s it like now?</Text>
+            <Text style={strip.shareHint}>· 5 seconds, private</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* Share a Quick Signal (intel_capture_quick_signal). */}
       {showShare ? (
@@ -461,6 +500,8 @@ const strip = StyleSheet.create({
   },
   shareText: { ...typography.button, color: color.signalDim },
   shareHint: { ...typography.metadata, color: color.mute },
+  // §10 re-ask takes the warn tint: neither Live's vermilion nor emerging's teal.
+  reaskBtn: { backgroundColor: color.warn + '12', borderColor: color.warn + '55' },
 });
 
 // ── PlaceDirectionsRow ────────────────────────────────────────────────────────
