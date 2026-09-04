@@ -359,6 +359,51 @@ export interface PassportSharedContextSummary {
   handoffEligible: boolean;
 }
 
+/** §5 traveler-state kinds — the closed set the server projects. */
+export type TravelerStateKind =
+  | 'home'
+  | 'traveling'
+  | 'exploring'
+  | 'open_to_plans'
+  | 'at_event'
+  | 'with_crew'
+  | 'unavailable';
+
+/**
+ * §5 Current Traveler State — temporary, server-projected, never derived on
+ * the client from the AvailabilityStore. Broad city only (§23). `expiresAt`
+ * is the §31 expiry the chip must honour: a state past it is never rendered
+ * as current.
+ */
+export interface TravelerStateView {
+  state: TravelerStateKind;
+  label: string;
+  city: string | null;
+  validFrom: string | null;
+  expiresAt: string | null;
+}
+
+/** §6/§31 availability summary the projection permits this viewer to see. */
+export interface PassportAvailabilityView {
+  openToPlans: boolean;
+  socialAvailability: 'open' | 'maybe' | 'crew_only' | 'following_only' | 'not_open';
+  /** Current explicit, non-expired window (server-filtered) or null. */
+  currentWindow: { status: string; expiresAt: string | null } | null;
+  expiresAt: string | null;
+}
+
+/**
+ * §9/§10 trust summary as the server projects it FOR THIS VIEWER. `score` is
+ * only non-null where the server chose to expose the number (self view); the
+ * client renders it verbatim and never derives authorization from it (§11).
+ */
+export interface PassportTrustView {
+  label: string;
+  publicLevel: string;
+  score: number | null;
+  confidence: 'low' | 'medium' | 'high';
+}
+
 /** Minimal identity slice the client needs (Plans header + QR projection). */
 export interface PassportProjectionIdentity {
   userId: string;
@@ -380,6 +425,14 @@ export interface PassportProjectionView {
   userId: string;
   identity: PassportProjectionIdentity;
   viewerContext: PassportViewerContext;
+  /** §5 current traveler state — null when none / not permitted (short-lived, §31). */
+  travelerState: TravelerStateView | null;
+  /** §6 availability summary — null when not permitted for this viewer (short-lived, §31). */
+  availability: PassportAvailabilityView | null;
+  /** §9 trust summary for this viewer — null when not permitted (short-lived, §31). */
+  trust: PassportTrustView | null;
+  /** True when the server attached a travelIdentity slice this viewer may open. */
+  hasTravelIdentity: boolean;
   stats: PassportStatsView;
   /** §3 recent-stamps preview (already coarsened + verification-tagged). */
   recentStamps: PassportStampView[];
@@ -397,7 +450,13 @@ export interface PassportProjectionView {
   restricted: boolean;
 }
 
-const DEFAULT_ACTIONS: PassportViewerActions = {
+/**
+ * The fail-closed viewer-action set: every capability denied. Used as the
+ * projection default AND by the §31 cache to blank capabilities once the cached
+ * projection is past its short (volatile) TTL — a stale "you may follow" must
+ * never survive as current.
+ */
+export const DENIED_VIEWER_ACTIONS: PassportViewerActions = {
   can_follow: false,
   can_message: false,
   can_make_plan: false,
@@ -405,6 +464,7 @@ const DEFAULT_ACTIONS: PassportViewerActions = {
   can_view_availability: false,
   can_view_trust: false,
 };
+const DEFAULT_ACTIONS = DENIED_VIEWER_ACTIONS;
 
 function asString(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
@@ -482,6 +542,54 @@ function mapMemory(r: any): PassportMemoryView {
   };
 }
 
+const TRAVELER_STATE_KINDS: ReadonlySet<string> = new Set([
+  'home', 'traveling', 'exploring', 'open_to_plans', 'at_event', 'with_crew', 'unavailable',
+]);
+
+function mapTravelerState(r: any): TravelerStateView | null {
+  if (!r || typeof r !== 'object') return null;
+  const state = asString(r.state);
+  if (!state || !TRAVELER_STATE_KINDS.has(state)) return null;
+  return {
+    state: state as TravelerStateKind,
+    label: asString(r.label) ?? state.replace(/_/g, ' '),
+    city: asString(r.city),
+    validFrom: asString(r.validFrom ?? r.valid_from),
+    expiresAt: asString(r.expiresAt ?? r.expires_at),
+  };
+}
+
+const SOCIAL_AVAILABILITY: ReadonlySet<string> = new Set([
+  'open', 'maybe', 'crew_only', 'following_only', 'not_open',
+]);
+
+function mapAvailability(r: any): PassportAvailabilityView | null {
+  if (!r || typeof r !== 'object') return null;
+  const social = asString(r.socialAvailability ?? r.social_availability);
+  const cw = r.currentWindow ?? r.current_window;
+  return {
+    openToPlans: (r.openToPlans ?? r.open_to_plans) === true,
+    socialAvailability: (social && SOCIAL_AVAILABILITY.has(social)
+      ? social
+      : 'not_open') as PassportAvailabilityView['socialAvailability'],
+    currentWindow: cw && typeof cw === 'object'
+      ? { status: asString(cw.status) ?? 'open', expiresAt: asString(cw.expiresAt ?? cw.expires_at) }
+      : null,
+    expiresAt: asString(r.expiresAt ?? r.expires_at),
+  };
+}
+
+function mapTrust(r: any): PassportTrustView | null {
+  if (!r || typeof r !== 'object') return null;
+  const conf = asString(r.confidence);
+  return {
+    label: asString(r.label) ?? 'Trust',
+    publicLevel: asString(r.publicLevel ?? r.public_level) ?? '',
+    score: typeof r.score === 'number' && Number.isFinite(r.score) ? r.score : null,
+    confidence: (conf === 'low' || conf === 'medium' || conf === 'high' ? conf : 'low'),
+  };
+}
+
 function mapSharedContext(r: any): PassportSharedContextSummary | null {
   if (!r || typeof r !== 'object') return null;
   const rawFacts: unknown[] = Array.isArray(r.facts) ? r.facts : [];
@@ -521,6 +629,10 @@ export function mapProjection(raw: any): PassportProjectionView {
       homeCountry: asString(identity.homeCountry ?? identity.home_country),
     },
     viewerContext: (p.viewerContext ?? 'public') as PassportViewerContext,
+    travelerState: mapTravelerState(p.travelerState ?? p.traveler_state),
+    availability: mapAvailability(p.availability),
+    trust: mapTrust(p.trust),
+    hasTravelIdentity: p.travelIdentity != null && typeof p.travelIdentity === 'object',
     stats: mapStats(p.stats),
     recentStamps: stamps.map(mapStamp),
     featuredJourney: mapFeaturedJourney(p.featuredJourney ?? p.featured_journey),
