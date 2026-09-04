@@ -21,6 +21,8 @@ import {
   buildMissionCandidate, shouldGenerateMission,
   type MissionTriggerContext, type BuildMissionInput,
 } from "../../lib/missionGeneration.js";
+import { mintMissionNonce } from "../../lib/intelMissionNonce.js";
+import { logger } from "../../lib/logger.js";
 
 const MISSIONS_FLAG = "intel_missions";
 
@@ -104,17 +106,32 @@ export async function commitAndDispatch(sc: any, missionId: string): Promise<{ o
  * flag being switched off. Guarded on status='dispatched' so nothing that was
  * never dispatched can be accepted.
  */
-export async function acceptMission(sc: any, missionId: string, actorId: string): Promise<{ ok: boolean; reason?: string }> {
+export async function acceptMission(
+  sc: any, missionId: string, actorId: string,
+): Promise<{ ok: boolean; reason?: string; nonce?: string }> {
+  // Unit I3 / P4: mint the single-use mission nonce at accept. Only the HMAC
+  // DIGEST is stored (intel_mission_candidates.nonce, migration 2276); the
+  // plaintext is returned ONCE to the caller for the contributor. If no secret
+  // is configured the commitment is still honoured — the mission simply can
+  // never back a P4 capture (fail-closed on the rung, not on the acceptance).
+  let minted: { token: string; digest: string } | null = null;
+  try {
+    minted = mintMissionNonce(missionId, actorId);
+  } catch (err) {
+    logger.warn({ err, missionId }, "mission nonce not minted — mission cannot reach P4");
+  }
+  const patch: Record<string, unknown> = { status: "accepted", accepted_by: actorId, updated_at: new Date().toISOString() };
+  if (minted) patch.nonce = minted.digest;
   const { data, error } = await sc
     .from("intel_mission_candidates")
-    .update({ status: "accepted", accepted_by: actorId, updated_at: new Date().toISOString() })
+    .update(patch)
     .eq("id", missionId)
     .eq("status", "dispatched")
     .select()
     .maybeSingle();
   if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
   if (!data) return { ok: false, reason: "not_acceptable" };
-  return { ok: true };
+  return minted ? { ok: true, nonce: minted.token } : { ok: true };
 }
 
 /** A mission outcome (§16). 'negative' is a fully VALID completion, never a failure. */

@@ -16,10 +16,12 @@ import assert from "node:assert/strict";
 import {
   buildRewardEligibilityContext,
   candidateQiu,
+  classifyAttribution,
   evaluateCandidate,
   CURRENT_REWARD_LEDGER_VERSION,
   type EarningCandidate,
 } from "../services/intel/RewardOracle.js";
+import { ATTRIBUTION_FLAG } from "../lib/intelAttributionScheduler.js";
 import { QIU_TO_CREDITS } from "../lib/rewardEarnings.js";
 import { runIntelRewardPass } from "../lib/intelRewardScheduler.js";
 
@@ -30,7 +32,7 @@ const OBS = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 const SERVED_CANDIDATE: EarningCandidate = {
   actorId: ACTOR, observationId: OBS,
-  served: true, servedConfidence: 0.8,
+  served: true, servedConfidence: 0.8, outcomeAttribution: "not_required",
   moderationState: "allowed", consentEnabled: true, consentWithdrawn: false,
 };
 
@@ -41,6 +43,8 @@ interface Seed {
   snapshots: any[];
   observations: any[];
   consent: any[];
+  /** I4a attribution ledger rows (intel_attributions) — the honest oracle's input. */
+  attributions?: any[];
 }
 function makeDb(seed: Seed) {
   const flags = seed.flags;
@@ -50,6 +54,7 @@ function makeDb(seed: Seed) {
     intel_observations: [...seed.observations],
     intel_contribution_consent: [...seed.consent],
     intel_reward_ledger: [],
+    intel_attributions: [...(seed.attributions ?? [])],
   };
   let seq = 0;
 
@@ -237,5 +242,95 @@ describe("reward producer — writes NOTHING when it must not", () => {
     const r = await runIntelRewardPass({ client: db });
     assert.equal(r.candidates, 0, "its (subject,zone,type) has no served snapshot");
     assert.equal(db._tables.intel_reward_ledger.length, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// I4a — the HONEST oracle: a finalized attribution row, not "served snapshot exists"
+// ═══════════════════════════════════════════════════════════════════════════
+const ATTR = (over: Record<string, unknown> = {}) => ({
+  observation_id: OBS, actor_id: ACTOR, outcome: "same", outcome_score: 1, contradiction: false, ...over,
+});
+
+describe("reward oracle — outcomeAttribution is part of outcomeFinalized (I4a)", () => {
+  it("classifyAttribution: absent / ungraded / finalized / contradicted, contradiction never outvoted", () => {
+    assert.equal(classifyAttribution([]), "absent");
+    assert.equal(classifyAttribution([{ contradiction: false, outcome_score: null }]), "ungraded", "did_not_go only");
+    assert.equal(classifyAttribution([{ contradiction: false, outcome_score: 1 }]), "finalized");
+    assert.equal(classifyAttribution([{ contradiction: false, outcome_score: "0.85" }]), "finalized", "PostgREST numeric string");
+    assert.equal(classifyAttribution([{ contradiction: false, outcome_score: 1 }, { contradiction: false, outcome_score: 1 }, { contradiction: true, outcome_score: 0.1 }]), "contradicted");
+  });
+  it("not_required (loop OFF) ⇒ served alone finalizes — the pre-I4a oracle, unchanged", () => {
+    assert.equal(buildRewardEligibilityContext({ ...SERVED_CANDIDATE, outcomeAttribution: "not_required" }).outcomeFinalized, true);
+    assert.equal(buildRewardEligibilityContext({ ...SERVED_CANDIDATE, outcomeAttribution: "not_required", served: false }).outcomeFinalized, false);
+  });
+  it("loop ON ⇒ only a finalized attribution finalizes; absent/ungraded/contradicted do not, even when served", () => {
+    assert.equal(buildRewardEligibilityContext({ ...SERVED_CANDIDATE, outcomeAttribution: "finalized" }).outcomeFinalized, true);
+    for (const a of ["absent", "ungraded", "contradicted"] as const) {
+      const r = evaluateCandidate({ ...SERVED_CANDIDATE, outcomeAttribution: a });
+      assert.equal(r.eligible, false, a);
+      assert.deepEqual(r.reasons, ["outcome_not_finalized"], a);
+    }
+    assert.equal(buildRewardEligibilityContext({ ...SERVED_CANDIDATE, outcomeAttribution: "finalized", served: false }).outcomeFinalized, false, "an attribution cannot outrank served-ness");
+  });
+});
+
+describe("reward producer — honest oracle, both flag states", () => {
+  it("attribution flag OFF ⇒ books off the served snapshot exactly as before; the ledger is not read", async () => {
+    const db = makeDb(servedWorld({ flags: { intel_rewards: true, [ATTRIBUTION_FLAG]: false } }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.booked, 1);
+    assert.equal(db._tables.intel_reward_ledger.length, 1);
+  });
+
+  it("attribution flag ON + no attribution row ⇒ ineligible, nothing booked, reconsidered next pass", async () => {
+    const db = makeDb(servedWorld({ flags: { intel_rewards: true, [ATTRIBUTION_FLAG]: true } }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.candidates, 1);
+    assert.equal(r.ineligible, 1);
+    assert.equal(r.booked, 0);
+    assert.equal(db._tables.intel_reward_ledger.length, 0);
+    // Still a candidate on the next pass (nothing was booked, nothing anti-joined).
+    const again = await runIntelRewardPass({ client: db });
+    assert.equal(again.candidates, 1);
+  });
+
+  it("attribution flag ON + a finalized, non-contradicting, graded row ⇒ books exactly once", async () => {
+    const db = makeDb(servedWorld({ flags: { intel_rewards: true, [ATTRIBUTION_FLAG]: true }, attributions: [ATTR()] }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.booked, 1);
+    assert.equal(db._tables.intel_reward_ledger.length, 1);
+    assert.equal(db._tables.intel_reward_ledger[0].idempotency_key, `observation:${OBS}`);
+    const again = await runIntelRewardPass({ client: db });
+    assert.equal(again.booked, 0); assert.equal(db._tables.intel_reward_ledger.length, 1);
+  });
+
+  it("attribution flag ON + a contradiction ⇒ never booked, even beside successes", async () => {
+    const db = makeDb(servedWorld({
+      flags: { intel_rewards: true, [ATTRIBUTION_FLAG]: true },
+      attributions: [ATTR(), ATTR({ outcome: "worse", outcome_score: 0.1, contradiction: true })],
+    }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.ineligible, 1); assert.equal(r.booked, 0);
+    assert.equal(db._tables.intel_reward_ledger.length, 0);
+  });
+
+  it("attribution flag ON + only did_not_go (ungraded) ⇒ not finalized, nothing booked", async () => {
+    const db = makeDb(servedWorld({
+      flags: { intel_rewards: true, [ATTRIBUTION_FLAG]: true },
+      attributions: [ATTR({ outcome: "did_not_go", outcome_score: null })],
+    }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.ineligible, 1); assert.equal(r.booked, 0);
+    assert.equal(db._tables.intel_reward_ledger.length, 0);
+  });
+
+  it("attribution rows for ANOTHER observation do not finalize this one", async () => {
+    const db = makeDb(servedWorld({
+      flags: { intel_rewards: true, [ATTRIBUTION_FLAG]: true },
+      attributions: [ATTR({ observation_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" })],
+    }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.ineligible, 1); assert.equal(db._tables.intel_reward_ledger.length, 0);
   });
 });

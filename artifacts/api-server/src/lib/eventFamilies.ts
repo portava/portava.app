@@ -13,10 +13,13 @@
  *   action       — the traveler engaged with it           (open, save, join, direction)
  *   outcome      — a result followed                       (arrival, completion, rejection)
  *   satisfaction — an explicit satisfaction signal         (satisfaction)
+ *   domain       — an intel pipeline transition, not a    (intel.observation.recorded,
+ *                  traveler interaction (spec §21, 2277)    intel.claim.promoted,
+ *                                                           intel.state.changed)
  */
 import { type CanonicalEventVerb } from "./canonicalEvents.js";
 
-export const EVENT_FAMILIES = ["exposure", "action", "outcome", "satisfaction"] as const;
+export const EVENT_FAMILIES = ["exposure", "action", "outcome", "satisfaction", "domain"] as const;
 export type EventFamily = (typeof EVENT_FAMILIES)[number];
 
 /**
@@ -33,6 +36,9 @@ export const VERB_FAMILY: Record<CanonicalEventVerb, EventFamily> = {
   completion: "outcome",
   rejection: "outcome",
   satisfaction: "satisfaction",
+  "intel.observation.recorded": "domain",
+  "intel.claim.promoted": "domain",
+  "intel.state.changed": "domain",
 };
 
 /** The family for a verb, or null for a non-canonical verb (fail-closed). */

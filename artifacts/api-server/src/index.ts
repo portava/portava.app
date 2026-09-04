@@ -49,6 +49,8 @@ import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
 import { startIntelPatternScheduler } from "./lib/intelPatternScheduler.js";
 import { startIntelCalibrationScheduler } from "./lib/intelCalibrationScheduler.js";
 import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
+import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.js";
+import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
@@ -154,6 +156,15 @@ app.listen(port, (err) => {
   // contributors whose observations reached the served live state. Flag-gated on
   // intel_rewards, fail-closed, idempotent per observation; a no-op until enabled.
   startIntelRewardScheduler();
+  // I4a attribution job: joins outcome events (canonical_events, payload.intel)
+  // to the served claim's input observations and writes the append-only Table-22
+  // ledger (intel_attributions) + scoped trust. Flag-gated on
+  // intel_outcome_attribution_enabled, fail-closed, idempotent per outcome;
+  // a no-op until enabled. The §15 scoped-trust fold (2278) runs inside that
+  // same pass, on the rows it wrote — registered here so the pass is testable
+  // without it.
+  registerScopedTrustApplier();
+  startIntelAttributionScheduler();
   // Executes due user_deletion_requests. Irreversible, so it is gated behind
   // the `account_deletion_worker_enabled` feature flag and fails closed —
   // starting it here is safe even before the flag is turned on.

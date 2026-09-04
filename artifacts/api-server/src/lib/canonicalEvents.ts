@@ -11,9 +11,10 @@
  *
  * TWO SAFETY MECHANISMS ON EVERY EVENT
  * ====================================
- *   1. VERB PROJECTION. Only the nine canonical verbs are accepted. An event
- *      with any other verb is dropped by the projection before insert (and the
- *      table's CHECK would reject it anyway) — a bad verb never reaches the DB.
+ *   1. VERB PROJECTION. Only the canonical verbs are accepted — the nine
+ *      interaction verbs of 2120 plus the three intel domain verbs of 2277. An
+ *      event with any other verb is dropped by the projection before insert (and
+ *      the table's CHECK would reject it anyway) — a bad verb never reaches the DB.
  *   2. PAYLOAD SANITIZER. The free-form payload is (a) stripped of forbidden
  *      raw-GPS keys (lat/lng/latitude/longitude/coords/accuracy, case-insensitive)
  *      and (b) projected to an allow-list of known-safe context keys. A key that
@@ -24,8 +25,8 @@
  */
 import { logger } from "./logger.js";
 
-/** The nine canonical verbs. Mirrors the CHECK on canonical_events.verb. */
-export const CANONICAL_EVENT_VERBS = [
+/** The nine canonical INTERACTION verbs (migration 2120). */
+export const CORE_INTERACTION_VERBS = [
   "impression",
   "open",
   "save",
@@ -35,6 +36,27 @@ export const CANONICAL_EVENT_VERBS = [
   "completion",
   "rejection",
   "satisfaction",
+] as const;
+
+/**
+ * The Intelligence Gathering DOMAIN event verbs (spec §21 Table 29), added to
+ * the verb CHECK by migration 2277. They are not traveler interactions: they are
+ * pipeline transitions (an observation landed, a claim was promoted, a subject's
+ * live state changed band/eligibility) that downstream consumers subscribe to
+ * (I4b pattern learning, Compass, place card). They ride the same append-only
+ * spine so lineage lives in ONE table (the 2130 ruling), filed under the
+ * 'domain' family by eventFamilies.ts / the 2123 view.
+ */
+export const INTEL_DOMAIN_EVENT_VERBS = [
+  "intel.observation.recorded",
+  "intel.claim.promoted",
+  "intel.state.changed",
+] as const;
+
+/** Every canonical verb. Mirrors the CHECK on canonical_events.verb (2120 + 2277). */
+export const CANONICAL_EVENT_VERBS = [
+  ...CORE_INTERACTION_VERBS,
+  ...INTEL_DOMAIN_EVENT_VERBS,
 ] as const;
 
 export type CanonicalEventVerb = (typeof CANONICAL_EVENT_VERBS)[number];
@@ -78,9 +100,40 @@ export const ALLOWED_PAYLOAD_KEYS = [
   "reason",
   "position",
   "result_count",
+  // Intelligence Gathering closed loop (unit I4a). `intel` is the structured
+  // domain envelope shared with I4b: for an OUTCOME event it is exactly
+  // { snapshot_id, claim_id, subject_id, outcome, experience_rating?, served_at }
+  // (lib/intelOutcomes.ts); for a domain event it carries the transition
+  // detail. The three siblings are the attribution inputs of Table 22 and the
+  // scope input of §15 — kept OUTSIDE `intel` so the shared contract stays exact.
+  "intel",
+  "touch",
+  "counterfactual_same_choice",
+  "traveler_mode",
 ] as const;
 
 const ALLOWED_SET = new Set<string>(ALLOWED_PAYLOAD_KEYS);
+
+/**
+ * Strip forbidden GPS keys at EVERY depth of a nested value. The top-level
+ * allow-list already bounds which keys may appear; this makes the GPS strip
+ * hold for the object-valued keys (`intel`) too, so a coordinate can never ride
+ * in under an allowed parent. Arrays are walked; non-plain values pass through.
+ */
+function deepStripForbidden(value: unknown, depth = 0): unknown {
+  if (depth > 8) return undefined; // fail-closed on pathological nesting
+  if (Array.isArray(value)) return value.map((v) => deepStripForbidden(v, depth + 1));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (FORBIDDEN_SET.has(k.toLowerCase())) continue;
+      const cleaned = deepStripForbidden(v, depth + 1);
+      if (cleaned !== undefined) out[k] = cleaned;
+    }
+    return out;
+  }
+  return value;
+}
 
 export interface CanonicalEventInput {
   verb: CanonicalEventVerb;
@@ -106,7 +159,8 @@ export function sanitizePayload(raw: Record<string, unknown> | null | undefined)
   for (const [key, value] of Object.entries(raw)) {
     if (FORBIDDEN_SET.has(key.toLowerCase())) continue; // (a) GPS strip — absolute
     if (!ALLOWED_SET.has(key)) continue;                // (b) allow-list projection
-    out[key] = value;
+    // (c) the strip also applies INSIDE an allowed object-valued key.
+    out[key] = value && typeof value === "object" ? deepStripForbidden(value) : value;
   }
   return out;
 }

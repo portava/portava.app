@@ -145,7 +145,10 @@ router.post("/v1/internal/intel/missions/:id/accept", asyncHandler(async (req, r
     if (out.reason === "not_acceptable") return sendError(res, "invalid_payload", "mission is not a dispatched, acceptable mission");
     return sendError(res, "db_error", out.reason ?? "accept failed");
   }
-  res.json({ ok: true });
+  // Unit I3 / P4: the single-use mission nonce, returned ONCE. Only its HMAC
+  // digest is stored; this is the contributor's proof-of-assignment for the
+  // capture path (presenceAttestation.mission.nonce).
+  res.json(out.nonce ? { ok: true, nonce: out.nonce } : { ok: true });
 }));
 
 // POST /v1/internal/intel/missions/:id/complete — complete an accepted mission
