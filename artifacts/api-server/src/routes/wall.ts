@@ -648,8 +648,16 @@ router.get(
     // ── Session intent (spec §17). A per-request `session_intent` query param is
     //    a TEMPORARY steer (parsed fresh, not persisted); otherwise the stored
     //    intent applies. Both are ignored unless the phase flag is on.
+    //
+    //    FOR YOU ONLY (spec §5 / TABLE 1). Following is the strict-chronology
+    //    trust anchor: "No relevance reordering. Apply only safety/visibility
+    //    filters." An intent steer is a relevance filter, so it must never touch
+    //    Following — resolving it here would also echo an active `sessionIntent`
+    //    in the Following response and let a steer that dropped the tail make
+    //    `caughtUp` claim "all caught up" over a filtered subset. So the intent is
+    //    resolved (and later steered + echoed) ONLY in For You.
     let sessionIntent: StructuredIntent | undefined;
-    if (inputIntelEnabled) {
+    if (inputIntelEnabled && mode === "for_you") {
       try {
         if (session_intent && session_intent.trim()) {
           sessionIntent = await parseIntent(sc, user.id, session_intent, {
@@ -684,11 +692,17 @@ router.get(
     //    Post spine, which is left untouched. Every merged candidate still runs
     //    through the SAME eligibility → block → visibility gate below.
     const loaderViewer = { viewerId: user.id, followedCreatorIds: viewer.followedCreatorIds };
-    // Freeze the supplementary loaders to the SAME For You created-at horizon as
-    // the Post spine (loadCandidates, above) so a postcard/video/moment published
-    // mid-session cannot enter the candidate set and drift ranks across pages
-    // (§28). Following mode has no horizon (forYouCursor is null) and is unaffected.
-    const loaderOpts = { snapshotAtIso: forYouCursor?.snapshotAt };
+    // Give the supplementary loaders the SAME created-at horizon as the Post spine
+    // (loadCandidates, above) so their pages line up with it (§28). For You freezes
+    // to the rank-session snapshot (nothing published mid-session enters the set);
+    // Following slides the window down to the cursor's publishedAt so postcards /
+    // moments OLDER than the newest LOADER_FETCH stay reachable on later pages and
+    // keep their distinct identity (rather than reappearing as plain posts via the
+    // spine). Exactly one of the two is set, per mode.
+    const loaderOpts =
+      mode === "for_you"
+        ? { snapshotAtIso: forYouCursor?.snapshotAt }
+        : { followingCursorPublishedAt: followingCursor?.publishedAt };
     const [postcardsLoaded, mediaLoaded, momentsLoaded] = await Promise.all([
       loadPostcardCandidates(sc, mode, loaderViewer, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: postcard loader threw — no postcards");
@@ -705,7 +719,12 @@ router.get(
     ]);
     const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded);
 
-    const steered = applyIntentSteer(merged.candidates, sessionIntent);
+    // Steer For You only (spec §5). `sessionIntent` is already undefined outside
+    // For You (resolved above only in that mode); the explicit mode guard keeps
+    // the invariant local and obvious: Following candidates are never filtered by
+    // a relevance steer.
+    const steered =
+      mode === "for_you" ? applyIntentSteer(merged.candidates, sessionIntent) : merged.candidates;
 
     // ── Gate + project (eligibility/block/visibility BEFORE ordering, §23/§24).
     const projectViewer: ProjectViewerContext = {
@@ -744,6 +763,15 @@ router.get(
         currentCity: viewer.currentCity,
         currentCountry: viewer.currentCountry,
         followedCreatorIds: viewer.followedCreatorIds,
+        // loadViewerContext already resolved these (§13/§14) but the rank viewer
+        // was built without them, so WallRankingService.toViewerContext fed the
+        // ranker empty travelStyles / preferredCities and InterestFit +
+        // DestinationFit collapsed to their neutral floor on every request. The
+        // viewer's interest tokens are the ranker's travelStyles (interest slugs);
+        // preferred/home cities are its preferredCities. Both are already
+        // lowercased in loadViewerContext.
+        travelStyles: [...viewer.interests],
+        preferredCities: [...viewer.preferredCities],
       };
       const built = await rankForYou(sc, projections, rankViewer, {
         limit,

@@ -24,14 +24,24 @@
  * ## Why absence fails closed
  *
  * An unrecognised visibility value is treated as NOT readable by non-authors.
- * A new visibility tier added later (`followers_only`, say) is then invisible
- * to strangers until someone teaches this function about it, rather than
- * public by default. The author is always admitted, so a new tier cannot lock
- * a user out of their own post.
+ * A new visibility tier added later is then invisible to strangers until someone
+ * teaches this function about it, rather than public by default. The author is
+ * always admitted, so a new tier cannot lock a user out of their own post.
+ *
+ * ## followers_only
+ *
+ * `followers_only` (equivalently the raw value `followers`) is readable by the
+ * author's FOLLOWERS — not the public, and not strangers. Like the trip_only
+ * membership flag, the caller supplies `viewerIsFollower` (the result of a
+ * "does the viewer follow the author" check) rather than this function fetching
+ * it, so the common cases still cost no query and the function stays pure. It
+ * used to fall through to `unknown_visibility` and fail closed to everyone but
+ * the author, so a followers_only post reached NOBODY but its author even though
+ * the tier exists — this admits the followers it is meant for.
  */
 
 /** Visibility values this predicate understands. Anything else fails closed. */
-export const READABLE_VISIBILITIES = ["public", "private", "trip_only"] as const;
+export const READABLE_VISIBILITIES = ["public", "private", "trip_only", "followers_only"] as const;
 
 export interface ReadablePost {
   author_id: string;
