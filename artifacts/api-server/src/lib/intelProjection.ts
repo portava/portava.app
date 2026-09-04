@@ -29,6 +29,7 @@ import { scoreConfidence, type ConfidenceComponents, type ConfidencePenalties } 
 import { evaluatePrivacy, type PrivacyDecision } from "./privacyGate.js";
 import { expiresAt as policyExpiresAt } from "./freshnessPolicy.js";
 import { LIVE_ELIGIBLE_CLAIM_STATUSES } from "./intelContracts.js";
+import type { ConflictState } from "./intelConflict.js";
 
 export interface ProjectionInput {
   claimType: string;
@@ -57,6 +58,12 @@ export interface ProjectionInput {
   sensitiveSubject?: boolean;
   components: Partial<ConfidenceComponents>;
   penalties?: Partial<ConfidencePenalties>;
+  /**
+   * §10 material-conflict state of the cohort (lib/intelConflict), persisted
+   * onto the snapshot by projectAndStore. Absent ⇒ 'none'. It never feeds the
+   * score here — the aggregator already folded the penalty into `penalties`.
+   */
+  conflictState?: ConflictState;
 }
 
 export interface ProjectedSnapshot {
@@ -171,9 +178,13 @@ export async function projectAndStore(
     try {
       const r = await projectClaim(sc, subjectId, input, opts);
       if (!r.snapshot) { tally.skipped++; continue; }
+      // conflict_state (2275) rides alongside the projected row: the §10 state
+      // the aggregator assessed for this cohort, 'none' when the caller did not
+      // assess one. The read path treats NULL/absent as 'none' too.
+      const row = { ...r.snapshot, conflict_state: input.conflictState ?? "none" };
       const { error } = await sc
         .from("intel_state_snapshots")
-        .upsert(r.snapshot, { onConflict: "subject_id,zone_id,claim_type" });
+        .upsert(row, { onConflict: "subject_id,zone_id,claim_type" });
       if (error) { tally.skipped++; logger.warn({ err: error }, "intelProjection: upsert failed"); continue; }
       if (r.snapshot.privacy_eligible) tally.written++; else tally.suppressed++;
     } catch (err) {

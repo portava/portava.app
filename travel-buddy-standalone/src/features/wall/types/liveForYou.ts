@@ -31,6 +31,12 @@ export interface LiveForYouItem {
   /** 0–1; may be null when the source class may not present a confidence badge. */
   confidence?: number | null;
   state: 'live' | 'emerging';
+  /**
+   * IG §10 conflict state of the claim behind the item (mirror of api-server
+   * `LiveForYouItem.conflictState`). 'material' ⇒ `state` is 'emerging' and the
+   * strip says "Reports differ" instead of Live now / Emerging. Absent ⇒ none.
+   */
+  conflictState?: 'none' | 'minor' | 'material';
   observedAt: string;
   /** Freshness horizon — after this the client degrades to unknown (spec §31). */
   validUntil: string;

@@ -69,8 +69,29 @@ describe("canonicalEvents — allow-list projection", () => {
   });
 });
 
+describe("canonicalEvents — payload sanitizer strips GPS at every depth (I4a)", () => {
+  it("strips a forbidden key nested inside an allow-listed object key", () => {
+    const out = sanitizePayload({
+      intel: { snapshot_id: "s1", lat: 1, nested: { LNG: 2, keep: "x" }, list: [{ coords: [1, 2], ok: 1 }] },
+      touch: "go_tap",
+    });
+    assert.deepEqual(out, {
+      intel: { snapshot_id: "s1", nested: { keep: "x" }, list: [{ ok: 1 }] },
+      touch: "go_tap",
+    });
+  });
+  it("the I4a keys are allow-listed and scalars pass through unchanged", () => {
+    for (const k of ["intel", "touch", "counterfactual_same_choice", "traveler_mode"]) {
+      assert.ok((ALLOWED_PAYLOAD_KEYS as readonly string[]).includes(k), `${k} must be allow-listed`);
+    }
+    assert.deepEqual(sanitizePayload({ counterfactual_same_choice: true, traveler_mode: "solo" }),
+      { counterfactual_same_choice: true, traveler_mode: "solo" });
+  });
+});
+
 describe("canonicalEvents — verb projection", () => {
-  it("accepts all nine canonical verbs", () => {
+  it("accepts every canonical verb (nine interaction verbs + three intel domain verbs)", () => {
+    assert.equal(CANONICAL_EVENT_VERBS.length, 12);
     for (const verb of CANONICAL_EVENT_VERBS) {
       const row = projectEvent({ verb });
       assert.notEqual(row, null, `${verb} should be accepted`);
