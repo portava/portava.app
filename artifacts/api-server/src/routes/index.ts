@@ -32,6 +32,7 @@ import geofenceRouter from "./geofence";
 import intelRouter from "./intel.js";
 import intelCoverageRouter from "./intelCoverage.js";
 import intelApiRouter from "./intelApi.js";
+import intelReadModelsRouter from "./intelReadModels.js";
 import safeReturnRouter from "./safeReturn";
 import tripCrewLocationRouter from "./tripCrewLocation";
 import highlightsRouter from "./highlights";
@@ -284,6 +285,7 @@ router.use(placeRecapsRouter);
 router.use(intelRouter);
 router.use(intelCoverageRouter);
 router.use(intelApiRouter);
+router.use(intelReadModelsRouter);
 router.use(wallRouter);
 
 export default router;
