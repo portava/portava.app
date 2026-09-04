@@ -133,6 +133,8 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
   { table: "intel_state_snapshots", column: "observed_at", ownership: "derived_aggregate", personal: false, reason: "Aggregate observation time." },
   { table: "intel_state_snapshots", column: "expires_at", ownership: "portava_owned", personal: false,
     reason: "Portava's TTL policy applied to the snapshot. Redistributing live state without its expiry invites a consumer to cache it indefinitely." },
+  { table: "intel_state_snapshots", column: "conflict_state", ownership: "derived_aggregate", personal: false,
+    reason: "§10 material-conflict state (none/minor/material) of the projected cohort. A consumer MUST see it: spec §10 forbids high-confidence external output while reports materially differ, and the state is the only honest way to say so. Counts-only by construction — it names no side, no size, no contributor." },
 
   // ── intel_evidence / intel_confirmations ──────────────────────────────────
   { table: "intel_evidence", column: "actor_id", ownership: "restricted_no_redistribution", personal: true, reason: "Identifies the contributor." },

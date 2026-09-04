@@ -26,6 +26,7 @@ import { PRIVACY_THRESHOLD_V1, PILOT_CLAIMABLE_MODERATION_STATES, CLAIM_TYPES } 
 import { getPolicy } from "./freshnessPolicy.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { observationsHaveEligibleMediaEvidence } from "./media/mediaEvidenceLink.js";
+import { assessConflict, type ConflictAssessment, type ConflictVote } from "./intelConflict.js";
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
@@ -213,12 +214,18 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
   // (already consent-filtered), a withdrawn contributor's value cannot win. Fall
   // back to the anchor's value when the cohort supplies no value or has no clear
   // winner (a tie for the lead) — never invent a value the cohort did not give.
-  const latestValueByActor = new Map<string, { value: unknown; at: number }>();
+  const latestValueByActor = new Map<string, { value: unknown; at: number; groupKey: string | null }>();
   for (const o of freshObs) {
     if (o.value === undefined || o.actor_id == null) continue;
     const at = o.observed_at ? new Date(o.observed_at).getTime() : 0;
     const prev = latestValueByActor.get(o.actor_id);
-    if (!prev || at >= prev.at) latestValueByActor.set(o.actor_id, { value: o.value, at });
+    if (!prev || at >= prev.at) {
+      latestValueByActor.set(o.actor_id, {
+        value: o.value,
+        at,
+        groupKey: o.group_key == null || o.group_key === "" ? null : String(o.group_key),
+      });
+    }
   }
   const valueVotes = new Map<string, { value: unknown; count: number }>();
   for (const { value } of latestValueByActor.values()) {
@@ -322,6 +329,28 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
   const ageSeconds = Math.max(0, (now.getTime() - new Date(effectiveObservedAt).getTime()) / 1000);
   const ageRatio = ttl > 0 ? ageSeconds / ttl : 1;
 
+  // ── Material conflict (§10, AT-07) — lib/intelConflict ─────────────────────
+  // One vote per consented actor (their most recent value), weighted by
+  // INDEPENDENCE CLUSTER: a shared group_key is one cluster and carries a
+  // verifiable identity (weight 1); an actor with no group_key is their own
+  // "unclear" cluster (weight 0.5) — they can never be inferred into someone
+  // else's party, and they never earn full independent weight either. The
+  // predicate then needs distant values, qualifying weight on BOTH sides, and
+  // overlapping observation windows before it says 'material'. This runs over
+  // the same freshObs cohort as everything above, so a withdrawn or moderated
+  // contributor cannot manufacture a conflict.
+  const conflictVotes: ConflictVote[] = [];
+  for (const [actorId, v] of latestValueByActor) {
+    conflictVotes.push({
+      actorId,
+      clusterId: v.groupKey ?? `actor:${actorId}`,
+      independent: v.groupKey !== null,
+      value: v.value,
+      observedAt: new Date(v.at).toISOString(),
+    });
+  }
+  const conflict: ConflictAssessment = assessConflict({ claimType: claim.claim_type, ttlSeconds: ttl, votes: conflictVotes });
+
   const evidence: ClaimEvidence = {
     distinctActors,
     agrees,
@@ -331,9 +360,10 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
     sourceClass,
     ageRatio,
     // Reachable now: either the frozen claim status (still honoured) OR a
-    // genuinely disagreeing live cohort. Before this the flag was dead, because
-    // nothing ever writes status='conflicting'.
-    conflicting: claim.status === "conflicting" || cohortConflicting,
+    // genuinely disagreeing live cohort (a tie at the top, or ≥half disagree
+    // confirmations) OR a MATERIAL conflict under the §10 predicate. The penalty
+    // only ever adds; a material conflict can never raise confidence.
+    conflicting: claim.status === "conflicting" || cohortConflicting || conflict.state === "material",
   };
 
   return {
@@ -354,5 +384,9 @@ export async function assembleClaimInput(sc: any, claim: ClaimRow, now: Date): P
     sensitiveSubject: false,
     components: deriveComponents(evidence),
     penalties: derivePenalties(evidence),
+    // §10 conflict state, persisted on the snapshot (intel_state_snapshots.
+    // conflict_state, migration 2275) so the read path can suppress the strong
+    // Live label and surface "Reports differ" without recomputing the cohort.
+    conflictState: conflict.state,
   };
 }
