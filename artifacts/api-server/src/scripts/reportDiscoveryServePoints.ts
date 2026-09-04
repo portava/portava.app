@@ -121,12 +121,14 @@ import {
   ALL_SERVE_POINTS,
   CACHE_A_POINTS,
   DISCOVERY_ENDPOINT_POINTS,
-  RANKED_POINTS,
+  LEGACY_RANKED_POINTS,
   SERVE_POINT_LABEL,
   ReportWindowError,
   assertLabelsCoverEnum,
   countOn,
+  countRankedOn,
   observedPoints,
+  rankedOutsideLegacyPoints,
   resolveReportWindow,
   tallyServePoints,
   unexercisedPoints,
@@ -190,7 +192,7 @@ async function main(): Promise<void> {
 
   // ── Tally ──────────────────────────────────────────────────────────────────
   const tally = tallyServePoints(rows as ServeRow[]);
-  const { marked, byPoint, sessionsByPoint, noMarker, unknownMarker, unknownValues } = tally;
+  const { marked, byPoint, sessionsByPoint, rankedByPoint, rankedUnrecorded, noMarker, unknownMarker, unknownValues } = tally;
 
   console.log("── 1. rows by serve point ──");
   if (marked === 0) {
@@ -199,7 +201,16 @@ async function main(): Promise<void> {
     for (const sp of ALL_SERVE_POINTS) {
       const n = byPoint.get(sp) ?? 0;
       const sessions = sessionsByPoint.get(sp)?.size ?? 0;
-      const rankedTag = RANKED_POINTS.has(sp) ? "ranked" : "      ";
+      // Ranked-ness is read from the rows, not from the serve point. Under mode
+      // `pde` the cache-A points 1/2/3 rank per request and say so on the row;
+      // a static "ranked" tag keyed on the point would have called those rows
+      // unranked (docs/discovery/serve-point-report-20260828.md, the trap).
+      const ranked = rankedByPoint.get(sp) ?? 0;
+      const rankedTag =
+        n === 0      ? "            " :
+        ranked === n ? "ranked      " :
+        ranked === 0 ? "unranked    " :
+                       `ranked ${String(ranked).padStart(2)}/${String(n).padEnd(2)}`;
       const scope = DISCOVERY_ENDPOINT_POINTS.has(sp) ? "GET /discovery" : "other surface";
       console.log(
         `  ${sp}  ${SERVE_POINT_LABEL[sp]!.padEnd(30)} ${String(n).padStart(9)}  ${pct(n, marked)}  ${rankedTag}  ${String(sessions).padStart(7)} sessions  ${scope}`,
@@ -297,10 +308,17 @@ async function main(): Promise<void> {
   // error, and widening section 1 to 1-9 without ring-fencing this section
   // would have introduced it while fixing the blindness above.
   const endpointRows = countOn(tally, DISCOVERY_ENDPOINT_POINTS);
-  const rankedRows   = countOn(tally, RANKED_POINTS);
+  // THE NUMERATOR IS JUDGED PER ROW, not per serve point. `rankedInRequest` is
+  // written by every serve-point writer; a pde-ranked cache-A serve carries
+  // `true` on serve point 1/2/3 and is counted here. `countOn(tally,
+  // LEGACY_RANKED_POINTS)` is the old arithmetic and it is wrong under pde —
+  // it would report the engine's own serves as unranked.
+  const rankedRows   = countRankedOn(tally, DISCOVERY_ENDPOINT_POINTS);
   const cacheARows   = countOn(tally, CACHE_A_POINTS);
+  const cacheARanked = countRankedOn(tally, CACHE_A_POINTS);
   const cacheBRows   = byPoint.get(4) ?? 0;
   const otherRows    = marked - endpointRows;
+  const pdeRankedPoints = rankedOutsideLegacyPoints(tally);
 
   console.log("── 2. reached a ranker? (GET /discovery only — serve points 1-6) ──");
   console.log(`  GET /discovery serves     ${String(endpointRows).padStart(9)}  ${pct(endpointRows, marked)} of all marked rows`);
@@ -312,10 +330,20 @@ async function main(): Promise<void> {
     console.log("  No GET /discovery serves in this window. Section 3 is skipped: a ranked");
     console.log("  share over zero serves is not a small number, it is not a number.");
   } else {
-    console.log(`  ranked in-request (5,6)   ${String(rankedRows).padStart(9)}  ${pct(rankedRows, endpointRows)}`);
-    console.log(`  served from cache (1-4)   ${String(endpointRows - rankedRows).padStart(9)}  ${pct(endpointRows - rankedRows, endpointRows)}`);
-    console.log(`    of which cache A (1-3)  ${String(cacheARows).padStart(9)}  ${pct(cacheARows, endpointRows)}`);
-    console.log(`    of which cache B (4)    ${String(cacheBRows).padStart(9)}  ${pct(cacheBRows, endpointRows)}`);
+    console.log(`  ranked in-request         ${String(rankedRows).padStart(9)}  ${pct(rankedRows, endpointRows)}  (per-row marker; legacy points ${[...LEGACY_RANKED_POINTS].sort().join(",")} plus any pde-ranked cache hit)`);
+    console.log(`  unranked                  ${String(endpointRows - rankedRows).padStart(9)}  ${pct(endpointRows - rankedRows, endpointRows)}`);
+    console.log(`    cache A rows (1-3)      ${String(cacheARows).padStart(9)}  ${pct(cacheARows, endpointRows)}  of which ranked by pde: ${cacheARanked}`);
+    console.log(`    cache B replay (4)      ${String(cacheBRows).padStart(9)}  ${pct(cacheBRows, endpointRows)}  (replays a stored order — never ranked in-request)`);
+    if (pdeRankedPoints.length > 0) {
+      console.log(`\n  pde-ranked serves present on serve point(s) [${pdeRankedPoints.join(", ")}]: the engine is`);
+      console.log("  reaching cache-A traffic. These are counted as RANKED above. A build that keyed");
+      console.log("  ranked-ness on the serve point would have reported them as unranked.");
+    }
+    if (rankedUnrecorded > 0) {
+      console.log(`\n  ${rankedUnrecorded} marked row(s) carry NO rankedInRequest key and were classified by`);
+      console.log("  serve point (legacy fallback). That is the writer predating the marker, not a");
+      console.log("  statement about which engine ran. Treat the share above as a floor on doubt.");
+    }
   }
   console.log("");
 
