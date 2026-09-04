@@ -37,6 +37,7 @@ const NOTHING: MapCapabilityInputs = {
   locateFriendsFlagEnabled: false,
   locateFriendsScopeId: null,
   viewerId: null,
+  timeMachineProducerEnabled: false,
 };
 
 /** Everything a session could possibly offer. */
@@ -45,6 +46,7 @@ const EVERYTHING: MapCapabilityInputs = {
   locateFriendsFlagEnabled: true,
   locateFriendsScopeId: 'trip-1',
   viewerId: 'user-1',
+  timeMachineProducerEnabled: true,
 };
 
 describe('deriveMapCapabilities — §10 Crowd Flow', () => {
@@ -100,14 +102,22 @@ describe('deriveMapCapabilities — §12 Locate My Friends', () => {
   });
 });
 
-describe('deriveMapCapabilities — §15 Time Machine has no honest source', () => {
-  it('stays shut even when every other input is at its most generous', () => {
-    // Nothing anywhere produces per-offset state: no route, service or
-    // projection emits a `prediction` object or any forecast field.
-    // toTemporalObjects can only RELABEL what is on screen now, so +30m/+60m/
-    // +120m would all render today's map wearing a forecast badge — §37's "do
-    // not make predictions look like observations". Shut is the honest answer.
-    const caps = deriveMapCapabilities(EVERYTHING);
+describe('deriveMapCapabilities — §15 Time Machine', () => {
+  it('opens when the per-offset producer is reachable for this session', () => {
+    // GET /api/map/projection/temporal is now the source §15 never had. The gate
+    // is a presence check on the PRODUCER, so the mode opens even though a given
+    // offset may have nothing to show — an empty offset is an honest empty state,
+    // not a closed mode.
+    const caps = deriveMapCapabilities({ ...NOTHING, timeMachineProducerEnabled: true });
+    assert.equal(caps.TIME_MACHINE, true);
+    assert.equal(canEnterMode('TIME_MACHINE', caps), true);
+  });
+
+  it('stays shut when the temporal producer is unreachable (gateway flag off)', () => {
+    // The temporal endpoint rides map_projection_enabled; when it answers
+    // enabled:false there is no source to scrub through, so the mode stays shut
+    // rather than open onto a producer that cannot answer.
+    const caps = deriveMapCapabilities({ ...EVERYTHING, timeMachineProducerEnabled: false });
     assert.equal(caps.TIME_MACHINE, false);
     assert.equal(canEnterMode('TIME_MACHINE', caps), false);
   });

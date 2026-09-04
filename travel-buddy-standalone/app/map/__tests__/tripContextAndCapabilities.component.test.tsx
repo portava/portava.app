@@ -31,7 +31,10 @@ const knobs: {
   flags: Record<string, boolean>;
   userId: string | null;
   tripStops: unknown[];
-} = { params: {}, flags: {}, userId: null, tripStops: [] };
+  /** useMapEntities source — 'gateway' means the projection (and its temporal
+   *  sibling) answered, which is what opens §15 Time Machine. */
+  entitiesSource: 'gateway' | 'legacy' | 'mixed';
+} = { params: {}, flags: {}, userId: null, tripStops: [], entitiesSource: 'legacy' };
 
 jest.mock('expo-router', () => {
   const React = require('react');
@@ -195,7 +198,7 @@ jest.mock('../../../src/components/map/MapCarousel', () => {
 jest.mock('../../../src/hooks/useMapEntities', () => ({
   useMapEntities: () => ({
     entities: [], objects: [], liveEnrichment: null,
-    loading: false, error: null, refresh: () => {}, source: 'legacy',
+    loading: false, error: null, refresh: () => {}, source: knobs.entitiesSource,
   }),
 }));
 
@@ -230,6 +233,7 @@ beforeEach(() => {
   knobs.flags = {};
   knobs.userId = null;
   knobs.tripStops = [];
+  knobs.entitiesSource = 'legacy';
   locateSession().mockClear();
 });
 
@@ -325,19 +329,34 @@ describe('FullScreenMapScreen — §12 Locate My Friends capability', () => {
   });
 });
 
-describe('FullScreenMapScreen — §15 Time Machine stays shut', () => {
-  it('never renders the scrubber, even with a trip and every flag on', async () => {
-    // Nothing produces per-offset state, so every offset would redraw today's
-    // map wearing a forecast badge. The honest answer is not to offer the
-    // control — and specifically NOT to hardcode the capability true to make
-    // the surface appear.
+describe('FullScreenMapScreen — §15 Time Machine reachability', () => {
+  it('stays shut while the projection gateway is not answering (source: legacy)', async () => {
+    // The temporal producer rides map_projection_enabled; when the gateway is
+    // not answering (the legacy per-layer path), there is no per-offset source
+    // to scrub, so the control must not appear — and specifically must NOT be
+    // hardcoded true to make the surface show.
     knobs.params = { entityTypes: 'trips', tripId: 'trip-1' };
     knobs.flags = { locate_friends_enabled: true, map_crowd_flow_enabled: true, map_search_enabled: true };
     knobs.userId = 'user-1';
     knobs.tripStops = STOPS;
+    knobs.entitiesSource = 'legacy';
     await mount();
 
     await waitFor(() => expect(screen.getByTestId('map-carousel')).toBeTruthy());
     expect(screen.queryByTestId('time-machine-control')).toBeNull();
+  });
+
+  it('opens the scrubber once the gateway answers (source: gateway)', async () => {
+    // The producer GET /api/map/projection/temporal is the source §15 never had.
+    // When the projection gateway answers, that sibling endpoint is reachable,
+    // so the mode opens — even before the user scrubs to an offset with data,
+    // because an empty offset is an honest empty state, not a closed mode.
+    knobs.params = { tripId: 'trip-1' };
+    knobs.userId = 'user-1';
+    knobs.entitiesSource = 'gateway';
+    await mount();
+
+    await waitFor(() => expect(screen.getByTestId('map-carousel')).toBeTruthy());
+    expect(screen.queryByTestId('time-machine-control')).not.toBeNull();
   });
 });

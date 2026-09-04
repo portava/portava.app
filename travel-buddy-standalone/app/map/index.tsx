@@ -145,7 +145,9 @@ import {
   toMapObjects as compassPicksToMapObjects,
   type CompassMapCandidate,
 } from '../../src/features/map/compass/compassMapModel.ts';
-import { toTemporalObjects } from '../../src/features/map/time/timeMachine.ts';
+import { toTemporalObjects, offsetsEqual } from '../../src/features/map/time/timeMachine.ts';
+import { buildTemporalView } from '../../src/features/map/time/temporalView.ts';
+import { useTemporalEntities } from '../../src/hooks/useTemporalEntities.ts';
 import type { DiscoveryMapViewProps } from '../../src/components/discovery/DiscoveryMapView.tsx';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
@@ -1084,14 +1086,32 @@ function FullScreenMapScreenInner() {
         // it was opened for. No trip, no session to start, no mode to enter.
         locateFriendsScopeId: tripId,
         viewerId: userId ?? null,
+        // §15 — the temporal producer rides the SAME gateway flag the NOW
+        // projection does, so "the gateway answered for this session" is the
+        // honest presence check that the per-offset source is reachable. Legacy
+        // (per-layer) means the gateway is off/unreachable → no source to scrub.
+        timeMachineProducerEnabled: entitiesSource !== 'legacy',
       }),
-    [crowdFlowObjectCount, isFlagEnabled, tripId, userId],
+    [crowdFlowObjectCount, isFlagEnabled, tripId, userId, entitiesSource],
   );
   useEffect(() => {
     // The store bails out when the record says the same thing, so this settles
     // after one dispatch instead of re-rendering on every pass.
     setMapCapabilities(capabilities);
   }, [capabilities, setMapCapabilities]);
+
+  // ── §15 Time Machine — the per-offset payload ────────────────────────────────
+  // When the user scrubs to a non-NOW offset, the map shows a DIFFERENT instant
+  // fetched from GET /api/map/projection/temporal — real predictions/history, not
+  // the NOW map relabelled (§37). At NOW this fetches nothing; the screen keeps
+  // using the useMapEntities objects for the present.
+  const temporal = useTemporalEntities({
+    lat: fallbackLat,
+    lng: fallbackLng,
+    zoom: cameraZoom ?? paramZoom,
+    offset: timeOffset,
+    active: capabilities.TIME_MACHINE === true,
+  });
 
   // ── §3 / §26 Live Pulse ─────────────────────────────────────────────────────
   // "Bottom Live Pulse card summarizes the most important nearby change." The
@@ -1605,12 +1625,25 @@ function FullScreenMapScreenInner() {
     // 1. §16 layers, then §3's chip. homeVisibleObjects composes them in that
     //    order so a chip can only ever narrow what the layers already permit —
     //    a chip must never switch a layer back on.
-    const permitted = homeVisibleObjects(pipelineBase, homeFilter, effectiveLayerPrefs, layerContext);
-    // 2. §15 — a forecast becomes kind 'prediction' and loses any live
-    //    freshness, so zoneStyle gives it the dashed treatment (§37).
+    // §15 — at a non-NOW offset the base is the REAL per-offset payload from the
+    // temporal producer (predictions / observed history), NOT the NOW map: the
+    // old `toTemporalObjects(pipelineBase, offset)` could only relabel today's
+    // objects, which is exactly §37's "predictions looking like observations".
+    // At NOW `temporal.objects` is empty and this stays byte-identical to before.
+    const base = offsetsEqual(timeOffset, NOW_OFFSET) ? pipelineBase : temporal.objects;
+    // §16 layers still narrow the per-offset payload. In TIME_MACHINE mode the
+    // layer context forces `live_activity` on (predictions map to it) and leaves
+    // relevant_places on (historical places map to that), so the real payload
+    // survives the filter rather than being silently dropped.
+    const permitted = homeVisibleObjects(base, homeFilter, effectiveLayerPrefs, layerContext);
+    // 2. §15 — the ONE construction point: a forecast becomes kind 'prediction'
+    //    and loses any live freshness, so zoneStyle gives it the dashed treatment
+    //    (§37). On the temporal payload this is the enforcement pass (a prediction
+    //    stays a prediction); on the NOW map it is a no-op.
     return toTemporalObjects(permitted, timeOffset) as unknown as MapObject[];
   }, [
     pipelineBase,
+    temporal.objects,
     homeFilter,
     effectiveLayerPrefs,
     layerContext,
@@ -1623,6 +1656,19 @@ function FullScreenMapScreenInner() {
     () => homeChipCounts(compassPickObjects ?? defaultObjects, effectiveLayerPrefs, layerContext),
     [compassPickObjects, defaultObjects, effectiveLayerPrefs, layerContext],
   );
+
+  // §15 — the TimeMachineControl's own view of the offset: the city timeline and
+  // a representative forecast confidence, derived from the SAME real per-offset
+  // payload the map draws (temporal.objects at a non-NOW offset, the NOW map at
+  // NOW). An offset with nothing to show yields an empty timeline, which
+  // CityTimeline renders as its honest "no city trend" state — never a blank that
+  // reads as "nothing is happening".
+  const temporalView = useMemo(() => {
+    const source = offsetsEqual(timeOffset, NOW_OFFSET)
+      ? (compassPickObjects ?? defaultObjects)
+      : temporal.objects;
+    return buildTemporalView(source, timeOffset);
+  }, [timeOffset, temporal.objects, compassPickObjects, defaultObjects]);
 
   // §31 — collision only among the point-shaped markers. `dropped` is surfaced
   // rather than swallowed: a hidden object the user cannot reach is a silent
@@ -2386,6 +2432,8 @@ function FullScreenMapScreenInner() {
         <TimeMachineControl
           offset={timeOffset}
           onChange={setTimeOffset}
+          timeline={temporalView.timeline}
+          forecastConfidence={temporalView.forecastConfidence}
           bottomInset={insets.bottom + 140}
         />
       ) : null}
