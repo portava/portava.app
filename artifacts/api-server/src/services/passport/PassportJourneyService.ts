@@ -18,6 +18,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadMemories } from "./PassportMemoryService.js";
+import { filterMemories, type CallerContext } from "./PassportPrivacyGuard.js";
 
 export interface JourneyMemory {
   id: string;
@@ -78,6 +79,28 @@ export interface JourneyPermissions {
   canSeeTrips: boolean;
   /** Viewer may see friends-only trips (friend/crew-level relationship). */
   canSeeRestricted: boolean;
+  /**
+   * Per-item visibility context for the memories attached to a trip (§29 step 9).
+   * A viewer permitted to see a public TRIP must still NOT receive the trip's
+   * private/circle_only/trip_crew MEMORIES — journey memories run the exact same
+   * per-memory gate (filterMemories/guardMemory) the standalone memories array
+   * does. When omitted, a conservative fallback is derived from isSelf /
+   * canSeeRestricted so the journey path can never over-expose.
+   */
+  callerCtx?: CallerContext;
+}
+
+/**
+ * Effective per-memory caller context for the journey path. Prefers the exact
+ * CallerContext threaded from the route/aggregate; otherwise falls back to the
+ * least-privileged context the coarse trip permissions still justify (owner sees
+ * all, a restricted viewer maps to the "circle" friend proxy, everyone else is
+ * treated as public) — never more than the caller is entitled to.
+ */
+function effectiveCallerCtx(perms: JourneyPermissions): CallerContext {
+  if (perms.callerCtx) return perms.callerCtx;
+  if (perms.isSelf) return "owner";
+  return perms.canSeeRestricted ? "circle" : "public";
 }
 
 function yearOf(dateStr: string | null | undefined): number | null {
@@ -233,7 +256,9 @@ export async function buildJourneys(
   const visible = trips.filter((t) => tripVisibleToViewer(t, perms));
   if (visible.length === 0) return empty;
 
-  const memMap = memoriesByTrip(allMemories);
+  // §29 step 9: gate EACH memory by its own visibility before it is attached to a
+  // trip — a public trip must not leak its private/circle_only/trip_crew memories.
+  const memMap = memoriesByTrip(filterMemories(allMemories as any[], effectiveCallerCtx(perms)) as any[]);
   const journeys = visible.map((t) => projectTrip(t, memMap.get(t.id) ?? [], stampMap.get(t.id) ?? [], perms));
 
   // Newest first.
@@ -270,7 +295,9 @@ export async function buildFeaturedJourney(
   ]);
   const visible = trips.filter((t) => tripVisibleToViewer(t, perms));
   if (visible.length === 0) return null;
-  const memMap = memoriesByTrip(allMemories);
+  // Same per-memory visibility gate as buildJourneys — the featured trip's private
+  // memories must not reach a non-owner viewer either.
+  const memMap = memoriesByTrip(filterMemories(allMemories as any[], effectiveCallerCtx(perms)) as any[]);
   return pickFeatured(visible, memMap, stampMap, perms);
 }
 

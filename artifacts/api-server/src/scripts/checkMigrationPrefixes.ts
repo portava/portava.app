@@ -43,12 +43,27 @@ const PREFIX_RE = /^(\d+)/;
 // A prefix collision is normally fixed by renumbering the file that has NOT yet
 // been applied. That option only exists while one of the two is unapplied.
 //
-// There is no `schema_migrations` table in this project (verified 2026-08-09:
-// no table matching '%migration%' in `public` or `supabase_migrations`), so the
-// only way to know whether a file has been applied is to check whether its
-// objects exist live. For prefix 2059 BOTH files were verified applied against
-// the live database, so neither can be renumbered to reflect what happened —
-// renaming an applied file would only make the record less accurate.
+// "WHICH ONE IS APPLIED" IS NOW ANSWERABLE. As of
+// 2254_schema_migration_ledger.sql there is a ledger — public.schema_migration_ledger,
+// one row per migration file, read by `pnpm run check:migration-ledger`
+// (src/scripts/checkMigrationLedger.ts). Ask it first: a row with applied_by
+// 'ci' or 'manual' and a real sha256 means that file was applied to that
+// database. The old advice — infer it by checking whether the file's objects
+// exist live — was a guess dressed as a check, because objects can arrive from a
+// later file, a hand-run statement or the baseline dump.
+//
+// THE LEDGER IS AUTHORITATIVE ONLY FROM 2254 FORWARDS, and that limit matters
+// here specifically. 2254 backfilled every file that was on disk when it ran as
+// applied_by = 'backfill', and a backfill row asserts ONLY that the filename
+// existed — never that the file was applied. So for a collision between two
+// PRE-2254 files, including both pairs below, the ledger has nothing to say and
+// live object inspection is still the only available evidence. For any collision
+// between files applied after 2254, the ledger answers it outright.
+//
+// The two documented pairs below were settled the old way, before the ledger
+// existed. For prefix 2059 BOTH files were verified applied against the live
+// database, so neither can be renumbered to reflect what happened — renaming an
+// applied file would only make the record less accurate.
 //
 // Each entry below therefore records a collision that is permanent and
 // harmless, and must be justified in docs/migrations.md. The match is on the
@@ -81,8 +96,11 @@ const DOCUMENTED_COLLISIONS: Record<string, readonly string[]> = {
   // CHECK constraint on public.media_assets — so their relative order is
   // immaterial on a fresh replay. Renaming either would break the
   // correspondence between the filename and what was actually run against
-  // production, which is the only record that a migration WAS run: there is no
-  // schema_migrations table here. See docs/migrations.md "Prefix collisions".
+  // production. When this was written that correspondence was the ONLY record
+  // that a migration had run; public.schema_migration_ledger (2254) is now that
+  // record, but only for what happened after it existed, so for these two
+  // pre-2254 files the filename is still it. See docs/migrations.md "Prefix
+  // collisions".
   "2089": [
     "2089_media_assets_ready_requires_dimensions.sql",
     "2089_revoke_post_media_public_read.sql",
@@ -122,11 +140,16 @@ if (collisions.length > 0) {
       "       Migration runners apply files in lexicographic order; shared\n" +
       "       prefixes produce an ambiguous sequence and can cause 500 errors\n" +
       "       when columns or tables are referenced before they are created.\n\n" +
-      "       Before renumbering: there is no schema_migrations table, so check\n" +
-      "       whether each file's objects already exist LIVE. Renumber the one\n" +
-      "       that has NOT been applied. If both are already applied, document\n" +
-      "       the collision in docs/migrations.md and add it to\n" +
-      "       DOCUMENTED_COLLISIONS in this script.\n",
+      "       Before renumbering, find out which file has been APPLIED, and\n" +
+      "       renumber the one that has NOT. Ask the ledger first:\n" +
+      "         pnpm run check:migration-ledger\n" +
+      "       public.schema_migration_ledger (migration 2254) holds one row per\n" +
+      "       applied file. A row with applied_by 'ci' or 'manual' settles it.\n" +
+      "       A row with applied_by 'backfill' does NOT: those were seeded by\n" +
+      "       2254 and assert only that the file existed before the ledger did.\n" +
+      "       For a pre-ledger file, fall back to checking whether its objects\n" +
+      "       exist LIVE. If both are already applied, document the collision in\n" +
+      "       docs/migrations.md and add it to DOCUMENTED_COLLISIONS here.\n",
   );
   for (const { prefix, files: names } of collisions) {
     console.error(`  Prefix ${prefix}:`);

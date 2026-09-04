@@ -52,6 +52,7 @@ import {
   useAvailabilityEditor,
   type UseAvailabilityEditorResult,
 } from './useAvailabilityEditor.ts';
+import { trackAvailabilitySet, trackOpenToPlansEnabled } from './passportTelemetry.ts';
 import type {
   IntentType,
   GroupPreference,
@@ -251,10 +252,26 @@ export function AvailabilityView({ editor }: AvailabilityViewProps) {
 
   async function onSave() {
     setSavedNote(null);
+    // Capture the pre-save persisted Open-to-Plans state so we only emit the
+    // §32 open_to_plans_enabled event on an actual off→on transition.
+    const wasOpenToPlans = currentWindow?.openToPlans === true;
     const res = await save();
     if (!res.ok) {
       setSavedNote(res.message ?? 'Could not save — try again');
-    } else if (!res.enabled) {
+      return;
+    }
+    // §32 telemetry — the EXPLICIT answer was persisted (§7). Ids/enums/counts
+    // only: the flag, an intent count, and whether a live window exists — never
+    // the window times or the intent labels.
+    trackAvailabilitySet({
+      openToPlans: draft.openToPlans,
+      intentCount: draft.intents.length,
+      hasWindow: res.enabled,
+    });
+    if (draft.openToPlans && !wasOpenToPlans) {
+      trackOpenToPlansEnabled(draft.intents.length);
+    }
+    if (!res.enabled) {
       setSavedNote('Weekly availability saved. Open to Plans is rolling out soon.');
     } else {
       setSavedNote('Availability set');

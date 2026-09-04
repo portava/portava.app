@@ -14,6 +14,10 @@
  *     confidence can never exceed the observation's, nor `provisional`.
  *   * COHORT ARITHMETIC MATCHES lib/intelProjectionAggregator exactly.
  *   * THE PRODUCER REFUSES TO READ consent-scoped data it cannot publish.
+ *   * EVERY UNFED §10 FAMILY CARRIES A NAMED BLOCKER. `UNFED_FAMILY_BLOCKERS`
+ *     records that `arrival` and `navigation_start` are blocked by missing
+ *     CAPTURE (no source anywhere declares an ORIGIN), not by a missing
+ *     producer — so wiring one cannot be mistaken for closing the gap.
  *
  * Pure and offline except for the two fake-client cases.
  */
@@ -25,7 +29,11 @@ import {
   DECLARED_BUT_UNFED_FAMILIES,
   MAX_INFERRED_CAUSE_CONFIDENCE,
   OBSERVED_SIGNAL_FAMILIES,
+  SECOND_FAMILY_EVIDENCE,
+  SECOND_FAMILY_PRECONDITIONS,
+  SIGNAL_FAMILY_INDEPENDENCE,
   SIGNAL_MAX_AGE_MINUTES,
+  UNFED_FAMILY_BLOCKERS,
   WIRED_SIGNAL_SOURCES,
   attachCauseHypotheses,
   canProduceFlow,
@@ -73,8 +81,10 @@ function publishableCohort(
       actorId: ACTOR(i),
       groupKey: GROUP(i % 5),
       // Two families so MIN_SIGNAL_FAMILIES is satisfiable. `arrival` is
-      // SYNTHETIC here — see the module header: it has no producer in this
-      // repository today. The test exercises the derivation, not a live feed.
+      // SYNTHETIC here, and not merely unwired: UNFED_FAMILY_BLOCKERS records it
+      // as `no_declared_origin` — no source in this repository states an ORIGIN
+      // for an arrival, so no producer could supply this signal as written. The
+      // test exercises the derivation, not a live feed.
       family: i % 2 === 0 ? "next_stop_contribution" : "arrival",
       fromZoneId: from,
       toZoneId: to,
@@ -90,23 +100,59 @@ const derive = (signals: readonly MovementSignal[], extra: Record<string, unknow
 // ── §10 source honesty ────────────────────────────────────────────────────────
 
 describe("§10 signal families — what this repository actually feeds", () => {
-  it("only ONE observed family is wired, so no flow can be published today", () => {
-    assert.deepEqual([...WIRED_SIGNAL_SOURCES], ["next_stop_contribution"]);
-    assert.ok(
-      WIRED_SIGNAL_SOURCES.length < MIN_SIGNAL_FAMILIES,
-      "if a second family has been wired, update this test AND the module header audit",
-    );
-    assert.equal(canProduceFlow(), false);
+  it("TWO observed families are wired, which is exactly MIN_SIGNAL_FAMILIES", () => {
+    // `accepted_plan` was wired on 2026-08-31 by closing all four of the
+    // blockers the prior audit recorded against it (lib/routeHopSignal). If a
+    // THIRD family is ever added, this test, the module header audit and
+    // SIGNAL_FAMILY_INDEPENDENCE must all be updated together.
+    assert.deepEqual([...WIRED_SIGNAL_SOURCES].sort(), ["accepted_plan", "next_stop_contribution"]);
+    assert.equal(WIRED_SIGNAL_SOURCES.length, MIN_SIGNAL_FAMILIES);
+    assert.equal(canProduceFlow(), true);
+  });
+
+  it("EVERY wired family carries an independence case naming a residual limitation", () => {
+    // The load-bearing guard on this whole change. MIN_SIGNAL_FAMILIES is only
+    // worth something if each family is genuinely a separate SOURCE, and that is
+    // an argument, not a name. A family appended to WIRED_SIGNAL_SOURCES with no
+    // written case — or with an empty residual — fails here.
+    for (const family of WIRED_SIGNAL_SOURCES) {
+      const c = SIGNAL_FAMILY_INDEPENDENCE[family];
+      assert.ok(c, `${family} is wired with no independence case`);
+      assert.equal(c.family, family);
+      assert.ok(c.derivationPath.length >= 3, `${family}: the row->hop path must be traceable`);
+      for (const field of ["actorPopulation", "correlationRisk", "failureMode", "separatenessArgument"] as const) {
+        assert.ok(c[field].trim().length > 80, `${family}.${field} is too thin to review`);
+      }
+      assert.ok(
+        c.residualCorrelation.trim().length > 80,
+        `${family}: a family whose author could not name ONE limitation was not examined`,
+      );
+      assert.ok(c.evidence.length > 0, `${family}: a claim with no evidence is an assertion`);
+    }
+    // ...and nothing unwired is smuggled in beside them.
+    assert.deepEqual(Object.keys(SIGNAL_FAMILY_INDEPENDENCE).sort(), [...WIRED_SIGNAL_SOURCES].sort());
+  });
+
+  it("the two families do NOT share a table or a consent record", () => {
+    // The prior audit's bar, in code: a second claim type on intel_observations
+    // would share both, and would be one family wearing two hats.
+    const a = SIGNAL_FAMILY_INDEPENDENCE.next_stop_contribution.sourceTable;
+    const b = SIGNAL_FAMILY_INDEPENDENCE.accepted_plan.sourceTable;
+    assert.deepEqual(a.filter((t) => b.includes(t)), [], "the families must not share a source table");
+    assert.ok(a.includes("intel_contribution_consent"));
+    assert.ok(!b.includes("intel_contribution_consent"), "a shared consent record would collapse them into one");
   });
 
   it("the unfed register names every family §10 lists but nothing produces", () => {
+    // `accepted_plan` is deliberately ABSENT: its finding was deleted when the
+    // family was wired, which is the friction the register exists to create.
     assert.deepEqual([...DECLARED_BUT_UNFED_FAMILIES].sort(), [
-      "accepted_plan",
       "aggregate_presence",
       "arrival",
       "coarse_transition",
       "navigation_start",
     ]);
+    assert.ok(!DECLARED_BUT_UNFED_FAMILIES.includes("accepted_plan" as never));
   });
 
   it("event_context is cause-only and is NOT an observed family", () => {
@@ -122,6 +168,117 @@ describe("§10 signal families — what this repository actually feeds", () => {
   it("canProduceFlow needs MIN_SIGNAL_FAMILIES *observed* families, not just any two", () => {
     assert.equal(canProduceFlow(["next_stop_contribution", "event_context"]), false);
     assert.equal(canProduceFlow(["next_stop_contribution", "arrival"]), true);
+  });
+});
+
+// ── WHY each family is unfed — the audit as data, not prose ───────────────────
+//
+// These pin the 2026-08-31 re-audit. The point is not bookkeeping: the register
+// records that `arrival` and `navigation_start` are blocked by MISSING CAPTURE
+// (no source row anywhere declares an ORIGIN) rather than by a missing producer.
+// Anyone who flips one into WIRED_SIGNAL_SOURCES must delete a specific named
+// finding here, which is exactly the friction that stops MIN_SIGNAL_FAMILIES
+// becoming a rubber stamp.
+
+describe("§10 unfed families carry a NAMED blocker, not a shrug", () => {
+  it("the register covers every unfed family and nothing else", () => {
+    assert.deepEqual(
+      Object.keys(UNFED_FAMILY_BLOCKERS).sort(),
+      [...DECLARED_BUT_UNFED_FAMILIES].sort(),
+      "UNFED_FAMILY_BLOCKERS must track DECLARED_BUT_UNFED_FAMILIES exactly — a family " +
+        "wired without deleting its finding, or a finding left behind, both fail here",
+    );
+  });
+
+  it("every finding names a recognized blocker and real evidence", () => {
+    const KNOWN: readonly string[] = [
+      "table_absent", "no_producer", "no_declared_origin", "purpose_mismatch", "party_scoped",
+    ];
+    for (const [family, finding] of Object.entries(UNFED_FAMILY_BLOCKERS)) {
+      assert.ok(KNOWN.includes(finding.blocker), `${family}: unrecognized blocker ${finding.blocker}`);
+      for (const b of finding.alsoBlockedBy) {
+        assert.ok(KNOWN.includes(b), `${family}: unrecognized secondary blocker ${b}`);
+        assert.notEqual(b, finding.blocker, `${family}: primary blocker repeated in alsoBlockedBy`);
+      }
+      assert.ok(finding.evidence.length > 0, `${family}: a blocker with no evidence is an assertion`);
+      for (const e of finding.evidence) {
+        assert.ok(e.trim().length > 20, `${family}: evidence '${e}' is too thin to review`);
+      }
+    }
+  });
+
+  it("arrival and navigation_start are blocked by MISSING CAPTURE, not a missing producer", () => {
+    // The load-bearing claim of the audit. Both sources are destination-only by
+    // construction: canonical_events carries ONE subject and its payload
+    // allow-list has no origin key. Wiring a producer onto either would not
+    // produce a hop — it would produce a destination, and the origin could then
+    // only come from the actor's last known position, which is the trajectory
+    // reconstruction §10 forbids.
+    for (const family of ["arrival", "navigation_start"] as const) {
+      assert.equal(
+        UNFED_FAMILY_BLOCKERS[family]?.blocker,
+        "no_declared_origin",
+        `${family}: if this is now feedable, the capture that supplies the ORIGIN must be named here`,
+      );
+    }
+    // Only the two infrastructure gaps are the kind effort alone closes.
+    const byBlocker = (b: string) =>
+      Object.entries(UNFED_FAMILY_BLOCKERS).filter(([, f]) => f.blocker === b).map(([k]) => k).sort();
+    assert.deepEqual(byBlocker("table_absent"), ["coarse_transition"]);
+    // `accepted_plan` used to be the sole purpose_mismatch entry. Its purpose
+    // now exists (lib/locationPurposes 'route_plan_itinerary'), so the finding
+    // is gone rather than downgraded.
+    assert.deepEqual(byBlocker("purpose_mismatch"), []);
+  });
+
+  it("the preconditions for a second family are stated, and none is 'add another claim type'", () => {
+    assert.ok(SECOND_FAMILY_PRECONDITIONS.length >= 4);
+    for (const p of SECOND_FAMILY_PRECONDITIONS) {
+      assert.ok(p.trim().length > 40, `precondition '${p}' is too thin to act on`);
+    }
+    // A second claim type on intel_observations would share the table, the
+    // consent record and the actor population — one family wearing two hats.
+    assert.ok(
+      SECOND_FAMILY_PRECONDITIONS.some((p) => /origin/i.test(p)),
+      "the origin requirement is the whole finding; it may not be dropped",
+    );
+  });
+
+  it("EVERY precondition has recorded evidence — four out of five is not satisfied", () => {
+    assert.equal(
+      SECOND_FAMILY_EVIDENCE.length,
+      SECOND_FAMILY_PRECONDITIONS.length,
+      "a precondition with no evidence entry is a precondition nobody answered",
+    );
+    for (let i = 0; i < SECOND_FAMILY_PRECONDITIONS.length; i++) {
+      assert.equal(
+        SECOND_FAMILY_EVIDENCE[i].precondition,
+        SECOND_FAMILY_PRECONDITIONS[i],
+        "the evidence list must stay aligned with the preconditions, in order",
+      );
+      assert.ok(
+        SECOND_FAMILY_EVIDENCE[i].satisfiedBy.trim().length > 80,
+        `precondition ${i} is answered too thinly to check`,
+      );
+    }
+    // The preconditions themselves are the STANDING bar and must not have been
+    // softened to fit the family that was wired.
+    assert.ok(SECOND_FAMILY_PRECONDITIONS.some((p) => /ZONE granularity/i.test(p)));
+    assert.ok(SECOND_FAMILY_PRECONDITIONS.some((p) => /consent scope/i.test(p)));
+    assert.ok(SECOND_FAMILY_PRECONDITIONS.some((p) => /group_key/i.test(p)));
+  });
+
+  it("a destination-only signal cannot become a transition — the origin rule, in code", () => {
+    // The register's `no_declared_origin` is not merely a note: a signal with no
+    // fromZoneId is refused at intake rather than being completed from anywhere.
+    const { transitions, rejected } = derive([
+      {
+        actorId: ACTOR(1), groupKey: GROUP(0), family: "arrival",
+        fromZoneId: "", toZoneId: "zone-B", observedAt: OBSERVED,
+      },
+    ]);
+    assert.equal(transitions.length, 0);
+    assert.deepEqual(rejected.map((r) => r.reason), ["invalid_input"]);
   });
 });
 
@@ -505,9 +662,63 @@ function fakeClient(opts: {
   };
 }
 
+/**
+ * A client serving BOTH families: intel_observations for next_stop_contribution
+ * and route_plans/route_stops/route_legs for accepted_plan, each behind its OWN
+ * consent table. The two consent tables being separate is the point — if one
+ * record governed both, they would be one source wearing two hats.
+ *
+ * The stop coordinates are sentinels (16.0512345 / 108.2212345). They must be
+ * resolved to zones and never appear downstream.
+ */
+function twoFamilyClient(observations: any[], planActors: string[]) {
+  const plans = planActors.map((a, i) => ({
+    id: `plan-${i}`, trip_id: `TRIPSENTINEL${i % 5}xyz`,
+    accepted_by_user_id: a, accepted_at: OBSERVED, status: "active",
+  }));
+  const stops = plans.flatMap((p) => [
+    { id: `${p.id}-a`, route_plan_id: p.id, structured_location: { label: "L", lat: 16.0512345, lng: 108.2212345 }, updated_at: null },
+    { id: `${p.id}-b`, route_plan_id: p.id, structured_location: { label: "L", lat: 16.0712345, lng: 108.2412345 }, updated_at: null },
+  ]);
+  const legs = plans.map((p) => ({ route_plan_id: p.id, from_stop_id: `${p.id}-a`, to_stop_id: `${p.id}-b` }));
+
+  const chain = (rows: any[]) => {
+    const self: any = {
+      select: () => self, eq: () => self, in: () => self, is: () => self,
+      gte: () => self, not: () => self, limit: () => self,
+      maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
+      then: (res: any) => res({ data: rows, error: null }),
+    };
+    return self;
+  };
+  return {
+    from(table: string) {
+      if (table === "feature_flags") return chain([{ enabled: true }]);
+      if (table === "intel_observations") return chain(observations);
+      if (table === "intel_contribution_consent") {
+        return chain(observations.map((o) => ({ user_id: o.actor_id })));
+      }
+      if (table === "route_plans") return chain(plans);
+      if (table === "route_stops") return chain(stops);
+      if (table === "route_legs") return chain(legs);
+      if (table === "route_flow_contribution_consent") {
+        return chain(planActors.map((a) => ({ user_id: a })));
+      }
+      assert.fail(`unexpected table read: ${table}`);
+    },
+  };
+}
+
 describe("readCrowdFlowSignals — the single I/O seam", () => {
   it("REFUSES BEFORE READING when too few families are wired", async () => {
-    const r = await readCrowdFlowSignals(forbiddenClient() as any, { now: NOW });
+    // Both families are wired by default now, so the refusal is exercised by
+    // pinning `wired` to one. The property under test is unchanged: below
+    // MIN_SIGNAL_FAMILIES no query is issued at all, because processing
+    // consent-scoped data for a result that cannot publish is not free.
+    const r = await readCrowdFlowSignals(forbiddenClient() as any, {
+      now: NOW,
+      wired: ["next_stop_contribution"],
+    });
     assert.equal(r.refusal, "insufficient_wired_families");
     assert.deepEqual(r.signals, []);
     assert.deepEqual([...r.unfedFamilies], [...DECLARED_BUT_UNFED_FAMILIES]);
@@ -549,9 +760,81 @@ describe("readCrowdFlowSignals — the single I/O seam", () => {
   });
 
   it("produceZoneTransitions surfaces the refusal instead of an unexplained empty layer", async () => {
-    const r = await produceZoneTransitions(forbiddenClient() as any, { now: NOW });
+    const r = await produceZoneTransitions(forbiddenClient() as any, {
+      now: NOW,
+      wired: ["next_stop_contribution"],
+    });
     assert.equal(r.refusal, "insufficient_wired_families");
     assert.deepEqual(r.transitions, []);
+  });
+
+  it("the accepted_plan family refuses WITHOUT a zone resolver, and says so per family", async () => {
+    // The whole-read refusal must stay null — one family declining is not the
+    // same event as declining to look at all, and a caller needs to tell them
+    // apart. The surviving signals then carry ONE family, so the flow gate
+    // refuses the bucket: a family failure shrinks the result, never widens it.
+    const r = await readCrowdFlowSignals(
+      fakeClient({ flagOn: true, observations: [], consented: [] }) as any,
+      { now: NOW },
+    );
+    assert.equal(r.refusal, null);
+    assert.equal(r.familyRefusals.accepted_plan, "no_zone_resolver");
+    assert.equal(r.familyRefusals.next_stop_contribution, null);
+    assert.deepEqual(r.signals, []);
+  });
+
+  it("BOTH families are read, and together they publish a flow end to end", async () => {
+    // The end-to-end claim, exercised rather than asserted: ten consented
+    // next-move contributions and ten consented accepted plans over the same
+    // edge make one 20-person, 5-party, two-family cohort that clears every §10
+    // gate — and no actor id, group key or stop coordinate survives into it.
+    const observations = Array.from({ length: 10 }, (_, i) => ({
+      actor_id: ACTOR(i), subject_id: "p1", zone_id: "zone-A",
+      value: { destinationArea: "An Thuong" }, group_key: GROUP(i % 5),
+      observed_at: OBSERVED, expires_at: null,
+    }));
+    const planActors = Array.from({ length: 10 }, (_, i) => ACTOR(100 + i));
+    const client = twoFamilyClient(observations, planActors);
+
+    const r = await readCrowdFlowSignals(client as any, {
+      now: NOW,
+      resolveZoneId: (kind: string) => (kind === "destination_area" ? "zone-B" : "zone-A"),
+      resolveZoneForPoint: (pt: { lat: number }) => (pt.lat < 16.06 ? "zone-A" : "zone-B"),
+      groupKeyFor: (_edge: unknown, id: any) =>
+        `GK:${id.kind === "crew" ? id.crewId : id.actorId}`,
+    } as any);
+
+    assert.equal(r.refusal, null);
+    assert.deepEqual(r.familyRefusals, { accepted_plan: null, next_stop_contribution: null });
+    assert.equal(r.signals.length, 20);
+    assert.deepEqual(
+      [...new Set(r.signals.map((s) => s.family))].sort(),
+      ["accepted_plan", "next_stop_contribution"],
+    );
+
+    const { transitions } = derive(r.signals);
+    assert.equal(transitions.length, 1);
+    assert.equal(transitions[0].distinctActors, 20);
+    assert.deepEqual(transitions[0].signalFamilies, ["accepted_plan", "next_stop_contribution"]);
+
+    const result = deriveCrowdFlow(transitions, { now: NOW });
+    assert.equal(result.flows.length, 1, JSON.stringify(result.rejected));
+    assert.equal(result.flows[0].payload.observed.cohortSize, 20);
+    assert.deepEqual(
+      result.flows[0].payload.observed.signalFamilies,
+      ["accepted_plan", "next_stop_contribution"],
+    );
+    // Two families cap the band at `provisional` — see the residual-correlation
+    // finding: two SOURCES is not two independent populations.
+    assert.equal(transitions[0].confidence, "provisional");
+
+    // And the privacy proof holds across the joined path.
+    const blob = JSON.stringify({ transitions, result });
+    for (const s of allStrings(JSON.parse(blob))) {
+      assert.ok(!s.includes("SENTINEL"), `identifier fragment survived: ${s}`);
+    }
+    assert.ok(!blob.includes("16.0512345"), "a stop coordinate reached the flow");
+    assert.ok(!blob.includes("108.2212345"), "a stop coordinate reached the flow");
   });
 });
 

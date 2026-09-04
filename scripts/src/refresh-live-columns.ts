@@ -74,6 +74,13 @@ const payload = {
     "GENERATED FILE — do not edit by hand. Live public-schema columns fetched " +
     "from Supabase (information_schema.columns). Refresh with: " +
     "pnpm --filter @workspace/scripts run refresh:live-columns",
+  // WHICH database this describes. The snapshot went ~6 weeks stale without
+  // anyone noticing, and the reason it stayed unnoticed is that the file said
+  // "live" without saying live WHERE: with two projects in the org, a reader
+  // could not tell whether a missing column meant the schema lacked it or the
+  // snapshot came from the other database. Recording the ref makes a snapshot
+  // regenerated against the wrong project visible in the diff.
+  projectRef: ref,
   generatedAt: new Date().toISOString(),
   tables,
 };

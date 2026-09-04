@@ -187,6 +187,75 @@ export const CONFIDENCE_LABELS: Record<ConfidenceState, string> = {
   unverified: 'Unconfirmed',
 };
 
+// ── Source class (spec §9, §37) ────────────────────────────────────────────────
+
+/**
+ * WHO IS SPEAKING. Mirrors api-server lib/intelContracts.ts SOURCE_CLASSES,
+ * which lib/mapObjects.ts re-exports as the map's wire vocabulary.
+ *
+ * The §9 provenance panel already carries the attribution as PROSE
+ * ("Sponsored · crowd.level"). This is the same fact as a value, so the §8
+ * Live Place sheet can badge a paid claim by switching on a field instead of
+ * regexing a sentence. Spec §37: "Do not let paid businesses buy factual
+ * confidence" — a renderer that has to parse English to find out whether a
+ * claim was paid for will eventually get it wrong in that direction.
+ *
+ * The server sets this ONLY from a live claim, and only to a value in this
+ * list; an unrecognised class arrives as an absent field, never as a string
+ * outside the vocabulary. So `SOURCE_CLASS_LABELS[obj.sourceClass]` is safe,
+ * and an absent `sourceClass` means "no live claim, or no attributable one" —
+ * it must never be defaulted to a traveler report.
+ */
+export const SOURCE_CLASSES = [
+  'verified_firsthand',
+  'firsthand_unverified',
+  'official_signed',
+  'sponsored',
+  'imported_owned',
+  'historical_pattern',
+  'portava_prediction',
+  'hearsay',
+] as const;
+export type SourceClass = (typeof SOURCE_CLASSES)[number];
+
+/**
+ * The canonical user-facing label per class. These are the SERVER's strings
+ * (intelContracts SOURCE_CLASS_LABELS), not new copy: the same claim has to
+ * read the same way on the map, in Compass and on the place sheet, and
+ * mapObjectsContract.test.ts fails if this table drifts from the server's.
+ */
+export const SOURCE_CLASS_LABELS: Record<SourceClass, string> = {
+  verified_firsthand: 'Live from verified visitor',
+  firsthand_unverified: 'Traveler report — unverified',
+  official_signed: 'Official update',
+  sponsored: 'Sponsored',
+  imported_owned: 'Imported source',
+  historical_pattern: 'Typical pattern',
+  portava_prediction: 'Portava prediction',
+  hearsay: 'Unverified tip',
+};
+
+/**
+ * Classes that are one party talking about themselves. A claim in one of these
+ * carries NO cohort bucket (the server withholds it) and must never be rendered
+ * as independent community consensus — no "several travelers say", no crowd
+ * icon, no confidence borrowed from a headcount that does not exist.
+ */
+export const NON_INDEPENDENT_SOURCE_CLASSES = [
+  'official_signed',
+  'sponsored',
+  'imported_owned',
+] as const;
+
+/** Compile-time pin: every member above must be a declared source class. */
+const _nonIndependentAreSourceClasses: readonly SourceClass[] = NON_INDEPENDENT_SOURCE_CLASSES;
+void _nonIndependentAreSourceClasses;
+
+/** True when this class may be counted toward independent community consensus. */
+export function mayCountAsConsensus(cls: SourceClass): boolean {
+  return !(NON_INDEPENDENT_SOURCE_CLASSES as readonly string[]).includes(cls);
+}
+
 // ── Trend (spec §7) ────────────────────────────────────────────────────────────
 
 /** Spec §7's "Trend" column — the direction of change, separate from level. */
@@ -400,6 +469,21 @@ export interface MapObject<T = unknown> {
   /** Spec §7 activity level and trend, kept as separate axes. */
   activity?: ActivityLevel;
   trend?: TrendState;
+
+  /**
+   * WHO the live claim came from, as a value the renderer can switch on.
+   *
+   * OPTIONAL, and absent is meaningful: an object with no live claim has no
+   * speaker, so there is no honest default — never fall back to a traveler
+   * report. Absent also means "attribution withheld", which is what a
+   * coarsened protected object looks like: spec §24 strips this field server
+   * side, because `verified_firsthand` on its own still says "a
+   * presence-verified person observed this place".
+   *
+   * Never widen this to a bare `string`. The server only ever sends a member of
+   * SOURCE_CLASSES, and that guarantee is what lets a badge be exhaustive.
+   */
+  sourceClass?: SourceClass;
 
   /** Opaque provenance refs backing the §9 Why? panel. Never user identifiers. */
   sourceRefs?: string[];

@@ -9,6 +9,7 @@ import Svg, { Path } from 'react-native-svg';
 import {
   CalendarDays, User as UserIcon, Clock, MapPin, CheckCircle2, Circle as CircleIcon,
   CalendarPlus, UserPlus, Sparkles, Settings, Bookmark, Plus, ChevronRight, Plane,
+  Map as MapIcon,
   MessageCircle, ShieldCheck, ImagePlus, Info, X, Bell,
 } from 'lucide-react-native';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
@@ -860,25 +861,52 @@ export function TripStamps({ stamps }: { stamps: PassportStamp[] }) {
   );
 }
 
-/* ── Map Preview (compact stub — approximate only, no live location) ── */
-export function TripMapPreview() {
+/* ── Trip Map (entry point to the full map — no live location here) ── */
+/**
+ * `tripId` is the map's §11 Trip Map context.
+ *
+ * The /map shell reads `params.tripId` and gates three things on it — the trip
+ * itinerary objects, the Optimize Today chip, and the Locate My Friends group
+ * scope. This is the ONE entry point that legitimately knows which trip the
+ * user is looking at; every other push to /map (gems, passport stamps, the
+ * circle map, and the three Compass place/event links) is about a place or a
+ * person and has no trip to name, so none of them gained the parameter.
+ *
+ * Optional rather than required: without a trip the header still opens the map,
+ * it just opens it with no itinerary — which is the honest result, and better
+ * than naming a trip that does not exist.
+ *
+ * The card is a tap target, not a preview. It used to draw three pins at
+ * hardcoded percentages under a "Destination" label and a Plans/Saved/Hidden
+ * Gems legend — none of which described the trip being viewed. The user's real
+ * pins are on /map, one tap away, so the invented ones were dropped rather than
+ * dressed up. Mounted by `app/trip/[id].tsx`, which is what makes `tripId`
+ * reachable at all.
+ */
+export function TripMapPreview({ tripId }: { tripId?: string } = {}) {
+  const mapHref = tripId
+    ? `/map?entityTypes=trips&tripId=${encodeURIComponent(tripId)}`
+    : '/map?entityTypes=trips';
+  const openMap = () => router.push(mapHref as any);
   return (
     <View>
-      <TravelSectionHeader title="Map Preview" onAction={() => router.push('/map?entityTypes=trips' as any)} actionLabel="View map" />
-      <View style={mp.card}>
-        <View style={mp.map}>
-          <View style={[mp.pin, { top: '30%', left: '25%', backgroundColor: color.signal }]} />
-          <View style={[mp.pin, { top: '55%', left: '60%', backgroundColor: color.deep }]} />
-          <View style={[mp.pin, { top: '40%', left: '75%', backgroundColor: color.success }]} />
-          <View style={mp.cityLabel}><Text style={mp.cityText}>Destination</Text></View>
-        </View>
-        <View style={mp.legend}>
-          <View style={mp.legendItem}><View style={[mp.dot, { backgroundColor: color.signal }]} /><Text style={mp.legendText}>Plans</Text></View>
-          <View style={mp.legendItem}><View style={[mp.dot, { backgroundColor: color.deep }]} /><Text style={mp.legendText}>Saved</Text></View>
-          <View style={mp.legendItem}><View style={[mp.dot, { backgroundColor: color.success }]} /><Text style={mp.legendText}>Hidden Gems</Text></View>
+      <TravelSectionHeader title="Trip Map" onAction={openMap} actionLabel="View map" />
+      <Pressable
+        style={({ pressed }) => [mp.card, pressed && { opacity: layout.pressedOpacity }]}
+        onPress={openMap}
+        accessibilityRole="button"
+        accessibilityLabel="Open this trip on the map"
+      >
+        <View style={mp.prompt}>
+          <View style={mp.iconWrap}><MapIcon size={22} color={color.deep} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={mp.title}>See this trip on the map</Text>
+            <Text style={mp.sub}>Your stops, saved places, and hidden gems nearby.</Text>
+          </View>
+          <ChevronRight size={icon.s16} color={color.mute} />
         </View>
         <View style={mp.noteRow}><Info size={11} color={color.mute} /><Text style={mp.note}>Approximate areas only — exact locations stay private.</Text></View>
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -1134,14 +1162,10 @@ const ts = StyleSheet.create({
 
 const mp = StyleSheet.create({
   card: { marginHorizontal: space.lg, backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, overflow: 'hidden', ...shadow.card },
-  map: { height: 150, backgroundColor: '#DDE6E8' },
-  pin: { position: 'absolute', width: icon.s16, height: icon.s16, borderRadius: icon.s16 / 2, borderWidth: 2, borderColor: color.paper },
-  cityLabel: { position: 'absolute', top: '44%', left: '38%', backgroundColor: 'rgba(255,255,255,0.7)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  cityText: { ...t.small, color: color.ink, fontWeight: '700', fontSize: 11 },
-  legend: { flexDirection: 'row', gap: space.lg, padding: space.md },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  dot: { width: dot.s10, height: dot.s10, borderRadius: dot.s10 / 2 },
-  legendText: { ...t.small, color: color.mute, fontSize: 12 },
+  prompt: { flexDirection: 'row', alignItems: 'center', gap: space.md, padding: space.md },
+  iconWrap: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, backgroundColor: '#E2EDF0', alignItems: 'center', justifyContent: 'center' },
+  title: { ...t.bodyStrong, color: color.ink, fontSize: 15 },
+  sub: { ...t.small, color: color.mute, marginTop: 1 },
   noteRow: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: space.md, paddingBottom: space.md },
   note: { ...t.small, color: color.mute, fontSize: 11 },
 });

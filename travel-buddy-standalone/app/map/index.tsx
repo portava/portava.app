@@ -18,7 +18,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CameraRef } from '@maplibre/maplibre-react-native';
 import {
   View, Text, Pressable, StyleSheet, Platform, ActivityIndicator, AppState, BackHandler,
-  useWindowDimensions,
+  useWindowDimensions, Share, Alert,
 } from 'react-native';
 import { useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { router } from 'expo-router';
@@ -40,10 +40,10 @@ import {
   loadEnabledLayers,
 } from '../../src/components/map/MapFilterSheet.tsx';
 import type { MapEntity, ToggleableEntityType, PassportCountryPayload } from '../../src/types/mapTypes.ts';
-import { TOGGLEABLE_LAYERS } from '../../src/types/mapTypes.ts';
+import { TOGGLEABLE_LAYERS, KIND_TO_ENTITY_TYPE } from '../../src/types/mapTypes.ts';
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
-import { MapStoreProvider, useMapStore } from '../../src/stores/mapStore.tsx';
+import { MapStoreProvider, useMapStore, deriveMapCapabilities } from '../../src/stores/mapStore.tsx';
 import { resolveBack } from '../../src/features/map/state/mapMachine.ts';
 import { activeIntent } from '../../src/features/map/intent/intentModel.ts';
 import { NOW_OFFSET } from '../../src/features/map/time/timeMachine.ts';
@@ -68,22 +68,40 @@ import {
   type OptimizeProposal,
 } from '../../src/features/map/trip/tripMapModel.ts';
 import { fetchTripPlanMap } from '../../src/services/tripPlan.ts';
-import { submitMapObservation } from '../../src/services/mapObservations.ts';
+import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
+import type { MapMediaAsset } from '../../src/features/map/truth/contributionFlow.ts';
+import type { MediaKind } from '../../src/features/map/truth/liveTruth.ts';
 import { openInMaps } from '../../src/lib/openInMaps.ts';
 import { centroidOf } from '../../src/types/mapObjects.ts';
 import { MapSearchSheet } from '../../src/components/map/MapSearchSheet.tsx';
+import { MeetHereSheet } from '../../src/components/map/MeetHereSheet.tsx';
+import { LocateFriendsPanel } from '../../src/components/map/LocateFriendsPanel.tsx';
+import {
+  startLocateFriendsSession,
+  publishManualCheckpoint,
+  LOCATE_FRIENDS_PUBLISH_INTERVAL_MS,
+} from '../../src/services/locateFriends.ts';
+import { useSession } from '../../src/context/SessionContext.tsx';
+import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
+import { countBucket, durationBucketMs } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
 import {
   coordinateTarget,
   objectTarget,
   coordinateOf,
+  describeTarget,
   type LongPressTarget,
 } from '../../src/features/map/interaction/longPress.ts';
+import { longPressTargetAt } from '../../src/features/map/interaction/pressTarget.ts';
 import { TimeMachineControl } from '../../src/components/map/TimeMachineControl.tsx';
 import {
   EMPTY_LAYER_PREFERENCES,
   DEFAULT_LAYER_CONTEXT,
+  isAlwaysOnLayer,
+  layerForKind,
   type LayerPreferences,
+  type MapLayerId,
+  type ToggleableLayerId,
 } from '../../src/features/map/layers/layerModel.ts';
 import {
   createFetchTelemetryTransport,
@@ -94,11 +112,26 @@ import {
   setMapTelemetryTransport,
 } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { freshToken } from '../../src/services/apiToken.ts';
-import type { MapObject, MapAction } from '../../src/types/mapObjects.ts';
+import {
+  MAP_OBJECT_KINDS,
+  precisionRank,
+  type MapObject,
+  type MapAction,
+} from '../../src/types/mapObjects.ts';
+import { canonicalUrl } from '../../src/constants/canonicalUrl.ts';
+import { rsvpEvent } from '../../src/services/events.ts';
+import { openDirectThread } from '../../src/services/messaging.ts';
+import { followUser } from '../../src/services/follows.ts';
+import { blockUser } from '../../src/services/blocks.ts';
+import type { ModerationSubjectType } from '../../src/services/moderation.ts';
+import { ReportSheet } from '../../src/components/ReportSheet.tsx';
+import { TripWishlistPicker } from '../../src/components/discovery/TripWishlistPicker.tsx';
+import type { AddToTripPayload } from '../../src/components/discovery/TripWishlistPicker.tsx';
 import {
   prepareForRender,
   zoomRenderBand,
   isKindVisibleAtBand,
+  compassRecommendationIdsOf,
 } from '../../src/features/map/render/collision.ts';
 import { filterByLayers } from '../../src/features/map/layers/layerModel.ts';
 import { isZoneKind } from '../../src/features/map/render/zoneStyle.ts';
@@ -210,6 +243,242 @@ function parseZoom(v: string | string[] | undefined): number {
   const n = parseCoord(v);
   return n != null ? Math.max(1, Math.min(22, n)) : 11;
 }
+
+// ── §16 layers ↔ the legacy layer toggle ──────────────────────────────────────
+
+/**
+ * Which §16 layers a legacy `MapFilterSheet` toggle speaks for.
+ *
+ * DERIVED from the two canonical tables (`KIND_TO_ENTITY_TYPE` maps a contract
+ * kind to its legacy layer; `layerForKind` maps the same kind to its §16 layer)
+ * rather than written out, because a third hand-maintained vocabulary of the
+ * same twelve ids is exactly how one of them silently loses a layer. A kind
+ * added to the contract flows through here automatically.
+ *
+ * `safety` is skipped: §5/§24 make it always-on, and it is not expressible as a
+ * user choice.
+ */
+const LAYERS_FOR_LEGACY_TOGGLE: Record<ToggleableEntityType, ToggleableLayerId[]> = (() => {
+  const out = {} as Record<ToggleableEntityType, ToggleableLayerId[]>;
+  for (const legacy of TOGGLEABLE_LAYERS) out[legacy] = [];
+  for (const kind of MAP_OBJECT_KINDS) {
+    const legacy = KIND_TO_ENTITY_TYPE[kind];
+    if (!(TOGGLEABLE_LAYERS as readonly string[]).includes(legacy)) continue;
+    const layer: MapLayerId = layerForKind(kind);
+    if (isAlwaysOnLayer(layer)) continue;
+    const bucket = out[legacy as ToggleableEntityType];
+    if (!bucket.includes(layer)) bucket.push(layer);
+  }
+  return out;
+})();
+
+/**
+ * The bare id behind a projected object id (`event:abc` -> `abc`).
+ *
+ * Every projector — client and server — prefixes with its own slug, and the
+ * services that act on an object (RSVP, save) want the canonical row id. Same
+ * rule the Compass candidate mapping below already used; stated once.
+ */
+function rawObjectId(id: string): string {
+  const at = id.indexOf(':');
+  return at >= 0 ? id.slice(at + 1) : id;
+}
+
+/**
+ * §25 `save` — the same `AddToTripPayload` shape `MapEntityActionRow` builds,
+ * from a `MapObject` instead of the legacy envelope, so both surfaces hand
+ * `TripWishlistPicker` the same thing.
+ *
+ * The privacy rule that file's header states is honoured here rather than
+ * re-derived: coordinates are carried ONLY at `place_level` or better. An
+ * approximate zone contributes its name and nothing else, so saving a "roughly
+ * around here" object cannot quietly persist a precise point nobody published.
+ */
+function savePayloadForObject(obj: MapObject): AddToTripPayload {
+  const c = centroidOf(obj.geometry);
+  const precise = precisionRank(obj.privacyClass) >= precisionRank('place_level');
+  return {
+    id: rawObjectId(obj.id),
+    name: obj.title,
+    category: obj.kind === 'hidden_gem' ? 'hidden_gem' : KIND_TO_ENTITY_TYPE[obj.kind],
+    lat: precise ? (c?.lat ?? null) : null,
+    lng: precise ? (c?.lng ?? null) : null,
+  };
+}
+
+/**
+ * §8/§25 `share`. Same message and same origin helper `MapEntityActionRow`
+ * uses, so a link shared from the map sheet and one shared from a carousel card
+ * are byte-identical rather than two builders drifting apart.
+ */
+async function shareMapObject(obj: MapObject): Promise<void> {
+  try {
+    await Share.share({
+      message: `Check out ${obj.title} on Portava!\n${canonicalUrl(obj.interaction?.detailRoute ?? '')}`,
+    });
+  } catch {
+    // Cancelled, or sharing unavailable — silent, exactly as the action row.
+  }
+}
+
+/**
+ * §25 `join`.
+ *
+ * There IS a real implementation: joining is an event RSVP, and `event` is the
+ * only kind `clientProjection` offers the action on. So it is wired to
+ * `rsvpEvent` rather than dropped — but ONLY for events, because for anything
+ * else "join" has no meaning and a button that reports success against nothing
+ * would be worse than one that is not offered.
+ *
+ * §35 `plan_joined` fires on the CONFIRMED branch alone — a waitlist placement
+ * is not a join. This screen is the SECOND producer of that event
+ * (`MapEntityActionRow` is the first), which `mapTelemetryCardinality`'s
+ * allow-list permits with a stated reason: one join, two surfaces — the
+ * carousel action row, and the map rail / Live Place sheet. A user joins once,
+ * from whichever is in front of them, so the count is not inflated; the same
+ * pair `route_started` is already exempted for.
+ */
+async function joinMapObject(
+  obj: MapObject,
+  discovery: 'map' | 'compass',
+): Promise<void> {
+  if (obj.kind !== 'event') return;
+  const res = await rsvpEvent(rawObjectId(obj.id), 'going');
+  if (!res.ok) {
+    Alert.alert('Could not RSVP', (res as { message?: string }).message ?? 'Please try again.');
+    return;
+  }
+  const data = res.data as { status?: string; position?: number } | null;
+  if (data?.status === 'waitlisted') {
+    // A waitlist placement is not a join, and must not be reported as one —
+    // hence the early return BEFORE the emit below.
+    const posText = data.position != null ? ` You are #${data.position} on the waitlist.` : '';
+    Alert.alert(
+      "You're on the waitlist",
+      `The event is full.${posText} We'll notify you if a spot opens up.`,
+    );
+    return;
+  }
+  emitMapEvent('plan_joined', {
+    ref: describeMapObject(obj),
+    planKind: 'event',
+    // The joiner is definitionally a participant. A floor of one, not an
+    // invented total — the projection carries no attendee count.
+    participants: countBucket(1),
+    discovery,
+  });
+  Alert.alert("You're going!", 'Your RSVP has been confirmed.');
+}
+
+// ── §25 person-subject actions ────────────────────────────────────────
+//
+// `message`, `follow` and `block` act on a PERSON, not on a location. Only two
+// kinds carry one, and an object with no user id is not a person with a missing
+// field — it is a place. So each of these resolves the subject FIRST and does
+// nothing without it, rather than falling back to the object's own id and
+// mutating the wrong row.
+
+/** Kinds standing for a real person. `MapEntityActionRow`'s PERSON_TYPES, in MapObject vocabulary. */
+const PERSON_KINDS: readonly MapObject['kind'][] = ['crew_member', 'buddy_zone'];
+
+/** The user behind a person-bearing object; null for everything else. */
+function personUserId(obj: MapObject): string | null {
+  if (!PERSON_KINDS.includes(obj.kind)) return null;
+  const raw = (obj.payload as { userId?: unknown } | undefined)?.userId;
+  return typeof raw === 'string' && raw !== '' ? raw : null;
+}
+
+/**
+ * What a report about this object is filed against. The same mapping
+ * `MapEntityActionRow` uses: a buddy pin is a LISTING and a circle member is a
+ * USER, and moderation treats those differently — filing one as the other sends
+ * a harassment report to a marketplace queue.
+ */
+function moderationSubjectOf(obj: MapObject): ModerationSubjectType {
+  switch (obj.kind) {
+    case 'event':
+      return 'event';
+    case 'buddy_zone':
+      return 'buddy_listing';
+    case 'crew_member':
+      return 'user';
+    default:
+      return 'post';
+  }
+}
+
+/** Display name for a confirmation prompt. Never an id — the user did not pick an id. */
+function displayNameOf(obj: MapObject): string {
+  return obj.title && obj.title !== '' ? obj.title : 'this person';
+}
+
+/**
+ * §25 `message`. Opens (or reuses) the direct thread, then navigates — the same
+ * two steps, with the same query params, that `MapEntityActionRow` performs, so
+ * both surfaces land on one thread screen rather than two drifting routes.
+ */
+async function messageMapObject(obj: MapObject): Promise<void> {
+  const userId = personUserId(obj);
+  if (!userId) return;
+  const res = await openDirectThread(userId);
+  if (!res.ok || !res.data?.threadId) {
+    Alert.alert('Could not open conversation', 'Please try again.');
+    return;
+  }
+  router.push(
+    `/messages/${res.data.threadId}?threadType=direct&otherUserId=${encodeURIComponent(userId)}` as never,
+  );
+}
+
+/**
+ * §25 `follow`.
+ *
+ * The §8 sheet's button is a STATIC "Follow" — unlike the carousel row it
+ * carries no follow state — so this follows rather than toggles. Following
+ * someone already followed is idempotent; a toggle against a state this surface
+ * has never read is the version that could silently UNfollow.
+ */
+async function followMapObject(obj: MapObject): Promise<void> {
+  const userId = personUserId(obj);
+  if (!userId) return;
+  const res = await followUser(userId);
+  if (!res.ok) {
+    Alert.alert('Could not follow', res.message ?? 'Please try again.');
+    return;
+  }
+  // A private account answers a follow with a REQUEST, not a follow. Saying
+  // "Following" there would claim access the user does not have yet.
+  Alert.alert(
+    res.data?.following ? 'Following' : 'Request sent',
+    res.data?.following
+      ? `You now follow ${displayNameOf(obj)}.`
+      : 'They will see your request and can approve it.',
+  );
+}
+
+/**
+ * §25 `block`. Destructive and not self-evidently reversible from here, so it
+ * confirms first — the same prompt shape `MapEntityActionRow` and
+ * `CircleMemberRow` both use.
+ */
+function blockMapObject(obj: MapObject): void {
+  const userId = personUserId(obj);
+  if (!userId) return;
+  Alert.alert(`Block ${displayNameOf(obj)}?`, 'They will no longer be able to contact you.', [
+    { text: 'Cancel', style: 'cancel' },
+    {
+      text: 'Block',
+      style: 'destructive',
+      onPress: () => {
+        void (async () => {
+          const res = await blockUser(userId);
+          if (!res.ok) Alert.alert('Could not block', res.error ?? 'Please try again.');
+        })();
+      },
+    },
+  ]);
+}
+
 
 // ── Web placeholder ───────────────────────────────────────────────────────────
 
@@ -385,7 +654,41 @@ export default function FullScreenMapScreen() {
 /** Inner implementation — reads map state from the store via useMapStore(). */
 function FullScreenMapScreenInner() {
   const insets = useSafeAreaInsets();
+  // §22's eighth prompt needs a camera, and this screen is where one lives.
+  // The shared picker is used rather than a map-specific one so the capture
+  // rules (Take Photo / Library, permissions, quality) stay one implementation.
+  const { pickMedia } = useMediaPicker();
+
+  /**
+   * §22 media capture for the contribution sheet.
+   *
+   * Picking ONLY. The upload goes through the app's existing
+   * `services/media.uploadMedia` (POST /api/media/upload, which strips
+   * EXIF/GPS) inside the sheet, and the observation the photo attaches to is
+   * submitted before it — §21's order. Nothing here reads a location: a §22
+   * artifact is evidence for an observation, not a position, and
+   * `intel_evidence` must not become a second location store.
+   */
+  const requestContributionMedia = useCallback(
+    async (kind: MediaKind): Promise<MapMediaAsset | null> => {
+      const assets = await pickMedia({
+        title: kind === 'video' ? 'Add video' : 'Add photo',
+        mediaTypes: kind === 'video' ? ['videos'] : ['images'],
+      });
+      const asset = assets?.[0];
+      if (!asset?.uri) return null;
+      return {
+        uri: asset.uri,
+        mimeType: asset.mimeType ?? null,
+        fileSize: asset.fileSize ?? null,
+        duration: asset.duration != null ? asset.duration / 1000 : null,
+        type: kind === 'video' ? 'video' : 'image',
+      };
+    },
+    [pickMedia],
+  );
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const { userId } = useSession();
   const params = useLocalSearchParams<{
     entityTypes?: string;
     lat?: string;
@@ -414,6 +717,7 @@ function FullScreenMapScreenInner() {
     setCameraZoom,
     machine,
     dispatchMapEvent,
+    setMapCapabilities,
     intent,
     setIntent,
     clearIntent,
@@ -587,6 +891,20 @@ function FullScreenMapScreenInner() {
   // ── Entity data fetch ───────────────────────────────────────────────────────
   // `title` is used as the city name — passed in from Discovery / Trips entry points.
   // In passport mode the hook still runs but its output is discarded in favour of
+  // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
+  //
+  // Declared HERE, above useMapEntities, and that position is load-bearing.
+  // §16 gives crowd_flow a `contextual` default whose two automatic triggers
+  // are both circular — `density` is measured by the projection layer (a
+  // property of the response) and CROWD_FLOW mode is gated on a capability
+  // derived from flows having already arrived. §16's EXPLICIT user choice is
+  // the only non-circular trigger, and it lives in this state, so the hook
+  // cannot ask for the kind unless this is resolved before it runs.
+  const [layerPrefs, setLayerPrefs] = useState<LayerPreferences>(EMPTY_LAYER_PREFERENCES);
+  useEffect(() => {
+    loadLayerPreferences().then(setLayerPrefs).catch(() => {});
+  }, []);
+
   // passportEntities — React hooks cannot be called conditionally.
   const {
     entities: defaultEntities,
@@ -599,6 +917,9 @@ function FullScreenMapScreenInner() {
     lat: fallbackLat,
     lng: fallbackLng,
     zoom: cameraZoom ?? paramZoom,
+    // §16 explicit choice only. Passport mode asks for nothing at all, so it
+    // must not smuggle a flow request past that intent.
+    crowdFlow: mode !== 'passport' && layerPrefs.crowd_flow === 'on',
   });
 
   // ── §11 Trip Map ────────────────────────────────────────────────────────────
@@ -655,6 +976,38 @@ function FullScreenMapScreenInner() {
     [tripId, tripStops],
   );
 
+  // ── §30 capabilities ────────────────────────────────────────────────────────
+  // `canEnterMode` fails closed, and nothing in the app ever called
+  // `setMapCapabilities`, so the record the machine was created with was also
+  // the record it died with: three surfaces were gated by a switch that had no
+  // hand on it. The record is now DERIVED from what this session can actually
+  // see — see `deriveMapCapabilities` for what each answer rests on.
+  //
+  // The derivation runs against the objects the gateway returned, NOT against
+  // the post-layer/post-zoom projection: whether the world contains aggregate
+  // movement is a fact about the data, not about what the user has switched on.
+  const crowdFlowObjectCount = useMemo(
+    () => defaultObjects.reduce((n, o) => (o.kind === 'crowd_flow' ? n + 1 : n), 0),
+    [defaultObjects],
+  );
+  const capabilities = useMemo(
+    () =>
+      deriveMapCapabilities({
+        crowdFlowObjectCount,
+        locateFriendsFlagEnabled: isFlagEnabled('locate_friends_enabled'),
+        // §12 is group-scoped: the only scope this screen can name is the trip
+        // it was opened for. No trip, no session to start, no mode to enter.
+        locateFriendsScopeId: tripId,
+        viewerId: userId ?? null,
+      }),
+    [crowdFlowObjectCount, isFlagEnabled, tripId, userId],
+  );
+  useEffect(() => {
+    // The store bails out when the record says the same thing, so this settles
+    // after one dispatch instead of re-rendering on every pass.
+    setMapCapabilities(capabilities);
+  }, [capabilities, setMapCapabilities]);
+
   // ── §3 / §26 Live Pulse ─────────────────────────────────────────────────────
   // "Bottom Live Pulse card summarizes the most important nearby change." The
   // card itself decides WHICH item is most important, via the pure
@@ -670,12 +1023,6 @@ function FullScreenMapScreenInner() {
     })();
     return () => { cancelled = true; };
   }, [mode]);
-
-  // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
-  const [layerPrefs, setLayerPrefs] = useState<LayerPreferences>(EMPTY_LAYER_PREFERENCES);
-  useEffect(() => {
-    loadLayerPreferences().then(setLayerPrefs).catch(() => {});
-  }, []);
 
   // ── §35 telemetry ───────────────────────────────────────────────────────────
   // Transport is installed once per map session. Without one the emitter keeps
@@ -778,7 +1125,7 @@ function FullScreenMapScreenInner() {
     const candidates: CompassMapCandidate[] = entities.map((e) => {
       const obj = (e.payload as MapObject | undefined) ?? undefined;
       return {
-        id: e.id.includes(':') ? e.id.slice(e.id.indexOf(':') + 1) : e.id,
+        id: rawObjectId(e.id),
         title: obj?.title ?? String((e.payload as any)?.title ?? 'Suggestion'),
         subtitle: obj?.subtitle,
         lat: e.lat,
@@ -801,6 +1148,9 @@ function FullScreenMapScreenInner() {
         raw: e.payload,
       };
     });
+    // A new question starts a new round count — "show me something else" is
+    // scoped to one decision, not to the session.
+    alternativeRoundRef.current = 0;
     const picked = selectCompassPicks(candidates);
     // `ok:false` means fewer than the §14 minimum survived. Render what there
     // is rather than nothing — but do not pad the list to reach three.
@@ -845,13 +1195,102 @@ function FullScreenMapScreenInner() {
     [places],
   );
 
+  // ── §16 / §19 the one layer decision on this screen ─────────────────────────
+  // Declared here rather than beside the render pipeline below because the
+  // MARKERS need it too: `filterByLayers` was imported and never called, so the
+  // Layers sheet wrote preferences that could not reach a drawn pin.
+  const activeZoom = cameraZoom ?? paramZoom;
+  const zoomBand = zoomRenderBand(activeZoom);
+
+  const layerContext = useMemo(
+    () => ({
+      ...DEFAULT_LAYER_CONTEXT,
+      mode: machine.mode,
+      // §16 names zoom and trip state as inputs to automatic relevance, and the
+      // screen already knows both — passing the defaults instead told the
+      // contextual layers the map was always at city zoom with no trip.
+      zoomBand,
+      tripActive: tripId != null,
+    }),
+    [machine.mode, zoomBand, tripId],
+  );
+
+  /**
+   * The §16 preferences, composed with the legacy `MapFilterSheet` toggle set.
+   *
+   * Two layer controls coexist (they have different storage keys — see the
+   * LayersSheet comment below), and only the legacy one was reaching markers.
+   * Now both do, composed so that:
+   *
+   *   - a legacy toggle that is ON asserts an explicit `on` for the §16 layers
+   *     it speaks for. Without this the §16 DEFAULTS (Hidden Gems off, Buddies
+   *     off, Trip contextual) would silently delete gem, buddy, trip and crew
+   *     pins the user never asked to hide — including from the Gems and Circle
+   *     entry points, which would then open onto an empty map;
+   *   - an explicit LayersSheet choice OUTRANKS that seed, because it is the
+   *     newer and more specific control and `layerPrefs` only ever contains
+   *     keys the user actually touched (§16: an explicit choice outranks the
+   *     automatic resolution).
+   *
+   * A legacy toggle that is OFF asserts nothing: `EntityMapLayers` already
+   * drops those pins, so the §16 default is left to speak for the layer.
+   *
+   * Net effect on what is drawn: relative to before, this can only ever REMOVE
+   * objects, and only ones a user explicitly switched off.
+   */
+  const effectiveLayerPrefs = useMemo<LayerPreferences>(() => {
+    const seeded: Partial<Record<ToggleableLayerId, 'on'>> = {};
+    for (const legacy of TOGGLEABLE_LAYERS) {
+      if (!enabledLayers.includes(legacy)) continue;
+      for (const layer of LAYERS_FOR_LEGACY_TOGGLE[legacy]) seeded[layer] = 'on';
+    }
+    return { ...seeded, ...layerPrefs };
+  }, [enabledLayers, layerPrefs]);
+
+  /**
+   * The objects the §16 decision is made over: the pipeline's INPUT, before any
+   * filtering, so a marker can be matched to the object it came from.
+   */
+  const pipelineBase = compassPickObjects ?? (tripObjects ?? defaultObjects);
+
+  /**
+   * Ids the layers say NO to.
+   *
+   * Deliberately a HIDDEN set rather than a kept set. `useMapEntities` builds
+   * its entities from these very objects (`mapObjectsToEntities` preserves
+   * `obj.id`), so the two lists match by id — but the entity list ALSO carries
+   * things the pipeline never evaluated: discovery places, passport stamps and
+   * raw Compass results, none of which have a MapObject here at all (the
+   * Compass PICKS are re-keyed to bare ids, so they do not match either).
+   * Filtering to a kept set would delete every one of those and blank passport
+   * mode outright. An id is dropped only when the pipeline actually looked at
+   * it and said no; everything else passes through untouched.
+   */
+  const layerHiddenIds = useMemo(() => {
+    const hidden = new Set<string>();
+    if (pipelineBase.length === 0) return hidden;
+    const visible = new Set(
+      filterByLayers(pipelineBase, effectiveLayerPrefs, layerContext).map((o) => o.id),
+    );
+    for (const o of pipelineBase) if (!visible.has(o.id)) hidden.add(o.id);
+    return hidden;
+  }, [pipelineBase, effectiveLayerPrefs, layerContext]);
+
   // The active entity list.  Priority order:
   //   1. Compass override (active search result)
   //   2. Passport entities when mode=passport
   //   3. Default hook-sourced entities + place entities
-  const entities = compassOverrideEntities ?? (
+  const allEntities = compassOverrideEntities ?? (
     mode === 'passport' ? passportEntities : [...defaultEntities, ...placeEntities]
   );
+
+  // One list drives the markers AND the carousel, so a card can never advertise
+  // a pin the map is not drawing. Identity is preserved when nothing is hidden,
+  // which keeps the compass/passport branches referentially stable exactly as
+  // before.
+  const entities = layerHiddenIds.size === 0
+    ? allEntities
+    : allEntities.filter((e) => !layerHiddenIds.has(e.id));
 
   // ── Carousel state ──────────────────────────────────────────────────────────
   // activeIndex / setActiveIndex come from the map store (carouselIndex / setCarouselIndex).
@@ -986,39 +1425,32 @@ function FullScreenMapScreenInner() {
     [entities, setCameraCenter, setCameraZoom, setActiveIndex, setSelectedEntityId],
   );
 
-  const layerContext = useMemo(
-    () => ({ ...DEFAULT_LAYER_CONTEXT, mode: machine.mode }),
-    [machine.mode],
-  );
-
   // ── §17 / §31 render pipeline ───────────────────────────────────────────────
   // Order matters and follows §19: layers decide what MAY be drawn, the zoom
   // band decides what is legible at this scale, Time Machine coerces forecasts
   // so they cannot look like observations, and only then does §31 collision
   // decide what actually fits.
-  const activeZoom = cameraZoom ?? paramZoom;
-  const zoomBand = zoomRenderBand(activeZoom);
-
+  //
+  // `activeZoom` / `zoomBand` / `layerContext` are declared with the marker
+  // filter above — the markers need the same decision, and one screen must not
+  // hold two answers to "is this layer on".
   const objects: MapObject[] = useMemo(() => {
     // §14 — while a Compass query is active the map shows the picks and nothing
     // else. That IS the mode: "reduces visual noise and highlights approximately
     // three to five best next moves".
-    const base = compassPickObjects ?? (tripObjects ?? defaultObjects);
     // 1. §16 layers, then §3's chip. homeVisibleObjects composes them in that
     //    order so a chip can only ever narrow what the layers already permit —
     //    a chip must never switch a layer back on.
-    const permitted = homeVisibleObjects(base, homeFilter, layerPrefs, layerContext);
+    const permitted = homeVisibleObjects(pipelineBase, homeFilter, effectiveLayerPrefs, layerContext);
     // 2. §17 — no POI pins at world zoom; individual places only from district in.
     const legible = permitted.filter((o) => isKindVisibleAtBand(o.kind, zoomBand));
     // 3. §15 — a forecast becomes kind 'prediction' and loses any live
     //    freshness, so zoneStyle gives it the dashed treatment (§37).
     return toTemporalObjects(legible, timeOffset) as unknown as MapObject[];
   }, [
-    defaultObjects,
-    compassPickObjects,
-    tripObjects,
+    pipelineBase,
     homeFilter,
-    layerPrefs,
+    effectiveLayerPrefs,
     layerContext,
     zoomBand,
     timeOffset,
@@ -1027,12 +1459,26 @@ function FullScreenMapScreenInner() {
   // Badge counts must use the same layer-aware path as the objects themselves,
   // or a chip can advertise results the map will not draw.
   const chipCounts = useMemo(
-    () => homeChipCounts(compassPickObjects ?? defaultObjects, layerPrefs, layerContext),
-    [compassPickObjects, defaultObjects, layerPrefs, layerContext],
+    () => homeChipCounts(compassPickObjects ?? defaultObjects, effectiveLayerPrefs, layerContext),
+    [compassPickObjects, defaultObjects, effectiveLayerPrefs, layerContext],
   );
 
   // §5 levels 2-3: zones render beneath everything and skip collision.
-  const zoneObjects = useMemo(() => objects.filter((o) => isZoneKind(o.kind)), [objects]);
+  //
+  // `crowd_flow` is included even though it is NOT a ZoneKind, and that is
+  // deliberate rather than sloppy. This array feeds two layers — ActivityZone
+  // and CrowdFlowLayer — and each re-filters for what it draws: ActivityZone
+  // keeps only isZoneKind, CrowdFlowLayer keeps only 'crowd_flow'. Filtering to
+  // ZONE_KINDS here therefore starved the flow layer of every object it exists
+  // to render, so §10 would have gone live and drawn nothing.
+  //
+  // It must NOT be added to ZONE_KINDS to fix that: a flow is a LineString and
+  // ActivityZone draws polygons, so widening the kind list would send it to a
+  // renderer that cannot draw it. The feed widens; the vocabulary does not.
+  const zoneObjects = useMemo(
+    () => objects.filter((o) => isZoneKind(o.kind) || o.kind === 'crowd_flow'),
+    [objects],
+  );
 
   // §31 — collision only among the point-shaped markers. `dropped` is surfaced
   // rather than swallowed: a hidden object the user cannot reach is a silent
@@ -1054,6 +1500,12 @@ function FullScreenMapScreenInner() {
           promotion: {
             selectedId: machine.selection?.objectId ?? null,
             navigationTargetId: machine.navigation?.destinationObjectId ?? null,
+            // §14/§31 — promoteAll recomputes renderingPriority from each
+            // object's KIND, so the Compass rung the pick producer stamped is
+            // discarded unless the ids are named here. Without this the picks
+            // fall to their kind default and the "3-5 best next moves" lose
+            // collisions to ordinary events and live zones.
+            compassRecommendationIds: compassRecommendationIdsOf(objects),
           },
         },
       ),
@@ -1084,14 +1536,102 @@ function FullScreenMapScreenInner() {
     anchor?: { x: number; y: number };
   } | null>(null);
   const [contributeObject, setContributeObject] = useState<MapObject | null>(null);
+  /**
+   * §25 `report` on a person or a listing. Held as the OBJECT rather than a
+   * boolean so the sheet's subject cannot drift from the thing that was
+   * reported when the selection changes underneath it.
+   */
+  const [reportTarget, setReportTarget] = useState<MapObject | null>(null);
+  /** §25 `save` — the subject of the wishlist picker, null when it is closed. */
+  const [saveTarget, setSaveTarget] = useState<AddToTripPayload | null>(null);
+  const [meetTarget, setMeetTarget] = useState<MeetTarget | null>(null);
+  const [meetSurface, setMeetSurface] =
+    useState<'action_rail' | 'long_press' | 'place_sheet'>('action_rail');
+
+  // ── §12 Locate My Friends ───────────────────────────────────────────────────
+  // The session id is the whole mount condition. It is NOT gated on a feature
+  // flag: the panel handles `enabled: false` itself, and its Leave control
+  // renders unconditionally — gating the mount would reintroduce exactly the
+  // stranding bug the un-gated DELETE route was written to prevent.
+  const [locateSessionId, setLocateSessionId] = useState<string | null>(null);
+  const [locateStarting, setLocateStarting] = useState(false);
+
+  const startLocateFriends = useCallback(
+    async (scope: { kind: 'trip' | 'circle' | 'event' | 'plan'; id: string }, ttlMinutes: number) => {
+      setLocateStarting(true);
+      const res = await startLocateFriendsSession({
+        groupScopeKind: scope.kind,
+        groupScopeId: scope.id,
+        // §12 "temporary and auto-expiring" — required, never defaulted here.
+        ttlMinutes,
+      }).catch(() => null);
+      setLocateStarting(false);
+      if (!res || !res.ok || !res.data.session) return;
+
+      setLocateSessionId(res.data.session.id);
+      // §35 crew_locate_started, with the rung ACTUALLY requested after the
+      // purpose ceiling was applied — not the one this screen asked for.
+      emitMapEvent('crew_locate_started', {
+        crewSize: countBucket(0),
+        requestedPrecision: res.data.requestedClass,
+        ttl: durationBucketMs(ttlMinutes * 60_000),
+        source: machine.mode === 'TRIP' ? 'trip_map' : 'action_rail',
+      });
+    },
+    [machine.mode],
+  );
+  /**
+   * §25 "Create checkpoint" — §12's manual rung, into the live group session.
+   *
+   * The session id is the whole precondition, and it is the SAME value the menu
+   * was gated on (`checkpointScopeId` below): with no session there is nobody
+   * the checkpoint could reach, which is why the row is disabled rather than
+   * this function guessing at a scope.
+   *
+   * The label comes from `describeTarget` — the object's own title, or the
+   * coarsened coordinate for a press on bare map — so the name the group reads
+   * is the name the menu showed the user in its header. What is NOT sent is the
+   * pressed point; see `publishManualCheckpoint`.
+   *
+   * A refusal is reported, not swallowed: the ladder can decline (`stored:
+   * false`) and so can the transport, and a checkpoint the group never received
+   * must not look like one they did.
+   */
+  const dropCheckpoint = useCallback(
+    async (target: LongPressTarget) => {
+      if (!locateSessionId) return;
+      const label = describeTarget(target);
+      const res = await publishManualCheckpoint({ sessionId: locateSessionId, label }).catch(
+        () => null,
+      );
+      if (!res || !res.ok || !res.data.stored) {
+        Alert.alert('Could not drop the checkpoint', 'Please try again.');
+        return;
+      }
+      Alert.alert('Checkpoint dropped', `Your group can see “${label}”.`);
+    },
+    [locateSessionId],
+  );
+
+  /** §35 alternative_requested: which round of "show me something else" this is. */
+  const alternativeRoundRef = useRef(0);
 
   const overlayOpen = (o: 'INTENT' | 'LAYERS' | 'FILTERS' | 'SEARCH') =>
     machine.overlays.includes(o);
 
   /**
-   * §25 action dispatch, shared by the persistent rail and the Live Place
-   * sheet. Both were previously inert for everything except 'contribute',
-   * which meant the rail rendered four buttons and three of them did nothing.
+   * §25 action dispatch, shared by the persistent rail and the §8 Live Place
+   * sheet.
+   *
+   * EVERY value in `MAP_ACTIONS` is handled here. That is a deliberate
+   * invariant, not a coincidence: the rail draws four fixed slots, but the
+   * sheet renders `orderedActions(obj)` — whatever the projection declared —
+   * so any action a projection offers and this switch omits becomes a rendered
+   * button that silently does nothing when pressed. `default` therefore exists
+   * only for a null-ish slug at runtime, never as a resting place for an
+   * action someone still has to wire. `mapActionDispatch.component.test.tsx`
+   * pins the completeness so the next action added to the union cannot land
+   * offered-but-inert.
    *
    * Routes to the SAME flows MapEntityActionRow already uses, rather than
    * reimplementing them — two navigate paths would drift.
@@ -1115,19 +1655,105 @@ function FullScreenMapScreenInner() {
         case 'view':
           if (obj.interaction?.detailRoute) router.push(obj.interaction.detailRoute as never);
           return;
-        case 'add_to_trip':
         case 'meet_here':
-          // Both open flows this screen does not own (the plan picker and the
-          // meeting-point flow). Selecting the object is the honest step here;
-          // the detail surface owns the rest. Doing nothing silently was worse,
-          // but so would be a fake confirmation.
+          setMeetSurface('action_rail');
+          setMeetTarget({ kind: 'object', object: obj });
+          return;
+        case 'add_to_trip':
+          // Opens a flow this screen does not own (the plan picker). Navigating
+          // to the detail surface is the honest step; a fake confirmation here
+          // would be worse than the handoff.
           if (obj.interaction?.detailRoute) router.push(obj.interaction.detailRoute as never);
+          return;
+        case 'save':
+          // The SAME picker MapEntityActionRow opens, given the same payload
+          // shape. Offered by livePlaceModel and clientProjection; until now it
+          // fell through `default` and the button did nothing.
+          setSaveTarget(savePayloadForObject(obj));
+          return;
+        case 'share':
+          void shareMapObject(obj);
+          return;
+        case 'join':
+          void joinMapObject(obj, compassPickObjects !== null ? 'compass' : 'map');
+          return;
+        case 'message':
+          void messageMapObject(obj);
+          return;
+        case 'follow':
+          void followMapObject(obj);
+          return;
+        case 'block':
+          blockMapObject(obj);
+          return;
+        case 'book':
+          // A buddy pin's booking surface IS its detail route — the same push
+          // `MapEntityActionRow`'s Book button makes. Reading it off the object
+          // rather than rebuilding `/(rent-a-buddy)/buddy/:id` here keeps one
+          // definition of where a buddy lives.
+          if (obj.interaction?.detailRoute) router.push(obj.interaction.detailRoute as never);
+          return;
+        case 'report':
+          // TWO different things are called `report`, and routing one into the
+          // other's flow is the failure that matters. A CONTRIBUTABLE object
+          // means "report what is here" — an observation about a place, which is
+          // the contribution sheet, exactly as the long-press menu routes it.
+          // Anything else is a MODERATION report about a person or a listing,
+          // which is the ReportSheet. A harassment report must never land in a
+          // place-observation flow.
+          if (obj.interaction?.contributable) {
+            setContributeObject(obj);
+          } else {
+            setReportTarget(obj);
+          }
+          return;
+        case 'create_checkpoint':
+          // §12: a checkpoint is a manual position report INTO a group or event
+          // map. With no session there is nobody to tell — the long-press menu
+          // disables the row with this reason, and the sheet has no disabled
+          // state, so it is said here rather than failing silently.
+          if (!locateSessionId) {
+            Alert.alert('No group map active', 'Join a group or event map to drop a checkpoint.');
+            return;
+          }
+          void dropCheckpoint(objectTarget(obj));
           return;
         default:
           return;
       }
     },
-    [dispatchMapEvent],
+    [dispatchMapEvent, compassPickObjects, locateSessionId, dropCheckpoint],
+  );
+
+  /**
+   * §25 long-press — the gesture that opens the menu.
+   *
+   * Until this existed, `longPress` was state with no producer: the menu was
+   * mounted, its seven rows resolved correctly, and nothing on the map could
+   * ever set a target. The native map is the only thing that can report where a
+   * press landed on the ground, so the gesture starts there and `pressTarget`
+   * turns the point into §25's union.
+   *
+   * WHAT IS PRESSABLE IS WHAT §31 SAYS IS DRAWN. `renderResult.kept` is the
+   * collision-resolved marker set — the same list this screen already counts
+   * `hiddenByCollision` against — and `zoneObjects` is Levels 2-3. Testing the
+   * press against anything wider would let a finger land on an object the map
+   * decided not to show, which is the §31 truncation problem in reverse.
+   *
+   * The anchor is the press point in the map view's own pixels. The map fills
+   * this screen, so that is the window point the menu opens under; the menu
+   * clamps it to the viewport itself, and falls back to centred if it is
+   * missing.
+   */
+  const handleMapLongPress = useCallback(
+    (press: { lat: number; lng: number; screenX: number; screenY: number }) => {
+      const target = longPressTargetAt(
+        { markers: renderResult.kept, areas: zoneObjects },
+        { lat: press.lat, lng: press.lng, zoom: activeZoom },
+      );
+      setLongPress({ target, anchor: { x: press.screenX, y: press.screenY } });
+    },
+    [renderResult.kept, zoneObjects, activeZoom],
   );
 
   /** Called when the user taps a marker on the map. */
@@ -1278,6 +1904,7 @@ function FullScreenMapScreenInner() {
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
         filterRowOffset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT + 8}
+        onLongPressMap={handleMapLongPress}
       />
 
       {/* ── §3 header: menu · city/area · search · layers ─────────────────── */}
@@ -1542,25 +2169,50 @@ function FullScreenMapScreenInner() {
 
       {/* ── §22 one-tap contribution ────────────────────────────────────────
           An observation, never a rating — and a reward may never raise
-          confidence (§22, §37). Submission is the caller's seam. */}
+          confidence (§22, §37).
+
+          The sheet owns the submission (see its header): a photo attaches to an
+          observation that already exists, so the act is two calls in §21's
+          order and only the sheet can show the contributor how both landed.
+          `onSubmit` is telemetry, and must not post again. */}
       <MapContributionSheet
         visible={contributeObject !== null}
         object={contributeObject}
         onClose={() => setContributeObject(null)}
+        onRequestMedia={requestContributionMedia}
         onSubmit={(contribution) => {
           if (!contributeObject) return;
-          const obj = contributeObject;
           emitMapEvent('contribution_submitted', {
-            ref: describeMapObject(obj),
+            ref: describeMapObject(contributeObject),
             contributionKind: contribution.kind,
             prompt: 'sheet',
           });
-          // Fire-and-forget: §22 is a LOW-FRICTION capture surface, so the tap
-          // must not wait on the network. The server owns consent, validation
-          // and idempotency, and dedupes a double tap on its own.
-          void submitMapObservation(obj.id, obj.kind, contribution);
-          setContributeObject(null);
         }}
+      />
+
+      {/* ── §25 Report ──────────────────────────────────────────────────────
+          The moderation sheet MapEntityActionRow already opens, reached from
+          the §8 sheet as well as the carousel card. `subjectType` decides which
+          queue it lands in, so it is derived from the object's kind rather than
+          defaulted — a circle member is a USER and a buddy pin is a LISTING. */}
+      <ReportSheet
+        visible={reportTarget !== null}
+        subjectType={reportTarget ? moderationSubjectOf(reportTarget) : 'post'}
+        subjectId={reportTarget ? rawObjectId(reportTarget.id) : ''}
+        subjectUserId={reportTarget ? personUserId(reportTarget) : null}
+        subjectName={reportTarget ? reportTarget.title : null}
+        onClose={() => setReportTarget(null)}
+      />
+
+      {/* ── §25 Save ────────────────────────────────────────────────────────
+          The picker MapEntityActionRow already opens, reached from the rail and
+          the §8 sheet as well as the carousel card. One implementation, one
+          storage path — a second "save" would be a second source of truth for
+          what the user has saved. */}
+      <TripWishlistPicker
+        visible={saveTarget !== null}
+        place={saveTarget}
+        onClose={() => setSaveTarget(null)}
       />
 
       {/* ── §11 Optimize Today ──────────────────────────────────────────────
@@ -1612,7 +2264,7 @@ function FullScreenMapScreenInner() {
         target={longPress?.target ?? null}
         visible={longPress != null}
         anchor={longPress?.anchor}
-        context={{ checkpointScopeId: null, now: Date.now() }}
+        context={{ checkpointScopeId: locateSessionId, now: Date.now() }}
         onClose={() => setLongPress(null)}
         onSelect={(action, target) => {
           setLongPress(null);
@@ -1620,12 +2272,124 @@ function FullScreenMapScreenInner() {
             setContributeObject(target.object);
             return;
           }
+          if (action === 'meet_here') {
+            // A long-press can land on empty map, so the target is a union —
+            // proposeMeetHere decides whether it can anchor a meeting at all.
+            setMeetSurface('long_press');
+            setMeetTarget(
+              target.kind === 'object'
+                ? { kind: 'object', object: target.object }
+                : { kind: 'coordinate', lat: target.lat, lng: target.lng },
+            );
+            return;
+          }
           if (action === 'ask_compass') {
             const pt = coordinateOf(target);
             if (pt) void geocodeAndFly(`${pt.lat.toFixed(3)},${pt.lng.toFixed(3)}`);
+            return;
+          }
+          if (action === 'create_checkpoint') {
+            void dropCheckpoint(target);
+            return;
+          }
+          // §25 `share` is NEVER routed here. The row says "Share permitted
+          // location" and carries a §23 rung and a TTL on its second line; the
+          // only share this screen owns is §8's `shareMapObject`, which sends a
+          // link to a place and expires never. Handing this slug to it would
+          // answer a bounded location share with a permanent link — so the menu
+          // refuses the row outright instead (longPress.ts
+          // `BOUNDED_SHARE_CHANNEL_EXISTS`) and nothing arrives here to route.
+          if (action === 'share') return;
+          // `save` and `add_to_trip` reach the flows the rail already owns —
+          // the wishlist picker and the detail-surface handoff — rather than a
+          // second copy of either. Both need a place record, so the menu
+          // disables them for a bare coordinate and only an object gets here.
+          if (target.kind === 'object') handleMapAction(action, target.object);
+        }}
+      />
+
+      {/* ── §12 Locate My Friends ───────────────────────────────────────────
+          Mounted on the session id alone. The panel owns its own read and
+          publish polls and tears both down with its effect, so a closed screen
+          cannot keep publishing someone's position. */}
+      {locateSessionId && userId ? (
+        <LocateFriendsPanel
+          live={{ sessionId: locateSessionId, viewerMemberId: userId }}
+          onLeave={() => setLocateSessionId(null)}
+          onEndSession={() => setLocateSessionId(null)}
+        />
+      ) : machine.mode === 'LOCATE_FRIENDS' && tripId ? (
+        <Pressable
+          style={[s2.optimizeChip, { bottom: insets.bottom + 200 }]}
+          disabled={locateStarting}
+          onPress={() => void startLocateFriends({ kind: 'trip', id: tripId }, 120)}
+          accessibilityRole="button"
+          accessibilityLabel="Start locating friends for two hours"
+        >
+          <Text style={s2.optimizeChipText}>
+            {locateStarting ? 'Starting…' : 'Locate my friends · 2h'}
+          </Text>
+        </Pressable>
+      ) : null}
+
+      {/* ── §25 Meet Here ───────────────────────────────────────────────────
+          The rung the meeting point publishes at is decided by the model from
+          the subject, never requested here. An aggregate subject is refused
+          with its reason shown rather than silently doing nothing. */}
+      <MeetHereSheet
+        target={meetTarget}
+        surface={meetSurface}
+        onClose={() => setMeetTarget(null)}
+        onRefused={(info) => {
+          const subject =
+            meetTarget?.kind === 'object' ? describeMapObject(meetTarget.object) : null;
+          // Only an object can be refused — a user's own dropped pin always
+          // qualifies — so a null subject here would be a contradiction.
+          if (subject) {
+            emitMapEvent('meet_here_refused', {
+              ref: subject,
+              reason: info.reason,
+              surface: info.surface,
+            });
+          }
+        }}
+        onCreated={(info) => {
+          const subject =
+            meetTarget?.kind === 'object' ? describeMapObject(meetTarget.object) : null;
+          if (subject) {
+            emitMapEvent('meet_here_created', {
+              ref: subject,
+              audience: info.audience,
+              invitees: countBucket(info.inviteeCount),
+              // The rung it ACTUALLY published at, not the one asked for.
+              sharedAs: info.sharedAs,
+            });
           }
         }}
       />
+
+      {/* ── §14 "show me something else" ────────────────────────────────────
+          The affordance §35's alternative_requested measures. Re-asks Compass
+          within the SAME decision, incrementing the round, so a user who
+          rejects three suggestions is one decision with three rounds rather
+          than three unrelated asks. */}
+      {compassQuery && compassPickObjects ? (
+        <Pressable
+          style={[s2.altChip, { bottom: insets.bottom + 168 }]}
+          onPress={() => {
+            alternativeRoundRef.current += 1;
+            emitMapEvent('alternative_requested', {
+              reason: 'not_interested',
+              round: alternativeRoundRef.current,
+            });
+            void geocodeAndFly(compassQuery);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Show me something else"
+        >
+          <Text style={s2.altChipText}>Show me something else</Text>
+        </Pressable>
+      ) : null}
 
       {/* ── §27 Search ──────────────────────────────────────────────────────
           "Geographic results should center or frame the relevant map object."
@@ -1725,6 +2489,19 @@ const s2 = StyleSheet.create({
   moreChipText: {
     color: '#FAF9F6',
     fontSize: 12,
+    fontWeight: '600',
+  },
+  altChip: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: 'rgba(23,28,34,0.94)',
+  },
+  altChipText: {
+    color: '#FAF9F6',
+    fontSize: 13,
     fontWeight: '600',
   },
   cacheBanner: {

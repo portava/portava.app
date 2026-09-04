@@ -40,6 +40,7 @@ import {
   type TripOverlap,
   type UsePassportPlansResult,
 } from './usePassportPlans.ts';
+import { trackMakePlanStarted } from './passportTelemetry.ts';
 
 const VIS_OPTIONS: { value: TripVisibility; label: string; Icon: typeof Lock }[] = [
   { value: 'private', label: 'Private', Icon: Lock },
@@ -236,6 +237,12 @@ export default function PlansScreen({ targetUserId, viewerUserId, onConnect, sta
   const vm = stateOverride ?? hook;
 
   const connect = (overlap: TripOverlap) => {
+    // §32 make_plan_started — the identity→action bridge (§18). Ids/enum only:
+    // the other traveler's id and where the action started; never the city text.
+    // Emit the SERVER-RESOLVED owner uuid (identity.userId), never the raw route
+    // param — `targetUserId` may be an @handle, and passportTelemetry's scrubber
+    // filters KEYS not VALUES, so a handle value would leak (§23/§24/§32).
+    trackMakePlanStarted(vm.identity?.userId ?? '', 'plans_overlap');
     if (onConnect) onConnect(overlap);
     else defaultConnect(targetUserId, overlap);
   };

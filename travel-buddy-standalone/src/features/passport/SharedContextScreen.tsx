@@ -16,7 +16,7 @@
  * surfaces use), which combines both permitted passport projections with live
  * Map intelligence to propose real experiences (§19 / TABLE 19 / §35).
  */
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -46,6 +46,7 @@ import {
   buildCompassPrompt,
   type UseSharedContextResult,
 } from './useSharedContext.ts';
+import { trackSharedContextViewed, trackMakePlanStarted } from './passportTelemetry.ts';
 import type {
   SharedContextProjection,
   SharedContextFact,
@@ -185,10 +186,34 @@ export default function SharedContextScreen({
 
   const { data, reason, loading, error } = hook;
   const hasOverlap = !!data && data.facts.length > 0;
-  const canHandoff = !!data && data.compassHandoff.eligible;
+  // §18 make-plan CTA requires BOTH server signals: the Compass handoff is
+  // eligible AND the viewer holds the server-projected can_make_plan capability
+  // (§30). The client never infers the action from the fact set or a score.
+  const canHandoff = !!data && data.compassHandoff.eligible && hook.canMakePlan;
+
+  // §32 shared_context_viewed — fire once the overlap is shown for this viewer
+  // relationship. Ids/enum/count only: the other traveler's id, the number of
+  // facts, and the qualitative label — never the fact text and never a score.
+  const viewedRef = useRef(false);
+  useEffect(() => {
+    if (viewedRef.current || !data) return;
+    viewedRef.current = true;
+    trackSharedContextViewed({
+      // The SERVER-RESOLVED owner uuid, never the raw route param — `userId` may
+      // be an @handle (the endpoint resolves @handles), and passportTelemetry's
+      // scrubber filters KEYS not VALUES, so a handle value would pass straight
+      // through and break the module's no-handle invariant (§23/§24/§32).
+      subjectId: data.ownerId,
+      factCount: data.facts.length,
+      summary: data.summaryLabel,
+    });
+  }, [data]);
 
   function openCompass(): void {
     if (!data) return;
+    // §32 make_plan_started — the identity→action bridge (§18/§35). Use the
+    // server-resolved owner uuid, not the raw (possibly @handle) route param.
+    trackMakePlanStarted(data.ownerId, 'shared_context');
     router.push({
       pathname: COMPASS_ROUTE,
       params: { prefillMessage: buildCompassPrompt(data, otherName) },
