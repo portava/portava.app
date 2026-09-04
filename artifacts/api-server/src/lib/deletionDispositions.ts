@@ -59,6 +59,12 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "intel_evidence",
   "intel_confirmations",
   "intel_state_snapshots",
+  // Unit I3 presence-verification audit rows (migration 2276). observation_id
+  // and actor_id both cascade: erase_intel_for_actor deletes the actor's
+  // observations inside its erasure declaration, so the cascade is permitted by
+  // the append-only trigger and the rows go with the observation. Coarse
+  // buckets only — never a coordinate — so nothing precise outlives the actor.
+  "intel_presence_verifications",
   // IG-02 contribution consent (migration 2172, user_id-keyed). Its ON DELETE
   // CASCADE to profiles never fires because the deletion keeps an anonymised
   // tombstone profile — the same mistake 2187 made for derived memory. Erased
@@ -457,6 +463,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // IG mission candidates, added by migration 2167 (post-baseline). Classified
   // in ANONYMISED_FK_NULLED (accepted_by is NULLed, the row is kept).
   "intel_mission_candidates",
+  // Unit I3 presence-verification audit, added by migration 2276 (post-baseline).
+  // Classified in ERASED_BY_CASCADE above.
+  "intel_presence_verifications",
   // Passport / Wall owner-scoped tables (migrations 2260 / 2261 / 2271,
   // post-baseline). Classified in ERASED_BY_CASCADE above.
   "availability_windows",
