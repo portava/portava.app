@@ -307,15 +307,65 @@ export function durationBucketMs(ms: number | null | undefined): DurationBucket 
 export type MapSessionId = string;
 export type DecisionId = string;
 
-export type MapEntryPoint =
-  | 'tab'
-  | 'deeplink'
-  | 'trip'
-  | 'compass'
-  | 'notification'
-  | 'search'
-  | 'place'
-  | 'unknown';
+export const MAP_ENTRY_POINTS = [
+  'tab',
+  'deeplink',
+  'trip',
+  'compass',
+  'notification',
+  'search',
+  'place',
+  'unknown',
+] as const;
+
+export type MapEntryPoint = (typeof MAP_ENTRY_POINTS)[number];
+
+/**
+ * Narrow an untrusted value to a MapEntryPoint.
+ *
+ * Exists because the map screen derives `entry` from the URL, and
+ * `useLocalSearchParams()` returns `any` — so nothing the compiler does can
+ * stop a query string from publishing an arbitrary entry value. Verified
+ * 2026-09-04: every one of the four production paths into /map emitted a value
+ * OUTSIDE this union ('circle', 'passport', and 'direct' for the rest), and the
+ * `any` at the seam is exactly why no typecheck ever said so.
+ *
+ * Mirrors `isMapMode` in features/map/vocabulary.ts, and for the same reason:
+ * an enumerated telemetry dimension fed from user-controllable input is
+ * unbounded cardinality unless something narrows it at the boundary.
+ */
+export function isMapEntryPoint(value: unknown): value is MapEntryPoint {
+  return typeof value === 'string' && (MAP_ENTRY_POINTS as readonly string[]).includes(value);
+}
+
+/**
+ * Decide `map_opened.entry` from the map screen's route params.
+ *
+ * Lives here, beside the union, rather than inline in the screen: this is a
+ * vocabulary decision, and inline it was untestable without the whole screen
+ * harness — which is why the previous expression (`mode ?? 'direct'`) had no
+ * test at all and shipped an entry point that does not exist.
+ *
+ * Rules, in order:
+ *   1. An explicit `entry` param, but only if it is a real MapEntryPoint. A
+ *      query param is user-controllable, and an enumerated telemetry dimension
+ *      fed from one is unbounded cardinality unless it is narrowed here.
+ *   2. Otherwise `deeplink` when the URL carried anything at all — every
+ *      in-app `router.push('/map?…')` is exactly that.
+ *   3. Otherwise `tab`, the bare open.
+ *
+ * `mode` is deliberately NOT consulted: 'circle' and 'passport' are §30 map
+ * modes, a different vocabulary, and the payload already reports the real mode
+ * from the state machine.
+ */
+export function deriveMapEntryPoint(
+  params: Readonly<Record<string, string | string[] | undefined>>,
+): MapEntryPoint {
+  const rawEntry = params.entry;
+  const first = Array.isArray(rawEntry) ? rawEntry[0] : rawEntry;
+  if (isMapEntryPoint(first)) return first;
+  return Object.keys(params).length > 0 ? 'deeplink' : 'tab';
+}
 
 // The §30 modes, from features/map/vocabulary.ts. Declared there rather than
 // here so telemetry reports the SAME mode value the state machine is actually
