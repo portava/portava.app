@@ -91,6 +91,10 @@ import {
   type PresenceEstimateState,
   type PrivacyClass,
 } from '../features/map/presence/presenceLadder.ts';
+import {
+  eventCachedSignal,
+  type EventCheckInCache,
+} from '../features/map/presence/eventCachedLocation.ts';
 
 // ── Cadence ───────────────────────────────────────────────────────────────────
 
@@ -699,6 +703,61 @@ export async function publishManualCheckpoint(
       rung: 'manual_checkpoint',
       observedAt: now,
       checkpointLabel: input.label,
+      now,
+    },
+    transport,
+  );
+}
+
+/** What a §12 rung-2 "Event-local cached location" publish needs. */
+export interface EventCachedLocationInput {
+  sessionId: string;
+  /** A cache built by `cacheEventCheckInLocation`; carries its own explicit consent + TTL. */
+  cache: EventCheckInCache | null;
+  /** The ceiling the group agreed to, in §23 vocabulary. */
+  sessionCeiling?: PrivacyClass;
+  grant?: PrecisionGrant | null;
+  capabilities?: PresenceCapabilities;
+  now?: number;
+}
+
+/**
+ * §12 rung 2, "Event-local cached location" — the degraded-mode producer.
+ *
+ * A member's last-known fix, cached at event check-in, republished as the
+ * `event_cached_location` rung when a live network fix is not available. It
+ * goes through the SAME `publishLocateFriendsPosition` path as every other
+ * rung, so the rung's `approximate` ceiling and §23 decay coarsen it there —
+ * the raw coordinate is dropped and the venue label is what the group sees.
+ *
+ * Two ways it declines to publish, both `ok: true` with `stored: false` (a
+ * decline is not a transport error and must not be retried as one):
+ *   - the cache is expired or unconsented (`eventCachedSignal` returns null),
+ *   - the ladder refuses the resulting signal (e.g. horizon exceeded).
+ */
+export async function publishEventCachedLocation(
+  input: EventCachedLocationInput,
+  transport?: Partial<LocateFriendsTransport> | null,
+): Promise<LocateFriendsResult<PublishOutcome>> {
+  const now = input.now ?? Date.now();
+  const signal = eventCachedSignal(input.cache, now);
+  if (!signal) {
+    const decision: PublishDecision = { publish: false, reason: 'observation_too_old' };
+    return {
+      ok: true,
+      data: { enabled: true, stored: false, storedPrecision: null, refusal: 'observation_too_old', decision },
+    };
+  }
+  return publishLocateFriendsPosition(
+    {
+      sessionId: input.sessionId,
+      rung: 'event_cached_location',
+      observedAt: signal.observedAt,
+      position: signal.position ?? null,
+      checkpointLabel: signal.checkpointLabel ?? null,
+      sessionCeiling: input.sessionCeiling,
+      grant: input.grant ?? null,
+      capabilities: input.capabilities,
       now,
     },
     transport,

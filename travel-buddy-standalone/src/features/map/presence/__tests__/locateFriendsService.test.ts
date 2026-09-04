@@ -24,6 +24,7 @@ import {
   leaveLocateFriendsSession,
   memberSnapshotToState,
   precisionToPublish,
+  publishEventCachedLocation,
   publishLocateFriendsPosition,
   publishManualCheckpoint,
   readLocateFriendsSession,
@@ -32,6 +33,7 @@ import {
   type LocateFriendsMemberSnapshot,
   type LocateFriendsTransport,
 } from '../../../../services/locateFriends.ts';
+import { cacheEventCheckInLocation } from '../eventCachedLocation.ts';
 import {
   LOCATE_SIGNAL_RUNGS,
   RUNG_POLICY,
@@ -920,5 +922,71 @@ describe('the server snapshot becomes the model, without re-deriving it', () => 
     };
     const built = toLocateSession(envelope, 'me', NOW);
     assert.equal(built.ok, false);
+  });
+});
+
+// ── §12 rung 2 · the event_cached_location producer ──────────────────────────
+
+describe('§12 rung 2 · publishEventCachedLocation goes through the model', () => {
+  const DA_NANG = { lat: 16.047079, lng: 108.220518 };
+
+  function cache(over: Partial<Parameters<typeof cacheEventCheckInLocation>[0]> = {}) {
+    const r = cacheEventCheckInLocation({
+      lat: DA_NANG.lat,
+      lng: DA_NANG.lng,
+      venueLabel: 'Main Stage',
+      consent: true,
+      now: NOW,
+      ...over,
+    });
+    assert.ok(r.ok);
+    return r.cache;
+  }
+
+  test('it publishes at the event_cached_location rung and the raw coordinate never leaves the device', async () => {
+    const { impl, calls } = stubFetch([
+      { body: { enabled: true, stored: true, storedPrecision: 'approximate', rung: 'event_cached_location' } },
+    ]);
+    const res = await publishEventCachedLocation(
+      { sessionId: SESSION_ID, cache: cache(), now: NOW + 60_000 },
+      transportFor(impl),
+    );
+    assert.ok(res.ok);
+    if (!res.ok) return;
+    assert.equal(res.data.stored, true);
+    assert.equal(calls.length, 1);
+    const sent = calls[0].body;
+    assert.equal(sent.rung, 'event_cached_location');
+    // "names a venue, not a point": the cached coordinate is coarsened away by
+    // the rung's approximate ceiling; only the venue label survives.
+    assert.equal(sent.lat, null);
+    assert.equal(sent.lng, null);
+    assert.equal(sent.checkpointLabel, 'Main Stage');
+    assert.notEqual(sent.precision, 'precise');
+  });
+
+  test('an expired cache declines without touching the network (not a retry-able error)', async () => {
+    const short = cache({ ttlMs: 60_000 });
+    const { impl, calls } = stubFetch([{ body: {} }]);
+    const res = await publishEventCachedLocation(
+      { sessionId: SESSION_ID, cache: short, now: short.expiresAt + 1 },
+      transportFor(impl),
+    );
+    assert.ok(res.ok);
+    if (!res.ok) return;
+    assert.equal(res.data.stored, false);
+    assert.equal(calls.length, 0, 'a dead cache must not hit the wire');
+  });
+
+  test('a null cache declines the same way', async () => {
+    const { impl, calls } = stubFetch([{ body: {} }]);
+    const res = await publishEventCachedLocation(
+      { sessionId: SESSION_ID, cache: null, now: NOW },
+      transportFor(impl),
+    );
+    assert.ok(res.ok);
+    if (!res.ok) return;
+    assert.equal(res.data.stored, false);
+    assert.equal(calls.length, 0);
   });
 });
