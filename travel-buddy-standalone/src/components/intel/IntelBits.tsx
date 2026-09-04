@@ -34,6 +34,12 @@ export function SuppressedNotice({ reason }: { reason: Exclude<SuppressReason, n
       title: 'Prompts are paused',
       body: 'You’ve paused capture prompts. You can resume them in Settings → Live intel prompts.',
     },
+    throttled: {
+      Icon: Clock,
+      tint: color.mute,
+      title: 'Just a moment',
+      body: 'You were asked about this place recently — we won’t prompt again for a little while.',
+    },
   }[reason];
   const { Icon, tint, title, body } = map;
   return (
