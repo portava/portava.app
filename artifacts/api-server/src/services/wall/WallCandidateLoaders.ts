@@ -90,14 +90,31 @@ export interface LoaderViewer {
  */
 export interface LoaderOptions {
   snapshotAtIso?: string;
+  /**
+   * Following pagination horizon (spec §28). The Following cursor's `publishedAt`:
+   * slide the fetch window down to (and including) this instant so postcards /
+   * moments OLDER than the newest LOADER_FETCH remain reachable on later pages and
+   * keep their distinct identity — otherwise a supplementary loader is frozen at
+   * the newest rows, the older ones are never fetched, and an older postcard's
+   * post appears via the Post spine as a plain post (identity lost). Mutually
+   * exclusive with `snapshotAtIso`: For You sets the snapshot, Following sets this.
+   */
+  followingCursorPublishedAt?: string;
 }
 
-/** Is a canonical row within the For You freeze horizon? A row with no created_at
- *  cannot be proven pre-snapshot, so it is excluded once a horizon is set. */
-function withinSnapshot(createdAt: unknown, snapshotAtIso: string | undefined): boolean {
-  if (!snapshotAtIso) return true;
+/** The effective created-at ceiling for a loader: the For You snapshot freeze, or
+ *  the Following cursor slide, whichever the caller set (at most one is). */
+function loaderHorizon(opts: LoaderOptions): string | undefined {
+  return opts.snapshotAtIso ?? opts.followingCursorPublishedAt;
+}
+
+/** Is a canonical row within the loader's created-at horizon (For You freeze or
+ *  Following slide)? A row with no created_at cannot be proven within it, so it is
+ *  excluded once a horizon is set. */
+function withinSnapshot(createdAt: unknown, horizon: string | undefined): boolean {
+  if (!horizon) return true;
   const c = typeof createdAt === "string" ? createdAt : "";
-  return c !== "" && c <= snapshotAtIso;
+  return c !== "" && c <= horizon;
 }
 
 function emptyLoaded(): LoadedWallCandidates {
@@ -160,6 +177,59 @@ async function batchPlaces(sc: any, ids: string[]): Promise<Map<string, PublicPl
     }
   } catch (err) {
     logger.warn({ err }, "place batch read failed");
+  }
+  return out;
+}
+
+/**
+ * Batch-load the experience time (spec §16 `experienceAt`) for a set of entities
+ * from the canonical media layer. `media_assets.captured_at` (migration 2250) is
+ * WHEN the media was captured — the "Happened last night · 10:15 PM" clock,
+ * distinct from `publishedAt`. The asset is linked to its entity through the
+ * canonical §6.1 `media_attachments` layer (entity_type + entity_id), so this is
+ * the same read model the Media v2 system owns — the Wall does not invent a
+ * second one.
+ *
+ * Per entity we take the COVER asset's captured_at when one is marked, else the
+ * lowest-position asset's; a null captured_at contributes nothing (the entity
+ * simply has no experience time, which is honest — most rows will). Returns a
+ * Map keyed by entity_id; fail-soft to an empty map so a media-layer hiccup only
+ * costs the `experienceAt` annotation, never the object.
+ */
+async function loadCapturedAtByEntity(
+  sc: any,
+  entityType: "postcard" | "shared_moment" | "post",
+  entityIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(entityIds)].filter(Boolean);
+  if (!sc || unique.length === 0) return out;
+  try {
+    const { data } = await sc
+      .from("media_attachments")
+      .select("entity_id, is_cover, position, media_assets(captured_at)")
+      .eq("entity_type", entityType)
+      .in("entity_id", unique.slice(0, 500));
+    // Best attachment per entity: cover wins, else lowest position. Only an
+    // attachment whose asset actually carries a captured_at contributes.
+    const best = new Map<string, { cover: boolean; position: number; capturedAt: string }>();
+    for (const r of (data as any[]) ?? []) {
+      const eid = r?.entity_id ? String(r.entity_id) : "";
+      if (!eid) continue;
+      const asset = Array.isArray(r.media_assets) ? r.media_assets[0] : r.media_assets;
+      const capturedAt = typeof asset?.captured_at === "string" ? asset.captured_at : null;
+      if (!capturedAt) continue;
+      const cover = r.is_cover === true;
+      const position = typeof r.position === "number" ? r.position : 0;
+      const cur = best.get(eid);
+      // Prefer a cover; among equals prefer the earlier position.
+      if (!cur || (cover && !cur.cover) || (cover === cur.cover && position < cur.position)) {
+        best.set(eid, { cover, position, capturedAt });
+      }
+    }
+    for (const [eid, v] of best) out.set(eid, v.capturedAt);
+  } catch (err) {
+    logger.warn({ err, entityType }, "captured_at (experienceAt) read failed — no experience time");
   }
   return out;
 }
@@ -268,20 +338,36 @@ export async function loadPostcardCandidates(
   const followed = [...viewer.followedCreatorIds];
   if (followed.length === 0) return emptyLoaded(); // no in-graph postcards to show
 
+  const horizon = loaderHorizon(opts);
+
   // 1. The discriminator: live passport_postcards rows for followed authors.
   const postcardPostIds = new Set<string>();
+  // post_id → passport_postcard id, so the postcard's media (and its capture
+  // time) can be looked up through the canonical §6.1 attachment layer, which is
+  // keyed by the postcard entity id, not the post id (spec §16).
+  const postcardIdByPostId = new Map<string, string>();
   try {
-    const { data } = await sc
+    let dq = sc
       .from("passport_postcards")
-      .select("post_id, user_id, status, deleted_at, created_at")
+      .select("id, post_id, user_id, status, deleted_at, created_at")
       .in("user_id", followed.slice(0, 500))
       .eq("status", "active")
       .order("created_at", { ascending: false })
       .limit(LOADER_FETCH);
+    // Slide the discriminator window down to the horizon too (spec §28): on a
+    // Following page past the newest LOADER_FETCH, the newest postcards are all
+    // newer than the cursor and contribute nothing, so we must walk back to the
+    // older ones instead of re-reading the same newest set every page.
+    if (horizon) dq = dq.lte("created_at", horizon);
+    const { data } = await dq;
     // Re-checked in memory (status + tombstone) so a row fed past the query
     // filter cannot resurrect a hidden/reported/deleted postcard on the Wall.
     for (const r of (data as any[]) ?? []) {
-      if (isLivePostcardRow(r) && r.post_id) postcardPostIds.add(String(r.post_id));
+      if (isLivePostcardRow(r) && r.post_id) {
+        const pid = String(r.post_id);
+        postcardPostIds.add(pid);
+        if (r.id) postcardIdByPostId.set(pid, String(r.id));
+      }
     }
   } catch (err) {
     logger.warn({ err }, "postcard discriminator read failed — degrading to no postcards");
@@ -303,9 +389,10 @@ export async function loadPostcardCandidates(
       .in("author_id", followed.slice(0, 500))
       .order("created_at", { ascending: false })
       .limit(LOADER_FETCH);
-    // Freeze to the For You horizon so a newly-published postcard can't enter
-    // mid-pagination (mirrors the Post spine's `.lte(created_at, snapshotAt)`).
-    if (opts.snapshotAtIso) q = q.lte("created_at", opts.snapshotAtIso);
+    // Apply the loader horizon: the For You freeze (a newly-published postcard
+    // can't enter mid-pagination) OR the Following cursor slide (older postcards
+    // past the newest window stay reachable). Mirrors the Post spine.
+    if (horizon) q = q.lte("created_at", horizon);
     const { data } = await q;
     // In-memory guards, independent of the query filters: the row must be one
     // a live postcard points at (the discriminator) and must be published.
@@ -343,6 +430,14 @@ export async function loadPostcardCandidates(
     logger.warn({ err }, "postcard media batch read failed — postcards project without media");
   }
 
+  // Experience time (spec §16): the postcard cover media's capture instant, read
+  // through the canonical attachment layer keyed by the postcard entity id.
+  const capturedByPostcardId = await loadCapturedAtByEntity(
+    sc,
+    "postcard",
+    [...postcardIdByPostId.values()],
+  );
+
   const [profiles, places] = await Promise.all([
     batchProfiles(sc, authorIds),
     batchPlaces(sc, placeIds),
@@ -355,6 +450,9 @@ export async function loadPostcardCandidates(
     const prof = profiles.get(authorId);
     const placeRef = r.canonical_place_id ? places.get(String(r.canonical_place_id)) ?? null : null;
     const media = mediaByPost.get(id) ?? [];
+    const publishedAt = String(r.published_at ?? r.created_at);
+    const postcardId = postcardIdByPostId.get(id);
+    const capturedAt = postcardId ? capturedByPostcardId.get(postcardId) : undefined;
 
     out.candidates.push({
       objectType: "postcard",
@@ -362,7 +460,10 @@ export async function loadPostcardCandidates(
       authorId,
       visibility: r.visibility ?? null,
       tripId: r.trip_id ?? null,
-      publishedAt: String(r.published_at ?? r.created_at),
+      publishedAt,
+      // Only when it DIFFERS from publishedAt — a postcard published at the same
+      // instant it was captured carries one clock, not two (spec §16).
+      experienceAt: capturedAt && capturedAt !== publishedAt ? capturedAt : undefined,
       text: r.content ?? null,
       place: placeRef,
       actor: actorFrom(prof, authorId),
@@ -411,10 +512,12 @@ export async function loadVideoMediaCandidates(
       feedType: "following",
       limit: LOADER_FETCH,
     });
-    // Freeze to the For You horizon: drop media published after the session
-    // snapshot so it can't drift ranks mid-pagination (like the Post spine).
-    const rows = opts.snapshotAtIso
-      ? fetched.filter((r) => withinSnapshot((r as any).created_at, opts.snapshotAtIso))
+    // Apply the loader horizon (For You freeze or Following slide): drop media
+    // published after the horizon so it can't drift ranks / duplicate across pages
+    // (like the Post spine).
+    const horizon = loaderHorizon(opts);
+    const rows = horizon
+      ? fetched.filter((r) => withinSnapshot((r as any).created_at, horizon))
       : fetched;
     if (rows.length === 0) return emptyLoaded();
 
@@ -542,9 +645,10 @@ export async function loadSharedMomentCandidates(
   const moments = memberships
     .map((m) => m?.shared_moments)
     .filter((row: any) => row && row.status === "active" && row.owner_id)
-    // Freeze to the For You horizon: a Moment created after the session snapshot
-    // must not enter mid-pagination (mirrors the Post spine's created-at freeze).
-    .filter((row: any) => withinSnapshot(row.created_at, opts.snapshotAtIso));
+    // Apply the loader horizon (For You freeze or Following slide): a Moment
+    // outside the horizon must not enter mid-pagination or duplicate across pages
+    // (mirrors the Post spine's created-at horizon).
+    .filter((row: any) => withinSnapshot(row.created_at, loaderHorizon(opts)));
   if (moments.length === 0) return emptyLoaded();
 
   const momentIds = moments.map((m: any) => String(m.id));
@@ -578,9 +682,13 @@ export async function loadSharedMomentCandidates(
   }
 
   const participantIds = [...membersByMoment.values()].flat();
-  const [profiles, places] = await Promise.all([
+  const [profiles, places, capturedByMomentId] = await Promise.all([
     batchProfiles(sc, [...ownerIds, ...participantIds]),
     batchPlaces(sc, placeIds),
+    // Experience time (spec §16): a Shared Moment is a "discovered social memory"
+    // — its media's capture instant is exactly the "happened" clock, read through
+    // the canonical attachment layer keyed by the moment entity id.
+    loadCapturedAtByEntity(sc, "shared_moment", momentIds),
   ]);
 
   const out = emptyLoaded();
@@ -591,12 +699,15 @@ export async function loadSharedMomentCandidates(
     const participants = (membersByMoment.get(id) ?? [])
       .map((uid) => actorFrom(profiles.get(uid), uid))
       .filter((a): a is PublicActorRef => !!a);
+    const publishedAt = String(m.created_at ?? new Date().toISOString());
+    const capturedAt = capturedByMomentId.get(id);
 
     out.candidates.push({
       objectType: "shared_moment",
       canonicalObjectId: id,
       authorId: ownerId,
-      publishedAt: String(m.created_at ?? new Date().toISOString()),
+      publishedAt,
+      experienceAt: capturedAt && capturedAt !== publishedAt ? capturedAt : undefined,
       text: m.title ?? null,
       place: placeRef,
       actor: actorFrom(profiles.get(ownerId), ownerId),
