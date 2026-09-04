@@ -116,6 +116,7 @@ import {
   MAP_OBJECT_KINDS,
   precisionRank,
   type MapObject,
+  type MapObjectKind,
   type MapAction,
 } from '../../src/types/mapObjects.ts';
 import { canonicalUrl } from '../../src/constants/canonicalUrl.ts';
@@ -1271,6 +1272,52 @@ function FullScreenMapScreenInner() {
   }, [enabledLayers, layerPrefs]);
 
   /**
+   * The kinds the user EXPLICITLY ASKED FOR — the trigger for the owner's
+   * "cull, but never to empty" ruling (see `CollisionOptions.requestedKinds`).
+   *
+   * Two signals, and the second is not optional:
+   *
+   *  1. `?entityTypes=…`. A deep link that names a layer is the clearest form
+   *     of the request: `/map?entityTypes=gems` is the Gems tab's "View on
+   *     map", and it is the entry point the ruling was written about — it
+   *     passes no `zoom`, so it lands at 11, one band below where §17
+   *     introduces `hidden_gem`.
+   *
+   *  2. An explicit `on` in `effectiveLayerPrefs`. The deep link says "show me
+   *     gems now"; the layer switch says "show me gems always". They are the
+   *     same request through different doors, and honouring only the first
+   *     would blank the gem layer for a user who turned Hidden Gems on in the
+   *     §16 sheet and then opened the map from anywhere else — the identical
+   *     failure, reached by a different route. It also has to be the COMPOSED
+   *     preferences, because this screen must not hold two answers to "is this
+   *     layer on": the legacy `MapFilterSheet` toggle is a real user-facing
+   *     control, and the seed above already treats its ON state as an explicit
+   *     `on` that outranks §16's automatic default.
+   *
+   * What does NOT count: a `LAYER_DEFAULTS` value. `relevant_places` defaults
+   * to `on`, and reading a default as a request would arm the guard for
+   * `place` — the most common object on the map — for every user on every
+   * screen, which would retire §17's "individual places only from district in"
+   * altogether. Absence of a key is the automatic state, not a request.
+   *
+   * `KIND_TO_ENTITY_TYPE` is many-to-one (the zone and forecast kinds all map
+   * to `places` because the legacy renderer had nowhere else to put them), so
+   * `?entityTypes=places` nominates `memory` and `safety_notice` too. Harmless
+   * by construction: §17 introduces both in the `world` row, so they are never
+   * band-culled and the waiver can never have anything to do.
+   */
+  const requestedKinds = useMemo<MapObjectKind[]>(() => {
+    const named = new Set(
+      entityTypes.split(',').map((s: string) => s.trim()).filter(Boolean),
+    );
+    return MAP_OBJECT_KINDS.filter((kind) => {
+      if (named.has(KIND_TO_ENTITY_TYPE[kind])) return true;
+      const layer = layerForKind(kind);
+      return !isAlwaysOnLayer(layer) && effectiveLayerPrefs[layer] === 'on';
+    });
+  }, [entityTypes, effectiveLayerPrefs]);
+
+  /**
    * The objects the §16 decision is made over: the pipeline's INPUT, before any
    * filtering, so a marker can be matched to the object it came from.
    */
@@ -1457,7 +1504,13 @@ function FullScreenMapScreenInner() {
   // `activeZoom` / `zoomBand` / `layerContext` are declared with the marker
   // filter above — the markers need the same decision, and one screen must not
   // hold two answers to "is this layer on".
-  const objects: MapObject[] = useMemo(() => {
+  //
+  // §17 is deliberately NOT applied here any more. It is applied once, inside
+  // `prepareForRender` below, because that is where the "cull, but never to
+  // empty" ruling can see whether culling a kind would leave it with nothing —
+  // a question this stage cannot answer, since the answer depends on what
+  // survives collision. `objects` is then re-derived from the verdict.
+  const permittedObjects: MapObject[] = useMemo(() => {
     // §14 — while a Compass query is active the map shows the picks and nothing
     // else. That IS the mode: "reduces visual noise and highlights approximately
     // three to five best next moves".
@@ -1465,17 +1518,14 @@ function FullScreenMapScreenInner() {
     //    order so a chip can only ever narrow what the layers already permit —
     //    a chip must never switch a layer back on.
     const permitted = homeVisibleObjects(pipelineBase, homeFilter, effectiveLayerPrefs, layerContext);
-    // 2. §17 — no POI pins at world zoom; individual places only from district in.
-    const legible = permitted.filter((o) => isKindVisibleAtBand(o.kind, zoomBand));
-    // 3. §15 — a forecast becomes kind 'prediction' and loses any live
+    // 2. §15 — a forecast becomes kind 'prediction' and loses any live
     //    freshness, so zoneStyle gives it the dashed treatment (§37).
-    return toTemporalObjects(legible, timeOffset) as unknown as MapObject[];
+    return toTemporalObjects(permitted, timeOffset) as unknown as MapObject[];
   }, [
     pipelineBase,
     homeFilter,
     effectiveLayerPrefs,
     layerContext,
-    zoomBand,
     timeOffset,
   ]);
 
@@ -1485,6 +1535,76 @@ function FullScreenMapScreenInner() {
     () => homeChipCounts(compassPickObjects ?? defaultObjects, effectiveLayerPrefs, layerContext),
     [compassPickObjects, defaultObjects, effectiveLayerPrefs, layerContext],
   );
+
+  // §31 — collision only among the point-shaped markers. `dropped` is surfaced
+  // rather than swallowed: a hidden object the user cannot reach is a silent
+  // truncation, and the count is what an "N more" affordance needs.
+  //
+  // This is also where §17 band culling happens now, because only here is the
+  // "cull, but never to empty" ruling decidable: `requestedKinds` lets the
+  // resolver waive the band gate for a kind the user asked for when applying it
+  // would leave that kind with nothing on screen. Zones are excluded from the
+  // input as before, so a zone kind can never be waived — §17 keeps its full
+  // force over Levels 2-3, where the failure the ruling names (a marker layer
+  // that goes blank at the band boundary) does not exist.
+  const renderResult = useMemo(
+    () =>
+      prepareForRender(
+        permittedObjects.filter((o) => !isZoneKind(o.kind)),
+        {
+          viewport: {
+            zoom: activeZoom,
+            center: {
+              lat: liveCamera?.lat ?? cameraCenter?.lat ?? fallbackLat ?? 0,
+              lng: liveCamera?.lng ?? cameraCenter?.lng ?? fallbackLng ?? 0,
+            },
+            width: windowWidth,
+            height: windowHeight,
+          },
+          requestedKinds,
+          promotion: {
+            selectedId: machine.selection?.objectId ?? null,
+            navigationTargetId: machine.navigation?.destinationObjectId ?? null,
+            // §14/§31 — promoteAll recomputes renderingPriority from each
+            // object's KIND, so the Compass rung the pick producer stamped is
+            // discarded unless the ids are named here. Without this the picks
+            // fall to their kind default and the "3-5 best next moves" lose
+            // collisions to ordinary events and live zones.
+            compassRecommendationIds: compassRecommendationIdsOf(permittedObjects),
+          },
+        },
+      ),
+    [
+      permittedObjects,
+      requestedKinds,
+      activeZoom,
+      liveCamera,
+      cameraCenter,
+      fallbackLat,
+      fallbackLng,
+      machine.selection?.objectId,
+      machine.navigation,
+      windowWidth,
+      windowHeight,
+    ],
+  );
+
+  /**
+   * Everything §17 says is legible right now — the screen's own view of "what
+   * is on the map", kept in step with the resolver's.
+   *
+   * `bandWaivedKinds` is read back rather than recomputed so there is exactly
+   * one answer to "was this kind rescued". Without it a waived gem would be
+   * drawn as a pin (from `renderResult.kept`) and simultaneously be absent from
+   * `objects` — so `selectedObject` would resolve to null and tapping the pin
+   * the ruling exists to preserve would open nothing.
+   */
+  const objects: MapObject[] = useMemo(() => {
+    const waived = renderResult.bandWaivedKinds;
+    return permittedObjects.filter(
+      (o) => isKindVisibleAtBand(o.kind, zoomBand) || waived.includes(o.kind),
+    );
+  }, [permittedObjects, zoomBand, renderResult.bandWaivedKinds]);
 
   // §5 levels 2-3: zones render beneath everything and skip collision.
   //
@@ -1503,72 +1623,74 @@ function FullScreenMapScreenInner() {
     [objects],
   );
 
-  // §31 — collision only among the point-shaped markers. `dropped` is surfaced
-  // rather than swallowed: a hidden object the user cannot reach is a silent
-  // truncation, and the count is what an "N more" affordance needs.
-  const renderResult = useMemo(
-    () =>
-      prepareForRender(
-        objects.filter((o) => !isZoneKind(o.kind)),
-        {
-          viewport: {
-            zoom: activeZoom,
-            center: {
-              lat: liveCamera?.lat ?? cameraCenter?.lat ?? fallbackLat ?? 0,
-              lng: liveCamera?.lng ?? cameraCenter?.lng ?? fallbackLng ?? 0,
-            },
-            width: windowWidth,
-            height: windowHeight,
-          },
-          promotion: {
-            selectedId: machine.selection?.objectId ?? null,
-            navigationTargetId: machine.navigation?.destinationObjectId ?? null,
-            // §14/§31 — promoteAll recomputes renderingPriority from each
-            // object's KIND, so the Compass rung the pick producer stamped is
-            // discarded unless the ids are named here. Without this the picks
-            // fall to their kind default and the "3-5 best next moves" lose
-            // collisions to ordinary events and live zones.
-            compassRecommendationIds: compassRecommendationIdsOf(objects),
-          },
-        },
-      ),
-    [
-      objects,
-      activeZoom,
-      liveCamera,
-      cameraCenter,
-      fallbackLat,
-      fallbackLng,
-      machine.selection?.objectId,
-      machine.navigation,
-      windowWidth,
-      windowHeight,
-    ],
-  );
-  const hiddenByCollision = renderResult.collisionDroppedCount ?? 0;
+  /**
+   * Every id the pipeline above had JURISDICTION over: its own input, minus the
+   * zone kinds it never judges. Anything outside this set has no `MapObject`
+   * projection at all — discovery place pins, passport stamps, raw Compass
+   * envelopes (the Compass PICKS are re-keyed to bare ids, so even those do not
+   * match) — so `renderResult` holds no verdict about it and it must pass
+   * through untouched. Filtering the markers to `kept` alone would delete every
+   * one of them and blank passport mode outright.
+   */
+  const pipelineJudgedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const o of permittedObjects) if (!isZoneKind(o.kind)) ids.add(o.id);
+    return ids;
+  }, [permittedObjects]);
 
-  // NOT filtered to `renderResult.kept` here, deliberately. This branch used to
-  // hand the marker layer a kept-filtered list; main's own
-  // layerFilteredMarkers.component.test.tsx rules the other way and is the
-  // merged, tested design:
-  //
-  //   "Filtering to the pipeline's KEPT set would delete every one of them and
-  //    blank the surface outright, which is exactly why the filter drops by an
-  //    explicit HIDDEN set instead."
-  //
-  // Concretely, filtering to `kept` also applies §17 band culling at the marker
-  // layer, and hidden_gem is not introduced until the `district` band (zoom 12).
-  // At the default zoom of 11 every gem pin disappeared — which is the exact
-  // blanking that file's "THE anti-blanking assertion" exists to catch. It broke
-  // four of its tests.
-  //
-  // What this branch DOES change is the zoom that decision is made at: activeZoom
-  // now follows the real camera instead of a constant, so the band logic finally
-  // sees the zoom the user is actually at.
-  //
-  // STILL OPEN, and a product call rather than a merge call: `hiddenByCollision`
-  // above feeds a "+N more nearby" chip that counts markers §31 dropped, while
-  // the marker layer still draws them. One of the two has to give.
+  /**
+   * What the MARKER LAYER draws: the entities whose object survived §17 and
+   * §31, plus everything the pipeline never judged.
+   *
+   * Until this landed the map was handed the raw `entities` array, so the whole
+   * declutter stage was computed and thrown away — and the "+N more nearby"
+   * chip counted markers that were still on screen, an affordance offering to
+   * reveal what was never hidden.
+   *
+   * Matched by id because `MapEntity` and `MapObject` are two envelopes over
+   * the same object (`mapObjectToEntity` copies `obj.id` verbatim).
+   *
+   * The CAROUSEL deliberately keeps the full `entities` list: collision.ts is
+   * explicit that "a hidden object the user cannot reach is a silent
+   * truncation", so a decluttered pin stays reachable as a card.
+   */
+  const renderedEntities = useMemo(() => {
+    if (pipelineJudgedIds.size === 0) return entities;
+    const kept = new Set(renderResult.kept.map((o) => o.id));
+    return entities.filter((e) => kept.has(e.id) || !pipelineJudgedIds.has(e.id));
+  }, [entities, renderResult.kept, pipelineJudgedIds]);
+
+  /**
+   * The "+N more nearby" count — only markers that are genuinely not drawn.
+   *
+   * Two things make that true, and neither was true before:
+   *
+   *  1. `renderedEntities` above actually removes them. While the map drew the
+   *     raw list this number described objects the user could already see: an
+   *     affordance offering to reveal what was never hidden.
+   *  2. It is read off the FINAL pass, after the emptiness guard has re-admitted
+   *     any waived kind and §31 has re-judged it. A pin the guard put back is
+   *     not counted as hidden; one that then lost an overlap is.
+   *
+   * The remaining gap is the other direction — counting an object that has no
+   * marker at all. `entities` is not always built from `pipelineBase`: in
+   * Compass mode the picks are the objects while the RESULTS are the entities,
+   * re-keyed to bare ids, so a §31 verdict on a pick reaches no marker. The
+   * chip promises "zoom in to see them", so an object with nothing to reveal
+   * must not be counted. Membership is checked against the full `entities`
+   * list, which is precisely "a marker for this object exists".
+   *
+   * Band drops are deliberately NOT counted. The chip is §31's affordance —
+   * "N more nearby", i.e. behind this pin. A kind §17 has not introduced yet is
+   * not nearby-and-hidden; it is not part of this altitude's vocabulary.
+   */
+  const hiddenByCollision = useMemo(() => {
+    if (renderResult.collisionDroppedCount === 0) return 0;
+    const hasMarker = new Set(entities.map((e) => e.id));
+    return renderResult.dropped.filter(
+      (d) => d.reason === 'collision' && hasMarker.has(d.object.id),
+    ).length;
+  }, [renderResult, entities]);
 
   // ── §8 the selected MapObject, and its §30 overlays ─────────────────────────
   const selectedObject = useMemo(
@@ -1945,7 +2067,7 @@ function FullScreenMapScreenInner() {
         userLat={userLat}
         userLng={userLng}
         externalCameraRef={cameraRef}
-        entities={entities}
+        entities={renderedEntities}
         zoneObjects={zoneObjects}
         enabledEntityLayers={enabledLayers}
         onSelectEntity={handleSelectEntity}
