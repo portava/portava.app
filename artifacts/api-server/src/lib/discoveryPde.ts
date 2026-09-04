@@ -96,8 +96,15 @@ import type { RankCandidate, ViewerContext, ScoredCandidate } from "./portavaRan
 import { rankItems as drsRankItems } from "../services/ranking/DiscoveryRankingService.js";
 import type { RankingInput, RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import { emitCreatorCapAnalytics } from "../services/ranking/CreatorCapEnforcer.js";
-import { emitFeedSlotAnalytics } from "../services/ranking/FeedSlotAllocator.js";
+import {
+  emitFeedSlotAnalytics, allocateExplorationBudget,
+  type GovernorCandidate, type GovernorOutcome,
+} from "../services/ranking/FeedSlotAllocator.js";
 import { buildPlaceAffinities } from "../services/ranking/MediaFeedRankingService.js";
+import {
+  loadDiscoveryModifiers, inertModifiers,
+  type DiscoveryModifiers, type ModifiersReason,
+} from "./discoveryModifiers.js";
 
 /**
  * The structural subset of a discovery place that ranking reads.
@@ -251,6 +258,20 @@ export interface PdeRankOptions {
    *         here or from anything downstream. See the module header.
    */
   served: boolean;
+  /**
+   * ROADMAP step 7/8 modifiers, pre-assembled. Omit and they are loaded here
+   * (one cached flag read; nothing else with the flag off). Tests inject a
+   * record to exercise the ON path without a flag row.
+   */
+  modifiers?: DiscoveryModifiers;
+  /**
+   * Candidate-set key (destination:category — Cache A's key) for the momentum
+   * cache. Omit and one is derived from the candidate ids, which is the same
+   * identity, slower to compute.
+   */
+  candidateKey?: string;
+  /** Epoch ms; injectable so the governor's seeded allocation is testable. */
+  nowMs?: number;
 }
 
 /** Which stages actually ran. Absence and failure must stay distinguishable. */
@@ -259,6 +280,14 @@ export interface PdeStages {
   /** DRS re-rank completed and reordered. False if it errored or returned nothing. */
   drs: boolean;
   analytics: boolean;
+  /** Why the modifiers were on or off for this run. */
+  modifiers: ModifiersReason;
+  /**
+   * `applied`  the governor reordered the page (modifiers on)
+   * `observed` it computed an allocation and recorded it, order untouched
+   * `skipped`  too few candidates to govern, or the stage threw
+   */
+  governor: "applied" | "observed" | "skipped";
   /**
    * Writes intercepted because `served` was false. A non-zero count is the
    * proof the suppressor is load-bearing rather than decorative: it is how many
@@ -334,6 +363,26 @@ export interface PdeRankOutcome<T extends PdePlace> {
   scoredById: Map<string, ScoredCandidate<RankCandidate>>;
   stages: PdeStages;
   timings: { portavaRankMs: number; drsMs: number; totalMs: number };
+  /** The modifiers this run ranked under (inert with the flag off). */
+  modifiers: DiscoveryModifiers;
+  /**
+   * The governor's allocation — reason codes and slots — whether or not it was
+   * applied. Null only when the stage was skipped. The same information is
+   * written per item into `scoredById[...].features` (governorSlot,
+   * governor_<reason>, governorApplied, governorBudgetPct) so it reaches
+   * rank_events through logImpression without a new writer.
+   */
+  governor: GovernorOutcome | null;
+}
+
+/** FNV-1a over sorted ids — the candidate-set identity when no key is given. */
+function deriveCandidateKey(city: string | null, ids: readonly string[]): string {
+  let h = 2166136261;
+  for (const id of [...ids].sort()) {
+    for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+    h ^= 0x1f; h = Math.imul(h, 16777619);
+  }
+  return `${city ?? ""}:${ids.length}:${(h >>> 0).toString(16)}`;
 }
 
 /**
@@ -456,13 +505,38 @@ export async function rankForViewer<T extends PdePlace>(
   opts: PdeRankOptions,
 ): Promise<PdeRankOutcome<T>> {
   const t0 = Date.now();
-  const stages: PdeStages = { portavaRank: false, drs: false, analytics: false, suppressedWrites: 0 };
+  const nowMs = opts.nowMs ?? t0;
+  const stages: PdeStages = {
+    portavaRank: false, drs: false, analytics: false, suppressedWrites: 0,
+    modifiers: "flag_off", governor: "skipped",
+  };
 
   // On a run nobody receives, everything downstream gets a client that cannot
   // write. Reads are untouched, so the ranking stays representative.
   const sc = opts.served
     ? opts.sc
     : suppressWrites(opts.sc, () => { stages.suppressedWrites += 1; });
+
+  // ── ROADMAP step 7/8 modifiers — behind discovery_ranking_modifiers_enabled ─
+  // With the flag off this is one cached flag read and an inert record; the
+  // ranking below is then byte-identical to the pre-modifier pipeline. Never
+  // fatal: an assembly failure is the inert record, not a thrown request.
+  let modifiers: DiscoveryModifiers;
+  if (opts.modifiers) {
+    modifiers = opts.modifiers;
+  } else {
+    try {
+      modifiers = await loadDiscoveryModifiers(sc, {
+        city: viewer.city,
+        placeIds: places.map((p) => p.id),
+        cacheKey: opts.candidateKey ?? deriveCandidateKey(viewer.city, places.map((p) => p.id)),
+        nowMs,
+      });
+    } catch {
+      modifiers = inertModifiers("flag_off");
+    }
+  }
+  stages.modifiers = modifiers.reason;
 
   const viewerContext: ViewerContext = {
     userId:       viewer.userId,
@@ -480,6 +554,9 @@ export async function rankForViewer<T extends PdePlace>(
     // both the signal (place_view history) and the kernel exist. Paired with
     // candidate.placeId below.
     placeAffinities: viewer.placeAffinities,
+    // Capped local momentum (portavaRank LOCAL_MOMENTUM_MAX_CONTRIBUTION).
+    // Undefined with the flag off ⇒ the feature is 0 for every candidate.
+    localMomentum: modifiers.enabled ? modifiers.localMomentum : undefined,
   };
 
   // Map place → RankCandidate.
@@ -501,7 +578,13 @@ export async function rankForViewer<T extends PdePlace>(
   }));
 
   const prT0 = Date.now();
-  const scored = rankCandidates(candidates, viewerContext);
+  // With the modifiers ON the governor owns exploration for this surface, so
+  // portavaRank's fixed every-7th slot is switched off here — otherwise the
+  // page would carry two exploration passes and exceed the budget. With the
+  // modifiers OFF the call is exactly what it was.
+  const scored = modifiers.enabled
+    ? rankCandidates(candidates, viewerContext, { exploration: false })
+    : rankCandidates(candidates, viewerContext);
   const portavaRankMs = Date.now() - prT0;
   stages.portavaRank = true;
 
@@ -628,10 +711,54 @@ export async function rankForViewer<T extends PdePlace>(
   } catch { /* non-fatal — portavaRank order preserved on DRS error */ }
   drsMs = Date.now() - drsT0;
 
+  // ── Exploration GOVERNOR (ROADMAP step 8) ──────────────────────────────────
+  // Runs over the FINAL order (after DRS) so its slots are positions on the
+  // page the user would receive. `apply` follows the flag: off ⇒ observe only,
+  // order untouched, allocation recorded; on ⇒ the picks move into their slots.
+  // Either way the decision lands in every candidate's feature vector, which
+  // logImpression writes verbatim — analytics visible before the behaviour is.
+  let governor: GovernorOutcome | null = null;
+  try {
+    const gc: GovernorCandidate[] = ranked.map((p) => ({
+      id: p.id,
+      category: p.category ?? null,
+      socialProof: p.savedCount ?? null,
+      momentum: modifiers.enabled ? (modifiers.localMomentum[p.id] ?? null) : null,
+    }));
+    governor = allocateExplorationBudget(gc, {
+      userId: viewer.userId,
+      budgetPct: modifiers.explorationBudgetPct,
+      categoryAffinities: viewer.categoryAffinities,
+      nowMs,
+    }, modifiers.enabled);
+
+    const slotById = new Map(governor.allocations.map((a) => [a.id, a]));
+    for (const [id, scoredC] of scoredById) {
+      scoredC.features.governorApplied   = governor.applied ? 1 : 0;
+      scoredC.features.governorBudgetPct = governor.budgetPct;
+      const a = slotById.get(id);
+      scoredC.features.governorSlot = a ? 1 : 0;
+      if (a) for (const r of a.reasons) scoredC.features[`governor_${r}`] = 1;
+    }
+
+    if (governor.applied) {
+      const pos = new Map(governor.order.map((id, i) => [id, i]));
+      ranked.sort((a, b) => (pos.get(a.id) ?? ranked.length) - (pos.get(b.id) ?? ranked.length));
+      stages.governor = "applied";
+    } else {
+      stages.governor = governor.slotCount > 0 ? "observed" : "skipped";
+    }
+  } catch {
+    governor = null;
+    stages.governor = "skipped";
+  }
+
   return {
     ranked,
     scoredById,
     stages,
     timings: { portavaRankMs, drsMs, totalMs: Date.now() - t0 },
+    modifiers,
+    governor,
   };
 }
