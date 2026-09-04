@@ -31,6 +31,7 @@ import { useWallFeed } from '../hooks/useWallFeed.ts';
 import { useLiveForYou } from '../hooks/useLiveForYou.ts';
 import { useWallSessionIntent } from '../hooks/useWallSessionIntent.ts';
 import { trackFeedOpen, trackModeSelect } from '../services/wallAnalytics.ts';
+import type { ResolvedWallIntent } from '../services/wallSessionIntent.ts';
 import type { StructuredIntent, WallMode } from '../types/wallProjection.ts';
 
 function intentLabelOf(intent: StructuredIntent | null, fallback: string | null): string | null {
@@ -77,8 +78,10 @@ export function WallScreen({
   );
 
   const handleSetIntent = React.useCallback(
-    (text: string) => {
-      void intent.setIntent(text);
+    (resolved: ResolvedWallIntent) => {
+      // Steer with the resolved text; a canonical entity seeds a structured
+      // filter client-side so the chip is structured, not a raw string (§17).
+      void intent.setIntent(resolved.text, resolved.filter);
     },
     [intent],
   );

@@ -10,9 +10,24 @@
  */
 
 import React from 'react';
-import { View, Text, Pressable, TextInput, StyleSheet } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { Bell, Send, Sparkles, X, MapPin } from 'lucide-react-native';
 import { color, space, radius, type as t, icon } from '../../../theme/tokens.ts';
+import { SmartInput } from '../../../platform/input-assistance/components/SmartInput.tsx';
+import { registerField, isFieldRegistered } from '../../../platform/input-assistance/contexts/fieldRegistry.ts';
+import type { InputSuggestion } from '../../../platform/input-assistance/types/inputSuggestion.ts';
+import { resolveWallIntent, type ResolvedWallIntent } from '../services/wallSessionIntent.ts';
+
+/**
+ * The Wall steer bar joins the platform Global Input Intelligence layer by
+ * registering a field, not by owning an autocomplete engine (spec §17). It uses
+ * the `global_search` context so typeahead can resolve canonical entities
+ * (cities, places, people, interests…) as well as free-text intent.
+ */
+const WALL_INTENT_FIELD_ID = 'wall.session_intent';
+if (!isFieldRegistered(WALL_INTENT_FIELD_ID)) {
+  registerField(WALL_INTENT_FIELD_ID, 'global_search');
+}
 
 export function WallHeader({
   city,
@@ -30,17 +45,30 @@ export function WallHeader({
   intentActive?: boolean;
   intentLabel?: string | null;
   intentPending?: boolean;
-  onSetIntent?: (text: string) => void;
+  /** Submit the RESOLVED intent — a structured entity filter or free-text (§17). */
+  onSetIntent?: (intent: ResolvedWallIntent) => void;
   onClearIntent?: () => void;
   onOpenNotifications?: () => void;
   onOpenTelegraph?: () => void;
 }) {
   const [draft, setDraft] = React.useState('');
 
+  // Free-text steer (return key): submit the raw typed intent (§17 example
+  // 'food' / 'Bangkok nightlife'). The server parses it into structured filters.
   const submit = () => {
     const text = draft.trim();
     if (!text) return;
-    onSetIntent?.(text);
+    onSetIntent?.({ text });
+  };
+
+  // A canonical entity (or query completion) chosen from typeahead: submit the
+  // RESOLVED intent — an entity becomes a structured filter, not a raw string
+  // (§17). Returning false suppresses SmartInput's default field mutation since
+  // the steer chip replaces the input entirely.
+  const onSelectSuggestion = (suggestion: InputSuggestion): boolean => {
+    const resolved = resolveWallIntent(suggestion);
+    if (resolved.text) onSetIntent?.(resolved);
+    return false;
   };
 
   const clear = () => {
@@ -111,18 +139,28 @@ export function WallHeader({
       ) : (
         <View style={s.steerBar}>
           <Sparkles size={icon.s16} color={color.faint} />
-          <TextInput
-            style={s.steerInput}
-            value={draft}
-            onChangeText={setDraft}
-            onSubmitEditing={submit}
-            placeholder="Steer your feed — try “food” or “Bangkok nightlife”"
-            placeholderTextColor={color.faint}
-            returnKeyType="search"
-            editable={!intentPending}
-            testID="wall-intent-input"
-            accessibilityLabel="Steer your feed"
-          />
+          {/* Global Input Intelligence typeahead (spec §17): entity selection
+              becomes a structured filter, free text is a temporary steer. The
+              steer chip replaces this input once an intent is active. The flex
+              wrapper lets SmartInput fill the pill; its own input chrome is
+              neutralised (transparent) so the pill remains the visible frame. */}
+          <View style={s.steerInputWrap}>
+            <SmartInput
+              fieldId={WALL_INTENT_FIELD_ID}
+              context="global_search"
+              value={draft}
+              onChangeText={setDraft}
+              onSelectSuggestion={onSelectSuggestion}
+              onSubmitEditing={submit}
+              style={s.steerInput}
+              placeholder="Steer your feed — try “food” or “Bangkok nightlife”"
+              returnKeyType="search"
+              editable={!intentPending}
+              testID="wall-intent-input"
+              label="Steer your feed"
+              overlayMaxHeight={260}
+            />
+          </View>
         </View>
       )}
     </View>
@@ -177,7 +215,18 @@ const s = StyleSheet.create({
     paddingHorizontal: space.md,
     paddingVertical: space.sm,
   },
-  steerInput: { flex: 1, ...t.body, color: color.ink, padding: 0 },
+  steerInputWrap: { flex: 1 },
+  // Neutralise SmartInput's default bordered/padded input chrome so the steer
+  // pill (steerBar) stays the single visible frame.
+  steerInput: {
+    ...t.body,
+    color: color.ink,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderRadius: 0,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
   intentChip: {
     flexDirection: 'row',
     alignItems: 'center',
