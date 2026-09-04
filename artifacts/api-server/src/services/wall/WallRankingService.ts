@@ -33,9 +33,18 @@
  * a snapshot timestamp. Within one session the full candidate set is ranked with
  * a session-seeded, TOTAL order (finalScore desc, then a deterministic
  * session-seeded tiebreak), then sliced by offset — so page 2 is a continuation
- * of page 1, never a reshuffle. The snapshot timestamp lets the route hold the
- * candidate set steady across pages; a feed refresh starts a NEW session (a new
+ * of page 1, never a reshuffle. A feed refresh starts a NEW session (a new
  * seed), which is the only thing that reshuffles.
+ *
+ * The snapshot timestamp does TWO jobs, and both are required for that to hold:
+ * it is the horizon the route filters candidates by (nothing published mid-
+ * session enters the set), AND it is the instant the ranker scores at. Scoring
+ * page 2 at the wall clock instead re-ranks a frozen candidate set against a
+ * moved clock: freshness decays continuously, so two items whose scores cross
+ * between the pages swap across the slice boundary, and an item that crosses
+ * the boundary itself is served twice or skipped — the exact duplication §28
+ * forbids. Pinning the instant makes one session's order a pure function of
+ * (session, snapshotAt, candidate set, viewer).
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID, createHash } from "node:crypto";
@@ -255,8 +264,11 @@ function seededKey(session: string, canonicalObjectId: string): string {
  * The FULL set is ranked to a total order every call; the page is a slice at the
  * cursor offset. Callers MUST pass a candidate set that is stable across the
  * pages of one session (filter by `snapshotAt`) so the sliced prefix does not
- * drift (spec §28). Never throws: if the ranker fails, it falls back to the
- * input order (spec §34 / TABLE 5 — ranking unavailable ⇒ safe recent ordering).
+ * drift (spec §28); the session's `snapshotAt` is also handed to the ranker as
+ * the evaluation instant, so the scores that produce the order are computed at
+ * the same moment on every page. Never throws: if the ranker fails, it falls
+ * back to the input order (spec §34 / TABLE 5 — ranking unavailable ⇒ safe
+ * recent ordering).
  */
 export async function rankForYou(
   sc: SupabaseClient | null,
@@ -270,6 +282,15 @@ export async function rankForYou(
       ? { session: opts.cursor.session, version: opts.cursor.version, snapshotAt: opts.cursor.snapshotAt }
       : newRankSession();
   const offset = opts.cursor && opts.cursor.session === sess.session ? opts.cursor.offset : 0;
+
+  // Score AT the session snapshot, not at "now". Every page of one session must
+  // be evaluated at the same instant or the time-decayed components move between
+  // pages and the sliced prefix drifts (spec §28). A fresh session snapshots the
+  // current instant, so a first page is unchanged. Guard is belt-and-braces —
+  // decodeForYouCursor already rejects an unparseable snapshotAt — because this
+  // function must never throw.
+  const snapshotMs = Date.parse(sess.snapshotAt);
+  const evaluatedAtMs = Number.isNaN(snapshotMs) ? Date.now() : snapshotMs;
 
   // De-duplicate by canonicalObjectId — the same object never appears twice in
   // one feed session (spec §28). First occurrence wins (input order).
@@ -295,6 +316,7 @@ export async function rankForYou(
       toViewerContext(viewer, sess.session),
       sc,
       opts.rankOverrides ?? {},
+      { nowMs: evaluatedAtMs },
     );
     for (const r of ranked) {
       if (r.eligibilityPassed) scoreOf.set(r.itemId, r.finalScore);
