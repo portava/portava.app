@@ -198,6 +198,57 @@ interface ProjectionTravelIdentityEnvelope {
   projection?: { travelIdentity?: TravelIdentityProjection | null };
 }
 
+/** What a Travel-DNA control writes (§19). `key` is a dimension or trait key. */
+export type TravelDnaKind = 'dimension' | 'trait';
+
+export interface TravelDnaPrefInput {
+  key: string;
+  kind: TravelDnaKind;
+  state: TravelDnaState;
+}
+
+/** The persisted preference the server echoes back on a successful write. */
+export interface TravelDnaPref extends TravelDnaPrefInput {
+  userId: string;
+}
+
+/**
+ * Persist one owner-controlled Show/Hide/Not-Me preference (§19) via
+ * `PUT /api/passport/me/travel-dna`. Owner-scoped (the server stamps the caller
+ * id from the bearer token — the client never sends a user id). The screen keeps
+ * the optimistic local update and reconciles/reverts on this result.
+ */
+export async function putTravelDna(input: TravelDnaPrefInput): Promise<ApiResult<TravelDnaPref>> {
+  const token = await authToken();
+  if (!token) return { ok: false, message: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/passport/me/travel-dna`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: input.key, kind: input.kind, state: input.state }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { ok: false, message: (body as any)?.message ?? `API ${res.status}` };
+    }
+    const json = await res.json().catch(() => ({}));
+    const pref = (json as any)?.pref ?? {};
+    return {
+      ok: true,
+      data: {
+        userId: String(pref.userId ?? pref.user_id ?? ''),
+        key: typeof pref.key === 'string' ? pref.key : input.key,
+        kind: (pref.kind === 'trait' || pref.kind === 'dimension' ? pref.kind : input.kind),
+        state: (pref.state === 'hidden' || pref.state === 'not_me' || pref.state === 'shown'
+          ? pref.state
+          : input.state) as TravelDnaState,
+      },
+    };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'Network error' };
+  }
+}
+
 /**
  * Fetch the §29 aggregate and return ONLY the travelIdentity slice. Returns
  * `null` (ok) when the projection carries no travel identity (e.g. the viewer
