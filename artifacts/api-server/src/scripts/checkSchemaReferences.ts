@@ -123,11 +123,6 @@ const UNDECLARED_LIVE_COLUMNS = new Set<string>([
  * fails. This list must reach zero.
  */
 const KNOWN_DEAD_REFERENCES: Record<string, { count: number; note: string }> = {
-  "src/lib/inputAssistance/duplicateDetection.ts": {
-    count: 1,
-    note: "places.country — the founding defect, recurred a THIRD time. The table " +
-      "has country_code. Neither existing check scanned src/lib, so nothing saw it.",
-  },
   "src/lib/mediaAccess.ts": {
     count: 2,
     note: "close_friends.friend_id and user_follows.id — both reads die whole, " +

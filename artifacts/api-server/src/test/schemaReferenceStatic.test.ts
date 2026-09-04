@@ -188,6 +188,12 @@ describe("static schema-reference check — catches the recurrence", () => {
     // rest found `places.country` a THIRD time, in src/lib — plus ten more dead
     // references, all verified missing in production. A check that cannot see
     // src/lib could not have caught any of them.
+    //
+    // The sentinel must be a dead reference that STILL EXISTS in src/lib. The
+    // third `places.country` (src/lib/inputAssistance/duplicateDetection.ts) was
+    // fixed in 9e82e8450, so it can no longer prove coverage; `close_friends.friend_id`
+    // (src/lib/mediaAccess.ts) is the next src/lib entry on the ratchet. When that
+    // is fixed too, move the sentinel to whichever src/lib entry remains.
     const { sites } = extractSchemaReferences(API_ROOT, [
       resolve(API_ROOT, "src/lib"),
       resolve(API_ROOT, "src/compass"),
@@ -196,8 +202,8 @@ describe("static schema-reference check — catches the recurrence", () => {
     assert.ok(sites.length > 500, `only ${sites.length} references outside routes+services`);
     const found = findUndeclaredReferences(schema(), sites).map((f) => `${f.table}.${f.column}`);
     assert.ok(
-      found.includes("places.country"),
-      "the src/lib recurrence of places.country is no longer detected — either it " +
+      found.includes("close_friends.friend_id"),
+      "the src/lib sentinel dead reference is no longer detected — either it " +
         `was fixed (update this test) or coverage regressed. Found: ${found.join(", ")}`,
     );
   });
