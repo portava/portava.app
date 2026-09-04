@@ -1,0 +1,37 @@
+{
+  // Test-suite typecheck for the api-server. tsconfig.json deliberately keeps
+  // `"exclude": ["src/test"]` so the shipped build's rootDir/outDir stay clean;
+  // this program adds those 598 node:test files back and compiles nothing else
+  // differently.
+  //
+  // The ONE compiler difference is allowImportingTsExtensions: the suite imports
+  // its helpers as `./helpers/liveColumns.ts` because tsx resolves them that way
+  // at runtime. Production sources never do, so the flag is not moved into
+  // tsconfig.json.
+  //
+  // Every test here uses node:test via an explicit `import ... from "node:test"`,
+  // so `types` stays exactly ["node"] — there are no ambient test globals to add
+  // and none are wanted.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    // Distinct from tsconfig.json's ".tsbuildinfo" — two programs over
+    // overlapping files must not share one incremental cache.
+    "tsBuildInfoFile": ".test.tsbuildinfo",
+    // tsconfig.json pins rootDir to "src" so the shipped build's layout is
+    // fixed. The SUITE legitimately reaches outside it — migrationApplyOrder
+    // imports scripts/src/apply-migrations.ts, the very script it exists to
+    // test — and TS enforces rootDir even under noEmit. Widened to the repo
+    // root here only; nothing is emitted from this project.
+    "rootDir": "../..",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src"
+  ],
+  // Resets tsconfig.json's `["src/test"]` — that directory is the point.
+  "exclude": []
+}

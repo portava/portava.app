@@ -123,8 +123,20 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
         neq(col: string, val: any)    { filters.push((r) => r[col] !== val); return builder; },
         in(col: string, vals: any[])  { filters.push((r) => vals.includes(r[col])); return builder; },
         not(col: string, op: string, val: any) {
-          if (op === "is") filters.push((r) => r[col] !== val && r[col] != null);
-          return builder;
+          if (op === "is") { filters.push((r) => r[col] !== val && r[col] != null); return builder; }
+          // `.not(col, "in", '("a","b")')` — PostgREST's negated set filter.
+          // Modelling only `is` here meant a `.not(…, "in", …)` clause was a
+          // silent no-op in the mock: the route could exclude rows in
+          // production while every fixture sailed through the test.
+          if (op === "in") {
+            const vals = new Set(
+              String(val).replace(/^\(|\)$/g, "").split(",")
+                .map((v) => v.trim().replace(/^"|"$/g, "")),
+            );
+            filters.push((r) => !vals.has(String(r[col] ?? "")));
+            return builder;
+          }
+          throw new Error(`fake client: unmodelled .not(${col}, "${op}", …)`);
         },
         is(col: string, val: any) {
           filters.push((r) => val === null ? r[col] == null : r[col] === val);
@@ -668,7 +680,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
           host_id: ALICE, cover_url: "https://cdn/evt.jpg",
           city: "Paris", country: "France",
           starts_at: UPCOMING_EVENT_ISO,
-          visibility: "public", status: "published",
+          visibility: "public", state: "open",
           created_at: "2026-07-01T00:00:00Z",
         },
       ],
@@ -699,7 +711,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
         { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
       ],
       blocks: [],
-      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: UPCOMING_EVENT_ISO, visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
+      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: UPCOMING_EVENT_ISO, visibility: "public", state: "open", created_at: "2026-07-01T00:00:00Z" }],
       event_rsvps: [],
       profile_privacy_settings: [],
     });
@@ -711,7 +723,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
   it("excludes events hosted by a blocked user", async () => {
     setup({
       blocks: [{ blocker_id: ME, blocked_id: ALICE }],
-      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: null, visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
+      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: ALICE, city: "Paris", country: "France", starts_at: null, visibility: "public", state: "open", created_at: "2026-07-01T00:00:00Z" }],
       event_rsvps: [],
       profile_privacy_settings: [],
     });
@@ -727,7 +739,7 @@ describe("GET /api/discovery/search — normalized result shape (events)", () =>
         { id: SUSPENDED, handle: "susp", name: "Suspended User", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "suspended" },
       ],
       blocks: [],
-      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: SUSPENDED, city: "Paris", country: "France", starts_at: null, visibility: "public", status: "published", created_at: "2026-07-01T00:00:00Z" }],
+      events: [{ id: EVT_ID, title: "Paris Jazz Festival", description: "Jazz", host_id: SUSPENDED, city: "Paris", country: "France", starts_at: null, visibility: "public", state: "open", created_at: "2026-07-01T00:00:00Z" }],
       event_rsvps: [],
       profile_privacy_settings: [],
     });
@@ -914,7 +926,7 @@ describe("GET /api/discovery/search — cursor pagination", () => {
       ],
       blocks: [],
       events: [
-        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: null, visibility: "public", status: "published", created_at: "2026-01-01T00:00:00Z" },
+        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: null, visibility: "public", state: "open", created_at: "2026-01-01T00:00:00Z" },
       ],
       hashtags: [
         { id: "ht-1", slug: "travellife", name: "travellife", usage_count: 100, is_blocked: false, created_at: "2026-01-01T00:00:00Z" },
@@ -943,7 +955,7 @@ describe("GET /api/discovery/search — type=all fan-out", () => {
       ],
       blocks: [],
       events: [
-        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: UPCOMING_EVENT_ISO, visibility: "public", status: "published", created_at: "2026-01-01T00:00:00Z" },
+        { id: "evt-1", title: "Travel Expo", description: "Expo", host_id: ALICE, city: null, country: null, starts_at: UPCOMING_EVENT_ISO, visibility: "public", state: "open", created_at: "2026-01-01T00:00:00Z" },
       ],
       hashtags: [
         { id: "ht-1", slug: "travellife", name: "travellife", usage_count: 100, is_blocked: false, created_at: "2026-01-01T00:00:00Z" },
@@ -1003,7 +1015,7 @@ describe("GET /api/discovery/search — type=all fan-out", () => {
       // bucket. A fixture that expires does not always go red — sometimes it
       // just stops testing anything.
       host_id: ALICE, city: null, country: null, starts_at: UPCOMING_EVENT_ISO,
-      visibility: "public", status: "published",
+      visibility: "public", state: "open",
       created_at: "2026-01-01T00:00:00Z",
     }));
     setup({
@@ -1168,8 +1180,8 @@ describe("GET /api/discovery/search — hidden gems submitter enforcement", () =
       profile_privacy_settings: [],
       user_follows: [],
       hidden_gems: [
-        { id: GEM_OK,  name: "Secret Beach",    description: null, city: "Cebu", country: "PH", submitted_by: ALICE,    image_url: null, category: "nature", status: "approved", created_at: "2026-01-01T00:00:00Z" },
-        { id: GEM_AGE, name: "Adult Night Spot", description: null, city: "Cebu", country: "PH", submitted_by: AGE_DAVE, image_url: null, category: "nightlife", status: "approved", created_at: "2026-01-01T00:00:00Z" },
+        { id: GEM_OK,  name: "Secret Beach",    description: null, city: "Cebu", country: "PH", submitted_by: ALICE,    image_url: null, category: "nature", status: "active", sensitivity_level: "public", approx_latitude: 10.31, approx_longitude: 123.89, created_at: "2026-01-01T00:00:00Z" },
+        { id: GEM_AGE, name: "Adult Night Spot", description: null, city: "Cebu", country: "PH", submitted_by: AGE_DAVE, image_url: null, category: "nightlife", status: "active", sensitivity_level: "public", approx_latitude: 10.31, approx_longitude: 123.89, created_at: "2026-01-01T00:00:00Z" },
       ],
       user_privacy_settings: [
         { user_id: AGE_DAVE, age_restriction_enabled: true },
@@ -1194,8 +1206,8 @@ describe("GET /api/discovery/search — hidden gems submitter enforcement", () =
       profile_privacy_settings: [],
       user_follows: [],
       hidden_gems: [
-        { id: GEM_OK,   name: "Gem Cebu",  description: null, city: "Cebu", country: "PH", submitted_by: ALICE,     image_url: null, category: "nature", status: "approved", created_at: "2026-01-01T00:00:00Z" },
-        { id: GEM_SUSP, name: "Gem Cebu2", description: null, city: "Cebu", country: "PH", submitted_by: SUSP_USER, image_url: null, category: "nature", status: "approved", created_at: "2026-01-01T00:00:00Z" },
+        { id: GEM_OK,   name: "Gem Cebu",  description: null, city: "Cebu", country: "PH", submitted_by: ALICE,     image_url: null, category: "nature", status: "active", sensitivity_level: "public", approx_latitude: 10.31, approx_longitude: 123.89, created_at: "2026-01-01T00:00:00Z" },
+        { id: GEM_SUSP, name: "Gem Cebu2", description: null, city: "Cebu", country: "PH", submitted_by: SUSP_USER, image_url: null, category: "nature", status: "active", sensitivity_level: "public", approx_latitude: 10.31, approx_longitude: 123.89, created_at: "2026-01-01T00:00:00Z" },
       ],
       user_privacy_settings: [],
     });

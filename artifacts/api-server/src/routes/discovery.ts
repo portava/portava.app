@@ -2183,16 +2183,43 @@ router.get("/discovery/feed", async (req, res) => {
         if (userData?.user?.id) {
           viewerId = userData.user.id;
           // Load both directions of the block relationship
-          const [{ data: out }, { data: inn }] = await Promise.all([
+          const [{ data: out, error: outErr }, { data: inn, error: innErr }] = await Promise.all([
             sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId),
             sc.from("blocks").select("blocker_id").eq("blocked_id",  viewerId),
           ]);
+          // "This viewer has blocked nobody" and "the blocks table could not be
+          // read" both arrive as an empty `blockedIds`, and the event-post
+          // pipeline below filters on exactly that set — so the second case
+          // serves blocked users. PostgREST reports such failures in `error`
+          // rather than throwing, so the catch below never fires for them, and
+          // that catch is about an UNRESOLVED VIEWER anyway rather than a
+          // verdict on this read. The fail-open posture is unchanged; it is now
+          // observable.
+          if (outErr || innErr) {
+            req.log.warn(
+              {
+                outCode: (outErr as any)?.code,
+                innCode: (innErr as any)?.code,
+                err: outErr ?? innErr,
+                userId: viewerId,
+              },
+              "discovery/feed: block-state read failed — blocked users are NOT being filtered from event posts",
+            );
+          }
           for (const r of (out as any[] ?? [])) blockedIds.add(r.blocked_id as string);
           for (const r of (inn as any[] ?? [])) blockedIds.add(r.blocker_id as string);
         }
       }
     }
-  } catch { /* fail-open: unresolved viewer still gets places */ }
+  } catch (err) {
+    // Reached for an unresolved viewer (the documented case) AND for a rejected
+    // blocks read that threw rather than resolving. Both leave `blockedIds`
+    // empty, so both are worth a line.
+    req.log.warn(
+      { err, userId: viewerId },
+      "discovery/feed: viewer/block-state resolution rejected — blocked users are NOT being filtered from event posts",
+    );
+  }
 
   // ── Fetch places across all requested categories ───────────────────────────
   try {

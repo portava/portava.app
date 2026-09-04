@@ -236,13 +236,23 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
           const blockedSet = new Set<string>();
           if (profileIds.length > 0) {
             const ids = profileIds.join(",");
-            const { data: blockRows } = await sc
+            const { data: blockRows, error: blockErr } = await sc
               .from("blocks")
               .select("blocker_id, blocked_id")
               .or(
                 `and(blocker_id.eq.${auth.user.id},blocked_id.in.(${ids})),` +
                 `and(blocked_id.eq.${auth.user.id},blocker_id.in.(${ids}))`,
               );
+            // An empty result means "none of these profiles is blocked"; a
+            // rejected one (a malformed or() filter is the usual cause here,
+            // since this predicate is string-built) means "we did not check".
+            // Both leave blockedSet empty and both let blocked users through.
+            if (blockErr) {
+              req.log?.warn(
+                { userId: auth.user.id, code: (blockErr as any)?.code, err: blockErr },
+                "telegraph: block-state read failed — blocked users are NOT being filtered from suggestions",
+              );
+            }
             for (const row of (blockRows ?? []) as any[]) {
               blockedSet.add(
                 row.blocker_id === auth.user.id ? row.blocked_id : row.blocker_id,

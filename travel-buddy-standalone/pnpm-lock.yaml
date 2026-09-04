@@ -210,6 +210,9 @@ importers:
       '@types/geojson':
         specifier: ^7946.0.16
         version: 7946.0.16
+      '@types/jest':
+        specifier: ^29.5.14
+        version: 29.5.14
       '@types/node':
         specifier: 22.20.0
         version: 22.20.0
@@ -219,6 +222,9 @@ importers:
       '@types/react-dom':
         specifier: ~19.1.7
         version: 19.1.11(@types/react@19.1.17)
+      '@types/react-test-renderer':
+        specifier: ^19.1.0
+        version: 19.1.0
       babel-plugin-react-compiler:
         specifier: ^19.0.0-beta-e993439-20250117
         version: 19.0.0-beta-ebf51a3-20250411
@@ -1959,6 +1965,9 @@ packages:
   '@types/istanbul-reports@3.0.4':
     resolution: {integrity: sha512-pk2B1NWalF9toCRu6gjBzR69syFjP4Od8WRAX+0mmf9lAjCRicLOWc+ZrxZHx/0XRjotgkF9t6iaMJ+aXcOdZQ==}
 
+  '@types/jest@29.5.14':
+    resolution: {integrity: sha512-ZN+4sdnLUbo8EVvVc2ao0GFW6oVrQRPn4K2lglySj7APvSrgzxHiNNK99us4WDMi57xxA2yggblIAMNhXOotLQ==}
+
   '@types/jsdom@20.0.1':
     resolution: {integrity: sha512-d0r18sZPmMQr1eG35u12FZfhIXNrnsPU/g5wvRKCUf/tOGilKKwYMYGqh33BNR6ba+2gkHw1EUiHoN3mn7E5IQ==}
 
@@ -1977,6 +1986,9 @@ packages:
     resolution: {integrity: sha512-HZOXsKT0tGI9LlUw2LuedXsVeB88wFa536vVL0M6vE8zN63nI+sSr1ByxmPToP5K5bukaVscyeCJcF9guVNJ1g==}
     peerDependencies:
       '@types/react': '*'
+
+  '@types/react-test-renderer@19.1.0':
+    resolution: {integrity: sha512-XD0WZrHqjNrxA/MaR9O22w/RNidWR9YZmBdRGI7wcnWGrv/3dA8wKCJ8m63Sn+tLJhcjmuhOi629N66W6kgWzQ==}
 
   '@types/react@19.1.17':
     resolution: {integrity: sha512-Qec1E3mhALmaspIrhWt9jkQMNdw6bReVu64mjvhbhq2NFPftLPVr+l1SZgmw/66WwBNpDh7ao5AT6gF5v41PFA==}
@@ -2010,10 +2022,12 @@ packages:
   '@xmldom/xmldom@0.8.13':
     resolution: {integrity: sha512-KRYzxepc14G/CEpEGc3Yn+JKaAeT63smlDr+vjB8jRfgTBBI9wRj/nkQEO+ucV8p8I9bfKLWp37uHgFrbntPvw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abab@2.0.6:
     resolution: {integrity: sha512-j2afSsaIENvHZN2B8GOpF566vZ5WVk5opAiMTvWgaQT8DkbOqsTfvNAvHoRGU2zzP8cPoqys+xHTRDWW8L+/BA==}
@@ -7646,6 +7660,11 @@ snapshots:
     dependencies:
       '@types/istanbul-lib-report': 3.0.3
 
+  '@types/jest@29.5.14':
+    dependencies:
+      expect: 29.7.0
+      pretty-format: 29.7.0
+
   '@types/jsdom@20.0.1':
     dependencies:
       '@types/node': 22.20.0
@@ -7665,6 +7684,10 @@ snapshots:
       '@types/react': 19.1.17
 
   '@types/react-reconciler@0.33.0(@types/react@19.1.17)':
+    dependencies:
+      '@types/react': 19.1.17
+
+  '@types/react-test-renderer@19.1.0':
     dependencies:
       '@types/react': 19.1.17
 

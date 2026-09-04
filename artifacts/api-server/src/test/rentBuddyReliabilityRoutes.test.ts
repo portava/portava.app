@@ -427,6 +427,14 @@ function makeMatchFakeClient(buddyRow: Record<string, any>) {
       neq:       () => b,
       in:        () => b,
       not:       () => b,
+      // `or` exists because every buddy-listing endpoint now resolves
+      // fetchBlockedSet, which uses it. Without it the builder throws, the
+      // resolver catches and returns null, and the endpoint correctly fails
+      // CLOSED to an empty list — so these assertions would fail with
+      // "0 !== 1" for a reason unrelated to what they test. This fake returns
+      // rows only for rent_buddy_profiles, so `blocks` resolves empty and no
+      // buddy is filtered.
+      or:        () => b,
       is:        () => b,
       gte:       () => b,
       lte:       () => b,
@@ -1556,6 +1564,10 @@ describe("saved-buddies display cards — completed_count takes precedence over 
         select:      () => b,
         eq:          () => b,
         neq:         () => b,
+        // See makeMatchFakeClient: saved-buddies now resolves fetchBlockedSet,
+        // which calls `.or(...)`. Without it the endpoint fails closed to an
+        // empty list and this assertion reads "0 !== 1".
+        or:          () => b,
         order:       () => b,
         limit:       () => b,
         single:      () => Promise.resolve({ data: null, error: null }),
@@ -1680,6 +1692,9 @@ function makeOffersFakeClient(buddyRow: Record<string, any>) {
       select:      () => b,
       eq:          () => b,
       neq:         () => b,
+      // See makeMatchFakeClient: the offers endpoint now resolves
+      // fetchBlockedSet, which calls `.or(...)`.
+      or:          () => b,
       order:       () => b,
       limit:       () => b,
       maybeSingle: () => {

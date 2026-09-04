@@ -206,6 +206,18 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     requiresAuth: true,
     // href: null — hidden from tab bar
   },
+  {
+    key: 'tab-wall',
+    path: '(tabs)/wall',
+    title: 'Wall',
+    parent: null,
+    icon: 'LayoutGrid',
+    requiresAuth: true,
+    // Flag-gated OFF server-side (wall_enabled). Added non-disruptively:
+    // href: null in the tabs layout, so it does not replace the Pulse landing
+    // tab and stays a secondary surface until the server flag is turned on.
+    featureFlag: 'wall_enabled',
+  },
 
   // ── Root stack screens ────────────────────────────────────────────────────
 
@@ -608,6 +620,86 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: false,
     deepLink: '/passport/country/[country]',
+  },
+  {
+    key: 'passport-my-world',
+    path: 'passport/my-world',
+    title: 'My World',
+    parent: 'tab-passport',
+    icon: 'Globe2',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/my-world',
+  },
+  {
+    key: 'passport-trust',
+    path: 'passport/trust',
+    title: 'Trust & Credentials',
+    parent: 'tab-passport',
+    icon: 'ShieldCheck',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/trust',
+  },
+  {
+    key: 'passport-shared-context',
+    path: 'passport/shared-context',
+    title: 'Shared Context',
+    // Reached while viewing ANOTHER traveler's passport — the other user's id
+    // arrives as a query param (?userId=…), so this is NOT ownerOnly.
+    parent: 'passport-viewer',
+    icon: 'Users',
+    requiresAuth: true,
+    deepLink: '/passport/shared-context',
+  },
+  {
+    key: 'passport-journeys',
+    path: 'passport/journeys',
+    title: 'Journeys',
+    parent: 'tab-passport',
+    icon: 'Route',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/journeys',
+  },
+  {
+    key: 'passport-travel-identity',
+    path: 'passport/travel-identity',
+    title: 'Travel Identity',
+    parent: 'tab-passport',
+    icon: 'Fingerprint',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/travel-identity',
+  },
+  {
+    key: 'passport-plans',
+    path: 'passport/plans',
+    title: 'Plans',
+    parent: 'tab-passport',
+    icon: 'CalendarClock',
+    requiresAuth: true,
+    deepLink: '/passport/plans',
+  },
+  {
+    key: 'passport-availability',
+    path: 'passport/availability',
+    title: 'My Availability',
+    parent: 'tab-passport',
+    icon: 'CalendarClock',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/availability',
+  },
+  {
+    key: 'passport-share',
+    path: 'passport/share',
+    title: 'Share Passport',
+    parent: 'tab-passport',
+    icon: 'Share2',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/passport/share',
   },
 
   // ── Stamps ────────────────────────────────────────────────────────────────

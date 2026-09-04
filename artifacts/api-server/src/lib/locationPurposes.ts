@@ -238,6 +238,25 @@ export const LOCATION_PURPOSES: readonly LocationPurpose[] = [
     requiresSeparateControl: false,
   },
   {
+    id: "route_plan_itinerary",
+    retentionBound: "content_lifetime",
+    description: "Keep the multi-stop route a traveler asked Portava to plan, and — only with a separate opt-in — contribute the areas an ACCEPTED route moves between to the public Crowd Flow aggregate.",
+    precision: "precise",
+    lawfulBasis: "contract",
+    retentionSeconds: null,
+    retentionNote:
+      "WORDING PROVISIONAL — the user-facing text for the contribution opt-in describes what this code does and is NOT a legal conclusion; the privacy-policy owner must review it before the consent is offered.\n" +
+      "WHAT IS HELD: route_stops.structured_location is {label, lat, lng} — a precise point per stop — plus route_plans.start_location / end_location. This is CONTENT the traveler deliberately created (the same reasoning the owner applied to stamps on 2026-08-23: one artifact about a set of places, not a trail assembled from many involuntary observations), so the bound is the life of that content, not a clock. Deleting the plan deletes the stops and legs with it (ON DELETE CASCADE, migration 0058).\n" +
+      "WHAT IS PUBLISHED, AND ONLY THEN: contribution to Map spec §10 Crowd Flow is a SEPARATE processing with its own opt-in, route_flow_contribution_consent (migration 2224), default false and withdrawable, checked at read time so a withdrawal takes effect at once and retroactively. It applies ONLY to plans the traveler explicitly accepted (POST /api/route-plans/:id/accept; a generated draft contributes nothing) and ONLY within the crowd-flow freshness window (lib/crowdFlowProducer.SIGNAL_MAX_AGE_MINUTES), after which the plan stops contributing.\n" +
+      "WHAT LEAVES: a pair of ZONE identifiers and the acceptance timestamp. lib/routeHopSignal.resolveStopZones is the only function that sees a coordinate, and it returns a type with no lat/lng field, so no coordinate, stop title, plan id, user id or ordered sequence of stops can reach the aggregate. A stop that resolves to no zone is dropped, never approximated to its point. Nothing is stored: the aggregate is derived at read time, so there is no second copy to retain, purge or erase.\n" +
+      "THE POLICY QUESTION A REVIEWER SHOULD ASK: this entry declares ONE lawful basis for two processings — 'contract' for holding the plan the traveler asked for, with the publication leg gated on separate consent described above. It is stated this way because the registry carries one basis per purpose and the crowd-flow aggregate has no table of its own to claim under a second entry (compare intel_claim/consent + aggregate_live_state/legitimate_interest, which can be split because the aggregate is stored). If a reviewer prefers the publication leg to carry its own entry, it needs an aggregate table to name.",
+    visibility: "The plan owner, and members of the trip it belongs to (RLS: route_plans_owner_select / route_plans_member_select, migration 0058). Nothing about a plan is public. The only public derivative is a zone-to-zone edge in Crowd Flow, and only when the shared privacy gate passes (PRIVACY_THRESHOLD_V1: >=15 distinct people, >=5 independent parties, <=20% single-party share, plus a publication delay) — one person's accepted route can never publish.",
+    deletionBehavior: "Deleted with the account: route_plans.owner_user_id REFERENCES auth.users ON DELETE CASCADE (migration 0058), and route_stops / route_legs / route_plan_members all cascade from route_plans. accepted_by_user_id also CASCADEs (migration 2224) rather than SET NULL, which would produce the row route_plans_accepted_requires_evidence forbids. The consent row cascades with the profile.",
+    tables: ["route_plans", "route_stops", "route_legs", "route_plan_members"],
+    requiresSeparateControl: true,
+    jurisdictionNote: "Publication into a public aggregate is the sensitive leg and is why requiresSeparateControl is true. Owner authorization 2026-08-31 covers creating the consent scope and declaring this entry; it does not settle the wording, which needs privacy-policy review.",
+  },
+  {
     id: "journey_observation",
     retentionBound: "clock",
     description: "Restricted Journey ingestion for segment/shadow evaluation.",

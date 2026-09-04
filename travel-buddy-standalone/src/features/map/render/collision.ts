@@ -7,7 +7,10 @@
  * kept together because they are the same decision at three scales:
  *
  *   1. `zoomRenderBand` / `kindsVisibleAtBand` — §17: WHICH KINDS may exist at
- *      all at this camera altitude. "World: … no POI pins."
+ *      all at this camera altitude. "World: … no POI pins." Bounded by the
+ *      owner's ruling — CULL, BUT NEVER TO EMPTY: a kind the user explicitly
+ *      asked for is re-admitted rather than culled to nothing (see
+ *      `CollisionOptions.requestedKinds`).
  *   2. `promotePriority` — §31 + §5: WHERE a single object sits on the ladder
  *      once selection, Compass, navigation, confidence and freshness are known.
  *   3. `resolveCollisions` — §31: when two objects overlap in screen space,
@@ -437,6 +440,28 @@ export function promoteAll(objects: readonly MapObject[], ctx: PromotionContext 
   });
 }
 
+/**
+ * The ids a producer already stamped with the §14 Compass rung.
+ *
+ * `explainPriority` seeds from `KIND_DEFAULT_PRIORITY[obj.kind]` and never
+ * looks at the object's own `renderingPriority`, so a rung a producer set —
+ * `compassMapModel.toMapObjects` on every pick, `tripMapModel` on every Compass
+ * alternative — is DISCARDED by `promoteAll` unless the id is also named in
+ * `PromotionContext.compassRecommendationIds`. A pick of kind `place` silently
+ * fell from `compass_recommendation` (70) to `relevant_place` (40), losing
+ * collisions to ordinary events (60) and live zones (50) that §31 says it
+ * outranks; picks of different kinds ended up on different rungs, so "these are
+ * the N picks" stopped being one tier.
+ *
+ * This re-declares that producer intent through the documented channel rather
+ * than teaching the ladder about Compass payload shapes.
+ */
+export function compassRecommendationIdsOf(objects: readonly MapObject[]): string[] {
+  return objects
+    .filter((o) => o.renderingPriority === RENDERING_PRIORITY.compass_recommendation)
+    .map((o) => o.id);
+}
+
 // ── §31 collision resolution ──────────────────────────────────────────────────
 
 export interface HitBox {
@@ -482,6 +507,16 @@ export interface CollisionResult {
   /** Only the collision drops — what a "N more here" chip should actually count. */
   collisionDroppedCount: number;
   band: ZoomBand;
+  /**
+   * Kinds whose §17 band gate was waived under `requestedKinds` because
+   * applying it would have left that kind with no object on screen at all.
+   * Empty on every result where the guard did not fire.
+   *
+   * Reported rather than silent so a caller can keep the rest of its own view
+   * of "what is on the map" in step with this one — and so the guard is
+   * observable to a test without a screen element (see `requestedKinds`).
+   */
+  bandWaivedKinds: MapObjectKind[];
 }
 
 export interface CollisionOptions {
@@ -499,6 +534,43 @@ export interface CollisionOptions {
    * Defaults to `AREA_GEOMETRY_EXEMPT` semantics (see `collides`).
    */
   alwaysKeepKinds?: readonly MapObjectKind[];
+  /**
+   * The kinds the user explicitly asked to see. This arms the owner's
+   * "cull, but never to empty" ruling, and nothing else reads it.
+   *
+   * ## The rule
+   *
+   * When §17 band gating would remove EVERY object of one of these kinds — so
+   * that kind ends up with nothing on screen — the gate is waived FOR THAT KIND
+   * ALONE and its objects are re-admitted. They then take their chances in §31
+   * collision exactly like anything else, and the waived kinds are reported
+   * back in `bandWaivedKinds`.
+   *
+   * ## Why it is band-only
+   *
+   * §17 is a POLICY about a kind at an altitude: "no POI pins" removes every
+   * `place` on the screen at once, and leaves nothing behind to stand for what
+   * it took. A user who navigated to that kind is then looking at a surface
+   * that says "there is nothing here" about the one thing they came for. That
+   * is the failure the ruling names, and waiving the gate is the only repair.
+   *
+   * §31 collision is a different judgement: object vs object, at one point on
+   * the screen, where two 44 pt boxes genuinely cannot both be drawn. Its loser
+   * is not erased — a higher-priority pin stands in the same place, the "N more
+   * nearby" chip counts it, and the carousel still carries it. So a collision
+   * drop is never the emptiness this guard exists to prevent, and overruling it
+   * would only stack two pins on one pixel. A kind emptied purely by collision
+   * is therefore NOT waived.
+   *
+   * ## Granularity
+   *
+   * Per kind, not per surface. §17 culls by kind, so "empty" is measured in the
+   * same unit as the rule being overruled. Whole-surface emptiness would almost
+   * never fire in the case the ruling was written for: arriving from the Gems
+   * tab at city zoom, events and zones are usually still on screen, so the
+   * surface is not empty and the gems the user came for stay gone.
+   */
+  requestedKinds?: readonly MapObjectKind[];
 }
 
 interface Box {
@@ -546,10 +618,66 @@ export function participatesInCollision(obj: MapObject): boolean {
  *
  * Nothing is ever silently truncated: `kept.length + dropped.length` always
  * equals `objects.length`, and every input appears in exactly one of them.
+ *
+ * Runs twice when `opts.requestedKinds` rescues a kind from §17 — see that
+ * option and `bandWaivedKindsOf` for the "cull, but never to empty" ruling.
  */
+/** No kind is exempt. Hoisted so the common path allocates nothing. */
+const NO_KINDS: ReadonlySet<MapObjectKind> = new Set();
+
 export function resolveCollisions(
   objects: readonly MapObject[],
   opts: CollisionOptions,
+): CollisionResult {
+  const first = resolveOnce(objects, opts, NO_KINDS);
+  const waived = bandWaivedKindsOf(first, opts);
+  if (waived.length === 0) return first;
+  // One re-run rather than a patch-up of `first`: re-admitting a kind changes
+  // which boxes are on screen, so every §31 verdict has to be taken again with
+  // them present. A second waiver pass is impossible by construction — the
+  // waived kinds are exactly the ones that can no longer be band-dropped.
+  return { ...resolveOnce(objects, opts, new Set(waived)), bandWaivedKinds: waived };
+}
+
+/**
+ * The kinds `opts.requestedKinds` rescues from §17 on this pass.
+ *
+ * A kind qualifies only when all three hold:
+ *
+ *   - the user explicitly asked for it (`requestedKinds`);
+ *
+ *   - the BAND GATE is what took it. A kind emptied by `not_renderable`, or by
+ *     losing an overlap, is not this guard's business — waiving the band would
+ *     not bring those back, and §31's loser is not erased in the first place;
+ *
+ *   - nothing of that kind survived. `isKindVisibleAtBand` is a function of
+ *     (kind, band) alone, so band gating is all-or-nothing per kind and the
+ *     previous clause already implies this one — it cannot fail today. It is
+ *     stated anyway, for the same reason the null-box branch in `resolveOnce`
+ *     is: the rule the owner gave is about EMPTINESS, and a future per-object
+ *     band rule must not turn this into a blanket exemption in silence.
+ *
+ * Ordered by `MAP_OBJECT_KINDS` so the result is stable across re-renders.
+ *
+ * `applyZoomBands: false` needs no case of its own: with the gate off nothing
+ * is ever dropped for `zoom_band`, so the second clause already returns empty.
+ */
+function bandWaivedKindsOf(first: CollisionResult, opts: CollisionOptions): MapObjectKind[] {
+  const requested = opts.requestedKinds;
+  if (!requested || requested.length === 0) return [];
+  const survived = new Set(first.kept.map((o) => o.kind));
+  const bandDropped = new Set(
+    first.dropped.filter((d) => d.reason === 'zoom_band').map((d) => d.object.kind),
+  );
+  return MAP_OBJECT_KINDS.filter(
+    (kind) => requested.includes(kind) && bandDropped.has(kind) && !survived.has(kind),
+  );
+}
+
+function resolveOnce(
+  objects: readonly MapObject[],
+  opts: CollisionOptions,
+  bandExempt: ReadonlySet<MapObjectKind>,
 ): CollisionResult {
   const band = opts.band ?? zoomRenderBand(opts.viewport.zoom);
   const applyBands = opts.applyZoomBands !== false;
@@ -567,7 +695,7 @@ export function resolveCollisions(
       dropped.push({ object: obj, reason: 'not_renderable' });
       continue;
     }
-    if (applyBands && !isKindVisibleAtBand(obj.kind, band)) {
+    if (applyBands && !bandExempt.has(obj.kind) && !isKindVisibleAtBand(obj.kind, band)) {
       dropped.push({ object: obj, reason: 'zoom_band' });
       continue;
     }
@@ -600,6 +728,7 @@ export function resolveCollisions(
     droppedCount: dropped.length,
     collisionDroppedCount: dropped.filter((d) => d.reason === 'collision').length,
     band,
+    bandWaivedKinds: [],
   };
 }
 

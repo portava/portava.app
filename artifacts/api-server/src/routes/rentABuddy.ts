@@ -35,6 +35,9 @@ import {
   isOneOf,
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
+// The ONE bidirectional, fail-closed block resolver. Marketplace search filters
+// against the same set the map layer does.
+import { fetchBlockedSet } from "../lib/blocks.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
@@ -47,6 +50,16 @@ import {
   scanText,
   worstSeverity,
 } from "../lib/rentaBuddyScanner.js";
+import {
+  // The public buddy field-exposure rules live in lib/buddyMapRead.ts so the
+  // Map Intelligence Gateway (§19) and this marketplace read through ONE
+  // definition. They moved out of this file unchanged; `mapProfile` keeps its
+  // local name here so every call site below is byte-identical to before.
+  BUDDY_PUBLIC_COLUMNS,
+  hasMeetupBase,
+  mapBuddyPublicProfile as mapProfile,
+  stripBuddyPrivateFields,
+} from "../lib/buddyMapRead.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
@@ -237,62 +250,6 @@ async function requireBookingParty(
 }
 
 // ── Row mapper helpers ─────────────────────────────────────────────────────────
-
-/**
- * Explicit column list for all public-facing buddy profile selects.
- * Intentionally excludes admin-only and private contact fields:
- *   admin_status, risk_hold, id_verification_ref, legal_name,
- *   exact_address, home_address, phone_number.
- */
-const BUDDY_PUBLIC_COLUMNS =
-  "id, user_id, display_name, tagline, bio, intro_video_url, languages, city, country, " +
-  "categories, hourly_rate_usd, status, verified, verified_at, verification_status, " +
-  "average_rating, review_count, completed_bookings, completed_count, response_time_h, " +
-  "cover_photo_url, gallery_urls, vibe_tags, safety_badges, buddy_level, category_approvals, " +
-  "new_buddy_public_only, new_buddy_daytime_only, new_buddy_max_hours, max_group_size, " +
-  "preferred_meetup_zones, availability_blocks, meetup_base_lat, meetup_base_lng, featured, available_now, cancel_count, no_show_count, " +
-  "favorites_count, created_at, updated_at, profiles!user_id(verification_level)";
-
-function mapProfile(row: any) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    userId: row.user_id,
-    displayName: row.display_name,
-    tagline: row.tagline,
-    bio: row.bio,
-    introVideoUrl: row.intro_video_url,
-    languages: row.languages ?? [],
-    city: row.city,
-    country: row.country,
-    categories: row.categories ?? [],
-    hourlyRateUsd: row.hourly_rate_usd ? Number(row.hourly_rate_usd) : null,
-    status: row.status,
-    verified: row.verified,
-    verifiedAt: row.verified_at,
-    averageRating: row.average_rating ? Number(row.average_rating) : null,
-    reviewCount: row.review_count ?? 0,
-    completedBookings: row.completed_count ?? row.completed_bookings ?? 0,
-    responseTimeH: row.response_time_h ? Number(row.response_time_h) : null,
-    coverPhotoUrl: row.cover_photo_url,
-    galleryUrls: row.gallery_urls ?? [],
-    vibeTags: row.vibe_tags ?? [],
-    safetyBadges: row.safety_badges ?? [],
-    buddyLevel: row.buddy_level,
-    categoryApprovals: row.category_approvals ?? {},
-    newBuddyPublicOnly: row.new_buddy_public_only,
-    newBuddyDaytimeOnly: row.new_buddy_daytime_only,
-    newBuddyMaxHours: row.new_buddy_max_hours,
-    maxGroupSize: row.max_group_size,
-    preferredMeetupZones: row.preferred_meetup_zones ?? [],
-    availabilityBlocks: row.availability_blocks ?? [],
-    meetupBaseLat: typeof row.meetup_base_lat === "number" ? row.meetup_base_lat : null,
-    meetupBaseLng: typeof row.meetup_base_lng === "number" ? row.meetup_base_lng : null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    verificationLevel: (row.profiles?.verification_level as string) ?? null,
-  };
-}
 
 function mapBooking(row: any) {
   if (!row) return null;
@@ -511,12 +468,6 @@ async function geocodeBuddyCity(city: string, country: string | null): Promise<{
   return coords;
 }
 
-/** True when a buddy row carries a usable approximate meetup-base pin. */
-function hasMeetupBase(r: Record<string, unknown>): boolean {
-  return typeof r.meetup_base_lat === "number" && Number.isFinite(r.meetup_base_lat)
-    && typeof r.meetup_base_lng === "number" && Number.isFinite(r.meetup_base_lng);
-}
-
 router.post("/rent-a-buddy/search", async (req, res) => {
   const serviceClient = sc();
   if (!serviceClient) return res.json({ buddies: [], total: 0, page: 1, perPage: 20 });
@@ -538,6 +489,35 @@ router.post("/rent-a-buddy/search", async (req, res) => {
   }
 
   const origin = latPresent && lngPresent ? { lat: lat as number, lng: lng as number } : null;
+
+  // ── Block filter ────────────────────────────────────────────────────────────
+  // Blocking is a safety feature: a viewer who blocked someone must not then be
+  // offered them in a browsable list of people to hire, and neither must the
+  // person who blocked the viewer.
+  //
+  // This is the SAME path the map layer applies to buddy pins (lib/buddyMapRead
+  // step 2): lib/blocks.fetchBlockedSet, the one bidirectional block resolver in
+  // the server. It ORs `blocker_id.eq.<viewer>` with `blocked_id.eq.<viewer>`
+  // and adds the COUNTER-PARTY of each row, so "I blocked them" and "they
+  // blocked me" both land in the set.
+  //
+  // FAIL-CLOSED, on the same contract: fetchBlockedSet returns null when the
+  // block state could not be read, and null means expose NOBODY — never "no
+  // blocks". A block filter that fails open is worse than no filter, because it
+  // looks like it works.
+  //
+  // Auth stays OPTIONAL (optionalUser, not requireUser) so this endpoint remains
+  // public exactly as it is today. An anonymous caller has no block
+  // relationships to resolve, so there is nothing that could be unknown and
+  // nothing to fail closed about.
+  const viewerId = (await optionalUser(req))?.user.id ?? null;
+  let blockedSet: Set<string> | null = null;
+  if (viewerId) {
+    blockedSet = await fetchBlockedSet(serviceClient as any, viewerId);
+    if (blockedSet === null) {
+      return res.json({ buddies: [], total: 0, page, perPage });
+    }
+  }
 
   let query = serviceClient
     .from("rent_buddy_profiles")
@@ -564,6 +544,18 @@ router.post("/rent-a-buddy/search", async (req, res) => {
   if (error) return sendError(res, "db_error", error.message);
 
   let rows: Record<string, unknown>[] = data ?? [];
+
+  // Drop blocked people BEFORE ranking and before the city geocode below, so a
+  // blocked buddy never costs an outbound Nominatim lookup and cannot reach the
+  // response shaping at the bottom of this handler.
+  let blockedRemoved = 0;
+  if (blockedSet !== null && blockedSet.size > 0) {
+    const blocked = blockedSet;
+    const before = rows.length;
+    rows = rows.filter((r) => !(r.user_id != null && blocked.has(String(r.user_id))));
+    blockedRemoved = before - rows.length;
+  }
+
   const distanceById = new Map<string, number | null>();
 
   if (origin) {
@@ -615,7 +607,11 @@ router.post("/rent-a-buddy/search", async (req, res) => {
       ...mapProfile(stripBuddyPrivateFields(p, false)),
       distanceKm: distanceById.get(String(p.id)) ?? null,
     })),
-    total: count ?? 0,
+    // `count` is the DB's pre-block total, so it is reduced by the blocked rows
+    // we actually saw. It can still over-report when a blocked buddy sits
+    // outside the fetched window — the number is a pagination hint, and erring
+    // high there never exposes anybody.
+    total: Math.max(0, (count ?? 0) - blockedRemoved),
     page,
     perPage,
   });
@@ -4953,13 +4949,6 @@ function hasNightlifeProhibitedContent(text: string): boolean {
 function stripTravelerPrivateFields(travelerRow: any): any {
   if (!travelerRow) return null;
   const { legal_name, id_document_ref, hotel_address, exact_location, home_address, ...safe } = travelerRow;
-  return safe;
-}
-
-function stripBuddyPrivateFields(buddyRow: any, confirmed: boolean): any {
-  if (!buddyRow) return null;
-  if (confirmed) return buddyRow;
-  const { id_verification_ref, legal_name, exact_address, home_address, phone_number, ...safe } = buddyRow;
   return safe;
 }
 

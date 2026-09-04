@@ -19,12 +19,16 @@ import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { useFollow } from '../../src/hooks/useFollow';
 import { useHighlightRingState } from '../../src/hooks/useHighlightRingState';
 import { usePublicPassport } from '../../src/hooks/usePublicPassport';
+import { usePassportProjection } from '../../src/hooks/usePassportProjection.ts';
+import {
+  PassportHomePreviews,
+  PassportViewerMemoriesList,
+  PassportViewerPlansList,
+} from '../../src/components/passport/PassportHomePreviews.tsx';
 import { PrivateProfileWall } from '../../src/components/privacy/PrivateProfileWall';
 import { HighlightViewer } from '../../src/components/HighlightViewer';
 import { PostcardsTab } from '../../src/components/PostcardsTab';
 import { StampsTab } from '../../src/components/StampsTab';
-import { MemoriesTab } from '../../src/components/MemoriesTab';
-import { TripsTab } from '../../src/components/TripsTab';
 import { MapTab } from '../../src/components/MapTab';
 import { resolveTabOrder, type PassportTabKey, TAB_LABELS } from '../../src/components/passport/passportTabs';
 import { resolveDisplayName, formatHandle, truncateDisplayName } from '../../src/utils/identity';
@@ -82,6 +86,12 @@ function PassportDocumentScreenInner() {
   const insets = useSafeAreaInsets();
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = usePlainBottomInset();
+
+  // §29 aggregate for THIS viewer — powers the §3 Home previews, the §17 "YOU
+  // TWO" Shared-Context entry / §18 Make-a-Plan, and the permitted Memories /
+  // Plans the tabs render (F3). All privacy filtering is server-side; a
+  // null/own id makes it a no-op. Called before any early return (Rules of Hooks).
+  const projection = usePassportProjection(profile?.id ?? null);
 
   // Availability chip — computed from public profile fields when the API returns them.
   // homeCity visibility: show only when the profile makes it public (homeCity present).
@@ -442,6 +452,19 @@ function PassportDocumentScreenInner() {
         {/* ── Circle — mutual connections (visitor only) ── */}
         {!isOwner && <CircleSection targetUserId={profile.id} />}
 
+        {/* ── §3 Passport Home previews + §17/§18 viewer affordances ──
+             Recent stamps / Featured Journey / next Trip / memories, plus (for a
+             non-owner viewer) the "YOU TWO" Shared-Context entry and the
+             capability-gated Make-a-Plan action. Reads the shared projection
+             fetched above; fails soft to nothing when the aggregate is
+             unavailable. This is what makes SharedContextScreen reachable (F1). */}
+        <PassportHomePreviews
+          userId={profile.id}
+          isOwner={isOwner}
+          otherName={truncateDisplayName(resolveDisplayName(profile))}
+          hookOverride={projection}
+        />
+
         {/* ── Featured stamps showcase (public, read-only) ── */}
         {isFlagEnabled('stamp_showcase_enabled') && showcaseItems && showcaseItems.length > 0 && (
           <PublicStampShowcaseSection
@@ -478,8 +501,23 @@ function PassportDocumentScreenInner() {
                 {tab === 'postcards' && <PostcardsTab postcards={postcards} isOwner={false} sentinel={postcardSentinel ?? undefined} />}
                 {tab === 'stamps'    && <StampsTab stamps={[]} viewingUsername={username} viewingUserId={profile?.id} />}
                 {tab === 'map'       && <MapTab postcards={postcards} sentinel={postcardSentinel ?? undefined} />}
-                {tab === 'memories'  && <MemoriesTab memories={[]} onReload={() => {}} />}
-                {tab === 'plans'     && <TripsTab trips={[]} isOwner={false} />}
+                {/* F3: render the memories/plans THIS viewer is permitted to
+                    see from the server-filtered projection (not a hardcoded []).
+                    The projection returns nothing when the owner hasn't shared
+                    any with this viewer, so an unpermitted viewer still sees a
+                    clear empty state — read-only, never the owner's edit tab. */}
+                {tab === 'memories'  && (
+                  <PassportViewerMemoriesList
+                    memories={projection.data?.memories ?? []}
+                    loading={projection.loading}
+                  />
+                )}
+                {tab === 'plans'     && (
+                  <PassportViewerPlansList
+                    plans={projection.data?.upcomingPlans ?? []}
+                    loading={projection.loading}
+                  />
+                )}
               </View>
             </>
           );

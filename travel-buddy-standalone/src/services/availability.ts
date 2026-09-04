@@ -80,6 +80,29 @@ async function apiPatch<T>(path: string, body: Record<string, unknown>): Promise
   }
 }
 
+async function apiSend<T>(method: 'POST' | 'DELETE', path: string, body?: Record<string, unknown>): Promise<AvailabilityResult<T>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: null };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, message: 'Not authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      return { ok: false, data: null, message: b?.message ?? `API ${res.status}` };
+    }
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    return { ok: false, data: null, message: e instanceof Error ? e.message : 'Network error' };
+  }
+}
+
 // ── Own availability ──────────────────────────────────────────────────────────
 
 export async function getMyAvailability(): Promise<AvailabilityResult<WeeklyAvailabilityData>> {
@@ -148,4 +171,125 @@ export interface AvailabilityNudge {
 
 export async function getAvailabilityNudges(): Promise<AvailabilityResult<{ nudges: AvailabilityNudge[] }>> {
   return apiGet('/api/me/availability-nudges');
+}
+
+// ── Availability Windows — §8 Open-to-Plans / Temporary Intent (TABLE 8) ──────
+//
+// The §8 AvailabilityWindow domain is DISTINCT from the §6 weekly grid
+// (getMyAvailability) and the four-value quick status (getMyQuickStatus): a
+// window answers "Do I want social invitations, when, for what, with whom, and
+// how far will I travel?" — and it EXPIRES. These wrap the availability router's
+// /api/me/availability-windows endpoints (already on main). The endpoints are
+// gated behind `open_to_plans_windows_enabled` (seeded OFF); when the flag is
+// off, reads answer `{ windows: [], enabled: false }` and writes answer
+// `{ ok: true, enabled: false }` and store nothing.
+//
+// §7 is enforced at BOTH ends: `createMyAvailabilityWindow` always sends
+// source:'explicit', and the server ignores any client-supplied source and
+// forces 'explicit' too. An answer given through this screen is, by
+// construction, an EXPLICIT answer — never an inferred value promoted to a
+// public status.
+
+export type WindowType = 'recurring' | 'trip' | 'one_time' | 'derived';
+export type IntentType = 'Food' | 'Drinks' | 'Nightlife' | 'Explore' | 'Events' | 'MeetTravelers';
+export type GroupPreference = 'solo' | 'one_on_one' | 'small_group' | 'crew_only' | 'large_group' | 'any';
+export type VisibilityPolicy = 'public' | 'followers' | 'following' | 'crew' | 'private';
+export type WindowSource = 'explicit' | 'plan_derived';
+/** TABLE 10 SocialAvailability enum surface. */
+export type SocialAvailability = 'open' | 'maybe' | 'crew_only' | 'following_only' | 'not_open';
+
+/** TABLE 8 AvailabilityWindow, as projected by the availability router. */
+export interface AvailabilityWindow {
+  id: string;
+  userId: string;
+  type: WindowType;
+  startAt: string;
+  endAt: string;
+  tripId: string | null;
+  openToPlans: boolean;
+  intents: IntentType[];
+  groupPreference: GroupPreference | null;
+  maxTravelMinutes: number | null;
+  visibility: VisibilityPolicy;
+  source: WindowSource;
+  socialAvailability: SocialAvailability | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAvailabilityWindowInput {
+  type: WindowType;
+  startAt: string;
+  endAt: string;
+  tripId?: string | null;
+  openToPlans?: boolean;
+  intents?: IntentType[];
+  groupPreference?: GroupPreference | null;
+  maxTravelMinutes?: number | null;
+  visibility?: VisibilityPolicy;
+  socialAvailability?: SocialAvailability | null;
+  expiresAt?: string | null;
+  /** §7: the screen's set action IS the explicit answer. Always 'explicit'. */
+  source?: 'explicit';
+}
+
+export interface UpdateAvailabilityWindowInput {
+  openToPlans?: boolean;
+  intents?: IntentType[];
+  groupPreference?: GroupPreference | null;
+  maxTravelMinutes?: number | null;
+  visibility?: VisibilityPolicy;
+  socialAvailability?: SocialAvailability | null;
+  endAt?: string;
+  expiresAt?: string | null;
+}
+
+/** GET envelope: `windows` are already §31-filtered (non-expired) server-side. */
+export interface AvailabilityWindowsEnvelope {
+  windows: AvailabilityWindow[];
+  enabled: boolean;
+}
+
+/** Mutation envelope: `window` present on success, absent when flag-disabled. */
+export interface AvailabilityWindowMutation {
+  window?: AvailabilityWindow;
+  enabled: boolean;
+  ok?: boolean;
+  cleared?: boolean;
+}
+
+/** Own windows. Non-expired only by default (§31); includeExpired for history. */
+export async function getMyAvailabilityWindows(
+  opts: { includeExpired?: boolean } = {},
+): Promise<AvailabilityResult<AvailabilityWindowsEnvelope>> {
+  const q = opts.includeExpired ? '?includeExpired=1' : '';
+  return apiGet(`/api/me/availability-windows${q}`);
+}
+
+/**
+ * Set an EXPLICIT intent window (§7/§8). `source` is pinned to 'explicit' here so
+ * the answer can never be mistaken for an inferred one, regardless of caller —
+ * the server also forces 'explicit', but pinning it client-side keeps the
+ * screen's contract honest and self-evident.
+ */
+export async function createMyAvailabilityWindow(
+  input: CreateAvailabilityWindowInput,
+): Promise<AvailabilityResult<AvailabilityWindowMutation>> {
+  return apiSend('POST', '/api/me/availability-windows', { ...input, source: 'explicit' } as Record<string, unknown>);
+}
+
+/** Update intent / openToPlans / visibility / TTL on an owned window. */
+export async function patchMyAvailabilityWindow(
+  id: string,
+  patch: UpdateAvailabilityWindowInput,
+): Promise<AvailabilityResult<AvailabilityWindowMutation>> {
+  return apiPatch(`/api/me/availability-windows/${id}`, patch as Record<string, unknown>);
+}
+
+/** Explicit clear (§8 "explicit clear action"): delete an owned window. */
+export async function deleteMyAvailabilityWindow(
+  id: string,
+): Promise<AvailabilityResult<AvailabilityWindowMutation>> {
+  return apiSend('DELETE', `/api/me/availability-windows/${id}`);
 }
