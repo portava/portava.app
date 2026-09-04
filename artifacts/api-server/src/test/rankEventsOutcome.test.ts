@@ -4,6 +4,10 @@
  * Covers:
  *  A. Valid tap on an existing impression row → 200, outcome + outcome_at updated.
  *  B. No prior impression row → 404, no phantom rows created.
+ *  C. An outcome NEVER touches content_distribution_stats — the exposure
+ *     denominator is written on the impression path (00_STATUS defect 4).
+ *  D. Funnel-rung upgrades: a stronger outcome upgrades a row already holding
+ *     a weaker one; a weaker or equal outcome never downgrades (404).
  *
  * Runtime: node:test + node:assert/strict (no vitest / no supertest).
  * Fake Supabase client injected via _setTestClient.
@@ -58,8 +62,23 @@ function makeClient(opts: {
         filtered = filtered.filter((r) => r[col] === val);
         return b;
       },
-      order: (_col: string, _opts?: any) => b,
-      limit: (_n: number) => b,
+      in: (col: string, vals: any[]) => {
+        filtered = filtered.filter((r) => vals.includes(r[col]));
+        return b;
+      },
+      // Real ordering + limit, so "most recent row wins" is proven rather than
+      // an accident of fixture array order.
+      order: (col: string, opts?: { ascending?: boolean }) => {
+        const dir = (opts?.ascending ?? true) ? 1 : -1;
+        filtered = [...filtered].sort((x, y) =>
+          x[col] < y[col] ? -dir : x[col] > y[col] ? dir : 0,
+        );
+        return b;
+      },
+      limit: (n: number) => {
+        filtered = filtered.slice(0, n);
+        return b;
+      },
       maybeSingle: () =>
         Promise.resolve({ data: filtered[0] ?? null, error: null }),
       single: () =>
@@ -219,13 +238,19 @@ describe("POST /api/rank-events/outcome — A: existing impression row", async (
   });
 });
 
-// ── C: Repeated outcomes on the same item — counters must only increase ────────
+// ── C: An outcome never moves the exposure denominator ────────────────────────
 //
-// Regression test for the counter-reset bug where a hardcoded-value upsert
-// (eligible_impressions: 1) reset accumulated counts back to 1 on every call.
-// The correct path uses only the RPC, which increments atomically.
+// content_distribution_stats.eligible_impressions is the EXPOSURE denominator.
+// This route used to be its only writer ("an outcome confirms the impression
+// was real"), which made the column count conversions — 00_STATUS defect 4 /
+// fact layer §4.6. The counter is now incremented on the impression path
+// (lib/rankLog.ts, lib/discoveryServeLog.ts; pinned in
+// distributionStatsExposure.test.ts). Two outcomes here must therefore produce
+// ZERO increment_distribution_stats calls — and, as before, never a literal
+// upsert that would reset the counters (the fake has no `upsert`, so one would
+// throw and fail the request).
 
-describe("POST /api/rank-events/outcome — C: repeated outcomes never reset distribution counters", async () => {
+describe("POST /api/rank-events/outcome — C: an outcome never touches the exposure denominator", async () => {
   let url: string;
   let close: () => Promise<void>;
   let rpcCaptures: RpcCapture[];
@@ -277,7 +302,7 @@ describe("POST /api/rank-events/outcome — C: repeated outcomes never reset dis
     _setTestClient(null as any, false);
   });
 
-  it("calls increment_distribution_stats RPC for each outcome — never a destructive upsert with hardcoded 1 values", async () => {
+  it("records both outcomes and calls increment_distribution_stats ZERO times — outcomes are numerator events", async () => {
     const postOutcome = () =>
       fetch(`${url}/api/rank-events/outcome`, {
         method:  "POST",
@@ -298,24 +323,158 @@ describe("POST /api/rank-events/outcome — C: repeated outcomes never reset dis
     assert.equal(r1.status, 200, "first outcome must return 200");
     assert.equal(r2.status, 200, "second outcome must return 200");
 
-    // Both should have triggered the RPC
+    // Let any fire-and-forget work settle before counting.
+    await new Promise((r) => setImmediate(r));
+
     const statsRpcs = rpcCaptures.filter(
       (c) => c.name === "increment_distribution_stats",
     );
     assert.equal(
       statsRpcs.length,
-      2,
-      "increment_distribution_stats RPC must be called once per outcome",
+      0,
+      "an outcome must NOT increment eligible_impressions — that made the exposure " +
+      "denominator a count of conversions (00_STATUS defect 4); the impression " +
+      "path owns the counter now",
+    );
+  });
+});
+
+// ── D: Funnel-rung upgrades ───────────────────────────────────────────────────
+//
+// rank_events is a mutable-state table: an outcome UPDATES the impression row.
+// The row can hold one outcome, so it must be the furthest rung reached. A
+// 'tap' (discovery: card opened) followed by a 'save' (from inside the detail
+// sheet) must land as 'save'; previously the tap consumed the row and the save
+// 404'd — the strongest discovery signal was lost.
+
+function impressionRow(id: string, outcome: string, servedAt: string) {
+  return {
+    id,
+    user_id:    ALICE_ID,
+    item_id:    ITEM_ID,
+    item_kind:  "place",
+    surface:    "discovery",
+    outcome,
+    position:   0,
+    features:   {},
+    served_at:  servedAt,
+    session_id: SESSION_ID,
+    outcome_at: outcome === "impression" ? null : servedAt,
+  };
+}
+
+async function postDiscoveryOutcome(url: string, outcome: string) {
+  return fetch(`${url}/api/rank-events/outcome`, {
+    method:  "POST",
+    headers: {
+      Authorization:  "Bearer alice-token",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ item_id: ITEM_ID, surface: "discovery", outcome }),
+  });
+}
+
+describe("POST /api/rank-events/outcome — D: a stronger outcome upgrades a weaker row", async () => {
+  let url: string;
+  let close: () => Promise<void>;
+  let updateCaptures: UpdateCapture[];
+
+  before(async () => {
+    const app = await makeApp();
+    ({ url, close } = await startServer(app));
+  });
+
+  after(async () => {
+    await close();
+    _setTestClient(null as any, false);
+  });
+
+  it("'save' after 'tap' on the same impression upgrades the row to 'save' (200)", async () => {
+    updateCaptures = [];
+    _setTestClient(
+      makeClient({
+        rankEventsRows: [impressionRow(ROW_ID, "impression", new Date().toISOString())],
+        updateCaptures,
+      }),
+      true,
     );
 
-    // Neither call should carry a hardcoded eligible_impressions=1 that would
-    // reset accumulated counters — the RPC owns all increments.
-    for (const rpc of statsRpcs) {
-      assert.ok(
-        !("eligible_impressions" in rpc.params),
-        "RPC params must NOT contain eligible_impressions — counter resets are forbidden",
-      );
-    }
+    const tap = await postDiscoveryOutcome(url, "tap");
+    assert.equal(tap.status, 200, "the tap must land on the impression row");
+    assert.equal(updateCaptures[0]?.patch.outcome, "tap");
+
+    const save = await postDiscoveryOutcome(url, "save");
+    assert.equal(save.status, 200, "the save must upgrade the tapped row, not 404");
+    assert.equal(updateCaptures.length, 2, "exactly one update per outcome");
+    assert.equal(updateCaptures[1]!.filterVal, ROW_ID, "the SAME row is upgraded");
+    assert.equal(updateCaptures[1]!.patch.outcome, "save", "the row now holds the furthest rung");
+  });
+
+  it("'attended' upgrades a row already at 'rsvp' (200)", async () => {
+    updateCaptures = [];
+    _setTestClient(
+      makeClient({
+        rankEventsRows: [impressionRow(ROW_ID, "rsvp", new Date().toISOString())],
+        updateCaptures,
+      }),
+      true,
+    );
+
+    const r = await postDiscoveryOutcome(url, "attended");
+    assert.equal(r.status, 200);
+    assert.equal(updateCaptures[0]?.patch.outcome, "attended");
+  });
+
+  it("'tap' after 'save' NEVER downgrades — 404, no update", async () => {
+    updateCaptures = [];
+    _setTestClient(
+      makeClient({
+        rankEventsRows: [impressionRow(ROW_ID, "save", new Date().toISOString())],
+        updateCaptures,
+      }),
+      true,
+    );
+
+    const r = await postDiscoveryOutcome(url, "tap");
+    assert.equal(r.status, 404, "a weaker outcome finds no upgradable row");
+    assert.equal(updateCaptures.length, 0, "no update may be written");
+  });
+
+  it("an equal rung ('join' after 'rsvp') does not rewrite the row — 404, no update", async () => {
+    updateCaptures = [];
+    _setTestClient(
+      makeClient({
+        rankEventsRows: [impressionRow(ROW_ID, "rsvp", new Date().toISOString())],
+        updateCaptures,
+      }),
+      true,
+    );
+
+    const r = await postDiscoveryOutcome(url, "join");
+    assert.equal(r.status, 404);
+    assert.equal(updateCaptures.length, 0);
+  });
+
+  it("prefers the most recent upgradable row: a fresh impression wins over an older tapped row", async () => {
+    updateCaptures = [];
+    const older = new Date(Date.now() - 60_000).toISOString();
+    const newer = new Date().toISOString();
+    _setTestClient(
+      makeClient({
+        rankEventsRows: [
+          // Older row FIRST in fixture order: the fake sorts on .order(), so
+          // only the served_at DESC ordering can pick the newer row.
+          impressionRow("row00000-0000-0000-0000-00000000000a", "tap", older),
+          impressionRow("row00000-0000-0000-0000-00000000000b", "impression", newer),
+        ],
+        updateCaptures,
+      }),
+      true,
+    );
+
+    const r = await postDiscoveryOutcome(url, "save");
+    assert.equal(r.status, 200);
+    assert.equal(updateCaptures[0]!.filterVal, "row00000-0000-0000-0000-00000000000b");
   });
 });
 
