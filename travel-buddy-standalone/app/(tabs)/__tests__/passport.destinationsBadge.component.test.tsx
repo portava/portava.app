@@ -279,6 +279,7 @@ describe('Passport — Destinations tab badge', () => {
             verificationLevel:'none',
             sourceType:       null,
             photoUrl:         null,
+            mediaType:        null,
             planId:           null,
             tripId:           null,
             suggestionReason: null,

@@ -105,16 +105,30 @@ import { useBlockUser } from '../../../hooks/useBlockUser.ts';
 import { openInMaps } from '../../../lib/openInMaps.ts';
 import { openDirectThread } from '../../../services/messaging.ts';
 import type { MapEntity } from '../../../types/mapTypes.ts';
+import {
+  buddyEntity,
+  eventEntity,
+  friendEntity,
+  gemEntity,
+} from '../../../__fixtures__/mapEntities.ts';
 
 // ── Factory ───────────────────────────────────────────────────────────────────
+//
+// Entities come from the REAL projectors (src/__fixtures__/mapEntities.ts). They
+// used to be hand-written raw-DTO literals, which is how this row kept "passing"
+// while reading `payload.userId` / `.displayName` / `.title` / `.name` — fields
+// that stopped existing when the producers switched to emitting `MapObject`. On
+// the real path every buddy was "Local Buddy", every gem was "Hidden Gem", and
+// `userId` was undefined, so Message / Follow / Block acted on a null user.
+//
+// (This file also ran in NO test runner until 2026-09-03: it was named
+// `MapEntityActionRow.test.tsx`, which the node runner skips — it collects only
+// `.test.ts` files — and which jest's `.component.test.` path pattern skips too.
+// It was tracked debt in scripts/ORPHANED_TESTS_ALLOWLIST.json.)
 
 function makeGemEntity(overrides: Partial<MapEntity> = {}): MapEntity {
   return {
-    id: 'gem:abc',
-    type: 'gems',
-    lat: 10,
-    lng: 20,
-    payload: { id: 'abc', name: 'Test Gem', category: 'cafe', city: 'Paris', vibeTags: [] },
+    ...gemEntity({ id: 'abc' }),
     actionCapabilities: ['save', 'share', 'directions'],
     ...overrides,
   };
@@ -122,11 +136,7 @@ function makeGemEntity(overrides: Partial<MapEntity> = {}): MapEntity {
 
 function makeFriendEntity(overrides: Partial<MapEntity> = {}): MapEntity {
   return {
-    id: 'friend:user-1',
-    type: 'friends',
-    lat: 10,
-    lng: 20,
-    payload: { userId: 'user-1', name: 'Alice', city: 'Paris', avatarUrl: null },
+    ...friendEntity({ userId: 'user-1', name: 'Alice', city: 'Paris' }),
     actionCapabilities: ['message', 'follow', 'report', 'block'],
     permissions: { canMessage: true, canFollow: true, canBlock: true, canReport: true },
     ...overrides,
@@ -135,11 +145,7 @@ function makeFriendEntity(overrides: Partial<MapEntity> = {}): MapEntity {
 
 function makeEventEntity(overrides: Partial<MapEntity> = {}): MapEntity {
   return {
-    id: 'event:ev-1',
-    type: 'events',
-    lat: 10,
-    lng: 20,
-    payload: { id: 'ev-1', title: 'Jazz Night', startsAt: null, goingCount: 0, priceType: 'free' },
+    ...eventEntity({ id: 'ev-1', title: 'Jazz Night' }),
     actionCapabilities: ['join', 'share', 'report'],
     permissions: { canMessage: false, canFollow: false, canBlock: false, canReport: true },
     ...overrides,
@@ -148,13 +154,27 @@ function makeEventEntity(overrides: Partial<MapEntity> = {}): MapEntity {
 
 function makeBuddyEntity(overrides: Partial<MapEntity> = {}): MapEntity {
   return {
-    id: 'buddy:buddy-1',
-    type: 'buddies',
-    lat: 10,
-    lng: 20,
-    payload: { id: 'buddy-1', userId: 'user-2', displayName: 'Bob', city: 'NYC', categories: [], hourlyRateUsd: 30 },
+    ...buddyEntity({ id: 'buddy-1', userId: 'user-2', displayName: 'Bob', city: 'NYC' }),
     actionCapabilities: ['book', 'message', 'report'],
     permissions: { canMessage: true, canFollow: false, canBlock: false, canReport: true },
+    ...overrides,
+  };
+}
+
+/**
+ * A NON-projected entity, for the two producers that build envelopes directly:
+ * the places layer (app/map/index.tsx) and passport mode. The row falls back to
+ * reading `payload.name` / `payload.id` for those, and the fallback needs its
+ * own coverage.
+ */
+function makePlaceEntity(overrides: Partial<MapEntity> = {}): MapEntity {
+  return {
+    id: 'place:p1',
+    type: 'places',
+    lat: 10,
+    lng: 20,
+    payload: { id: 'p1', name: 'Museu do Azulejo', city: 'Lisbon' },
+    actionCapabilities: ['save', 'share', 'directions'],
     ...overrides,
   };
 }
@@ -328,9 +348,12 @@ describe('MapEntityActionRow', () => {
   });
 
   it('calls openInMaps with entity lat/lng when Directions is tapped', async () => {
-    await render(<MapEntityActionRow entity={makeGemEntity({ actionCapabilities: ['directions'] })} />);
+    // Read off the entity rather than hard-coded: the coordinates come from the
+    // projector via the DTO, and a literal here would just re-assert the fixture.
+    const entity = makeGemEntity({ actionCapabilities: ['directions'] });
+    await render(<MapEntityActionRow entity={entity} />);
     fireEvent.press(screen.getByTestId('map-action-directions'));
-    expect(openInMaps).toHaveBeenCalledWith(10, 20);
+    expect(openInMaps).toHaveBeenCalledWith(entity.lat, entity.lng);
   });
 
   it('calls openDirectThread when Message is tapped', async () => {
@@ -423,59 +446,30 @@ describe('MapEntityActionRow', () => {
     });
   });
 
-  it('mounts showing Waitlisted (disabled) when payload.myWaitlistPosition is set', async () => {
-    const entity = makeEventEntity({
-      payload: {
-        id: 'ev-1', title: 'Jazz Night', startsAt: null, goingCount: 10,
-        priceType: 'free', myRsvp: null, myWaitlistPosition: 3,
-      },
-    });
-    await render(<MapEntityActionRow entity={entity} />);
-    expect(screen.getByText('Waitlisted')).toBeTruthy();
-    expect(screen.queryByText('Join')).toBeNull();
-    expect(screen.queryByText('Going')).toBeNull();
-    const btn = screen.getByTestId('map-action-join');
-    expect(btn.props.accessibilityState?.disabled ?? btn.props.disabled).toBeTruthy();
-  });
+  // ── Join state is no longer SEEDED from the payload ────────────────────────
+  //
+  // Four tests here used to mount an event whose payload carried `myRsvp` /
+  // `myWaitlistPosition` and assert the button opened as Going / Waitlisted.
+  // Neither field is on the shape `projectEvent` emits, so that seeding had been
+  // dead on the real path since the producers switched to MapObject — the tests
+  // were describing a card the app had stopped rendering. Restoring it is a
+  // projector change; see docs/map-card-projection-gaps.md.
 
-  // ── Join seeded from payload.myRsvp ────────────────────────────────────────
-
-  it('mounts showing Going (disabled) when payload.myRsvp is going', async () => {
-    const entity = makeEventEntity({
-      payload: {
-        id: 'ev-1', title: 'Jazz Night', startsAt: null, goingCount: 1,
-        priceType: 'free', myRsvp: 'going',
-      },
-    });
-    await render(<MapEntityActionRow entity={entity} />);
-    expect(screen.getByText('Going')).toBeTruthy();
-    expect(screen.queryByText('Join')).toBeNull();
-    const btn = screen.getByTestId('map-action-join');
-    expect(btn.props.accessibilityState?.disabled ?? btn.props.disabled).toBeTruthy();
-  });
-
-  it('mounts showing Join when payload.myRsvp is null', async () => {
-    const entity = makeEventEntity({
-      payload: {
-        id: 'ev-1', title: 'Jazz Night', startsAt: null, goingCount: 0,
-        priceType: 'free', myRsvp: null,
-      },
-    });
-    await render(<MapEntityActionRow entity={entity} />);
+  it('mounts showing Join — the projection carries no viewer RSVP to seed from', async () => {
+    await render(<MapEntityActionRow entity={makeEventEntity()} />);
     expect(screen.getByText('Join')).toBeTruthy();
     expect(screen.queryByText('Going')).toBeNull();
+    expect(screen.queryByText('Waitlisted')).toBeNull();
+    const btn = screen.getByTestId('map-action-join');
+    expect(btn.props.accessibilityState?.disabled ?? btn.props.disabled).toBeFalsy();
   });
 
-  it('mounts showing Join when payload.myRsvp is maybe (not going)', async () => {
-    const entity = makeEventEntity({
-      payload: {
-        id: 'ev-1', title: 'Jazz Night', startsAt: null, goingCount: 0,
-        priceType: 'free', myRsvp: 'maybe',
-      },
-    });
-    await render(<MapEntityActionRow entity={entity} />);
-    expect(screen.getByText('Join')).toBeTruthy();
-    expect(screen.queryByText('Going')).toBeNull();
+  // ── Non-projected producers still work ─────────────────────────────────────
+
+  it('a places entity (never projected) still resolves its name and id', async () => {
+    await render(<MapEntityActionRow entity={makePlaceEntity()} />);
+    expect(screen.getByTestId('map-action-save')).toBeTruthy();
+    expect(screen.getByTestId('map-action-share')).toBeTruthy();
   });
 
   // ── Grep assertion: no duplicate mutations in src/components/map/ ───────────

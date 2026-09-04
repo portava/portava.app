@@ -74,7 +74,15 @@ const BUDDY: BuddyProfile = {
   coverPhotoUrl: null,
   responseTimeH: 1,
   distanceKm: null,
-  buddyLevel: null,
+  // BuddyProfile.buddyLevel is `string | undefined` (optional), not nullable.
+  buddyLevel: undefined,
+  // The four remaining required BuddyProfile fields. Absent, so this literal
+  // was not a BuddyProfile at all — and BuddyCard reads `verified`/`verifiedAt`
+  // to decide the verification badge.
+  verifiedAt: '2026-01-01T00:00:00Z',
+  galleryUrls: [],
+  createdAt: '2026-01-01T00:00:00Z',
+  updatedAt: '2026-01-01T00:00:00Z',
   meetupBaseLat: null,
   meetupBaseLng: null,
 };

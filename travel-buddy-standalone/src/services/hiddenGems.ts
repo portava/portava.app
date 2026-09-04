@@ -6,6 +6,7 @@
  */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { normalizeGuideProfile } from './hiddenGemsMappers.ts';
 import type {
   GemState,
   GemConfidence,
@@ -215,7 +216,8 @@ export async function getGem(
   return {
     gem: mapGem(data.gem),
     savedByMe: data.savedByMe ?? false,
-    guideProfile: data.guideProfile ?? null,
+    // Normalised, not passed through: the route sends the raw snake_case row.
+    guideProfile: normalizeGuideProfile(data.guideProfile),
   };
 }
 
@@ -395,24 +397,15 @@ export async function applyForGuide(
   });
 }
 
+// The mapping lives in hiddenGemsMappers.ts (react-native-free) so it can be
+// unit-tested; re-exported here so existing importers are unaffected.
+export { normalizeGuideProfile } from './hiddenGemsMappers.ts';
+
 /** Get a guide's public profile. */
 export async function getGuideProfile(userId: string): Promise<GuideProfile | null> {
   try {
     const data = await apiFetch<{ guide: any }>(`/api/hidden-gems/guides/${userId}`);
-    const g = data.guide;
-    if (!g) return null;
-    // Normalise snake_case DB fields → camelCase GuideProfile interface
-    return {
-      userId:            g.user_id      ?? g.userId,
-      guideLevel:        g.guide_level  ?? g.guideLevel  ?? 1,
-      cityExpertise:     g.city_expertise ?? g.cityExpertise ?? [],
-      contributionCount: g.contribution_count ?? g.contributionCount ?? 0,
-      helpfulVotes:      g.helpful_votes ?? g.helpfulVotes ?? 0,
-      accuracyScore:     g.accuracy_score ?? g.accuracyScore ?? 0,
-      status:            g.status,
-      bio:               g.bio ?? null,
-      verifiedAt:        g.verified_at ?? g.verifiedAt ?? null,
-    };
+    return normalizeGuideProfile(data.guide);
   } catch {
     return null;
   }

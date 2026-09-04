@@ -128,7 +128,10 @@ function makeTrip(id: string, city: string, country: string): TripRow {
     delayedPostingDefault: false,
     preciseLocationVisible: false,
     planEditPermission: null,
-  } as TripRow;
+    // Required by TripRow. It was missing, and the redundant `as TripRow` on a
+    // value already annotated `: TripRow` suppressed the missing-property error.
+    showHeaderPublicly: false,
+  };
 }
 
 const trips = [makeTrip('t1', 'Rome', 'Italy')];

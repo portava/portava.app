@@ -238,7 +238,10 @@ describe('SafeReturnSetupSheet integration — form-submit path (runHandleStart)
     let closeCalls = 0;
 
     const outcome = await runHandleStart({
-      createSession: async () => ({ ok: false, session: null }),
+      // The real createSession returns `session?: SafeReturnSession` — it OMITS
+      // the field on failure, it does not send null. A `session: null` fixture
+      // was describing a response shape the service cannot produce.
+      createSession: async () => ({ ok: false }),
       startSession:  async () => ({ ok: true, session: { id: 'should-not-reach' } }),
       onStarted: () => { startedCalls++; },
       onClose:   () => { closeCalls++; },
@@ -254,7 +257,7 @@ describe('SafeReturnSetupSheet integration — form-submit path (runHandleStart)
     let closeCalls = 0;
 
     const outcome = await runHandleStart({
-      createSession: async () => ({ ok: false, session: null, error: 'conflict' }),
+      createSession: async () => ({ ok: false, error: 'conflict' }),
       startSession:  async () => ({ ok: true, session: { id: 'should-not-reach' } }),
       onStarted: () => { startedCalls++; },
       onClose:   () => { closeCalls++; },
@@ -271,7 +274,7 @@ describe('SafeReturnSetupSheet integration — form-submit path (runHandleStart)
 
     const outcome = await runHandleStart({
       createSession: async () => ({ ok: true, session: { id: 'c-005' } }),
-      startSession:  async () => ({ ok: false, session: null }),
+      startSession:  async () => ({ ok: false }),
       onStarted: () => { startedCalls++; },
       onClose:   () => { closeCalls++; },
     });

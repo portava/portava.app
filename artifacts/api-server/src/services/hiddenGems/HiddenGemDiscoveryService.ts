@@ -93,6 +93,15 @@ export async function discoverGems(
   const proximityBounded =
     opts.userLat != null && opts.userLng != null && opts.radiusKm != null;
 
+  // `crowd_level` drives the §16.2 overcrowding demotion in
+  // lib/hiddenGemState.rankGem and the gem-state derivation in
+  // HiddenGemContributionService. It is a real hidden_gems column but was absent
+  // from this select, so both read undefined and the demotion — the one rule
+  // that stops a small overloaded place being recommended harder — never fired.
+  //
+  // NOTE: this select list is sent to PostgREST verbatim. Nothing may go inside
+  // the template literal except column names and commas; a comment in there
+  // becomes part of the column list and fails the whole query.
   let q = db
     .from("hidden_gems")
     .select(`
@@ -101,6 +110,7 @@ export async function discoverGems(
       vibe_tags, price_range, safety_notes, best_time_to_go, local_etiquette,
       layover_safe, minimum_layover_minutes,
       sensitivity_level, verification_level, status,
+      crowd_level,
       submitted_by, guide_verified_by,
       save_count, visit_count, report_count,
       image_url, canonical_place_id, source_type, moderation_status,

@@ -80,10 +80,28 @@
 name: CI (live DB)
 
 on:
-  push:
-    branches: ['**']
+  # ONE CERTIFICATION PER SHA, NOT TWO.
+  #
+  # This used to be `push: ['**']` AND `pull_request: ['**']`. For a PR branch
+  # in this repo both fire for the same commit, so every PR commit enqueued TWO
+  # live-DB runs competing for one shared database. Measured over 100 runs: 63%
+  # of SHAs enqueued a duplicate, and the duplicate is pure loss — it certifies
+  # the same tree twice and doubles the pressure that was evicting other
+  # branches' runs.
+  #
+  # The model is now explicit about WHICH commit each event certifies:
+  #   pull_request  -> the PR head, pre-merge. The verdict that gates a merge.
+  #   push to main  -> the merged commit, post-merge. The verdict that says main
+  #                    is certified, which no pre-merge run can establish
+  #                    because the merge commit does not exist until it lands.
+  #
+  # Feature-branch pushes are deliberately NOT certified here: the PR event
+  # already covers that tree, and a branch with no PR has nothing to gate.
+  # Ordinary (non-DB) CI still runs on every push — see ci.yml, unchanged.
   pull_request:
     branches: ['**']
+  push:
+    branches: [main]
   # Drift between migrations and the live database is caused by database
   # changes, not by commits, so it is also checked on a fixed cadence.
   schedule:
@@ -92,6 +110,8 @@ on:
 
 permissions:
   contents: read
+  # live-db-slot lists this workflow's runs to decide whose turn it is.
+  actions: read
 
 # ONE SHARED NON-PRODUCTION SUPABASE PROJECT, ONE RUN AT A TIME.
 #
@@ -127,8 +147,21 @@ permissions:
 #
 # See docs/ci/README.md § "Concurrency: runs are evicted, not queued".
 concurrency:
-  group: live-db-shared-supabase-project
-  cancel-in-progress: false
+  # PER-PR, NOT GLOBAL. The old group was `live-db-shared-supabase-project` for
+  # every ref, which made GitHub's eviction policy cross branches: a push to
+  # branch B cancelled branch A's pending certification. 64 of 100 sampled runs
+  # were cancelled that way and 45% of commits ended with no verdict at all.
+  #
+  # Keyed per PR (falling back to the ref for push/schedule/dispatch), the only
+  # run this can supersede is an obsolete run of the SAME PR — which is exactly
+  # the supersession we want, and nothing else can take a verdict away.
+  #
+  # Mutual exclusion on the shared database has moved to an explicit WAIT — see
+  # .github/scripts/live-db-acquire-slot.sh. GitHub concurrency cannot express
+  # "queue": it keeps one running plus one pending and evicts the rest, so it
+  # can serialize OR preserve verdicts, but not both. The wait can do both.
+  group: live-db-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   NODE_VERSION: '24'
@@ -179,11 +212,99 @@ jobs:
   # (exit 0 AND the literal `GATE live_pulse: PERMITTED` line) lives there and
   # should have exactly one implementation.
   # ───────────────────────────────────────────────────────────────────────────
+  # ── The shared-database queue ───────────────────────────────────────────────
+  #
+  # Every DB-touching job below waits behind this one. It does not cancel
+  # anybody; it blocks until this run is the OLDEST active run of this workflow,
+  # which is a total order over a shrinking set, so exactly one run is eligible
+  # at a time and the queue cannot deadlock.
+  #
+  # Why a separate job rather than a step in each: the lock is held by the RUN
+  # (a run stays in_progress until all its jobs finish), so waiting once here
+  # covers all four DB jobs, and they keep running in parallel behind it exactly
+  # as they do today. Four waits would serialize nothing extra and cost four
+  # times the queue latency.
+  #
+  # A timeout here exits 75 and this job FAILS, which the verdict job reports as
+  # NOT EXECUTED. That is the whole point: a certification that never got the
+  # database must not look like one that passed.
+  live-db-slot:
+    name: live DB · acquire the shared-database slot
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    needs: preflight
+    outputs:
+      slot: ${{ steps.acquire.outputs.live_db_slot }}
+      waited: ${{ steps.acquire.outputs.live_db_slot_wait_seconds }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for the shared Supabase project
+        id: acquire
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_DB_SLOT_TIMEOUT_SECONDS: '2700'
+        run: bash .github/scripts/live-db-acquire-slot.sh
+
+      # ── Observability (Phase 7) ────────────────────────────────────────────
+      #
+      # The states worth measuring are queued / started / cancelled-before-
+      # execution / cancelled-during / passed / failed / infra-failure, plus
+      # queue and execution duration. Every one of those is already derivable
+      # from the Actions API — run.status, run.conclusion, run.created_at,
+      # run.run_started_at, and each job's started_at/completed_at — so this
+      # deliberately adds NO new infrastructure and NO dashboard. It writes the
+      # two facts the API cannot reconstruct after the fact (how long THIS run
+      # waited for the database, and whether it got it) into the step summary
+      # and a small artifact, so a later query can join them.
+      #
+      # `gh run list --workflow "CI (live DB)" --json conclusion,createdAt,...`
+      # answers the rest, which is how the 64/100 cancellation rate that
+      # motivated this work was measured in the first place.
+      - name: Record slot telemetry
+        if: ${{ always() }}
+        shell: bash
+        env:
+          SLOT: ${{ steps.acquire.outputs.live_db_slot }}
+          WAITED: ${{ steps.acquire.outputs.live_db_slot_wait_seconds }}
+        run: |
+          set -uo pipefail
+          mkdir -p .live-db-telemetry
+          cat > .live-db-telemetry/slot.json <<EOF
+          {
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT:-1}",
+            "event": "${GITHUB_EVENT_NAME}",
+            "ref": "${GITHUB_REF}",
+            "sha": "${GITHUB_SHA}",
+            "slot": "${SLOT:-not_acquired}",
+            "queue_wait_seconds": "${WAITED:-null}"
+          }
+          EOF
+          {
+            echo "### live-DB slot"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| slot | ${SLOT:-not_acquired} |"
+            echo "| queue wait (s) | ${WAITED:-n/a} |"
+            echo "| event | ${GITHUB_EVENT_NAME} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload slot telemetry
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-db-slot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .live-db-telemetry/slot.json
+          if-no-files-found: warn
+          retention-days: 14
+
   api-server-check-all:
     name: api-server · check:all + live_pulse gate (needs credentials)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: preflight
+    needs: [preflight, live-db-slot]
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -372,7 +493,7 @@ jobs:
     name: schema drift · apply migrations, certify, then audit vs live (needs credentials)
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: preflight
+    needs: [preflight, live-db-slot]
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -575,11 +696,30 @@ jobs:
   # production unconditionally. There is no variable that points it at
   # production. The production apply is a separate, deliberate operator action.
   # ───────────────────────────────────────────────────────────────────────────
+  # ── ORDERED AFTER schema-drift, deliberately ────────────────────────────────
+  #
+  # schema-drift APPLIES MIGRATIONS when `github.ref == 'refs/heads/main'` —
+  # real DDL against the shared project. This job and live-db-security-suites
+  # read and assert schema state (RLS policies, grants, column shapes). Running
+  # them alongside in-flight DDL is not merely a lock-contention risk: a suite
+  # that enumerates policies WHILE a migration adds or drops one can observe a
+  # half-applied schema and report a confident, wrong result. That is the same
+  # failure mode this whole workflow exists to eliminate — a check that verifies
+  # something other than what it claims.
+  #
+  # Cost, measured on run 33834367778: schema-drift takes ~55s and the DB jobs
+  # ran 5m45s wall-clock in parallel. Serializing ONLY this edge makes it ~6m40s
+  # (+55s), versus 8m37s for fully serializing all four. The narrow edge is worth
+  # 55s; the wide one is not, and is not needed — see the audit in
+  # docs/ci/README.md.
+  #
+  # On PR runs schema-drift applies nothing (the apply/certify steps are gated on
+  # main), so this ordering costs a read-only job's duration and nothing else.
   post-media-revocation-rehearsal:
     name: post-media revocation · before-proof, apply, after-proof
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: preflight
+    needs: [preflight, live-db-slot, schema-drift]
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -705,11 +845,30 @@ jobs:
   # above is the primary defence; the per-suite output assertions below are the
   # second. Do not remove either.
   # ───────────────────────────────────────────────────────────────────────────
+  # ── ORDERED AFTER schema-drift, deliberately ────────────────────────────────
+  #
+  # schema-drift APPLIES MIGRATIONS when `github.ref == 'refs/heads/main'` —
+  # real DDL against the shared project. This job and live-db-security-suites
+  # read and assert schema state (RLS policies, grants, column shapes). Running
+  # them alongside in-flight DDL is not merely a lock-contention risk: a suite
+  # that enumerates policies WHILE a migration adds or drops one can observe a
+  # half-applied schema and report a confident, wrong result. That is the same
+  # failure mode this whole workflow exists to eliminate — a check that verifies
+  # something other than what it claims.
+  #
+  # Cost, measured on run 33834367778: schema-drift takes ~55s and the DB jobs
+  # ran 5m45s wall-clock in parallel. Serializing ONLY this edge makes it ~6m40s
+  # (+55s), versus 8m37s for fully serializing all four. The narrow edge is worth
+  # 55s; the wide one is not, and is not needed — see the audit in
+  # docs/ci/README.md.
+  #
+  # On PR runs schema-drift applies nothing (the apply/certify steps are gated on
+  # main), so this ordering costs a read-only job's duration and nothing else.
   live-db-security-suites:
     name: live DB · RLS + role/is_official write boundaries (needs credentials)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    needs: preflight
+    needs: [preflight, live-db-slot, schema-drift]
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -1030,52 +1189,24 @@ jobs:
     if: ${{ always() }}
     needs:
       - preflight
+      - live-db-slot
       - api-server-check-all
       - schema-drift
       - live-db-security-suites
       - post-media-revocation-rehearsal
     steps:
-      - name: Every live-DB job must have run and succeeded
+      - uses: actions/checkout@v4
+      - name: Classify the run — PASS / FAIL / NOT EXECUTED
         shell: bash
         env:
-          R_PREFLIGHT: ${{ needs.preflight.result }}
-          R_CHECK_ALL: ${{ needs['api-server-check-all'].result }}
-          R_SCHEMA_DRIFT: ${{ needs['schema-drift'].result }}
-          R_SECURITY_SUITES: ${{ needs['live-db-security-suites'].result }}
-          R_REVOCATION_REHEARSAL: ${{ needs['post-media-revocation-rehearsal'].result }}
+          SLOT_STATE: ${{ needs['live-db-slot'].outputs.slot }}
+          SLOT_WAITED: ${{ needs['live-db-slot'].outputs.waited }}
         run: |
-          set -uo pipefail
-          BAD=0
-          {
-            echo "### live-DB run verdict"
-            echo ""
-            echo "| job | result |"
-            echo "| --- | --- |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          for PAIR in \
-            "preflight:$R_PREFLIGHT" \
-            "api-server-check-all:$R_CHECK_ALL" \
-            "schema-drift:$R_SCHEMA_DRIFT" \
-            "live-db-security-suites:$R_SECURITY_SUITES" \
-            "post-media-revocation-rehearsal:$R_REVOCATION_REHEARSAL"
-          do
-            NAME="${PAIR%%:*}"
-            RESULT="${PAIR#*:}"
-            echo "| $NAME | ${RESULT:-unknown} |" >> "$GITHUB_STEP_SUMMARY"
-            echo "$NAME: ${RESULT:-unknown}"
-            if [ "$RESULT" != "success" ]; then
-              echo "::error::Job '$NAME' reported '${RESULT:-unknown}', not 'success'. A cancelled or skipped live-DB job has verified nothing about the RLS policies, the profiles.role write boundary, the is_official trigger, or schema drift. It is not a pass. If the cause was concurrency eviction (this workflow's group is global and evicts the pending run rather than queueing it), re-run this workflow once the in-progress run has finished."
-              BAD=1
-            fi
-          done
-
-          if [ "$BAD" -ne 0 ]; then
-            {
-              echo ""
-              echo "> **This run did not verify the live database.** At least one job did not"
-              echo "> reach a successful conclusion. See the annotations above."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          echo "All live-DB jobs ran and succeeded."
+          echo "slot=${SLOT_STATE:-n/a} waited=${SLOT_WAITED:-?}s"
+          bash .github/scripts/live-db-verdict.sh \
+            "preflight=${{ needs.preflight.result }}" \
+            "live-db-slot=${{ needs['live-db-slot'].result }}" \
+            "api-server-check-all=${{ needs['api-server-check-all'].result }}" \
+            "schema-drift=${{ needs['schema-drift'].result }}" \
+            "live-db-security-suites=${{ needs['live-db-security-suites'].result }}" \
+            "post-media-revocation-rehearsal=${{ needs['post-media-revocation-rehearsal'].result }}"

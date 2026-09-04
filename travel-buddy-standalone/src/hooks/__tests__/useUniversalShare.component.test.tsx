@@ -39,7 +39,10 @@ function makeEntity(overrides: Partial<ShareableEntity> = {}): ShareableEntity {
     canonicalUrl: 'https://portava.replit.app/event/ev-1',
     metadata: {},
     allowedDestinations: ['dm', 'external'],
-    allowedActions: ['send_in_app', 'copy_link'],
+    // Real ShareActionIds. 'send_in_app' is not one, and shareActionRegistry
+    // silently ignores an id it does not know — so the fixture was asking for an
+    // action that could never resolve.
+    allowedActions: ['send_to_traveler', 'copy_link'],
     ...overrides,
   };
 }
