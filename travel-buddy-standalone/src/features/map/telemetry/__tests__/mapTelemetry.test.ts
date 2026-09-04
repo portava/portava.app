@@ -152,7 +152,7 @@ afterEach(() => {
 function openMap() {
   emitMapEvent('map_opened', {
     entry: 'tab',
-    mode: 'explore',
+    mode: 'LIVE',
     viewportCell: cellFor(16.0544, 108.2022),
     zoom: 14,
     hasTripContext: true,
@@ -171,7 +171,7 @@ function emitAllSixteen(): void {
   emitMapEvent('place_opened', { ref, source: 'marker', rank: 2, saved: false });
   emitMapEvent('live_state_viewed', { ref, activity: 'busy', trend: 'getting_busier', detent: 'half', dwell: '1-5m' });
   emitMapEvent('why_shown_opened', { ref, lineCount: 4, provenanceRefs: ['snap_a', 'snap_b'] });
-  emitMapEvent('compass_requested', { trigger: 'action_rail', contextCell: cellFor(16.05, 108.2), intent: 'food_now', mode: 'explore' });
+  emitMapEvent('compass_requested', { trigger: 'action_rail', contextCell: cellFor(16.05, 108.2), intent: 'food_now', mode: 'LIVE' });
   emitMapEvent('compass_option_selected', { ref, optionIndex: 0, optionCount: 3, distance: '1-3km' });
   emitMapEvent('recommendation_accepted', { ref, via: 'route', optionIndex: 0, optionCount: 3 });
   emitMapEvent('route_started', { ref, travelMode: 'walk', distance: '1-3km', eta: '15-60m', external: false });
@@ -522,7 +522,7 @@ describe('mapTelemetry — correlation ids', () => {
 
   it('threads one decisionId through the whole §38 outcome loop', async () => {
     openMap();
-    emitMapEvent('compass_requested', { trigger: 'action_rail', intent: 'food_now', mode: 'explore' });
+    emitMapEvent('compass_requested', { trigger: 'action_rail', intent: 'food_now', mode: 'LIVE' });
     const decision = currentDecisionId();
     assert.equal(typeof decision, 'string');
 
@@ -542,7 +542,7 @@ describe('mapTelemetry — correlation ids', () => {
 
   it('lets an explicit decisionId override the active one (a stashed card outcome)', async () => {
     openMap();
-    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'explore' });
+    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'LIVE' });
     const stale = currentDecisionId();
     const stashed = newDecisionId();
     const ref = describeMapObject(mapObject());
@@ -555,16 +555,16 @@ describe('mapTelemetry — correlation ids', () => {
 
   it('a new compass_requested starts a new decision', async () => {
     openMap();
-    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'explore' });
+    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'LIVE' });
     const first = currentDecisionId();
-    emitMapEvent('compass_requested', { trigger: 'long_press', mode: 'explore' });
+    emitMapEvent('compass_requested', { trigger: 'long_press', mode: 'LIVE' });
     const second = currentDecisionId();
     assert.notEqual(first, second);
   });
 
   it('clearActiveDecision stops later outcomes being mis-attributed', async () => {
     openMap();
-    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'explore' });
+    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'LIVE' });
     clearActiveDecision();
     const ref = describeMapObject(mapObject());
     emitMapEvent('route_started', { ref, travelMode: 'walk', distance: '<0.5km' });
@@ -575,7 +575,7 @@ describe('mapTelemetry — correlation ids', () => {
 
   it('never attaches a decisionId to a non-decision event', async () => {
     openMap();
-    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'explore' });
+    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'LIVE' });
     const ref = describeMapObject(mapObject());
     emitMapEvent('live_state_viewed', { ref, activity: 'busy' });
     emitMapEvent('why_shown_opened', { ref, lineCount: 2 });
@@ -588,7 +588,7 @@ describe('mapTelemetry — correlation ids', () => {
 
   it('endMapSession flushes and forgets both ids', async () => {
     openMap();
-    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'explore' });
+    emitMapEvent('compass_requested', { trigger: 'action_rail', mode: 'LIVE' });
     await endMapSession();
     assert.equal(transport.events.length, 2);
     assert.equal(currentMapSessionId(), null);

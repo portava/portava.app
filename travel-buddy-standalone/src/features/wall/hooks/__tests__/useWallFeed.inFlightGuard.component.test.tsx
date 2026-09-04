@@ -52,7 +52,7 @@ describe('useWallFeed — stale-gen resolution keeps the in-flight guard', () =>
     );
 
     const { result, rerender } = await renderHook(
-      ({ mode }) => useWallFeed(mode),
+      ({ mode }: { mode: WallMode }) => useWallFeed(mode),
       { initialProps: { mode: 'for_you' as WallMode } },
     );
 

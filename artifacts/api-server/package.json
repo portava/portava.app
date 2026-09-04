@@ -9,6 +9,7 @@
     "start": "node --import ./dist/sentry-preload.mjs --env-file-if-exists=.env --enable-source-maps ./dist/index.mjs",
     "report:osm-coverage": "node --import tsx/esm src/scripts/reportOsmTagCoverage.ts",
     "typecheck": "./node_modules/.bin/tsc -b ../../lib/api-zod ../../lib/db && ./node_modules/.bin/tsc -p tsconfig.json --noEmit",
+    "typecheck:tests": "./node_modules/.bin/tsc -b ../../lib/api-zod ../../lib/db && node ../../scripts/check-test-typecheck.mjs --package artifacts/api-server",
     "audit:shadow-append-only": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditShadowAppendOnly.ts",
     "audit:schema": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditMigrationsVsLive.ts",
     "audit:live-unexplained": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditLiveVsCanonical.ts",

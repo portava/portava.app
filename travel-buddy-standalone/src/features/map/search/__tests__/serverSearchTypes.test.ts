@@ -272,6 +272,13 @@ describe('the remaining drops are geometric, and provably so', () => {
     for (const t of ['travelers', 'buddies']) {
       const r = toMapSearchResult({ id: `${t}-x`, type: t, title: 'Ada', metadata: null });
       assert.ok(r, `${t} with no coordinates should still be listed`);
+      // Narrow to the two person-shaped members before reading `center`: it is
+      // not on every MapSearchResult (a hashtag has none), so an unnarrowed
+      // read would be asserting about a field the union does not guarantee.
+      assert.ok(
+        r.type === 'user' || r.type === 'buddy',
+        `${t} must map to a person result, got '${r.type}'`,
+      );
       assert.equal(r.center ?? null, null);
     }
   });
