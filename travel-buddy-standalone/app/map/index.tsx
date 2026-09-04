@@ -28,6 +28,7 @@ import { MapPin, X as XIcon } from 'lucide-react-native';
 import { color, space, radius, type as t, icon, avatar } from '../../src/theme/tokens.ts';
 import { MapTopControls } from '../../src/components/map/MapTopControls.tsx';
 import { MapFloatingControls } from '../../src/components/map/MapFloatingControls.tsx';
+import { pruneBaseMapRegions } from '../../src/features/map/cache/offlineBaseMap.ts';
 import { AskCompassBar } from '../../src/components/map/AskCompassBar.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
 import { getDiscoveryPlaces } from '../../src/services/discovery.ts';
@@ -1160,6 +1161,18 @@ function FullScreenMapScreenInner() {
       endMapSession();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── §28 offline base-map hygiene ─────────────────────────────────────────────
+  // "Clearly label stale cached intelligence" applies to cached geography too:
+  // drop offline base-map packs past the base_map_region TTL (and any beyond the
+  // class's entry cap) whenever the map opens. Fire-and-forget and fails soft —
+  // it downloads nothing, only prunes, and reports `offline_unavailable` on a
+  // build without the native OfflineManager (web / Jest). Creating a pack is a
+  // deliberate act a §28 "download this area" surface owns; this is the upkeep
+  // that keeps whatever exists inside policy.
+  useEffect(() => {
+    void pruneBaseMapRegions().catch(() => {});
+  }, []);
 
   // ── §30 Back ladder ─────────────────────────────────────────────────────────
   // Overlay -> selection -> secondary mode -> let the router pop. Navigation is
