@@ -60,6 +60,7 @@ import {
   type EnumTally,
   type FunnelRows,
   type ObservationRow,
+  type OutcomeRow,
   type SnapshotRow,
 } from "../lib/intelFunnelReport.js";
 
@@ -147,7 +148,7 @@ async function main(): Promise<void> {
   const EXACT = { count: "exact" as const };
   const obsQ = withUntil(
     sc.from("intel_observations")
-      .select("actor_id, subject_id, claim_type, moderation_state, observed_at, expires_at, group_key, party_size_bucket", EXACT)
+      .select("actor_id, subject_id, zone_id, claim_type, moderation_state, observed_at, expires_at, group_key, party_size_bucket", EXACT)
       .gte("observed_at", window.since),
     "observed_at",
     window.until,
@@ -173,18 +174,37 @@ async function main(): Promise<void> {
   // the window would be re-scored over a truncated cohort and the verdict would lie.
   const freshObsQ = sc
     .from("intel_observations")
-    .select("actor_id, subject_id, claim_type, expires_at, group_key, moderation_state", EXACT)
+    .select("actor_id, subject_id, zone_id, claim_type, observed_at, expires_at, group_key, moderation_state", EXACT)
     .or(`expires_at.is.null,expires_at.gt.${now.toISOString()}`);
+  // Finalized outcome events (spec §14/§21) — canonical_events carrying an intel
+  // payload. Windowed by occurred_at. Feeds outcomeConfirmations + after-proof pairs.
+  const outcomeQ = withUntil(
+    sc.from("canonical_events")
+      .select("subject_id, occurred_at, payload", EXACT)
+      .not("payload->intel", "is", null)
+      .gte("occurred_at", window.since),
+    "occurred_at",
+    window.until,
+  );
 
-  const [observations, freshObservations, claims, snapshots, confirmations] = await Promise.all([
+  const [observations, freshObservations, claims, snapshots, confirmations, outcomeEvents] = await Promise.all([
     fetchAll<ObservationRow>(obsQ, "intel_observations"),
     fetchAll<ObservationRow>(freshObsQ, "intel_observations (fresh cohort)"),
     fetchAll<ClaimRow>(claimQ, "intel_claims"),
     fetchAll<SnapshotRow>(snapQ, "intel_state_snapshots"),
     fetchAll<ConfirmationRow>(confQ, "intel_confirmations"),
+    fetchAll<{ subject_id: string | null; occurred_at: string | null; payload: any }>(outcomeQ, "canonical_events (intel outcomes)"),
   ]);
 
-  const rows: FunnelRows = { observations, freshObservations, claims, snapshots, confirmations };
+  // Project the intel envelope out of each canonical_events payload.
+  const outcomes: OutcomeRow[] = outcomeEvents.map((e) => ({
+    subject_id: e.subject_id ?? e.payload?.intel?.subject_id ?? null,
+    snapshot_id: e.payload?.intel?.snapshot_id ?? null,
+    outcome: e.payload?.intel?.outcome ?? null,
+    occurred_at: e.occurred_at ?? null,
+  }));
+
+  const rows: FunnelRows = { observations, freshObservations, claims, snapshots, confirmations, outcomes };
   const funnel = tallyIntelFunnel(rows, now);
 
   // ── Empty-data honesty, BEFORE any gate verdict ──────────────────────────────
@@ -313,7 +333,10 @@ async function main(): Promise<void> {
   console.log("── 6. §26 density gate (promotion criterion) ──");
   console.log(`  citywide contributors ... ${assessment.metrics.activeReliableContributorsCitywide} / ${DENSITY_GATE_V1.activeReliableContributorsCitywide}  (UPPER BOUND — reliability not modelled)`);
   console.log(`  qualifying obs .......... ${assessment.metrics.qualifyingWeeklyObservations} / ${DENSITY_GATE_V1.qualifyingWeeklyObservations}  (in-window pilot-claimable count vs a WEEKLY threshold — compare only on a ~7-day window; ${windowDesc})`);
-  console.log(`  per-cluster / per-venue / outcomes / calibration / expiry ... UNINSTRUMENTED (forced fail-closed)`);
+  console.log(`  min contributors/cluster  ${assessment.metrics.minContributorsPerCluster} / ${DENSITY_GATE_V1.activeReliableContributorsPerCluster}  (weakest zone; UPPER BOUND — reliability not modelled)`);
+  console.log(`  min indep sources/venue-night  ${assessment.metrics.minIndependentSourcesPerKeyVenueNight} / ${DENSITY_GATE_V1.independentSourcesPerKeyVenueNight}  (weakest key venue-night; MEASURED)`);
+  console.log(`  outcome confirmations ... ${assessment.metrics.outcomeConfirmations} / ${DENSITY_GATE_V1.outcomeConfirmations}  (MEASURED)   after-proof pairs: ${funnel.density.afterProofPairs}`);
+  console.log(`  calibration accuracy / expiry correctness ... UNINSTRUMENTED (forced fail-closed — no crowd after-proof value; no serve-time log)`);
   console.log(`  gate arithmetic .......... ${assessment.gate.met ? "met" : "NOT met"}  ${assessment.gate.failures.length ? `[${assessment.gate.failures.join(", ")}]` : ""}`);
   console.log("");
   if (assessment.certifiable) {

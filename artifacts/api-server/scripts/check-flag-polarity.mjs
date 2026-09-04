@@ -403,6 +403,16 @@ const CLASSIFIED = [
       'inert no-op. The store exists regardless (migration 2279); this gates only the writer. Nothing client-facing; no cash.',
   },
   {
+    flag: 'intel_calibration_report',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` runs the IG §21 DAILY calibration/density report (lib/intelCalibrationScheduler.ts): a read-only ' +
+      'funnel tally + §26 density-gate assessment, logged. False-on-error is correct and is the design: ' +
+      'runCalibrationReportPass returns {skipped:true, reason:"disabled"} and reads/writes nothing, so the ' +
+      'scheduler is an inert no-op. It never certifies the gate while inputs are uninstrumented; promotion stays ' +
+      'a human decision. Nothing client-facing; no cash.',
+  },
+  {
     flag: 'intel_live_label_crowd',
     kind: 'CAPABILITY',
     reason:

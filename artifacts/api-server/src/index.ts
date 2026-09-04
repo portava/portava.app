@@ -47,6 +47,7 @@ import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
 import { startIntelPatternScheduler } from "./lib/intelPatternScheduler.js";
+import { startIntelCalibrationScheduler } from "./lib/intelCalibrationScheduler.js";
 import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
@@ -145,6 +146,10 @@ app.listen(port, (err) => {
   // enforced) and writes invalidation tombstones. Flag-gated on
   // intel_pattern_learning, fail-closed; a no-op until enabled.
   startIntelPatternScheduler();
+  // IG §21 daily calibration/density report: read-only funnel + density-gate
+  // assessment, logged. Flag-gated on intel_calibration_report, fail-closed; a
+  // no-op until enabled. Never certifies the gate while inputs are uninstrumented.
+  startIntelCalibrationScheduler();
   // IG-10 reward producer: books NON-CASH earned credits to intel_reward_ledger for
   // contributors whose observations reached the served live state. Flag-gated on
   // intel_rewards, fail-closed, idempotent per observation; a no-op until enabled.

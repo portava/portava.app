@@ -236,15 +236,57 @@ describe("intelFunnelReport — independent-group signal (owner refinement)", ()
 });
 
 describe("intelFunnelReport — density gate is fail-closed, never certifiable here", () => {
-  it("reports NOT met / NOT certifiable and lists uninstrumented inputs even with many contributors", () => {
+  it("reports NOT met / NOT certifiable and lists the STILL-uninstrumented inputs", () => {
     const f = tallyIntelFunnel({ ...empty, observations: observers(50) }, NOW);
     const a = assessDensityGate(f, { qualifyingWeeklyObservations: 9999 });
     assert.equal(a.gate.met, false, "uninstrumented inputs force failure");
-    assert.equal(a.certifiable, false, "never certifiable while inputs are uninstrumented");
-    assert.ok(a.uninstrumented.includes("outcomeConfirmations"));
-    assert.ok(a.uninstrumented.includes("minContributorsPerCluster"));
+    assert.equal(a.certifiable, false, "never certifiable while inputs remain uninstrumented");
+    // Now instrumented (no longer uninstrumented): outcomeConfirmations (measured),
+    // minContributorsPerCluster (upper bound), minIndependentSourcesPerKeyVenueNight (measured).
+    assert.ok(!a.uninstrumented.includes("outcomeConfirmations"), "outcomeConfirmations now measured");
+    assert.ok(!a.uninstrumented.includes("minContributorsPerCluster"), "per-cluster now an upper bound");
+    // Still uninstrumented (no reader yet): calibration accuracy + expiry correctness.
+    assert.ok(a.uninstrumented.includes("crowdCalibrationAccuracy"));
+    assert.ok(a.uninstrumented.includes("expiryCorrectness"));
+    // Reliability-unmodelled inputs are upper bounds — never trusted to clear.
     assert.ok(a.upperBound.includes("activeReliableContributorsCitywide"));
+    assert.ok(a.upperBound.includes("minContributorsPerCluster"));
     assert.equal(a.metrics.qualifyingWeeklyObservations, 9999, "measured input passed through");
     assert.equal(a.metrics.activeReliableContributorsCitywide, 50, "distinct actors as an upper bound");
+  });
+});
+
+describe("intelFunnelReport — §26 density instrumentation (new readers)", () => {
+  it("derives contributors per cluster (zone), weakest-link min over clusters", () => {
+    const rows: FunnelRows = { ...empty, observations: [
+      ...observers(3, { zone_id: "zA" }),
+      ...observers(5, { zone_id: "zB" }).map((o, i) => ({ ...o, actor_id: `zb-${i}` })),
+    ] };
+    const f = tallyIntelFunnel(rows, NOW);
+    assert.deepEqual(f.density.contributorsPerCluster, [3, 5]);
+    const a = assessDensityGate(f, { qualifyingWeeklyObservations: 0 });
+    assert.equal(a.metrics.minContributorsPerCluster, 3, "weakest cluster");
+  });
+
+  it("derives independent sources per key venue-night from distinct group_keys", () => {
+    const rows: FunnelRows = { ...empty, observations: [
+      { actor_id: "a1", subject_id: S, claim_type: CT, moderation_state: "allowed", observed_at: HOUR_AGO, expires_at: FUTURE, group_key: "g1" },
+      { actor_id: "a2", subject_id: S, claim_type: CT, moderation_state: "allowed", observed_at: HOUR_AGO, expires_at: FUTURE, group_key: "g2" },
+      { actor_id: "a3", subject_id: S, claim_type: CT, moderation_state: "allowed", observed_at: HOUR_AGO, expires_at: FUTURE, group_key: "g2" }, // same group
+    ] };
+    const f = tallyIntelFunnel(rows, NOW);
+    assert.deepEqual(f.density.independentSourcesPerKeyVenueNight, [2], "2 distinct groups on the venue-night");
+  });
+
+  it("counts outcomes and after-proof pairs from outcome events", () => {
+    const rows: FunnelRows = { ...empty, outcomes: [
+      { subject_id: S, snapshot_id: "snap-1", outcome: "better", occurred_at: HOUR_AGO },
+      { subject_id: S, snapshot_id: null, outcome: "same", occurred_at: HOUR_AGO }, // no snapshot ⇒ not a pair
+    ] };
+    const f = tallyIntelFunnel(rows, NOW);
+    assert.equal(f.density.outcomeConfirmations, 2);
+    assert.equal(f.density.afterProofPairs, 1, "only the outcome referencing a snapshot is an after-proof pair");
+    const a = assessDensityGate(f, { qualifyingWeeklyObservations: 0 });
+    assert.equal(a.metrics.outcomeConfirmations, 2, "flows into the gate metric");
   });
 });

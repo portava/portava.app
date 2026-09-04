@@ -173,6 +173,11 @@ INSERT INTO public.feature_flags (flag, enabled, description) VALUES
     'intel_pattern_learning',
     false,
     'Runs the IG §12 nightly pattern producer (lib/intelPatternScheduler): derives recurring cohort patterns from FINALIZED intel outcomes into intel_historical_patterns and writes invalidation tombstones on correction/withdrawal. Off = the scheduler writes nothing (inert no-op).'
+  ),
+  (
+    'intel_calibration_report',
+    false,
+    'Runs the IG §21/§26 DAILY calibration/density report (lib/intelCalibrationScheduler): tallies the capture→serve funnel and the density-gate assessment (read-only, logs a report). Off = the scheduler is an inert no-op that reads and writes nothing.'
   )
 ON CONFLICT (flag) DO NOTHING;
 
@@ -189,9 +194,13 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'intel_pattern_learning') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: intel_pattern_learning flag not seeded';
   END IF;
-  -- Flag seeded OFF: on_count for this flag must be 0.
-  IF (SELECT count(*) FROM public.feature_flags WHERE flag = 'intel_pattern_learning' AND enabled) <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: intel_pattern_learning must be seeded OFF (on_count=0)';
+  IF NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'intel_calibration_report') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: intel_calibration_report flag not seeded';
+  END IF;
+  -- Both flags seeded OFF: on_count across them must be 0.
+  IF (SELECT count(*) FROM public.feature_flags
+        WHERE flag IN ('intel_pattern_learning','intel_calibration_report') AND enabled) <> 0 THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: intel_pattern_learning/intel_calibration_report must be seeded OFF (on_count=0)';
   END IF;
   -- Append-only guard must be attached.
   IF NOT EXISTS (SELECT 1 FROM pg_trigger
@@ -204,6 +213,6 @@ END $$;
 COMMIT;
 
 -- REVERSAL:
---   DELETE FROM public.feature_flags WHERE flag = 'intel_pattern_learning';
+--   DELETE FROM public.feature_flags WHERE flag IN ('intel_pattern_learning','intel_calibration_report');
 --   ALTER TABLE public.intel_state_snapshots DROP COLUMN IF EXISTS source_class;
 --   DROP TABLE IF EXISTS public.intel_historical_patterns;
