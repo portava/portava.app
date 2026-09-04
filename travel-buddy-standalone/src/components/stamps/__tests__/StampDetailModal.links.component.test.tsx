@@ -10,7 +10,7 @@
  *   3. Following a link closes the sheet first, then navigates.
  */
 import React from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react-native';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 const mockPush = jest.fn();
 // NOTE: intentionally exhaustive — expo-router needs native navigation modules; only router.push is asserted.
@@ -51,14 +51,19 @@ it('viewer: View Journey carries the owner handle; My World is not offered', asy
   await render(<StampDetailModal stamp={stamp()} isOwner={false} visible onClose={jest.fn()} username="mai" />);
 
   fireEvent.press(await screen.findByTestId('stamp-open-journey'));
-  expect(mockPush).toHaveBeenCalledWith('/passport/journeys?userId=mai&tripId=trip-7');
+  // Navigation is deferred past the sheet's close animation (BUG CC/CD), so it
+  // fires after the press, not synchronously.
+  expect(mockPush).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(mockPush).toHaveBeenCalledWith('/passport/journeys?userId=mai&tripId=trip-7'),
+  );
   expect(screen.queryByTestId('stamp-open-my-world')).toBeNull();
 });
 
 it('a stamp with no trip still links to Journeys (no tripId param)', async () => {
   await render(<StampDetailModal stamp={stamp({ tripId: null })} isOwner visible onClose={jest.fn()} username="me" />);
   fireEvent.press(await screen.findByTestId('stamp-open-journey'));
-  expect(mockPush).toHaveBeenCalledWith('/passport/journeys');
+  await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/passport/journeys'));
 });
 
 // Owner render mounts the owner-only visibility Switch; kept LAST because that
@@ -69,10 +74,11 @@ it('owner: View Journey opens own journeys focused on the trip; My World is offe
   await render(<StampDetailModal stamp={stamp()} isOwner visible onClose={onClose} username="me" />);
 
   fireEvent.press(await screen.findByTestId('stamp-open-journey'));
+  // The sheet closes synchronously; navigation is deferred (BUG CC/CD).
   expect(onClose).toHaveBeenCalledTimes(1);
-  expect(mockPush).toHaveBeenCalledWith('/passport/journeys?tripId=trip-7');
+  await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/passport/journeys?tripId=trip-7'));
 
   expect(screen.getByTestId('stamp-open-my-world')).toBeTruthy();
   fireEvent.press(screen.getByTestId('stamp-open-my-world'));
-  expect(mockPush).toHaveBeenLastCalledWith('/passport/my-world');
+  await waitFor(() => expect(mockPush).toHaveBeenLastCalledWith('/passport/my-world'));
 });
