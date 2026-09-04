@@ -19,8 +19,9 @@
  */
 import React, { useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { Info, Radio, Clock } from 'lucide-react-native';
+import { Info, Radio, Clock, AlertTriangle } from 'lucide-react-native';
 import { color, space, radius, typography } from '../../theme/tokens.ts';
+import { normalizeConflictState, conflictExplanation } from '../../lib/intel/conflict.ts';
 import { PortavaSheet } from '../ui/PortavaSheet.tsx';
 import type { PlaceLivingResponse, LiveClaimDTO } from '../../types/placeLiving.ts';
 import {
@@ -83,6 +84,9 @@ function dtoToClaim(dto: LiveClaimDTO): ChipClaim {
     serverState: dto.state ?? null,
     observedAt: dto.observedAt ?? null,
     validUntil: dto.validUntil ?? null,
+    // §10 conflict state — normalised the same way the server does (absent ⇒
+    // 'none'; an unrecognised marker ⇒ 'material', fail-closed for the label).
+    conflictState: normalizeConflictState(dto.conflictState ?? dto.conflict?.state ?? null),
     synthesized: false,
   };
 }
@@ -134,6 +138,10 @@ export function buildLiveClaims(living: PlaceLivingResponse): ChipClaim[] {
         serverState: null,
         observedAt: living.generatedAt ?? null,
         validUntil: null,
+        // A bare string carries no conflict marker — and the server returns
+        // null for the bare crowdLevel under a material conflict precisely so
+        // an unlabelled plurality never reaches this path.
+        conflictState: null,
         synthesized: true,
       },
     ];
@@ -145,9 +153,16 @@ export interface DecisionExposureChipsProps {
   living: PlaceLivingResponse;
   /** intel_live_label_crowd — off ⇒ render nothing. */
   enabled: boolean;
+  /**
+   * §10 contradiction-resolution opportunity: when set, a materially-
+   * conflicted claim's sheet offers "What's it like now?" and calls this with
+   * the claim. The caller decides whether a prompt may be shown at all
+   * (useIntelPrompts.conflictReask) — leave it undefined to offer nothing.
+   */
+  onResolveConflict?: (claim: LiveIntelClaim) => void;
 }
 
-export function DecisionExposureChips({ living, enabled }: DecisionExposureChipsProps) {
+export function DecisionExposureChips({ living, enabled, onResolveConflict }: DecisionExposureChipsProps) {
   const claims = useMemo(() => (enabled ? buildLiveClaims(living) : []), [enabled, living]);
   const [openClaim, setOpenClaim] = useState<ChipClaim | null>(null);
 
@@ -167,37 +182,58 @@ export function DecisionExposureChips({ living, enabled }: DecisionExposureChips
         </View>
         {claims.map((claim, i) => {
           const state = liveState(claim);
-          const stateColor = liveStateColor(state);
+          const stateColor = liveStateColor(state, claim.conflictState);
+          const material = normalizeConflictState(claim.conflictState) === 'material';
           return (
             <Pressable
               key={`${claim.claimType}-${i}`}
               testID={`intel-chip-${claim.claimType}`}
               accessibilityRole="button"
-              accessibilityLabel={`${claimTypeLabel(claim.claimType)} ${formatClaimValue(claim.claimType, claim.value)}, ${liveStateLabel(state)}. Tap for why.`}
+              accessibilityLabel={`${claimTypeLabel(claim.claimType)} ${formatClaimValue(claim.claimType, claim.value)}, ${liveStateLabel(state, claim.conflictState)}. Tap for why.`}
               onPress={() => setOpenClaim(claim)}
               style={({ pressed }) => [styles.chip, { borderColor: stateColor + '55' }, pressed && styles.chipPressed]}
             >
-              <View style={[styles.dot, { backgroundColor: stateColor }]} />
+              {material ? (
+                <AlertTriangle size={11} color={stateColor} />
+              ) : (
+                <View style={[styles.dot, { backgroundColor: stateColor }]} />
+              )}
               <Text style={styles.chipLabel}>{claimTypeLabel(claim.claimType)}</Text>
               <Text style={[styles.chipValue, { color: stateColor }]} numberOfLines={1}>
                 {formatClaimValue(claim.claimType, claim.value)}
               </Text>
+              {/* §10: the conflict is said in TEXT on the chip itself, not only in the sheet. */}
+              {material ? (
+                <Text style={[styles.chipConflict, { color: stateColor }]} testID={`intel-chip-conflict-${claim.claimType}`}>
+                  {liveStateLabel(state, claim.conflictState)}
+                </Text>
+              ) : null}
               <Info size={12} color={color.faint} />
             </Pressable>
           );
         })}
       </ScrollView>
 
-      <WhySheet claim={openClaim} onClose={() => setOpenClaim(null)} />
+      <WhySheet claim={openClaim} onClose={() => setOpenClaim(null)} onResolveConflict={onResolveConflict} />
     </>
   );
 }
 
-function WhySheet({ claim, onClose }: { claim: ChipClaim | null; onClose: () => void }) {
+function WhySheet({
+  claim,
+  onClose,
+  onResolveConflict,
+}: {
+  claim: ChipClaim | null;
+  onClose: () => void;
+  onResolveConflict?: (claim: LiveIntelClaim) => void;
+}) {
   if (!claim) return null;
   const state = liveState(claim);
-  const stateColor = liveStateColor(state);
+  const stateColor = liveStateColor(state, claim.conflictState);
   const showBand = !claim.synthesized;
+  const conflictState = normalizeConflictState(claim.conflictState);
+  const conflictWhy = conflictExplanation(conflictState);
   return (
     <PortavaSheet visible={!!claim} onClose={onClose} accessibilityLabel="Why we show this" maxHeightPercent={70}>
       <View style={sheet.container}>
@@ -207,9 +243,35 @@ function WhySheet({ claim, onClose }: { claim: ChipClaim | null; onClose: () => 
           </Text>
           <View style={[sheet.statePill, { backgroundColor: stateColor + '18', borderColor: stateColor + '55' }]}>
             {state === 'live' ? <Radio size={12} color={stateColor} /> : null}
-            <Text style={[sheet.statePillText, { color: stateColor }]}>{liveStateLabel(state)}</Text>
+            {conflictState === 'material' ? <AlertTriangle size={12} color={stateColor} /> : null}
+            <Text style={[sheet.statePillText, { color: stateColor }]}>{liveStateLabel(state, claim.conflictState)}</Text>
           </View>
         </View>
+
+        {conflictWhy ? (
+          <View style={[sheet.conflictBox, { borderColor: stateColor + '55' }]} testID="intel-why-conflict">
+            <Text style={sheet.conflictTitle}>
+              {conflictState === 'material' ? 'Reports differ right now' : 'Reports vary a little'}
+            </Text>
+            <Text style={sheet.why}>{conflictWhy}</Text>
+            {conflictState === 'material' && onResolveConflict ? (
+              <Pressable
+                testID="intel-conflict-reask"
+                accessibilityRole="button"
+                accessibilityLabel="Help settle it — what's it like now?"
+                onPress={() => {
+                  onClose();
+                  onResolveConflict(claim);
+                }}
+                style={({ pressed }) => [sheet.reaskBtn, pressed && { opacity: 0.85 }]}
+              >
+                <Radio size={14} color={color.signal} />
+                <Text style={sheet.reaskText}>What’s it like now?</Text>
+                <Text style={sheet.reaskHint}>· 5 seconds, private</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
 
         {showBand ? (
           <Row label="Confidence" value={BAND_LABEL[claim.band]} />
@@ -280,6 +342,7 @@ const styles = StyleSheet.create({
   dot: { width: 7, height: 7, borderRadius: 999 },
   chipLabel: { ...typography.metadata, color: color.mute, textTransform: 'uppercase' },
   chipValue: { ...typography.label, color: color.ink },
+  chipConflict: { ...typography.metadata, textTransform: 'uppercase' },
 });
 
 const sheet = StyleSheet.create({
@@ -302,4 +365,27 @@ const sheet = StyleSheet.create({
   detailValue: { ...typography.body, color: color.ink, flexShrink: 1, textAlign: 'right' },
   why: { ...typography.caption, color: color.mute, lineHeight: 19 },
   note: { ...typography.caption, color: color.faint, fontStyle: 'italic', lineHeight: 18 },
+  conflictBox: {
+    gap: space.sm,
+    padding: space.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    backgroundColor: color.paperRaised,
+  },
+  conflictTitle: { ...typography.cardTitle, color: color.ink },
+  reaskBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.signal + '55',
+    backgroundColor: color.paper,
+  },
+  reaskText: { ...typography.label, color: color.ink },
+  reaskHint: { ...typography.metadata, color: color.mute },
 });

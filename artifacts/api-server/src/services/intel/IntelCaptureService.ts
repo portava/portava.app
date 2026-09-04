@@ -21,13 +21,16 @@
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import {
   CLAIM_TYPES,
+  COMMERCIAL_DISCLOSURES,
   MODERATION_STATES,
   VISIBILITIES,
   PRESENCE_LEVELS,
   MIN_PRESENCE_FOR_LIVE_CLAIM,
   clampObservedAt,
+  disclosureSourceClass,
   isValidIdempotencyKey,
   isPilotClaimable,
+  type CommercialDisclosure,
   type Visibility,
   type PresenceLevel,
   type PartySizeBucket,
@@ -38,6 +41,8 @@ import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
 import { isSharedCrewMember } from "../../lib/tripMembership.js";
 import { resolveActiveCrewId } from "../../lib/activeCrew.js";
 import { hasValidIntelConsent } from "../../lib/intelConsent.js";
+import { logger } from "../../lib/logger.js";
+import { verifyPresence, type PresenceVerificationOutcome } from "./PresenceVerifier.js";
 
 /**
  * Capture surfaces, each gated by its own flag (spec §26 flag registry):
@@ -99,6 +104,11 @@ export interface CaptureInput {
   presenceLevel?: string;         // from a presence attestation; default 'P0'
   presenceAttestation?: Record<string, unknown> | null;
   captureSurface?: CaptureSurface; // default 'quick_signal'
+  // §22 Table 30 commercial disclosure. Optional; omitted/unknown ⇒ 'none'
+  // (fail-closed). A non-'none' disclosure records the observation under a
+  // NON_INDEPENDENT source class (disclosureSourceClass) so a disclosed-commercial
+  // report never counts as independent community consensus.
+  commercialDisclosure?: CommercialDisclosure;
   // V1 independent-group signal (§privacy). partySize is the raw "who are you here
   // with?" answer; partyId is the observer's active Trip Crew id (validated here).
   // Both optional → group_key resolves to null (fail-closed) for older clients.
@@ -194,6 +204,103 @@ export function resolvePresenceAttestation(
   };
 }
 
+// ── Presence verification (unit I3, P2/P3/P4) ────────────────────────────────
+// The verifier that plugs into the seam above. Consulted ONLY when
+// `intel_presence_verification_enabled` is on AND the claim is live-grade; in
+// every other case the result is exactly resolvePresenceAttestation's, so with
+// the flag OFF the capture path is byte-identical to before this unit landed.
+//
+// The verifier reports what the SERVER-HELD evidence supports (Table 13 rungs:
+// geofence + dwell/interaction ⇒ P2, + receipt ⇒ P3, + mission nonce ⇒ P4). The
+// stored level is the LOWER of the claim and that verdict: verification can only
+// ever lower a claim, never inflate it, and any verifier failure is P1.
+
+export interface ResolvedPresenceForCapture extends ResolvedPresence {
+  /** Present only when the verifier actually ran (flag ON + live-grade claim). */
+  verification?: PresenceVerificationOutcome;
+}
+
+export interface PresenceCaptureContext {
+  actorId: string;
+  subjectId: string;
+  subjectKind: string;
+  claimType: string;
+  /** Server-clamped ISO observed_at. */
+  observedAt: string;
+  capturedAt: string | null;
+}
+
+export async function resolvePresenceForCapture(
+  sc: any,
+  claimedLevelRaw: unknown,
+  claimedAttestation: Record<string, unknown> | null | undefined,
+  ctx: PresenceCaptureContext,
+): Promise<ResolvedPresenceForCapture> {
+  const claimed = normalisePresenceLevel(claimedLevelRaw);
+  const isLiveGrade = presenceRank(claimed) >= MIN_LIVE_PRESENCE_INDEX;
+  // Below the live floor nothing is verified — unchanged behaviour, no flag read.
+  if (!isLiveGrade) return resolvePresenceAttestation(claimedLevelRaw, claimedAttestation);
+  // Flag OFF (or unreadable — isFlagEnabled is fail-closed) ⇒ today's clamp, byte-identical.
+  if (!(await isFlagEnabled(sc, "intel_presence_verification_enabled"))) {
+    return resolvePresenceAttestation(claimedLevelRaw, claimedAttestation);
+  }
+
+  const verification = await verifyPresence(sc, {
+    actorId: ctx.actorId,
+    subjectId: ctx.subjectId,
+    subjectKind: ctx.subjectKind,
+    claimType: ctx.claimType,
+    observedAt: ctx.observedAt,
+    capturedAt: ctx.capturedAt,
+    claimedLevel: claimed,
+    attestation: claimedAttestation,
+  });
+  // Never above the claim, never above the evidence.
+  const presenceLevel: PresenceLevel =
+    presenceRank(verification.level) < presenceRank(claimed) ? verification.level : claimed;
+  const attested = presenceRank(presenceLevel) >= MIN_LIVE_PRESENCE_INDEX;
+  return {
+    presenceLevel,
+    attestation: {
+      claimed,
+      stored: presenceLevel,
+      attested,
+      clamped: presenceLevel !== claimed,
+      liveGradeFloor: MIN_PRESENCE_FOR_LIVE_CLAIM,
+      reason: attested ? "attested" : "clamped_unverified",
+      client: claimedAttestation ?? null,
+      // Server-written verdict (coarse buckets + references, never a coordinate).
+      // `verifier.geofence === "inside"` is what a LATER capture's dwell check
+      // reads back from this observation — server-set, so a client cannot forge it.
+      verifier: { version: 1, method: verification.method, level: verification.level, ...verification.evidence },
+    },
+    verification,
+  };
+}
+
+/**
+ * Append the audit row for a verification attempt (intel_presence_verifications,
+ * migration 2276). Best-effort AFTER the observation is stored: a failed audit
+ * write is logged — observable, never silent — but does not undo the capture.
+ */
+async function recordPresenceVerification(
+  sc: any, observationId: string, actorId: string, verification: PresenceVerificationOutcome,
+): Promise<boolean> {
+  const { error } = await sc.from("intel_presence_verifications").insert({
+    observation_id: observationId,
+    actor_id: actorId,
+    method: verification.method,
+    level_reached: verification.level,
+    evidence: verification.evidence,
+    verified_at: new Date().toISOString(),
+  });
+  if (error) {
+    logger.warn({ err: error, observationId }, "intel presence verification record write failed");
+    return false;
+  }
+  return true;
+}
+
 /**
  * Write one observation. Fail-closed no-op when the flag is off. Idempotent: a
  * replay of the same (actor_id, idempotency_key) returns the stored row.
@@ -219,15 +326,26 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   if (!validateForSurface(surface, input.claimType, input.value)) return { ok: false, reason: "invalid_value", detail: input.claimType };
 
   const visibility: Visibility = input.visibility && VISIBILITIES.includes(input.visibility) ? input.visibility : "private";
-  // Presence attestation gate (H2): a client-asserted live-grade presence is not
-  // trusted without a server-verified attestation. No verifier exists at capture
-  // today, so any unattested live-grade claim is clamped to the unverified ceiling.
-  const presence = resolvePresenceAttestation(input.presenceLevel, input.presenceAttestation);
-
   // Fail-closed subject resolution — never let the places FK throw a 500.
   const { data: subj, error: subjErr } = await sc.from("places").select("id").eq("id", input.subjectId).maybeSingle();
   if (subjErr) return { ok: false, reason: "db_error", detail: "subject lookup" };
   if (!subj) return { ok: false, reason: "unknown_subject", detail: input.subjectId };
+
+  // Presence attestation gate (H2): a client-asserted live-grade presence is not
+  // trusted without a server-verified attestation. With
+  // intel_presence_verification_enabled OFF (the default) no verifier runs and
+  // every unattested live-grade claim is clamped to the unverified ceiling; ON,
+  // services/intel/PresenceVerifier may confirm P2/P3/P4 from server-held
+  // evidence (unit I3). Resolved after the subject check so an unknown subject
+  // never spends a mission nonce.
+  const presence = await resolvePresenceForCapture(sc, input.presenceLevel, input.presenceAttestation, {
+    actorId,
+    subjectId: input.subjectId,
+    subjectKind: input.subjectKind ?? "experience",
+    claimType: input.claimType,
+    observedAt: clamped.observedAt,
+    capturedAt: input.capturedAt ?? null,
+  });
 
   const ttl = ttlFor(input.claimType);
   const expiresAt = ttl ? new Date(new Date(clamped.observedAt).getTime() + ttl.ttlSeconds * 1000).toISOString() : null;
@@ -259,6 +377,17 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   }
   const groupKey = deriveGroupKey(input.subjectId, groupIdentity);
 
+  // §22 Table 30 commercial disclosure. Fail-closed: an unknown/omitted value is
+  // 'none'. A DISCLOSED commercial relationship (non-'none') records the
+  // observation under the NON_INDEPENDENT `sponsored` source class
+  // (disclosureSourceClass), which is the "official/community separation" that
+  // keeps a disclosed-commercial report out of independent community consensus —
+  // it never overwrites confidence, only its epistemic standing.
+  const commercialDisclosure: CommercialDisclosure =
+    input.commercialDisclosure && (COMMERCIAL_DISCLOSURES as readonly string[]).includes(input.commercialDisclosure)
+      ? input.commercialDisclosure
+      : "none";
+
   const row = {
     actor_id: actorId,
     subject_kind: input.subjectKind ?? "experience",
@@ -266,11 +395,11 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     zone_id: input.zoneId ?? null,
     claim_type: input.claimType,
     value: input.value,
-    source_class: "firsthand_unverified",
+    source_class: disclosureSourceClass(commercialDisclosure),
     capture_surface: surface,
     visibility,
     moderation_state: "pending",
-    commercial_disclosure: "none",
+    commercial_disclosure: commercialDisclosure,
     presence_level: presence.presenceLevel,
     presence_attestation: presence.attestation,
     observed_at: clamped.observedAt,
@@ -291,6 +420,11 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
       if (existing) return { ok: true, observation: existing, deduped: true };
     }
     return { ok: false, reason: "db_error", detail: String((error as any).message ?? "") };
+  }
+  // Unit I3 audit row — only when the verifier actually ran (flag ON + live-grade
+  // claim). A deduped replay never reaches here, so a record is written once.
+  if (presence.verification && data?.id) {
+    await recordPresenceVerification(sc, data.id, actorId, presence.verification);
   }
   return { ok: true, observation: data, deduped: false };
 }

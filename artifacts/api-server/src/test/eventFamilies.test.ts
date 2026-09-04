@@ -27,7 +27,7 @@ describe("eventFamilies — the map is total and valid", () => {
       );
     }
   });
-  it("every family value is one of the four", () => {
+  it("every family value is one of the five", () => {
     for (const fam of Object.values(VERB_FAMILY)) {
       assert.ok(EVENT_FAMILIES.includes(fam), `'${fam}' is not a valid family`);
     }
@@ -46,6 +46,10 @@ describe("eventFamilies — the documented categorization", () => {
       completion: "outcome",
       rejection: "outcome",
       satisfaction: "satisfaction",
+      // I4a (2277): pipeline transitions, not traveler interactions.
+      "intel.observation.recorded": "domain",
+      "intel.claim.promoted": "domain",
+      "intel.state.changed": "domain",
     });
   });
 });

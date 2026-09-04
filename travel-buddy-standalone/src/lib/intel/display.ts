@@ -24,6 +24,7 @@ import {
   type ConfidenceBand,
   type SourceClass,
 } from './contracts.ts';
+import { CONFLICT_LABEL, normalizeConflictState, type ConflictState } from './conflict.ts';
 
 /**
  * Coarse cohort-size bucket (mirror of api-server `SourceCountBucket`). The EXACT
@@ -69,6 +70,11 @@ export interface LiveIntelClaim {
   observedAt: string | null;
   /** ISO expiry, when the claim stops being live. */
   validUntil: string | null;
+  /**
+   * §10 conflict state from the wire. 'material' ⇒ never rendered as Live
+   * (liveState caps it) and labelled "Reports differ". Absent/null ⇒ none.
+   */
+  conflictState?: ConflictState | null;
 }
 
 /**
@@ -122,14 +128,30 @@ export function liveState(claim: LiveIntelClaim | null | undefined, now: Date = 
   if (claim.sourceClass === null) return 'typical';
   if (!mayRenderAsLive(claim.sourceClass)) return 'typical';
   if (claim.validUntil && new Date(claim.validUntil).getTime() <= now.getTime()) return 'unknown';
-  if (claim.serverState === 'live' || claim.serverState === 'emerging') return claim.serverState;
+  // §10: a MATERIAL conflict is never Live, whatever the server state or band
+  // said — the server already caps both, this is the client's own guard so a
+  // stale payload or a hand-built claim cannot overstate a disputed fact. It
+  // degrades to 'emerging' (real, current, not Live-qualified), never lower:
+  // the value is shown WITH "Reports differ", not hidden.
+  const material = normalizeConflictState(claim.conflictState) === 'material';
+  if (claim.serverState === 'live' || claim.serverState === 'emerging') {
+    return material ? 'emerging' : claim.serverState;
+  }
   const floor = CONFIDENCE_BAND_FLOOR[claim.band];
-  if (floor >= CONFIDENCE_BAND_FLOOR.live) return 'live';
+  if (floor >= CONFIDENCE_BAND_FLOOR.live) return material ? 'emerging' : 'live';
   if (floor >= CONFIDENCE_BAND_FLOOR[MIN_BAND_FOR_LIVE_STATE]) return 'emerging';
   return 'typical';
 }
 
-export function liveStateLabel(state: LiveState): string {
+/**
+ * The state label. Under a MATERIAL conflict the label is "Reports differ"
+ * wherever a Live/Observed label would have rendered (§10) — the state itself
+ * is still 'emerging' (see liveState), so nothing else changes.
+ */
+export function liveStateLabel(state: LiveState, conflictState?: ConflictState | null): string {
+  if ((state === 'live' || state === 'emerging') && normalizeConflictState(conflictState) === 'material') {
+    return CONFLICT_LABEL;
+  }
   return state === 'live'
     ? 'Live'
     : state === 'emerging'
@@ -140,8 +162,12 @@ export function liveStateLabel(state: LiveState): string {
 }
 
 /** Colour for a state — vermilion signal is reserved for genuinely live; emerging
- *  gets its own teal accent so it never borrows the Live vermilion. */
-export function liveStateColor(state: LiveState): string {
+ *  gets its own teal accent so it never borrows the Live vermilion. A material
+ *  conflict takes the warn colour: neither Live's vermilion nor emerging's teal. */
+export function liveStateColor(state: LiveState, conflictState?: ConflictState | null): string {
+  if ((state === 'live' || state === 'emerging') && normalizeConflictState(conflictState) === 'material') {
+    return color.warn;
+  }
   return state === 'live'
     ? color.signal
     : state === 'emerging'

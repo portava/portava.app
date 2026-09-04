@@ -41,6 +41,7 @@
 import { randomUUID } from "node:crypto";
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
+import { recordImpressionDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
 
 /** Feature flag gating every write in this module. Absent row ⇒ disabled. */
 export const DISCOVERY_SERVE_LOG_FLAG = "discovery_serve_log_enabled";
@@ -232,6 +233,12 @@ export async function logDiscoveryServe(
         { err: error, servePoint, route, count: rows.length },
         "discoveryServeLog: impression insert rejected",
       );
+    } else {
+      // Exposure denominator — content_distribution_stats.eligible_impressions
+      // mirrors the impression rows that landed (lib/rankLog.ts does the same
+      // for the ranked writers). Still behind the flag above: with it off there
+      // is no insert, so there is no increment either.
+      await recordImpressionDistributionStats(sc, rows.map((r) => r.item_id), userId);
     }
   } catch (err) {
     logger.warn({ err }, "discoveryServeLog: impression insert threw");

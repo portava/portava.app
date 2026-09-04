@@ -1852,6 +1852,7 @@ function makeOutcomeClient(rankEventsRows: any[], cap: OutcomeCaptures) {
     let filtered = (db[table] ?? []).map((r) => ({ ...r }));
     const b: any = {
       eq:    (col: string, val: any) => { filtered = filtered.filter((r) => r[col] === val); return b; },
+      in:    (col: string, vals: any[]) => { filtered = filtered.filter((r) => vals.includes(r[col])); return b; },
       order: (_c: string, _o?: any) => b,
       limit: (_n: number) => b,
       maybeSingle: () => Promise.resolve({ data: filtered[0] ?? null, error: null }),

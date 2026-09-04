@@ -157,6 +157,9 @@ export async function buildLiveForYou(
       freshness,
       confidence: env.confidence,
       state: env.state === "live" ? "live" : "emerging",
+      // §10: carried so the strip can say "Reports differ" where it would have
+      // said Live/Emerging. The read path already capped state under 'material'.
+      conflictState: env.conflictState,
       observedAt: env.observedAt,
       validUntil: env.validUntil,
       action: actionFor(cand),
