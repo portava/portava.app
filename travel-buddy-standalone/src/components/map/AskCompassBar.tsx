@@ -37,6 +37,7 @@ import {
   emitMapEvent,
 } from '../../features/map/telemetry/mapTelemetry.ts';
 import { useOptionalMapStore } from '../../stores/mapStore.tsx';
+import { intentToRankingContext } from '../../features/map/intent/intentModel.ts';
 
 // ── Prompt chips ──────────────────────────────────────────────────────────────
 
@@ -154,11 +155,28 @@ export function AskCompassBar({
     setErrorMsg(null);
     inputRef.current?.blur();
 
+    // §13 TemporaryIntent addend (Table 9). intentToRankingContext is the ONE
+    // blessed projection of the store's intent into ranking input: it routes
+    // through activeIntent, so an EXPIRED intent projects to nulls and is not
+    // sent — a stale mood can never reach the ranker from here. When a live
+    // intent exists, its kind + sliders + horizon ride along so the map's
+    // Compass results are ranked for what the user wants right now, and the
+    // server can mark which picks "Match current intent".
+    const intentCtx = intentToRankingContext(mapStore?.intent ?? null);
+
     const res = await fetchCompassRecommendations({
       q: trimmed,
       city: city || undefined,
       surface: 'map',
       limit: 30,
+      ...(intentCtx.kind
+        ? {
+            intent: intentCtx.kind,
+            intentEnergy: intentCtx.energy ?? undefined,
+            intentNovelty: intentCtx.novelty ?? undefined,
+            intentExpiresAt: intentCtx.expiresAt ?? undefined,
+          }
+        : {}),
     });
 
     setLoading(false);

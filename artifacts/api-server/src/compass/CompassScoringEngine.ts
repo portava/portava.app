@@ -33,6 +33,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile, CompassContext } from "./types.js";
+import { intentBoost } from "./CompassTemporaryIntent.js";
 
 // ── Per-type weight profiles ──────────────────────────────────────────────────
 // Each key is the max contribution of that component for the given content type.
@@ -405,6 +406,15 @@ export interface ScoreComponents {
   diversityBoost:       number;
   fairExposureBoost:    number;
   attendanceBoost:      number;
+  /**
+   * §13 TemporaryIntent addend (0…INTENT_BOOST_MAX). Non-zero only when the
+   * request carried a live intent AND the item matches it. Like the
+   * place-affinity multiplier, it is a request-scoped signal that lives OUTSIDE
+   * the per-type 100 budget — it is added to the raw sum and re-clamped, so a
+   * strong intent match reorders mid-ranked candidates without ever exceeding
+   * the 0–100 contract.
+   */
+  temporaryIntentBoost: number;
   reportPenalty:        number;
   repetitionPenalty:    number;
   spamPenalty:          number;
@@ -444,6 +454,8 @@ function computeComponents(
     diversityBoost:      calcDiversityBoost(item.diversityScore as number | undefined, w.diversityBoost),
     fairExposureBoost:   calcFairExposureBoost(item.fairExposureScore as number | undefined, w.fairExposureBoost),
     attendanceBoost:     calcAttendanceBoost(item.attendingFriendCount as number | undefined, w.attendanceBoost),
+    // §13 intent addend — 0 when the request carried no live intent.
+    temporaryIntentBoost: intentBoost(item, context.temporaryIntent),
     // Penalties
     reportPenalty:       calcReportPenalty(item.reportCount),
     repetitionPenalty:   calcRepetitionPenalty(item.repeatCount),
@@ -458,7 +470,8 @@ function finalizeScore(c: ScoreComponents): number {
     c.interestMatch + c.cityMatch + c.freshness + c.trustBoost +
     c.languageMatch + c.qualitySignal + c.contextBoost +
     c.socialCompatibility + c.safetyCompatibility +
-    c.diversityBoost + c.fairExposureBoost + c.attendanceBoost -
+    c.diversityBoost + c.fairExposureBoost + c.attendanceBoost +
+    c.temporaryIntentBoost -
     c.reportPenalty - c.repetitionPenalty - c.spamPenalty -
     c.expiredSoonPenalty - c.riskPenalty;
   return Math.min(100, Math.max(0, raw));
@@ -541,6 +554,7 @@ export function scoreItem(
         languageMatch: 0, qualitySignal: 0, contextBoost: 0,
         socialCompatibility: 0, safetyCompatibility: 0,
         diversityBoost: 0, fairExposureBoost: 0, attendanceBoost: 0,
+        temporaryIntentBoost: 0,
         reportPenalty: 0, repetitionPenalty: 0, spamPenalty: 0,
         expiredSoonPenalty: 0, riskPenalty: 0,
       },
