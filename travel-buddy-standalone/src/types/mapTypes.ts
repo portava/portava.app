@@ -166,6 +166,9 @@ export const KIND_TO_ENTITY_TYPE: Record<MapObjectKind, MapEntityType> = {
   prediction: 'places',
   safety_notice: 'places',
   memory: 'places',
+  // A saved place is a place the viewer chose; the legacy renderer draws it
+  // with the places layer, the new renderer reads the kind directly (§6 gold).
+  saved_place: 'places',
 };
 
 /** The legacy action slugs, keyed by contract action. Unmapped actions drop. */

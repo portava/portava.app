@@ -123,9 +123,12 @@ describe('buildQrProjection — minimal allow-list', () => {
 });
 
 describe('buildQrPayload — the encoded QR carries no PII', () => {
-  it('encodes only the passport deep link', () => {
+  it('encodes only the passport deep link plus the scan marker (§32 passport_qr_scanned)', () => {
     const payload = buildQrPayload('ada');
-    expect(payload).toBe(makeDeepLink('ada'));
+    // The marker is the ONLY difference from the plain share link — it carries
+    // no data about anyone and lets the opened passport tell a scan from a tap.
+    expect(payload).toBe(`${makeDeepLink('ada')}?via=qr`);
+    expect(payload.startsWith(makeDeepLink('ada'))).toBe(true);
     for (const leak of ['Ada', 'Lovelace', 'secret.example', 'Da Nang', '87']) {
       expect(payload).not.toContain(leak);
     }

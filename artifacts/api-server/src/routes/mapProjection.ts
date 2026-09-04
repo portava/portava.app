@@ -118,6 +118,11 @@ import { loadNearbyEvents } from "./mapSearch.js";
 import { aggregateForViewport, bboxContains, deriveCrowdFlow, type BBox } from "../lib/mapAggregation.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { CROWD_FLOW_FLAG, produceZoneTransitions } from "../lib/crowdFlowProducer.js";
+import { readMeetingPoints } from "../lib/mapProducers/meetingPointProducer.js";
+import { readMemoryPins } from "../lib/mapProducers/memoryProducer.js";
+import { readSafetyNotices } from "../lib/mapProducers/safetyNoticeProducer.js";
+import { readSavedPlacePins } from "../lib/mapProducers/savedPlaceProducer.js";
+import { deriveEventCauseHypotheses } from "../lib/mapProducers/eventContextProducer.js";
 import { loadViewportPlaceRows, projectPlace } from "../lib/mapProjectPlace.js";
 
 /**
@@ -319,6 +324,35 @@ interface CrowdFlowReport {
   published: number;
   withheld: number;
   withheldForProtection: number;
+  /**
+   * §10 "inferred cause": what lib/mapProducers/eventContextProducer proposed
+   * from the events adjacent to the flow zones, and how many published flows
+   * actually carry an `inferred` half. Counts only. `eventsReadFailed` is the
+   * difference between "no adjacent event" and "we could not look" — a null
+   * inferred half for the second reason must not read as the first.
+   */
+  inferredCause: {
+    events: number;
+    eventsReadFailed: boolean;
+    hypotheses: number;
+    attached: number;
+  };
+}
+
+/**
+ * What each of the four M5 producer layers did, in counts, mirroring
+ * `crowdFlow`: a null entry means the kind was not requested; a `refusal`
+ * names why a producer declined to read (flag off, gates closed, read failure)
+ * so an empty layer is never ambiguous between "nothing here" and "we could
+ * not tell". `collected` is the count BEFORE the §24 gate and aggregation —
+ * the objects that were handed to the pipeline, not the objects served.
+ */
+type ProducerLayerReport = { refusal: string | null; collected: number };
+interface ProducerReports {
+  meeting_point: ProducerLayerReport | null;
+  memory: ProducerLayerReport | null;
+  safety_notice: ProducerLayerReport | null;
+  saved_place: ProducerLayerReport | null;
 }
 
 /**
@@ -395,6 +429,7 @@ router.get(
         protection: null,
         liveEnrichment: null,
         crowdFlow: null,
+        producers: null,
         places: null,
         generatedAt,
       });
@@ -444,6 +479,7 @@ router.get(
         protection: null,
         liveEnrichment: null,
         crowdFlow: null,
+        producers: null,
         places: null,
         generatedAt,
       });
@@ -493,14 +529,104 @@ router.get(
       );
     }
 
+    // ONE event read per request, shared by the `event` layer and the §10
+    // inferred-cause producer. Both go through `loadNearbyEvents` — the SAME
+    // privacy-complete source (visibility, friendship, eligibility, the shared
+    // block set, show_exact_location redaction) — so a cause hypothesis can
+    // only ever name an event the viewer could see as a pin anyway. `null`
+    // means the read failed; the event layer keeps its historical "empty on
+    // failure" behaviour, the cause producer reports it.
+    let eventsOnce: Promise<any[] | null> | null = null;
+    const loadEventsOnce = (): Promise<any[] | null> => {
+      if (!eventsOnce) {
+        eventsOnce = loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null);
+      }
+      return eventsOnce;
+    };
+
     if (wantKind("event")) {
       tasks.push(
         (async () => {
-          const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(
-            () => [],
-          );
+          const events = (await loadEventsOnce()) ?? [];
           for (const ev of events) collected.push(projectEvent(ev, nowMs));
           sources.push("events");
+        })(),
+      );
+    }
+
+    // ── M5 producers — the four kinds §18 declared and nothing produced ──────
+    //
+    // Each read is the ONE privacy-complete reader for its kind (registered in
+    // src/test/gatewayBypassGuard.test.ts with this file as its only approved
+    // caller). This route hands each one the viewer's SESSION id and the
+    // viewport, and decides nothing about who may see what: that decision is
+    // the producer's, and the object then goes through the same servable →
+    // enrich → §24 gate → aggregate → rank pipeline as every other layer.
+    const producers: ProducerReports = {
+      meeting_point: null,
+      memory: null,
+      safety_notice: null,
+      saved_place: null,
+    };
+
+    if (wantKind("meeting_point")) {
+      tasks.push(
+        (async () => {
+          // Participants only: scoped to the trips the viewer belongs to, and
+          // expiring at the meeting time (lib/mapProducers/meetingPointProducer).
+          const read = await readMeetingPoints(sc, user.id, { bbox, now: nowMs }).catch(() => null);
+          if (!read) { producers.meeting_point = { refusal: "read_threw", collected: 0 }; return; }
+          if (!read.ok) { producers.meeting_point = { refusal: read.reason, collected: 0 }; return; }
+          for (const p of read.points) collected.push(p);
+          producers.meeting_point = { refusal: null, collected: read.points.length };
+          sources.push("meeting_points");
+        })(),
+      );
+    }
+
+    if (wantKind("memory")) {
+      tasks.push(
+        (async () => {
+          // Owner only, coarse: `user.id` is the SESSION identity — the memory
+          // read takes it as the owner and returns that owner's private memory,
+          // so it must never come from a query parameter (the 2182 lesson).
+          const read = await readMemoryPins(sc, user.id, { bbox }).catch(() => null);
+          if (!read) { producers.memory = { refusal: "read_threw", collected: 0 }; return; }
+          if (!read.ok) { producers.memory = { refusal: read.reason, collected: 0 }; return; }
+          for (const p of read.pins) collected.push(p);
+          producers.memory = { refusal: null, collected: read.pins.length };
+          sources.push("memories");
+        })(),
+      );
+    }
+
+    if (wantKind("safety_notice")) {
+      tasks.push(
+        (async () => {
+          // §5 / §24: the specialist-reviewed safety claim, at the top of the
+          // §31 ladder and exempt from the §24 gate (lib/protectedLocations
+          // PROTECTION_EXEMPT_KINDS) — which is exactly why the producer emits
+          // no presence payload.
+          const read = await readSafetyNotices(sc, { bbox, now: nowMs }).catch(() => null);
+          if (!read) { producers.safety_notice = { refusal: "read_threw", collected: 0 }; return; }
+          if (!read.ok) { producers.safety_notice = { refusal: read.reason, collected: 0 }; return; }
+          for (const n of read.notices) collected.push(n);
+          producers.safety_notice = { refusal: null, collected: read.notices.length };
+          sources.push("safety");
+        })(),
+      );
+    }
+
+    if (wantKind("saved_place")) {
+      tasks.push(
+        (async () => {
+          // §16 Saved layer: the viewer's own wishlist on public venue geography.
+          const read = await readSavedPlacePins(sc, user.id, { bbox }).catch(() => null);
+          if (!read) { producers.saved_place = { refusal: "read_threw", collected: 0 }; return; }
+          if (!read.ok) { producers.saved_place = { refusal: read.reason, collected: 0 }; return; }
+          for (const p of read.pins) collected.push(p);
+          producers.saved_place = { refusal: null, collected: read.pins.length };
+          sources.push("saved");
         })(),
       );
     }
@@ -605,6 +731,7 @@ router.get(
             published: 0,
             withheld: 0,
             withheldForProtection: 0,
+            inferredCause: { events: 0, eventsReadFailed: false, hypotheses: 0, attached: 0 },
           };
           crowdFlow.report = report;
 
@@ -651,14 +778,30 @@ router.get(
             placeIndexFailed: placeRows === null,
           };
 
+          // §10 "inferred cause". The hypotheses are proposed from the events
+          // adjacent to the flow zones in space and time — the `event_context`
+          // family, which lib/crowdFlowProducer admits ONLY through this door
+          // (a MovementSignal carrying it is rejected at intake). A hypothesis
+          // can explain a flow the observed families published; it cannot
+          // create one, strengthen one, or set a flow state — `dispersing` and
+          // `unusual` stay explicitly-flagged facts (the recorded ruling in
+          // lib/crowdFlowProducer.ts), and nothing here proposes them.
+          const events = await loadEventsOnce();
+          const causes = deriveEventCauseHypotheses(events ?? [], zones, { now: nowMs });
+          report.inferredCause.events = causes.considered;
+          report.inferredCause.eventsReadFailed = events === null;
+          report.inferredCause.hypotheses = causes.hypotheses.length;
+
           // read → derive → attach cause. Every gate below is the producer's
-          // and lib/mapAggregation's; this route supplies the zone model and
-          // the clock, and decides nothing about who may be counted.
+          // and lib/mapAggregation's; this route supplies the zone model, the
+          // clock and the cause hypotheses, and decides nothing about who may
+          // be counted.
           const produced = await produceZoneTransitions(sc, {
             now: nowMs,
             zoneCentroids: model.centroids,
             resolveZoneId: model.resolveZoneId,
             resolveZoneForPoint: model.resolveZoneForPoint,
+            causeHypotheses: causes.hypotheses,
           }).catch(() => null);
           if (!produced) {
             report.refusal = "produce_failed";
@@ -671,7 +814,12 @@ router.get(
           const flow = deriveCrowdFlow(produced.transitions, { now: nowMs });
           report.published = flow.flows.length;
           report.withheld = flow.rejected.length;
-          for (const f of flow.flows) collected.push(f);
+          for (const f of flow.flows) {
+            if ((f.payload as { inferred?: unknown } | undefined)?.inferred != null) {
+              report.inferredCause.attached += 1;
+            }
+            collected.push(f);
+          }
 
           // A refusal means we never looked, so the layer must not appear in
           // `sources` claiming an empty answer it did not obtain.
@@ -725,6 +873,7 @@ router.get(
         protection: null,
         liveEnrichment: null,
         crowdFlow: null,
+        producers: null,
         places: null,
         generatedAt,
       });
@@ -784,6 +933,9 @@ router.get(
       // "no flows" is never ambiguous between "the gates said no" and "nothing
       // asked". See CrowdFlowReport.
       crowdFlow: crowdFlow.report,
+      // Per-producer refusals + pre-gate counts for the four M5 kinds. See
+      // ProducerReports: null per entry when that kind was not requested.
+      producers,
       // Null when the layer was not requested or could not be read (then it is
       // also absent from `sources`). Otherwise the row count and whether the
       // bounded read was a SAMPLE of the viewport — see lib/mapProjectPlace.

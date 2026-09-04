@@ -16,18 +16,20 @@
 import React from 'react';
 import {
   View,
+  Text,
   FlatList,
   ActivityIndicator,
   RefreshControl,
   StyleSheet,
   type ViewToken,
 } from 'react-native';
-import { color, space } from '../../../theme/tokens.ts';
+import { color, space, radius, type as typeScale } from '../../../theme/tokens.ts';
 import { WallObjectRenderer } from './WallObjectRenderer.tsx';
 import { CaughtUpState } from './CaughtUpState.tsx';
 import { NotInterestedControl } from './objects/wallItemShared.tsx';
 import { WallItemVisibilityProvider } from '../hooks/useWallItemVisibility.tsx';
 import { trackCaughtUp, trackImpression } from '../services/wallAnalytics.ts';
+import { formatCacheAge } from '../services/wallPrefetch.ts';
 import type { WallMode, WallProjection } from '../types/wallProjection.ts';
 
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 55 };
@@ -40,6 +42,8 @@ export function WallFeed({
   refreshing,
   loadingMore,
   caughtUp,
+  stale = false,
+  cachedAt = null,
   onEndReached,
   onRefresh,
   onHide,
@@ -51,6 +55,10 @@ export function WallFeed({
   refreshing: boolean;
   loadingMore: boolean;
   caughtUp: boolean;
+  /** Items are the offline cached page — render a saved/stale label (§31/§37). */
+  stale?: boolean;
+  /** Epoch-ms the cached page was saved, for the "saved N ago" label. */
+  cachedAt?: number | null;
   onEndReached: () => void;
   onRefresh: () => void;
   /** Drop an object the viewer marked "not interested" (spec §7/§32). */
@@ -103,6 +111,28 @@ export function WallFeed({
     [onHide],
   );
 
+  // Offline stale banner (§31/§37). Rendered ABOVE the caller's header so it is
+  // the first thing seen, and never relies on color alone (§36): it carries an
+  // explicit "Offline · saved feed" text with the last-saved time.
+  const staleBanner =
+    stale && items.length > 0 ? (
+      <View style={s.staleBanner} testID="wall-stale-banner" accessibilityRole="text">
+        <Text style={s.staleText}>
+          {`Offline · saved feed${cachedAt != null ? ` · ${formatCacheAge(Date.now() - cachedAt)}` : ''}`}
+        </Text>
+      </View>
+    ) : null;
+
+  const header =
+    staleBanner != null ? (
+      <>
+        {staleBanner}
+        {ListHeaderComponent}
+      </>
+    ) : (
+      ListHeaderComponent
+    );
+
   return (
     <WallItemVisibilityProvider visibleIds={visibleIds}>
     <FlatList
@@ -110,7 +140,7 @@ export function WallFeed({
       data={items}
       keyExtractor={(item) => item.projectionId}
       renderItem={renderItem}
-      ListHeaderComponent={ListHeaderComponent}
+      ListHeaderComponent={header}
       onEndReached={onEndReached}
       onEndReachedThreshold={0.6}
       onViewableItemsChanged={onViewableItemsChanged.current}
@@ -149,4 +179,13 @@ const s = StyleSheet.create({
   itemWrap: { paddingHorizontal: space.lg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: space.xxxl },
   footer: { paddingVertical: space.xl, alignItems: 'center' },
+  staleBanner: {
+    marginHorizontal: space.lg,
+    marginBottom: space.sm,
+    paddingVertical: space.sm,
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    backgroundColor: color.haze,
+  },
+  staleText: { ...typeScale.small, color: color.mute, textAlign: 'center' },
 });

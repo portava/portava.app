@@ -898,6 +898,16 @@ export function liveSubjectIdFor(obj: MapObject): string | null {
     return typeof canonical === "string" && canonical.length > 0 ? canonical : null;
   }
 
+  // A SAVED PLACE'S SUBJECT IS ITS CANONICAL PLACE TOO. saved_places.place_id
+  // is a discovery_places id — the same foreign id space as a gem — and the
+  // bridge is discovery_places.canonical_location_id → places.id (migration
+  // 2053), which lib/mapProducers/savedPlaceProducer.ts carries as
+  // payload.canonicalPlaceId. Unbridged ⇒ no live subject, never a wrong one.
+  if (kind === "saved") {
+    const canonical = (obj.payload as { canonicalPlaceId?: unknown } | undefined)?.canonicalPlaceId;
+    return typeof canonical === "string" && canonical.length > 0 ? canonical : null;
+  }
+
   // Only place-like objects carry live claims today.
   return kind === "place" ? rest : null;
 }
