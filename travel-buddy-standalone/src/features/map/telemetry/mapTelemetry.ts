@@ -375,9 +375,12 @@ export function isMapEntryPoint(value: unknown): value is MapEntryPoint {
  *   1. An explicit `entry` param, but only if it is a real MapEntryPoint. A
  *      query param is user-controllable, and an enumerated telemetry dimension
  *      fed from one is unbounded cardinality unless it is narrowed here.
- *   2. Otherwise `deeplink` when the URL carried anything at all — every
- *      in-app `router.push('/map?…')` is exactly that.
- *   3. Otherwise `tab`, the bare open.
+ *   2. Present but not a real entry point → `unknown`: someone stated an origin
+ *      and named something that is not one, which is unknown, not a deep link.
+ *   3. Absent entirely → `deeplink`. Every internal surface that navigates to
+ *      /map states its origin explicitly (see the producer table in PR #354),
+ *      so an unstated origin is an external/unattributable deep link. (This
+ *      returns `deeplink`, not `tab`; the bare tab open states its own origin.)
  *
  * `mode` is deliberately NOT consulted: 'circle' and 'passport' are §30 map
  * modes, a different vocabulary, and the payload already reports the real mode

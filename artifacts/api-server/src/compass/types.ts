@@ -70,6 +70,15 @@ export interface CompassContext {
    * context-resolver) do not need to change.
    */
   placeAffinities?: Record<string, number>;
+  /**
+   * Map spec §13 TemporaryIntent — the request-scoped "what I want right now"
+   * addend (bored / eat / party / …) with its two sliders. Optional and
+   * ephemeral: set only when the client sent a live intent (the recommendations
+   * route parses and re-checks its expiry via CompassTemporaryIntent), never
+   * read from or written back to the stored profile. Drives the intent boost in
+   * CompassScoringEngine. Absent ⇒ zero boost, cleanly.
+   */
+  temporaryIntent?: import("./CompassTemporaryIntent.js").TemporaryIntentContext | null;
 }
 
 // ── User profile ──────────────────────────────────────────────────────────────

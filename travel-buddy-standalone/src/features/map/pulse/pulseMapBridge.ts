@@ -433,6 +433,45 @@ export function mapStateToPulseQuery(
   };
 }
 
+/**
+ * The map screen's convenience over `mapStateToPulseQuery`: it holds primitives
+ * (a mode, a camera centre, maybe a selected object and a city) rather than a
+ * `MapDeepLinkState`, so this assembles the minimal state and reverses it into a
+ * Pulse query. It exists so the Map → Pulse direction is a ONE-LINE call at the
+ * fetch site and the state-assembly rule is testable on its own — a screen that
+ * hand-rolled the `MapDeepLinkState` inline would be re-deriving §26's mapping
+ * where no test could see it.
+ *
+ * `cameraState` defaults from the centre: a fix means the user is looking at a
+ * place (FOLLOW_USER → `nearMe`), no fix means a free/city view. Callers that
+ * know the real camera state (following the user, focused on a trip) should pass
+ * it so `mapStateToPulseQuery` can pick the more specific context.
+ */
+export function pulseQueryForMap(input: {
+  mode: MapMode;
+  cameraState?: MapCameraState;
+  center?: LatLng | null;
+  subjectKind?: MapObjectKind | null;
+  subjectId?: string | null;
+  citySlug?: string | null;
+  layers?: readonly MapLayer[];
+}): PulseQuery {
+  const center = input.center ?? null;
+  const state: MapDeepLinkState = {
+    mode: input.mode,
+    cameraTarget: {
+      state: input.cameraState ?? (center ? "FOLLOW_USER" : "FREE_EXPLORE"),
+      center,
+      bounds: null,
+      zoom: null,
+      subject: { kind: input.subjectKind ?? null, id: input.subjectId ?? null },
+    },
+    selectedObjectId: input.subjectId ?? null,
+    layers: normaliseLayers(input.layers ? [...input.layers] : [...DEFAULT_MAP_LAYERS]),
+  };
+  return mapStateToPulseQuery(state, { citySlug: input.citySlug ?? null });
+}
+
 // ── §26 guarantee: no contradiction ────────────────────────────────────────────
 
 /**

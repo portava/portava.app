@@ -49,6 +49,13 @@ import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 import { MapStoreProvider, useMapStore, deriveMapCapabilities } from '../../src/stores/mapStore.tsx';
 import { resolveBack } from '../../src/features/map/state/mapMachine.ts';
 import { activeIntent } from '../../src/features/map/intent/intentModel.ts';
+import {
+  pulseQueryForMap,
+  reconcileOrDrop,
+  type MapMode,
+  type PulseIntelItem,
+} from '../../src/features/map/pulse/pulseMapBridge.ts';
+import { detectArrivalPick } from '../../src/features/map/arrival/arrivalPromptModel.ts';
 import { NOW_OFFSET } from '../../src/features/map/time/timeMachine.ts';
 import { IntentSheet } from '../../src/components/map/IntentSheet.tsx';
 import { LayersSheet, loadLayerPreferences } from '../../src/components/map/LayersSheet.tsx';
@@ -1172,11 +1179,26 @@ function FullScreenMapScreenInner() {
     if (mode === 'passport') return;
     let cancelled = false;
     void (async () => {
-      const res = await getLivePulseItems({}).catch(() => null);
+      // §26 Map → Pulse: the narrative feed follows the geographic state. The
+      // reverse of the deep-link tap — mapStateToPulseQuery, via pulseQueryForMap
+      // — turns "where the map is looking" into "which Pulse context/coords to
+      // ask for", so the bottom card summarises the change near what the user is
+      // actually looking at rather than a fixed default.
+      const query = pulseQueryForMap({
+        mode: machine.mode as MapMode,
+        center: cameraCenter ?? null,
+        citySlug: null,
+      });
+      const res = await getLivePulseItems({
+        context: query.context,
+        lat: query.lat,
+        lng: query.lng,
+        citySlug: query.citySlug,
+      }).catch(() => null);
       if (!cancelled && res && res.ok) setPulseItems(res.items);
     })();
     return () => { cancelled = true; };
-  }, [mode]);
+  }, [mode, machine.mode, cameraCenter]);
 
   // ── §35 telemetry ───────────────────────────────────────────────────────────
   // Transport is installed once per map session. Without one the emitter keeps
@@ -1912,6 +1934,43 @@ function FullScreenMapScreenInner() {
   } | null>(null);
   const [contributeObject, setContributeObject] = useState<MapObject | null>(null);
   /**
+   * §38 arrival prompt. The id of the object whose contribution sheet was opened
+   * BY an arrival (not a manual tap), so `contribution_submitted` can carry
+   * `prompt: 'arrival'` and close the §38 loop. Compared by id in onSubmit so no
+   * manual open path has to know about it; cleared on close.
+   */
+  const [arrivalPromptId, setArrivalPromptId] = useState<string | null>(null);
+  /**
+   * §38: picks we have already surfaced the arrival prompt for this session, so
+   * a one-tap prompt does not re-fire every time GPS re-enters the radius. A ref
+   * (not state) — it must not trigger a re-render or re-run the detector.
+   */
+  const arrivalPromptedIdsRef = useRef<Set<string>>(new Set());
+
+  // ── §38 arrival one-tap prompt ──────────────────────────────────────────────
+  // "The user taps Go There … arrives, and later answers a one-tap prompt about
+  // the crowd. That observation re-enters the Live Intelligence pipeline." When
+  // the user's real position reaches a Compass Pick they have not yet been asked
+  // about, surface the contribution sheet ONCE and mark it arrival-triggered so
+  // contribution_submitted carries prompt:'arrival' and closes the loop. Gated
+  // on no sheet already being open, so it never yanks the user off something
+  // they are already doing. detectArrivalPick is pure and fail-closed.
+  useEffect(() => {
+    if (mode === 'passport') return;
+    if (contributeObject !== null) return; // don't interrupt an open sheet
+    if (userLat == null || userLng == null) return;
+    const pick = detectArrivalPick(
+      { lat: userLat, lng: userLng },
+      compassPickObjects,
+      arrivalPromptedIdsRef.current,
+    );
+    if (!pick) return;
+    arrivalPromptedIdsRef.current.add(pick.id);
+    setArrivalPromptId(pick.id);
+    setContributeObject(pick);
+  }, [mode, userLat, userLng, compassPickObjects, contributeObject]);
+
+  /**
    * §25 `report` on a person or a listing. Held as the OBJECT rather than a
    * boolean so the sheet's subject cannot drift from the thing that was
    * reported when the selection changes underneath it.
@@ -2468,14 +2527,33 @@ function FullScreenMapScreenInner() {
         <LivePulseCard
           items={pulseItems}
           bottomInset={insets.bottom + 96}
-          onDeepLink={(deepLink) => {
+          onDeepLink={(deepLink, item) => {
             if (deepLink.mode) dispatchMapEvent({ type: 'ENTER_MODE', mode: deepLink.mode });
             if (deepLink.selectedObjectId) {
-              dispatchMapEvent({
-                type: 'SELECT_OBJECT',
-                objectId: deepLink.selectedObjectId,
-                objectKind: 'place',
-              });
+              // §26 guarantee at the handoff: a card the user just read is about
+              // to become a marker they read. If the two surfaces disagree about
+              // the SAME subject's live state, selecting the marker would show a
+              // second truth — so reconcileOrDrop against the map's own object
+              // and, on divergence, FALL CLOSED: move the camera to the area but
+              // do not open a sheet that contradicts the card (§37: no stale
+              // claim rendered live). Silence on both sides is not a divergence,
+              // so a Pulse item that states no intel axes always selects.
+              const targetObj = objects.find((o) => o.id === deepLink.selectedObjectId) ?? null;
+              const verdict = targetObj
+                ? reconcileOrDrop(item as PulseIntelItem, targetObj)
+                : { ok: true as const };
+              if (verdict.ok) {
+                dispatchMapEvent({
+                  type: 'SELECT_OBJECT',
+                  objectId: deepLink.selectedObjectId,
+                  objectKind: 'place',
+                });
+              } else if (__DEV__) {
+                console.warn(
+                  '[map] §26 Pulse↔Map divergence — deep-link select suppressed',
+                  verdict.divergences,
+                );
+              }
             }
             const target = deepLink.cameraTarget;
             const cam = cameraRef.current;
@@ -2599,14 +2677,19 @@ function FullScreenMapScreenInner() {
       <MapContributionSheet
         visible={contributeObject !== null}
         object={contributeObject}
-        onClose={() => setContributeObject(null)}
+        onClose={() => { setContributeObject(null); setArrivalPromptId(null); }}
         onRequestMedia={requestContributionMedia}
         onSubmit={(contribution) => {
           if (!contributeObject) return;
+          // §38: a submission whose sheet was opened by an arrival carries
+          // prompt:'arrival' — the loop's VERIFY step, attributable to the pick
+          // the user was routed to. Everything else is a manual 'sheet' open.
+          const arrivalTriggered =
+            arrivalPromptId !== null && contributeObject.id === arrivalPromptId;
           emitMapEvent('contribution_submitted', {
             ref: describeMapObject(contributeObject),
             contributionKind: contribution.kind,
-            prompt: 'sheet',
+            prompt: arrivalTriggered ? 'arrival' : 'sheet',
           });
         }}
       />

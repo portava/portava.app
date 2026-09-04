@@ -29,6 +29,11 @@ import { checkRateLimit } from "../lib/rateLimit.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { logCompassImpression } from "../lib/rankLog.js";
 import { buildCompassContext, defaultSignals } from "../compass/CompassContextEngine.js";
+import {
+  MAP_INTENT_LABELS,
+  itemMatchesIntent,
+  parseTemporaryIntent,
+} from "../compass/CompassTemporaryIntent.js";
 import { resolveLocalHour, parseTzOffsetParam } from "../lib/localTime.js";
 import { timeOfDayForHour } from "./compassHome.js";
 import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
@@ -3093,6 +3098,16 @@ const recommendationsQuerySchema = z.object({
   endDate:   z.string().max(30).optional(),
   tripId:    z.string().uuid().optional(),
   sessionId: z.string().max(100).optional(),
+  // §13 TemporaryIntent addend (Table 9). The client's IntentRankingContext,
+  // flattened onto the query string. All optional: a request with no live
+  // intent simply omits them, and CompassTemporaryIntent.parseTemporaryIntent
+  // re-checks the horizon fail-closed. `intent` is validated as a real map
+  // intent kind THERE, not here, so an off-vocabulary value is ignored (no
+  // intent) rather than rejecting the whole recommendations request.
+  intent:         z.string().max(40).optional(),
+  intentEnergy:   z.coerce.number().min(0).max(1).optional(),
+  intentNovelty:  z.coerce.number().min(0).max(1).optional(),
+  intentExpiresAt: z.string().max(40).optional(),
 });
 
 router.get("/compass/recommendations", async (req, res) => {
@@ -3112,12 +3127,23 @@ router.get("/compass/recommendations", async (req, res) => {
     return;
   }
 
-  const { surface = "for_you", q, city, limit, startDate, endDate, tripId, sessionId } = parsed.data;
+  const {
+    surface = "for_you", q, city, limit, startDate, endDate, tripId, sessionId,
+    intent, intentEnergy, intentNovelty, intentExpiresAt,
+  } = parsed.data;
   // Preserve a client-supplied sessionId for funnel grouping; otherwise mint
   // one for this request batch so every skip-ranking pipeline below still
   // logs an attributable session_id instead of silently dropping it.
   const effectiveSessionId = sessionId ?? randomUUID();
   const nowMs = Date.now();
+
+  // §13 TemporaryIntent (Table 9). Parsed and expiry-re-checked fail-closed —
+  // null unless the client sent a live, well-formed, unexpired intent. It is a
+  // request-scoped addend to ranking, never merged into the stored profile.
+  const temporaryIntent = parseTemporaryIntent(
+    { intent, intentEnergy, intentNovelty, intentExpiresAt },
+    nowMs,
+  );
 
   // Feature-flag gate — silently return empty list when Compass is off.
   const enabled = await isCompassEnabled(sc);
@@ -3577,6 +3603,13 @@ router.get("/compass/recommendations", async (req, res) => {
       await localHourForRequest(sc, user.id, req),
     );
     const context = buildCompassContext(effectiveProfile as typeof profile, signals);
+    // §13: thread the TemporaryIntent addend into ranking. This is a SEPARATE
+    // input alongside the profile (Table 9's `+`), consumed by the scoring
+    // engine's intent boost — never merged into or written back to the profile.
+    // It runs inside scoreItem, AFTER the Safety/Eligibility/Privacy gates and
+    // the k-anonymity aggregation, so it can only reorder what a user may
+    // already see, never widen it.
+    if (temporaryIntent) context.temporaryIntent = temporaryIntent;
     const items   = await hydrateCompassItems(sc, effectiveProfile as typeof profile);
 
     // Choose section and type whitelist by surface
@@ -3658,9 +3691,24 @@ router.get("/compass/recommendations", async (req, res) => {
 
     const topItems = candidateItems.slice(0, limit);
 
+    // §14 "Matches current intent" — surfaced only when a live intent shaped
+    // this ranking. The datum is the SAME `itemMatchesIntent` the scoring boost
+    // is built on, so the line the map renders and the boost the ranker applied
+    // can never disagree. Attached to `data` so the map's compassMapModel can
+    // populate a CompassMapCandidate's matchesIntent/intentLabel from it.
+    const intentLabel = temporaryIntent ? MAP_INTENT_LABELS[temporaryIntent.kind] : null;
+
     const recommendations = topItems.map((fi: any) => {
       const inner = fi.item ?? fi;
       const type  = String(inner.type ?? fi.type ?? "");
+      const baseData = inner.data ?? null;
+      const data = temporaryIntent
+        ? {
+            ...(baseData ?? {}),
+            matchesIntent: itemMatchesIntent(inner as any, temporaryIntent),
+            intentLabel,
+          }
+        : baseData;
       return {
         id:       String(inner.id ?? fi.id ?? ""),
         type,
@@ -3668,7 +3716,7 @@ router.get("/compass/recommendations", async (req, res) => {
         title:    inner.title ?? fi.title ?? null,
         reason:   buildReasonText(type, fi.explanationKey, city ?? profile.currentCity ?? null),
         city:     inner.city ?? (inner.data?.city as string | undefined) ?? city ?? profile.currentCity ?? null,
-        data:     inner.data ?? null,
+        data,
       };
     });
 
