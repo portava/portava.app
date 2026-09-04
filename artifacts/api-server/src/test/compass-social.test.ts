@@ -357,6 +357,70 @@ describe("D. get_travel_compatibility", () => {
   });
 });
 
+// ── D2. §8 explicit current-intent weighting ──────────────────────────────────
+//
+// Compass reads both travelers' EXPLICIT availability windows through the ONE
+// Passport projection layer and weights a shared CURRENT intent above generic
+// long-term interests — but ONLY when the target has an active explicit window,
+// so ordering is unchanged for travelers who declared no explicit intent (§8).
+
+const WIN_PAST = new Date(Date.now() - 3_600_000).toISOString();
+const WIN_FUTURE = new Date(Date.now() + 6 * 3_600_000).toISOString();
+function windowRow(userId: string, intents: string[], visibility = "public") {
+  return {
+    id: `w-${userId}-${Math.random().toString(16).slice(2)}`, user_id: userId, type: "one_time",
+    start_at: WIN_PAST, end_at: WIN_FUTURE, trip_id: null, open_to_plans: true, intents,
+    group_preference: "small_group", max_travel_minutes: 20, visibility,
+    source: "explicit", social_availability: "open", expires_at: WIN_FUTURE,
+    created_at: WIN_PAST, updated_at: WIN_PAST,
+  };
+}
+
+describe("D2. get_travel_compatibility — §8 explicit current-intent weighting", () => {
+  it("a shared explicit current intent lifts the score above the generic-only baseline (order changes only WITH a window)", async () => {
+    // Baseline: co-members, no explicit windows → no intent weighting at all.
+    const baseline: any = await executeCompassTool(
+      makeClient(tripFixture()), ALICE_ID, profileFor(), "get_travel_compatibility", { handle: "bob" },
+    );
+    assert.ok(baseline.compatibility, "co-members can be compared");
+    assert.deepEqual(baseline.compatibility.sharedIntents, [], "no window ⇒ no explicit current intent");
+    assert.equal(baseline.compatibility.intentBoosted, false, "no window ⇒ ordering unchanged");
+
+    // Both now hold an active explicit window sharing 'Nightlife'.
+    const db = tripFixture();
+    db.availability_windows = [
+      windowRow(ALICE_ID, ["Nightlife", "Food"]),
+      windowRow(BOB_ID, ["Nightlife"], "public"),
+    ];
+    const boosted: any = await executeCompassTool(
+      makeClient(db), ALICE_ID, profileFor(), "get_travel_compatibility", { handle: "bob" },
+    );
+    assert.ok(boosted.compatibility);
+    assert.deepEqual(boosted.compatibility.sharedIntents, ["Nightlife"], "only the SHARED explicit intent is revealed");
+    assert.equal(boosted.compatibility.intentBoosted, true);
+    assert.ok(
+      boosted.compatibility.score > baseline.compatibility.score,
+      "explicit current-intent overlap must outweigh the generic-only baseline",
+    );
+    // Alice's own non-shared intent ("Food") must never surface as shared.
+    assert.ok(!boosted.compatibility.sharedIntents.includes("Food"), "non-shared intent must not surface");
+  });
+
+  it("§7: a window the caller may NOT see (private) never weights the score", async () => {
+    const db = tripFixture();
+    db.availability_windows = [
+      windowRow(ALICE_ID, ["Nightlife"]),
+      windowRow(BOB_ID, ["Nightlife"], "private"), // §7: private/inferred is never shared
+    ];
+    const result: any = await executeCompassTool(
+      makeClient(db), ALICE_ID, profileFor(), "get_travel_compatibility", { handle: "bob" },
+    );
+    assert.ok(result.compatibility);
+    assert.deepEqual(result.compatibility.sharedIntents, [], "a private window is invisible to the caller");
+    assert.equal(result.compatibility.intentBoosted, false);
+  });
+});
+
 // ── E. get_group_recommendation ───────────────────────────────────────────────
 
 function groupFixture(): Db {
