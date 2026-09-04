@@ -27,6 +27,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, X as XIcon } from 'lucide-react-native';
 import { color, space, radius, type as t, icon, avatar } from '../../src/theme/tokens.ts';
 import { MapTopControls } from '../../src/components/map/MapTopControls.tsx';
+import { MapFloatingControls } from '../../src/components/map/MapFloatingControls.tsx';
+import { pruneBaseMapRegions } from '../../src/features/map/cache/offlineBaseMap.ts';
 import { AskCompassBar } from '../../src/components/map/AskCompassBar.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
 import { getDiscoveryPlaces } from '../../src/services/discovery.ts';
@@ -888,6 +890,29 @@ function FullScreenMapScreenInner() {
    */
   const placesWanted = mode !== 'passport' && layerPrefs.relevant_places !== 'off';
 
+  // ── §34 live camera ──────────────────────────────────────────────────────────
+  // Where the camera actually SETTLED, reported by DiscoveryMapView through its
+  // onCameraChange prop. Declared above useMapEntities because the hook now
+  // takes it as the §34 re-query source: it used to be kept out of the fetch
+  // key because "a float that changes on every pinch would refetch the
+  // projection continuously" — the hook now QUANTISES it to a zoom band + a
+  // coarse centre grid and only re-queries after the §34 settle debounce, so a
+  // pan inside the viewport never re-queries and crossing into a new area does
+  // exactly once. It still also drives §17 bands and the §31 collision viewport
+  // (activeZoom / zoomBand, below).
+  const [liveCamera, setLiveCamera] =
+    useState<{ zoom: number; lat: number; lng: number } | null>(null);
+  const handleCameraChange = useCallback(
+    (cam: { zoom: number; center: { lat: number; lng: number } }) => {
+      setLiveCamera((prev) =>
+        prev && prev.zoom === cam.zoom && prev.lat === cam.center.lat && prev.lng === cam.center.lng
+          ? prev
+          : { zoom: cam.zoom, lat: cam.center.lat, lng: cam.center.lng },
+      );
+    },
+    [],
+  );
+
   // passportEntities — React hooks cannot be called conditionally.
   const {
     entities: defaultEntities,
@@ -902,6 +927,10 @@ function FullScreenMapScreenInner() {
     lat: fallbackLat,
     lng: fallbackLng,
     zoom: cameraZoom ?? paramZoom,
+    // §34: once the camera settles, the viewport intelligence is fetched for
+    // where the user is actually looking, not where the shell last aimed. Null
+    // in passport mode, which fetches nothing regardless.
+    camera: mode === 'passport' ? null : liveCamera,
     // §16 explicit choice only. Passport mode asks for nothing at all, so it
     // must not smuggle a flow request past that intent.
     crowdFlow: mode !== 'passport' && layerPrefs.crowd_flow === 'on',
@@ -1153,6 +1182,18 @@ function FullScreenMapScreenInner() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── §28 offline base-map hygiene ─────────────────────────────────────────────
+  // "Clearly label stale cached intelligence" applies to cached geography too:
+  // drop offline base-map packs past the base_map_region TTL (and any beyond the
+  // class's entry cap) whenever the map opens. Fire-and-forget and fails soft —
+  // it downloads nothing, only prunes, and reports `offline_unavailable` on a
+  // build without the native OfflineManager (web / Jest). Creating a pack is a
+  // deliberate act a §28 "download this area" surface owns; this is the upkeep
+  // that keeps whatever exists inside policy.
+  useEffect(() => {
+    void pruneBaseMapRegions().catch(() => {});
+  }, []);
+
   // ── §30 Back ladder ─────────────────────────────────────────────────────────
   // Overlay -> selection -> secondary mode -> let the router pop. Navigation is
   // deliberately NOT a rung: a stray back must not drop the user out of
@@ -1166,6 +1207,23 @@ function FullScreenMapScreenInner() {
     });
     return () => sub.remove();
   }, [machine, dispatchMapEvent]);
+
+  // ── §30 END_NAVIGATION on return from external routing ───────────────────────
+  // Navigate hands off to the device's maps app (see handleMapAction), which
+  // backgrounds Portava. There is no in-app turn-by-turn to "finish", so the
+  // honest end of the navigation framing is the moment the user comes BACK: the
+  // app returns to the foreground. This listener is mounted ONLY while a
+  // navigation is active, so a plain background/foreground with nothing routing
+  // dispatches nothing, and END_NAVIGATION on a null navigation is a machine
+  // no-op regardless. On return the destination pin's §5 promotion is released.
+  const hasNavigation = machine.navigation !== null;
+  useEffect(() => {
+    if (!hasNavigation) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') dispatchMapEvent({ type: 'END_NAVIGATION' });
+    });
+    return () => sub.remove();
+  }, [hasNavigation, dispatchMapEvent]);
 
   // ── Compass search override ─────────────────────────────────────────────────
   // When a Compass query is active, compassOverrideEntities replaces defaultEntities
@@ -1308,29 +1366,12 @@ function FullScreenMapScreenInner() {
   // Declared here rather than beside the render pipeline below because the
   // MARKERS need it too: `filterByLayers` was imported and never called, so the
   // Layers sheet wrote preferences that could not reach a drawn pin.
-  // `liveCamera` is the camera DiscoveryMapView actually has, reported through
-  // its onCameraChange prop. It is held HERE rather than pushed into mapStore's
-  // cameraZoom because that value is part of useMapEntities' fetch key above —
-  // a float that changes on every pinch would refetch the projection
-  // continuously. What needs the live camera is this pipeline (§17 bands, the
-  // §31 collision viewport), not the fetch.
   //
-  // It takes precedence over cameraZoom/cameraCenter: those are written when
-  // the screen COMMANDS a camera move (a carousel swipe, a marker tap), so they
-  // describe where the camera was sent, and liveCamera describes where it
-  // ended up. When the two disagree the camera is the authority.
-  const [liveCamera, setLiveCamera] =
-    useState<{ zoom: number; lat: number; lng: number } | null>(null);
-  const handleCameraChange = useCallback(
-    (cam: { zoom: number; center: { lat: number; lng: number } }) => {
-      setLiveCamera((prev) =>
-        prev && prev.zoom === cam.zoom && prev.lat === cam.center.lat && prev.lng === cam.center.lng
-          ? prev
-          : { zoom: cam.zoom, lat: cam.center.lat, lng: cam.center.lng },
-      );
-    },
-    [],
-  );
+  // `liveCamera` (declared above, before useMapEntities) is where the camera
+  // ENDED UP. It takes precedence over cameraZoom/cameraCenter, which are
+  // written when the screen COMMANDS a camera move (a carousel swipe, a marker
+  // tap) and describe where the camera was SENT. When the two disagree the
+  // camera is the authority.
   const activeZoom = liveCamera?.zoom ?? cameraZoom ?? paramZoom;
   const zoomBand = zoomRenderBand(activeZoom);
 
@@ -1517,6 +1558,17 @@ function FullScreenMapScreenInner() {
         setActiveIndex(focusIndex);
         carouselRef.current?.scrollToIndex(focusIndex);
         const entity = entities[focusIndex];
+        // §30 FOCUS_OBJECT — frame the deep-linked object WITHOUT selecting it.
+        // This snap centres the camera on a focusId without opening its sheet
+        // (a marker tap does that via SELECT_OBJECT), so the machine's framing
+        // event is FOCUS_OBJECT: camera → the kind's framing, cameraTargetId →
+        // the object, selection untouched. Kind comes off the entity's own
+        // MapObject; the reducer no-ops on a malformed kind, so a payload-less
+        // entity simply leaves the machine framing where it was.
+        const focusObj = objectOf(entity);
+        if (focusObj) {
+          dispatchMapEvent({ type: 'FOCUS_OBJECT', objectId: focusObj.id, objectKind: focusObj.kind });
+        }
         if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
           cameraRef.current.easeTo({
             center: [entity.lng, entity.lat],
@@ -1931,6 +1983,18 @@ function FullScreenMapScreenInner() {
       const c = centroidOf(obj.geometry);
       switch (action) {
         case 'navigate':
+          // §30 START_NAVIGATION — §5 gives active navigation standing camera
+          // precedence, so the machine enters FOCUS_ROUTE and promotes THIS
+          // object's pin (renderResult reads navigation.destinationObjectId).
+          // Routing itself is the device's maps app (openInMaps), which has no
+          // in-app session to observe; END_NAVIGATION fires when the user
+          // returns to Portava (the AppState effect below). routeId must be a
+          // non-empty string for the reducer to accept it.
+          dispatchMapEvent({
+            type: 'START_NAVIGATION',
+            routeId: `route:${rawObjectId(obj.id)}`,
+            destinationObjectId: obj.id,
+          });
           if (c) openInMaps(c.lat, c.lng);
           return;
         case 'contribute':
@@ -2191,6 +2255,10 @@ function FullScreenMapScreenInner() {
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
         onCameraChange={handleCameraChange}
+        // §30: a user drag/pinch hands the camera to the machine (FREE_EXPLORE).
+        // Gated inside DiscoveryMapView on the SDK's userInteraction flag, so a
+        // programmatic easeTo (recenter, carousel, focus) never lands here.
+        onUserPan={() => dispatchMapEvent({ type: 'USER_PANNED' })}
         filterRowOffset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT + 8}
         onLongPressMap={handleMapLongPress}
       />
@@ -2226,6 +2294,18 @@ function FullScreenMapScreenInner() {
         title={null}
         topInset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT}
         onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'LAYERS' })}
+        // §30 RECENTER — return camera control to the machine (FOLLOW_USER).
+        // The button's own easeTo does the move; this records the intent.
+        onRecenter={() => dispatchMapEvent({ type: 'RECENTER' })}
+      />
+
+      {/* §3 floating controls: zoom in/out + orientation reset (compass → N).
+          Steps from activeZoom — the camera's REAL zoom — so a tap is one level
+          from where the map actually is, not from a stale commanded value. */}
+      <MapFloatingControls
+        cameraRef={cameraRef}
+        zoom={activeZoom}
+        bottomInset={insets.bottom + 220}
       />
 
       {/* Places loading indicator — small spinner overlay while getDiscoveryPlaces
