@@ -99,6 +99,7 @@ import {
   prepareForRender,
   zoomRenderBand,
   isKindVisibleAtBand,
+  compassRecommendationIdsOf,
 } from '../../src/features/map/render/collision.ts';
 import { filterByLayers } from '../../src/features/map/layers/layerModel.ts';
 import { isZoneKind } from '../../src/features/map/render/zoneStyle.ts';
@@ -1054,6 +1055,12 @@ function FullScreenMapScreenInner() {
           promotion: {
             selectedId: machine.selection?.objectId ?? null,
             navigationTargetId: machine.navigation?.destinationObjectId ?? null,
+            // §14/§31 — promoteAll recomputes renderingPriority from each
+            // object's KIND, so the Compass rung the pick producer stamped is
+            // discarded unless the ids are named here. Without this the picks
+            // fall to their kind default and the "3-5 best next moves" lose
+            // collisions to ordinary events and live zones.
+            compassRecommendationIds: compassRecommendationIdsOf(objects),
           },
         },
       ),
