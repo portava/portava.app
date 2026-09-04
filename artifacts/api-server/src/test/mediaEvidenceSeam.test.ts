@@ -30,6 +30,7 @@
  * No DB, no network — pure functions + a fake Supabase client. Run:
  *   node --import tsx/esm --test src/test/mediaEvidenceSeam.test.ts
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { assembleClaimInput, type ClaimRow } from "../lib/intelProjectionAggregator.js";
@@ -122,7 +123,7 @@ function makeDb(cfg: DbCfg) {
     };
     return b;
   }
-  return { from, _store: store };
+  return { from, _store: store } as unknown as SupabaseClient & { _store: typeof store };
 }
 
 // ── Shared fixture: a live claim with two fresh consented observers ───────────

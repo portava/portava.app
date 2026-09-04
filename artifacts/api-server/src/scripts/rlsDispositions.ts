@@ -98,6 +98,35 @@ export const FOLLOW_UPS: ReadonlyArray<{ table: string; note: string }> = [
   { table: "circle_invites", note: "user-facing deny-all — confirm no client reads directly with the anon key before assuming safe" },
 ];
 
+/**
+ * Tables created by canonical migrations AFTER the 2026-08-19 baseline, with
+ * their disposition written down NOW rather than at the next recapture.
+ *
+ * They cannot go into RLS_DISPOSITIONS yet: rlsDispositions.test.ts asserts
+ * that every entry there names a table in the committed baseline (the
+ * staleness check), so an entry for a post-baseline table would fail the
+ * suite — which is why intel_coverage_snapshots (2181), intel_live_promoted_scopes
+ * (2179) and the rest of the post-baseline intel family have no entry at all.
+ * That is inherited silence, the thing this file exists to refuse. This list
+ * is the written disposition in the meantime; at recapture each entry moves
+ * into RLS_DISPOSITIONS (regenerate from the new baseline and diff — the class
+ * and policy count must match what the parser finds) and is deleted here.
+ *
+ * Not enforced by the test (it verifies the manifest against the baseline);
+ * enforced by review.
+ */
+export const POST_BASELINE_RLS_DISPOSITIONS: Record<string, RlsDisposition & { migration: string }> = {
+  "intel_state_snapshot_versions": {
+    class: "DENY_ALL_BY_DESIGN",
+    policyCount: 0,
+    migration: "2273_intel_replayable_projection.sql",
+    reason:
+      "I1 append-only projection history. RLS enabled, zero policies: service_role (bypasses RLS) holds INSERT+SELECT only; " +
+      "anon and authenticated hold nothing (REVOKE ALL, no grant). Readers reach live state through intel_state_snapshots " +
+      "via the server projection, never this table. UPDATE/DELETE refused by trigger AND by grant.",
+  },
+};
+
 export const RLS_DISPOSITIONS: Record<string, RlsDisposition> = {
   "activity_events": { class: "RLS_REQUIRED", policyCount: 1 },
   "admin_access_log": { class: "DENY_ALL_BY_DESIGN", policyCount: 0, reason: "Baseline-derived 2026-08-19: RLS enabled, zero policies in the committed baseline -- deny-all by construction (only service_role, which bypasses RLS, can read/write this table). Mechanically classified; not yet reviewed for a table-specific justification." },
