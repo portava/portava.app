@@ -1440,3 +1440,71 @@ export async function buildPassportProjection(
   };
   return projection;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §31 cache tiering
+//
+// §31 splits the aggregate into two cache classes:
+//   • STATIC — identity, stamp metadata, travel stats, travel identity, credentials
+//     and permitted public journeys/memories/plans change rarely.
+//   • DYNAMIC — Availability, current state, Open to Plans, Shared Context, Trust
+//     projection and capabilities MUST use short TTLs and "never render stale".
+//
+// The route sets one Cache-Control max-age (the SHORTEST TTL among the sections
+// actually present, so the response as a whole is only cacheable as long as its
+// most volatile part) plus an ETag. The per-section `sections` map is returned
+// in the body so the CLIENT can tier its own cache — holding identity/stamps for
+// an hour while re-fetching availability/state every 30s.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Static-tier TTL, seconds — identity, stamps, stats, credentials, DNA, journeys. */
+export const PASSPORT_STATIC_MAX_AGE = 3600;
+/** Dynamic-tier TTL, seconds — availability, state, intent, trust, shared context, capabilities. */
+export const PASSPORT_DYNAMIC_MAX_AGE = 30;
+
+/** Which cache tier each §29 aggregate section belongs to (§31). */
+const SECTION_TIER: Record<string, number> = {
+  // Static
+  identity: PASSPORT_STATIC_MAX_AGE,
+  stamps: PASSPORT_STATIC_MAX_AGE,
+  stats: PASSPORT_STATIC_MAX_AGE,
+  credentials: PASSPORT_STATIC_MAX_AGE,
+  travelIdentity: PASSPORT_STATIC_MAX_AGE,
+  featuredJourney: PASSPORT_STATIC_MAX_AGE,
+  memories: PASSPORT_STATIC_MAX_AGE,
+  upcomingPlans: PASSPORT_STATIC_MAX_AGE,
+  // Dynamic
+  travelerState: PASSPORT_DYNAMIC_MAX_AGE,
+  availability: PASSPORT_DYNAMIC_MAX_AGE,
+  intent: PASSPORT_DYNAMIC_MAX_AGE,
+  trust: PASSPORT_DYNAMIC_MAX_AGE,
+  sharedContext: PASSPORT_DYNAMIC_MAX_AGE,
+  capabilities: PASSPORT_DYNAMIC_MAX_AGE,
+};
+
+export interface ProjectionCachePolicy {
+  /** Cache-Control max-age for the whole response: the shortest present-section TTL. */
+  maxAge: number;
+  /** Per-section max-age so the client cache can tier the aggregate (§31). */
+  sections: Record<string, number>;
+}
+
+/**
+ * Derive the §31 cache policy for a built projection. Pure and deterministic:
+ * only sections actually PRESENT in the projection contribute, and the overall
+ * `maxAge` is the minimum of those — so a public view lacking availability is
+ * still bounded by its dynamic traveler-state/trust/capabilities sections, while
+ * a restricted card (a relationship state) is treated as fully dynamic.
+ */
+export function buildProjectionCachePolicy(projection: PassportProjection): ProjectionCachePolicy {
+  const sections: Record<string, number> = {};
+  for (const [key, ttl] of Object.entries(SECTION_TIER)) {
+    if ((projection as any)[key] !== undefined) sections[key] = ttl;
+  }
+  // A restricted (blocked/unavailable) card carries a relationship-dependent
+  // `restricted` marker — never cache it beyond the dynamic horizon.
+  if (projection.restricted) sections.restricted = PASSPORT_DYNAMIC_MAX_AGE;
+  const ttls = Object.values(sections);
+  const maxAge = ttls.length ? Math.min(...ttls) : PASSPORT_DYNAMIC_MAX_AGE;
+  return { maxAge, sections };
+}
