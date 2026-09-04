@@ -18,6 +18,7 @@ import { countUserTrips } from "../lib/tripCounts.js";
 import {
   buildPassportProjection,
   resolvePassportViewerContext,
+  toCallerContext,
 } from "../services/passport/PassportProjectionService.js";
 import { buildSharedContext } from "../services/passport/SharedContextService.js";
 import { buildJourneys } from "../services/passport/PassportJourneyService.js";
@@ -1482,6 +1483,13 @@ router.get("/passport/:userId/shared-context", async (req, res) => {
       return;
     }
     const resolution = await resolvePassportViewerContext(sc, targetId, viewerId);
+    // Blocked / unavailable relationships get no overlap facts — mirror the sibling
+    // /journeys and /contributions endpoints (a blocked viewer must not receive
+    // both-in-city / shared-cities / intent-overlap / compass-city context).
+    if (resolution.permissions.isBlocked || resolution.permissions.isUnavailable) {
+      res.status(200).json({ sharedContext: null, restricted: true });
+      return;
+    }
     const sharedContext = await buildSharedContext(sc, targetId, viewerId, {
       canSeeAvailability: resolution.permissions.canSeeAvailability,
       canSeeMutuals: resolution.permissions.canSeeMutuals,
@@ -1516,6 +1524,9 @@ router.get("/passport/:userId/journeys", async (req, res) => {
         resolution.permissions.canViewFullProfile ||
         resolution.context === "trip_crew" ||
         resolution.context === "trip_host",
+      // Per-memory visibility gate for the memories attached to each journey
+      // (§29 step 9) — a public trip must not leak its private memories.
+      callerCtx: toCallerContext(resolution.context, resolution.permissions),
     });
     res.status(200).json({ journeys, viewerContext: resolution.context });
   } catch (e: any) {

@@ -33,6 +33,14 @@ export interface FollowingCursor {
 export interface BuildFollowingOptions {
   limit: number;
   cursor?: FollowingCursor | null;
+  /**
+   * Whether the underlying candidate fetch reached the TRUE end of eligible
+   * followed content (returned fewer than its fetch cap). `caughtUp` is asserted
+   * ONLY when this is true (or unspecified, for callers that fetch the whole set),
+   * so exhausting a capped fetch window never masquerades as "you're all caught
+   * up" while older eligible posts remain unfetched (spec §27).
+   */
+  reachedEnd?: boolean;
 }
 
 export interface BuildFollowingResult {
@@ -118,10 +126,15 @@ export function buildFollowing(
   const nextCursor: FollowingCursor | null =
     hasMore && last ? { publishedAt: last.publishedAt, id: last.canonicalObjectId } : null;
 
+  // Honest "caught up": this page exhausted the gated set AND the underlying fetch
+  // actually reached the end. A capped fetch window that merely ran out of rows in
+  // the gated set (older eligible posts still unfetched) is NOT caught up (§27).
+  // `reachedEnd` undefined ⇒ the caller fetched the whole set, so !hasMore suffices.
+  const reachedEnd = opts.reachedEnd ?? true;
+
   return {
     items: page,
     nextCursor,
-    // Caught up when this page exhausts eligible content (no next page).
-    caughtUp: !hasMore,
+    caughtUp: !hasMore && reachedEnd,
   };
 }

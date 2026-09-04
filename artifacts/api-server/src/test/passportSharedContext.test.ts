@@ -14,10 +14,14 @@
  *
  * Run: node --import tsx/esm --test src/test/passportSharedContext.test.ts
  */
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
 import { buildSharedContext } from "../services/passport/SharedContextService.js";
 import { makePassportDb } from "./helpers/fakePassportDb.js";
+import { _setTestClient, _clearTestClient } from "../lib/http.js";
+import passportRouter from "../routes/passport.js";
 
 const OWNER = "owner-1";
 const VIEWER = "viewer-1";
@@ -202,5 +206,112 @@ describe("buildSharedContext — shared_moments fact (§15/§17, TABLE 17)", () 
     });
     const r = await buildSharedContext(db, OWNER, VIEWER, ALL);
     assert.ok(!factKeys(r).includes("shared_moments"), "capability off ⇒ no fact");
+  });
+});
+
+// ── D2 regression — GET /passport/:userId/shared-context block/unavailable guard.
+//    The route must short-circuit to a restricted payload for a blocked (or
+//    unavailable) relationship, exactly like the sibling /journeys and
+//    /contributions endpoints. Before the fix it called buildSharedContext even
+//    for a blocked viewer, leaking both-in-city / shared-cities / intent-overlap /
+//    compass-city facts.
+const OWNER_UUID = "11111111-1111-4111-8111-111111111111";
+const VIEWER_UUID = "22222222-2222-4222-8222-222222222222";
+const TOKEN = "viewer-token";
+
+function routeClient(tables: Record<string, any[]>) {
+  const base: any = makePassportDb(tables);
+  base.auth = {
+    getUser: async (token: string) =>
+      token === TOKEN
+        ? { data: { user: { id: VIEWER_UUID } }, error: null }
+        : { data: { user: null }, error: { message: "invalid" } },
+  };
+  return base;
+}
+
+function httpGet(baseUrl: string, path: string, token?: string): Promise<{ status: number; json: any }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(baseUrl + path);
+    const req = http.request(
+      { hostname: url.hostname, port: url.port, path: url.pathname, method: "GET", headers: token ? { authorization: `Bearer ${token}` } : {} },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c as Buffer));
+        res.on("end", () => {
+          const raw = Buffer.concat(chunks).toString("utf8");
+          let json: any = null;
+          try { json = raw ? JSON.parse(raw) : null; } catch { json = raw; }
+          resolve({ status: res.statusCode ?? 0, json });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+describe("GET /passport/:userId/shared-context — blocked/unavailable guard (D2)", () => {
+  let server: http.Server;
+  let baseUrl = "";
+
+  before(async () => {
+    const app = express();
+    app.use(express.json());
+    app.use("/", passportRouter);
+    await new Promise<void>((resolve) => {
+      server = http.createServer(app);
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address() as { port: number };
+        baseUrl = `http://127.0.0.1:${addr.port}`;
+        server.unref();
+        resolve();
+      });
+    });
+  });
+
+  after(async () => {
+    _clearTestClient();
+    await new Promise<void>((resolve) => {
+      server.closeAllConnections?.();
+      server.close(() => resolve());
+    });
+  });
+
+  it("returns the restricted payload (no facts) when the owner has blocked the viewer", async () => {
+    _setTestClient(
+      routeClient({
+        profiles: [
+          { id: OWNER_UUID, current_city: "Da Nang", home_city: "Da Nang", interests: ["Food"] },
+          { id: VIEWER_UUID, current_city: "Da Nang", home_city: "Hanoi", interests: ["Food"] },
+        ],
+        // Owner blocks the viewer ⇒ resolveInteractionPermissions → isBlocked.
+        blocks: [{ blocker_id: OWNER_UUID, blocked_id: VIEWER_UUID }],
+      }),
+      true,
+    );
+    const res = await httpGet(baseUrl, `/passport/${OWNER_UUID}/shared-context`, TOKEN);
+    assert.equal(res.status, 200);
+    assert.equal(res.json.restricted, true, "blocked viewer gets the restricted shape");
+    assert.equal(res.json.sharedContext, null, "no overlap facts are computed or returned");
+    assert.equal(res.json.viewerContext, undefined, "the non-restricted branch (which leaks facts) did not run");
+  });
+
+  it("does NOT short-circuit for a normal (non-blocked) viewer — facts are computed", async () => {
+    _setTestClient(
+      routeClient({
+        profiles: [
+          { id: OWNER_UUID, current_city: "Da Nang", home_city: "Da Nang", interests: ["Food"] },
+          { id: VIEWER_UUID, current_city: "Da Nang", home_city: "Hanoi", interests: ["Food"] },
+        ],
+        // no blocks staged
+      }),
+      true,
+    );
+    const res = await httpGet(baseUrl, `/passport/${OWNER_UUID}/shared-context`, TOKEN);
+    assert.equal(res.status, 200);
+    assert.notEqual(res.json.restricted, true, "a normal viewer is not restricted");
+    assert.ok("viewerContext" in res.json, "the normal branch ran and returned a shared context");
+    assert.ok(res.json.sharedContext, "shared context facts are present for a permitted viewer");
   });
 });
