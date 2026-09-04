@@ -50,6 +50,7 @@ import { PassportAboutSection } from '../../src/components/passport/PassportAbou
 import { PassportSafetySection } from '../../src/components/passport/PassportSafetySection';
 import { PassportTravelInfoSection } from '../../src/components/passport/PassportTravelInfoSection';
 import { PassportQuickLinks } from '../../src/components/passport/PassportQuickLinks.tsx';
+import { PassportHomePreviews } from '../../src/components/passport/PassportHomePreviews.tsx';
 import { PP, PP_LABEL } from '../../src/theme/passportTokens';
 import { AppHeader } from '../../src/components/ui/AppHeader';
 import { PassportSectionReorderSheet } from '../../src/components/passport/PassportSectionReorderSheet';
@@ -740,6 +741,13 @@ function PassportContent({
             else if (label === 'Following') router.push('/following' as any);
           }}
         />
+
+        {/* ── §3 high-priority previews (recent stamps / Featured Journey /
+             next Trip / memories) read from the /passport/:userId/projection
+             aggregate. Additive + fail-soft: renders nothing until the
+             aggregate loads, so the existing owner sections below are
+             unaffected. Owner context → no viewer Make-a-Plan / Shared Context. */}
+        <PassportHomePreviews userId={profile.id} isOwner />
 
         {/* ── Pending posts ── */}
         {pendingCount > 0 && (
