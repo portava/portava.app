@@ -17,6 +17,34 @@
  */
 import { logger } from "./logger.js";
 
+/**
+ * Version tag of the freshness curve the projection applies to (age, ttl).
+ * Stamped into every persisted snapshot version through
+ * lib/intelProjection.PROJECTION_ALGORITHM_VERSION so a replay can tell a
+ * curve change from an input change. "linear" is the pre-I1 `1 - age/ttl`.
+ */
+export const FRESHNESS_CURVE_VERSION = "linear";
+
+/**
+ * The freshness component of the confidence score for a claim `ageSeconds`
+ * old under a `ttlSeconds` policy. Pure. Fail-closed: a non-finite or
+ * non-positive TTL, or a non-finite age, scores 0 (never fresh); a negative
+ * age (clock skew already clamped upstream) is treated as 0.
+ */
+export function freshnessScore(ageSeconds: number, ttlSeconds: number): number {
+  if (!Number.isFinite(ageSeconds) || !Number.isFinite(ttlSeconds) || ttlSeconds <= 0) return 0;
+  const age = ageSeconds < 0 ? 0 : ageSeconds;
+  return freshnessFromRatio(age / ttlSeconds);
+}
+
+/** The same curve over an already-computed age/ttl ratio. */
+export function freshnessFromRatio(ratio: number): number {
+  if (!Number.isFinite(ratio)) return 0;
+  const r = ratio < 0 ? 0 : ratio;
+  const v = 1 - r;
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
 export interface FreshnessPolicy {
   claimType: string;
   ttlSeconds: number;

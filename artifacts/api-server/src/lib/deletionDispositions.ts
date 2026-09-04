@@ -170,7 +170,25 @@ export const DELETION_FLOW_TABLES: readonly string[] = [
  * DECIDED retentions. Each entry needs a reason a user could be shown.
  * Empty until D6 is answered — deliberately, so the backlog count stays honest.
  */
-export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string }> = [];
+export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string }> = [
+  // I1 (migration 2273). NOT user-keyed: it carries no actor column and no
+  // personal data — subject_id is a place, distinct_actors is a count, and the
+  // replay record is a set of weighted model inputs. It is an append-only log of
+  // what the projection computed, keyed by (place, zone, claim_type); nothing in
+  // it can be attributed to a person, so account deletion leaves it alone. The
+  // per-person inputs behind a version are erased through erase_intel_for_actor
+  // (observations, evidence, confirmations); a version row remains as the record
+  // that an aggregate was once computed — the same posture as intel_claims and
+  // intel_state_snapshots, which erase_intel_for_actor deliberately does not
+  // touch ("aggregate beliefs about a place, not personal data"). Listed here so
+  // the fate is written down, not inherited silence.
+  {
+    table: "intel_state_snapshot_versions",
+    reason:
+      "Append-only projection history with no actor column and no personal data (place key, counts, model inputs). " +
+      "The per-person contributions behind it are erased by erase_intel_for_actor; the aggregate record is kept, as intel_claims/intel_state_snapshots are.",
+  },
+];
 
 /**
  * NOT DECISIONS. Pre-existing user-keyed tables that survive account deletion and
@@ -430,6 +448,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "intel_evidence",
   "intel_confirmations",
   "intel_state_snapshots",
+  // I1 append-only projection history, added by migration 2273 (post-baseline).
+  // Classified in RETAINED_WITH_REASON above (no actor column).
+  "intel_state_snapshot_versions",
   "intel_contribution_consent",
   // IG-10 non-cash reward ledger, added by migration 2170 (post-baseline).
   "intel_reward_ledger",

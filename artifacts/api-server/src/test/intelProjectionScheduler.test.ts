@@ -38,6 +38,8 @@ function makeDb(cfg: {
   rangeError?: { table: string; minOffset?: number };
 }) {
   const snaps: any[] = [...(cfg.snapshots ?? [])];
+  // I1: every snapshot write is preceded by an append to the version table.
+  const versions: any[] = [];
   // Every .update(...).in("id",[...]) is recorded here so a test can assert which
   // snapshot ids (if any) the reconciliation force-expired.
   const updates: { table: string; ids: any[]; patch: any }[] = [];
@@ -47,7 +49,7 @@ function makeDb(cfg: {
   const consentRows = [...new Set((cfg.observations ?? []).map((o: any) => o.actor_id).filter(Boolean))]
     .map((id: string) => ({ user_id: id, enabled: !withdrawn.has(id), withdrawn_at: withdrawn.has(id) ? NOW.toISOString() : null }));
   function from(table: string) {
-    let op: "select" | "upsert" | "update" = "select"; let payload: any = null;
+    let op: "select" | "upsert" | "update" | "insert" = "select"; let payload: any = null;
     const eqs: [string, any][] = []; const gts: [string, any][] = [];
     let inF: [string, any[]] | null = null; let lim = Infinity; let rangeF: [number, number] | null = null;
     // Observations default to moderation_state 'allowed' (explicit values override),
@@ -71,6 +73,10 @@ function makeDb(cfg: {
         return { data: null, error: { message: "range boom" } };
       }
       if (op === "upsert") { snaps.push(...(Array.isArray(payload) ? payload : [payload])); return { data: null, error: null }; }
+      if (op === "insert") {
+        if (table === "intel_state_snapshot_versions") versions.push(...(Array.isArray(payload) ? payload : [payload]));
+        return { data: null, error: null };
+      }
       if (op === "update") {
         const ids = inF && inF[0] === "id" ? [...inF[1]] : [];
         for (const r of src()) if (match(r)) Object.assign(r, payload); // mutate the store in place
@@ -82,6 +88,7 @@ function makeDb(cfg: {
     const b: any = {
       select() { return b; },
       upsert(row: any) { op = "upsert"; payload = row; return Promise.resolve(run()); },
+      insert(row: any) { op = "insert"; payload = row; return Promise.resolve(run()); },
       update(patch: any) { op = "update"; payload = patch; return b; },
       eq(c: string, v: any) { eqs.push([c, v]); return b; },
       gt(c: string, v: any) { gts.push([c, v]); return b; },
@@ -94,7 +101,7 @@ function makeDb(cfg: {
     };
     return b;
   }
-  return { from, _snaps: snaps, _updates: updates };
+  return { from, _snaps: snaps, _versions: versions, _updates: updates };
 }
 
 describe("intelProjection aggregator — deriveComponents (conservative)", () => {

@@ -133,6 +133,14 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
   { table: "intel_state_snapshots", column: "observed_at", ownership: "derived_aggregate", personal: false, reason: "Aggregate observation time." },
   { table: "intel_state_snapshots", column: "expires_at", ownership: "portava_owned", personal: false,
     reason: "Portava's TTL policy applied to the snapshot. Redistributing live state without its expiry invites a consumer to cache it indefinitely." },
+  // I1 (2273) Table-17 lineage. algorithm_version and conflict_state are part of
+  // the published contract (§19: every response carries its versions; Table 28:
+  // the Verification product may return contradictions). The replay record and
+  // the claim-version array are internal lineage — see INTERNAL_COLUMNS.
+  { table: "intel_state_snapshots", column: "algorithm_version", ownership: "portava_owned", personal: false,
+    reason: "The projection algorithm version that produced the state. A version string; says nothing about any person and lets a consumer tell two computations apart." },
+  { table: "intel_state_snapshots", column: "conflict_state", ownership: "derived_aggregate", personal: false,
+    reason: "none/contextualized/material (Table 17). Derived from the cohort, never from one contributor; the 'Reports differ' signal §10 requires be visible rather than averaged away." },
 
   // ── intel_evidence / intel_confirmations ──────────────────────────────────
   { table: "intel_evidence", column: "actor_id", ownership: "restricted_no_redistribution", personal: true, reason: "Identifies the contributor." },
@@ -164,6 +172,14 @@ export const INTERNAL_COLUMNS: readonly string[] = [
   // Internal promotion provenance ('admin' | 'system'): never surfaced publicly,
   // never redistributed — pure lineage, like superseded_by.
   "promotion_source",
+  // I1 (2273) replay lineage on intel_state_snapshots. confidence_components is
+  // the raw ConfidenceResult (every weighted input, including independence and
+  // agreement derived from the cohort) — model internals, replayed by
+  // lib/intelReplay, never an API field; a consumer gets confidence + band.
+  // input_claim_versions is a pointer array into intel_claims, exactly like
+  // superseded_by / claim_id above.
+  "confidence_components",
+  "input_claim_versions",
 ];
 
 /** The intel tables this registry covers. */

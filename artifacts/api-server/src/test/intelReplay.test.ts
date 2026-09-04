@@ -1,0 +1,149 @@
+/**
+ * intelReplay (I1) — a stored snapshot version replays to an identical result,
+ * and a changed algorithm/formula version is REPORTED, never silently re-scored.
+ *
+ * The version rows under test are produced by the real writer (projectClaim +
+ * projectAndStore through a fake client), so what is replayed is exactly what
+ * production would persist — not a hand-built fixture asserting a shape the
+ * writer never emits.
+ */
+import { describe, it, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import { projectAndStore, PROJECTION_ALGORITHM_VERSION } from "../lib/intelProjection.js";
+import { replayVersion, replaySnapshotVersion, parseReplayRecord } from "../lib/intelReplay.js";
+import { SEED_FRESHNESS_POLICIES, invalidateFreshnessPolicyCache, FRESHNESS_CURVE_VERSION } from "../lib/freshnessPolicy.js";
+import { PRIVACY_THRESHOLD_V1, CLAIM_TYPES } from "../lib/intelContracts.js";
+
+const NOW = new Date("2026-08-22T12:00:00.000Z");
+const OBSERVED = new Date(NOW.getTime() - 20 * 60_000).toISOString();
+
+const POLICY_ROWS = [
+  ...SEED_FRESHNESS_POLICIES.map((p) => ({ claim_type: p.claim_type, ttl_seconds: p.ttl_seconds, note: p.note })),
+  ...CLAIM_TYPES.map((c) => ({ claim_type: c.claimType, ttl_seconds: c.ttlSeconds, note: c.note })),
+];
+
+/** A fake client that stores version rows and serves them back by id. */
+function client(opts: { readError?: boolean } = {}) {
+  const versions: any[] = [];
+  return {
+    versions,
+    from(table: string) {
+      if (table === "freshness_policies") return { select: async () => ({ data: POLICY_ROWS, error: null }) };
+      if (table === "feature_flags") {
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { enabled: true }, error: null }) }) }) };
+      }
+      if (table === "intel_state_snapshots") return { upsert: async () => ({ error: null }) };
+      if (table === "intel_state_snapshot_versions") {
+        return {
+          insert: async (row: any) => { versions.push(row); return { error: null }; },
+          select: () => ({
+            eq: (_c: string, id: string) => ({
+              maybeSingle: async () => opts.readError
+                ? { data: null, error: { message: "boom" } }
+                : { data: versions.find((v) => v.id === id) ?? null, error: null },
+            }),
+          }),
+        };
+      }
+      throw new Error(`unexpected table ${table}`);
+    },
+  };
+}
+
+const input = {
+  claimType: "crowd.level",
+  value: { level: "busy" },
+  observedAt: OBSERVED,
+  distinctActors: PRIVACY_THRESHOLD_V1.minUniqueActors,
+  distinctGroups: PRIVACY_THRESHOLD_V1.minIndependentGroups,
+  maxGroupShare: PRIVACY_THRESHOLD_V1.maxSingleGroupShare,
+  components: { presence: 0.5, freshness: 0.7, independence: 1, sourceReliability: 0.5, evidenceQuality: 0.3, agreement: 0.5, specificity: 0.5 },
+  penalties: { materialConflict: 0.2 },
+  freshness: { ageSeconds: 810, ttlSeconds: 2700 },
+  inputClaimVersions: [{ claim_id: "claim-1", updated_at: "2026-08-22T11:40:00.000Z", version: 2, status: "active" }],
+};
+
+async function storedVersion(c = client()) {
+  const t = await projectAndStore(c, "place-1", [input], { now: NOW });
+  assert.equal(t.written, 1);
+  assert.equal(c.versions.length, 1);
+  return c.versions[0];
+}
+
+describe("intelReplay — a stored version replays to identical output", () => {
+  beforeEach(() => invalidateFreshnessPolicyCache());
+
+  it("replayVersion (pure) reproduces the stored confidence and band exactly", async () => {
+    const v = await storedVersion();
+    const r = replayVersion(v);
+    assert.equal(r.status, "equal", `expected equal, got ${r.reasons.join(",")}`);
+    assert.deepEqual(r.reasons, []);
+    assert.equal(r.recomputed.confidence, v.confidence);
+    assert.equal(r.recomputed.band, v.confidence_band);
+    assert.equal(r.stored.algorithmVersion, PROJECTION_ALGORITHM_VERSION);
+  });
+
+  it("replaySnapshotVersion reads the row by id and reports equal; not_found and error are distinct from diverged", async () => {
+    const c = client();
+    const v = await storedVersion(c);
+    const r = await replaySnapshotVersion(c, v.id);
+    assert.equal(r.status, "equal");
+    assert.equal((await replaySnapshotVersion(c, "no-such-version")).status, "not_found");
+    assert.equal((await replaySnapshotVersion(client({ readError: true }), v.id)).status, "error");
+    assert.equal((await replaySnapshotVersion(null, v.id)).status, "error", "no client is an error, never a silent equal");
+  });
+
+  it("the replay record survives a JSON round-trip (what PostgREST hands back is a plain object, numerics may be strings)", async () => {
+    const v = await storedVersion();
+    const roundTripped = { ...JSON.parse(JSON.stringify(v)), confidence: String(v.confidence) };
+    const r = replayVersion(roundTripped);
+    assert.equal(r.status, "equal");
+    assert.ok(parseReplayRecord(roundTripped.confidence_components));
+  });
+});
+
+describe("intelReplay — a changed formula/algorithm version is REPORTED as divergence", () => {
+  beforeEach(() => invalidateFreshnessPolicyCache());
+
+  it("a row stamped with a different algorithm_version diverges with algorithm_version_changed, even though the numbers still agree", async () => {
+    const v = await storedVersion();
+    const r = replayVersion({ ...v, algorithm_version: "projection/1+confidence/1+freshness/linear" });
+    assert.equal(r.status, "diverged");
+    assert.deepEqual(r.reasons, ["algorithm_version_changed"]);
+    assert.equal(r.recomputed.confidence, v.confidence, "the recomputation is still reported, it just is not the same computation");
+  });
+
+  it("replaying 'as of' a newer running version diverges the same way", async () => {
+    const v = await storedVersion();
+    const r = replayVersion(v, { algorithmVersion: "projection/3+confidence/1+freshness/linear" });
+    assert.equal(r.status, "diverged");
+    assert.ok(r.reasons.includes("algorithm_version_changed"));
+  });
+
+  it("a different formulaVersion inside the record is its own reason", async () => {
+    const v = await storedVersion();
+    const r = replayVersion({ ...v, confidence_components: { ...v.confidence_components, formulaVersion: 99 } });
+    assert.ok(r.reasons.includes("formula_version_changed"), r.reasons.join(","));
+  });
+
+  it("a different freshness curve tag is reported, and the freshness component is then NOT re-derived under the new curve", async () => {
+    const v = await storedVersion();
+    const rec = { ...v.confidence_components, freshness: { ...v.confidence_components.freshness, curve: "not-" + FRESHNESS_CURVE_VERSION } };
+    const r = replayVersion({ ...v, confidence_components: rec });
+    assert.deepEqual(r.reasons, ["freshness_curve_changed"]);
+  });
+
+  it("a tampered stored confidence is confidence_mismatch — same versions, different answer", async () => {
+    const v = await storedVersion();
+    const r = replayVersion({ ...v, confidence: (v.confidence as number) + 0.05 });
+    assert.equal(r.status, "diverged");
+    assert.ok(r.reasons.includes("confidence_mismatch"));
+    assert.ok(!r.reasons.includes("algorithm_version_changed"), "versions still match — this is a data defect, not a code change");
+  });
+
+  it("a row with no replay record is unreplayable and says so (fail-closed)", () => {
+    const r = replayVersion({ id: "v", subject_id: "p", zone_id: "", claim_type: "crowd.level", confidence: 0.5, confidence_band: "provisional", confidence_components: null, algorithm_version: PROJECTION_ALGORITHM_VERSION });
+    assert.equal(r.status, "diverged");
+    assert.deepEqual(r.reasons, ["replay_record_missing"]);
+  });
+});

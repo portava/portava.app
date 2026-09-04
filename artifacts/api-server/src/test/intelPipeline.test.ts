@@ -40,8 +40,10 @@ function makeDb(flags: Record<string, boolean>) {
   // it per db so a fixed test clock never serves a prior test's promoted set.
   _clearPromotedScopeCache();
   const snapshots: any[] = [];
+  const versions: any[] = [];
   return {
     snapshots,
+    versions,
     from(table: string) {
       if (table === "freshness_policies") return { select: async () => ({ data: POLICIES, error: null }) };
       if (table === "intel_live_promoted_scopes") {
@@ -67,6 +69,10 @@ function makeDb(flags: Record<string, boolean>) {
           }
           return { data: flag in flags ? { enabled: flags[flag] } : null, error: null };
         } }) }) };
+      }
+      if (table === "intel_state_snapshot_versions") {
+        // I1: the writer appends an immutable version row before every upsert.
+        return { insert: async (row: any) => { versions.push(row); return { error: null }; } };
       }
       if (table === "intel_state_snapshots") {
         const q: any = {

@@ -120,6 +120,15 @@ const ALLOWLIST = new Set<string>([
   "passport_visibility_preferences.map_visibility",    // live: map_visible
   "tags.tagged_at",                     // does not exist live
   "hashtags.normalized_name",           // live: slug
+
+  // ── Pending live apply: 2273_intel_replayable_projection.sql (IG unit I1) ──
+  // Table-17 lineage columns on the current-state snapshot. Applied to the CI
+  // project by live-db.yml's apply step on merge to main; remove these four
+  // entries once that apply is certified.
+  "intel_state_snapshots.confidence_components",
+  "intel_state_snapshots.algorithm_version",
+  "intel_state_snapshots.input_claim_versions",
+  "intel_state_snapshots.conflict_state",
 ]);
 
 // ── Superseded / known-drifted migration files ────────────────────────────────
@@ -137,7 +146,10 @@ const SKIP_FILES = new Set<string>([
 // been applied yet).  Columns on these tables are skipped — the table-missing
 // case is already caught by audit:schema.
 const SKIP_TABLES = new Set<string>([
-  // (empty — all previously pending migrations have been applied to the live DB)
+  // 2273_intel_replayable_projection.sql (IG unit I1): the append-only
+  // projection history. Pending live apply on merge to main; remove once the
+  // apply is certified.
+  "intel_state_snapshot_versions",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

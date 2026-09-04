@@ -9,8 +9,8 @@
  */
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { projectClaim, projectAndStore } from "../lib/intelProjection.js";
-import { SEED_FRESHNESS_POLICIES, invalidateFreshnessPolicyCache } from "../lib/freshnessPolicy.js";
+import { projectClaim, projectAndStore, PROJECTION_ALGORITHM_VERSION } from "../lib/intelProjection.js";
+import { SEED_FRESHNESS_POLICIES, invalidateFreshnessPolicyCache, FRESHNESS_CURVE_VERSION } from "../lib/freshnessPolicy.js";
 import { PRIVACY_THRESHOLD_V1, CLAIM_TYPES } from "../lib/intelContracts.js";
 
 const NOW = new Date("2026-08-22T12:00:00.000Z");
@@ -22,10 +22,12 @@ const POLICY_ROWS = [
   ...CLAIM_TYPES.map((c) => ({ claim_type: c.claimType, ttl_seconds: c.ttlSeconds, note: c.note })),
 ];
 
-function client(opts: { flag?: boolean; upsertError?: boolean } = {}) {
+function client(opts: { flag?: boolean; upsertError?: boolean; versionError?: boolean } = {}) {
   const upserts: any[] = [];
+  const versions: any[] = [];
   return {
     upserts,
+    versions,
     from(table: string) {
       if (table === "freshness_policies") return { select: async () => ({ data: POLICY_ROWS, error: null }) };
       if (table === "feature_flags") {
@@ -34,6 +36,9 @@ function client(opts: { flag?: boolean; upsertError?: boolean } = {}) {
       }
       if (table === "intel_state_snapshots") {
         return { upsert: async (row: any) => { upserts.push(row); return opts.upsertError ? { error: { message: "boom" } } : { error: null }; } };
+      }
+      if (table === "intel_state_snapshot_versions") {
+        return { insert: async (row: any) => { if (opts.versionError) return { error: { message: "version boom" } }; versions.push(row); return { error: null }; } };
       }
       throw new Error(`unexpected table ${table}`);
     },
@@ -168,5 +173,62 @@ describe("intelProjection — projectAndStore", () => {
     const t = await projectAndStore(c, "place-1", [passing], { now: NOW });
     assert.equal(t.skipped, 1);
     assert.equal(t.written, 0);
+  });
+});
+
+describe("intelProjection — replayability (I1: §8 store every component, §11 Table 17)", () => {
+  beforeEach(() => invalidateFreshnessPolicyCache());
+
+  it("projectClaim persists the WHOLE confidence record, the algorithm version and the claim lineage — not just the number", async () => {
+    const lineage = [{ claim_id: "claim-1", updated_at: "2026-08-22T11:30:00.000Z", version: 3, status: "active" }];
+    const r = await projectClaim(client(), "place-1",
+      { ...passing, components: { presence: 0.5, freshness: 0.8 }, penalties: { instability: 0.1 }, freshness: { ageSeconds: 300, ttlSeconds: 2700 }, inputClaimVersions: lineage },
+      { now: NOW });
+    const s = r.snapshot!;
+    assert.equal(s.algorithm_version, PROJECTION_ALGORITHM_VERSION);
+    assert.deepEqual(s.input_claim_versions, lineage);
+    assert.equal(s.conflict_state, null, "I1 writes the column NULL; unit I2 populates it");
+    const rec = s.confidence_components;
+    assert.equal(rec.formulaVersion, 1);
+    assert.equal(rec.components.presence, 0.5);
+    assert.equal(rec.components.freshness, 0.8);
+    assert.equal(rec.components.independence, 0, "an absent component is stored as the zero it scored as");
+    assert.equal(rec.penalties.instability, 0.1);
+    assert.deepEqual(rec.freshness, { ageSeconds: 300, ttlSeconds: 2700, curve: FRESHNESS_CURVE_VERSION });
+    assert.ok(Math.abs(rec.raw - rec.penalty - s.confidence) < 1e-9, "raw − penalty reproduces the stored confidence");
+  });
+
+  it("records an EMPTY lineage array, never an invented one, when the caller supplies no claim identity", async () => {
+    const r = await projectClaim(client(), "place-1", passing, { now: NOW });
+    assert.deepEqual(r.snapshot!.input_claim_versions, []);
+  });
+
+  it("appends ONE immutable version row per snapshot write, BEFORE the upsert, carrying the same lineage", async () => {
+    const c = client({ flag: true });
+    const order: string[] = [];
+    const inner = c.from.bind(c);
+    c.from = (table: string) => { order.push(table); return inner(table); };
+    const t = await projectAndStore(c, "place-1", [passing, { ...passing, claimType: "queue.wait", distinctActors: 1 }], { now: NOW });
+    assert.equal(t.written + t.suppressed, 2);
+    assert.equal(c.versions.length, 2, "one version row per write — the suppressed one too");
+    assert.equal(c.upserts.length, 2);
+    const v = c.versions[0];
+    assert.match(v.id, /^[0-9a-f-]{36}$/, "the version id is minted by the writer so the lineage log can name it");
+    assert.equal(v.generated_at, NOW.toISOString());
+    assert.equal(v.algorithm_version, PROJECTION_ALGORITHM_VERSION);
+    assert.deepEqual(v.confidence_components, c.upserts[0].confidence_components, "version row and current row carry the same replay record");
+    assert.equal(v.privacy_reason, null);
+    assert.equal(c.versions[1].privacy_reason, "below_actor_threshold", "the suppression reason is part of the record");
+    const firstVersion = order.indexOf("intel_state_snapshot_versions");
+    const firstUpsert = order.indexOf("intel_state_snapshots");
+    assert.ok(firstVersion !== -1 && firstVersion < firstUpsert, "the version row is appended BEFORE the current state is touched");
+  });
+
+  it("a failed version append leaves the current state UNTOUCHED (fail-closed: a state that cannot be replayed is never served)", async () => {
+    const c = client({ flag: true, versionError: true });
+    const t = await projectAndStore(c, "place-1", [passing], { now: NOW });
+    assert.equal(t.skipped, 1);
+    assert.equal(t.written, 0);
+    assert.equal(c.upserts.length, 0, "no upsert after a version-append failure");
   });
 });
