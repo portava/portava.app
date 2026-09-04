@@ -46,6 +46,7 @@ import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
 import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
 import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
+import { fetchBlockedSet } from "../lib/blocks.js";
 import { pruneAndBound } from "../lib/boundedMapCache.js";
 import { createInflightDedup } from "../lib/inflightDedup.js";
 import {
@@ -842,11 +843,59 @@ export function evictCacheEntriesForEntity(entityId: string): void {
   }
 }
 
+/**
+ * Author-side visibility for one community row.
+ *
+ * A `discovery_places` row can carry a `submitted_by` — a real person, whose
+ * blurb, photo and rating ride along with the venue. Blocking that person hides
+ * their submission, which is what every other surface already does with this
+ * same column: CompassItemHydrator hands it to the ranker as `authorId` and
+ * CompassFeedBuilder turns it into `authorIsBlockedByViewer`;
+ * CompassFallbackFeedBuilder filters on it directly; mapSearch and mediaFeed do
+ * the same for `hidden_gems`. Discovery was the one surface that showed a
+ * blocked person's submission back to the viewer who blocked them.
+ *
+ * Enforced HERE, as a candidate pre-filter, rather than through the ranker's
+ * eligibility gate — deliberately, and the way the surfaces above do it. The
+ * blocked row never becomes a candidate, so every eligibility input in
+ * lib/discoveryPde.ts stays a constant and its per-candidate analytics opt-out
+ * stays honest. Wiring the gate instead would put ~180 rank_events inserts per
+ * ranked request back; see the guard tests in test/discoveryPde.test.ts.
+ *
+ * `blockedIds === null` means the block list could not be READ. A row with no
+ * submitter is a venue fact and stays; a row with one is withheld, per the
+ * fail-closed contract in lib/blocks.ts — never leak while block state is
+ * uncertain. Either way only the community subset is affected: canonical
+ * `places` rows and OSM rows have no author at all.
+ *
+ * Exported so tests can pin the rule without reaching through a route.
+ */
+export function submitterIsVisible(submittedBy: unknown, blockedIds: Set<string> | null): boolean {
+  const author = (submittedBy ?? null) as string | null;
+  if (!author) return true;               // venue fact — no voice attached to it
+  if (blockedIds === null) return false;  // block state unknown → fail closed
+  return !blockedIds.has(author);
+}
+
+/**
+ * @param blockedIds bidirectional block set for the viewer, or null when it
+ *        could not be read (fail-closed — see submitterIsVisible). Pass an
+ *        EMPTY set for an unauthenticated caller: no viewer, no block
+ *        relationship, nothing to filter.
+ *
+ * This is the single funnel through which a discovery_places row reaches any
+ * discovery serve point, which is why the block filter lives here rather than
+ * at one of them — no serve point can forget it. It is also cache-safe: the L1
+ * and L2 caches store OSM rows only (`setCacheA(key, { places: enrichedOsm })`),
+ * and community rows are re-queried per request, so one viewer's block list can
+ * never be cached into another viewer's feed.
+ */
 async function queryDbPlaces(
   destination: string,
   category: string,
   centerLat: number | null,
   centerLng: number | null,
+  blockedIds: Set<string> | null,
 ): Promise<DiscoveryPlace[]> {
   if (_testDbOverride) return _testDbOverride(destination, category, centerLat, centerLng);
 
@@ -859,7 +908,11 @@ async function queryDbPlaces(
   try {
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, rating, saved_count, lat, lng, tag, verified, created_at, source")
+      // submitted_by is read for the block filter below and for nothing else. It
+      // is deliberately NOT mapped onto DiscoveryPlace: toPublic is the identity
+      // function, so any field placed on that object is serialised straight to
+      // the client, and a submitter's user id is not the client's business.
+      .select("id, city, name, place_type, category, primary_category, secondary_categories, neighborhood, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, rating, saved_count, lat, lng, tag, verified, created_at, source, submitted_by")
       .or(`city.ilike.${cityBase},city.ilike.${cityBase}%`)
       .eq("status", "active")
       // Exclude seeded demo/QA fixtures — they never carry real OSM enrichment
@@ -884,6 +937,11 @@ async function queryDbPlaces(
 
     const dbPlaces = (data as any[])
       .filter((row: any) => {
+        // Blocked submitters, both directions. Applied in TS rather than as a
+        // SQL predicate for the same reason the category filter below is: the
+        // set is per-viewer, and folding it into the query would make the
+        // statement (and its plan) viewer-specific for a table this small.
+        if (!submitterIsVisible(row.submitted_by, blockedIds)) return false;
         // In-memory safety net alongside the DB predicate: exclude demo/QA fixture
         // rows even if the DB filter was not applied (e.g. a test override, a schema
         // change, or a future query refactor).  null source passes — it is a legitimate
@@ -1080,9 +1138,12 @@ async function loadCuratedAndCanonicalPlaces(
   category: string,
   centerLat: number | null,
   centerLng: number | null,
+  blockedIds: Set<string> | null,
 ): Promise<DiscoveryPlace[]> {
   const [curated, canonical] = await Promise.all([
-    queryDbPlaces(destination, category, centerLat, centerLng),
+    // Only the curated half takes the block set: canonical `places` rows carry
+    // no author column, so there is nobody to have blocked.
+    queryDbPlaces(destination, category, centerLat, centerLng, blockedIds),
     queryCanonicalPlaces(destination, category, centerLat, centerLng),
   ]);
   const curatedNames = new Set(curated.map((p) => p.name.toLowerCase().trim()));
@@ -1463,6 +1524,19 @@ router.get("/discovery", async (req, res) => {
     }
   }
 
+  // ── Viewer block list ──────────────────────────────────────────────────────
+  // Resolved once, here, and threaded into every path below that can surface a
+  // community row — the three cache-hit serve points via serveCachedPlaces and
+  // the cache-miss pipeline feeding the Compass and ranked paths. An
+  // unauthenticated caller has no block relationship, so it filters nothing; a
+  // viewer whose list could not be read gets null, which submitterIsVisible
+  // treats as fail-closed.
+  let viewerBlockedIds: Set<string> | null = new Set<string>();
+  if (callerUserId) {
+    const blockSc = getServiceClient();
+    viewerBlockedIds = blockSc ? await fetchBlockedSet(blockSc, callerUserId) : null;
+  }
+
   const key    = cacheKey(destination, category, radiusKm);
   const cached = cache.get(key);
 
@@ -1554,7 +1628,7 @@ router.get("/discovery", async (req, res) => {
   async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string): Promise<void> {
     const distRef = userCoords ?? clientCoords;
     // destination! — narrowed by the guard above; TypeScript can't see it through the closure.
-    const dbPlaces = await loadCuratedAndCanonicalPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null);
+    const dbPlaces = await loadCuratedAndCanonicalPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null, viewerBlockedIds);
     const osmWithDist = sortBy === "nearest" && distRef
       ? osmPlaces.map((p) =>
           p.lat != null && p.lng != null
@@ -1769,7 +1843,7 @@ router.get("/discovery", async (req, res) => {
     const osmT0 = Date.now();
     const [osmPlaces, dbPlaces] = await Promise.all([
       queryOverpassDeduped(coords.lat, coords.lng, radiusM, category),
-      loadCuratedAndCanonicalPlaces(destination, category, distRef.lat, distRef.lng),
+      loadCuratedAndCanonicalPlaces(destination, category, distRef.lat, distRef.lng, viewerBlockedIds),
     ]);
     const osmMs = Date.now() - osmT0;
 
@@ -2101,7 +2175,11 @@ router.get("/discovery/counts", async (req, res) => {
         // Cache cold — fetch Overpass + DB, then populate cache for subsequent requests.
         const [osmPlaces, dbPlaces] = await Promise.all([
           queryOverpassDeduped(coords.lat, coords.lng, radiusM, cat),
-          queryDbPlaces(destination, cat, coords.lat, coords.lng),
+          // /discovery/counts resolves no caller, so there is no block
+          // relationship to apply. A count can therefore include a row a
+          // signed-in viewer would not be shown; this route returns totals,
+          // never place content.
+          queryDbPlaces(destination, cat, coords.lat, coords.lng, new Set<string>()),
         ]);
         const enriched = osmPlaces.length > 0 ? await enrichOsmSavedCounts(osmPlaces) : osmPlaces;
         if (enriched.length > 0) setCacheA(k, { places: enriched, cachedAt: Date.now() });
@@ -2173,6 +2251,12 @@ router.get("/discovery/feed", async (req, res) => {
   // When unauthenticated, pass null → fetchEventPostsForDiscovery returns [].
   let viewerId: string | null = null;
   let blockedIds = new Set<string>();
+  // Same block relationship, kept separately for places because the two
+  // consumers want opposite behaviour when the read FAILS: event posts have
+  // always failed open (see the catch below), while a community place fails
+  // closed — null here, per submitterIsVisible. Stays an empty set when no
+  // viewer resolves, which is not a failure: there is simply nobody to block.
+  let placeBlockedIds: Set<string> | null = new Set<string>();
   try {
     const sc = getServiceClient();
     if (sc) {
@@ -2182,32 +2266,27 @@ router.get("/discovery/feed", async (req, res) => {
         const { data: userData } = await sc.auth.getUser(token);
         if (userData?.user?.id) {
           viewerId = userData.user.id;
-          // Load both directions of the block relationship
-          const [{ data: out, error: outErr }, { data: inn, error: innErr }] = await Promise.all([
-            sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId),
-            sc.from("blocks").select("blocker_id").eq("blocked_id",  viewerId),
-          ]);
-          // "This viewer has blocked nobody" and "the blocks table could not be
-          // read" both arrive as an empty `blockedIds`, and the event-post
-          // pipeline below filters on exactly that set — so the second case
-          // serves blocked users. PostgREST reports such failures in `error`
-          // rather than throwing, so the catch below never fires for them, and
-          // that catch is about an UNRESOLVED VIEWER anyway rather than a
-          // verdict on this read. The fail-open posture is unchanged; it is now
-          // observable.
-          if (outErr || innErr) {
+          // Both directions of the block relationship, through the one helper
+          // that owns that query (one round trip instead of two). It returns
+          // null when the blocks table could not be read — PostgREST reports
+          // that in `error` rather than throwing, so the catch below never
+          // fires for it; that catch is about an UNRESOLVED VIEWER. The two
+          // consumers want opposite behaviour for a null, so it fans out here:
+          //  - event posts keep their documented fail-OPEN posture: `blockedIds`
+          //    stays empty and the pipeline below filters on exactly that set,
+          //    which means a failed read serves blocked users. Unchanged, but
+          //    it must stay observable — hence the warn.
+          //  - community places fail CLOSED: `placeBlockedIds` stays null and
+          //    submitterIsVisible withholds every authored row.
+          placeBlockedIds = await fetchBlockedSet(sc, viewerId);
+          if (placeBlockedIds === null) {
             req.log.warn(
-              {
-                outCode: (outErr as any)?.code,
-                innCode: (innErr as any)?.code,
-                err: outErr ?? innErr,
-                userId: viewerId,
-              },
+              { userId: viewerId },
               "discovery/feed: block-state read failed — blocked users are NOT being filtered from event posts",
             );
+          } else {
+            for (const id of placeBlockedIds) blockedIds.add(id);
           }
-          for (const r of (out as any[] ?? [])) blockedIds.add(r.blocked_id as string);
-          for (const r of (inn as any[] ?? [])) blockedIds.add(r.blocker_id as string);
         }
       }
     }
@@ -2230,7 +2309,7 @@ router.get("/discovery/feed", async (req, res) => {
           const [rawOsmPlaces, dbPlaces] = includePlaces
             ? await Promise.all([
                 queryOverpassDeduped(coords!.lat, coords!.lng, radiusM, cat),
-                queryDbPlaces(destination ?? "", cat, coords!.lat, coords!.lng),
+                queryDbPlaces(destination ?? "", cat, coords!.lat, coords!.lng, placeBlockedIds),
               ])
             : [[], [] as DiscoveryPlace[]];
           const osmPlaces = await enrichOsmSavedCounts(rawOsmPlaces);
@@ -2385,28 +2464,52 @@ router.get("/discovery/community", async (req, res) => {
   const customMinAge = req.query.customMinAge ? parseInt(req.query.customMinAge as string) : null;
   const customMaxAge = req.query.customMaxAge ? parseInt(req.query.customMaxAge as string) : null;
 
+  // ── Viewer identity, resolved at most once ─────────────────────────────────
+  // Three things here need to know who is asking: the open_to_me age filter
+  // (immediately below), the blocked-submitter filter (after the query), and
+  // the saved-state lookup (further down — the one place this route already
+  // spent an auth.getUser). Routing all three through this resolver is what
+  // lets the block filter cost no extra round trip; an open_to_me request used
+  // to spend TWO and now spends one. A caller with no Bearer header never
+  // triggers the call at all, so anonymous requests are untouched.
+  //
+  // The PROMISE is memoised, not the value, so concurrent callers share the one
+  // in-flight lookup rather than racing to start a second.
+  let communityViewerId: string | null = null;
+  let commViewerPromise: Promise<string | null> | null = null;
+  function resolveCommunityViewer(): Promise<string | null> {
+    if (!commViewerPromise) {
+      commViewerPromise = (async () => {
+        const authHeader = req.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) return null;
+        const authSc = getServiceClient();
+        if (!authSc) return null;
+        try {
+          const { data: authData } = await authSc.auth.getUser(authHeader.slice(7).trim());
+          communityViewerId = (authData?.user?.id as string | undefined) ?? null;
+        } catch { /* degrade gracefully — an unresolved viewer is not an error here */ }
+        return communityViewerId;
+      })();
+    }
+    return commViewerPromise;
+  }
+
   // Optional auth — needed only for open_to_me to resolve caller DOB
   let commCallerAge: number | null = null;
   let commCallerDobMissing = false;
   if (ageFilterComm === "open_to_me") {
-    const authHeader = req.headers.authorization;
-    if (authHeader?.startsWith("Bearer ")) {
-      const sc = getServiceClient();
-      if (sc) {
-        try {
-          const token = authHeader.slice(7).trim();
-          const { data: authData } = await sc.auth.getUser(token);
-          if (authData?.user) {
-            const { data: profileRow } = await sc
-              .from("profiles")
-              .select("date_of_birth")
-              .eq("id", authData.user.id)
-              .maybeSingle();
-            const dob = (profileRow as any)?.date_of_birth ?? null;
-            commCallerAge = calculateUserAge(dob);
-          }
-        } catch { /* degrade gracefully */ }
-      }
+    const ageSc    = getServiceClient();
+    const viewerId = await resolveCommunityViewer();
+    if (ageSc && viewerId) {
+      try {
+        const { data: profileRow } = await ageSc
+          .from("profiles")
+          .select("date_of_birth")
+          .eq("id", viewerId)
+          .maybeSingle();
+        const dob = (profileRow as any)?.date_of_birth ?? null;
+        commCallerAge = calculateUserAge(dob);
+      } catch { /* degrade gracefully */ }
     }
     if (commCallerAge === null) commCallerDobMissing = true;
   }
@@ -2494,13 +2597,32 @@ router.get("/discovery/community", async (req, res) => {
       return;
     }
 
+    // ── Blocked submitters ───────────────────────────────────────────────────
+    // The most exposed of the community surfaces: this query joins profiles and
+    // returns the submitter's name, avatar and handle, so an unfiltered row puts
+    // a blocked person's BYLINE in front of the viewer who blocked them, not
+    // just their pick. Same rule and the same helper as the feed surfaces — see
+    // submitterIsVisible, including what a null set means.
+    //
+    // Applied here, before nameVisibilitySet and before items are built, so a
+    // blocked submitter's display name is never resolved and `total` counts what
+    // the viewer actually received. Skipped entirely when the query came back
+    // empty, so a request that would not have resolved a viewer still doesn't.
+    const rawRows = (data ?? []) as any[];
+    let rows = rawRows;
+    if (rawRows.length > 0) {
+      const viewerId = await resolveCommunityViewer();
+      const blocked  = viewerId ? await fetchBlockedSet(sc, viewerId) : new Set<string>();
+      rows = rawRows.filter((row: any) => submitterIsVisible(row.submitted_by, blocked));
+    }
+
     // Universal display-name rule: submitter names show @handle unless opted in.
     const allowedSubmitterNames = await nameVisibilitySet(
       getServiceClient(),
-      (data ?? []).map((r: any) => r.submitted_by).filter(Boolean),
+      rows.map((r: any) => r.submitted_by).filter(Boolean),
     );
 
-    const items: CommunityDiscoveryItem[] = (data ?? []).map((row: any) => {
+    const items: CommunityDiscoveryItem[] = rows.map((row: any) => {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       return {
         id:           row.id,
@@ -2541,33 +2663,29 @@ router.get("/discovery/community", async (req, res) => {
     // Batch-fetch saved state and vote/review aggregates in parallel (both non-fatal)
     const placeIds = items.map((i) => i.id);
     const savedPlaceIds = new Set<string>();
-    // Hoisted out of the saved-places block below so the serve log can reuse the
-    // identity that block ALREADY resolves. Instrumenting this route must not
-    // cost a second auth.getUser round trip on a path that previously made one.
-    let communityViewerId: string | null = null;
+    // Identity comes from resolveCommunityViewer above — this block used to own
+    // the route's single auth.getUser, and the serve log below reads the same
+    // memoised value. Keeping the resolution in one place is what stops the
+    // blocked-submitter filter from adding a second round trip here.
     const [, voteAgg] = await Promise.all([
       (async () => {
         try {
-          const authHeaderComm = req.headers.authorization;
-          const commSc = getServiceClient();
-          if (authHeaderComm?.startsWith("Bearer ") && commSc && placeIds.length > 0) {
-            const { data: authDataComm } = await commSc.auth.getUser(authHeaderComm.slice(7).trim());
-            if (authDataComm?.user) {
-              communityViewerId = authDataComm.user.id as string;
-              const { data: userCols } = await commSc
-                .from("collections")
-                .select("id")
-                .eq("owner_id", authDataComm.user.id);
-              const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
-              if (colIds.length > 0) {
-                const { data: savedItems } = await commSc
-                  .from("collection_items")
-                  .select("entity_id")
-                  .eq("entity_type", "place")
-                  .in("collection_id", colIds)
-                  .in("entity_id", placeIds);
-                for (const s of (savedItems ?? []) as any[]) savedPlaceIds.add((s as any).entity_id as string);
-              }
+          const commSc   = getServiceClient();
+          const viewerId = placeIds.length > 0 ? await resolveCommunityViewer() : null;
+          if (viewerId && commSc) {
+            const { data: userCols } = await commSc
+              .from("collections")
+              .select("id")
+              .eq("owner_id", viewerId);
+            const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
+            if (colIds.length > 0) {
+              const { data: savedItems } = await commSc
+                .from("collection_items")
+                .select("entity_id")
+                .eq("entity_type", "place")
+                .in("collection_id", colIds)
+                .in("entity_id", placeIds);
+              for (const s of (savedItems ?? []) as any[]) savedPlaceIds.add((s as any).entity_id as string);
             }
           }
         } catch { /* non-fatal */ }
