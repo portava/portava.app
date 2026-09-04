@@ -20,6 +20,7 @@ import { OptionPills } from './OptionPills.tsx';
 import {
   submitQuickSignal,
   submitWalkIn,
+  submitMusic,
   makeIdempotencyKey,
   type CaptureResult,
   type ObservationEnvelope,
@@ -60,6 +61,8 @@ export function PromptBlock({ subjectId, question, visibility, zoneId, partySize
       let res: CaptureResult;
       if (question.kind === 'walkIn') {
         res = await submitWalkIn({ subjectId, accepted: option === 'accepted', visibility, partySize, idempotencyKey });
+      } else if (question.kind === 'music') {
+        res = await submitMusic({ subjectId, genre: option, visibility, zoneId, partySize, idempotencyKey });
       } else {
         res = await submitQuickSignal({
           subjectId,
@@ -109,6 +112,7 @@ export function PromptBlock({ subjectId, question, visibility, zoneId, partySize
         busyOption={busyOption}
         selectedOption={sentOption}
         disabled={!question.phase1}
+        labelFor={question.labelFor}
         testIDPrefix={`intel-q-${question.id}`}
       />
       {!question.phase1 ? (

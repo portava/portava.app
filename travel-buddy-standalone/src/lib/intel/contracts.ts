@@ -59,6 +59,30 @@ export const QUICK_SIGNAL_PROMPTS: Record<QuickSignalContext, QuickSignalPrompt>
 /** The exit reasons, surfaced by the Trail exit sheet. Alias of the exit options. */
 export const EXIT_REASONS = QUICK_SIGNAL_PROMPTS.exit.options;
 
+// ── music.current (§4 Table 6 / §29 Included) ────────────────────────────────
+/**
+ * The controlled, copyright-safe genre vocabulary — byte-for-byte the server's
+ * MUSIC_GENRES (lib/intelContracts). NEVER a track, artist or lyric: the composer
+ * offers only these genres, so the write carries no free text. 'none' records
+ * silence; 'other' is the honest catch-all so the picker never forces a genre.
+ */
+export const MUSIC_GENRES = ['none', 'house', 'techno', 'hip_hop', 'latin', 'pop', 'rock', 'jazz', 'live_band', 'other'] as const;
+export type MusicGenre = (typeof MUSIC_GENRES)[number];
+
+/** Traveler-facing labels for the genre pills (canonical value stays as sent). */
+export const MUSIC_GENRE_LABELS: Record<MusicGenre, string> = {
+  none: 'No music',
+  house: 'House',
+  techno: 'Techno',
+  hip_hop: 'Hip-hop',
+  latin: 'Latin',
+  pop: 'Pop',
+  rock: 'Rock',
+  jazz: 'Jazz',
+  live_band: 'Live band',
+  other: 'Other',
+};
+
 // ── Independent-group signal (§privacy V1) ───────────────────────────────────
 /**
  * The "who are you here with?" answer — a byte-for-byte mirror of the api-server
@@ -138,9 +162,17 @@ export interface PromptQuestion {
   topic: string;
   /** The question copy shown above the option pills. */
   prompt: string;
-  kind: 'context' | 'walkIn';
+  /**
+   *  - 'context' → submits `{ context, option }` (server maps to a claim).
+   *  - 'walkIn'  → submits the direct Phase-1 claim `access.walk_in`.
+   *  - 'music'   → submits the direct Phase-1 claim `music.current`; each option
+   *                is a canonical MUSIC_GENRES value, rendered via `labelFor`.
+   */
+  kind: 'context' | 'walkIn' | 'music';
   context?: QuickSignalContext;
   options: readonly string[];
+  /** Optional raw-option → display-label map (e.g. genre value → friendly name). */
+  labelFor?: (option: string) => string;
   phase1: boolean;
 }
 
@@ -149,6 +181,8 @@ const Q_INSIDE: PromptQuestion = { id: 'inside', topic: 'trajectory', prompt: QU
 const Q_ENTRANCE: PromptQuestion = { id: 'entrance', topic: 'line', prompt: QUICK_SIGNAL_PROMPTS.entrance.prompt, kind: 'context', context: 'entrance', options: QUICK_SIGNAL_PROMPTS.entrance.options, phase1: true };
 const Q_WALKIN: PromptQuestion = { id: 'walkin', topic: 'walk-in', prompt: 'Walking in without a booking?', kind: 'walkIn', options: ['accepted', 'turned away'], phase1: true };
 const Q_EXIT: PromptQuestion = { id: 'exit', topic: 'why leave', prompt: QUICK_SIGNAL_PROMPTS.exit.prompt, kind: 'context', context: 'exit', options: QUICK_SIGNAL_PROMPTS.exit.options, phase1: false };
+/** music.current — §29 Included nightlife family; a controlled genre picker (no free text). */
+const Q_MUSIC: PromptQuestion = { id: 'music', topic: 'music', prompt: 'What is playing?', kind: 'music', options: MUSIC_GENRES, labelFor: (o) => MUSIC_GENRE_LABELS[o as MusicGenre] ?? o, phase1: true };
 
 /**
  * Per-venue arrival + exit/follow-up question sets (§6). Every arrival question
@@ -158,7 +192,7 @@ const Q_EXIT: PromptQuestion = { id: 'exit', topic: 'why leave', prompt: QUICK_S
  * read-only "planned" chips from `VENUE_PROMPTS` by the sheet itself.
  */
 export const VENUE_QUESTION_SETS: Record<VenueCategory, { arrival: PromptQuestion[]; exit: PromptQuestion[] }> = {
-  nightlife: { arrival: [Q_ARRIVAL, Q_INSIDE, Q_ENTRANCE, Q_WALKIN], exit: [Q_EXIT] },
+  nightlife: { arrival: [Q_ARRIVAL, Q_INSIDE, Q_ENTRANCE, Q_WALKIN, Q_MUSIC], exit: [Q_EXIT] },
   restaurant: { arrival: [Q_ENTRANCE, Q_WALKIN, Q_ARRIVAL], exit: [Q_EXIT] },
   event: { arrival: [Q_ARRIVAL, Q_ENTRANCE, Q_INSIDE], exit: [Q_EXIT] },
   transit: { arrival: [Q_ENTRANCE, Q_ARRIVAL], exit: [Q_EXIT] },
@@ -276,6 +310,7 @@ export function correctionOptionsFor(claimType: string): readonly string[] | nul
     case 'crowd.trajectory': return QUICK_SIGNAL_PROMPTS.inside.options;
     case 'queue.wait': return QUICK_SIGNAL_PROMPTS.entrance.options;
     case 'access.walk_in': return ['accepted', 'turned away'];
+    case 'music.current': return MUSIC_GENRES;
     default: return null;
   }
 }
@@ -298,6 +333,8 @@ export function optionToClaimValue(claimType: string, option: string): Record<st
     }
     case 'access.walk_in':
       return option === 'accepted' ? { accepted: true } : option === 'turned away' ? { accepted: false } : null;
+    case 'music.current':
+      return (MUSIC_GENRES as readonly string[]).includes(option) ? { genre: option } : null;
     default:
       return null;
   }

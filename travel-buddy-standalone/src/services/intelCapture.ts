@@ -195,6 +195,32 @@ export function submitWalkIn(args: {
   });
 }
 
+/**
+ * Convenience: the direct Phase-1 music.current claim (§29 Included). `genre` is a
+ * canonical MUSIC_GENRES value — the composer sends no free text, only a genre.
+ */
+export function submitMusic(args: {
+  subjectId: string;
+  genre: string;
+  visibility?: Visibility;
+  zoneId?: string | null;
+  /** V1 independent-group signal — music is a label-eligible nightlife signal. */
+  partySize?: PartySizeBucket;
+  partyId?: string | null;
+  idempotencyKey?: string;
+}): Promise<CaptureResult> {
+  return submitObservation({
+    subjectId: args.subjectId,
+    claimType: 'music.current',
+    value: { genre: args.genre },
+    visibility: args.visibility,
+    zoneId: args.zoneId,
+    partySize: args.partySize,
+    partyId: args.partyId,
+    idempotencyKey: args.idempotencyKey,
+  });
+}
+
 // ── Claim lifecycle ───────────────────────────────────────────────────────────
 export interface ProposeResult {
   ok: boolean;
