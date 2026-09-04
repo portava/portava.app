@@ -2541,6 +2541,10 @@ function FullScreenMapScreenInner() {
         onAccept={(p) => {
           const activeTripId = tripId;
           if (!activeTripId) { setProposal(null); return; }
+          // Append accepted ideas after the existing stops rather than at
+          // sort_order 0 — the batch reorder then places them by the plan.
+          let appendOrder =
+            (composedTrip?.source.stops ?? []).reduce((m, st) => Math.max(m, st.orderIndex), -1) + 1;
           void (async () => {
             const result = await persistOptimizeAcceptance(p, new Date().toISOString(), {
               // Owner-only batch reorder — the durable Trips write (§20).
@@ -2556,6 +2560,7 @@ function FullScreenMapScreenInner() {
                   lat: idea.lat,
                   lng: idea.lng,
                   ...(idea.subtitle ? { locationName: idea.subtitle } : {}),
+                  sortOrder: appendOrder++,
                 });
                 return item.id;
               },
