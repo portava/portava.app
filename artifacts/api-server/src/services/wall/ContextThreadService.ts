@@ -43,7 +43,7 @@ import type {
   WallProjection,
 } from "../../lib/wallProjection.js";
 import { readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
-import { deriveHiddenGemState, deriveGemConfidence } from "../../lib/hiddenGemState.js";
+import { deriveGemProjection } from "../hiddenGems/HiddenGemContributionService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { logger } from "../../lib/logger.js";
 
@@ -487,22 +487,19 @@ async function readHiddenGemCandidate(
   try {
     const { data, error } = await sc
       .from("hidden_gems")
-      // `confirmation_count` and `days_since_last_confirmation` were in this
-      // select list but exist on NO table in the schema — not hidden_gems, not
-      // anywhere in public. PostgREST fails the WHOLE read on an unknown
-      // select-list column (PGRST100), so the `if (error || !data) return null`
-      // below fired on every call and this thread never rendered at all.
+      // hidden_gems has NO confirmation_count and NO days_since_last_confirmation
+      // column, and never did. Naming them here failed the WHOLE read with
+      // PGRST100, so `if (error || !data) return null` fired on every call and
+      // this branch has never produced a candidate in production. The columns
+      // below are each verified present in the live schema.
       //
-      // Dropped rather than invented: the two derivations already default them
-      // (`?? null`, `?? 0`), so removing them yields exactly the values the code
-      // was written to expect, and a thread that renders instead of one that
-      // never does.
-      //
-      // To make those signals real, derive them from `hidden_gem_verifications`
-      // (the confirmations table) rather than adding denormalised counters here.
+      // The two derivations below still default those signals (`?? null`, `?? 0`).
+      // To make them real, derive from `hidden_gem_verifications` (the
+      // confirmations table) rather than adding denormalised counters here.
       .select(
         "id, sensitivity_level, verification_level, status, crowd_level, " +
-          "save_count, visit_count, updated_at",
+          "save_count, visit_count, updated_at, canonical_place_id, " +
+          "latitude, longitude, approx_latitude, approx_longitude, image_url",
       )
       .eq("canonical_place_id", place.placeId)
       .eq("status", "active")
@@ -511,21 +508,25 @@ async function readHiddenGemCandidate(
     if (error || !data) return null;
     const row = data as any;
 
-    const state = deriveHiddenGemState({
-      status: row.status ?? null,
-      crowdLevel: row.crowd_level ?? null,
-      daysSinceLastConfirmation: row.days_since_last_confirmation ?? null,
-      confirmationCount: Number(row.confirmation_count ?? 0),
-      saveCount: Number(row.save_count ?? 0),
-      visitCount: Number(row.visit_count ?? 0),
-    });
-    const conf = deriveGemConfidence({
-      verificationLevel: row.verification_level ?? null,
-      approvedConfirmations: Number(row.confirmation_count ?? 0),
-      daysSinceLastConfirmation: row.days_since_last_confirmation ?? null,
-      hasCanonicalPlace: true,
-    });
-    const confidence = conf.confidence;
+    // Confirmations are an AGGREGATE, not a column: deriveGemProjection folds
+    // hidden_gem_verifications and hidden_gem_contributions into the confirmation
+    // count and the days-since-last-confirmation this state machine wants. The
+    // two invented columns above were a denormalised shortcut to data that lives
+    // in those two tables, and it never existed.
+    //
+    // Delegating also stops this being a second, weaker copy of the derivation.
+    // The hand-rolled call it replaces passed four signals; the shared producer
+    // passes eleven — distinct confirmers, suspicious-visit ratio, positive and
+    // negative contributions, coords, media and paid-promotion all reach
+    // deriveGemConfidence now, and hasCanonicalPlace is read from the row rather
+    // than hardcoded true.
+    //
+    // Cost: three extra reads for one gem on this path. Worth stating plainly —
+    // but the path it replaces performed one read that always failed, so this is
+    // three queries where there were previously zero useful ones.
+    const projection = await deriveGemProjection(sc, row, now.getTime());
+    const state = projection.gemState;
+    const confidence = projection.gemConfidence.score;
 
     const sensitivity = String(row.sensitivity_level ?? "public");
     const sensitiveDisclosure = PROTECTED_GEM_SENSITIVITY.has(sensitivity);
