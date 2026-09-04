@@ -578,6 +578,7 @@ const KIND_NOUNS: Partial<Record<MapObjectKind, string>> = {
   hidden_gem: "places",
   trip_stop: "places",
   memory: "places",
+  saved_place: "places",
   event: "events",
   prediction: "signals",
 };
