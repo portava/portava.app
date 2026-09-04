@@ -322,6 +322,32 @@ describe("executeAccountDeletion — full cascade", () => {
       "the delete_intel_reward_ledger step must run and succeed");
   });
 
+  it("erases the Passport/Wall owner-scoped rows — their profiles cascade never fires under the tombstone", async () => {
+    // availability_windows (2260), passport_travel_dna_prefs (2261) and
+    // wall_session_intents (2271) are each user_id-keyed with ON DELETE CASCADE to
+    // profiles, but the tombstone profile means that cascade never fires — so the
+    // rows (open-to-plans windows, Travel-DNA Show/Hide/Not-Me prefs, and the typed
+    // Wall session intent whose raw_text echoes typed input) would survive deletion
+    // as orphaned personal data. None is append-only, so each is cleared with a
+    // direct scoped delete keyed by user_id.
+    const c = makeClient();
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
+    assert.equal(out.ok, true, JSON.stringify(out.steps));
+
+    for (const [table, step] of [
+      ["availability_windows", "delete_availability_windows"],
+      ["passport_travel_dna_prefs", "delete_travel_dna_prefs"],
+      ["wall_session_intents", "delete_wall_session_intent"],
+    ] as const) {
+      const del = opFor(c, table, "delete");
+      assert.ok(del, `the cascade must delete ${table}`);
+      assert.deepEqual(del!.filters, [["eq", "user_id", USER_ID]],
+        `${table} must be deleted scoped to this user by user_id`);
+      assert.ok(out.steps.some((s) => s.step === step && s.ok),
+        `the ${step} step must run and succeed`);
+    }
+  });
+
   it("ABORTS the deletion when the memory purge fails — never silently leaves memory behind", async () => {
     // The privacy guarantee: a deletion request that cannot purge derived memory
     // must fail loudly and stay retryable, rather than reporting success with the

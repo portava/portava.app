@@ -468,6 +468,21 @@ export interface MeetHereCreatedPayload extends DecisionScoped {
   ttl?: DurationBucket;
 }
 
+/**
+ * A Meet Here the policy refused. Deliberately NOT decision-scoped: a refusal
+ * is a property of the subject and the rule, not of a Compass decision, and
+ * attaching a decisionId would let a refusal count as an outcome of a
+ * recommendation it had nothing to do with.
+ */
+export interface MeetHereRefusedPayload {
+  /** The subject that could not anchor a meeting. Already coarsened. */
+  ref: MapObjectRef;
+  /** Which rule fired. Mirrors meetHereModel's MeetRefusalReason. */
+  reason: 'aggregate_subject' | 'no_geometry' | 'not_visible';
+  /** Where the user asked from, so rail and long-press can be told apart. */
+  surface: 'action_rail' | 'long_press' | 'place_sheet';
+}
+
 export interface CrewLocateStartedPayload {
   crewSize: CountBucket;
   /** Rung requested — §23 requires this be temporary and group-scoped. */
@@ -534,6 +549,7 @@ export interface MapEventPayloads {
   alternative_requested: AlternativeRequestedPayload;
   recommendation_accepted: RecommendationAcceptedPayload;
   recommendation_declined: RecommendationDeclinedPayload;
+  meet_here_refused: MeetHereRefusedPayload;
 }
 
 export type MapEventName = keyof MapEventPayloads;
@@ -556,6 +572,16 @@ export const MAP_EVENT_NAMES = [
   'alternative_requested',
   'recommendation_accepted',
   'recommendation_declined',
+  // ── Beyond §35's sixteen, deliberately ──────────────────────────────────
+  // §35 names sixteen events, all of which describe something the user DID.
+  // None describes something the product REFUSED to do. Without this, a Meet
+  // Here that policy blocked is indistinguishable from a Meet Here the user
+  // never tried — the funnel simply shows a gap, and a §23 refusal rule that
+  // fires constantly looks identical to a feature nobody uses.
+  //
+  // It carries a reason, never a subject's precise geometry: the point is to
+  // measure the RULE, not the place it fired on.
+  'meet_here_refused',
 ] as const;
 
 /** Events that may carry a decisionId — the outcome arm of a Compass decision. */

@@ -333,8 +333,43 @@ jobs:
   # credentials is not blocked"). That is green-by-absence by design and must
   # not be copied into CI.
   # ───────────────────────────────────────────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────────────────
+  # MIGRATIONS ARE APPLIED HERE, IN THIS JOB, BEFORE THE DRIFT AUDITS RUN.
+  #
+  # THE DEFECT. Five migrations reached main and were never applied to the CI
+  # project: 2220, 2223, 2224, 2250, 2252. Nothing in the merge path applied
+  # them, so `audit:schema` below went red ON MAIN ITSELF and stayed red until
+  # somebody hand-applied old migrations through the Management API — unordered,
+  # unrecorded, and dependent on a person noticing. This job is what makes that
+  # automatic, ordered and recorded.
+  #
+  # WHY THESE STEPS ARE IN THE DRIFT JOB RATHER THAN A NEW ONE. Three reasons,
+  # in order of weight:
+  #
+  #   1. ORDER. `audit:schema` and `check:media-objects` ask "does the live
+  #      schema match the migrations". Running them in a job that could execute
+  #      BEFORE or ALONGSIDE the apply would produce a red that the apply in the
+  #      same run had already fixed. Steps in one job are sequential, so the
+  #      ordering is structural rather than a `needs:` edge somebody can drop.
+  #   2. The set of credential jobs in this file is DECLARED, not inferred, in
+  #      REQUIRED_CREDENTIAL_JOBS in .github/scripts/assert-ci-scripts.mjs. A
+  #      new credential-bearing job here without a matching entry there is a
+  #      preflight failure — correctly, because acquiring database credentials
+  #      is a scope change that should be reviewed. `schema-drift` is already on
+  #      that list and already runs the unconditional allowlist step.
+  #   3. One install, not two.
+  #
+  # WHAT RUNS WHERE, AND WHY THE DRY RUN IS UNCONDITIONAL. On every ref the
+  # applier runs with --dry-run: it reads the ledger, computes the canonical
+  # order, classifies every pending file and writes nothing. That is what turns
+  # "this migration cannot be applied atomically with its ledger row" into a red
+  # on the PR that introduces it, instead of a red on main after it merges. The
+  # real apply and the certification are restricted to the default branch,
+  # because applying an unmerged branch's migrations to the shared CI database
+  # would leave that database ahead of main with no commit accounting for it.
+  # ───────────────────────────────────────────────────────────────────────────
   schema-drift:
-    name: schema drift · migrations vs live (needs credentials)
+    name: schema drift · apply migrations, certify, then audit vs live (needs credentials)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: preflight
@@ -421,9 +456,59 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile
 
+      # ── APPLY ────────────────────────────────────────────────────────────
+      #
+      # Dry run on EVERY ref, including pull requests. Writes nothing: it reads
+      # public.schema_migration_ledger, computes the canonical order, and
+      # classifies every pending file. A migration whose shape cannot be applied
+      # atomically with its ledger row (an interior COMMIT, a ROLLBACK probe,
+      # CREATE INDEX CONCURRENTLY) is REFUSED here, on the PR that introduces
+      # it, rather than on main after it merges.
+      #
+      # Exit contract: 0 = nothing refused, 1 = a pending file would be refused,
+      # 2 = environment (no SUPABASE_URL, no Management API token, no ledger
+      # table). 2 is a failure and never a skip — a migration apply that
+      # silently did not happen is the entire defect this exists to fix.
+      - name: 'migrations — dry run (ordered plan, writes nothing)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations:dry-run
+
+      # THE APPLY. Default branch only — see the job header. Each pending
+      # migration is applied in ONE transaction that also carries its ledger
+      # row, so "applied but unrecorded" is unreachable; the run stops at the
+      # first failure, because later migrations routinely depend on earlier ones
+      # and continuing past a failure invents a schema state no environment has
+      # ever had.
+      #
+      # It is idempotent: a file whose ledger row PROVES an apply
+      # (applied_by ci|manual with a real sha256) is skipped by name, so a
+      # re-run of this workflow applies nothing and exits 0.
+      - name: 'migrations — apply to the sanctioned CI project'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && github.ref == 'refs/heads/main' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations
+
+      # CERTIFICATION. A separate process, reading the catalog, because an
+      # applier's own report is a claim about a request and not about a
+      # database. Five stages in order, stopping at the first failure and naming
+      # it: ledger parity (delegated to check:migration-ledger), the declared
+      # objects, grants and RLS, the migrations' own postconditions re-run after
+      # the commit, and the repo's live-schema checks. It applies nothing.
+      - name: 'migrations — certify the apply landed'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && github.ref == 'refs/heads/main' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server certify:migrations
+
+      # ── AUDIT ────────────────────────────────────────────────────────────
+      #
       # Exit contract, read from source: 0 = clean, 1 = real drift,
       # 2 = cannot run (no SUPABASE_URL / no token). All three are handled;
       # 2 is a failure, not a skip.
+      #
+      # These run AFTER the apply above, in the same job, on purpose: they ask
+      # whether the live schema matches the migrations, and the apply is what
+      # makes that true.
       - name: 'audit:schema — migrations vs live schema'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash

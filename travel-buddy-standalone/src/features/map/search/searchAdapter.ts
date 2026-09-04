@@ -20,7 +20,8 @@
  * A result can still be listed and tapped through to its detail route without
  * being placeable on a map.
  *
- * Pure: no network, no storage, no clock.
+ * Pure: no network, no storage, no clock. The single exception is a deduped
+ * diagnostic for unknown server types — see `setUnknownServerTypeSink`.
  */
 import type {
   AreaSearchResult,
@@ -41,25 +42,56 @@ export interface UnifiedSearchResultLike {
 }
 
 /**
- * The server's `type` strings mapped onto §27's nine result types.
+ * THE WIRE VOCABULARY
+ * ===================
+ * The server's per-item `type` is a `SearchType` from the discovery search
+ * route (artifacts/api-server/src/routes/discoverySearch.ts, `SEARCH_TYPES`).
+ * Those are the PLURAL forms — "travelers", "hidden_gems", "cities" — and there
+ * are SEVENTEEN of them, not nine. §27 lists what the MAP shows; the endpoint
+ * is the app's one global search and also returns posts, circles, stamps,
+ * plans and three static taxonomy facets.
  *
- * Anything unrecognised is DROPPED rather than coerced to 'place': a result
- * rendered under the wrong heading, with the wrong zoom and the wrong camera
- * state, is worse than one that simply is not on the map.
+ * Every one of those seventeen must appear in exactly one of the two tables
+ * below. `__tests__/serverSearchTypes.test.ts` reads `SEARCH_TYPES` out of the
+ * server source itself and fails if any type is in neither — so the wire
+ * growing an eighteenth type breaks a test here instead of silently losing
+ * results, which is exactly what the singular keys this table used to hold did
+ * to Travelers, Hidden Gems, Cities and Countries.
  */
+
+/** Server types that have a §27 map representation. */
 export const SERVER_TYPE_TO_MAP_TYPE: Record<string, MapSearchResultType> = {
-  place: 'place',
   places: 'place',
+  // `activities` is the SAME discovery_places table filtered to activity
+  // categories, and routes to /place/:id. It is a Place under a filter, so it
+  // belongs under the Places heading rather than nowhere.
+  activities: 'place',
+  events: 'event',
+  trips: 'trip',
+  travelers: 'user',
+  buddies: 'buddy',
+  hidden_gems: 'hidden_gem',
+  hashtags: 'hashtag',
+  // A city or a country is a REGION: it frames rather than centres. Given only
+  // a centroid — the canonical-location rows /discovery/suggest returns carry
+  // lat/lng — the 'area' branch degrades it to a point rather than inventing a
+  // bounding box around it.
+  cities: 'area',
+  countries: 'area',
+
+  // ── Tolerated aliases — NOT the wire vocabulary ───────────────────────
+  // None of these is emitted by discoverySearch.ts. They are kept so a rename
+  // or a second producer degrades gracefully, and they are segregated here so
+  // no one mistakes them for the wire again. They earn no coverage: the
+  // coverage test drives off the server's own list, never off this table.
+  place: 'place',
   venue: 'place',
   event: 'event',
-  events: 'event',
   trip: 'trip',
-  trips: 'trip',
   user: 'user',
   users: 'user',
   profile: 'user',
   buddy: 'buddy',
-  buddies: 'buddy',
   gem: 'hidden_gem',
   gems: 'hidden_gem',
   hidden_gem: 'hidden_gem',
@@ -67,15 +99,108 @@ export const SERVER_TYPE_TO_MAP_TYPE: Record<string, MapSearchResultType> = {
   areas: 'area',
   neighborhood: 'area',
   city: 'area',
+  country: 'area',
   hashtag: 'hashtag',
-  hashtags: 'hashtag',
   tag: 'hashtag',
+  // §27's ninth type. The server has NO `saved` SearchType and never emits one,
+  // so this is reachable only from a local or future producer.
   saved: 'saved',
   wishlist: 'saved',
 };
 
+/**
+ * Server types ruled OFF the map on purpose, each with its reason.
+ *
+ * This table is the whole difference between "we decided this has no place on
+ * the map" and "we have never heard of this". Both drop the result; only the
+ * second is a bug, and only the second warns.
+ */
+export const SERVER_TYPE_NOT_ON_MAP: Record<string, string> = {
+  plans:
+    'a plan is an item inside a trip, not a §27 heading; it carries only tripId/creatorId and has no geometry of its own — it reaches the map as its parent trip',
+  posts: 'a post is content, not a location; §27 has no Posts heading',
+  circles: 'a circle is a group of people, not a place',
+  stamps:
+    'a stamp is an earned award; its subject is a trip or a city, and it has no point of its own',
+  languages: 'a static taxonomy facet, not a geographic object',
+  interests: 'a static taxonomy facet, not a geographic object',
+  vibes: 'a static taxonomy facet, not a geographic object',
+};
+
+/** What this adapter knows about one server `type` string. */
+export type ServerTypeVerdict =
+  | { kind: 'mapped'; mapType: MapSearchResultType }
+  | { kind: 'not_on_map'; reason: string }
+  | { kind: 'unknown' };
+
+/**
+ * Classify one server `type`. Unlike `mapSearchTypeFor`, this distinguishes a
+ * deliberate omission from an unrecognised string.
+ */
+export function classifyServerType(serverType: string): ServerTypeVerdict {
+  const key = String(serverType).toLowerCase();
+  const mapType = SERVER_TYPE_TO_MAP_TYPE[key];
+  if (mapType) return { kind: 'mapped', mapType };
+  const reason = SERVER_TYPE_NOT_ON_MAP[key];
+  if (reason) return { kind: 'not_on_map', reason };
+  return { kind: 'unknown' };
+}
+
 export function mapSearchTypeFor(serverType: string): MapSearchResultType | null {
-  return SERVER_TYPE_TO_MAP_TYPE[String(serverType).toLowerCase()] ?? null;
+  const verdict = classifyServerType(serverType);
+  return verdict.kind === 'mapped' ? verdict.mapType : null;
+}
+
+// ── The unknown-type signal ─────────────────────────────────────────
+//
+// SHOULD AN UNKNOWN TYPE BE SILENT? No — silence is how this survived. The map
+// search sheet asks for type=all and kept 4 of the 17 types the server returns;
+// nothing failed, nothing logged, and the missing results simply looked like a
+// thin search.
+//
+// But only UNKNOWN types warn. A `not_on_map` type is a decision already
+// written down above and reviewed, and posts/languages/interests/vibes appear
+// in essentially every type=all response — warning on those would fire on every
+// keystroke and teach everyone to ignore the channel. An unknown type is rare
+// by construction: it means the wire grew something this client has never heard
+// of, which is precisely the event worth interrupting someone for.
+//
+// Deduped per type so one page of results cannot emit twenty identical lines,
+// and routed through a replaceable sink so tests can observe it and a host app
+// can send it somewhere better than the console. This memo is the module's only
+// state; everything else here is pure.
+
+export type UnknownServerTypeSink = (serverType: string) => void;
+
+const DEFAULT_UNKNOWN_SINK: UnknownServerTypeSink = (serverType) => {
+  console.warn(
+    `[map/search] dropped a result of unknown server type "${serverType}". ` +
+      'Every SearchType in artifacts/api-server/src/routes/discoverySearch.ts must be listed ' +
+      'in SERVER_TYPE_TO_MAP_TYPE or SERVER_TYPE_NOT_ON_MAP.',
+  );
+};
+
+let unknownTypeSink: UnknownServerTypeSink = DEFAULT_UNKNOWN_SINK;
+const warnedUnknownTypes = new Set<string>();
+
+/**
+ * Replace the unknown-type sink and reset the dedupe memo. Returns the sink
+ * that was installed before, so a caller can restore it.
+ */
+export function setUnknownServerTypeSink(
+  sink: UnknownServerTypeSink | null,
+): UnknownServerTypeSink {
+  const previous = unknownTypeSink;
+  unknownTypeSink = sink ?? DEFAULT_UNKNOWN_SINK;
+  warnedUnknownTypes.clear();
+  return previous;
+}
+
+function reportUnknownType(serverType: string): void {
+  const key = String(serverType).toLowerCase();
+  if (warnedUnknownTypes.has(key)) return;
+  warnedUnknownTypes.add(key);
+  unknownTypeSink(serverType);
 }
 
 /** A finite lat/lng pair, or null. Never partially populated. */
@@ -122,12 +247,18 @@ export function boundsFromMetadata(
 }
 
 /**
- * Translate one unified result. Returns null when the type is unrecognised —
- * see SERVER_TYPE_TO_MAP_TYPE.
+ * Translate one unified result. Returns null in three distinguishable cases:
+ * the type has no map representation (deliberate, silent), the type is unknown
+ * (a bug — warns once), or the result carries no usable geometry.
  */
 export function toMapSearchResult(r: UnifiedSearchResultLike): MapSearchResult | null {
-  const type = mapSearchTypeFor(r.type);
-  if (!type) return null;
+  const verdict = classifyServerType(r.type);
+  if (verdict.kind === 'unknown') {
+    reportUnknownType(r.type);
+    return null;
+  }
+  if (verdict.kind === 'not_on_map') return null;
+  const type = verdict.mapType;
 
   const base = {
     id: r.id,
@@ -164,8 +295,13 @@ export function toMapSearchResult(r: UnifiedSearchResultLike): MapSearchResult |
       return { ...base, type: 'user', center: center ?? null };
     case 'buddy':
       return { ...base, type: 'buddy', center: center ?? null };
-    default:
+    default: {
+      // Exhaustiveness: a tenth MapSearchResultType with no branch here fails
+      // typecheck instead of silently returning null at runtime.
+      const unhandled: never = type;
+      void unhandled;
       return null;
+    }
   }
 }
 

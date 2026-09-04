@@ -12,6 +12,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirZone = dirname(fileURLToPath(import.meta.url));
 
 import {
   ACTIVITY_RAMP,
@@ -408,4 +413,51 @@ test('zoneStyleForObject reads the five axes off the object', () => {
 test('zoneStyle is a pure function of its input', () => {
   const input = { kind: 'activity_zone', activity: 'busy', trend: 'stable' } as const;
   assert.deepEqual(zoneStyle({ ...input }), zoneStyle({ ...input }));
+});
+
+// ── The zone feed is wider than the zone vocabulary, on purpose ───────────────
+//
+// app/map/index.tsx builds `zoneObjects` and hands the SAME array to two
+// layers, each of which re-filters for what it draws:
+//
+//   ActivityZoneLayer  → keeps isZoneKind          (polygons)
+//   CrowdFlowLayer     → keeps kind === 'crowd_flow' (LineStrings)
+//
+// So the feed must carry crowd_flow even though crowd_flow is not a ZoneKind.
+// It was filtered to ZONE_KINDS alone, which starved the flow layer of every
+// object it exists to render: §10 could have shipped end-to-end on the server
+// and drawn absolutely nothing, with no error anywhere.
+//
+// The tempting fix — adding 'crowd_flow' to ZONE_KINDS — is wrong, and these
+// tests pin BOTH halves so neither drifts: a flow is a LineString and
+// ActivityZone draws polygons, so widening the vocabulary would route it to a
+// renderer that cannot draw it.
+test("the crowd_flow feed rule — crowd_flow is NOT a ZoneKind, so it never reaches the polygon renderer", () => {
+  assert.equal(
+    (ZONE_KINDS as readonly MapObjectKind[]).includes('crowd_flow'),
+    false,
+    'adding crowd_flow to ZONE_KINDS sends a LineString to ActivityZone, which draws polygons',
+  );
+  assert.equal(isZoneKind('crowd_flow' as MapObjectKind), false);
+});
+
+test('the crowd_flow feed rule — the map shell still widens its zone feed to include crowd_flow', () => {
+  // Reads the shell directly: this is a wiring property, and a unit test of
+  // the predicate alone would keep passing while the feed silently narrowed.
+  const shell = readFileSync(
+    resolve(__dirZone, '..', '..', '..', '..', '..', 'app', 'map', 'index.tsx'),
+    'utf8',
+  );
+  const at = shell.indexOf('const zoneObjects');
+  assert.ok(at >= 0, 'could not find the zoneObjects declaration — if it was renamed, re-point this test');
+  // The declaration plus its filter body; deliberately not a tight capture,
+  // because an over-precise regex here fails on reformatting rather than on
+  // the property, which is worse than useless.
+  const decl = shell.slice(at, at + 400);
+  assert.match(decl, /objects\.filter\(/, 'zoneObjects no longer filters — re-point this test');
+  assert.match(
+    decl,
+    /crowd_flow/,
+    "the zone feed no longer carries crowd_flow, so CrowdFlowLayer receives nothing and §10 renders blank",
+  );
 });

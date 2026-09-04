@@ -153,6 +153,57 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/adminGeocode.ts|update|dynamic table name", 2],
   ["src/routes/adminGeocode.ts|upsert|dynamic table name", 2],
 
+  // ── select(BUDDY_PUBLIC_COLUMNS) — one constant, verified at its definition ─
+  //
+  // These sites pass the imported BUDDY_PUBLIC_COLUMNS constant rather than a
+  // literal, and resolveSelectString follows an identifier only to a SAME-FILE
+  // initializer, so it cannot see through the import.
+  //
+  // They are a weaker blind spot than most entries here. The risk this check
+  // exists to catch is a select list naming a column that does not exist —
+  // PostgREST then fails the WHOLE read with PGRST100 (exactly the
+  // places.country bug). That risk is already covered for this string:
+  // lib/buddyMapRead.ts defines BUDDY_PUBLIC_COLUMNS and calls
+  // .select(BUDDY_PUBLIC_COLUMNS) in the same file, so it IS statically
+  // resolved and column-checked there, on every run. These seven sites pass
+  // the identical constant.
+  //
+  // The alternative was inlining the literal at each site, which would put
+  // seven copies of the public-column allow-list back in the tree — the exact
+  // drift that consolidating onto one constant removed, and a privacy drift
+  // rather than a schema one. A verified-elsewhere blind spot beats that.
+  //
+  // THE EXCEPTION IS ONLY VALID WHILE THAT VERIFICATION EXISTS, and that is a
+  // load-bearing, invisible condition: move the constant to a shared module, or
+  // refactor buddyMapRead so it no longer selects through it in the same file,
+  // and the live column check silently stops covering this string — leaving
+  // these entries sitting here looking considered while the sites go genuinely
+  // blind. So the condition is pinned executably in
+  // src/test/buddyColumnsAllowlistJustification.test.ts, which fails if the
+  // definition moves, if the initializer stops being a literal, if the
+  // same-file select disappears, if these entries are removed, or if
+  // resolveSelectString learns to follow imports (in which case these sites
+  // resolve on their own and the entries should be DROPPED, not kept).
+  //
+  // If these ever stop passing that constant, the counts change and this
+  // fails, which is the intended tripwire.
+  ["src/routes/rentABuddy.ts|select|select list not statically resolvable", 4],
+  ["src/routes/rentABuddyMarketplace.ts|select|select list not statically resolvable", 3],
+
+  // ── Generic count/scan helpers that take the table as a PARAMETER ─────────
+  //
+  // Both are small helpers whose whole purpose is to run the same shape of read
+  // over several tables, so the table name is an argument and no static analysis
+  // can resolve it. Rewriting them to be resolvable would mean unrolling one
+  // helper into N near-identical copies, which trades a narrow blind spot for a
+  // broad duplication hazard — the wrong side of that trade.
+  //
+  // Both read with select("*") or a template literal and are used only to COUNT
+  // or scan rows, so a wrong column name here fails the read rather than
+  // silently corrupting a write. That is what keeps the blind spot narrow.
+  ["src/services/media/MediaProjectionService.ts|select|dynamic table name", 1],
+  ["src/services/media/MyWorldMemoryService.ts|select|dynamic table name", 1],
+
   // ── Insert/upsert payloads built at runtime ───────────────────────────────
   ["src/routes/circle.ts|upsert|payload not statically resolvable", 1],
   // 3 sites: feed-section registration + the two /compass/ask uiBlock
@@ -235,7 +286,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/posts.ts|select|payload partially resolvable", 7],
   ["src/routes/pulse.ts|select|payload partially resolvable", 1],
   // rentABuddy: select lists that mix static columns with awaited sub-selects.
-  ["src/routes/rentABuddy.ts|select|payload partially resolvable", 4],
   // stamps: OWNER_STAMP_COLS / PUBLIC_STAMP_COLS prefix is now audited; the
   // stamp_definitions embedded resource + artCol suffix are skipped/dynamic.
   ["src/routes/stamps.ts|select|payload partially resolvable", 9],

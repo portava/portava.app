@@ -70,7 +70,21 @@ export interface ViewerCtx {
 
 export interface EligibilityResult {
   eligible: MediaCandidate[];
-  /** True if block fetch failed — caller should treat as empty feed. */
+  /**
+   * True when a HARD GATE could not be evaluated — blocks (step 1) or
+   * suspended/banned account status (step 3). Caller must treat as an empty
+   * feed: an unevaluated hard gate means we cannot prove the page is safe to
+   * serve, and both gates decide integrity outcomes rather than preferences.
+   *
+   * Mutes are deliberately NOT a hard gate. Losing the mute filter costs the
+   * viewer a preference; losing blocks or the suspended/banned filter serves
+   * content the platform has already decided must not be served.
+   *
+   * The name is narrower than the meaning and is kept only so that the four
+   * call sites — in files owned by a concurrent workstream — do not have to be
+   * touched to widen it. `gateFetchFailed` is the honest name; renaming it is
+   * follow-up work, not a behaviour question.
+   */
   blockFetchFailed: boolean;
 }
 
@@ -156,12 +170,28 @@ export async function filterEligibleMediaCandidates(
   let muteSet = mutedCreatorIds ?? new Set<string>();
   if (mutedCreatorIds === null || mutedCreatorIds === undefined) {
     try {
-      const { data: muteRows } = await sc
+      const { data: muteRows, error: muteErr } = await sc
         .from("user_mutes")
         .select("muted_id")
         .eq("muter_id", viewerCtx.viewerUserId);
+      // "No mutes" and "the mute query was rejected" both leave muteSet empty,
+      // and the difference is the whole gate: on a schema/query error every
+      // muted creator's media becomes eligible again. PostgREST returns such
+      // errors in `error` rather than throwing, so the catch below never sees
+      // them — bind and log, or the failure is invisible.
+      if (muteErr) {
+        console.warn(
+          "filterEligibleMediaCandidates: user_mutes read failed — mute gate is OFF for this request",
+          { viewerUserId: viewerCtx.viewerUserId, code: (muteErr as any)?.code, message: (muteErr as any)?.message },
+        );
+      }
       for (const r of (muteRows as any[]) ?? []) muteSet.add(r.muted_id as string);
-    } catch { /* best-effort: mutes contribute empty set on failure */ }
+    } catch (err) {
+      console.warn(
+        "filterEligibleMediaCandidates: user_mutes read rejected — mute gate is OFF for this request",
+        { viewerUserId: viewerCtx.viewerUserId, err },
+      );
+    }
   }
 
   // ── Step 3: Collect unique creator ids to check account status ────────────
@@ -169,15 +199,40 @@ export async function filterEligibleMediaCandidates(
   const suspendedCreatorIds = new Set<string>();
   if (creatorIds.length > 0) {
     try {
-      const { data: profileRows } = await sc
+      const { data: profileRows, error: statusErr } = await sc
         .from("profiles")
         .select("id, account_status")
         .in("id", creatorIds)
         .in("account_status", ["suspended", "banned"]);
+      // Same shape as the mute read above, with a heavier consequence: an empty
+      // result means "nobody on this page is suspended", and a rejected query
+      // means "we do not know" — indistinguishable here, so a schema/query
+      // error would silently serve suspended and banned creators' media.
+      //
+      // The 2026-08-31 audit made this failure visible but left it best-effort,
+      // and recorded the asymmetry it could not resolve from inside an audit:
+      // step 1 of THIS function treats an unknown block state as fail-closed and
+      // returns an empty feed, while this read served the page anyway. Both are
+      // integrity gates and serving a banned creator's media is the same
+      // category of harm, so the asymmetry was a gap rather than a decision.
+      // It is now closed in the direction step 1 already set.
+      if (statusErr) {
+        console.warn(
+          "filterEligibleMediaCandidates: profiles account_status read failed — suspended/banned gate could not be evaluated, failing closed to an empty feed",
+          { creatorCount: creatorIds.length, code: (statusErr as any)?.code, message: (statusErr as any)?.message },
+        );
+        return { eligible: [], blockFetchFailed: true };
+      }
       for (const r of (profileRows as any[]) ?? []) {
         suspendedCreatorIds.add(r.id as string);
       }
-    } catch { /* best-effort: suspended set stays empty on failure */ }
+    } catch (err) {
+      console.warn(
+        "filterEligibleMediaCandidates: profiles account_status read rejected — suspended/banned gate could not be evaluated, failing closed to an empty feed",
+        { creatorCount: creatorIds.length, err },
+      );
+      return { eligible: [], blockFetchFailed: true };
+    }
   }
 
   // ── Step 4: Per-item eligibility gates ────────────────────────────────────

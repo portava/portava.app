@@ -20,12 +20,20 @@ import {
   getSharedContext,
   type SharedContextProjection,
 } from '../../services/passportSharedContext.ts';
+import { getPassportProjection } from '../../services/passportProjection.ts';
 
 export interface UseSharedContextResult {
   /** The viewer↔owner overlap, or null (own passport / no relationship). */
   data: SharedContextProjection | null;
   /** Server reason when `data` is null (e.g. 'self'). */
   reason: string | null;
+  /**
+   * Server-projected (§30): whether this viewer may start a plan with the owner
+   * (`capabilities.actions.can_make_plan`). Fail-closed — the "See What You
+   * Could Do" make-plan action is never offered on a client guess; if the
+   * capability can't be confirmed it stays false and the CTA is withheld.
+   */
+  canMakePlan: boolean;
   loading: boolean;
   error: string | null;
   reload: () => Promise<void>;
@@ -72,6 +80,7 @@ function joinClauses(clauses: string[]): string {
 export function useSharedContext(userId: string | undefined): UseSharedContextResult {
   const [data, setData] = useState<SharedContextProjection | null>(null);
   const [reason, setReason] = useState<string | null>(null);
+  const [canMakePlan, setCanMakePlan] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,21 +88,30 @@ export function useSharedContext(userId: string | undefined): UseSharedContextRe
     if (!userId) {
       setData(null);
       setReason(null);
+      setCanMakePlan(false);
       setError('No traveler to compare with');
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
-    const res = await getSharedContext(userId);
-    if (res.ok) {
-      setData(res.data.sharedContext);
-      setReason(res.data.reason ?? null);
+    // Fetch the overlap and the viewer's server-projected action capabilities
+    // together. The make-plan CTA (§18) is gated on the SERVER `can_make_plan`
+    // flag (§30) — never on the fact set — so the client can't recreate policy.
+    const [ctx, proj] = await Promise.all([
+      getSharedContext(userId),
+      getPassportProjection(userId),
+    ]);
+    if (ctx.ok) {
+      setData(ctx.data.sharedContext);
+      setReason(ctx.data.reason ?? null);
     } else {
-      setError(res.message ?? 'Could not load shared context');
+      setError(ctx.message ?? 'Could not load shared context');
       setData(null);
       setReason(null);
     }
+    // Fail-closed: any projection error leaves can_make_plan false.
+    setCanMakePlan(proj.ok ? proj.data.actions.can_make_plan === true : false);
     setLoading(false);
   }, [userId]);
 
@@ -101,5 +119,5 @@ export function useSharedContext(userId: string | undefined): UseSharedContextRe
     load();
   }, [load]);
 
-  return { data, reason, loading, error, reload: load };
+  return { data, reason, canMakePlan, loading, error, reload: load };
 }

@@ -187,24 +187,43 @@ function emitAllSixteen(): void {
 // ── 1. The catalogue ──────────────────────────────────────────────────────────
 
 describe('mapTelemetry — the §35 catalogue', () => {
-  it('declares exactly the sixteen events §35 names', () => {
-    assert.equal(MAP_EVENT_NAMES.length, 16);
-    assert.deepEqual([...MAP_EVENT_NAMES].sort(), [
+  it('declares §35s sixteen events, and nothing else by accident', () => {
+    // §35 names sixteen. The set now carries a SEVENTEENTH, `meet_here_refused`,
+    // added deliberately: §35 has no event for something the product REFUSED to
+    // do, so a §23 policy block was indistinguishable from a feature nobody
+    // used. It is asserted separately below so this list stays a faithful quote
+    // of the spec — a future addition must still be a deliberate edit here.
+    const SPEC_35 = [
       'alternative_requested', 'compass_option_selected', 'compass_requested',
       'contribution_submitted', 'crew_locate_started', 'live_state_viewed',
       'map_opened', 'meet_here_created', 'place_opened', 'plan_joined',
       'recommendation_accepted', 'recommendation_declined', 'route_started',
       'trip_stop_added', 'why_shown_opened', 'zone_selected',
-    ]);
+    ];
+    const BEYOND_SPEC = ['meet_here_refused'];
+
+    for (const name of SPEC_35) {
+      assert.ok(MAP_EVENT_NAMES.includes(name as never), `§35 event missing: ${name}`);
+    }
+    assert.deepEqual(
+      [...MAP_EVENT_NAMES].sort(),
+      [...SPEC_35, ...BEYOND_SPEC].sort(),
+      'the event set drifted — every addition beyond §35 must be listed in BEYOND_SPEC with a reason',
+    );
+    assert.equal(MAP_EVENT_NAMES.length, SPEC_35.length + BEYOND_SPEC.length);
   });
 
-  it('emits every one of the sixteen with its declared payload', async () => {
+  it('emits every §35 event with its declared payload', async () => {
     emitAllSixteen();
     await flushMapTelemetry();
 
     const names = transport.events.map((e) => e.name);
+    // emitAllSixteen covers §35's sixteen; meet_here_refused has its own
+    // coverage in mapTelemetryOutcomes.test.ts, where the NEGATIVE case (a
+    // refusal must not look like a success) is what actually matters.
     assert.equal(names.length, 16);
     for (const name of MAP_EVENT_NAMES) {
+      if (name === 'meet_here_refused') continue; // covered in mapTelemetryOutcomes
       assert.ok(names.includes(name), `missing event: ${name}`);
     }
   });

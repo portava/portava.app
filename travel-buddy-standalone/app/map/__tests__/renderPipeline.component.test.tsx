@@ -298,17 +298,15 @@ beforeEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('FullScreenMapScreen — the marker layer draws renderResult.kept', () => {
-  it('omits the marker §31 collision dropped', async () => {
-    // THE DEFECT. Pre-fix the map was handed `entities` and drew both events,
-    // so two pins sat on the same pixel while the screen simultaneously
-    // rendered "+1 more nearby" for the one it believed it had hidden.
-    await mountMap();
-
-    expect(idsOnMap()).toContain('event:aaa');
-    expect(idsOnMap()).not.toContain('event:bbb');
-  });
-
+// The tests that asserted the marker layer is filtered to renderResult.kept
+// were removed with the filter itself. They were not wrong — they collided
+// with app/map/__tests__/layerFilteredMarkers.component.test.tsx, which is
+// merged and rules the other way, and the collision turned out to be a real
+// product question: §17 introduces hidden_gem at the district band (zoom 12),
+// parseZoom defaults to 11, and the Gems tab's "View on map" passes no zoom —
+// so culling honestly at the marker layer blanks that entry point. The owner
+// ruled "cull, but never to empty"; those tests return with that work.
+describe('FullScreenMapScreen — the render pipeline', () => {
   it('keeps the decluttered object reachable in the carousel', async () => {
     // §31 hides pins; it must never lose objects. A card is how the user
     // reaches the one whose pin lost the overlap.
@@ -317,30 +315,9 @@ describe('FullScreenMapScreen — the marker layer draws renderResult.kept', () 
     expect(idsInCarousel()).toEqual(['event:aaa', 'event:bbb', 'place:zzz']);
   });
 
-  it('passes through an entity the pipeline never judged', async () => {
-    // Guard against over-correction: `kept` is a verdict on MapObjects, and an
-    // entity with no MapObject projection (place pins, passport stamps, raw
-    // Compass envelopes) must not be deleted merely for being absent from it.
-    // Proven by driving the camera to a band where the projected `place:zzz`
-    // IS legible — the surviving list is then the pipeline's, not the raw one.
-    await mountMap();
-    await cameraSettlesAt(15);
-
-    expect(idsOnMap()).toEqual(['event:aaa', 'place:zzz']);
-  });
 });
 
 describe('FullScreenMapScreen — the "+N more nearby" chip', () => {
-  it('counts a marker that is genuinely off the map', async () => {
-    // The chip reads renderResult.collisionDroppedCount. While the map drew the
-    // raw list, that number described objects the user could already see — an
-    // affordance offering to reveal what was never hidden.
-    await mountMap();
-
-    expect(screen.getByLabelText('1 more nearby — zoom in to see them')).toBeTruthy();
-    expect(idsOnMap()).not.toContain('event:bbb');
-  });
-
   it('zooms IN from where the camera actually is', async () => {
     // Its promise is "zoom in to see them", and it stepped up from the store's
     // COMMANDED zoom. A user who had pinched to 16 was eased to 12.5 — a zoom
@@ -360,7 +337,7 @@ describe('FullScreenMapScreen — the "+N more nearby" chip', () => {
   });
 });
 
-describe('FullScreenMapScreen — the real camera zoom reaches §17 band culling', () => {
+describe('FullScreenMapScreen — the real camera reaches the screen', () => {
   it('gives DiscoveryMapView a camera callback at all', async () => {
     // Pre-fix DiscoveryMapViewProps declared no camera prop, so the zoom the
     // component already tracked could not leave it.
@@ -372,37 +349,4 @@ describe('FullScreenMapScreen — the real camera zoom reaches §17 band culling
     expect(typeof __holder.onCameraChange).toBe('function');
   });
 
-  it('hides a district-band kind while the camera is at city zoom', async () => {
-    // §17: "no POI pins at world zoom; individual places only from district
-    // in." The screen opens at the fallback zoom of 11 — the `city` band — so
-    // a `place` is not yet legible.
-    await mountMap();
-
-    expect(idsOnMap()).not.toContain('place:zzz');
-  });
-
-  it('draws it once the camera reports a zoom that makes it legible', async () => {
-    // THE DEFECT. With no camera callback the screen's zoom was pinned at the
-    // query-param default forever, so this pin could never appear no matter how
-    // far the user zoomed in.
-    await mountMap();
-    expect(idsOnMap()).not.toContain('place:zzz');
-
-    await cameraSettlesAt(15);
-
-    expect(idsOnMap()).toContain('place:zzz');
-  });
-
-  it('hides it again when the camera zooms back out', async () => {
-    // The band is read from the live camera each time, not latched on the
-    // first report — otherwise zooming out would leave POI pins stranded at
-    // world scale, which is the clutter §17 exists to prevent.
-    await mountMap();
-
-    await cameraSettlesAt(15);
-    expect(idsOnMap()).toContain('place:zzz');
-
-    await cameraSettlesAt(9);
-    expect(idsOnMap()).not.toContain('place:zzz');
-  });
 });
