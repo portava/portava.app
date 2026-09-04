@@ -36,6 +36,7 @@ import type {
 } from "../../lib/wallProjection.js";
 import type { WallRankSignals } from "./WallRankingService.js";
 import { dedupeCandidates, type WallCandidate } from "./WallProjectionService.js";
+import { isPostPublished } from "../../lib/postVisibility.js";
 import {
   resolveViewer,
   loadEligibleCandidates,
@@ -205,16 +206,54 @@ function readyMediaToDisplay(rows: any[]): DisplayMedia[] {
 // ── 1. Postcards (spec §10) ──────────────────────────────────────────────────
 
 const POSTCARD_COLUMNS =
-  "id, author_id, trip_id, content, visibility, status, created_at, published_at, " +
-  "canonical_place_id, add_to_passport, has_video, media_count, category, " +
+  "id, author_id, trip_id, content, visibility, status, post_status, created_at, published_at, " +
+  "canonical_place_id, has_video, media_count, category, " +
   "location_city, location_country, save_count";
 
 /**
- * Load Postcard candidates — the canonical Passport-postcard posts (a `posts`
- * row with `add_to_passport = true`, the flag the /api/postcards composer sets).
- * Scoped to followed authors in BOTH modes (a viewer's own postcards live on
- * their Passport, not the Wall's Following-of-others). Projected as `postcard`
- * so the client's distinct story presentation renders instead of a plain post.
+ * Is this `passport_postcards` row a LIVE postcard? The same predicate the
+ * canonical Passport readers apply (MediaProjectionService.countOwned,
+ * compass/PassportRemembersService; routes/passport.ts filters status='active'
+ * at the DB): moderation-active and not tombstoned.
+ */
+function isLivePostcardRow(r: any): boolean {
+  return !!r && String(r.status ?? "") === "active" && r.deleted_at == null;
+}
+
+/**
+ * Load Postcard candidates — the canonical Passport-postcard posts, scoped to
+ * followed authors in BOTH modes (a viewer's own postcards live on their
+ * Passport, not the Wall's Following-of-others). Projected as `postcard` so the
+ * client's distinct story presentation renders instead of a plain post.
+ *
+ * ── WHAT MAKES A POST A POSTCARD (the discriminator) ─────────────────────────
+ * A live `passport_postcards` row pointing at the post (post_id) — NOT
+ * `posts.add_to_passport`. That column is the author's INTENT flag and it
+ * defaults TRUE everywhere: `boolean DEFAULT true NOT NULL` in the schema,
+ * `addToPassport ?? true` in POST /posts, `.default(true)` in POST /postcards.
+ * So a Hidden-Gem post, a plain text update, or any composer that omits the
+ * field carries add_to_passport=true, and a loader keyed on it rendered all of
+ * them as Postcards (§10: a Postcard is a distinct object, never a Post with a
+ * badge).
+ *
+ * The postcards system itself never treats the flag as the fact. It creates
+ * the `passport_postcards` row only when a post actually BECOMES a postcard:
+ * POST /posts on create when it has media + add_to_passport + active
+ * (lib/locationVerify.shouldCreatePostcard), and POST /postcards/:id/media/
+ * :mediaId/complete lazily on the FIRST ready media (routes/postcards.ts). A
+ * post with the flag and no media never gets a row and is not a postcard.
+ * Every canonical Postcard reader — GET /passport/:handle/postcards,
+ * GET /me/passport/postcards, Compass "What Portava Remembers", the Media v2
+ * ownership count — reads `passport_postcards`, so this loader reads the same
+ * table and the same liveness predicate (status='active', not tombstoned).
+ *
+ * Two reads: the live postcard rows for the followed authors (the
+ * discriminator), then the `posts` rows those point at (the canonical object:
+ * text, visibility, place, delayed-publish state). A post is emitted only when
+ * it is in BOTH sets, and only when it is `status='active'` AND
+ * `post_status='published'` — the delayed-publish gate the Post spine applies
+ * (lib/postVisibility.isPostPublished); a postcard whose author asked for it
+ * to stay hidden until they left the place is not served (§23).
  *
  * Post-like → the projection gate re-checks visibility with decidePostReadable,
  * exactly as the Post loader; this loader only SELECTS and shapes.
@@ -228,13 +267,38 @@ export async function loadPostcardCandidates(
   const followed = [...viewer.followedCreatorIds];
   if (followed.length === 0) return emptyLoaded(); // no in-graph postcards to show
 
+  // 1. The discriminator: live passport_postcards rows for followed authors.
+  const postcardPostIds = new Set<string>();
+  try {
+    const { data } = await sc
+      .from("passport_postcards")
+      .select("post_id, user_id, status, deleted_at, created_at")
+      .in("user_id", followed.slice(0, 500))
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(LOADER_FETCH);
+    // Re-checked in memory (status + tombstone) so a row fed past the query
+    // filter cannot resurrect a hidden/reported/deleted postcard on the Wall.
+    for (const r of (data as any[]) ?? []) {
+      if (isLivePostcardRow(r) && r.post_id) postcardPostIds.add(String(r.post_id));
+    }
+  } catch (err) {
+    logger.warn({ err }, "postcard discriminator read failed — degrading to no postcards");
+    return emptyLoaded();
+  }
+  if (postcardPostIds.size === 0) return emptyLoaded();
+
+  // 2. The canonical objects those postcards point at.
   let rows: any[] = [];
   try {
     let q = sc
       .from("posts")
       .select(POSTCARD_COLUMNS)
+      .in("id", [...postcardPostIds].slice(0, 500))
       .eq("status", "active")
-      .eq("add_to_passport", true)
+      // Delayed-publish gate — same DB predicate as the Post spine and the
+      // Following / global feeds (routes/posts.ts). Re-checked in memory below.
+      .eq("post_status", "published")
       .in("author_id", followed.slice(0, 500))
       .order("created_at", { ascending: false })
       .limit(LOADER_FETCH);
@@ -242,10 +306,11 @@ export async function loadPostcardCandidates(
     // mid-pagination (mirrors the Post spine's `.lte(created_at, snapshotAt)`).
     if (opts.snapshotAtIso) q = q.lte("created_at", opts.snapshotAtIso);
     const { data } = await q;
-    // Client-side guard: a Postcard is defined by add_to_passport === true.
-    // Re-checking here (not just trusting the query filter) keeps a loader that
-    // is fed rows without the flag from mis-emitting ordinary posts as postcards.
-    rows = ((data as any[]) ?? []).filter((r) => r && r.add_to_passport === true);
+    // In-memory guards, independent of the query filters: the row must be one
+    // a live postcard points at (the discriminator) and must be published.
+    rows = ((data as any[]) ?? []).filter(
+      (r) => r && postcardPostIds.has(String(r.id)) && isPostPublished(r),
+    );
   } catch (err) {
     logger.warn({ err }, "postcard candidate read failed — degrading to no postcards");
     return emptyLoaded();

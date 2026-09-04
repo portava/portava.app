@@ -9,7 +9,7 @@
  * THE GATE ORDER IS THE POINT (spec §23/§24). Every candidate passes the
  * canonical eligibility / block / visibility gates BEFORE it is projected:
  *
- *   1. Eligibility  — author not banned/suspended, object not deleted/removed.
+ *   1. Eligibility  — author account 'active' (allowlist), object not deleted/removed.
  *   2. Block        — no block in EITHER direction between viewer and author
  *                     (fail-closed: an unreadable blocks table drops the author).
  *   3. Visibility   — lib/postVisibility.decidePostReadable for post-like objects,
@@ -74,7 +74,8 @@ export interface WallCandidate {
   actor?: PublicActorRef | null;
 
   // ── Eligibility signals (spec §23) ──────────────────────────────────────────
-  /** 'active' | 'banned' | 'suspended' — anything but active drops the object. */
+  /** profiles.account_status ('active' | 'deactivated' | 'pending_deletion' |
+   *  'deleted') — ALLOWLIST: anything but 'active' drops the object. */
   authorAccountStatus?: string | null;
   /** Canonical moderation state; 'removed'/'takedown' drops the object (§37). */
   moderationStatus?: string | null;
@@ -180,8 +181,20 @@ async function loadBlockedAuthorIds(
 /** Object-not-eligible check (author status + moderation + deletion). */
 function passesEligibility(c: WallCandidate): boolean {
   if (c.isDeleted) return false;
+  // ALLOWLIST: only `account_status === 'active'` passes — the canonical
+  // predicate (lib/circleLocationsRead gate 7, lib/mapTravelers, the
+  // `.in("account_status", ["active"])` DB filters in discoverySearch / follows
+  // / compass). This used to be a DENYLIST of 'banned' / 'suspended', two
+  // values the profiles CHECK constraint does not even allow
+  // (profiles_account_status_check: active / deactivated / pending_deletion /
+  // deleted) — so it could never drop anything, and a deactivated or
+  // pending-deletion author's posts kept flowing onto every follower's Wall
+  // (§23: fail closed). A null/absent value reads as 'active' exactly as
+  // lib/http requireUser and gate 7 do: the column is NOT NULL, so absence
+  // only means a loader that could not read the profile, which is the
+  // loaders' own fail-soft default.
   const status = c.authorAccountStatus ?? "active";
-  if (status === "banned" || status === "suspended") return false;
+  if (status !== "active") return false;
   const mod = c.moderationStatus ?? "active";
   if (mod === "removed" || mod === "takedown" || mod === "moderated") return false;
   return true;

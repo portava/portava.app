@@ -31,6 +31,7 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser, sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isPostPublished } from "../lib/postVisibility.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { logger as rootLogger } from "../lib/logger.js";
@@ -98,8 +99,13 @@ const MAX_LIMIT = 40;
  *  first server page fast (spec TABLE 4: < 500 ms backend). */
 const CANDIDATE_FETCH = 150;
 
+// `post_status` is the delayed-publish state machine (lib/postVisibility
+// isPostPublished). It was never selected here, so the spine's only gate was
+// `status = 'active'` — and POST /posts inserts a delayed-geotag post as
+// status='active' + post_status='pending_*'. The Wall served those pending
+// posts to every follower while the author was still at the place (§23/§37).
 const POST_COLUMNS =
-  "id, author_id, trip_id, content, visibility, status, created_at, published_at, " +
+  "id, author_id, trip_id, content, visibility, status, post_status, created_at, published_at, " +
   "canonical_place_id, has_video, media_count, category, location_city, location_country, " +
   "like_count, comment_count, save_count";
 
@@ -336,6 +342,9 @@ async function loadCandidates(
         .from("posts")
         .select(POST_COLUMNS)
         .eq("status", "active")
+        // Delayed-publish gate — the same DB predicate the Following / global
+        // feeds apply (routes/posts.ts). Re-checked in memory below.
+        .eq("post_status", "published")
         .in("author_id", followed.slice(0, 500))
         .order("created_at", { ascending: false })
         .limit(CANDIDATE_FETCH);
@@ -362,6 +371,7 @@ async function loadCandidates(
         .from("posts")
         .select(POST_COLUMNS)
         .eq("status", "active")
+        .eq("post_status", "published")
         .eq("visibility", "public")
         .order("created_at", { ascending: false })
         .limit(CANDIDATE_FETCH);
@@ -379,6 +389,10 @@ async function loadCandidates(
   }
 
   if (rows.length === 0) return { ...empty, followingReachedEnd };
+
+  // In-memory re-check of the delayed-publish gate (same predicate as the query
+  // filter above): a row fed past the DB filter must still never be served.
+  rows = rows.filter((r) => isPostPublished(r));
 
   // Dedupe by post id (a post could appear in both queries).
   const byId = new Map<string, any>();
