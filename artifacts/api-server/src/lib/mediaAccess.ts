@@ -81,11 +81,17 @@ async function isCloseFriend(
   viewerId: string,
 ): Promise<boolean> {
   try {
+    // `close_friends` is keyed (owner_id, friend_user_id). There is no
+    // `user_id` and no `friend_id` column, so this read raised 42703 and the
+    // catch below turned it into `false` — EVERY close-friends story denied its
+    // own close friends, and the failure was a media AUTHORIZATION outcome, not
+    // an empty list. Columns copied verbatim from routes/stories.ts:46-50,
+    // which has always spelled them correctly.
     const { data } = await sc
       .from("close_friends")
-      .select("friend_id")
-      .eq("user_id", ownerId)
-      .eq("friend_id", viewerId)
+      .select("friend_user_id")
+      .eq("owner_id", ownerId)
+      .eq("friend_user_id", viewerId)
       .maybeSingle();
     return Boolean(data);
   } catch { return false; }
@@ -195,7 +201,13 @@ async function decide(
         // Public-profile viewers: "full" visibility can be granted to strangers;
         // check for an explicit follow or friendship instead.
         const [followRes, friendResA, friendResB] = await Promise.all([
-          sc.from("user_follows").select("id")
+          // `user_follows` is (follower_id, following_id, created_at) — it has
+          // no `id` column, so selecting one raised 42703 and this arm always
+          // resolved to `{ data: null }`: a plain follower was wrongly denied
+          // the owner's avatar unless a user_friendships row happened to exist.
+          // `follower_id` is the column lib/profileVisibility.ts:156 selects
+          // for the identical existence check.
+          sc.from("user_follows").select("follower_id")
             .eq("follower_id", viewerId).eq("following_id", owner)
             .maybeSingle().then(undefined, () => ({ data: null })),
           sc.from("user_friendships").select("user_a")

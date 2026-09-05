@@ -446,17 +446,17 @@ This is the defect D5=B exists to fix, and it is a statement about control flow:
 
 ### 4. `rank_events` is mutable state with a client-input surface
 
-Outcomes arrive from clients and UPDATE existing rows (`routes/rankEvents.ts:194#outcome_at`).
+Outcomes arrive from clients and UPDATE existing rows (`routes/rankEvents.ts:231#outcome_at`).
 One contaminated row corrupting the comparison funnel is disqualifying — which
 is why D7=A put shadow data in its own append-only table.
 
 **Still true after #365 and #387, and both changed something about it.** #365
 made an outcome upgrade any row on a strictly *lower funnel rung* rather than
-only `outcome='impression'` (`routes/rankEvents.ts:111#upgradableOutcomesFor`, `:171`), so a tap
+only `outcome='impression'` (`routes/rankEvents.ts:139#upgradableOutcomesFor`, `:171`), so a tap
 followed by a save no longer 404s — but the update is **still in place**, so the
 tap is still overwritten and the transition is still unrecoverable. #387 stopped
 the serve-point report reading the corpus through `outcome` at all
-(`event_type IS NULL`, `lib/discoveryServePointReport.ts:587#event_type`). **Neither makes
+(`event_type IS NULL`, `lib/discoveryServePointReport.ts:589#event_type`). **Neither makes
 `rank_events` an event log.** The mutability is the constraint; only the
 instruments that used to depend on the mutable column have been moved off it.
 
@@ -658,13 +658,13 @@ no state at all, so they were invisible there too. It now carries state.
 
 | Landed | Where | Sequence step |
 |---|---|---|
-| **impression-path exposure denominator** (#365) | `content_distribution_stats.eligible_impressions` is incremented where the impression is written (`lib/rankLog.ts:154#recordImpressionDistributionStats`, `:248`; `lib/discoveryServeLog.ts:241#recordImpressionDistributionStats`), and the outcome route no longer touches it (`routes/rankEvents.ts:235-241#content_distribution_stats`). The denominator was previously a count of **conversions** | Fixes the `03_Trending` defect the architecture status list carried as open |
-| **discovery-surface outcome reporting** (#365) | An outcome now upgrades any row on a strictly **lower funnel rung** rather than only `outcome='impression'` (`routes/rankEvents.ts:111#upgradableOutcomesFor`, `:171`), so a tap→save chain lands as `save` instead of 404ing | Step 2 (Event Truth) is still the answer; this stops one class of loss on the way there |
+| **impression-path exposure denominator** (#365) | `content_distribution_stats.eligible_impressions` is incremented where the impression is written (`lib/rankLog.ts:154#recordImpressionDistributionStats`, `:248`; `lib/discoveryServeLog.ts:274#recordImpressionDistributionStats`), and the outcome route no longer touches it (`routes/rankEvents.ts:290#content_distribution_stats`). The denominator was previously a count of **conversions** | Fixes the `03_Trending` defect the architecture status list carried as open |
+| **discovery-surface outcome reporting** (#365) | An outcome now upgrades any row on a strictly **lower funnel rung** rather than only `outcome='impression'` (`routes/rankEvents.ts:139#upgradableOutcomesFor`, `:171`), so a tap→save chain lands as `save` instead of 404ing | Step 2 (Event Truth) is still the answer; this stops one class of loss on the way there |
 | **pde-aware serve-point report** (#366) | Ranked-ness is read from the row — `features.rankedInRequest` (`lib/discoveryServePointReport.ts:171`) — not from a static serve-point set, so a pde-ranked cache-A serve counts as ranked | Instrument for step 1 / Phase E step 3 |
 | **capped `local_momentum`** (#366) | `lib/discoveryLocalMomentum.ts:152#velocity` computes a 48h-vs-baseline place velocity; `portavaRank.ts:152` caps its contribution at `LOCAL_MOMENTUM_MAX_CONTRIBUTION = 0.15`, clamped at `:337-338` | **Step 7** — *"capped `local_momentum` as modifiers only"*, built to the words |
 | **exploration governor** (#366) | `allocateExplorationBudget` (`services/ranking/FeedSlotAllocator.ts:463#allocateExplorationBudget`) — budget bounds declared at `:358-359#GOVERNOR_BUDGET_MIN_PCT` (15 and 25) and applied by the clamp at `:434#GOVERNOR_BUDGET_MAX_PCT`, slots spread rather than pinned, four **reason codes** per pick (`governorReasonsFor`, `:438#governorReasonsFor`). With the flag off it computes the allocation and applies nothing | **Step 8** — *"budget ~15–25 % with reason codes, not fixed positions"* |
 | **graph node kinds** (#366) | `circle` + `experience` admitted to the Compass graph (`migrations/2290_intelligence_graph_node_kinds.sql`) | Feeds step 7's *graph as modifier* |
-| **serve-point report corpus** (#387) | `fetchDiscoveryServeRows` selects by **`event_type IS NULL`** (`lib/discoveryServePointReport.ts:572#fetchDiscoveryServeRows`, predicate at `:587#event_type`), never by `outcome` | Repairs the instrument Phase E step 3 reads — see below |
+| **serve-point report corpus** (#387) | `fetchDiscoveryServeRows` selects by **`event_type IS NULL`** (`lib/discoveryServePointReport.ts:574#fetchDiscoveryServeRows`, predicate at `:589#event_type`), never by `outcome` | Repairs the instrument Phase E step 3 reads — see below |
 | **`/discovery/feed` client callers** (#382) | Serve point 7 had no caller in the repo; it has two now (`travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx`, `ForYouTab.tsx:428`) | Reachability of the surface Phase B measures |
 
 #### #387 changes what an old serve-point reading means, and that is worth stating
@@ -1582,7 +1582,7 @@ built ready-to-run.
    > (`features.rankedInRequest`, `lib/discoveryServePointReport.ts:171`) instead
    > of a static serve-point set, so a pde-ranked cache-A serve now counts as
    > ranked. **#387** replaced the serve corpus predicate: it is
-   > `event_type IS NULL` (`lib/discoveryServePointReport.ts:587#event_type`), never `outcome='impression'`, because the
+   > `event_type IS NULL` (`lib/discoveryServePointReport.ts:589#event_type`), never `outcome='impression'`, because the
    > outcome route UPDATEs a served row in place and the old filter therefore
    > dropped every serve that converted — **differentially, and against the
    > ranked serve points, which convert best.**

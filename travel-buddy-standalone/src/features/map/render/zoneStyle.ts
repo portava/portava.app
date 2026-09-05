@@ -75,7 +75,16 @@ export const ARROW_DIRECTIONS = ['none', 'forward', 'reverse', 'outward'] as con
 export type ArrowDirection = (typeof ARROW_DIRECTIONS)[number];
 
 /** The kinds this module styles as an area. */
-export const ZONE_KINDS = ['activity_zone', 'social_zone', 'buddy_zone', 'prediction'] as const;
+/**
+ * The polygon kinds ActivityZone draws as §6's "soft filled zone".
+ *
+ * `world_pulse` (§36 Phase 7) is here because it IS one: a concentration cell
+ * over the §31 aggregation, carrying an `activity` band exactly as an
+ * activity_zone does, and reading it through `ACTIVITY_RAMP` is the whole point
+ * of rendering it "through the existing layer model". It is not a forecast, so
+ * `resolveOutlineStyle` gives it a solid outline like any other observation.
+ */
+export const ZONE_KINDS = ['activity_zone', 'social_zone', 'buddy_zone', 'prediction', 'world_pulse'] as const;
 export type ZoneKind = (typeof ZONE_KINDS)[number];
 
 export function isZoneKind(kind: MapObjectKind): kind is ZoneKind {

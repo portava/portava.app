@@ -13,6 +13,25 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canonicalLocationKey, definitionScopedKey, type LocationKeyInput } from "./locationKey.js";
 import { STYLE_VERSION } from "./artDirection.js";
+import { toCountryCode } from "../countryCodes.js";
+
+/**
+ * Normalise a caller-supplied catalog country code to a real ISO-3166-1
+ * alpha-2 code, or the "XX" sentinel the xx-repair pipeline already knows how
+ * to fix up.
+ *
+ * STAMP·H3 hardening: this used to be `country_code.toUpperCase().slice(0, 2)`.
+ * For the two in-tree callers that is a no-op (both pass a resolved code), but
+ * it is a silent fabrication trap: any caller that ever passed a country NAME
+ * would get its first two letters written to the catalog as if they were an
+ * ISO code — "Vietnam" → "VI", "Japan" → "JA" — poisoning canonical_location_key
+ * and steering the wrong artwork. Truncation is never a valid derivation, so a
+ * country name is now resolved through the real ISO table and anything still
+ * unrecognised becomes "XX" instead of a plausible-looking lie.
+ */
+export function normalizeCatalogCountryCode(raw: string | null | undefined): string {
+  return toCountryCode(raw) ?? "XX";
+}
 
 // ── LRU cache ─────────────────────────────────────────────────────────────────
 
@@ -195,7 +214,7 @@ export async function resolveOrEnqueue(
     stamp_type:             stampType,
     display_name:           location.displayName,
     country:                location.country,
-    country_code:           location.country_code.toUpperCase().slice(0, 2),
+    country_code:           normalizeCatalogCountryCode(location.country_code),
     region:                 location.region ?? null,
     city:                   location.city ?? null,
     neighborhood:           location.neighborhood ?? null,

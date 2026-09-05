@@ -98,9 +98,17 @@ export async function reportMedia(
 
 // ── Owner: visibility change ──────────────────────────────────────────────────
 
+/**
+ * Owner-only visibility change.
+ *
+ * The accepted set mirrors the server schema, which mirrors the column: only
+ * labels of the `post_visibility` enum can be written. 'friends' is not one —
+ * it was accepted here and by the route, and rejected by Postgres every single
+ * time (22P02 → db_error).
+ */
 export async function updateMediaVisibility(
   mediaId: string,
-  visibility: 'public' | 'friends' | 'private',
+  visibility: 'public' | 'private',
 ): Promise<MediaActionResult> {
   return call('PATCH', `/api/media/${encodeURIComponent(mediaId)}`, { visibility });
 }

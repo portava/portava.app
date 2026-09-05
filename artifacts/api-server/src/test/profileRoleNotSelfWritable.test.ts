@@ -59,7 +59,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
 
 // ── Env-var checks ────────────────────────────────────────────────────────────
 
@@ -162,8 +162,8 @@ before(async () => {
   // handle_new_user() creates the profile rows; ensure the fields we rely on.
   const { error: pErr } = await admin.from("profiles").upsert(
     [
-      { id: attackerId, handle: `${PREFIX}attacker`, name: "Role Guard Attacker" },
-      { id: victimId, handle: `${PREFIX}victim`, name: "Role Guard Victim" },
+      { id: attackerId, handle: fixtureLabel(`${PREFIX}attacker`), name: "Role Guard Attacker" },
+      { id: victimId, handle: fixtureLabel(`${PREFIX}victim`), name: "Role Guard Victim" },
     ],
     { onConflict: "id" },
   );
@@ -316,7 +316,7 @@ describe("5. alternate write paths cannot bypass the boundary", { skip: !CREDS_A
     // statement from UPDATE, and historically a common way past column grants.
     const { error } = await userClient(attackerToken)
       .from("profiles")
-      .upsert({ id: attackerId, handle: `${PREFIX}attacker`, name: "Upserted", role: "admin" }, { onConflict: "id" });
+      .upsert({ id: attackerId, handle: fixtureLabel(`${PREFIX}attacker`), name: "Upserted", role: "admin" }, { onConflict: "id" });
 
     assert.ok(error, "upsert carrying role must be refused");
     assert.equal(await readRole(attackerId), "user");
@@ -347,7 +347,7 @@ describe("5. alternate write paths cannot bypass the boundary", { skip: !CREDS_A
 
       const { error } = await userClient(freshToken)
         .from("profiles")
-        .insert({ id: freshId, handle: `${PREFIX}fresh`, name: "Fresh", role: "admin" });
+        .insert({ id: freshId, handle: fixtureLabel(`${PREFIX}fresh`), name: "Fresh", role: "admin" });
 
       assert.ok(error, "insert carrying role=admin must be refused");
 

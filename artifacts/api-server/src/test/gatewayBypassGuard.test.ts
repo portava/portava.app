@@ -117,6 +117,48 @@ const READERS: Record<string, { approved: Record<string, string> }> = {
       // caller precisely so those three stages cannot be bypassed.
     },
   },
+  // ── §36 Phase 7 World Intelligence. Two I/O readers, each the ONE
+  // privacy-complete read for its kinds.
+  //
+  // `readTravelerFlowEdges` is the one that matters most, and for
+  // `produceZoneTransitions`'s reason rather than the usual one: it drives
+  // lib/routeHopSignal, which reads accepted route plans belonging to real
+  // people under a consent record (route_flow_contribution_consent, 2224). A
+  // second caller would be a second publication path for that consent — and it
+  // would skip PRIVACY_THRESHOLD_V1, the cohort BUCKETING that replaces the
+  // exact count, the §24 withhold-rather-than-coarsen step and §31 ranking.
+  //
+  // `readPersonalCityPins` reads the VIEWER'S OWN passport history. A caller
+  // other than the gateway would be a second surface for private travel history
+  // outside the Passport boundary — exactly what readMemoryPins is protected
+  // from, one aggregation level out.
+  //
+  // `readCityModels` reads an already-published aggregate, so its risk is §19's
+  // first sentence rather than a consent one: served directly it would skip the
+  // per-slice k gate's companions — the §24 gate, aggregation and ranking.
+  //
+  // `deriveWorldPulse` is PURE and takes objects, not a client, so it is not
+  // listed: there is no read to bypass. Its inputs are already-gated objects,
+  // and its own guard (src/test/mapWorldIntelligenceLayer.test.ts) asserts the
+  // kinds it will and will not accept.
+  readTravelerFlowEdges: {
+    approved: {
+      "lib/mapProducers/travelerFlowProducer.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+    },
+  },
+  readCityModels: {
+    approved: {
+      "lib/mapProducers/cityModelProducer.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+    },
+  },
+  readPersonalCityPins: {
+    approved: {
+      "lib/mapProducers/personalCityProducer.ts": "defines it",
+      "routes/mapProjection.ts": "the gateway (§19)",
+    },
+  },
   readBuddyMapPins: {
     approved: {
       "lib/buddyMapRead.ts": "defines it",

@@ -346,15 +346,23 @@ router.post("/v1/intel/claims/:id/correct", asyncHandler(async (req, res) => {
 //
 // INTERNAL ONLY (§29 Included: "Internal coverage dashboard for pilot zones").
 // This is NOT movement publication — §29 EXCLUDES "Public Crowd Movement
-// output"; that stays behind intel_movement_prediction (seeded OFF) and the §13
-// mayPublishMovement gate, which no route calls. requireAdmin, never a client.
+// output"; that stays behind intel_movement_prediction (declared in §26
+// INTEL_FLAGS but NOT SEEDED: no migration creates the row, per the 2165 rule
+// that a flag arrives with its reader; isFlagEnabled reads an absent row as
+// false) and the §13 mayPublishMovement gate, which no route calls.
+//
+// requireAdmin, never a client — but "internal" is an ACCESS CONTROL, not an
+// anonymity guarantee, so lib/trailServe still applies the §13 cohort floor as a
+// FILTER and serves only floor-clearing buckets. Nothing below the floor reaches
+// this response, not even its (origin, destination, window) tuple.
 router.get("/v1/internal/intel/trail/movement", asyncHandler(async (req: Request, res: Response) => {
   const ctx = await requireAdmin(req, res);
   if (!ctx) return;
   const q = z.object({ subjectId: z.string().uuid().optional() }).safeParse(req.query ?? {});
   if (!q.success) return sendError(res, "invalid_payload", "subjectId must be a uuid when supplied");
   const read = await readTrailMovement(getServiceClient()!, ctx.userId, { originId: q.data.subjectId ?? null });
-  if (read.refusal === "flag_off") return sendError(res, "feature_disabled", "intel_trail_followup is off");
+  if (read.refusal === "flag_off")
+    return sendError(res, "feature_disabled", "the intel_trail_followup flag chain is not fully enabled");
   if (read.refusal !== null) return sendError(res, "db_error", read.refusal);
   res.json(read);
 }));

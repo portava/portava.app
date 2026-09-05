@@ -233,7 +233,7 @@ describe("source allowlist — only first-party captures are eligible", () => {
 
 // ── 4. Freshness — capped at 'fresh', never 'live' ────────────────────────────
 
-describe("computeFreshnessClass — media never manufactures 'live'", () => {
+describe("AT-05: computeFreshnessClass — old media never manufactures 'live'", () => {
   it("< 1h ⇒ 'fresh' (NOT 'live')", () => {
     assert.equal(computeFreshnessClass(minutesAgo(5), NOW), "fresh");
   });

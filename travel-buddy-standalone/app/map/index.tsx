@@ -908,6 +908,7 @@ function FullScreenMapScreenInner() {
    */
   const placesWanted = mode !== 'passport' && layerPrefs.relevant_places !== 'off';
 
+
   // ── §34 live camera ──────────────────────────────────────────────────────────
   // Where the camera actually SETTLED, reported by DiscoveryMapView through its
   // onCameraChange prop. Declared above useMapEntities because the hook now
@@ -930,6 +931,37 @@ function FullScreenMapScreenInner() {
     },
     [],
   );
+
+  /**
+   * §36 Phase 7 World Intelligence through the gateway.
+   *
+   * `world_intelligence` is `contextual` in §16, and — UNLIKE crowd_flow — its
+   * trigger is not circular. crowd_flow's two automatic inputs (`density` and
+   * CROWD_FLOW mode) are both properties of the RESPONSE, so the request cannot
+   * condition on them; this layer's input is the §17 ZOOM BAND, which the shell
+   * knows before it fetches. So the request can honour the contextual rule
+   * honestly instead of falling back to explicit choice only.
+   *
+   * The precedence below mirrors `resolveLayers` exactly: an explicit `off`
+   * wins over everything, an explicit `on` outranks the band, and otherwise the
+   * band decides. Requesting out of band would cost a round trip for kinds the
+   * server refuses with `band_not_eligible` anyway.
+   */
+  const requestZoomBand = zoomRenderBand(liveCamera?.zoom ?? cameraZoom ?? paramZoom);
+  const worldIntelligenceWanted =
+    mode !== 'passport' &&
+    layerPrefs.world_intelligence !== 'off' &&
+    (layerPrefs.world_intelligence === 'on' ||
+      requestZoomBand === 'world' ||
+      requestZoomBand === 'city');
+
+  /**
+   * §36 Phase 7 My Cities — the viewer's OWN city history. Default OFF, like
+   * Memories: private history is requested only on an explicit opt-in, so it
+   * never rides a default-on load and turning the world view on can never turn
+   * it on.
+   */
+  const myCitiesWanted = mode !== 'passport' && layerPrefs.my_cities === 'on';
 
   // passportEntities — React hooks cannot be called conditionally.
   const {
@@ -966,6 +998,10 @@ function FullScreenMapScreenInner() {
     // trip is on the map — trip mode, or the legacy Trips pin that seeds the
     // §16 trip layer on. Downstream §16 filtering owns final visibility.
     meetingPoints: mode !== 'passport' && (machine.mode === 'TRIP' || enabledLayers.includes('trips')),
+    // §36 Phase 7. Two options, because the three public aggregates and the
+    // viewer's own history answer to two different consent regimes.
+    worldIntelligence: worldIntelligenceWanted,
+    myCities: myCitiesWanted,
   });
 
   // ── Places: projected through the gateway, or the legacy Discovery fetch ───
@@ -1912,8 +1948,13 @@ function FullScreenMapScreenInner() {
   // It must NOT be added to ZONE_KINDS to fix that: a flow is a LineString and
   // ActivityZone draws polygons, so widening the kind list would send it to a
   // renderer that cannot draw it. The feed widens; the vocabulary does not.
+  // `traveler_flow` rides the same widening as `crowd_flow`, for the same
+  // reason and with the same limit: it is a LineString, so TravelerFlowLayer
+  // owns it and ActivityZone must never be asked to draw it. `world_pulse` is
+  // NOT listed here — it is a polygon and is a real member of ZONE_KINDS, so
+  // isZoneKind already admits it.
   const zoneObjects = useMemo(
-    () => objects.filter((o) => isZoneKind(o.kind) || o.kind === 'crowd_flow'),
+    () => objects.filter((o) => isZoneKind(o.kind) || o.kind === 'crowd_flow' || o.kind === 'traveler_flow'),
     [objects],
   );
 

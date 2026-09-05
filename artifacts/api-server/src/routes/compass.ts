@@ -3424,7 +3424,13 @@ router.get("/compass/recommendations", async (req, res) => {
             .select("owner_id, destination_city")
             .in("owner_id", travCandidateIds)
             .in("status", ["upcoming", "active"])
-            .in("visibility", ["public", "friends"])
+            // `trip_visibility` is an ENUM: public | buddies | invite | private.
+            // "friends" is NOT a label (that is `event_visibility`'s
+            // `friends_only`, a different enum on a different table — see
+            // mapSearch.ts:88, which is correct). Postgres rejects an unknown
+            // enum literal outright (22P02), so this read failed WHOLE and the
+            // traveller destination-overlap match signal has always been inert.
+            .in("visibility", ["public", "buddies"])
             .gte("end_date", nowStr);
           for (const t of (travTripRows ?? []) as any[]) {
             const dest = (t.destination_city as string)?.toLowerCase().trim();

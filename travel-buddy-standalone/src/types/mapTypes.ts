@@ -169,6 +169,22 @@ export const KIND_TO_ENTITY_TYPE: Record<MapObjectKind, MapEntityType> = {
   // A saved place is a place the viewer chose; the legacy renderer draws it
   // with the places layer, the new renderer reads the kind directly (§6 gold).
   saved_place: 'places',
+  // §36 Phase 7 kinds have no legacy layer either, and 'places' keeps the OLD
+  // renderer from crashing on them. HOW FAR THAT IS TRUE DIFFERS BY KIND, and
+  // saying "the new renderer reads MapObject directly" for all four would be
+  // overstating it:
+  //   world_pulse     IS a zone kind (render/zoneStyle ZONE_KINDS), so
+  //                   ActivityZoneLayer draws it from the MapObject.
+  //   traveler_flow   has TravelerFlowLayer, which draws the LineString.
+  //   city_model      no dedicated renderer yet. It comes THROUGH this view and
+  //   personal_city   draws as a generic place pin opening the generic
+  //                   LivePlaceSheet. It is placed and tappable, but it is not
+  //                   yet drawn as the kind it is. Anything that claims Phase 7
+  //                   is "complete" on the client has to say this.
+  world_pulse: 'places',
+  traveler_flow: 'places',
+  city_model: 'places',
+  personal_city: 'places',
 };
 
 /** The legacy action slugs, keyed by contract action. Unmapped actions drop. */

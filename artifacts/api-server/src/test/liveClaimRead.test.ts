@@ -102,7 +102,7 @@ describe("liveClaimRead — gate 1: the flag", () => {
 });
 
 describe("liveClaimRead — IG-09 limited-live gates (kill switch + pilot)", () => {
-  it("suppresses every Live label when the emergency stop is engaged", async () => {
+  it("AT-18: suppresses every Live label when the emergency stop is engaged (records preserved, not deleted)", async () => {
     assert.deepEqual(await readLiveClaims(client({ flag: true, kill: true, rows: [liveRow] }), "p1", { now: NOW }), []);
   });
   it("shows nothing until a pilot scope is promoted (intel_limited_live off)", async () => {
@@ -166,7 +166,7 @@ describe("liveClaimRead — IG-09 per-scope promotion allowlist", () => {
 });
 
 describe("liveClaimRead — gate 2 and 3 are applied in the query itself", () => {
-  it("filters on privacy_eligible and unexpired, not just in memory", async () => {
+  it("AT-01: filters on privacy_eligible and unexpired, not just in memory", async () => {
     const c = client({ flag: true, rows: [liveRow] });
     await readLiveClaims(c, "p1", { now: NOW });
     assert.equal(c.filters["privacy_eligible"], true, "an ineligible row must never leave the database");
@@ -260,7 +260,7 @@ describe("readLiveClaimEnvelopes — rich decision-exposure response", () => {
     assert.deepEqual(await readLiveClaimEnvelopes(client({ flag: false, rows: [idRow] }), "p1", { now: NOW }), []);
   });
 
-  it("excludes stale and non-exposable claims IN THE QUERY, not in memory", async () => {
+  it("AT-01: excludes stale and non-exposable claims IN THE QUERY, not in memory", async () => {
     // The eligibility + freshness gates are the query's job; a private or expired
     // row must never leave the database. (Stale rows are dropped by gt:expires_at;
     // ineligible rows by privacy_eligible.)
@@ -270,7 +270,7 @@ describe("readLiveClaimEnvelopes — rich decision-exposure response", () => {
     assert.equal(c.filters["gt:expires_at"], NOW.toISOString());
   });
 
-  it("emits only derived intelligence — no contributor id, coordinates or k-anon internals", async () => {
+  it("AT-06: emits only derived intelligence — observed time retained, no contributor id, coordinates or k-anon internals", async () => {
     // Even when the projection row carries private evidence, the envelope must not.
     const leaky = {
       ...idRow,
