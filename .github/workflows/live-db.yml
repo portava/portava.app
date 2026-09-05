@@ -322,7 +322,33 @@ jobs:
     name: api-server · check:all + live_pulse gate (needs credentials)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [preflight, live-db-slot]
+    needs: [preflight, live-db-slot, schema-drift]
+    # The schema-drift edge is ORDERING, NOT GATING. Both halves are load-bearing.
+    #
+    # WHY THE EDGE. check:write-path-columns fetches the LIVE schema and fails on
+    # any table the code references but the database lacks. Without this edge that
+    # fetch raced schema-drift's applier, and lost: on main run 33988500200 the two
+    # jobs started one second apart (20:00:06 / 20:00:07), the fetch landed at
+    # 20:01:19, and the applier did not finish until 20:02:04. So the check read a
+    # schema from BEFORE its own run's migrations and reported event_passport_shares
+    # — created by 2294, merged minutes earlier in #394 — as missing from nine call
+    # sites. Main went red on a table that its own run then created. Every commit
+    # that adds a table alongside its migration loses that race the same way, so
+    # this was a false red, not a finding.
+    #
+    # WHY NOT A SUCCESS GATE. On a PR branch schema-drift legitimately FAILS: a
+    # branch's own migration is never applied to the CI project, so the objects it
+    # claims are genuinely absent. Plain `needs:` treats that expected failure as a
+    # reason to SKIP — which is what already happens to live-db-security-suites and
+    # post-media-revocation-rehearsal below. Letting it skip check:all too would
+    # silently drop the primary code-quality gate on exactly the PRs that change the
+    # schema, and this workflow says elsewhere in its own words that a job which
+    # silently skips is indistinguishable from one that passed. `!cancelled()` keeps
+    # check:all running after schema-drift whatever schema-drift concluded.
+    #
+    # This also strictly widens coverage: a failed preflight used to skip this job,
+    # and now runs it so its own secret preflight fails out loud instead.
+    if: ${{ !cancelled() }}
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
