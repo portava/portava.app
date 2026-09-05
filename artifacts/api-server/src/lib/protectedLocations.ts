@@ -215,6 +215,30 @@ export const PROTECTION_EXEMPT_KINDS: readonly MapObjectKind[] = ["safety_notice
  * suppressed rather than coarsened, because for them the disclosure is the
  * ASSOCIATION, not the coordinate: "someone is at the medical facility" is the
  * sensitive fact, and it survives every amount of coordinate blurring.
+ *
+ * `memory` is here even though it is drawn for its OWNER ALONE, and that is the
+ * point worth stating: owner-onlyness is NOT the test this list applies. A
+ * memory is a VENUE-level pin whose title is the venue's own name, so a
+ * coarsened memory snapped to the zone anchor still reads "you have a history
+ * with this clinic" — the association is the whole object, and blurring the
+ * coordinate removes nothing.
+ *
+ * §36 PHASE 7's `personal_city` IS DELIBERATELY NOT HERE, and this was decided
+ * rather than overlooked (an omitted kind in a per-kind table is how the
+ * `prediction` hole reached the wire). It cannot make the assertion this list
+ * escalates on: its geometry is a CITY CENTROID, its title is the city's label
+ * and its payload carries a cityKey, a country and the viewer's own stamp
+ * count. The association it publishes is with a CITY, never with a place inside
+ * one, so there is no place-association for coarsening to fail to remove — and
+ * "you have been to Da Nang" is not a fact any protected zone exists to
+ * withhold. It is also the viewer's own history shown to the viewer, the same
+ * ground on which it is absent from `COARSEN_UNSAFE_KINDS` below.
+ *
+ * It still takes the zone's OWN action, so inside a suppress-class zone it is
+ * withheld like anything else. src/test/mapWorldIntelligenceLayer.test.ts
+ * ("personal_city is deliberately NOT an ambient-presence kind either") holds
+ * both halves by execution, and pins the city-centroid shape the decision rests
+ * on: if `personal_city` ever acquires a venue, this ruling expires.
  */
 export const AMBIENT_PRESENCE_KINDS: readonly MapObjectKind[] = [
   "social_zone",
@@ -248,6 +272,24 @@ export const AMBIENT_PRESENCE_KINDS: readonly MapObjectKind[] = [
  * an unattributable pin that asserts nothing. So inside a coarsen-class zone
  * these are SUPPRESSED. This only ever tightens.
  *
+ * THE §36 PHASE 7 AGGREGATE KINDS ARE HERE FOR THE SAME REASON. Each restates
+ * inside its own `payload` exactly the facts `coarsenForZone` deletes at the top
+ * level, and each already sits on geometry coarsening does not touch:
+ *
+ *   • `traveler_flow` carries `payload.{cohortBucket, observedAt}` on a
+ *     LineString between city centroids.
+ *   • `world_pulse` carries `payload.people.cohortBucket` and its density counts
+ *     on an aggregation-cell polygon.
+ *   • `city_model` carries `payload.rhythm`, a per-time-band activity reading,
+ *     on a city centroid.
+ *
+ * `personal_city` is DELIBERATELY NOT here, on the same grounds as the
+ * relationship-gated kinds below: it is the viewer's own history shown to the
+ * viewer, it asserts nothing about who is at the protected place, and coarsening
+ * exists to protect other people rather than the reader from themselves. It
+ * still takes the zone's own action, so inside a SUPPRESS-class zone it is
+ * withheld like anything else.
+ *
  * ONE POLICY, NOT TWO. `classifyAgainstProtected` escalates on this table and
  * `mapProjection.withholdCoarsenableAggregates` filters on it, so a route that
  * calls the gate directly and a route that pre-filters cannot disagree. The
@@ -256,7 +298,13 @@ export const AMBIENT_PRESENCE_KINDS: readonly MapObjectKind[] = [
  * for a caller that forgets it — which is exactly how the prediction hole got
  * in.
  */
-export const COARSEN_UNSAFE_KINDS: readonly MapObjectKind[] = ["crowd_flow", "prediction"];
+export const COARSEN_UNSAFE_KINDS: readonly MapObjectKind[] = [
+  "crowd_flow",
+  "prediction",
+  "traveler_flow",
+  "world_pulse",
+  "city_model",
+];
 
 /**
  * Deliberately NOT escalated, and this is a considered choice rather than an

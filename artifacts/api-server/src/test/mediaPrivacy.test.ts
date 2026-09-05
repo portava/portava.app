@@ -44,7 +44,13 @@ const VIEWER_ID   = "aa000000-0000-4000-a000-000000000001";
 const AUTHOR_ID   = "aa000000-0000-4000-a000-000000000002";
 const BLOCKED_ID  = "aa000000-0000-4000-a000-000000000003";
 const MUTED_ID    = "aa000000-0000-4000-a000-000000000004";
-const SUSPENDED_ID = "aa000000-0000-4000-a000-000000000005";
+// FIXTURE REPAIRED: this profile carried `account_status: "suspended"`, which
+// profiles_account_status_check does not permit (active | deactivated |
+// pending_deletion | deleted). The production gate filtered on the same
+// impossible value, so this test proved the code matched the fixture and
+// nothing about the database — the gate was a permanent no-op and every
+// non-active creator's media was served. `deactivated` is a real status.
+const DEACTIVATED_ID = "aa000000-0000-4000-a000-000000000005";
 
 const POST_PUBLIC_ID  = "bb000000-0000-4000-a000-000000000001";
 const POST_PRIVATE_ID = "bb000000-0000-4000-a000-000000000002";
@@ -287,10 +293,10 @@ function baseState(): FakeState {
         bio: null, account_status: "active",
       },
       {
-        id: SUSPENDED_ID, username: "suspended", full_name: "Suspended",
+        id: DEACTIVATED_ID, username: "deactivated", full_name: "Deactivated",
         avatar_url: null, is_private: false, is_verified: false,
         followers_count: 0, following_count: 0,
-        bio: null, account_status: "suspended",
+        bio: null, account_status: "deactivated",
       },
     ],
     posts: [
@@ -780,15 +786,15 @@ describe("filterEligibleMediaCandidates — eligibility gates", () => {
     assert.equal(result.eligible.length, 0, "post with no media should be excluded");
   });
 
-  it("excludes a post from a suspended creator", async () => {
+  it("excludes a post from a non-active (deactivated) creator", async () => {
     const state = baseState();
     const result = await filterEligibleMediaCandidates(
-      [makeCandidate({ author_id: SUSPENDED_ID })],
+      [makeCandidate({ author_id: DEACTIVATED_ID })],
       viewerCtx,
       makeSc(state),
       new Set(),
     );
-    assert.equal(result.eligible.length, 0, "suspended creator post should be excluded");
+    assert.equal(result.eligible.length, 0, "non-active creator post should be excluded");
   });
 
   it("excludes a post with geo_restriction when viewer country is unknown", async () => {

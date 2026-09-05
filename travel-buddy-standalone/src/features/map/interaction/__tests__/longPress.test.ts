@@ -639,6 +639,14 @@ describe('§22 · report', () => {
     'safety_notice',
     'memory',
     'prediction',
+    // §36 Phase 7. Three are aggregates over many people with no place to
+    // anchor an observation to, and the fourth is the viewer's own history —
+    // the same reason `memory` is here. Mirrors liveTruth.KIND_PROMPTS and the
+    // server's routes/mapObservations.KIND_PROMPTS.
+    'world_pulse',
+    'traveler_flow',
+    'city_model',
+    'personal_city',
   ];
 
   test('offered only for kinds §22 has a prompt for', () => {

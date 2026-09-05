@@ -11,7 +11,8 @@
  *                      event_type, category, created_at, metadata). It has no
  *                      producer: see "THE ACTIVITY LANE HAS NO PRODUCER" below
  *                      before trusting any activity_events-derived number.
- *   posts            — contribution count (author_id, status, created_at)
+ *   posts            — contribution count (author_id, status, post_status,
+ *                      created_at)
  *   events           — contribution count (host_id, created_at)
  *   trips            — contribution count (owner_id, created_at)
  *   reviews          — contribution count (reviewer_id, created_at)
@@ -467,12 +468,32 @@ export class CreatorSignalAggregator {
     try {
       // Fetch content timestamps from all contribution tables in parallel.
       const [postsData, eventsData, tripsData, reviewsData, placesData] = await Promise.all([
-        // posts: author_id, status, created_at
+        // posts: author_id, status, post_status, created_at
+        //
+        // TWO columns, TWO similarly-named enums — do not conflate them:
+        //   posts.status      public.post_status
+        //                     ('active','hidden','reported','deleted')
+        //   posts.post_status public.delayed_post_status
+        //                     ('draft','private','pending_location_exit',
+        //                      'pending_delay','pending_safety_review',
+        //                      'published','canceled','expired')
+        // This lane previously sent .eq("status","published") — 'published' is
+        // NOT a post_status label, so PostgREST rejected it with 22P02 and the
+        // surrounding catch swallowed it: the posts contribution count was
+        // permanently zero for every creator.
+        //
+        // The canonical "live post" predicate used by the Wall, Pulse, the
+        // global/Following feeds and profile tabs is status='active' AND
+        // post_status='published'; a contribution score must use the same one.
+        // Deliberately excluded: hidden/reported/deleted (not visible to the
+        // community, and counting `reported` would reward flagged content) and
+        // draft/private/pending_*/canceled/expired (never published).
         (this.db as any)
           .from("posts")
           .select("created_at")
           .eq("author_id", userId)
-          .eq("status", "published")
+          .eq("status", "active")
+          .eq("post_status", "published")
           .gte("created_at", ago90d),
 
         // events: host_id, created_at

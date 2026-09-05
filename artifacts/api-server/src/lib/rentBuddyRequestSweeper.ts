@@ -50,6 +50,7 @@ import { getServiceClient } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { notifyBookingParty } from "./bookingNotify.js";
 import { isFlagEnabled } from "./featureFlags.js";
+import { AWAITING_BUDDY_STATUSES } from "./rentBuddyBookingStatus.js";
 
 /** Master feature flag that gates the whole Rent-a-Buddy surface. */
 const RAB_MASTER_FLAG = "rent_buddy_enabled";
@@ -144,7 +145,11 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
     const { data, error: staleErr } = await serviceClient
       .from("rent_buddy_bookings")
       .select("id, traveler_id, status")
-      .in("status", ["pending", "requested"])
+      // AWAITING_BUDDY_STATUSES, not an inline pair. The canonical creation
+      // route writes "requested" and the other four write "pending"; an inline
+      // list here is exactly the drift lib/rentBuddyBookingStatus.ts exists to
+      // stop, and phase 1 was the one place still carrying a hand-written copy.
+      .in("status", [...AWAITING_BUDDY_STATUSES])
       .lt("expires_at", now);
     if (staleErr) {
       logger.error({ err: staleErr }, "stale-request fetch failed");

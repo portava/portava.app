@@ -519,9 +519,17 @@ async function toolSearchEvents(
     .from("events")
     .select("id, title, description, city, country, starts_at, category, host_id, state, visibility")
     .eq("visibility", "public")
-    .neq("state", "cancelled")
-    .neq("state", "deleted")
-    .neq("state", "banned")
+    // `event_state` is an ENUM: draft | open | full | waitlist | started |
+    // completed | cancelled | archived. `deleted` and `banned` are NOT labels,
+    // and Postgres rejects an unknown enum literal outright (22P02) rather than
+    // matching nothing — so this read failed WHOLE and the `if (error)` below
+    // returned "Event search unavailable right now." on every call. Compass
+    // chat could never return an event.
+    //
+    // The replacement is mapSearch.loadNearbyEvents' predicate verbatim, the
+    // same one discoverySearch:615 adopted when this defect was fixed there, so
+    // chat, discovery and the map agree about which events exist (§26).
+    .not("state", "in", '("draft","cancelled","archived")')
     .gte("starts_at", cutoff)
     .order("starts_at", { ascending: true });
   if (typeof args["query"] === "string" && args["query"].trim()) {
@@ -1014,9 +1022,10 @@ async function toolGroupRecommendation(
       .from("events")
       .select("id, title, description, city, country, starts_at, category, host_id, state, visibility, max_attendees, going_count, age_min, verified_only")
       .eq("visibility", "public")
-      .neq("state", "cancelled")
-      .neq("state", "deleted")
-      .neq("state", "banned")
+      // Same dead-literal repair as toolSearchEvents above: `deleted` / `banned`
+      // are not `event_state` labels, so this read failed 22P02 and the group
+      // recommendation lane could never return an event.
+      .not("state", "in", '("draft","cancelled","archived")')
       .gte("starts_at", cutoff)
       .order("starts_at", { ascending: true });
     if (typeof args["query"] === "string" && args["query"].trim()) {

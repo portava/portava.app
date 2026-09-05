@@ -217,11 +217,20 @@ async function fetchActiveTripForUser(
     if (tripIds.length === 0) return null;
 
     // 1. In-progress trips (highest priority — user is there right now)
+    //
+    // This used to filter `status = 'in_progress'`. `in_progress` is not a
+    // label of the `trip_status` enum (draft | planning | upcoming | active |
+    // completed | cancelled | archived), so PostgREST rejected it 22P02 and the
+    // whole read failed: the daily brief could never tell a user they were on a
+    // trip, and always fell through to the "upcoming" branch below. This exact
+    // defect is documented in lib/activeCrew.ts:26-28, which named dailyBrief
+    // as the reader carrying it. `active` is the label every other current-trip
+    // reader uses.
     const { data: inProgress } = await client
       .from("trips")
       .select("id,destination_city,destination_country,start_date,end_date")
       .in("id", tripIds)
-      .eq("status", "in_progress")
+      .eq("status", "active")
       .order("start_date", { ascending: true })
       .limit(1)
       .maybeSingle();

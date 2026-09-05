@@ -75,6 +75,22 @@ export const DiscoveryServePoint = {
   // receive, which is the specific error D4=C exists to prevent.
   // Like 7-9 it runs no ranker, so it is NOT part of the D5 denominator.
   COMMUNITY:              10,
+  // Stage 0c — the two discovery surfaces that live OUTSIDE routes/discovery*.
+  // Both return ranked results to a user and neither wrote a rank_events row of
+  // any kind, so a Discovery analytics query could not see them at all: not
+  // their impressions, and therefore not their outcomes either (the outcome
+  // route resolves an outcome by finding the impression it belongs to, so a
+  // surface with no impression row can never record one).
+  //
+  // HIDDEN_GEMS — routes/hiddenGems.ts. GET /hidden-gems runs
+  // HiddenGemDiscoveryService.discoverGems (verification weight + saves +
+  // visits + vibe-tag match) and GET /hidden-gems/nearby runs findNearbyGems.
+  // Both rank. Both are in RANKED_IN_REQUEST below.
+  HIDDEN_GEMS:            11,
+  // MAP_SEARCH — routes/mapSearch.ts GET /map/search. Merges travelers, gems
+  // and events, then rankResults() orders them and paginate() cuts the served
+  // page. Ranked in-request.
+  MAP_SEARCH:             12,
 } as const;
 
 export type DiscoveryServePointId =
@@ -92,6 +108,10 @@ export type DiscoveryServePointId =
 const RANKED_IN_REQUEST = new Set<number>([
   DiscoveryServePoint.COMPASS_FRESH_RANK,
   DiscoveryServePoint.COLD_FETCH_LEGACY_RANK,
+  // 11 and 12 DO rank during the request — discoverGems / findNearbyGems for
+  // hidden gems, rankResults for map search — so they belong here, unlike 7-10.
+  DiscoveryServePoint.HIDDEN_GEMS,
+  DiscoveryServePoint.MAP_SEARCH,
 ]);
 
 /**
@@ -125,6 +145,7 @@ export interface ServedItem {
  */
 export function searchTypeToItemKind(type: string): RankItemKind | null {
   switch (type) {
+    // Plural forms: the /discovery/search and /discovery/suggest group types.
     case "travelers":
     case "buddies":     return "buddy";
     case "events":      return "event";
@@ -133,6 +154,18 @@ export function searchTypeToItemKind(type: string): RankItemKind | null {
     case "places":      return "place";
     case "hidden_gems": return "gem";
     case "posts":       return "post";
+    // Singular forms: MapSearchResult.resultType (lib/mapSearch.ts) uses
+    // 'traveler' | 'gem' | 'event'. Mapped here rather than in a second
+    // near-identical function so both surfaces classify one entity identically —
+    // a map-search gem and a search-results gem must land on the same item_kind
+    // or every per-kind rollup double-counts under two names.
+    case "traveler":    return "buddy";
+    case "gem":         return "gem";
+    case "event":       return "event";
+    case "place":       return "place";
+    case "plan":
+    case "trip":        return "plan";
+    case "post":        return "post";
     default:            return null;
   }
 }

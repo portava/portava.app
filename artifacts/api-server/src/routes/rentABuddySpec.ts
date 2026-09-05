@@ -10,6 +10,8 @@ import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
+import { normalizeLaunchControlKey, upsertLaunchControlRow } from "../lib/rentBuddyLaunchControls.js";
+import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
 
 const router = Router();
 
@@ -375,41 +377,21 @@ router.delete("/me/buddy-availability-exceptions/:exceptionId", asyncHandler(asy
   return res.json({ ok: true });
 }));
 
-// ── buddy_booking_events read ──────────────────────────────────────────────────
-// Also accessible at /api/buddy-bookings/:id/events via URL alias in app.ts
-
-router.get("/rent-a-buddy/bookings/:bookingId/events", asyncHandler(async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const serviceClient = sc(auth.client);
-
-  const { bookingId } = req.params;
-  const { data: booking } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("id, traveler_id, buddy_id")
-    .eq("id", bookingId)
-    .maybeSingle();
-  if (!booking) return res.status(404).json({ error: "not_found" });
-
-  const b = booking as any;
-  const { data: bp } = await serviceClient
-    .from("rent_buddy_profiles")
-    .select("id")
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
-
-  const isParty = b.traveler_id === auth.user.id || (bp && b.buddy_id === (bp as any).id);
-  if (!isParty) return res.status(403).json({ error: "forbidden" });
-
-  const { data, error } = await serviceClient
-    .from("buddy_booking_events")
-    .select("*")
-    .eq("booking_id", bookingId)
-    .order("created_at", { ascending: true });
-
-  if (error) return sendError(res, "db_error", error.message);
-  return res.json({ events: data ?? [] });
-}));
+// ── buddy_booking_events read — REMOVED (dead duplicate) ──────────────────────
+//
+// A second `GET /rent-a-buddy/bookings/:bookingId/events` was declared here.
+// routes/index.ts mounts rentABuddy BEFORE rentABuddySpec, and rentABuddy.ts
+// already declares the identical method+path, so this handler was unreachable:
+// no request ever entered it.
+//
+// It was not a harmless copy. The live handler selects an explicit column list
+// and filters out events whose metadata marks them admin_only; this one did
+// `select("*")` with no such filter. Editing it — including tightening it —
+// changed nothing, which is exactly the trap a dead duplicate sets. Deleted
+// rather than merged: the reachable handler is the stricter of the two.
+//
+// src/test/rentBuddyRouteShadowing.test.ts now fails if any two of the four
+// Rent-a-Buddy routers declare the same method and path again.
 
 // ── booking request shorthand ──────────────────────────────────────────────────
 
@@ -645,6 +627,11 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
     .single();
 
   if (error) return sendError(res, "db_error", error.message);
+
+  // Estimated earnings-ledger row — the third of the three booking-creation
+  // paths that never wrote one. See lib/rentBuddyEarningsLedger.ts.
+  if (data) await createEarningsLedgerEntry(serviceClient, data, buddyId).catch(() => {});
+
   return res.status(201).json({ booking: data });
 }));
 
@@ -1551,24 +1538,25 @@ router.post("/rent-a-buddy/admin/kill-switch", asyncHandler(async (req, res) => 
     return res.status(400).json({ error: "invalid_payload", message: "enabled (boolean) is required." });
   }
 
-  // Upsert the global launch control (country_code=NULL, city=NULL, category=NULL)
-  const { data, error } = await serviceClient
-    .from("rent_buddy_launch_controls")
-    .upsert(
-      {
-        country_code: null,
-        city: null,
-        category: null,
-        enabled,
-        notes: enabled ? "Kill switch lifted by admin" : "Kill switch activated by admin",
-        created_by: auth.user.id,
-      },
-      { onConflict: "country_code,city,category" }
-    )
-    .select()
-    .single();
+  // Write the GLOBAL launch control (country_code=NULL, city=NULL, category=NULL).
+  //
+  // NOT `.upsert(..., { onConflict: "country_code,city,category" })`. That is what
+  // stood here, and against this table's plain `UNIQUE (country_code, city,
+  // category)` — NULLS DISTINCT — the ON CONFLICT arbiter never matched a row
+  // whose key is all-NULL. Every press INSERTed another global row: the switch
+  // could be pressed but never lifted, and the duplicated key then made the
+  // global control unreadable to getLaunchControl. See lib/rentBuddyLaunchControls.ts.
+  const { data, error } = await upsertLaunchControlRow(
+    serviceClient,
+    normalizeLaunchControlKey({}),
+    {
+      enabled,
+      notes: enabled ? "Kill switch lifted by admin" : "Kill switch activated by admin",
+    },
+    auth.user.id,
+  );
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) return sendError(res, "db_error", (error as any).message ?? String(error));
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
@@ -1683,23 +1671,16 @@ router.patch("/rent-a-buddy/admin/category-status/:category", asyncHandler(async
     return res.status(400).json({ error: "invalid_payload", message: "enabled (boolean) is required." });
   }
 
-  const { data, error } = await serviceClient
-    .from("rent_buddy_launch_controls")
-    .upsert(
-      {
-        country_code: null,
-        city: null,
-        category,
-        enabled,
-        notes: notes ?? null,
-        created_by: auth.user.id,
-      },
-      { onConflict: "country_code,city,category" }
-    )
-    .select()
-    .single();
+  // NULL-safe write — see the kill-switch handler above and
+  // lib/rentBuddyLaunchControls.ts for why an onConflict upsert cannot work here.
+  const { data, error } = await upsertLaunchControlRow(
+    serviceClient,
+    normalizeLaunchControlKey({ category }),
+    { enabled, notes: notes ?? null },
+    auth.user.id,
+  );
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) return sendError(res, "db_error", (error as any).message ?? String(error));
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
@@ -2060,16 +2041,16 @@ router.post("/rent-a-buddy/admin/category-status", asyncHandler(async (req, res)
     return res.status(400).json({ error: "invalid_payload", message: "category and enabled (boolean) are required." });
   }
 
-  const { data, error } = await serviceClient
-    .from("rent_buddy_launch_controls")
-    .upsert(
-      { country_code: null, city: null, category, enabled, notes: notes ?? null, created_by: auth.user.id },
-      { onConflict: "country_code,city,category" }
-    )
-    .select()
-    .single();
+  // NULL-safe write — see lib/rentBuddyLaunchControls.ts. The onConflict upsert
+  // that stood here never matched (NULLS DISTINCT) and duplicated the row.
+  const { data, error } = await upsertLaunchControlRow(
+    serviceClient,
+    normalizeLaunchControlKey({ category }),
+    { enabled, notes: notes ?? null },
+    auth.user.id,
+  );
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) return sendError(res, "db_error", (error as any).message ?? String(error));
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id, target_type: "category", target_id: category,
     action: enabled ? "category_enabled" : "category_disabled", notes: notes ?? null,
@@ -2133,16 +2114,16 @@ router.post("/rent-a-buddy/admin/category-status/:category", asyncHandler(async 
     return res.status(400).json({ error: "invalid_payload", message: "enabled (boolean) is required." });
   }
 
-  const { data, error } = await serviceClient
-    .from("rent_buddy_launch_controls")
-    .upsert(
-      { country_code: null, city: null, category, enabled, notes: notes ?? null, created_by: auth.user.id },
-      { onConflict: "country_code,city,category" }
-    )
-    .select()
-    .single();
+  // NULL-safe write — see lib/rentBuddyLaunchControls.ts. The onConflict upsert
+  // that stood here never matched (NULLS DISTINCT) and duplicated the row.
+  const { data, error } = await upsertLaunchControlRow(
+    serviceClient,
+    normalizeLaunchControlKey({ category }),
+    { enabled, notes: notes ?? null },
+    auth.user.id,
+  );
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) return sendError(res, "db_error", (error as any).message ?? String(error));
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id, target_type: "category", target_id: category,
     action: enabled ? "category_enabled" : "category_disabled", notes: notes ?? null,
