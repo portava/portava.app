@@ -50,6 +50,7 @@ import { NotificationService } from "../services/notifications/NotificationServi
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
+import { stripVideoLocationMetadata } from "../lib/videoMetadata.js";
 import {
   guardUploadRequest,
   verifyUploadedBytes,
@@ -163,17 +164,41 @@ router.post(
         // blocks the upload — the dedup worker skips rows where phash IS NULL.
         phash = await computePHash(img.buffer);
       } catch (err) {
-        if (sniffed.mime === "image/heic") {
-          // HEIC decode depends on the libvips build — store as-is rather than
-          // break older clients. (Mobile sends jpeg/png/webp; documented gap.)
-          req.log.warn({ err }, "HEIC processing unavailable — storing original");
-        } else {
-          // A jpeg/png/webp sharp cannot decode is corrupt → reject (spec:
-          // 'Reject corrupt files'; storing it would also skip the GPS strip).
-          sendError(res, "invalid_payload", "Corrupt or undecodable image file");
-          return;
-        }
+        // FAIL-CLOSED FOR EVERY IMAGE, HEIC INCLUDED.
+        //
+        // This used to special-case HEIC and store the raw bytes when sharp
+        // could not decode them — "documented gap", fail-open by design. It was
+        // not merely a gap, it was live: the bundled libvips (8.18.3) links
+        // libheif with only the AOM/AV1 codec, no HEVC decoder plugin, so a
+        // real iPhone HEIC fails with "Support for this compression format has
+        // not been built in" and took this branch EVERY time. `image/heic` is
+        // in ALLOWED_MEDIA_MIME and sniffMedia recognises the `heic`/`mif1`
+        // brands, so those uploads were stored byte-for-byte — EXIF and GPS
+        // intact — by the very code path whose purpose is to remove them.
+        //
+        // The sibling transport (postcards /complete) already rejects any image
+        // it cannot process, with no HEIC exception. Rejecting here makes the
+        // two agree: an image whose metadata we cannot strip is not stored.
+        req.log.warn({ err, mime: sniffed.mime }, "image processing failed — upload rejected");
+        sendError(res, "invalid_payload", "Corrupt or undecodable image file");
+        return;
       }
+    } else {
+      // VIDEO — no transcode tier, but the container still has to give up its
+      // capture coordinates. Length-preserving in-place scrub; see
+      // lib/videoMetadata.ts for why the bytes are overwritten rather than
+      // removed. Fail-closed: a video whose location metadata cannot be proven
+      // gone is refused, never stored.
+      const scrub = stripVideoLocationMetadata(rawBody, sniffed);
+      if (!scrub.ok) {
+        req.log.warn({ mime: sniffed.mime }, "video location metadata could not be stripped — upload rejected");
+        sendError(res, scrub.failure.code, scrub.failure.message);
+        return;
+      }
+      if (scrub.stripped.length > 0) {
+        req.log.info({ stripped: scrub.stripped }, "video location metadata stripped");
+      }
+      uploadBuf = scrub.buffer;
     }
 
     const basePath = `${user.id}/${Date.now()}`;
@@ -240,8 +265,9 @@ router.post(
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
     //
-    // `feedUrl` is NULL whenever no variant exists — video, HEIC that skipped
-    // processing, a failed derive, or any upload predating this feature. The
+    // `feedUrl` is NULL whenever no variant exists — video, or any upload
+    // predating this feature. (An image that fails processing no longer lands
+    // here at all: it is rejected above rather than stored unprocessed.) The
     // client must treat null as "use `url`". It must never construct a variant
     // path itself: for every pre-existing post that URL would 404.
     res.status(201).json({
