@@ -9,6 +9,16 @@
  *        throw in phase 2 bubbled out of runBuddyRequestSweep and skipped
  *        everything after it.
  *
+ *   P1 — phase 1 expires unanswered requests past their expires_at, for BOTH
+ *        statuses a creation path can write. The fake used to answer phase 1's
+ *        `.in("status", …)` query with a hard-coded empty array, so the whole
+ *        phase was uncovered: dropping "requested" — the status the CANONICAL
+ *        POST /rent-a-buddy/bookings writes, and the exact historical defect
+ *        this module exists to fix — left every test in this file green. The
+ *        fake now honours the .in()/.lt() filters against a fixture set, and
+ *        the statuses under test are derived from AWAITING_BUDDY_STATUSES so
+ *        the coverage cannot fall behind the constant.
+ *
  *   A2 — a fourth phase expires stale open marketplace rows that nothing else
  *        swept: pending rent_buddy_offers and open rent_buddy_requests past
  *        their own expires_at. A stale row is flipped to `expired`; a fresh row
@@ -26,6 +36,7 @@
 
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { AWAITING_BUDDY_STATUSES } from "../lib/rentBuddyBookingStatus.js";
 import {
   runBuddyRequestSweep,
   getSweepStatus,
@@ -46,6 +57,14 @@ interface BookingRow {
   buddy_id?: string;
 }
 
+/** Phase-1 fixture: an unanswered request with its own status and window. */
+interface StaleBookingRow {
+  id: string;
+  traveler_id: string;
+  status: string;
+  expires_at: string;
+}
+
 interface RecordedUpdate {
   table: string;
   patch: Record<string, unknown>;
@@ -56,6 +75,8 @@ interface FakeClientConfig {
   flagEnabled?: boolean;
   offers?: MarketRow[];
   requests?: MarketRow[];
+  // phase-1 unanswered requests (drives the P1 assertions)
+  staleBookings?: StaleBookingRow[];
   // phase-3 no-show bookings (drives the B3 "phase 3 still runs" assertion)
   noShows?: BookingRow[];
   // phase-2 fetch behaviour
@@ -74,6 +95,7 @@ function makeClient(cfg: FakeClientConfig = {}): any {
     flagEnabled = true,
     offers = [],
     requests = [],
+    staleBookings = [],
     noShows = [],
     throwOnAutoCompleteFetch = false,
   } = cfg;
@@ -124,8 +146,24 @@ function makeClient(cfg: FakeClientConfig = {}): any {
         }
         // op === "select"
         if (table === "rent_buddy_bookings") {
-          // phase 1 filters with .in("status", [...]); phases 2/3 use .eq("status").
-          if (inCol === "status") return Promise.resolve({ data: [], error: null });
+          // Phase 1 filters with .in("status", [...]) + .lt("expires_at", now);
+          // phases 2/3 use .eq("status"). This used to answer phase 1 with a
+          // hard-coded [] — which is why narrowing phase 1's status list changed
+          // nothing anywhere in this file. It now applies the real predicates.
+          if (inCol === "status") {
+            const wanted = inVals;
+            const rows = staleBookings.filter((r) => {
+              if (!wanted.includes(r.status)) return false;
+              for (const [c, v] of Object.entries(lts)) {
+                if (!((r as any)[c] < (v as any))) return false;
+              }
+              return true;
+            });
+            return Promise.resolve({
+              data: rows.map((r) => ({ id: r.id, traveler_id: r.traveler_id, status: r.status })),
+              error: null,
+            });
+          }
           if (eqs["status"] === "completed_pending_traveler_confirmation") {
             if (throwOnAutoCompleteFetch) {
               return Promise.reject(new Error("simulated auto-complete fetch failure"));
@@ -306,5 +344,76 @@ describe("A2 gate: marketplace expiry is skipped when the RAB master flag is off
     assert.equal(idsFor(client, "rent_buddy_offers").length, 0, "no offer update issued");
     assert.equal(idsFor(client, "rent_buddy_requests").length, 0, "no request update issued");
     assert.deepEqual(client._flagsQueried, ["rent_buddy_enabled"], "master flag was consulted");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// P1: phase 1 expires unanswered requests — in EVERY status a creation path writes
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("P1: expires unanswered requests past expires_at", () => {
+  /**
+   * Derived from the constant, not written out. The canonical creation route
+   * writes "requested"; the other four write "pending". Hard-coding either here
+   * is how phase 1 came to be tested with only the status it did not need to
+   * handle — and a fixture that stops matching a filter passes silently.
+   */
+  for (const status of AWAITING_BUDDY_STATUSES) {
+    it(`expires a stale booking in status "${status}"`, async () => {
+      const client = makeClient({
+        staleBookings: [
+          { id: `bk-stale-${status}`, traveler_id: "trav-1", status, expires_at: PAST },
+        ],
+      });
+
+      const r = await runBuddyRequestSweep(client);
+
+      assert.equal(r.ok, true);
+      assert.equal(r.expired, 1, `a stale "${status}" booking must expire`);
+      const patch = client._updates.find(
+        (u: RecordedUpdate) => u.table === "rent_buddy_bookings" && u.patch["status"] === "expired",
+      );
+      assert.ok(patch, "phase 1 must write status=expired");
+      assert.deepEqual(patch!.ids, [`bk-stale-${status}`]);
+    });
+  }
+
+  it("leaves a booking whose window has not closed alone", async () => {
+    const client = makeClient({
+      staleBookings: [
+        { id: "bk-fresh", traveler_id: "trav-1", status: AWAITING_BUDDY_STATUSES[0], expires_at: FUTURE },
+      ],
+    });
+    const r = await runBuddyRequestSweep(client);
+    assert.equal(r.expired, 0);
+    assert.equal(idsFor(client, "rent_buddy_bookings").includes("bk-fresh"), false);
+  });
+
+  it("leaves an already-answered booking alone", async () => {
+    // "scheduled" is what accept writes; it is not awaiting a response and must
+    // never be swept, whatever its expires_at says.
+    const client = makeClient({
+      staleBookings: [{ id: "bk-scheduled", traveler_id: "trav-1", status: "scheduled", expires_at: PAST }],
+    });
+    const r = await runBuddyRequestSweep(client);
+    assert.equal(r.expired, 0, "an accepted booking must not be expired by the sweeper");
+  });
+
+  it("expires a mixed batch in one pass", async () => {
+    const client = makeClient({
+      staleBookings: [
+        ...AWAITING_BUDDY_STATUSES.map((status, i) => ({
+          id: `bk-${i}`, traveler_id: "trav-1", status, expires_at: PAST,
+        })),
+        { id: "bk-fresh", traveler_id: "trav-1", status: AWAITING_BUDDY_STATUSES[0], expires_at: FUTURE },
+        { id: "bk-done", traveler_id: "trav-1", status: "completed", expires_at: PAST },
+      ],
+    });
+    const r = await runBuddyRequestSweep(client);
+    assert.equal(r.expired, AWAITING_BUDDY_STATUSES.length);
+    assert.deepEqual(
+      idsFor(client, "rent_buddy_bookings").sort(),
+      AWAITING_BUDDY_STATUSES.map((_, i) => `bk-${i}`).sort(),
+    );
   });
 });

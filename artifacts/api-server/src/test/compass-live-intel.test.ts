@@ -70,6 +70,23 @@ function makeClient(db: Record<string, any[]>) {
       select: () => b,
       eq: (col: string, val: any) => { filtered = filtered.filter((r) => r[col] === val); return b; },
       neq: (col: string, val: any) => { filtered = filtered.filter((r) => r[col] !== val); return b; },
+      // `.not(col, op, val)` was ABSENT, so the chain returned undefined the
+      // moment production started using it — the double could not express a
+      // negated filter at all. PostgREST's `not.in` takes `("a","b")`.
+      not: (col: string, op: string, val: any) => {
+        const o = String(op).toLowerCase();
+        if (o === "eq") filtered = filtered.filter((r) => r[col] !== val);
+        else if (o === "neq") filtered = filtered.filter((r) => r[col] === val);
+        else if (o === "is") filtered = filtered.filter((r) => (val === null ? r[col] != null : true));
+        else if (o === "in") {
+          const set = new Set(
+            String(val).replace(/^\(/, "").replace(/\)$/, "").split(",")
+              .map((s) => s.trim().replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1")),
+          );
+          filtered = filtered.filter((r) => !set.has(String(r[col])));
+        }
+        return b;
+      },
       gte: () => b,
       or: () => b,
       ilike: () => b,

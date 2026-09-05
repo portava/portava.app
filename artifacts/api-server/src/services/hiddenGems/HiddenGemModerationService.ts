@@ -280,7 +280,12 @@ export async function getDuplicateCandidates(
 
   const [{ data: pending, error: pErr }, { data: active, error: aErr }] = await Promise.all([
     db.from("hidden_gems").select(cols).eq("status", "pending").order("created_at", { ascending: true }),
-    db.from("hidden_gems").select(cols).in("status", ["approved", "active"]).limit(2000),
+    // "approved" is not a `hidden_gem_status` label (pending | active | hidden |
+    // merged). PostgREST rejected it 22P02 and, unlike the two swallowing
+    // callers of the same defect, this one `throw`s on aErr — so
+    // GET /admin/hidden-gems/duplicate-candidates returned db_error on EVERY
+    // call. `["active"]` is discoverySearch's GEM_SEARCHABLE_STATUSES.
+    db.from("hidden_gems").select(cols).in("status", ["active"]).limit(2000),
   ]);
   if (pErr) throw pErr;
   if (aErr) throw aErr;

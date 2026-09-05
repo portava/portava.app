@@ -816,9 +816,23 @@ const WRITTEN_SURFACES = [
   "compass",
   "live_pulse",
   "watch_feed",
+  // routes/wall.ts:145 has written surface='wall' since the Wall shipped. It
+  // was absent from this list, so the one report built to surface exactly this
+  // failure class could never name the surface that was losing every row.
+  // Migration 2298 admits 'wall' to rank_events_surface_check.
+  "wall",
 ] as const;
 
-/** Outcome values the codebase writes. 'analytics' was added by 0197. */
+/**
+ * Outcome values the codebase writes. 'analytics' was added by 0197.
+ *
+ * 'dismiss' is added by 2297_rank_events_dismiss_outcome.sql and is written by
+ * POST /api/rank-events/outcome. Until that migration is applied live it will
+ * print ABSENT here — correctly: the code writes it and the live CHECK does not
+ * yet permit it. This comparison is INFORMATIONAL ONLY (see the header) and
+ * carries no exit code, so naming it here reports the pending state rather than
+ * blocking on it.
+ */
 const WRITTEN_OUTCOMES = [
   "impression",
   "tap",
@@ -827,6 +841,7 @@ const WRITTEN_OUTCOMES = [
   "rsvp",
   "attended",
   "analytics",
+  "dismiss",
 ] as const;
 
 /**

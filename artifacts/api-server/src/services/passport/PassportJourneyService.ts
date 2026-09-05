@@ -20,6 +20,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories, type CallerContext } from "./PassportPrivacyGuard.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
+import { nameVisibilitySet, sanitizeIdentity } from "../../lib/publicIdentity.js";
 
 export interface JourneyMemory {
   id: string;
@@ -375,18 +376,29 @@ async function loadTripPeople(
   if (visibleIds.length === 0) return empty;
 
   // Coarse profile fetch for the survivors.
+  //
+  // NAME VISIBILITY (universal display-name rule, `lib/publicIdentity.ts`): the
+  // "Who was there" strip is a third-party identity list — each companion's real
+  // name only leaves the API when THAT companion has opted in via
+  // `profile_privacy_settings.show_real_name`. Every row goes through the
+  // canonical `sanitizeIdentity` choke point BEFORE any name-derived field is
+  // read, so a hidden name yields null and the person still renders by handle.
+  // Fail-closed: `nameVisibilitySet` returns an EMPTY set on a query error.
   const profiles = new Map<string, JourneyPerson>();
   try {
     const { data } = await sc
       .from("profiles")
       .select("id, display_name, name, username, handle, avatar_url, show_profile_picture_publicly")
       .in("id", visibleIds);
-    for (const p of ((data as any[]) ?? [])) {
-      profiles.set(p.id, {
-        id: p.id,
-        name: p.display_name ?? p.name ?? null,
-        handle: p.handle ?? p.username ?? null,
-        avatarUrl: p.show_profile_picture_publicly === false ? null : (p.avatar_url ?? null),
+    const rows = ((data as any[]) ?? []);
+    const nameAllowed = await nameVisibilitySet(sc, rows.map((r) => r.id));
+    for (const raw of rows) {
+      const named = sanitizeIdentity(raw, nameAllowed, viewerId);
+      profiles.set(raw.id, {
+        id: raw.id,
+        name: named.display_name ?? named.name ?? null,
+        handle: raw.handle ?? raw.username ?? null,
+        avatarUrl: raw.show_profile_picture_publicly === false ? null : (raw.avatar_url ?? null),
       });
     }
   } catch {

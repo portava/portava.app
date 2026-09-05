@@ -231,6 +231,15 @@ const COMPASS_PRIVACY: Record<MapObjectKind, PrivacyClass> = {
   memory: 'aggregate_only',
   prediction: 'aggregate_only',
   saved_place: 'place_level',
+  // §36 Phase 7. Compass never produces these — no projector emits them — but
+  // the table is total, so each gets the narrowest rung it is served at
+  // anywhere. The three aggregates are aggregate_only by construction;
+  // personal_city describes the viewer's own city history to the viewer, so it
+  // sits where `memory` sits rather than at a venue rung.
+  world_pulse: 'aggregate_only',
+  traveler_flow: 'aggregate_only',
+  city_model: 'aggregate_only',
+  personal_city: 'aggregate_only',
 };
 
 /** The fields of a Compass recommendation this projector reads. */
