@@ -23,7 +23,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -44,7 +44,7 @@ let authorId = "", strangerId = "", strangerToken = "", postId = "", featuredId 
 
 async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const sc = adminClient();
-  const email = `${PREFIX}${tag}@example.com`;
+  const email = fixtureEmail(`${PREFIX}${tag}@example.com`);
   const { data: c, error: cErr } = await sc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (cErr || !c?.user) throw new Error(`createUser(${tag}): ${cErr?.message}`);
   const id = c.user.id;
@@ -61,7 +61,7 @@ async function readFeatured(id: string): Promise<any | null> {
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}author@example.com`, `${PREFIX}stranger@example.com`]);
+  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}author@example.com`), fixtureEmail(`${PREFIX}stranger@example.com`)]);
   ({ id: authorId } = await makeUser("author"));
   ({ id: strangerId, token: strangerToken } = await makeUser("stranger"));
   const sc = adminClient();
@@ -77,7 +77,7 @@ after(async () => {
   const sc = adminClient();
   if (postId) await sc.from(TABLE).delete().eq("post_id", postId);
   if (postId) await sc.from("posts").delete().eq("id", postId);
-  await purgeFixtureUsers(sc, [`${PREFIX}author@example.com`, `${PREFIX}stranger@example.com`]);
+  await purgeFixtureUsers(sc, [fixtureEmail(`${PREFIX}author@example.com`), fixtureEmail(`${PREFIX}stranger@example.com`)]);
 });
 
 function assertDenied(error: any, what: string): void {
