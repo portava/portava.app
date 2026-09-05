@@ -151,11 +151,10 @@ const KNOWN_DEAD_REFERENCES: Record<string, { count: number; note: string }> = {
     count: 2,
     note: "rent_buddy_bookings.date_from / date_to — booking context is always empty.",
   },
-  "src/compass/PassportRemembersService.ts": {
-    count: 1,
-    note: "shared_moments.visibility — the shared-moments source of Passport " +
-      "Remembers is dead.",
-  },
+  // src/compass/PassportRemembersService.ts (shared_moments.visibility) was
+  // struck off on 2026-09-05: the read now selects `join_policy`, the column
+  // that actually carries who may be in a moment, and maps it through
+  // `sharedMomentVisibility`. Group 6 of Passport Remembers produces rows again.
   "src/scripts/seed-demo-social.ts": {
     count: 1,
     note: "passport_postcards.media_type on an INSERT — the demo seeder's postcard " +

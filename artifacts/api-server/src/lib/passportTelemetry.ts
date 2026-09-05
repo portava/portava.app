@@ -87,7 +87,15 @@ export const ALLOWED_PAYLOAD_KEYS = [
   "stamp_type",           // country | city | event | milestone | …
   "city",                 // broad city context (§5) — never a coordinate
   "country",
-  "viewer_relationship",  // self | public | follower | following | crew
+  // NOT `viewer_relationship`: "re-LAT-ionship" contains the forbidden fragment
+  // `lat`, so the coordinate strip above deleted the key before the allow-list
+  // ever saw it — AND the database's passport_telemetry_payload_is_clean CHECK
+  // (migration 2287) matches the same fragment list, so a row carrying it would
+  // have been rejected 23514 even if the emitter had let it through. The key was
+  // unwritable on both sides; the fact it names is not, so it is spelled with a
+  // word no fragment appears inside. The fragment list itself is untouched —
+  // narrowing a privacy filter to fit a key name would be the wrong trade.
+  "viewer_tier",          // self | public | follower | following | crew
   "surface",              // originating surface descriptor
 ] as const;
 
@@ -121,6 +129,47 @@ export function sanitizePassportPayload(raw: Record<string, unknown> | null | un
     if (!ALLOWED_SET.has(key)) continue; // (b) allow-list projection
     if (value === undefined || value === null) continue;
     out[key] = value && typeof value === "object" ? deepStripForbidden(value) : value;
+  }
+  return out;
+}
+
+/**
+ * The client's §32 payload keys are camelCase and named for the SURFACE
+ * (`subjectId`, `viewerContext`, `kind`); the store's allow-list is snake_case
+ * and named for the FACT (`subject_id`, `viewer_tier`, `stamp_type`).
+ * Without this translation every client payload would be projected to {} by
+ * ALLOWED_PAYLOAD_KEYS — the events would land, but carry nothing.
+ *
+ * Only these renames happen. Anything not renamed still has to survive the
+ * allow-list and the forbidden-fragment strip on its own, so this cannot widen
+ * what may be persisted — `sanitizePassportPayload` remains the only gate.
+ */
+const CLIENT_KEY_ALIASES: Record<string, string> = {
+  subjectId: "subject_id",
+  viewerContext: "viewer_tier",
+  kind: "stamp_type",
+  stampType: "stamp_type",
+  // `passport_shared.method` and `make_plan_started.from` are both provenance
+  // enums — the allow-list's `source`.
+  method: "source",
+  from: "source",
+};
+
+/**
+ * Rename the client's payload keys onto the store's vocabulary. Pure; exported
+ * for tests. Does NOT sanitize — the caller still passes the result through
+ * `sanitizePassportPayload` (via projectPassportEvent).
+ */
+export function normalizeClientPayload(
+  raw: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const mapped = CLIENT_KEY_ALIASES[key] ?? key;
+    // A caller that already sent the canonical key wins over an alias.
+    if (mapped in out && !(key in CLIENT_KEY_ALIASES)) out[mapped] = value;
+    else if (!(mapped in out)) out[mapped] = value;
   }
   return out;
 }

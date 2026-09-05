@@ -78,6 +78,27 @@ interface FakeState {
   countError?: boolean;
 }
 
+/**
+ * A REAL stamp_definitions row for a fixture's passport_stamps.stamp_type.
+ *
+ * Every category + slug below is seeded by migration 0081/0082/0145 and present
+ * in production. Do not shortcut this to `{ category: stampType }` — a
+ * passport_stamps.stamp_type is NOT a stamp_definitions.category, and pretending
+ * otherwise is what let buildStats's four counters read green in this file
+ * while returning zero for every real traveller.
+ */
+function definitionFor(stampType: string): { category: string; slug: string } {
+  switch (stampType) {
+    case "plan":        return { category: "event",    slug: "event_participant" };
+    case "host":        return { category: "event",    slug: "event_host" };
+    case "hidden_gem":  return { category: "location", slug: "hidden_gem_hunter" };
+    case "safe_return": return { category: "safety",   slug: "safe_return_completed" };
+    case "trip":
+    case "trip_crew":   return { category: "trip",     slug: "first_trip" };
+    default:            return { category: "location", slug: "city_explorer" };
+  }
+}
+
 function makeFakeClient(state: FakeState, userId: string) {
   const inserted: Array<{ table: string; row: any }> = [];
   const updated: Array<{ table: string; patch: any }> = [];
@@ -134,12 +155,23 @@ function makeFakeClient(state: FakeState, userId: string) {
         passport_stamps: state.stamps ?? [],
         // buildStats (Passport Countries/Cities stat) reads from the live
         // user_stamps table, not the legacy passport_stamps table it used to
-        // read — mirror the same fixture rows here, with stamp_type synthesized
-        // into a joined stamp_definitions.category shape.
+        // read — mirror the same fixture rows here with a joined
+        // stamp_definitions shape.
+        //
+        // This mapper used to be `stamp_definitions: { category: s.stamp_type }`,
+        // which ENCODED THE PRODUCTION BUG it was meant to exercise: it fed a
+        // passport_stamps.stamp_type straight into stamp_definitions.category,
+        // so buildStats's `category === "plan" | "host" | "safe_return"`
+        // branches matched here and nowhere else. No definition in any seed has
+        // any of those categories — the real vocabulary is community | event |
+        // location | rent_buddy | safety | special | trip | trust — so the four
+        // counters were zero in production while this test read green.
+        // Fixed 2026-09-05 by giving each fixture stamp a REAL definition
+        // (category + slug), taken from the seeds in migrations 0081/0082/0145.
         user_stamps: (state.stamps ?? []).map((s) => ({
           ...s,
           is_revoked: s.is_revoked ?? false,
-          stamp_definitions: { category: s.stamp_type },
+          stamp_definitions: definitionFor(s.stamp_type),
         })),
         passport_memories: state.memories ?? [],
         passport_contribution_events: state.contributions ?? [],

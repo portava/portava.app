@@ -28,8 +28,24 @@ import { buildJourneys } from "../services/passport/PassportJourneyService.js";
 import { buildYearbook } from "../services/passport/PassportYearbookService.js";
 import { writeTravelDnaPref } from "../services/passport/PassportTravelIdentityService.js";
 import { buildReputationSummary } from "../services/passport/PassportReputationService.js";
+import {
+  PASSPORT_TELEMETRY_EVENTS,
+  normalizeClientPayload,
+  recordPassportEvent,
+  type PassportTelemetryEvent,
+} from "../lib/passportTelemetry.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import { checkRateLimit } from "../lib/rateLimit.js";
 
 const router = Router();
+
+/**
+ * Ceiling on one §32 client telemetry batch. The transport's own default
+ * maxBatch is 25 and its queue cap is 200; 200 is the largest batch it can ever
+ * form, so this accepts every legitimate batch and refuses anything that is not
+ * one of ours.
+ */
+const MAX_TELEMETRY_EVENTS_PER_BATCH = 200;
 
 const PUBLIC_PROFILE_COLUMNS =
   "id, username, display_name, name, bio, avatar_url, cover_photo_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, is_private, spoken_languages, travel_styles, travel_pace, looking_for, account_status, passport_tab_order, is_official, featured_count, show_profile_picture_publicly";
@@ -1690,6 +1706,119 @@ router.get("/passport/:userId/contributions", async (req, res) => {
     req.log.error({ err: e }, "passport contributions failed");
     sendError(res, "db_error", e?.message ?? "Contributions failed");
   }
+});
+
+/* ===========================================================================
+ * POST /api/passport/telemetry — §32 client telemetry ingest
+ * ===========================================================================
+ * THE SEAM THIS CLOSES. `travel-buddy-standalone/src/features/passport/
+ * passportTelemetryTransport.ts` has been installed as the app's live §32 sink
+ * since `app/_layout.tsx:127`. It batches every Passport client event and POSTs
+ * it to exactly this path. No such route was ever mounted, so every batch 404'd;
+ * the transport's own 404 branch drops the batch and pins its backoff at the
+ * cap, which is why the loss is invisible — no error surfaces, no retry storm,
+ * and sixteen of the eighteen §32 event names have never been recorded once.
+ *
+ * WHAT THE CLIENT IS TRUSTED WITH — AND WHAT IT IS NOT.
+ *   • The ACTOR is stamped from the bearer token, never from the body. The
+ *     client does not send a user id and one sent anyway is ignored: the actor
+ *     is folded in by `recordPassportEvent({ actorId })` AFTER the body's
+ *     payload, so a forged `actor_id` cannot survive.
+ *   • The event NAME must be one of the canonical §32 names; anything else is
+ *     counted as rejected and dropped (projectPassportEvent would drop it
+ *     anyway, and the table's CHECK is the third backstop).
+ *   • The PAYLOAD is renamed onto the store's vocabulary and then passed through
+ *     the same `sanitizePassportPayload` allow-list every server-side emitter
+ *     uses — coordinate- and identity-shaped keys stripped at every depth, then
+ *     projected to the allow-list. A client cannot widen what gets stored.
+ *   • `ts`/`seq` are client-clock values; they never become `occurred_at`. The
+ *     server's own clock times the row.
+ *
+ * ALWAYS 202. Telemetry must never make a Passport screen fail, and a
+ * per-event verdict would tell a caller which names are canonical. The response
+ * is a count only. With `passport_telemetry_enabled` OFF (its shipped state)
+ * every accepted event is still a no-op inside recordPassportEvent — the route
+ * is the transport, the flag is the collection decision.
+ */
+const telemetryBatchSchema = z.object({
+  schemaVersion: z.literal("1"),
+  events: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(64),
+        ts: z.number().optional(),
+        seq: z.number().optional(),
+        payload: z.record(z.unknown()).optional(),
+      }),
+    )
+    .max(MAX_TELEMETRY_EVENTS_PER_BATCH),
+  meta: z.object({ dropped: z.number().optional() }).optional(),
+});
+
+router.post("/passport/telemetry", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  // Same posture as the sibling ingest at routes/mapTelemetry.ts:166 — an
+  // authenticated write endpoint that accepts a batch needs a ceiling of its
+  // own. The transport's idle flush is 4s, so 60/min is far above any honest
+  // client.
+  const rl = checkRateLimit("passport_telemetry", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many requests. Please wait.");
+    return;
+  }
+
+  const parsed = telemetryBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid batch");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { res.status(202).json({ accepted: 0, rejected: parsed.data.events.length }); return; }
+
+  // One flag read per BATCH, not per event: recordPassportEvent reads the flag
+  // itself (and stays the fail-closed authority), but a 200-event batch would
+  // otherwise issue 200 identical feature_flags queries.
+  //
+  // Spelled as a LITERAL, not as PASSPORT_TELEMETRY_FLAG: check:flag-polarity
+  // must be able to see statically which flag a reader gates on, and it refuses
+  // an argument it cannot resolve. `passportTelemetryIngest.test.ts` asserts
+  // this literal still equals the exported constant, so the two cannot drift.
+  const collecting = await isFlagEnabled(sc, "passport_telemetry_enabled");
+
+  let accepted = 0;
+  let rejected = 0;
+  for (const ev of parsed.data.events) {
+    if (!(PASSPORT_TELEMETRY_EVENTS as readonly string[]).includes(ev.name)) {
+      rejected++;
+      continue;
+    }
+    if (!collecting) { accepted++; continue; }
+    const payload = normalizeClientPayload(ev.payload);
+    // Provenance: these came off a device, not off a server action.
+    payload.surface = "client";
+    const subjectId = typeof payload.subject_id === "string" ? payload.subject_id : null;
+    delete payload.subject_id;
+    try {
+      await recordPassportEvent(sc, {
+        event: ev.name as PassportTelemetryEvent,
+        actorId: user.id,   // from the token — never from the body
+        subjectId,
+        payload,
+      });
+      accepted++;
+    } catch {
+      // recordPassportEvent never throws; this is belt-and-braces so one bad
+      // event can never fail the batch.
+      rejected++;
+    }
+  }
+
+  res.status(202).json({ accepted, rejected });
 });
 
 export default router;

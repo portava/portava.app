@@ -27,6 +27,7 @@ import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import { createStamp } from "../services/passport/PassportStampService.js";
+import { recordContributionIfEnabled } from "../services/passport/PassportContributionService.js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 import { invalidateCompassProfile } from "../compass/CompassProfileService.js";
@@ -405,6 +406,19 @@ router.post("/me/safe-return/sessions/:id/confirm", async (req, res) => {
         verificationLevel: "safe_return",
         sourceType: "safe_return_confirm",
         visibility: "private",
+      });
+      // §20 ledger (TABLE 21). DELIBERATELY NO CITY: a Safe Return says where
+      // someone was alone and when they got back, and the reputation projection
+      // would turn a city here into a public "Knows <city> well" claim derived
+      // from that. This event counts toward the level only — the stamp itself
+      // is already forced to visibility 'private' above for the same reason.
+      void recordContributionIfEnabled(sc, {
+        userId: user.id,
+        eventType: "safe_return_completed",
+        sourceType: "safe_return_confirm",
+        sourceId: req.params.id,
+        verificationLevel: "safe_return",
+        metadata: { category: "safe_return" },
       });
       if (result?.isNew) {
         const { data: memFlagRow } = await sc
