@@ -67,7 +67,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -148,7 +148,7 @@ async function ensureBadge(): Promise<void> {
 
 async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const sc = adminClient();
-  const email = `${PREFIX}${tag}@example.com`;
+  const email = fixtureEmail(`${PREFIX}${tag}@example.com`);
   const { data: created, error: cErr } = await sc.auth.admin.createUser({
     email,
     password: PASSWORD,
@@ -184,12 +184,12 @@ before(async () => {
   // this email address has already been registered" — a self-perpetuating red
   // that no code change can clear.
   await purgeFixtureUsers(adminClient(), [
-    `${PREFIX}plain@example.com`,
-    `${PREFIX}official@example.com`,
+    fixtureEmail(`${PREFIX}plain@example.com`),
+    fixtureEmail(`${PREFIX}official@example.com`),
     // Created mid-test with finally-cleanup; they leak only when a run crashes
     // before teardown, which is exactly the state that wedges the next run red.
-    `${PREFIX}normal@example.com`,
-    `${PREFIX}fresh@example.com`,
+    fixtureEmail(`${PREFIX}normal@example.com`),
+    fixtureEmail(`${PREFIX}fresh@example.com`),
   ]);
 
   ({ id: plainId, token: plainToken } = await makeUser("plain"));
@@ -321,7 +321,7 @@ describe("5. an ordinary INSERT carrying is_official is refused", { skip: !CREDS
   // that first write would be a free badge.
   it("self-INSERT with is_official=true does not yield a badge", async () => {
     const sc = adminClient();
-    const email = `${PREFIX}fresh@example.com`;
+    const email = fixtureEmail(`${PREFIX}fresh@example.com`);
     const { data: created, error: cErr } = await sc.auth.admin.createUser({
       email,
       password: PASSWORD,
@@ -365,7 +365,7 @@ describe("5. an ordinary INSERT carrying is_official is refused", { skip: !CREDS
     // Guard the guard: if the INSERT branch rejected normal signups, every
     // account creation would break. Proves the trigger is not simply denying.
     const sc = adminClient();
-    const email = `${PREFIX}normal@example.com`;
+    const email = fixtureEmail(`${PREFIX}normal@example.com`);
     const { data: created, error: cErr } = await sc.auth.admin.createUser({
       email,
       password: PASSWORD,

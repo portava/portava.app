@@ -228,7 +228,15 @@ export interface InvalidatingClaim {
   status: string;      // 'retracted' | 'superseded' | 'rejected' | ...
 }
 
-/** An existing current pattern row (what the read would serve today). */
+/**
+ * An existing current pattern row (what the read would serve today).
+ *
+ * `dow` IS PART OF THE KEY, not decoration: liveClaimRead.readTypicalPatterns
+ * matches a pattern with `.eq("time_band", …).eq("dow", …)`, so a row's weekday
+ * is as load-bearing as its hour band. A tombstone derived from a pattern must
+ * carry the same `dow` or the reader can never see it — see
+ * `InvalidationTombstone`.
+ */
 export interface ExistingPattern {
   id: string;
   subjectId: string;
@@ -236,15 +244,36 @@ export interface ExistingPattern {
   claimFamily: string;
   patternKind: PatternKind;
   timeBand: string;
+  /** 0..6 UTC weekday, or null for a kind that is not weekday-scoped. */
+  dow: number | null;
   computedAt: string;
 }
 
+/**
+ * A stored `intel_historical_patterns` row, tombstone or not. The input shape of
+ * `currentlyServedPatterns`, which decides which rows the read path would
+ * actually serve today.
+ */
+export interface StoredPatternRow extends ExistingPattern {
+  isInvalidation: boolean;
+}
+
+/**
+ * A superseding tombstone row.
+ *
+ * It carries the FULL read key of the pattern it retires — `time_band` AND
+ * `dow` — because the reader matches on both. A tombstone written without `dow`
+ * lands as NULL, matches no read, and the retracted pattern keeps serving
+ * forever (the reader's "latest row per scope" only ever sees rows that already
+ * passed the `dow` filter).
+ */
 export interface InvalidationTombstone {
   subjectId: string;
   zoneId: string | null;
   claimFamily: string;
   patternKind: PatternKind;
   timeBand: string;
+  dow: number | null;
   supersedesId: string;
   reason: string;
 }
@@ -286,9 +315,70 @@ export function deriveInvalidations(
       claimFamily: p.claimFamily,
       patternKind: p.patternKind,
       timeBand: p.timeBand,
+      // The reader matches (subject, time_band, dow) — carry the weekday or the
+      // tombstone is unreachable and the retracted pattern serves forever.
+      dow: p.dow,
       supersedesId: p.id,
       reason: "source_provenance_invalidated",
     });
+  }
+  return out;
+}
+
+/**
+ * The FULL key liveClaimRead.readTypicalPatterns resolves a served pattern by:
+ * it filters on subject + time_band + dow, then keeps the newest row per
+ * (zone, claim_family, pattern_kind). Two rows sharing this key are the same
+ * scope, and the newer one supersedes the older.
+ */
+function servedKey(p: {
+  subjectId: string;
+  zoneId: string | null;
+  claimFamily: string;
+  patternKind: string;
+  timeBand: string;
+  dow: number | null;
+}): string {
+  return `${p.subjectId}|${zk(p.zoneId)}|${p.claimFamily}|${p.patternKind}|${p.timeBand}|${p.dow ?? ""}`;
+}
+
+/** ISO → epoch ms, with an unparseable timestamp sorting oldest. */
+function ts(iso: string): number {
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? Number.NEGATIVE_INFINITY : t;
+}
+
+/**
+ * Reduce every stored row to the ones the read path would actually SERVE today:
+ * the newest row per `servedKey`, minus the scopes whose newest row is already a
+ * tombstone.
+ *
+ * WHY THE PASS NEEDS THIS. `deriveInvalidations` takes "currently served"
+ * patterns. Handing it every non-tombstone row instead means (a) superseded
+ * older rows are tombstoned even though nothing serves them, and (b) a scope
+ * already retired last night is tombstoned again tonight, and every night after
+ * — the append-only table grows a duplicate tombstone per pass forever. Filtering
+ * through the reader's own notion of "served" makes the invalidation pass
+ * IDEMPOTENT: once a scope's newest row is a tombstone, it is no longer served,
+ * so it is never re-tombstoned.
+ *
+ * A tie on `computed_at` resolves to the tombstone, matching the conservative
+ * direction (do not re-serve, do not re-write).
+ */
+export function currentlyServedPatterns(rows: readonly StoredPatternRow[]): ExistingPattern[] {
+  const latest = new Map<string, StoredPatternRow>();
+  for (const r of rows) {
+    const key = servedKey(r);
+    const prev = latest.get(key);
+    if (!prev) { latest.set(key, r); continue; }
+    const dt = ts(r.computedAt) - ts(prev.computedAt);
+    if (dt > 0 || (dt === 0 && r.isInvalidation && !prev.isInvalidation)) latest.set(key, r);
+  }
+  const out: ExistingPattern[] = [];
+  for (const r of latest.values()) {
+    if (r.isInvalidation) continue; // already retired — nothing to retire again
+    const { isInvalidation: _drop, ...pattern } = r;
+    out.push(pattern);
   }
   return out;
 }

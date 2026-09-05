@@ -22,7 +22,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -43,7 +43,7 @@ let ownerId = "", ownerToken = "", zoneId = "", systemZoneId = "";
 
 async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const sc = adminClient();
-  const email = `${PREFIX}${tag}@example.com`;
+  const email = fixtureEmail(`${PREFIX}${tag}@example.com`);
   const { data: c, error: cErr } = await sc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (cErr || !c?.user) throw new Error(`createUser(${tag}): ${cErr?.message}`);
   const id = c.user.id;
@@ -60,7 +60,7 @@ async function readZone(id: string): Promise<any | null> {
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}owner@example.com`]);
+  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}owner@example.com`)]);
   ({ id: ownerId, token: ownerToken } = await makeUser("owner"));
   const sc = adminClient();
   const { data, error } = await sc.from(TABLE).insert({ name: `${PREFIX}zone`, zone_type: "city", verified: false, featured: false }).select("id").single();
@@ -75,7 +75,7 @@ after(async () => {
   const sc = adminClient();
   for (const z of [zoneId, systemZoneId]) if (z) await sc.from(TABLE).delete().eq("id", z);
   await sc.from(TABLE).delete().like("name", `${PREFIX}%`);
-  await purgeFixtureUsers(sc, [`${PREFIX}owner@example.com`]);
+  await purgeFixtureUsers(sc, [fixtureEmail(`${PREFIX}owner@example.com`)]);
 });
 
 function assertDenied(error: any, what: string): void {

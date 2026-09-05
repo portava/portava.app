@@ -6,7 +6,11 @@
  *     pauses when scrolled off (§11);
  *   - reduce-motion falls back to the still poster and never mounts the player
  *     (§36);
- *   - the server's autoplayEligible hint can only veto, never force (§11);
+ *   - the user's autoplay preference is honored (§36);
+ *   - the server never decides: `autoplayEligible: false` is "no server opinion",
+ *     NOT a veto, so a visible video still autoplays (§11). The server used to
+ *     stamp `false` on EVERY video while this client read it as a hard veto,
+ *     which made inline Wall autoplay unreachable on every item;
  * plus a direct unit test of the pure resolveVideoAutoplay policy.
  */
 
@@ -124,7 +128,36 @@ describe('VideoWallItem inline autoplay policy (§11/§36)', () => {
     expect(screen.queryByTestId('shared-video-player')).toBeNull();
   });
 
-  it('does not autoplay when the server marks the media autoplayEligible:false', async () => {
+  it.each([
+    ['false (no server opinion)', false as boolean | undefined],
+    ['absent', undefined],
+    ['true (playable)', true as boolean | undefined],
+  ])(
+    'autoplays a visible video when the server hint is %s — the server never decides',
+    async (_label, autoplayEligible) => {
+      renderVideo(
+        new Set(['v1']),
+        videoProjection({
+          media: [
+            {
+              mediaId: 'm1',
+              kind: 'video',
+              url: 'post-media/u1/clip.mp4',
+              thumbnailUrl: 'post-media/u1/clip.jpg',
+              ...(autoplayEligible === undefined ? {} : { autoplayEligible }),
+            },
+          ],
+        }),
+      );
+
+      await waitFor(() => expect(screen.getByTestId('shared-video-player')).toBeTruthy());
+      expect(screen.getByTestId('autoplay-state')).toHaveTextContent('playing');
+      expect(screen.getByTestId('muted-state')).toHaveTextContent('muted');
+    },
+  );
+
+  it('reduced motion still wins over a server hint of true', async () => {
+    reduceMotionSpy.mockResolvedValue(true);
     renderVideo(
       new Set(['v1']),
       videoProjection({
@@ -134,20 +167,19 @@ describe('VideoWallItem inline autoplay policy (§11/§36)', () => {
             kind: 'video',
             url: 'post-media/u1/clip.mp4',
             thumbnailUrl: 'post-media/u1/clip.jpg',
-            autoplayEligible: false,
+            autoplayEligible: true,
           },
         ],
       }),
     );
 
-    // The player still mounts (it is in view) but the server veto keeps it paused.
-    await waitFor(() => expect(screen.getByTestId('shared-video-player')).toBeTruthy());
-    expect(screen.getByTestId('autoplay-state')).toHaveTextContent('paused');
+    await waitFor(() => expect(screen.getByLabelText('Play video')).toBeTruthy());
+    expect(screen.queryByTestId('shared-video-player')).toBeNull();
   });
 });
 
 describe('resolveVideoAutoplay (pure policy)', () => {
-  it('autoplays (muted) only when visible, motion allowed, and not server-vetoed', () => {
+  it('autoplays (muted) only when visible, motion allowed and the user permits', () => {
     expect(resolveVideoAutoplay({ visible: true, reduceMotion: false })).toEqual({
       autoplay: true,
       muted: true,
@@ -159,19 +191,24 @@ describe('resolveVideoAutoplay (pure policy)', () => {
   it('never autoplays under reduced motion', () => {
     expect(resolveVideoAutoplay({ visible: true, reduceMotion: true }).autoplay).toBe(false);
   });
-  it('lets the server veto (autoplayEligible:false) but never forces (true)', () => {
-    expect(
-      resolveVideoAutoplay({ visible: true, reduceMotion: false, serverEligible: false }).autoplay,
-    ).toBe(false);
-    // serverEligible true does not FORCE autoplay when the item is off-screen.
-    expect(
-      resolveVideoAutoplay({ visible: false, reduceMotion: false, serverEligible: true }).autoplay,
-    ).toBe(false);
-  });
   it('honors an explicit user autoplay-off preference', () => {
     expect(
       resolveVideoAutoplay({ visible: true, reduceMotion: false, userAutoplayEnabled: false })
         .autoplay,
     ).toBe(false);
+  });
+  it('reduced motion and the user setting both win over everything else', () => {
+    expect(
+      resolveVideoAutoplay({ visible: true, reduceMotion: true, userAutoplayEnabled: true })
+        .autoplay,
+    ).toBe(false);
+    expect(
+      resolveVideoAutoplay({ visible: true, reduceMotion: false, userAutoplayEnabled: false })
+        .autoplay,
+    ).toBe(false);
+  });
+  it('is always muted, whatever it decides', () => {
+    expect(resolveVideoAutoplay({ visible: true, reduceMotion: false }).muted).toBe(true);
+    expect(resolveVideoAutoplay({ visible: false, reduceMotion: true }).muted).toBe(true);
   });
 });
