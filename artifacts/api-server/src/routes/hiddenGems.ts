@@ -77,6 +77,7 @@ import {
   deriveGemProjection,
 } from "../services/hiddenGems/HiddenGemContributionService.js";
 import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
+import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
 
 import { isAdmin } from "../lib/requireAdmin.js";
 
@@ -536,6 +537,30 @@ router.get("/hidden-gems", async (req, res) => {
       return base;
     });
     res.json({ gems: enriched3, total: enriched3.length });
+
+    // Serve point 11 — this route ranks (discoverGems: verification weight +
+    // saves + visits + vibe-tag match) and served its results to users while
+    // writing no rank_events row of any kind, so Discovery analytics could not
+    // see hidden gems at all — not the impressions, and therefore not the
+    // outcomes either, because POST /rank-events/outcome resolves an outcome by
+    // finding the impression row it upgrades.
+    //
+    // AFTER res.json and un-awaited: logDiscoveryServe never throws and is
+    // itself gated on discovery_serve_log_enabled, so this adds no latency and
+    // cannot fail the request. It no-ops for anonymous callers, because
+    // rank_events.user_id is NOT NULL.
+    void logDiscoveryServe(sc, {
+      userId:     callerId ?? "",
+      servePoint: DiscoveryServePoint.HIDDEN_GEMS,
+      route:      "GET /hidden-gems",
+      items:      enriched3.map((g: any) => ({ id: String(g.id), kind: "gem" as const })),
+      context:    {
+        city:         opts.city ?? null,
+        neighborhood: opts.neighborhood ?? null,
+        category:     opts.category ?? null,
+        layoverSafe:  opts.layoverSafe === true,
+      },
+    });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
@@ -699,6 +724,18 @@ router.get("/hidden-gems/nearby", async (req, res) => {
     );
 
     res.json({ ok: true, gems });
+
+    // Serve point 11 — same reasoning as GET /hidden-gems above; the `route`
+    // field is what separates the two in the corpus. findNearbyGems ranks by
+    // proximity, so this is also a ranked-in-request serve.
+    void logDiscoveryServe(sc, {
+      userId:     user.id,
+      servePoint: DiscoveryServePoint.HIDDEN_GEMS,
+      route:      "GET /hidden-gems/nearby",
+      items:      gems.map((g: any) => ({ id: String(g.id), kind: "gem" as const })),
+      // Never the caller's coordinates — spec §8: precise GPS is not logged.
+      context:    { radiusKm: parsed.data.radiusKm, category: parsed.data.category ?? null },
+    });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }

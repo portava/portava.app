@@ -27,6 +27,9 @@ import {
   normalizeTraveler, normalizeGem, normalizeEvent,
   filterByQuery, rankResults, paginate, type MapSearchResult,
 } from "../lib/mapSearch.js";
+import {
+  logDiscoveryServe, DiscoveryServePoint, searchTypeToItemKind,
+} from "../lib/discoveryServeLog.js";
 import { buildCommandsFromIntent } from "../lib/mapCommands.js";
 import { forwardGeocode } from "../lib/geocodeForward.js";
 
@@ -196,6 +199,28 @@ router.get("/map/search", asyncHandler(async (req, res) => {
     total: rankedResults.length,
     nextCursor,
     generatedAt,
+  });
+
+  // Serve point 12 — map discovery ranks (rankResults) and paginates, then
+  // served `page` to a user while writing no rank_events row of any kind. It
+  // was invisible to Discovery analytics, and an outcome could not be reported
+  // against it either: POST /rank-events/outcome resolves an outcome by finding
+  // the impression row it upgrades, so a surface with no impression row has no
+  // outcome path at all.
+  //
+  // `page` and not `rankedResults`: an impression is what the viewer received,
+  // not what the ranker considered. The same distinction the pulse denominator
+  // was getting wrong.
+  //
+  // AFTER res.json and un-awaited: logDiscoveryServe never throws and is gated
+  // on discovery_serve_log_enabled, so this adds no latency and cannot fail the
+  // request. Coordinates are NOT logged (spec §8) — only the radius.
+  void logDiscoveryServe(sc, {
+    userId:     user.id,
+    servePoint: DiscoveryServePoint.MAP_SEARCH,
+    route:      "GET /map/search",
+    items:      page.map((r) => ({ id: String(r.id), kind: searchTypeToItemKind(r.resultType) })),
+    context:    { radiusKm, hasQuery: query !== null, resultCount: page.length },
   });
 }));
 
