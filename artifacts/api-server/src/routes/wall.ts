@@ -601,15 +601,29 @@ function applyIntentSteer(candidates: WallCandidate[], intent: StructuredIntent 
 
 // ── Live strip assembly (shared by GET /wall and GET /wall/live) ─────────────
 
+/**
+ * Build the strip, or nothing at all when `wall_live_for_you_enabled` is off.
+ *
+ * `candidates` is a THUNK, not an array, and that is the whole point. The strip's
+ * candidate set is the most expensive thing on the first page — the event
+ * producer alone runs a block read, a places read and up to two spatial event
+ * probes whose per-row privacy pass costs a friendship read plus
+ * checkEventEligibility per candidate row, and the trip producer adds three more
+ * reads. Passing an already-awaited array meant an OFF flag still paid for every
+ * one of them and then threw the result away, which is exactly the TABLE 4 cost
+ * this is supposed to bound. Deferring the assembly behind the flag check makes
+ * the flag structurally disable the WORK, not just the output, for every caller
+ * — there is no shape of this function in which the reads happen first.
+ */
 async function buildLiveStrip(
   sc: any,
   liveEnabled: boolean,
-  candidates: LiveForYouCandidate[],
+  candidates: () => Promise<LiveForYouCandidate[]>,
   opts: { limit: number; dedupeSubjectIds?: Set<string> },
 ): Promise<LiveForYouItem[]> {
   if (!liveEnabled) return [];
   try {
-    return await buildLiveForYou(sc, candidates, {
+    return await buildLiveForYou(sc, await candidates(), {
       limit: opts.limit,
       dedupeSubjectIds: opts.dedupeSubjectIds,
     });
@@ -903,10 +917,15 @@ router.get(
         feedPlaceRefs.push(placeRef);
       }
     }
-    const liveCandidates = await assembleLiveCandidates(sc, viewer, user.id, feedPlaceRefs, rabEnabled);
-    const liveForYou = await buildLiveStrip(sc, liveEnabled, liveCandidates, {
-      limit: MAX_LIVE_FOR_YOU,
-    });
+    //    The candidate assembly is deferred behind the strip's own flag (see
+    //    buildLiveStrip): with wall_live_for_you_enabled OFF the first page pays
+    //    for none of the producer reads.
+    const liveForYou = await buildLiveStrip(
+      sc,
+      liveEnabled,
+      () => assembleLiveCandidates(sc, viewer, user.id, feedPlaceRefs, rabEnabled),
+      { limit: MAX_LIVE_FOR_YOU },
+    );
 
     // ── Context Threads (spec §8/§9): attach an OPTIONAL compact bridge beneath
     //    an object ONLY where the §9 gate says it earns its place. Behind
@@ -962,19 +981,29 @@ router.get(
     // The strip is multi-kind (§4/TABLE 0): place_state from the intel projection
     // plus trip_signal / event_state / social_presence / hidden_gem / buddy from
     // their own canonical readers (assembleLiveCandidates).
-    const viewer = await loadViewerContext(sc, user.id);
-    const rabEnabled = await isFlagEnabled(sc, "wall_rab_integration_enabled");
-    const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
-    const seen = new Set<string>();
-    const placeRefs: PublicPlaceRef[] = [];
-    for (const [, placeRef] of loaded.placeByObject) {
-      if (seen.has(placeRef.placeId)) continue;
-      seen.add(placeRef.placeId);
-      placeRefs.push(placeRef);
-    }
-    const candidates = await assembleLiveCandidates(sc, viewer, user.id, placeRefs, rabEnabled);
-
-    const liveForYou = await buildLiveStrip(sc, liveEnabled, candidates, { limit });
+    //
+    // ALL of it sits inside the thunk buildLiveStrip only calls when the flag is
+    // ON. The strip IS this route's entire response, so with the flag off the
+    // route must cost nothing beyond the flag reads themselves — not the viewer
+    // context, not the followed-content window, not the producers.
+    const liveForYou = await buildLiveStrip(
+      sc,
+      liveEnabled,
+      async () => {
+        const viewer = await loadViewerContext(sc, user.id);
+        const rabEnabled = await isFlagEnabled(sc, "wall_rab_integration_enabled");
+        const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
+        const seen = new Set<string>();
+        const placeRefs: PublicPlaceRef[] = [];
+        for (const [, placeRef] of loaded.placeByObject) {
+          if (seen.has(placeRef.placeId)) continue;
+          seen.add(placeRef.placeId);
+          placeRefs.push(placeRef);
+        }
+        return assembleLiveCandidates(sc, viewer, user.id, placeRefs, rabEnabled);
+      },
+      { limit },
+    );
     res.status(200).json({ liveForYou, generatedAt: new Date().toISOString() });
   }),
 );

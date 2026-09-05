@@ -48,13 +48,24 @@ import { benchmark, formatBenchmark, seededRandom } from "./helpers/benchmark.js
 
 /**
  * Wall-clock ceiling for the p95 first page, in milliseconds — TABLE 4's own
- * production number. On a developer machine this tree runs the page in single
- * digits, so the ceiling carries roughly two orders of magnitude of headroom:
- * it cannot fail because a runner was busy, and it does fail when the page
- * becomes tens of times more expensive.
+ * production number.
+ *
+ * HOW MUCH HEADROOM THERE ACTUALLY IS. Measured on two developer Macs at the
+ * commit that introduced this file: p50 3–8 ms, p95 4–38 ms. So the real margin
+ * under this ceiling is roughly 13–100x depending on the machine, and the p95
+ * spread is an order of magnitude wider than the p50 spread — a tail of a few
+ * tens of milliseconds is ordinary here, because a single GC pause or a busy
+ * runner lands in a 20-sample p95. Quote a range, never one machine's number:
+ * an earlier draft of this comment claimed "two orders of magnitude" from the
+ * fastest run alone and overstated the margin by about 10x on slower hardware.
+ * The ceiling is sized for the SLOW end of that spread, so it does not fail
+ * because a runner was busy, and does fail when the page gets an order of
+ * magnitude more expensive. The read ratchets below are the hardware-independent
+ * half and are what actually catch a regression.
  */
 const FIRST_PAGE_P95_CEILING_MS = 500;
-/** The same for the median, where noise has less room to hide. */
+/** The same for the median, where noise has less room to hide (measured 3–8 ms,
+ *  so ~40x under this line even on the slower machine). */
 const FIRST_PAGE_P50_CEILING_MS = 300;
 
 /**
@@ -318,6 +329,12 @@ describe("Wall first-page performance (spec §33 / TABLE 4)", () => {
       { warmup: 5, iterations: 20 },
     );
     console.log(formatBenchmark(result));
+    // Print the margin THIS machine actually has, so the headroom is read off a
+    // run rather than remembered from someone else's laptop.
+    console.log(
+      `[bench] headroom on this machine: p50 ${(FIRST_PAGE_P50_CEILING_MS / Math.max(result.p50, 0.001)).toFixed(0)}x, ` +
+        `p95 ${(FIRST_PAGE_P95_CEILING_MS / Math.max(result.p95, 0.001)).toFixed(0)}x`,
+    );
     assert.ok(
       result.p50 <= FIRST_PAGE_P50_CEILING_MS,
       `first-page p50 ${result.p50.toFixed(1)}ms exceeds ${FIRST_PAGE_P50_CEILING_MS}ms — ` +

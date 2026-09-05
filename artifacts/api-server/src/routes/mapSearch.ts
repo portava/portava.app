@@ -47,10 +47,22 @@ const router = Router();
  * the query is byte-for-byte what it was.
  *
  * The predicate is "could this be on, or about to start": start no later than
- * `startsBeforeIso`, and either an end at or after `nowIso`, or no recorded end
- * with a start no earlier than `openEndedStartsAfterIso` (the caller's assumed
- * duration). A multi-day event that started last week is therefore kept, which
- * a naive range on `starts_at` alone would have dropped.
+ * `startsBeforeIso`, and either an end at or after `nowIso`, or a start no
+ * earlier than `openEndedStartsAfterIso` (the caller's assumed duration for an
+ * event with no usable end). A multi-day event that started last week is
+ * therefore kept, which a naive range on `starts_at` alone would have dropped.
+ *
+ * IT IS A SUPERSET, NOT A MIRROR. The second branch is deliberately NOT
+ * `and(ends_at.is.null, …)`. `eventContextProducer.eventPhaseAt` — the canonical
+ * derivation the Wall's strip runs over these rows — ignores an `ends_at` that is
+ * not strictly after `starts_at` and substitutes the assumed duration, so a row
+ * with a malformed end (at or before its start) can still be `ongoing`. Keying
+ * the fallback on `ends_at IS NULL` dropped exactly those rows before the per-row
+ * pass ever saw them. PostgREST cannot compare two columns, so the honest shape
+ * is the wider one: keep anything that starts inside the assumed-duration window
+ * regardless of its end. That admits a handful of rows the per-row pass will
+ * reject (a valid end that already passed), and admits EVERY row that pass would
+ * accept — narrowing must never cost a candidate.
  */
 export interface NearbyEventsWindow {
   nowIso: string;
@@ -80,9 +92,7 @@ export async function loadNearbyEvents(
   if (w) {
     q = q
       .lte("starts_at", w.startsBeforeIso)
-      .or(
-        `ends_at.gte.${w.nowIso},and(ends_at.is.null,starts_at.gte.${w.openEndedStartsAfterIso})`,
-      );
+      .or(`ends_at.gte.${w.nowIso},starts_at.gte.${w.openEndedStartsAfterIso}`);
   }
   const { data, error } = await q.limit(Math.max(1, Math.min(opts.limit ?? 60, 60)));
   // A read FAILURE is not an empty neighbourhood: return null so a caller that

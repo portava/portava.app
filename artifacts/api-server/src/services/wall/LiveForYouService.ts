@@ -618,9 +618,14 @@ export async function buildEventStateLiveCandidates(
     if (places.length === 0) return [];
     // Narrow the candidate rows to what could be on or about to start, so the
     // reader's per-row privacy pass runs over a handful of rows instead of 60.
-    // The bounds mirror eventPhaseAt exactly: it accepts `ongoing` while the end
-    // is ahead, `upcoming` up to EVENT_CAUSE_UPCOMING_MINUTES out, and assumes
-    // EVENT_CAUSE_DEFAULT_DURATION_MINUTES for an event with no recorded end.
+    // The bounds are a SUPERSET of what eventPhaseAt accepts, never a mirror of
+    // it: eventPhaseAt takes `ongoing` while the end is ahead, `upcoming` up to
+    // EVENT_CAUSE_UPCOMING_MINUTES out, and assumes
+    // EVENT_CAUSE_DEFAULT_DURATION_MINUTES whenever the recorded end is missing
+    // OR not after the start. The window is stated in exactly those two constants
+    // and is deliberately wider than the derivation at the edges (see
+    // NearbyEventsWindow), so narrowing can only ever cost a wasted row — never a
+    // candidate the per-row pass would have kept.
     const window = {
       nowIso: now.toISOString(),
       startsBeforeIso: new Date(nowMs + EVENT_CAUSE_UPCOMING_MINUTES * 60_000).toISOString(),
