@@ -16,6 +16,23 @@
  *   - Per-user errors are swallowed so a single failure never aborts the batch.
  *
  * Follows the compassSenseScheduler / compassAbuseScanScheduler pattern.
+ *
+ * COLD START: THIS JOB CANNOT SEED ITSELF
+ * --------------------------------------
+ * The candidate pool is (stale rows in `creator_activity_scores`) ∪ (actor_ids
+ * seen in `activity_events` in the last 90 days). `creator_activity_scores`
+ * has exactly one writer — persistActivityScore, called from this job — and
+ * `activity_events` has no producer at all (see the header of
+ * services/ranking/CreatorActivityScoreService.ts). So on an empty
+ * creator_activity_scores the union is empty, the batch is empty, and the job
+ * logs "no stale users" forever: no creator is ever scored a first time, and
+ * DiscoveryRankingService's activity boost stays at its no-row default.
+ *
+ * The fix is a real never-scored pool, and the obvious source is the same set
+ * of contribution tables the scorer itself already reads (posts, events,
+ * trips, reviews, discovery_places — all of which do have producers). That
+ * changes who gets ranked and how, so it is left as an owner decision rather
+ * than slipped in here.
  */
 
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
