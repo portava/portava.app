@@ -2875,6 +2875,10 @@ router.post("/rent-a-buddy/bookings/:bookingId/review", async (req, res) => {
       severity: "minor",
       sourceType: "review",
       sourceId: (review as any)?.id,
+      // The reviewer earns; the reviewee is the counterpart. Two people who
+      // review each other and almost nobody else are the exact shape the
+      // mutual-ring scan looks for.
+      counterpartyUserId: revieweeId,
     });
   }
 
