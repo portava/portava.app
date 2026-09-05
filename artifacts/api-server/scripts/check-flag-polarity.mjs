@@ -272,9 +272,13 @@ const CLASSIFIED = [
     flag: 'SEARCH_SIGNAL_DECAY_DAYS',
     kind: 'CONFIG',
     reason:
-      'NOT A GATE. A tuning value — the row carries a numeric_value column read as a decay half-life. Neither ' +
+      'NOT A GATE. A tuning value — the row carries the decay half-life in `metadata->>half_life_days`. Neither ' +
       'polarity rule applies. Classified so the name is accounted for rather than silently skipped by a check ' +
-      'that assumes every feature_flags row is a boolean.',
+      'that assumes every feature_flags row is a boolean. Seeded by 2306, and seeded OFF: the read used to ' +
+      'select a `numeric_value` column that does not exist (42703), and the capability behind it — the ' +
+      'compass_search_signal_log table and the upsert_compass_search_signal RPC — is not in the live schema ' +
+      'either, its DDL sitting unapplied in the frozen root artifacts/api-server/supabase/migrations/. Port ' +
+      'that DDL before enabling this row.',
   },
 
   // ── SCREAMING_CASE. A second naming scheme, deliberately given no ────────

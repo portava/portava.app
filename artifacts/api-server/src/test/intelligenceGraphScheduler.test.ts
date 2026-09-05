@@ -27,6 +27,12 @@ import {
 const FAKE_REPORT = {
   nodesUpserted: 3,
   edgesUpserted: 5,
+  // A rebuild now reports rejected chunks separately. Before these existed a
+  // wholly broken write path and an empty graph both reported
+  // `nodesUpserted: 0`, so the scheduler's recorded outcome could not tell
+  // them apart — see CompassGraphEngine.buildGraphFromSources.
+  nodesFailed: 0,
+  edgesFailed: 0,
   citiesModeled: 1,
   citiesScored: 1,
   strongestCity: "Cebu",

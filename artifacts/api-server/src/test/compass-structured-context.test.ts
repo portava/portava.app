@@ -103,9 +103,17 @@ function baseTables(): Tables {
     ],
     rent_buddy_bookings: [
       {
+        // FIXTURE CORRECTED to the real schema. This row used to carry
+        // `date_from` / `date_to` / `note`, none of which are columns of
+        // rent_buddy_bookings — the table is booking_date + start_time +
+        // duration_h + notes. The fixture was load-bearing (mutating the
+        // production select turned this file RED) while describing a row the
+        // database cannot produce, so the tests proved the code matched the
+        // fixture and proved nothing about production, where the whole select
+        // failed 42703.
         traveler_id: ME, buddy_id: BUDDY, city: "Cebu City",
-        date_from: "2026-07-22", date_to: "2026-07-24",
-        status: "confirmed", note: "SECRET hotel room 402",
+        booking_date: "2026-07-22", start_time: "14:00:00", duration_h: 4,
+        status: "confirmed", notes: "SECRET hotel room 402",
         lat: 10.3157, lng: 123.8854,
       },
     ],
@@ -152,7 +160,9 @@ describe("buildStructuredCompassContext — accurate references", () => {
     assert.equal(ctx.activeBookings.length, 1);
     const b = ctx.activeBookings[0];
     assert.equal(b.city, "Cebu City");
-    assert.equal(b.dateFrom, "2026-07-22");
+    assert.equal(b.date, "2026-07-22");
+    assert.equal(b.startTime, "14:00:00");
+    assert.equal(b.durationHours, 4);
     assert.equal(b.status, "confirmed");
     assert.equal(b.buddyHandle, "@localbuddy");
   });

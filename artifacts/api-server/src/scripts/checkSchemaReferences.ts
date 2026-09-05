@@ -138,24 +138,39 @@ const KNOWN_DEAD_REFERENCES: Record<string, { count: number; note: string }> = {
     note: "posts.view_count / posts.qualified_view_count — no such columns; the " +
       "collections worker's ranking read has never returned a row.",
   },
-  "src/compass/CompassAbuseDefenseEngine.ts": {
-    count: 1,
-    note: "compass_visibility_cooldowns.updated_at on an UPSERT — a write rejected " +
-      "even when the value is null, so the cooldown is never recorded.",
-  },
-  "src/compass/CompassSearchDecayService.ts": {
-    count: 1,
-    note: "feature_flags.numeric_value — the decay service cannot read its own flag.",
-  },
-  "src/compass/CompassStructuredContext.ts": {
-    count: 2,
-    note: "rent_buddy_bookings.date_from / date_to — booking context is always empty.",
-  },
-  "src/compass/PassportRemembersService.ts": {
-    count: 1,
-    note: "shared_moments.visibility — the shared-moments source of Passport " +
-      "Remembers is dead.",
-  },
+  // ── The four Memory / Compass entries below were STRUCK OFF by the
+  // ── memory-compass-lane batch. Each is recorded here rather than deleted
+  // ── outright so the next reader can see which real column carried the
+  // ── intent — the judgement was the work, exactly as the header says.
+  //
+  // src/compass/CompassAbuseDefenseEngine.ts (compass_visibility_cooldowns
+  //   .updated_at on an UPSERT): struck off. The table is
+  //   (id, author_id, cooldown_type, started_at, ends_at, reason); the two
+  //   sibling writers in CompassFairExposureEngine.ts:112,218 already write
+  //   `started_at` and no `updated_at`, so the intent ("when this cooldown
+  //   began", restated when ON CONFLICT extends it) had a correct in-repo
+  //   precedent. Every confirmed medium/high/severe abuse pattern had been
+  //   logging a warning and leaving the offender's reach untouched.
+  //
+  // src/compass/CompassSearchDecayService.ts (feature_flags.numeric_value):
+  //   struck off. feature_flags is (flag, enabled, description, updated_at,
+  //   metadata); the non-boolean payload convention is the `metadata` jsonb,
+  //   which lib/featureFlags.ts getFlagRow already selects. Now reads
+  //   `enabled, metadata` and takes the half-life from
+  //   metadata->>'half_life_days'; migration 2306 seeds the row, which had
+  //   also never existed.
+  //
+  // src/compass/CompassStructuredContext.ts (rent_buddy_bookings.date_from /
+  //   date_to): struck off. The table carries booking_date + start_time +
+  //   duration_h, and routes/rentABuddy.ts:4625 already proved the mapping by
+  //   translating its own ?dateFrom/?dateTo params onto `booking_date`. The
+  //   Compass chat prompt had never once known the caller had a booking.
+  //
+  // src/compass/PassportRemembersService.ts (shared_moments.visibility):
+  //   struck off. The table's audience control is `join_policy`
+  //   (invite_only | approval_required) — a shared moment is never public —
+  //   and its lifecycle control is `status`. The shared-moment group of "What
+  //   Portava Remembers" had never rendered a row.
   "src/scripts/seed-demo-social.ts": {
     count: 1,
     note: "passport_postcards.media_type on an INSERT — the demo seeder's postcard " +
