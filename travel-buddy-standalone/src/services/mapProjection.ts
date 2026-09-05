@@ -128,7 +128,12 @@ function disabledEnvelope(): MapProjectionEnvelope {
 }
 
 export interface FetchProjectionOptions {
-  bbox: MapBbox;
+  /**
+   * The viewport. Omit it ONLY when passing a usable `corridor`: the server
+   * then derives the viewport from the route polyline itself. With neither,
+   * the request is rejected.
+   */
+  bbox?: MapBbox;
   zoom: number;
   /** Restrict to these object kinds; omit for all. */
   kinds?: MapObjectKind[];

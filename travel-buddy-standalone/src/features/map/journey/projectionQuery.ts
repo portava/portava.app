@@ -24,7 +24,13 @@ export interface ProjectionBbox {
 }
 
 export interface ProjectionQueryInput {
-  bbox: ProjectionBbox;
+  /**
+   * The viewport. OPTIONAL only when a usable `corridor` is supplied: the
+   * server then derives the viewport from the polyline's own padded extent,
+   * which is strictly tighter than a client guess at a box containing its own
+   * route. With neither, the server answers `invalid_payload`.
+   */
+  bbox?: ProjectionBbox;
   zoom: number;
   kinds?: MapObjectKind[];
   limit?: number;
@@ -37,12 +43,12 @@ export interface ProjectionQueryInput {
 
 /** The query string for one projection call. */
 export function buildProjectionParams(opts: ProjectionQueryInput): URLSearchParams {
-  const { west, south, east, north } = opts.bbox;
-  const params = new URLSearchParams({
+  const params = new URLSearchParams({ zoom: String(opts.zoom) });
+  if (opts.bbox) {
+    const { west, south, east, north } = opts.bbox;
     // Wire order is w,s,e,n — the server's parseBbox reads it positionally.
-    bbox: `${west},${south},${east},${north}`,
-    zoom: String(opts.zoom),
-  });
+    params.set('bbox', `${west},${south},${east},${north}`);
+  }
   if (opts.kinds && opts.kinds.length > 0) params.set('kinds', opts.kinds.join(','));
   if (opts.limit != null) params.set('limit', String(opts.limit));
   if (opts.cursor) params.set('cursor', opts.cursor);

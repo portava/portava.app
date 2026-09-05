@@ -6,6 +6,15 @@
  *   RECOVERY        planned stops a live constraint or a missed window has
  *                   taken out, each with its reason, its evidence and the
  *                   next-best same-category alternative.
+ *   ALONG MY WAY    what is worth stopping for on the trip's own route, with
+ *                   the detour each would cost.
+ *
+ * ALONG MY WAY ASKS THE GATEWAY, IT DOES NOT COMPUTE A CORRIDOR. The polyline
+ * comes from the trip's route plan (the same stop list, in the same order, that
+ * the map draws the route line from) and goes to GET /api/map/projection as
+ * `corridor=`; the server filters, ranks by §31 and returns the detour
+ * estimates. No bbox is sent — the server derives the viewport from the
+ * polyline, which is tighter than any box this screen could guess.
  *
  * EVERY DECISION ON THIS SCREEN WAS MADE ON THE SERVER. The panel renders
  * `tallyLine`, `confirmArmed`, `recoveryEvidenceLine` and friends from
@@ -41,6 +50,16 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { color, radius, space, type as t } from '../../theme/tokens.ts';
+import { fetchMapProjection } from '../../services/mapProjection.ts';
+import { fetchTripRoutePlan } from '../../services/routePlan.ts';
+import {
+  corridorMetersFor,
+  corridorPathFromRoutePlan,
+  corridorSummaryLine,
+  foldAlongMyWay,
+  DEFAULT_CORRIDOR_PRESET,
+  type AlongMyWayState,
+} from '../../features/map/journey/alongMyWay.ts';
 import {
   fetchJourneyRecovery,
   fetchJourneyShortlist,
@@ -77,6 +96,7 @@ export function JourneyDecisionPanel({ tripId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [voting, setVoting] = useState<string | null>(null);
+  const [alongMyWay, setAlongMyWay] = useState<AlongMyWayState | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -95,6 +115,39 @@ export function JourneyDecisionPanel({ tripId }: Props) {
     // works without it, so it degrades to "no alternatives right now" rather
     // than taking the whole screen down.
     setRecovery(r.ok ? r.data : null);
+
+    // Along My Way, best-effort: no route plan (or no gateway) simply means
+    // there is no route to be "along", which the fold reports as `no_route`
+    // rather than as an empty result. Skipped entirely while Phase 6 is off —
+    // the corridor would be ignored server-side, so asking would cost a
+    // request for an answer that could not be shown.
+    if (!s.data.enabled) {
+      setAlongMyWay(null);
+      return;
+    }
+    const plan = await fetchTripRoutePlan(tripId);
+    const path = corridorPathFromRoutePlan(plan);
+    if (!path) {
+      setAlongMyWay(null);
+      return;
+    }
+    const projection = await fetchMapProjection({
+      // No bbox on purpose — the corridor defines the viewport.
+      zoom: 14,
+      kinds: ['place', 'event', 'saved_place', 'safety_notice'],
+      limit: 40,
+      corridor: path,
+      corridorMeters: corridorMetersFor(DEFAULT_CORRIDOR_PRESET),
+    });
+    setAlongMyWay(
+      projection.ok
+        ? foldAlongMyWay(
+            projection.data.objects,
+            projection.data.corridor,
+            projection.data.corridorMatches,
+          )
+        : null,
+    );
   }, [tripId]);
 
   useEffect(() => {
@@ -247,6 +300,26 @@ export function JourneyDecisionPanel({ tripId }: Props) {
           <Text style={s.muted}>Add a place to the trip to start a shortlist.</Text>
         ) : null}
       </View>
+
+      {/* ── Along My Way ──────────────────────────────────────────────────── */}
+      {alongMyWay ? (
+        <View style={s.card}>
+          <Text style={s.sectionTitle}>On your way</Text>
+          <Text style={s.footnote}>{corridorSummaryLine(alongMyWay)}</Text>
+          {alongMyWay.status === 'ready'
+            ? alongMyWay.items.map((entry) => (
+                <View key={entry.object.id} style={s.item}>
+                  <Text style={s.itemTitle}>{entry.object.title}</Text>
+                  {entry.object.subtitle ? (
+                    <Text style={s.itemWhere}>{entry.object.subtitle}</Text>
+                  ) : null}
+                  {/* The server's own line, verbatim — it already says "Est." */}
+                  {entry.detourLine ? <Text style={s.evidence}>{entry.detourLine}</Text> : null}
+                </View>
+              ))
+            : null}
+        </View>
+      ) : null}
 
       {/* ── Recovery ──────────────────────────────────────────────────────── */}
       <View style={s.card}>
