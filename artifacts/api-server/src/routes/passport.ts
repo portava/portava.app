@@ -22,8 +22,10 @@ import {
   resolvePassportViewerContext,
   toCallerContext,
 } from "../services/passport/PassportProjectionService.js";
+import { PASSPORT_STATIC_MAX_AGE } from "../services/passport/PassportProjectionService.js";
 import { buildSharedContext } from "../services/passport/SharedContextService.js";
 import { buildJourneys } from "../services/passport/PassportJourneyService.js";
+import { buildYearbook } from "../services/passport/PassportYearbookService.js";
 import { writeTravelDnaPref } from "../services/passport/PassportTravelIdentityService.js";
 import { buildReputationSummary } from "../services/passport/PassportReputationService.js";
 
@@ -1589,6 +1591,80 @@ router.put("/passport/me/travel-dna", async (req, res) => {
   } catch (e: any) {
     req.log.error({ err: e }, "passport travel-dna write failed");
     sendError(res, "db_error", e?.message ?? "Travel DNA write failed");
+  }
+});
+
+// GET /api/passport/:userId/yearbook — §9 Phase 9 per-year Yearbook.
+//
+// OWNER-PRIVATE. The yearbook aggregates a traveller's own already-built
+// material (journeys, stamps, memories, Travel DNA) into explainable per-year
+// lines. Aggregation makes a year's shape legible at a glance, which is exactly
+// why it is NOT served for someone else's passport: the owner has never opted
+// into that summary, so anything but the caller's own id resolves to a
+// `restricted` response rather than a viewer projection. `:userId` accepts the
+// literal "me" as well as the caller's own uuid/@handle.
+//
+// The builder itself is fully viewer-aware (it takes the same CallerContext and
+// trip/collection permissions the §29 aggregate does, and it re-uses those
+// readers rather than re-querying) — so if an owner-controlled share is added
+// later it plugs into the existing boundary instead of opening a new one.
+//
+// §31 caching: the yearbook is entirely STATIC-tier material (journeys, stamps,
+// memories, travel identity) — no availability/state/trust is read at all — so
+// it carries the static max-age plus an ETag for 304 revalidation, and is always
+// scoped `private` because it is owner-only.
+router.get("/passport/:userId/yearbook", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
+  try {
+    const raw = String(req.params.userId ?? "").trim();
+    const targetId = raw.toLowerCase() === "me"
+      ? auth.user.id
+      : await resolveProjectionUserId(sc, raw);
+    if (!targetId) { sendError(res, "not_found", "User not found"); return; }
+    if (targetId !== auth.user.id) {
+      res.status(200).json({ yearbook: null, restricted: true, reason: "owner_private" });
+      return;
+    }
+
+    const yearParam = req.query.year;
+    let year: number | null = null;
+    if (typeof yearParam === "string" && yearParam.trim().length > 0) {
+      const parsed = Number.parseInt(yearParam.trim(), 10);
+      if (!Number.isInteger(parsed) || parsed < 1900 || parsed > 2200) {
+        sendError(res, "invalid_payload", "year must be a 4-digit calendar year");
+        return;
+      }
+      year = parsed;
+    }
+
+    const yearbook = await buildYearbook(
+      sc,
+      targetId,
+      {
+        isSelf: true,
+        canSeeTrips: true,
+        canSeeRestricted: true,
+        callerCtx: "owner",
+        viewerId: auth.user.id,
+      },
+      { year },
+    );
+
+    const etag = `W/"${createHash("sha1").update(JSON.stringify(yearbook)).digest("hex")}"`;
+    res.setHeader("Cache-Control", `private, max-age=${PASSPORT_STATIC_MAX_AGE}`);
+    res.setHeader("ETag", etag);
+    const inm = req.headers["if-none-match"];
+    if (typeof inm === "string" && inm.split(",").some((t) => t.trim() === etag)) {
+      res.status(304).end();
+      return;
+    }
+    res.status(200).json({ yearbook });
+  } catch (e: any) {
+    req.log.error({ err: e }, "passport yearbook failed");
+    sendError(res, "db_error", e?.message ?? "Yearbook failed");
   }
 });
 

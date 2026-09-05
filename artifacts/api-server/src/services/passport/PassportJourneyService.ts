@@ -131,14 +131,49 @@ function yearOf(dateStr: string | null | undefined): number | null {
   return new Date(t).getUTCFullYear();
 }
 
-function durationLabel(start: string | null, end: string | null): string | null {
+/**
+ * Inclusive day span of a permitted date range, or null when either end is
+ * absent (including when the viewer's projection coarsened the dates away).
+ * The ONE definition of "how long was this journey" — the duration label, the
+ * Featured pick weight and the Yearbook's defining-journey ranking all read it,
+ * so those three can never drift apart.
+ */
+export function durationDaysOf(start: string | null | undefined, end: string | null | undefined): number | null {
   if (!start || !end) return null;
   const a = Date.parse(start);
   const b = Date.parse(end);
   if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
-  const days = Math.round((b - a) / 86_400_000) + 1;
+  return Math.round((b - a) / 86_400_000) + 1;
+}
+
+function durationLabel(start: string | null, end: string | null): string | null {
+  const days = durationDaysOf(start, end);
+  if (days === null) return null;
   if (days <= 1) return "1 day";
   return `${days} days`;
+}
+
+/**
+ * The shared "how rich is this journey" weight.
+ *
+ * Featured Journey (§14) and the Yearbook's defining journeys of a year both
+ * rank the same way, so this is the single rule: memories count double, stamps
+ * count once, every day adds a tenth, and a finished trip gets a small tiebreak.
+ * It is a PRESENTATION ranking only — it never gates visibility, and each of its
+ * four inputs is surfaced verbatim as the evidence line for the pick.
+ */
+export function journeyWeight(input: {
+  memoryCount: number;
+  stampCount: number;
+  durationDays: number;
+  completed: boolean;
+}): number {
+  return (
+    input.memoryCount * 2 +
+    input.stampCount +
+    input.durationDays * 0.1 +
+    (input.completed ? 1 : 0)
+  );
 }
 
 /** Is a trip visible to this viewer? Owners see all; others honour visibility. */
@@ -458,13 +493,12 @@ function pickFeatured(
   for (const t of trips) {
     const mems = memMap.get(t.id) ?? [];
     const stamps = stampMap.get(t.id) ?? [];
-    let days = 0;
-    if (t.start_date && t.end_date) {
-      const d = Date.parse(t.end_date) - Date.parse(t.start_date);
-      if (Number.isFinite(d) && d >= 0) days = d / 86_400_000;
-    }
-    let weight = mems.length * 2 + stamps.length + days * 0.1;
-    if (t.status === "completed") weight += 1; // small tiebreak toward finished journeys
+    const weight = journeyWeight({
+      memoryCount: mems.length,
+      stampCount: stamps.length,
+      durationDays: durationDaysOf(t.start_date, t.end_date) ?? 0,
+      completed: t.status === "completed",
+    });
     if (weight <= 0) continue;
     if (!best || weight > best.weight) best = { trip: t, weight };
   }

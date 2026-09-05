@@ -24,6 +24,8 @@ import assert from "node:assert/strict";
 
 import {
   AMBIENT_PRESENCE_KINDS,
+  COARSEN_UNSAFE_KINDS,
+  COARSENED_PAYLOAD_KEYS,
   CATEGORY_ACTION,
   CATEGORY_PRIVACY_FLOOR,
   PROTECTED_CATEGORIES,
@@ -356,6 +358,24 @@ describe("classifyAgainstProtected", () => {
       assert.equal(d.action, "suppress", `${kind} must escalate`);
       assert.equal(d.reason, "presence_in_protected_zone");
     }
+  });
+
+  it("escalates COARSEN-UNSAFE kinds inside a coarsen zone to suppression", () => {
+    // coarsenForZone deletes TOP-LEVEL fields only. crowd_flow restates them in
+    // payload.observed and prediction restates them in payload.{cohort,
+    // predictedFor}, so a coarsened one keeps everything coarsening removes.
+    for (const kind of COARSEN_UNSAFE_KINDS) {
+      const d = classifyAgainstProtected(obj({ kind }), [
+        circleZone({ category: "medical_facility" } as Partial<ProtectedZone>),
+      ]);
+      assert.equal(d.action, "suppress", `${kind} must escalate`);
+      assert.equal(d.reason, "uncoarsenable_in_protected_zone");
+    }
+  });
+
+  it("prediction is one of them — the §24 hole that shipped", () => {
+    assert.ok(COARSEN_UNSAFE_KINDS.includes("prediction"));
+    assert.ok(COARSEN_UNSAFE_KINDS.includes("crowd_flow"));
   });
 
   it("does NOT escalate relationship-gated kinds — that would break 'find my crew'", () => {
@@ -806,6 +826,13 @@ describe("kind policy is disjoint and deliberate", () => {
   it("no exempt kind is also escalated", () => {
     for (const k of PROTECTION_EXEMPT_KINDS) {
       assert.ok(!AMBIENT_PRESENCE_KINDS.includes(k as MapObjectKind));
+      assert.ok(!COARSEN_UNSAFE_KINDS.includes(k as MapObjectKind));
+    }
+  });
+
+  it("no coarsen-unsafe kind is relationship-gated — those two answers conflict", () => {
+    for (const k of COARSEN_UNSAFE_KINDS) {
+      assert.ok(!RELATIONSHIP_GATED_KINDS.includes(k), `${k} declared twice`);
     }
   });
 });
@@ -852,3 +879,53 @@ describe("§24 — a coarsened object does not keep a live rank", () => {
   });
 });
 
+
+// ── Coarsening must follow the disclosure into the payload ───────────────────
+//
+// Every strip above deletes a TOP-LEVEL field, and for a long time that was all
+// coarsening did. A producer that restates one of those facts inside `payload`
+// — which is what a payload is for — therefore sailed through: a `prediction`
+// reached the wire with `count` deleted and `payload.cohort` intact, saying the
+// identical thing one level down. The kind table is the primary answer for the
+// kinds where no amount of stripping helps; this is the backstop for the rest.
+describe("§24 — a coarsened object does not restate the disclosure in payload", () => {
+  it("strips the payload keys that mirror a deleted top-level field", () => {
+    const withPayload = {
+      ...obj({ id: "mirror" }),
+      count: 20,
+      payload: {
+        cohort: 20,
+        cohortSize: 20,
+        predictedFor: "2026-09-05T13:00:00.000Z",
+        observedAt: "2026-09-05T12:00:00.000Z",
+        observed: { cohortSize: 20 },
+        provenance: { x: 1 },
+        sourceRefs: ["obs-1"],
+        // NOT a mirror of anything deleted — render data must survive.
+        title: "kept",
+      },
+    };
+    const { objects } = applyProtection([withPayload], [circleZone({ category: "medical_facility" })]);
+    const out = objects.find((o) => o.id === "mirror");
+    assert.ok(out, "precondition: this kind coarsens rather than suppressing");
+    assert.equal(out.count, undefined, "precondition: the top-level count is deleted");
+    const payload = out.payload as Record<string, unknown>;
+    for (const key of COARSENED_PAYLOAD_KEYS) {
+      assert.ok(!(key in payload), `payload.${key} survived coarsening`);
+    }
+    assert.equal(payload.title, "kept", "coarsening must not gut the render data");
+  });
+
+  it("leaves an object with no payload alone", () => {
+    const { objects } = applyProtection([obj({ id: "nopayload" })], [circleZone({ category: "medical_facility" })]);
+    const out = objects.find((o) => o.id === "nopayload");
+    assert.ok(out);
+    assert.equal(out.payload, undefined);
+  });
+
+  it("does not mutate the caller's object", () => {
+    const src = { ...obj({ id: "pure" }), payload: { cohort: 9 } };
+    applyProtection([src], [circleZone({ category: "medical_facility" })]);
+    assert.equal((src.payload as { cohort?: number }).cohort, 9, "coarsening must be pure");
+  });
+});

@@ -397,6 +397,17 @@ export function inferTravelIdentity(
 type PrefMap = Map<string, TravelDnaState>;
 
 /**
+ * The owner's stored Show/Hide/Not-Me state plus whether it was actually
+ * applied (i.e. the table was readable). Exposed so a caller that builds MANY
+ * identity readings for one owner (the Yearbook builds one per year) can read
+ * the prefs ONCE and pass them in — the same gate, not a second copy of it.
+ */
+export interface TravelDnaPrefs {
+  prefs: PrefMap;
+  applied: boolean;
+}
+
+/**
  * Read stored Show/Hide/Not-Me prefs. Best-effort: a missing table → empty.
  *
  * DELIBERATELY NOT BEHIND `passport_travel_dna_enabled`.
@@ -419,7 +430,7 @@ type PrefMap = Map<string, TravelDnaState>;
  * and is not the rollback case: it cannot be distinguished from "the table does
  * not exist yet", which is the true state before migration 2261 is applied.
  */
-async function loadPrefs(sc: SupabaseClient, userId: string): Promise<{ prefs: PrefMap; applied: boolean }> {
+export async function loadTravelDnaPrefs(sc: SupabaseClient, userId: string): Promise<TravelDnaPrefs> {
   const empty = { prefs: new Map<string, TravelDnaState>(), applied: false };
   try {
     const { data, error } = await sc
@@ -441,16 +452,20 @@ async function loadPrefs(sc: SupabaseClient, userId: string): Promise<{ prefs: P
 /**
  * Build the full Travel Identity projection for an owner, applying stored
  * Show/Hide/Not-Me state. `editable` is true only on the owner's own view.
+ *
+ * `opts.prefs` lets a caller supply prefs it already read (see
+ * `loadTravelDnaPrefs`); omitted, they are read here. Either way the SAME
+ * override rule is applied — there is only one.
  */
 export async function buildTravelIdentity(
   sc: SupabaseClient,
   userId: string,
   profile: Record<string, any> | null,
   signals: TravelIdentitySignals,
-  opts: { isSelf: boolean },
+  opts: { isSelf: boolean; prefs?: TravelDnaPrefs },
 ): Promise<TravelIdentityProjection> {
   const { dimensions, traits } = inferTravelIdentity(userId, profile, signals);
-  const { prefs, applied } = await loadPrefs(sc, userId);
+  const { prefs, applied } = opts.prefs ?? (await loadTravelDnaPrefs(sc, userId));
 
   for (const d of dimensions) d.state = prefs.get(d.key) ?? "shown";
   for (const t of traits) t.state = prefs.get(t.key) ?? "shown";
@@ -494,7 +509,7 @@ export type TravelDnaWriteResult =
  * ignore anyway.
  *
  * The stored key is the RAW dimension/trait key (not namespaced): the read side
- * (`loadPrefs`) looks up prefs by the same raw key, and dimension and trait keys
+ * (`loadTravelDnaPrefs`) looks up prefs by the same raw key, and dimension and trait keys
  * do not collide. `kind` is validated and echoed back for the client but is not
  * itself a stored column — the key alone identifies the row.
  */
