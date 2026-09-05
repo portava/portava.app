@@ -216,6 +216,14 @@ export const OBJECT_KIND_CAMERA: Record<MapObjectKind, CameraState> = {
   crowd_flow: 'FOCUS_AREA',
   prediction: 'FOCUS_AREA',
   crew_member: 'FOCUS_GROUP',
+  // §36 Phase 7. All four are area-shaped: a continent cell, a city→city edge
+  // and a whole-city profile are aggregates, and framing any of them as a pin
+  // would imply a precision they do not have. personal_city is a summary OF a
+  // city, not of a spot inside it.
+  world_pulse: 'FOCUS_AREA',
+  traveler_flow: 'FOCUS_AREA',
+  city_model: 'FOCUS_AREA',
+  personal_city: 'FOCUS_AREA',
 };
 
 export function cameraForMode(mode: MapMode): CameraState {

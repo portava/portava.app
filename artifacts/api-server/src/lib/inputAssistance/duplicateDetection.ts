@@ -204,7 +204,13 @@ async function fetchGemCandidates(
       .from('hidden_gems')
       .select('id, name, city, country, category, latitude, longitude, status')
       .or(preds.join(','))
-      .in('status', ['approved', 'active'])
+      // "approved" is not a label of the `hidden_gem_status` enum (pending |
+      // active | hidden | merged), so PostgREST rejected it 22P02 and this read
+      // failed whole. Two swallows stacked (`if (error || !data) return []`
+      // here and `.catch(() => [])` in creation.ts:268), so a traveller
+      // submitting a Hidden Gem was never shown "this may already exist" — not
+      // even for an identical name at identical coordinates.
+      .in('status', ['active'])
       .limit(poolLimit);
     if (error || !data) return [];
     return data as GemRow[];
@@ -393,7 +399,14 @@ export async function findDuplicateEvents(
       .select('id, title, city, country, starts_at, visibility, state')
       .or(preds.join(','))
       .eq('visibility', 'public')
-      .not('state', 'in', '(cancelled,deleted,banned)')
+      // `deleted` and `banned` are not labels of the `event_state` enum (draft |
+      // open | full | waitlist | started | completed | cancelled | archived).
+      // The enum cast happens for `.not(col,'in',…)` exactly as it does for
+      // `.neq`, so PostgREST rejected this 22P02, the read failed whole and
+      // `findDuplicateEvents` returned [] on every call — a traveller creating
+      // an event was never shown "this may already exist". Predicate copied
+      // verbatim from mapSearch.loadNearbyEvents / discoverySearch:615.
+      .not('state', 'in', '("draft","cancelled","archived")')
       .limit(opts.poolLimit ?? 50);
     if (error || !data) return [];
     rows = data as EventRow[];

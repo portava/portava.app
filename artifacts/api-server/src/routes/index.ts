@@ -35,6 +35,7 @@ import intelCoverageRouter from "./intelCoverage.js";
 import intelApiRouter from "./intelApi.js";
 import intelReadModelsRouter from "./intelReadModels.js";
 import intelOutcomesRouter from "./intelOutcomes.js";
+import intelObservabilityRouter from "./intelObservability.js";
 import safeReturnRouter from "./safeReturn";
 import tripCrewLocationRouter from "./tripCrewLocation";
 import highlightsRouter from "./highlights";
@@ -294,6 +295,8 @@ router.use(intelReadModelsRouter);
 // I4a outcome events — its own file (routes/intel.ts is owned by another unit),
 // mounted alongside the other intel routers.
 router.use(intelOutcomesRouter);
+// §24/Table-32 observability read for the four admin dashboards (admin-gated).
+router.use(intelObservabilityRouter);
 router.use(wallRouter);
 
 export default router;

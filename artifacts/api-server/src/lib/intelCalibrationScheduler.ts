@@ -31,6 +31,7 @@ import {
   type ConfirmationRow,
   type OutcomeRow,
 } from "./intelFunnelReport.js";
+import { OUTCOME_VERBS } from "./intelOutcomes.js";
 
 const CALIBRATION_FLAG = "intel_calibration_report";
 const STARTUP_DELAY_MS = 8 * 60 * 1000;    // after the other intel schedulers settle
@@ -69,7 +70,14 @@ export async function runCalibrationReportPass(opts: { client?: any; now?: Date 
       db.from("intel_claims").select("subject_id, claim_type, status, observed_at").gte("observed_at", sinceIso).limit(FETCH_CAP),
       db.from("intel_state_snapshots").select("privacy_eligible, confidence_band, expires_at").gte("computed_at", sinceIso).limit(FETCH_CAP),
       db.from("intel_confirmations").select("stance").gte("created_at", sinceIso).limit(FETCH_CAP),
-      db.from("canonical_events").select("subject_id, occurred_at, payload").not("payload->intel", "is", null).gte("occurred_at", sinceIso).limit(FETCH_CAP),
+      // OUTCOME_VERBS is load-bearing: payload.intel is the envelope of EVERY
+      // intel domain event (intel.observation.recorded / intel.claim.promoted /
+      // intel.state.changed, lib/intelDomainEvents), so the payload predicate
+      // alone counts system transitions as "finalized intel outcome events"
+      // (intelFunnelReport density.outcomeConfirmations) and inflates the
+      // density gate's outcome evidence. Filter on the verb, like the dedup
+      // reader (lib/intelOutcomes) and intelAttributionScheduler do.
+      db.from("canonical_events").select("subject_id, occurred_at, payload").in("verb", OUTCOME_VERBS as unknown as string[]).not("payload->intel", "is", null).gte("occurred_at", sinceIso).limit(FETCH_CAP),
     ]);
     for (const r of [obs, freshObs, claims, snaps, confs, outcomeEvents]) {
       if (r.error) { logger.warn({ err: r.error }, "calibration report: read failed"); return { ...empty, reason: "error" }; }
