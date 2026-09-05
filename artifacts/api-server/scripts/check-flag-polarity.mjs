@@ -364,8 +364,11 @@ const CLASSIFIED = [
       'False-on-error is correct and is the design: the trail write path returns `disabled` and stores ' +
       'nothing, no follow-up prompt is issued, and the internal read refuses with `flag_off` and reads nothing. ' +
       'experience.next_move stays aggregate-only regardless of this flag (proposeClaim refuses a ' +
-      'single-user movement claim), and the §13 privacy threshold + 0.65 confidence floor gate publication, ' +
-      'which no route performs (intel_movement_prediction is seeded off).',
+      'single-user movement claim); the internal read serves only cohorts that clear the §13 floor, ' +
+      'never a below-floor bucket; and the §13 privacy threshold + 0.65 confidence floor gate publication, ' +
+      'which no route performs (intel_movement_prediction is DECLARED in INTEL_FLAGS but NOT SEEDED — ' +
+      'no migration creates the row, per the 2165 rule that a flag arrives with the unit that reads it, ' +
+      'and isFlagEnabled reads an absent row as false).',
   },
   {
     flag: 'intel_missions',
