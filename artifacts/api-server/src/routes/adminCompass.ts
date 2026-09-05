@@ -181,10 +181,23 @@ router.get("/admin/compass/dashboard", async (req, res) => {
         .not("city", "is", null)
         .limit(500),
 
-      // Delayed posts not yet published (pending publish)
+      // Delayed posts not yet published (pending publish).
+      //
+      // This used to say `.eq("post_status", "delayed_post")`. `delayed_post` is
+      // not a label of the `delayed_post_status` enum that types
+      // posts.post_status — the labels are draft / private /
+      // pending_location_exit / pending_delay / pending_safety_review /
+      // published / canceled / expired (migration 0049) — so the predicate could
+      // never match: the metric reported 0 pending posts forever, or PostgREST
+      // rejected the literal 22P02 and this Promise.allSettled entry rejected,
+      // which the reader below reads as 0 just the same. Not a leak (the count
+      // is admin-only and discloses no row), but a dead query: the one dashboard
+      // number that would have shown the delayed-publish backlog was flat zero
+      // whatever the backlog was. The real pending states are the three the
+      // sweeper (lib/delayedPostPublisher) picks up plus the moderation hold.
       sc.from("posts")
         .select("id", { count: "exact", head: true })
-        .eq("post_status", "delayed_post")
+        .in("post_status", ["pending_location_exit", "pending_delay", "pending_safety_review"])
         .gt("publish_eligible_at", now),
 
       // Total posts in window (for delayed publish rate denominator)
