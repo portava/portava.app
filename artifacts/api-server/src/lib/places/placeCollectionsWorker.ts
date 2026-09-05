@@ -19,6 +19,11 @@
  *   place_top_contributors         — (place_id, user_id) PK, contribution_count.
  *   place_best_of                  — place_id PK, top_videos/photos/etc JSONB.
  *
+ * place_top_contributors is a PUBLIC rail (routes/placeLiving serves it to
+ * anonymous callers) and is built from the STRANGER-READABLE subset of a
+ * place's posts; the place_contributor STAMP thresholds keep counting the full
+ * active set. See computeContributors — the two must not be collapsed again.
+ *
  * Pessimistic-lock pattern mirrors stamp_generation_queue: each claim sets
  * status='processing', locked_until = now + 5min, locked_by = WORKER_ID.
  * A stale-lock sweeper reclaims rows locked > 10 min.
@@ -176,30 +181,98 @@ async function tryAwardStamp(
 // Schema: place_top_contributors(place_id, user_id, contribution_count, updated_at)
 // PK: (place_id, user_id) — no rank column.
 // Posts use author_id for the post author; we surface it as user_id in place_top_contributors.
+//
+// TWO CONSUMERS, TWO POST SETS. This used to be one count driving both, and
+// that was a privacy defect:
+//
+//   • place_top_contributors is a PUBLIC rail. routes/placeLiving serves
+//     `topContributor { userId, displayName, avatarUrl, contributionCount }` on
+//     the anonymous living page (no viewer, service-role client, RLS bypassed).
+//     Counting every `status = 'active'` post meant a user whose only posts at a
+//     venue were `private` — or still `pending_location_exit`, i.e. a delayed
+//     post whose author has not left yet — was publicly named as that venue's
+//     top contributor. That is the same "this person is at this place"
+//     disclosure the visibility tiers and delayed geotagging exist to prevent,
+//     and it is the one read on that page that was NOT visibility-gated
+//     (placeLiving gates its own post sample and rating rolls-up already).
+//     ⇒ built from the STRANGER-READABLE subset (isPublicPlaceRailPost).
+//
+//   • the place_contributor STAMP is a private, earned credit awarded to the
+//     author themselves. Its thresholds have always counted the author's own
+//     work at the place, private posts included, and narrowing that set would
+//     silently retire stamps people have already earned and stop future ones.
+//     ⇒ built from the FULL active set, byte-for-byte as before.
+//
+// Neither rule is imposed on the other: one fetch, two derivations.
+
+type ContributorCount = [userId: string, postCount: number];
+
+/** Posts-per-author over an already-fetched batch, in first-seen order. */
+function countByAuthor(posts: any[]): Map<string, number> {
+  const countMap = new Map<string, number>();
+  for (const row of posts) {
+    if (!row.author_id) continue;
+    countMap.set(row.author_id, (countMap.get(row.author_id) ?? 0) + 1);
+  }
+  return countMap;
+}
+
+/** Top 3 by count. Sort is stable, so equal counts keep first-seen order. */
+function top3ByCount(countMap: Map<string, number>): ContributorCount[] {
+  return [...countMap.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+}
+
+/**
+ * Remove every place_top_contributors row for this place that the new public
+ * top-3 does not contain.
+ *
+ * Without this the fix would not actually fix anything: the write path is an
+ * UPSERT and routes/placeLiving reads `ORDER BY contribution_count DESC LIMIT 1`
+ * with NO staleness check at all, so a row baked from private posts before this
+ * change — or a contributor who has since made their posts private — would keep
+ * being served as the public top contributor forever. Best-effort: a prune
+ * failure is logged, never thrown, and never blocks the stamp award below.
+ */
+async function pruneContributors(
+  sc: any,
+  placeId: string,
+  keepUserIds: string[],
+): Promise<void> {
+  try {
+    let q = sc.from("place_top_contributors").delete().eq("place_id", placeId);
+    if (keepUserIds.length > 0) {
+      q = q.not("user_id", "in", `(${keepUserIds.join(",")})`);
+    }
+    const { error } = await q;
+    if (error) {
+      console.warn(JSON.stringify({
+        event:    "place_collections.contributor_prune_error",
+        place_id: placeId,
+        error:    error.message,
+      }));
+    }
+  } catch (err) {
+    console.warn(JSON.stringify({
+      event:    "place_collections.contributor_prune_error",
+      place_id: placeId,
+      error:    err instanceof Error ? err.message : String(err),
+    }));
+  }
+}
 
 async function computeContributors(
   sc: any,
   placeId: string,
   posts: any[],
 ): Promise<void> {
-  // Count posts per author from the already-fetched batch.
-  // posts.author_id is the canonical column for the post author.
-  const countMap = new Map<string, number>();
-  for (const row of posts) {
-    if (!row.author_id) continue;
-    countMap.set(row.author_id, (countMap.get(row.author_id) ?? 0) + 1);
-  }
-
-  if (countMap.size === 0) return;
-
-  // Top 3 contributors by post count.
-  const top3 = [...countMap.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
+  // ── A. PUBLIC RAIL — stranger-readable, published posts only ───────────────
+  const railTop3 = top3ByCount(countByAuthor(posts.filter((r) => isPublicPlaceRailPost(r))));
 
   const nowIso = new Date().toISOString();
 
-  for (const [userId, postCount] of top3) {
+  for (const [userId, postCount] of railTop3) {
     const { error: upsertErr } = await sc
       .from("place_top_contributors")
       .upsert(
@@ -220,7 +293,21 @@ async function computeContributors(
         error:    upsertErr.message,
       }));
     }
+  }
 
+  // Drop anyone the gated recompute no longer credits (including everyone, when
+  // a place has no publicly-readable posts left).
+  await pruneContributors(sc, placeId, railTop3.map(([userId]) => userId));
+
+  // ── B. STAMP THRESHOLDS — the full active set, unchanged ───────────────────
+  // Same source set, same top-3 selection, same counts, same thresholds and the
+  // same call order as before the rail was split off. The early return below is
+  // the old `if (countMap.size === 0) return` — it guarded the stamp loop, so it
+  // stays on the stamp side; the rail is pruned above regardless.
+  const stampTop3 = top3ByCount(countByAuthor(posts));
+  if (stampTop3.length === 0) return;
+
+  for (const [userId, postCount] of stampTop3) {
     // Award stamp at each threshold the contributor has crossed.
     // The stamp award engine deduplicates via (user:def:sourceType:sourceId)
     // so repeated calls for the same (userId, threshold) are idempotent.
@@ -376,16 +463,27 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
   // Limit 5 000 — Supabase default cap is 1 000 without an explicit limit.
   //
   // The gate columns (author_id / trip_id / visibility / post_status) ride along
-  // because the two consumers below need DIFFERENT sets: Best-Of is a public rail
-  // and must see only publicly-readable published posts, while contributor
-  // counting keeps working from every active post at the place as it always has.
-  // That is why the visibility/publication predicate is applied in memory here
-  // rather than narrowed at the query — one read, two rules, neither imposed on
-  // the other.
+  // because the consumers below need DIFFERENT sets:
+  //
+  //   • place_best_of — a PUBLIC rail: only stranger-readable, published posts.
+  //   • place_top_contributors — also a PUBLIC rail: same stranger-readable,
+  //     published subset, for both the top-3 selection and contribution_count.
+  //   • the place_contributor STAMP — keeps counting every active post at the
+  //     place as it always has, private and pending posts included.
+  //
+  // That is why the visibility/publication predicate is applied in memory (here
+  // for Best-Of, and inside computeContributors for the rail-vs-stamp split)
+  // rather than narrowed at the query — one read, three rules, none imposed on
+  // the others.
+  //
+  // PostgREST returns ONLY the projected columns, so a column omitted here reads
+  // back `undefined` and isPublicPlaceRailPost would treat it as a legacy row:
+  // visibility must be projected or the gate silently passes everything.
   const { data: postRows, error: postErr } = await sc
     .from("posts")
     .select(
-      "id, author_id, trip_id, visibility, post_status, content, media_type, media_urls, media_thumbnail_url, " +
+      "id, author_id, trip_id, visibility, post_status, content, media_type, " +
+      "media_urls, media_thumbnail_url, " +
       "post_buckets, like_count, save_count, share_count, view_count, qualified_view_count",
     )
     .eq("canonical_place_id", placeId)
