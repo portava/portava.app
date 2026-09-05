@@ -1,7 +1,7 @@
--- 2291_map_world_intelligence_flag.sql
+-- 2295_map_world_intelligence_flag.sql
 -- Portava Map — §36 Phase 7 "World Intelligence": ONE capability flag, seeded OFF.
 --
--- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band). Map Phase 7 lane 2291.
+-- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band). Map Phase 7 lane 2295.
 --
 -- Additive + idempotent. Safe to re-run. Seeds exactly one flag, and it has a
 -- LIVE reader (check-flag-polarity's rule: "a flag arrives with the unit that

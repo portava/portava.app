@@ -85,7 +85,7 @@ at, and the failure direction — which is the level §§1–35 carry:
 
 ### What was built against it
 
-Migration lane 2291 seeds `map_world_intelligence_enabled` OFF. Four kinds were
+Migration lane 2295 seeds `map_world_intelligence_enabled` OFF. Four kinds were
 added to the §18 contract on both mirrors — `world_pulse`, `traveler_flow`,
 `city_model`, `personal_city` — and four producers under
 `src/lib/mapProducers/`. See `docs/map/phase-7-world-intelligence.md` for the

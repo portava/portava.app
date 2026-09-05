@@ -9,7 +9,7 @@
  * PURE. No I/O, no clock, no privacy decision of its own — it declares the
  * vocabulary the four producers apply.
  *
- * ── THE ONE FLAG (migration 2291) ────────────────────────────────────────────
+ * ── THE ONE FLAG (migration 2295) ────────────────────────────────────────────
  * All four capabilities ride one switch because they are one capability: World
  * Pulse without the city model is a heat cell you cannot interrogate, and the
  * flow graph is the movement half of the same world view. Four switches would
@@ -58,7 +58,7 @@ import {
 import { meetsKAnonymity } from "../kAnonymity.js";
 import type { ActivityLevel, MapObjectKind } from "../mapObjects.js";
 
-/** Migration 2291. CAPABILITY convention (`*_enabled`), seeded OFF. */
+/** Migration 2295. CAPABILITY convention (`*_enabled`), seeded OFF. */
 export const WORLD_INTELLIGENCE_FLAG = "map_world_intelligence_enabled";
 
 /** The four §18 kinds Phase 7 introduced. Used by the route and by the guards. */

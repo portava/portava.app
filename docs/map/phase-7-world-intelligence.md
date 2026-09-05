@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-05
 **Approved by:** the owner (see the AMENDMENT in `scope-ruling-phases-6-7.md`).
-**Flag:** `map_world_intelligence_enabled`, migration lane 2291, seeded **OFF**.
+**Flag:** `map_world_intelligence_enabled`, migration lane 2295, seeded **OFF**.
 
 One flag gates all four capabilities, because they are one capability: World
 Pulse without the city model is a heat cell you cannot interrogate, and the

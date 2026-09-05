@@ -142,7 +142,7 @@ import { readPersonalCityPins, type PersonalCityReport } from "../lib/mapProduce
  */
 const CROWD_FLOW_FLAG_PIN: "map_crowd_flow_enabled" = CROWD_FLOW_FLAG;
 void CROWD_FLOW_FLAG_PIN;
-/** The same pin for §36 Phase 7's flag (migration 2291). */
+/** The same pin for §36 Phase 7's flag (migration 2295). */
 const WORLD_INTELLIGENCE_FLAG_PIN: "map_world_intelligence_enabled" = WORLD_INTELLIGENCE_FLAG;
 void WORLD_INTELLIGENCE_FLAG_PIN;
 import { type MapObject, type MapObjectKind } from "../lib/mapObjects.js";
@@ -413,7 +413,7 @@ interface ProducerReports {
  * wiring is broken.
  *
  * Per-producer entries are null when that kind was not requested. `refusal` is
- * the layer-wide answer: `flag_off` (migration 2291's seed), `band_not_eligible`
+ * the layer-wide answer: `flag_off` (migration 2295's seed), `band_not_eligible`
  * (the camera is below the city band, where none of these kinds exists) or
  * `no_city_model` (no curated `geo_zones` city geography covers this viewport).
  *

@@ -3,7 +3,7 @@
  *
  * WHY THE POSITIVE TESTS ARE THE LOAD-BEARING ONES
  * ================================================
- * `map_world_intelligence_enabled` is seeded FALSE (migration 2291) and both
+ * `map_world_intelligence_enabled` is seeded FALSE (migration 2295) and both
  * consent tables are empty in production, so a live call today returns nothing
  * — AND WOULD RETURN NOTHING IF THE WIRING WERE COMPLETELY BROKEN. Those two
  * states are indistinguishable from outside, which is exactly how this class of
