@@ -1066,6 +1066,11 @@ export async function executeAccountDeletion(
     { name: "delete_availability_windows", run: () => sc.from("availability_windows").delete().eq("user_id", userId) },
     { name: "delete_travel_dna_prefs",     run: () => sc.from("passport_travel_dna_prefs").delete().eq("user_id", userId) },
     { name: "delete_wall_session_intent",  run: () => sc.from("wall_session_intents").delete().eq("user_id", userId) },
+    //   event_passport_shares     — §25/§31 temporary event Passport shares
+    //                               (migration 2294). Each row names an event
+    //                               the user attended, so it is personal data;
+    //                               same tombstone-cascade problem as above.
+    { name: "delete_event_passport_shares", run: () => sc.from("event_passport_shares").delete().eq("user_id", userId) },
   ];
   for (const d of contentDeletes) {
     const ok = await step(steps, d.name, async () => {

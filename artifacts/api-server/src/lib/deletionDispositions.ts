@@ -148,6 +148,13 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "availability_windows",
   "passport_travel_dna_prefs",
   "wall_session_intents",
+  // Temporary event Passport shares (migration 2294), user_id-keyed with
+  // ON DELETE CASCADE to profiles — the same tombstone problem as the three
+  // above, so the share rows (which name an event the user attended) would
+  // survive deletion. Not append-only; erased by the
+  // `delete_event_passport_shares` step. service_role holds DELETE (2294
+  // grants it explicitly).
+  "event_passport_shares",
   // Derived memory (migrations 2183-2191). Erased explicitly by
   // AccountDeletionService's `erase_derived_memory` step, which calls the
   // SECURITY DEFINER erase_memory_for_user in one atomic, idempotent statement.
@@ -494,6 +501,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "availability_windows",
   "passport_travel_dna_prefs",
   "wall_session_intents",
+  // Temporary event Passport shares, added by migration 2294 (post-baseline).
+  // Classified in ERASED_BY_CASCADE above.
+  "event_passport_shares",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",

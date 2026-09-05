@@ -35,6 +35,13 @@
  *                    plans, availability or shared context. Strictly a NARROWING
  *                    of the aggregate the trip_crew / trip_host viewer contexts
  *                    already resolve to (see `toTripsProjection`).
+ *   event          → the temporary/event Passport share (§25/§31, TABLE 31
+ *                    Phase 8). The §25 QR family's minimal shape — photo, FIRST
+ *                    name, @handle, verification, permitted home country, what
+ *                    they are up for, Follow/Connect — plus the broad city when
+ *                    the owner is genuinely at an event. Reached only through
+ *                    EventPassportService, which adds the bounded TTL,
+ *                    revocation and co-attendance checks around it.
  *   safety         → restricted, purpose-specific context only.
  *
  * §8 (Open to Plans and Intent): the discovery_card variant's `intent` is the
@@ -72,7 +79,13 @@ import {
 // Variant kinds
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type PassportConsumerVariant = "discovery_card" | "telegraph" | "buddy" | "trips" | "safety";
+export type PassportConsumerVariant =
+  | "discovery_card"
+  | "telegraph"
+  | "buddy"
+  | "trips"
+  | "event"
+  | "safety";
 
 type SocialAvailability = "open" | "maybe" | "crew_only" | "following_only" | "not_open";
 
@@ -237,6 +250,56 @@ export interface TripsProjection {
   hostGuestContext: TripsHostGuestContext;
   /** Per-viewer trip actions (§30). */
   actions: Pick<PassportViewerActions, "can_message" | "can_invite_trip" | "can_make_plan">;
+  restricted?: { reason: string };
+}
+
+/**
+ * Temporary/event Passport identity (§25). Deliberately the QR family's shape:
+ * "photo, first name, @handle, verification, permitted home country/interests".
+ * FIRST NAME ONLY — the family name is never projected into an event share.
+ */
+export interface EventPassportIdentity {
+  userId: string;
+  firstName: string | null;
+  handle: string | null;
+  avatarUrl: string | null;
+  verified: boolean;
+  verificationLevel: string | null;
+  /** Already TABLE 24-gated by the assembler; null when not permitted. */
+  homeCountry: string | null;
+}
+
+/**
+ * The `event` variant — the projection behind a temporary event Passport share
+ * (§25 / §31 / TABLE 31 Phase 8).
+ *
+ * TWO properties this shape exists to guarantee:
+ *
+ *   • It exposes ONLY what an event context warrants: who you are, whether you
+ *     are verified, whether you are at this event (broad city, never a
+ *     coordinate — §23/TABLE 25), what you are currently up for, and
+ *     Follow/Connect. No stamps, journeys, memories, plans, trust words, trust
+ *     score, availability grid, capabilities block or shared context.
+ *
+ *   • It NEVER WIDENS. Every value is copied from the aggregate the ordinary
+ *     resolver already built for THIS viewer — the share does not elevate the
+ *     viewer's relationship, it only makes a narrow, expiring, revocable view
+ *     reachable (§25 "Scanning a QR never bypasses privacy policy").
+ */
+export interface EventPassportProjection {
+  variant: "event";
+  userId: string;
+  viewerContext: PassportViewerContext;
+  identity: EventPassportIdentity;
+  /**
+   * Broad city ONLY, and only while the owner's own projection says they are
+   * at an event right now. Null otherwise — never a coordinate, never a venue.
+   */
+  atEventCity: string | null;
+  /** Current intent (§8) the aggregate already permitted this viewer to see. */
+  intents: string[];
+  /** §25 "Follow/Connect" — server-projected (§30), never re-derived. */
+  actions: Pick<PassportViewerActions, "can_follow" | "can_message">;
   restricted?: { reason: string };
 }
 
@@ -657,6 +720,60 @@ function toTripsProjection(full: PassportProjection): TripsProjection {
   return trips;
 }
 
+/**
+ * First name only (§25). Never returns anything beyond the first whitespace-
+ * separated token of the display name the aggregate already permitted.
+ */
+export function firstNameOnly(name: string | null): string | null {
+  if (typeof name !== "string") return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  return trimmed.split(/\s+/)[0] ?? null;
+}
+
+/**
+ * The `event` variant. A pure NARROWING of `full`: no field is read from
+ * anywhere but the aggregate the ordinary resolver produced for this viewer.
+ */
+function toEventPassport(full: PassportProjection): EventPassportProjection {
+  const ev: EventPassportProjection = {
+    variant: "event",
+    userId: full.userId,
+    viewerContext: full.viewerContext,
+    identity: {
+      userId: full.identity.userId,
+      firstName: firstNameOnly(full.identity.name),
+      handle: full.identity.handle,
+      avatarUrl: full.identity.avatarUrl,
+      verified: full.identity.verified,
+      verificationLevel: full.identity.verificationLevel,
+      homeCountry: full.identity.homeCountry,
+    },
+    atEventCity: null,
+    intents: [],
+    actions: {
+      can_follow: full.capabilities.actions.can_follow,
+      can_message: full.capabilities.actions.can_message,
+    },
+  };
+
+  if (full.restricted) {
+    ev.restricted = full.restricted;
+    // A blocked / unavailable relationship gets identity + action flags only —
+    // the assembler has already blanked homeCountry on the restricted card.
+    return ev;
+  }
+
+  // §5/§23: broad event city, and only while the owner is genuinely at an event.
+  if (full.travelerState && full.travelerState.state === "at_event") {
+    ev.atEventCity = full.travelerState.city;
+  }
+  if (full.intent && Array.isArray(full.intent.current)) {
+    ev.intents = full.intent.current.slice(0, 6);
+  }
+  return ev;
+}
+
 function toSafetyProjection(full: PassportProjection): SafetyProjection {
   const safety: SafetyProjection = {
     variant: "safety",
@@ -684,6 +801,7 @@ export type ConsumerProjectionFor<V extends PassportConsumerVariant> =
   V extends "telegraph" ? TelegraphHeaderProjection :
   V extends "buddy" ? BuddyProjection :
   V extends "trips" ? TripsProjection :
+  V extends "event" ? EventPassportProjection :
   V extends "safety" ? SafetyProjection :
   never;
 
@@ -718,5 +836,6 @@ export async function buildConsumerProjection<V extends PassportConsumerVariant>
   if (variant === "telegraph") return toTelegraphHeader(full) as ConsumerProjectionFor<V>;
   if (variant === "buddy") return toBuddyProjection(full) as ConsumerProjectionFor<V>;
   if (variant === "trips") return toTripsProjection(full) as ConsumerProjectionFor<V>;
+  if (variant === "event") return toEventPassport(full) as ConsumerProjectionFor<V>;
   return toSafetyProjection(full) as ConsumerProjectionFor<V>;
 }
