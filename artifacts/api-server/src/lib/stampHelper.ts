@@ -7,7 +7,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Logger } from "pino";
-import { resolveCountry } from "./stamps/countryLookup.js";
+import { resolveCountry, countryFromCity } from "./stamps/countryLookup.js";
+import { toCountryCode } from "./countryCodes.js";
 
 export interface CityStampInput {
   userId: string;
@@ -17,9 +18,36 @@ export interface CityStampInput {
 }
 
 /**
+ * Resolve a *real* ISO-3166-1 alpha-2 code for a city stamp, or null.
+ *
+ * STAMP·H3: this used to be `country.slice(0, 2).toUpperCase()`, which
+ * fabricated codes from the spelling of the name — "Vietnam" → "VI"
+ * (actually the U.S. Virgin Islands), "Japan" → "JA", "United States" → "UN",
+ * "Germany" → "GE". Truncation is never a valid derivation, not even from
+ * alpha-3 ("Denmark"/DNK → "DN", "Portugal"/PRT → "PR").
+ *
+ * Resolution order, all map-backed and none of them guessing:
+ *   1. `toCountryCode` — full ISO-3166-1 name/alias/code table (lib/countryCodes)
+ *   2. `countryFromCity` — well-known city → country (lib/stamps/countryLookup)
+ *   3. null — an honest unknown
+ *
+ * Unknown is deliberately `null`, not "XX": the sublabel is rendered verbatim
+ * to the user, and a wrong-but-plausible code is worse than no code at all.
+ * A null code degrades the sublabel to year-only, which is the same fallback
+ * the function has always used for a missing country.
+ */
+function cityStampCountryCode(
+  city: string,
+  country: string | null,
+): string | null {
+  return toCountryCode(country) ?? countryFromCity(city)?.countryCode ?? null;
+}
+
+/**
  * Build the display labels for a city stamp.
- * label   → "CEBU"
- * sublabel → "PH · 2026"  (2-char ISO country code + year)
+ * label    → "CEBU"
+ * sublabel → "PH · 2026"  (real ISO-3166-1 alpha-2 code + year), or just
+ *            "2026" when no real code can be resolved.
  */
 export function buildCityStampLabels(
   city: string,
@@ -28,18 +56,7 @@ export function buildCityStampLabels(
   const rawLabel = city.trim().toUpperCase();
   const label = rawLabel.length > 0 ? rawLabel : "UNKNOWN";
   const year = new Date().getFullYear();
-  const trimmed = country?.trim() ?? null;
-  // Sentinel values that indicate an unresolved or missing country.  Slicing
-  // any of these would produce a meaningless ISO-looking code (e.g. "N/" from
-  // "N/A", "NO" from "None"), so treat them all the same as null.
-  const SENTINELS = new Set(["unknown", "n/a", "none", "null", "undefined", ""]);
-  const isSentinel =
-    trimmed === null || SENTINELS.has(trimmed.toLowerCase());
-  // Require at least 2 letters so punctuation-only ("---", "???") and
-  // digit-only ("00", "123") strings fall back to year-only instead of
-  // producing a meaningless code.
-  const isAlpha = !isSentinel && /^[A-Za-z]{2,}/.test(trimmed!);
-  const countryCode = isAlpha ? trimmed!.slice(0, 2).toUpperCase() : null;
+  const countryCode = cityStampCountryCode(city, country);
   const sublabel = countryCode ? `${countryCode} · ${year}` : String(year);
   return { label, sublabel };
 }
