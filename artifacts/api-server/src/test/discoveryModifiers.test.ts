@@ -49,8 +49,31 @@ function fakeClient(store: Store, throwOn: ReadonlySet<string> = new Set()) {
       const filters: Array<(r: Row) => boolean> = [];
       const rows = () => ((store as Record<string, Row[] | undefined>)[table] ?? []).filter((r) => filters.every((f) => f(r)));
       const fail = () => { reads.push(table); return Promise.reject(new Error(`read of ${table} failed`)); };
+      // `order` + `range`: loadLocalMomentum PAGES the rank_events read under a
+      // stable total order (a range-less read is silently capped by PostgREST at
+      // db-max-rows). A builder without them makes the loader throw and the
+      // momentum map come back empty — which reads as "no surge" rather than as
+      // a broken fake.
+      const orders: Array<{ col: string; asc: boolean }> = [];
+      let rangeFrom = 0;
+      let rangeTo: number | null = null;
+      const paged = (): Row[] => {
+        const out = [...rows()];
+        for (const o of [...orders].reverse()) {
+          out.sort((x, y) => {
+            const a = String(x[o.col] ?? "");
+            const b = String(y[o.col] ?? "");
+            return (a < b ? -1 : a > b ? 1 : 0) * (o.asc ? 1 : -1);
+          });
+        }
+        return rangeTo === null ? out : out.slice(rangeFrom, rangeTo + 1);
+      };
       const q = {
         select: () => q, neq: () => q, in: () => q, gte: () => q, limit: () => q,
+        order: (col: string, o?: { ascending?: boolean }) => {
+          orders.push({ col, asc: o?.ascending !== false }); return q;
+        },
+        range: (f: number, t: number) => { rangeFrom = f; rangeTo = t; return q; },
         eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return q; },
         maybeSingle: () => {
           if (throwOn.has(table)) return fail();
@@ -60,7 +83,7 @@ function fakeClient(store: Store, throwOn: ReadonlySet<string> = new Set()) {
         then: (resolve: (v: { data: Row[]; error: null }) => unknown, reject?: (e: unknown) => unknown) => {
           if (throwOn.has(table)) return fail().then(resolve, reject);
           reads.push(table);
-          return Promise.resolve({ data: rows(), error: null }).then(resolve, reject);
+          return Promise.resolve({ data: paged(), error: null }).then(resolve, reject);
         },
       };
       return q;

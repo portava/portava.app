@@ -167,6 +167,29 @@ const HAPPY: Fixture = {
   posts: [post()],
 };
 
+/**
+ * Route-level fixture — dated against the REAL clock, deliberately.
+ *
+ * The loader tests above inject `nowMs: NOW`, so a frozen 2026-09-04 fixture is
+ * exactly right for them: the assertions are about the window's arithmetic, not
+ * about today. GET /wall/quick-media has no such seam — routes/wall.ts calls
+ * loadQuickMediaItems without `nowMs`, so it falls back to `Date.now()`, and
+ * quickMediaAssetServable re-checks the 24-h window in memory (the fake's
+ * `.gte()` is a no-op, so the filter that matters is the in-memory one).
+ *
+ * A frozen `created_at` therefore ages: NOW - 2h is 2026-09-04T10:00:00Z, which
+ * fell out of the 24-h window at 2026-09-05T10:00:00Z and turned "returns the
+ * items when the Wall is on" red on a wall-clock deadline rather than on any
+ * code change. Anchoring the route fixture to the real now keeps the asset
+ * inside the window on every future run, and keeps the route honest about the
+ * clock it actually uses.
+ */
+const liveIso = (deltaMs: number) => new Date(Date.now() + deltaMs).toISOString();
+const HAPPY_LIVE: Fixture = {
+  ...HAPPY,
+  assets: [asset({ created_at: liveIso(-2 * H) })],
+};
+
 describe("loadQuickMediaItems — the §18 data source", () => {
   it("returns a followed person's recent media published through a readable post, with the stored ref unsigned", async () => {
     const items = await loadQuickMediaItems(fakeClient(HAPPY), VIEWER, { nowMs: NOW });
@@ -344,7 +367,7 @@ describe("GET /wall/quick-media", () => {
   }
 
   it("is feature_disabled while the Wall is dark", async () => {
-    use({ ...HAPPY, flags: { wall_enabled: false } });
+    use({ ...HAPPY_LIVE, flags: { wall_enabled: false } });
     const r = await get();
     // The error envelope maps feature_disabled to 404 (lib/http sendError).
     assert.equal(r.status, 404);
@@ -352,7 +375,7 @@ describe("GET /wall/quick-media", () => {
   });
 
   it("returns the items when the Wall is on", async () => {
-    use({ ...HAPPY, flags: { wall_enabled: true } });
+    use({ ...HAPPY_LIVE, flags: { wall_enabled: true } });
     const r = await get("?limit=5");
     assert.equal(r.status, 200);
     assert.equal(r.body.items.length, 1);
@@ -361,14 +384,14 @@ describe("GET /wall/quick-media", () => {
   });
 
   it("degrades to an empty row (200) when the source throws", async () => {
-    use({ ...HAPPY, flags: { wall_enabled: true }, throwOn: "user_follows" });
+    use({ ...HAPPY_LIVE, flags: { wall_enabled: true }, throwOn: "user_follows" });
     const r = await get();
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.items, []);
   });
 
   it("rejects an unauthenticated caller", async () => {
-    use({ ...HAPPY, flags: { wall_enabled: true } });
+    use({ ...HAPPY_LIVE, flags: { wall_enabled: true } });
     const res = await fetch(`${base}/wall/quick-media`);
     assert.equal(res.status, 401);
   });
