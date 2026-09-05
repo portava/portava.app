@@ -203,6 +203,21 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:schema-references
 
+      # check:doc-citations — the documentation half of the same idea.
+      # docs/discovery/ROADMAP.md carries its own rule, "maintain this table in
+      # the same PR as the work", and the 2026-09-05 reconciliation exists
+      # because seven PRs broke it. That reconciliation replaced prose with
+      # `path/file.ts:NNN` citations, and the PR that wrote it invalidated one
+      # of its own in the same diff by inserting three lines above the entry it
+      # cited. A citation nobody can execute is prose with extra precision.
+      # Static, no database, no network. See the script header for the COVERED
+      # registry and for the `#anchor` form, which is the half that notices code
+      # MOVING — a range check cannot.
+      - name: 'check:doc-citations (static; docs cite the code accurately)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:doc-citations
+
       - name: 'check:async-handlers'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash
