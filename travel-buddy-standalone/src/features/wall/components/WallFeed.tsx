@@ -141,6 +141,17 @@ export function WallFeed({
       keyExtractor={(item) => item.projectionId}
       renderItem={renderItem}
       ListHeaderComponent={header}
+      // ── Render-cost windowing (spec §33 / TABLE 4: 60 fps scroll, and video
+      //    "lazy load; only near viewport"). These were FlatList's implicit
+      //    defaults; they are stated here because they are a product decision
+      //    about how much work a frame may do, and a silent drift in them is
+      //    exactly the regression WallFeed.renderCost.component.test.tsx pins.
+      //    A feed card is tall and media-bearing, so a narrower window costs
+      //    little on screen and saves a lot per frame.
+      initialNumToRender={10}
+      maxToRenderPerBatch={5}
+      updateCellsBatchingPeriod={50}
+      windowSize={7}
       onEndReached={onEndReached}
       onEndReachedThreshold={0.6}
       onViewableItemsChanged={onViewableItemsChanged.current}
