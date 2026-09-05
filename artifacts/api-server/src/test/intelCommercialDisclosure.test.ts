@@ -93,7 +93,7 @@ const baseInput = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-describe("§22 disclosure → epistemic standing (the official/community separation)", () => {
+describe("AT-12: §22 disclosure → epistemic standing (the official/community separation)", () => {
   it("'none' keeps the honest firsthand default; every commercial disclosure → sponsored", () => {
     assert.equal(isCommercialDisclosure("none"), false);
     assert.equal(disclosureSourceClass("none"), "firsthand_unverified");
@@ -115,7 +115,7 @@ describe("§22 disclosure → epistemic standing (the official/community separat
 });
 
 describe("§22 writeObservation stores the disclosure and its source class", () => {
-  it("records a disclosed 'owner' observation under sponsored, with commercial_disclosure='owner'", async () => {
+  it("AT-12: records a disclosed 'owner' observation under sponsored, with commercial_disclosure='owner'", async () => {
     const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
     const r = await writeObservation(db as any, ACTOR, baseInput({ commercialDisclosure: "owner" }) as any);
     assert.equal(r.ok, true);

@@ -47,7 +47,7 @@ function makeDb(seed: any[], opts: { checkFail?: boolean } = {}) {
   };
 }
 
-describe("completeMission — §16 negative-result acceptance", () => {
+describe("AT-12 / AT-13: completeMission — §16 negative-result acceptance", () => {
   it("completes an ACCEPTED mission and records the result", async () => {
     const db = makeDb([{ id: "m1", status: "accepted" }]);
     const out = await completeMission(db as any, "m1", "negative");
@@ -71,7 +71,7 @@ describe("completeMission — §16 negative-result acceptance", () => {
     assert.equal(out.reason, "invalid_result");
   });
 
-  it("surfaces a DB CHECK rejection (e.g. evidence_contract shape) as a reason", async () => {
+  it("AT-13: surfaces a DB CHECK rejection (e.g. evidence_contract shape) as a reason — payment needs the evidence contract", async () => {
     const db = makeDb([{ id: "m1", status: "accepted" }], { checkFail: true });
     const out = await completeMission(db as any, "m1", "positive");
     assert.equal(out.ok, false);
