@@ -12,6 +12,55 @@
 
 export type VisibilityTier = "public" | "circle_only" | "trip_crew" | "private";
 
+// ── TABLE 24 owner field opt-outs (§22) ──────────────────────────────────────
+
+/**
+ * The owner's TABLE 24 location opt-outs (§22) from `profile_privacy_settings`.
+ * Only the columns that actually exist there are read — nothing is invented.
+ *
+ * This lives in the guard (not in one consumer) because MORE THAN ONE passport
+ * path discloses these fields: the main projection (identity.homeCountry /
+ * homeBase, travelerState.city) and Shared Context (the both-in-city fact and
+ * the Compass handoff city). They must read the column with IDENTICAL semantics,
+ * so there is exactly one reader.
+ */
+export interface OwnerFieldVisibility {
+  /** profile_privacy_settings.show_home_country — gates identity.homeCountry (+ homeBase). */
+  showHomeCountry: boolean;
+  /** profile_privacy_settings.show_current_city — gates any disclosure of the owner's current city. */
+  showCurrentCity: boolean;
+}
+
+const OWNER_FIELDS_HIDDEN: OwnerFieldVisibility = { showHomeCountry: false, showCurrentCity: false };
+
+/**
+ * Load the owner's location opt-outs. The model is show-by-default, so an
+ * absent settings row shows; but a READ ERROR fails CLOSED (hide), since these
+ * guard the known location-after-opt-out privacy class (same posture as the
+ * public-passport reader in routes/follows.ts). An owner's own view never
+ * consults the result — the owner always sees their own data.
+ */
+export async function loadOwnerFieldVisibility(
+  sc: { from: (t: string) => any },
+  userId: string,
+): Promise<OwnerFieldVisibility> {
+  try {
+    const { data, error } = await sc
+      .from("profile_privacy_settings")
+      .select("show_home_country, show_current_city")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) return OWNER_FIELDS_HIDDEN;
+    const row = (data as any) ?? null;
+    return {
+      showHomeCountry: row?.show_home_country !== false,
+      showCurrentCity: row?.show_current_city !== false,
+    };
+  } catch {
+    return OWNER_FIELDS_HIDDEN;
+  }
+}
+
 /** What the caller is allowed to see, based on their relationship to the owner. */
 export type CallerContext =
   | "owner"         // viewing own passport
