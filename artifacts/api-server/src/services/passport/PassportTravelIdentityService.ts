@@ -477,7 +477,7 @@ export type TravelDnaWriteResult =
  * ignore anyway.
  *
  * The stored key is the RAW dimension/trait key (not namespaced): the read side
- * (`loadPrefs`) looks up prefs by the same raw key, and dimension and trait keys
+ * (`loadTravelDnaPrefs`) looks up prefs by the same raw key, and dimension and trait keys
  * do not collide. `kind` is validated and echoed back for the client but is not
  * itself a stored column — the key alone identifies the row.
  */
