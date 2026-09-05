@@ -70,7 +70,7 @@ describe("IG-10 — field-licensing projection (§22)", () => {
     assert.equal(proj!.expires_at, "2999-01-01T00:00:00.000Z", "expiry must travel with live state");
   });
 
-  it("refuses a snapshot that is not privacy-eligible or has expired", () => {
+  it("AT-01 / AT-16: the API refuses a snapshot that is not privacy-eligible or has expired", () => {
     assert.equal(projectSnapshotForApi({ ...snapshot, privacy_eligible: false }, new Date("2026-08-25T21:30:00Z")), null);
     assert.equal(projectSnapshotForApi({ ...snapshot, expires_at: "2020-01-01T00:00:00.000Z" }, new Date("2026-08-25T21:30:00Z")), null);
     assert.equal(projectSnapshotForApi(null), null);

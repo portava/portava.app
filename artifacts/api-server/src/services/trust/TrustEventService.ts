@@ -26,6 +26,20 @@ export type TrustCategory =
 export type TrustSeverity = "minor" | "moderate" | "serious" | "severe";
 export type TrustEventStatus = "applied" | "pending_review" | "confirmed" | "dismissed";
 
+/**
+ * Metadata key carrying the OTHER USER an event was earned from.
+ *
+ * `source_id` cannot serve this purpose and never could: every production call
+ * site sets it to the id of the OBJECT the event came from — a booking, a gem,
+ * a review row, a geofence, a message request — because it is the dedup key.
+ * The two sites that do put a user id there (events.ts first_event_joined /
+ * first_event_hosted) put the SUBJECT's own id, not a counterpart's.
+ *
+ * The mutual-ring detector needs the counterpart, so it is recorded explicitly
+ * here rather than inferred from a field that means something else.
+ */
+export const COUNTERPARTY_METADATA_KEY = "counterparty_user_id";
+
 export interface TrustEventInput {
   userId: string;
   eventType: string;
@@ -34,6 +48,14 @@ export interface TrustEventInput {
   severity: TrustSeverity;
   sourceType?: string;
   sourceId?: string;
+  /**
+   * The other user this event was earned from, when there is one — the person
+   * reviewed, or the person on the other side of an accepted connection.
+   * Recorded into `metadata[COUNTERPARTY_METADATA_KEY]`; consumed by
+   * TrustGamingDetectionService's mutual-ring scan. Omit when the event has no
+   * counterpart (a GPS finding, a stamp, a solo milestone).
+   */
+  counterpartyUserId?: string;
   /** Dedup window in hours — default 24 */
   dedupWindowHours?: number;
   metadata?: Record<string, unknown>;
@@ -217,9 +239,14 @@ export async function recordTrustEvent(
 
   const {
     userId, category, delta, severity,
-    sourceType = "system", sourceId, dedupWindowHours = 24,
-    metadata = {},
+    sourceType = "system", sourceId, counterpartyUserId, dedupWindowHours = 24,
+    metadata: callerMetadata = {},
   } = input;
+  // A counterpart never overwrites an explicit metadata value of the same key.
+  const metadata: Record<string, unknown> =
+    counterpartyUserId && callerMetadata[COUNTERPARTY_METADATA_KEY] === undefined
+      ? { ...callerMetadata, [COUNTERPARTY_METADATA_KEY]: counterpartyUserId }
+      : callerMetadata;
   // Normalize to lowercase so "PLAN_ATTENDED" and "plan_attended" are the same bucket
   const eventType = input.eventType.toLowerCase();
 

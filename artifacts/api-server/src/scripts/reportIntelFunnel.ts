@@ -63,6 +63,7 @@ import {
   type OutcomeRow,
   type SnapshotRow,
 } from "../lib/intelFunnelReport.js";
+import { OUTCOME_VERBS } from "../lib/intelOutcomes.js";
 
 export {};
 
@@ -178,9 +179,15 @@ async function main(): Promise<void> {
     .or(`expires_at.is.null,expires_at.gt.${now.toISOString()}`);
   // Finalized outcome events (spec §14/§21) — canonical_events carrying an intel
   // payload. Windowed by occurred_at. Feeds outcomeConfirmations + after-proof pairs.
+  // The verb filter is load-bearing: payload.intel is the envelope of EVERY intel
+  // domain event (intel.observation.recorded / intel.claim.promoted /
+  // intel.state.changed, lib/intelDomainEvents), so the payload predicate alone
+  // would tally system transitions as finalized outcomes and inflate the gate.
+  // This is the on-demand twin of lib/intelCalibrationScheduler — same rows.
   const outcomeQ = withUntil(
     sc.from("canonical_events")
       .select("subject_id, occurred_at, payload", EXACT)
+      .in("verb", OUTCOME_VERBS as unknown as string[])
       .not("payload->intel", "is", null)
       .gte("occurred_at", window.since),
     "occurred_at",

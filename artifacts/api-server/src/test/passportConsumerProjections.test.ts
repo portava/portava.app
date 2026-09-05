@@ -22,7 +22,11 @@ import {
   GENERIC_WEIGHT_PER_MATCH,
   MAX_INTENT_WEIGHT,
 } from "../services/passport/PassportConsumerProjections.js";
-import type { ViewerResolution, ViewerPermissions } from "../services/passport/PassportProjectionService.js";
+import {
+  buildPassportProjection,
+  type ViewerResolution,
+  type ViewerPermissions,
+} from "../services/passport/PassportProjectionService.js";
 import { makePassportDb } from "./helpers/fakePassportDb.js";
 
 const OWNER = "owner-1";
@@ -232,6 +236,134 @@ describe("buddy variant — allow-list", () => {
   });
 });
 
+// ── trips allow-list (TABLE 22 Trips row) ─────────────────────────────────────
+
+describe("trips variant — allow-list", () => {
+  it("carries identity + trip eligibility + languages + travel style + host/guest only", async () => {
+    const t = (await buildConsumerProjection(
+      seedDb(), "trips", OWNER, VIEWER,
+      inject(resolution("trip_host", permsFollowing())),
+    ))!;
+    assert.equal(t.variant, "trips");
+    assert.equal(t.identity.handle, "wanderer");
+    assert.equal(t.hostGuestContext, "host", "owner hosts the shared trip");
+    // Sections a crew list has no business receiving.
+    for (const k of [
+      "stamps", "memories", "upcomingPlans", "featuredJourney", "credentials",
+      "availability", "intent", "sharedContext", "travelerState", "stats",
+      "capabilities", "trust", "travelIdentity",
+    ]) {
+      assert.ok(!(k in (t as any)), `trips variant leaked: ${k}`);
+    }
+    // TABLE 24 user-controlled location fields never ride a crew card.
+    for (const k of ["homeCountry", "homeBase", "coverUrl"]) {
+      assert.ok(!(k in (t.identity as any)), `trips identity leaked: ${k}`);
+    }
+    // Eligibility is the four TABLE 14 trip capabilities and nothing else.
+    assert.deepEqual(
+      Object.keys(t.eligibility).sort(),
+      ["canCreateLargePlan", "canHostTrip", "canJoinPublicTrip", "canUseCrewLocation"],
+    );
+  });
+
+  it("shows only the trip-role trust domains, as words — never a numeric score", async () => {
+    const t = (await buildConsumerProjection(
+      seedDb(), "trips", OWNER, VIEWER,
+      inject(resolution("trip_crew", permsFollowing())),
+    ))!;
+    assert.equal(t.hostGuestContext, "crew");
+    assert.ok(t.trustDomains.length > 0, "trip-domain trust words present");
+    for (const d of t.trustDomains) {
+      assert.ok(["trip_guest", "trip_host"].includes(d.key), `non-trip trust domain leaked: ${d.key}`);
+      assert.equal(typeof d.presentation, "string");
+      assert.ok(!("score" in (d as any)), "a domain must not carry a score");
+    }
+    assert.ok(!JSON.stringify(t).includes("\"score\""), "no numeric trust score anywhere on the trips variant");
+  });
+
+  it("projects the owner's languages and travel-style axes from the aggregate", async () => {
+    const t = (await buildConsumerProjection(
+      seedDb(), "trips", OWNER, VIEWER,
+      inject(resolution("trip_crew", permsFollowing())),
+    ))!;
+    assert.deepEqual(t.languages, ["English"]);
+    const keys = t.travelStyle.map((d) => d.key).sort();
+    assert.deepEqual(keys, ["group_style", "planning", "social", "travel_pace"]);
+    // Discovery/Compass-only axes must not ride along.
+    for (const forbidden of ["interests", "spend_style", "discovery", "energy", "rhythm"]) {
+      assert.ok(!t.travelStyle.some((d) => d.key === forbidden), `trips travelStyle leaked axis: ${forbidden}`);
+    }
+  });
+
+  it("reports languages as [] (never a fabricated 'Not set') when the owner set none", async () => {
+    // Same owner, minus spoken_languages — the axis then reads "Not set" and is
+    // flagged `inferred`, which must NOT become a language string.
+    const noLangDb = makePassportDb({
+      profiles: [{
+        id: OWNER, handle: "wanderer", display_name: "Wanderer", name: "Wanderer",
+        verified: true, is_private: false, passport_visibility: "public",
+        show_profile_picture_publicly: true, spoken_languages: [], created_at: "2023-01-01",
+      }],
+      trust_profiles: [{ user_id: OWNER, overall_score: 60, public_level: "trusted_traveler" }],
+    });
+    const t = (await buildConsumerProjection(
+      noLangDb, "trips", OWNER, VIEWER,
+      inject(resolution("trip_crew", permsFollowing())),
+    ))!;
+    assert.deepEqual(t.languages, []);
+  });
+
+  it("leaks nothing the FULL projection would not have shown this viewer", async () => {
+    // The property the variant exists to guarantee: it is a NARROWING. Every
+    // value it carries must be traceable to the same assembler output for the
+    // same viewer — so compare field by field against the full aggregate.
+    const res = resolution("trip_crew", permsFollowing());
+    const full = (await buildPassportProjection(seedDb(), OWNER, VIEWER, inject(res)))!;
+    const t = (await buildConsumerProjection(seedDb(), "trips", OWNER, VIEWER, inject(res)))!;
+
+    assert.equal(t.userId, full.userId);
+    assert.equal(t.viewerContext, full.viewerContext);
+    assert.equal(t.identity.name, full.identity.name);
+    assert.equal(t.identity.handle, full.identity.handle);
+    assert.equal(t.identity.avatarUrl, full.identity.avatarUrl);
+    assert.equal(t.identity.verified, full.identity.verified);
+    assert.equal(t.identity.verificationLevel, full.identity.verificationLevel);
+    assert.equal(t.identity.isOfficial, full.identity.isOfficial);
+    assert.equal(t.eligibility.canHostTrip, full.capabilities.owner.canHostTrip);
+    assert.equal(t.eligibility.canJoinPublicTrip, full.capabilities.owner.canJoinPublicTrip);
+    assert.equal(t.eligibility.canCreateLargePlan, full.capabilities.owner.canCreateLargePlan);
+    assert.equal(t.eligibility.canUseCrewLocation, full.capabilities.owner.canUseCrewLocation);
+    assert.equal(t.actions.can_message, full.capabilities.actions.can_message);
+    assert.equal(t.actions.can_invite_trip, full.capabilities.actions.can_invite_trip);
+    assert.equal(t.actions.can_make_plan, full.capabilities.actions.can_make_plan);
+
+    // Every trust domain on the variant appears verbatim on the full aggregate.
+    for (const d of t.trustDomains) {
+      const src = (full.trust?.domains ?? []).find((x) => x.key === d.key);
+      assert.ok(src, `variant invented trust domain ${d.key}`);
+      assert.equal(d.presentation, src!.presentation);
+      assert.equal(d.applicable, src!.applicable);
+    }
+    // Every travel-style axis appears verbatim on the full aggregate.
+    for (const d of t.travelStyle) {
+      const src = (full.travelIdentity?.dimensions ?? []).find((x) => x.key === d.key);
+      assert.ok(src, `variant invented travel axis ${d.key}`);
+      assert.equal(d.value, src!.value);
+    }
+    // Languages come from the same (viewer-filtered) languages axis.
+    const langAxis = (full.travelIdentity?.dimensions ?? []).find((x) => x.key === "languages");
+    assert.equal(t.languages.join(", "), langAxis && !langAxis.inferred ? langAxis.value : "");
+  });
+
+  it("host/guest context is 'none' outside a shared trip", async () => {
+    const t = (await buildConsumerProjection(
+      seedDb(), "trips", OWNER, VIEWER,
+      inject(resolution("following", permsFollowing())),
+    ))!;
+    assert.equal(t.hostGuestContext, "none");
+  });
+});
+
 // ── safety allow-list ────────────────────────────────────────────────────────────
 
 describe("safety variant — restricted purpose-specific only", () => {
@@ -281,6 +413,16 @@ describe("blocked viewer collapses every variant to its restricted shape (§24)"
     assert.deepEqual(b.credentials, []);
     assert.equal(b.trust, undefined);
     assert.equal(b.availability, undefined);
+  });
+
+  it("trips: restricted, no trust words, languages or travel style", async () => {
+    const t = (await buildConsumerProjection(seedDb(), "trips", OWNER, VIEWER, inject(blockedRes())))!;
+    assert.ok(t.restricted);
+    assert.deepEqual(t.trustDomains, []);
+    assert.deepEqual(t.languages, []);
+    assert.deepEqual(t.travelStyle, []);
+    assert.equal(t.hostGuestContext, "none", "a block collapses the relationship to the least-privileged context");
+    assert.equal(t.actions.can_message, false);
   });
 
   it("safety: restricted + blocked flag true", async () => {

@@ -937,27 +937,71 @@ cancelled two runs in three.
 3. **Exclusion is a wait, not a cancellation.**
    `.github/scripts/live-db-acquire-slot.sh` blocks until this run is the oldest
    active run of the workflow — a total order over a shrinking set, so exactly
-   one waiter is eligible and it cannot deadlock. Timing out exits 75 and the
-   run reports NOT EXECUTED.
-4. **Three verdict states.** `.github/scripts/live-db-verdict.sh` classifies the
+   one waiter is eligible and it cannot deadlock. The predicate itself lives in
+   `.github/scripts/live-db-slot-decide.sh`, which takes the run listing on
+   stdin and touches no network, so it is executed by the test suite rather than
+   trusted. Timing out exits 75 and the run reports NOT EXECUTED.
+4. **Every database job re-proves the slot in its own attempt.**
+   `needs: live-db-slot` is necessary and not sufficient — see below. Each DB
+   job runs the same script in `LIVE_DB_SLOT_ROLE=verify` as its first executing
+   step, before install, unconditionally, and fails closed.
+5. **Three verdict states.** `.github/scripts/live-db-verdict.sh` classifies the
    run PASS / FAIL / **NOT_EXECUTED**. Cancelled, skipped, starved, or an
    unrecognised job state all land on NOT_EXECUTED and exit non-zero. Absence of
    evidence is never a pass.
 
-`src/test/ciWorkflowArchitecture.test.ts` holds all four properties as a ratchet,
-and unit-tests the verdict classifier's behaviour rather than grepping the YAML
-for the word — an earlier version did grep, and a mutation that collapsed
-NOT_EXECUTED into FAIL survived it.
+`src/test/ciWorkflowArchitecture.test.ts` holds all five properties as a ratchet,
+and unit-tests the verdict classifier's and the slot decider's behaviour rather
+than grepping the YAML for a word — an earlier version did grep, and a mutation
+that collapsed NOT_EXECUTED into FAIL survived it.
+
+#### The re-run bypass (fixed 2026-09-05)
+
+`gh run rerun --failed` re-runs only the jobs that **failed**. The
+acquire-slot job had **succeeded**, so GitHub carried its result forward and the
+new attempt's database jobs started with `needs: live-db-slot` satisfied by a
+proof belonging to a previous attempt — having never asked whether the slot was
+still theirs.
+
+| run | attempt | acquire-slot | DB job |
+| --- | --- | --- | --- |
+| `33967089832` (main) | 1 | 12:49:14→13:06:58 | 13:08:09→13:15:46 |
+| `33967153487` (PR #408) | 1 | 12:51:13→13:17:10 | 13:17:56→13:23:28 |
+| `33967089832` (main) | 2 | **absent from the attempt** | 13:17:47→13:23:12 |
+
+The two attempts overlapped on the shared CI project for five and a half
+minutes. Five suites went red across the two runs — `memory-lifecycle`,
+`memory-projection-lifecycle`, `profile-role-not-self-writable`,
+`local-guide-self-promotion`, `rbp-self-verification` — all with "my fixture row
+vanished" errors, and the code under test was correct in every one of them.
+
+The structural lesson is that **the job that proves the slot must be the job that
+uses it**, because only then does re-running the user re-run the proof. So the
+predicate is now re-asserted inside each DB job. It is cheap: the predicate is
+about the RUN, and a run stays `in_progress` until all its jobs finish, so once a
+run is the oldest it stays the oldest — all four jobs satisfy the check at the
+same instant and nothing extra is serialized. In the normal path the queue job
+has already drained the queue and the verify returns on its first poll.
 
 #### Known limitation, stated rather than hidden
 
-Within a single run, `api-server-check-all`, `schema-drift`,
-`post-media-revocation-rehearsal` and `live-db-security-suites` all declare only
-`needs: [preflight, live-db-slot]` and therefore run **concurrently against the
-same database**. The old global group never prevented that either — it serialized
-runs, not database access — so this is pre-existing, not introduced. Serializing
-those four would roughly quadruple wall-clock for every run; that trade has not
-been made, and is a separate decision.
+The slot is held by the **run**, so it cannot separate two jobs of the *same*
+run, and the verify step above does not claim to. The dependency graph now
+serializes the DB jobs into two waves rather than four abreast —
+`{api-server-check-all, schema-drift}`, then
+`{post-media-revocation-rehearsal, live-db-security-suites}`, the latter two
+having gained `needs: schema-drift` so no suite asserts schema state mid-apply —
+but two jobs of one run still overlap on the database.
+
+What keeps them from colliding today is that they own disjoint fixtures:
+distinct fixture-email prefixes (`isSweepableFixtureUser` in
+`src/test/liveFixtureUsers.ts` additionally refuses to delete an account that
+belongs to any run but this process's, unless it is too old to be live) and
+distinct row keys. That is a convention, not an enforced boundary. Enforcing it
+needs a **per-job** mutual exclusion the run id cannot express — a
+`pg_advisory_lock` or a lease row in the CI project keyed by job name and held
+for the job's duration — which serializes the waves and roughly doubles
+wall-clock. That trade has not been made, and is a separate decision.
 
 #### Observing the lane
 

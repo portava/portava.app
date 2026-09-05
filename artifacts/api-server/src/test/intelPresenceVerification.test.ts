@@ -285,7 +285,7 @@ describe("I3 presence — flag ON, rung P2 (geofence + dwell/interaction)", () =
     assert.equal(rec[0].level_reached, "P1");
   });
 
-  it("outside the geofence ⇒ P1 even with dwell evidence; only a distance BUCKET is recorded", async () => {
+  it("AT-06: outside the geofence ⇒ P1 even with dwell evidence; only a distance BUCKET is recorded", async () => {
     const db = makeDb(ON, { location_snapshots: [snapshot(OUTSIDE, at(0)), snapshot(OUTSIDE, at(20 * MIN))] });
     const obs = await capture(db, { presenceLevel: "P2" });
     assert.equal(obs.presence_level, "P1");
@@ -354,7 +354,7 @@ describe("I3 presence — flag ON, rung P3 (receipt media)", () => {
     assert.equal(db._tables.intel_presence_verifications[0].level_reached, "P3");
   });
 
-  it("refusals keep P2: not owner / outside window / evidence-breaking edit / private / not ready / moderation-blocked / no reference", async () => {
+  it("AT-16 / AT-17: refusals keep P2 — not owner / outside window / evidence-breaking edit / private / not ready / moderation-blocked / no reference", async () => {
     const cases: Array<[string, Row | null, string]> = [
       ["not_owner", { owner_user_id: OTHER }, "receipt:not_owner"],
       ["outside_window", { provenance: { sourceType: "camera", capturedAt: at(5 * 60 * MIN), editHistory: [] }, captured_at: at(5 * 60 * MIN) }, "receipt:outside_window"],
@@ -402,7 +402,7 @@ describe("I3 presence — flag ON, rung P4 (mission nonce)", () => {
     assert.equal(db._tables.intel_presence_verifications[0].method, "mission_nonce");
   });
 
-  it("a REPLAYED nonce (second capture) is refused ⇒ P2, refusal mission:replayed", async () => {
+  it("AT-15: a REPLAYED nonce (second capture) is refused ⇒ P2, refusal mission:replayed", async () => {
     const minted = mintMissionNonce(MISSION, ACTOR);
     const db = withMission(minted.digest);
     assert.equal((await capture(db, claimP4(minted.token))).presence_level, "P4");
@@ -411,7 +411,7 @@ describe("I3 presence — flag ON, rung P4 (mission nonce)", () => {
     assert.ok(again.presence_attestation.verifier.refusals.includes("mission:replayed"));
   });
 
-  it("a FORGED nonce (well-formed but wrong) ⇒ P2, refusal mission:forged; nonce not consumed", async () => {
+  it("AT-15: a FORGED nonce (well-formed but wrong) ⇒ P2, refusal mission:forged; nonce not consumed", async () => {
     const minted = mintMissionNonce(MISSION, ACTOR);
     const db = withMission(minted.digest);
     const forged = "f".repeat(MISSION_NONCE_TOKEN_HEX_LENGTH);
