@@ -12,6 +12,7 @@
 import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../../lib/http.js";
+import { projectionKeys, projectRow } from "./selectProjection.js";
 
 export interface TableSpec {
   rows?: any[];
@@ -53,10 +54,17 @@ function parseInList(raw: unknown): string[] {
 function buildQuery(spec: TableSpec) {
   let rows = [...(spec.rows ?? [])];
   const err = spec.error ?? null;
-  const result = () => (err ? { data: null, error: err } : { data: rows, error: null });
+  // `null` = do not project (the historical behaviour: the whole seeded row).
+  // Narrowing happens on the way OUT only — the real database filters and sorts
+  // on the full row and projects last, and filtering on an unselected column is
+  // legal PostgREST. See selectProjection.ts.
+  let projection: Array<[string, string]> | null = null;
+  const narrow = (rs: any[]) => (projection ? rs.map((r) => projectRow(r, projection!)) : rs);
+  const narrowOne = (r: any) => (r && projection ? projectRow(r, projection) : r);
+  const result = () => (err ? { data: null, error: err } : { data: narrow(rows), error: null });
 
   const q: any = {
-    select() { return q; },
+    select(fields?: string) { projection = projectionKeys(fields); return q; },
     order() { return q; },
     range() { return q; },
     limit(n: number) { rows = rows.slice(0, n); return q; },
@@ -107,10 +115,10 @@ function buildQuery(spec: TableSpec) {
       return q;
     },
     maybeSingle() {
-      return Promise.resolve(err ? { data: null, error: err } : { data: rows[0] ?? null, error: null });
+      return Promise.resolve(err ? { data: null, error: err } : { data: narrowOne(rows[0] ?? null), error: null });
     },
     single() {
-      return Promise.resolve(err ? { data: null, error: err } : { data: rows[0] ?? null, error: null });
+      return Promise.resolve(err ? { data: null, error: err } : { data: narrowOne(rows[0] ?? null), error: null });
     },
     then(resolve: (v: any) => void, reject?: (e: any) => void) {
       return Promise.resolve(result()).then(resolve, reject);
