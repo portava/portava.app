@@ -22,6 +22,14 @@
  *   • NO precise media location leaves this router. The projectors are coarse by
  *     construction; scrubPreciseLocation is a fail-closed boundary backstop that
  *     removes (and counts) any coordinate key a regression might reintroduce.
+ *   • COARSE IS NOT THE SAME AS SAFE. Place-level IS the venue: a projection's
+ *     `placeLabel` is the stored `location_name` and its `placeId` resolves to
+ *     that same venue through the Map gateway. Every projection here therefore
+ *     goes through MediaProjectionService.projectCandidatesProtected — the
+ *     lib/mediaLocationVisibility choke point — so the OWNER's
+ *     `location_privacy_mode` and any hosting Hidden Gem's ceiling bind before
+ *     the venue is named. scrubPreciseLocation stays the last line, not the
+ *     first.
  *   • NO fabricated live/"busy now": current state comes only from the gated
  *     live-claim read, which returns nothing when live is off/stale/unpromoted.
  *   • Empty data yields a well-formed empty projection, never an error
