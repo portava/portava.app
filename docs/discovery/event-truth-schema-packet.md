@@ -65,15 +65,48 @@ on" are different facts about different moments, and the second overwrites the
 first.
 
 **(b) Every impression count is biased, in the worst possible direction.**
-`reportDiscoveryServePoints.ts:121` filters `.eq("outcome", "impression")`. So
-**the serve-point report systematically undercounts serves by exactly the ones
+`reportDiscoveryServePoints.ts:121` filtered `.eq("outcome", "impression")`. So
+**the serve-point report systematically undercounted serves by exactly the ones
 that converted.** The more successful a placement, the more invisible it
-becomes. Any engagement rate computed this way has its numerator removed from
+became. Any engagement rate computed that way had its numerator removed from
 its denominator.
 
 > This lands directly on the **deferred D5 empirical check**. That check reads
 > serve-point shares from this exact query. It was already gated on reachability
 > (Phase B) and on launch; it is **also** gated on this, and nobody knew.
+
+> #### ✅ (b) IS FIXED — PR #387, 2026-09-04. (a) AND (c) ARE NOT.
+>
+> The report no longer reads the corpus through `outcome` at all. It selects by
+> **`event_type IS NULL`** — the documented ranked/impression corpus
+> (`lib/rankLog.ts`, migration `0197`) — in `fetchDiscoveryServeRows`
+> (`lib/discoveryServePointReport.ts:574#fetchDiscoveryServeRows`, predicate at `:589#event_type`), which keeps
+> every serve whatever rung its outcome later reached and excludes the
+> analytics-sentinel rows the outcome route inserts (`event_type` set,
+> `outcome='analytics'`). A regression test proves a converted serve survives
+> alongside an impressed one and that restoring the `outcome` filter turns red.
+>
+> **The bias was worse than "some serves are missing": it was differential.** The
+> serve points that rank convert best, so the ranked share — the exact quantity
+> the D5 check reads — was pushed down by precisely the serves that reached a
+> ranker. **Any serve-point reading taken before `4cc19af82` is a floor, not a
+> measurement**, and is not comparable with one taken after.
+>
+> **This changes nothing about §1's finding.** (a) the impression fact is still
+> erased by the in-place UPDATE, and (c) the funnel between stages is still
+> unreconstructable. What #387 fixed is an *instrument* that had been reading the
+> mutable column; the mutability itself is untouched and is still what Event
+> Truth exists to answer.
+
+> #### The fourth, quieter loss is narrower than it was — PR #365, 2026-09-04
+>
+> The paragraph below says a repeat exposure "silently fails to attach outcomes"
+> because the finder filtered on `outcome = 'impression'`. It no longer does: an
+> outcome now upgrades any row on a strictly **lower funnel rung**
+> (`routes/rankEvents.ts:111` `upgradableOutcomesFor`, applied at `:171`), so a
+> tap→save chain lands as `save` instead of 404ing after the tap consumed the
+> row. **The overwrite is still in place** — the tap is still destroyed by the
+> save — so this narrows the loss and does not remove it.
 
 **(c) The funnel between stages cannot be reconstructed.** A tap followed by a
 save overwrites the tap. `impression → tap → save → attended` is the funnel the
@@ -97,8 +130,8 @@ the same reason.
 | Fact | Where | Class |
 |---|---|---|
 | an item was served, to an authenticated user | `rank_events` via `logImpression` / `logDiscoveryServe` | **until an outcome overwrites it** |
-| which of the 9 serve points served it | `features.servePoint` (Stage 0) | live |
-| ranking features for the item | `features` jsonb — **only on serve point 6**; `{}` elsewhere (`rankLog.ts:202`, `:425`) | partial |
+| which of the **10** serve points served it | `features.servePoint` (Stage 0). *Corrected 2026-09-05: it was 9 when this was written; `COMMUNITY` (10) was added to `DiscoveryServePoint` afterwards* | live |
+| ranking features for the item | `features` jsonb — **only where `logImpression` is handed scored candidates**: serve point 6 today, and cache-A serve points 1–3 under mode `pde`, which is off (`routes/discovery.ts:1705`, `:2021`). `{}` on every other serve point | partial |
 | destination / category / cache level / engine mode | `features` context | live |
 | the served **page** under shadow mode | `discovery_shadow_serves.legacy_ids` / `pde_ids` | append-only ✓ |
 | **anything about a candidate that was not served** | — | **nothing** |
@@ -185,7 +218,7 @@ existing table can.**
 | `stage` | `retrieved` → `eligible` → `filtered` → `ranked` → `served` — **the furthest stage reached** |
 | `excluded_at_stage`, `exclusion_reason` | e.g. `filter:min_rating`, `filter:age_gate`, `dedup:name_collision`, `page:below_fold` |
 | `score`, `rank_position` | |
-| `features` jsonb | the per-feature contributions, which `ScoredCandidate.features` already computes and currently discards for 8 of 9 serve points |
+| `features` jsonb | the per-feature contributions, which `ScoredCandidate.features` already computes and currently discards for 9 of the 10 serve points |
 | `viable` bool | **eligible and not excluded** — i.e. it *could* have been served |
 
 ### `discovery_exposures` — what was actually delivered
