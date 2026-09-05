@@ -105,11 +105,6 @@ describe("matchesFixtureEmail — what a purge is allowed to delete", () => {
  * the suite list the WORKFLOW actually runs rather than a list copied by hand —
  * a suite added to CI and not to this list would otherwise be unguarded.
  *
- * The rule is conditional, not blanket: a live suite that creates no auth users
- * (rlsPolicyShapeLive inspects pg_policy and touches no fixture account) has
- * nothing to scope and is exempted by construction, not by an allowlist that
- * would rot.
- *
  * The rule is per-ADDRESS, not per-file. "This file calls fixtureEmail somewhere"
  * was the first version and it was too weak to be worth having: reverting ONE of
  * memoryLifecycleLive's four addresses left the other three wrapped, so the file
@@ -117,7 +112,9 @@ describe("matchesFixtureEmail — what a purge is allowed to delete", () => {
  * Every fixture-domain literal must itself be the argument to fixtureEmail().
  *
  * As of this commit that holds for all 26 live suites with no exemptions, so
- * there is no allowlist to rot.
+ * there is no allowlist to rot. A suite with no fixture addresses at all
+ * (rlsPolicyShapeLive inspects pg_policy and touches no account) is exempt by
+ * construction: it contributes no literals to scan.
  */
 
 /**
@@ -147,6 +144,8 @@ function stripComments(source: string): string {
  */
 const FIXTURE_ADDRESS_LITERAL =
   /(fixtureEmail\(\s*)?(["'`])((?:[^"'`\\]|\\.)*?@(?:example\.com|portava-test\.invalid))\2/g;
+
+/** Walk up to the repo root, identified by the live-DB workflow this guard reads. */
 function repoRoot(): string {
   let dir = dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 8; i++) {
