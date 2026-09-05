@@ -11,7 +11,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { projectAndStore, PROJECTION_ALGORITHM_VERSION } from "../lib/intelProjection.js";
-import { replayVersion, replaySnapshotVersion, parseReplayRecord } from "../lib/intelReplay.js";
+import {
+  replayVersion, replaySnapshotVersion, parseReplayRecord,
+  auditSnapshotReplays, tallyReplayResults, REPLAY_AUDIT_DEFAULT_LIMIT,
+  type ReplayResult,
+} from "../lib/intelReplay.js";
 import { SEED_FRESHNESS_POLICIES, invalidateFreshnessPolicyCache, FRESHNESS_CURVE_VERSION, freshnessScore } from "../lib/freshnessPolicy.js";
 import { PRIVACY_THRESHOLD_V1, CLAIM_TYPES } from "../lib/intelContracts.js";
 
@@ -162,5 +166,148 @@ describe("intelReplay — a changed formula/algorithm version is REPORTED as div
     const r = replayVersion({ id: "v", subject_id: "p", zone_id: "", claim_type: "crowd.level", confidence: 0.5, confidence_band: "provisional", confidence_components: null, algorithm_version: PROJECTION_ALGORITHM_VERSION });
     assert.equal(r.status, "diverged");
     assert.deepEqual(r.reasons, ["replay_record_missing"]);
+  });
+});
+
+// ── The lineage AUDIT: the driver 2273 was written for and never had ─────────
+//
+// `replayVersion` had no non-test caller, so the lineage every projection writes
+// was never once checked. `auditSnapshotReplays` is the batch driver behind
+// `report:intel-lineage-audit` (spec §21 "lineage and correction consistency
+// audit nightly"). The rows it replays here are produced by the REAL writer
+// (projectAndStore), never hand-built.
+
+/** The fake client above, extended with the batch read the audit performs. */
+function auditClient(opts: { readError?: boolean } = {}) {
+  const base = client() as any;
+  const inner = base.from.bind(base);
+  base.from = (table: string) => {
+    if (table !== "intel_state_snapshot_versions") return inner(table);
+    const single = inner(table);
+    return {
+      ...single,
+      select: (_cols?: string) => {
+        const rows = () => (opts.readError
+          ? { data: null, error: { message: "boom" } }
+          : { data: [...base.versions], error: null });
+        const chain: any = {
+          eq: (_c: string, id: string) => ({
+            maybeSingle: async () => opts.readError
+              ? { data: null, error: { message: "boom" } }
+              : { data: base.versions.find((v: any) => v.id === id) ?? null, error: null },
+            // the audit narrows by subject_id, then orders/limits
+            order: () => chain,
+            limit: async () => rows(),
+          }),
+          gte: () => chain,
+          order: () => chain,
+          limit: async () => rows(),
+        };
+        return chain;
+      },
+    };
+  };
+  return base;
+}
+
+describe("auditSnapshotReplays — the nightly lineage audit", () => {
+  beforeEach(() => invalidateFreshnessPolicyCache());
+
+  it("replays every stored version and reports CLEAN when they all reproduce", async () => {
+    const c = auditClient();
+    await projectAndStore(c, "place-1", [input], { now: NOW });
+    await projectAndStore(c, "place-2", [input], { now: NOW });
+    const r = await auditSnapshotReplays(c);
+    assert.equal(r.readError, null);
+    assert.equal(r.scanned, 2);
+    assert.equal(r.equal, 2);
+    assert.equal(r.diverged, 0);
+    assert.deepEqual(r.reasons, {});
+    assert.equal(r.clean, true);
+  });
+
+  it("AN EMPTY TABLE IS NOT A PASS — absence of evidence is not evidence of absence", async () => {
+    const r = await auditSnapshotReplays(auditClient());
+    assert.equal(r.scanned, 0);
+    assert.equal(r.diverged, 0);
+    assert.equal(r.clean, false, "zero rows scanned proves nothing and must never report clean");
+  });
+
+  it("a read failure is reported, never dressed as a clean audit", async () => {
+    const r = await auditSnapshotReplays(auditClient({ readError: true }));
+    assert.equal(r.clean, false);
+    assert.ok(r.readError);
+    assert.equal(r.scanned, 0);
+  });
+
+  it("no client is an error, never a silent pass", async () => {
+    const r = await auditSnapshotReplays(null);
+    assert.equal(r.clean, false);
+    assert.ok(r.readError);
+  });
+
+  it("catches a row whose stored confidence disagrees with a replay of its own inputs", async () => {
+    const c = auditClient();
+    await projectAndStore(c, "place-1", [input], { now: NOW });
+    await projectAndStore(c, "place-2", [input], { now: NOW });
+    // Corrupt ONE stored row the way a hand edit or a non-deterministic formula would.
+    (c as any).versions[1].confidence = Number((c as any).versions[1].confidence) + 0.05;
+    const r = await auditSnapshotReplays(c);
+    assert.equal(r.scanned, 2);
+    assert.equal(r.equal, 1);
+    assert.equal(r.diverged, 1);
+    assert.equal(r.reasons.confidence_mismatch, 1);
+    assert.equal(r.clean, false);
+    assert.deepEqual(r.divergedVersionIds, [(c as any).versions[1].id]);
+  });
+
+  it("reports a version bump as a version change, distinct from a data defect", async () => {
+    const c = auditClient();
+    await projectAndStore(c, "place-1", [input], { now: NOW });
+    const r = await auditSnapshotReplays(c, { algorithmVersion: `${PROJECTION_ALGORITHM_VERSION}+next` });
+    assert.equal(r.diverged, 1);
+    assert.equal(r.reasons.algorithm_version_changed, 1);
+    assert.equal(r.reasons.confidence_mismatch ?? 0, 0, "the stored answer still reproduces — only the version moved");
+    assert.equal(r.clean, false);
+  });
+});
+
+describe("tallyReplayResults — the audit arithmetic, on its own", () => {
+  const eq = (id: string): ReplayResult => ({
+    status: "equal", versionId: id, reasons: [],
+    stored: { confidence: 1, band: "strong", algorithmVersion: "a", formulaVersion: 1 },
+    recomputed: { confidence: 1, band: "strong", algorithmVersion: "a", formulaVersion: 1 },
+  });
+  const bad = (id: string, reasons: ReplayResult["reasons"]): ReplayResult => ({ ...eq(id), status: "diverged", reasons });
+
+  it("counts each reason a diverged row raises, and a row may raise several", () => {
+    const t = tallyReplayResults([
+      eq("a"),
+      bad("b", ["confidence_mismatch", "band_mismatch"]),
+      bad("c", ["confidence_mismatch"]),
+    ]);
+    assert.equal(t.scanned, 3);
+    assert.equal(t.equal, 1);
+    assert.equal(t.diverged, 2);
+    assert.equal(t.reasons.confidence_mismatch, 2);
+    assert.equal(t.reasons.band_mismatch, 1);
+    assert.equal(t.clean, false);
+  });
+
+  it("caps the reported id list and SAYS it was truncated", () => {
+    const rows = Array.from({ length: 5 }, (_, i) => bad(`v${i}`, ["confidence_mismatch"]));
+    const t = tallyReplayResults(rows, 2);
+    assert.equal(t.diverged, 5, "the COUNT is never truncated, only the id list");
+    assert.deepEqual(t.divergedVersionIds, ["v0", "v1"]);
+    assert.equal(t.divergedTruncated, true);
+  });
+
+  it("an empty batch is not clean", () => {
+    assert.equal(tallyReplayResults([]).clean, false);
+    assert.equal(tallyReplayResults([eq("a")]).clean, true);
+  });
+
+  it("the default batch limit is a positive integer the script can rely on", () => {
+    assert.ok(Number.isInteger(REPLAY_AUDIT_DEFAULT_LIMIT) && REPLAY_AUDIT_DEFAULT_LIMIT > 0);
   });
 });
