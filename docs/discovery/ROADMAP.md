@@ -456,7 +456,7 @@ only `outcome='impression'` (`routes/rankEvents.ts:111#upgradableOutcomesFor`, `
 followed by a save no longer 404s — but the update is **still in place**, so the
 tap is still overwritten and the transition is still unrecoverable. #387 stopped
 the serve-point report reading the corpus through `outcome` at all
-(`event_type IS NULL`, `lib/discoveryServePointReport.ts:540#event_type`). **Neither makes
+(`event_type IS NULL`, `lib/discoveryServePointReport.ts:587#event_type`). **Neither makes
 `rank_events` an event log.** The mutability is the constraint; only the
 instruments that used to depend on the mutable column have been moved off it.
 
@@ -570,6 +570,32 @@ by row, each row cited to a file and line. The walk is recorded below the table:
 > It cannot check a claim nobody wrote as a citation, and it cannot tell you a
 > `DONE` is wrong. It removes exactly one failure mode — the citation that was
 > true when it was typed.
+>
+> **What this guard does not catch — stated plainly so nobody reads a green
+> check as "the docs are accurate".** The list is short and every item is a way
+> a false claim passes today:
+>
+> - **Uncited prose passes.** "The governor spreads slots across the tail" is
+>   checked by nothing. Only text shaped `file.ts:NNN` is evaluated at all.
+> - **An unanchored `file.ts:NNN` is only a length test.** It asserts that the
+>   file exists and has at least NNN lines. Every number inside a 3200-line
+>   route file passes, whatever it points at. That is why the anchored form is
+>   the one used wherever a reader would act on the citation, and why the
+>   anchored count carries a floor.
+> - **A bare basename resolves repo-wide.** A citation written as a basename
+>   with no directory prefix — a line number on a bare `discovery.ts`, say —
+>   matches *any* file of that name anywhere in the tree and passes if the
+>   longest candidate is long enough; the checker reports the multi-candidate
+>   case as INFO, not as a failure. Write the path prefix if the target matters.
+> - **Two whole categories are reported, not enforced.** As of 2026-09-05:
+>   **82** bare `:NNN` specs with no file named on their own line (unevaluable —
+>   76 of them in `phase-minus-1-repository-proof.md`) and **17** citations
+>   whose path matches more than one repo file. Both print as INFO and neither
+>   can turn the check red.
+>
+> So the guard's reach is exactly: *a citation someone wrote in the anchored
+> form, in a covered file, still points at the text it named.* Everything
+> outside that is unverified, and a clean run says nothing about it.
 
 ### Status reconciliation — 2026-09-05
 
@@ -635,10 +661,10 @@ no state at all, so they were invisible there too. It now carries state.
 | **impression-path exposure denominator** (#365) | `content_distribution_stats.eligible_impressions` is incremented where the impression is written (`lib/rankLog.ts:154#recordImpressionDistributionStats`, `:248`; `lib/discoveryServeLog.ts:241#recordImpressionDistributionStats`), and the outcome route no longer touches it (`routes/rankEvents.ts:235-241#content_distribution_stats`). The denominator was previously a count of **conversions** | Fixes the `03_Trending` defect the architecture status list carried as open |
 | **discovery-surface outcome reporting** (#365) | An outcome now upgrades any row on a strictly **lower funnel rung** rather than only `outcome='impression'` (`routes/rankEvents.ts:111#upgradableOutcomesFor`, `:171`), so a tap→save chain lands as `save` instead of 404ing | Step 2 (Event Truth) is still the answer; this stops one class of loss on the way there |
 | **pde-aware serve-point report** (#366) | Ranked-ness is read from the row — `features.rankedInRequest` (`lib/discoveryServePointReport.ts:171`) — not from a static serve-point set, so a pde-ranked cache-A serve counts as ranked | Instrument for step 1 / Phase E step 3 |
-| **capped `local_momentum`** (#366) | `lib/discoveryLocalMomentum.ts:96` computes a 48h-vs-baseline place velocity; `portavaRank.ts:152` caps its contribution at `LOCAL_MOMENTUM_MAX_CONTRIBUTION = 0.15`, clamped at `:337-338` | **Step 7** — *"capped `local_momentum` as modifiers only"*, built to the words |
-| **exploration governor** (#366) | `allocateExplorationBudget` (`services/ranking/FeedSlotAllocator.ts:461`) — budget clamped to 15–25 % (`:356-357`), slots spread rather than pinned, four **reason codes** per pick (`governorReasonsFor`, `:436`). With the flag off it computes the allocation and applies nothing | **Step 8** — *"budget ~15–25 % with reason codes, not fixed positions"* |
+| **capped `local_momentum`** (#366) | `lib/discoveryLocalMomentum.ts:152#velocity` computes a 48h-vs-baseline place velocity; `portavaRank.ts:152` caps its contribution at `LOCAL_MOMENTUM_MAX_CONTRIBUTION = 0.15`, clamped at `:337-338` | **Step 7** — *"capped `local_momentum` as modifiers only"*, built to the words |
+| **exploration governor** (#366) | `allocateExplorationBudget` (`services/ranking/FeedSlotAllocator.ts:463#allocateExplorationBudget`) — budget bounds declared at `:358-359#GOVERNOR_BUDGET_MIN_PCT` (15 and 25) and applied by the clamp at `:434#GOVERNOR_BUDGET_MAX_PCT`, slots spread rather than pinned, four **reason codes** per pick (`governorReasonsFor`, `:438#governorReasonsFor`). With the flag off it computes the allocation and applies nothing | **Step 8** — *"budget ~15–25 % with reason codes, not fixed positions"* |
 | **graph node kinds** (#366) | `circle` + `experience` admitted to the Compass graph (`migrations/2290_intelligence_graph_node_kinds.sql`) | Feeds step 7's *graph as modifier* |
-| **serve-point report corpus** (#387) | `fetchDiscoveryServeRows` selects by **`event_type IS NULL`** (`lib/discoveryServePointReport.ts:529#fetchDiscoveryServeRows`, predicate at `:540`), never by `outcome` | Repairs the instrument Phase E step 3 reads — see below |
+| **serve-point report corpus** (#387) | `fetchDiscoveryServeRows` selects by **`event_type IS NULL`** (`lib/discoveryServePointReport.ts:572#fetchDiscoveryServeRows`, predicate at `:587#event_type`), never by `outcome` | Repairs the instrument Phase E step 3 reads — see below |
 | **`/discovery/feed` client callers** (#382) | Serve point 7 had no caller in the repo; it has two now (`travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx`, `ForYouTab.tsx:428`) | Reachability of the surface Phase B measures |
 
 #### #387 changes what an old serve-point reading means, and that is worth stating
@@ -921,7 +947,7 @@ The state column is now maintained under the same rule as the phase table.
 | **5** | **PORTABLE TASTE** | **NOT STARTED** | Learned across destinations from **strong events**, with confidence **per taste dimension** |
 | **6** | **CANDIDATE GENERATION** | **NOT STARTED as a step** — Cache A already holds a user-independent candidate set (D5=B's retrieval half) | |
 | **7** | **CONTEXTUAL RANKING** | **PARTIAL, FLAG-GATED OFF.** `local_momentum` built and **capped** to `0.15` (`portavaRank.ts:152`), graph node kinds admitted (`2290`), all behind `discovery_ranking_modifiers_enabled` seeded OFF (`2289`) — #366 | **Taste as the spine**; graph, behaviour, trails and **capped `local_momentum` as modifiers only** |
-| **8** | **GOVERNOR** | **BUILT, INERT.** `allocateExplorationBudget` (`FeedSlotAllocator.ts:461`): budget clamped 15–25 %, spread slots, four reason codes. With the flag off it computes the allocation and **applies nothing** — #366 | Exploration and diversity **allocator** — budget ~**15–25 %** with **reason codes**, *not fixed positions* |
+| **8** | **GOVERNOR** | **BUILT, INERT.** `allocateExplorationBudget` (`FeedSlotAllocator.ts:463#allocateExplorationBudget`): budget clamped 15–25 %, spread slots, four reason codes. With the flag off it computes the allocation and **applies nothing** — #366 | Exploration and diversity **allocator** — budget ~**15–25 %** with **reason codes**, *not fixed positions* |
 | **9** | **LEARNED RESIDUAL** | **NOT STARTED — and must stay that way.** Its entry condition is *trustworthy outcomes*, and step 2 is unbuilt | **Only after trustworthy outcomes exist.** It must **improve the explicit model**, and an **unexplainable high-confidence prediction must CONSTRAIN how aggressively it is exploited** |
 | **10** | **OPTIMISE AGAINST TRIP OUTCOMES** | **NOT STARTED** | |
 
@@ -1168,7 +1194,7 @@ Two separate problems, and the second is the more serious:
 a server-held `FOURSQUARE_API_KEY` (`lib/foursquarePlaces.ts:41#FOURSQUARE_API_KEY`),
 same API version (`lib/foursquarePlaces.ts:16#FSQ_API_VERSION`) *(both re-cited
 2026-09-05; they read lines 35 and 15 and the file has moved under them)*. A
-`GET /places/photo` endpoint already exists (`routes/places.ts:430`) but is
+`GET /places/photo` endpoint already exists (`routes/places.ts:773#/places/photo`) but is
 **Google-backed**, so it is a sibling rather than a drop-in.
 
 **Steps**
@@ -1556,7 +1582,7 @@ built ready-to-run.
    > (`features.rankedInRequest`, `lib/discoveryServePointReport.ts:171`) instead
    > of a static serve-point set, so a pde-ranked cache-A serve now counts as
    > ranked. **#387** replaced the serve corpus predicate: it is
-   > `event_type IS NULL` (`lib/discoveryServePointReport.ts:540#event_type`), never `outcome='impression'`, because the
+   > `event_type IS NULL` (`lib/discoveryServePointReport.ts:587#event_type`), never `outcome='impression'`, because the
    > outcome route UPDATEs a served row in place and the old filter therefore
    > dropped every serve that converted — **differentially, and against the
    > ranked serve points, which convert best.**

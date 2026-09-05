@@ -131,8 +131,16 @@ export const COVERED = [
 // against rather than trusted. RAISING this number is expected. LOWERING it is
 // a deliberate reduction in coverage and must be justified in the PR that does
 // it — not done to make a red build green.
+//
+// SHRINK-ONLY: this sits AT the measured count, not below it. It was first
+// written as 40 against a measured 42, and a floor with slack is a floor that
+// absorbs two silent regressions before it says anything. 2026-09-05 re-anchored
+// the six stale `discoveryServePointReport.ts` citations plus the governor,
+// momentum, photo-route and ranked-set ones; the measured count is now 55, so
+// the floor is 55. Whoever adds anchors next should move this number up with
+// them in the same PR — that is the ratchet doing its job, not a chore.
 // ---------------------------------------------------------------------------
-export const MIN_ANCHORED_CITATIONS = 40;
+export const MIN_ANCHORED_CITATIONS = 55;
 
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 
