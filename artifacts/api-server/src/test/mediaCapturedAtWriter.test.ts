@@ -117,10 +117,8 @@ describe("capturedAtFromImageBytes — the §6 clock", () => {
 
 // ── The route supplies it ─────────────────────────────────────────────────────
 
-const SB = "https://storage.test";
 const TOKEN = "tok";
 const USER_ID = "user-1";
-const OLD_SUPABASE_URL = process.env.SUPABASE_URL;
 
 let server: http.Server;
 let base = "";
@@ -218,7 +216,7 @@ function makeClient(flags: Record<string, boolean>) {
             return { data: { path }, error: null };
           },
           getPublicUrl(path: string) {
-            return { data: { publicUrl: `${SB}/storage/v1/object/public/${bucket}/${path}` } };
+            return { data: { publicUrl: `${bucket}/${path}` } };
           },
           async remove(paths: string[]) {
             return { data: paths, error: null };
@@ -244,7 +242,6 @@ async function settle(): Promise<void> {
 
 describe("POST /api/media/upload — supplies captured_at to the canonical write", () => {
   before(async () => {
-    process.env.SUPABASE_URL = SB;
     const app = express();
     app.use(express.json());
     app.use((r: any, _res: any, next: any) => {
@@ -261,7 +258,6 @@ describe("POST /api/media/upload — supplies captured_at to the canonical write
   });
 
   after(async () => {
-    process.env.SUPABASE_URL = OLD_SUPABASE_URL;
     _clearTestClient();
     await new Promise<void>((r) => server.close(() => r()));
   });
