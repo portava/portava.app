@@ -132,13 +132,59 @@ export interface YearbookProjection {
    * Which collections this viewer was permitted to aggregate over. A `false`
    * here is why a line is missing — the yearbook says so rather than silently
    * under-counting.
+   *
+   * This is a PERMISSION/AVAILABILITY flag, never a has-content flag: a
+   * collection that is fully included but simply empty stays `true`, so an
+   * owner with no trips is never told their trips were withheld.
    */
-  included: {
-    journeys: boolean;
-    stamps: boolean;
-    memories: boolean;
-    travelDna: boolean;
-  };
+  included: Record<YearbookCollection, boolean>;
+  /**
+   * One entry per collection whose `included` is false, naming WHY. Without
+   * this the surface can only guess at a reason, and guessing produced a false
+   * explanation ("hidden by your visibility settings") for owners who simply
+   * had no content in a collection.
+   */
+  exclusions: YearbookExclusion[];
+}
+
+/** The four collections a yearbook aggregates over. */
+export type YearbookCollection = "journeys" | "stamps" | "memories" | "travelDna";
+
+/** Stable render order for the exclusion list. */
+const YEARBOOK_COLLECTIONS: readonly YearbookCollection[] = [
+  "journeys",
+  "stamps",
+  "memories",
+  "travelDna",
+];
+
+export interface YearbookExclusion {
+  collection: YearbookCollection;
+  /**
+   * `visibility` — the owner's passport visibility settings (or, for a viewer,
+   * the trips gate) forbid this viewer the collection.
+   * `unavailable`  — the underlying reader failed, so the collection could not
+   * be counted at all. NOT a privacy statement.
+   */
+  reason: "visibility" | "unavailable";
+}
+
+/**
+ * Turn the permission flags plus the set of readers that failed into the
+ * per-collection reasons the surface renders. A failed read always wins: it is
+ * the true reason the collection is absent, and calling it a visibility choice
+ * would tell the owner something untrue about their own settings.
+ */
+function exclusionsFor(
+  included: Record<YearbookCollection, boolean>,
+  failed: ReadonlySet<YearbookCollection>,
+): YearbookExclusion[] {
+  const out: YearbookExclusion[] = [];
+  for (const collection of YEARBOOK_COLLECTIONS) {
+    if (included[collection]) continue;
+    out.push({ collection, reason: failed.has(collection) ? "unavailable" : "visibility" });
+  }
+  return out;
 }
 
 /** Viewer permissions, mirroring the Journeys surface plus the caller context. */
@@ -374,6 +420,7 @@ function journeyLines(bucket: YearBucket): YearbookLine[] {
  *
  * `orderedStamps` is the viewer-permitted stamp collection sorted OLDEST first,
  * so the running totals are true cumulative history, not a per-year restart.
+ * Only dated stamps count toward those totals — see the guard in the loop.
  */
 function stampMilestoneLines(
   year: number,
@@ -388,6 +435,10 @@ function stampMilestoneLines(
 
   for (const s of orderedStamps) {
     const y = yearOfIso(s.earnedAt);
+    // A stamp with no usable date is anchored to no year card and counted in no
+    // `year.stampCount`; letting it advance the running total would number a
+    // milestone over stamps that appear nowhere in the yearbook.
+    if (y === null) continue;
     total += 1;
     const label = s.name ?? s.stampType ?? "stamp";
     const country = typeof s.country === "string" ? s.country.trim() : "";
@@ -617,25 +668,51 @@ export async function buildYearbook(
     viewerId: perms.viewerId,
   };
 
+  // Readers that failed. A fail-closed fallback below drops the collection, and
+  // this set is what lets the projection say "unavailable" rather than blaming
+  // the owner's visibility settings for a read error.
+  const failed = new Set<YearbookCollection>();
+
   const [visibility, journeysProjection, unified, rawMemories, dnaPrefs] = await Promise.all([
-    loadCollectionVisibility(sc, userId, perms.callerCtx).catch(() => ({ stamps: false, memories: false })),
-    buildJourneys(sc, userId, journeyPerms).catch(
-      () => ({ userId, years: [], featured: null, totalJourneys: 0 }) as JourneysProjection,
-    ),
-    buildUnifiedStamps(sc, userId).catch(() => ({ stamps: [] as UnifiedStamp[], count: 0, breakdown: { v1: 0, v2: 0, deduped: 0 } })),
-    loadMemories(sc, userId).catch(() => [] as any[]),
+    loadCollectionVisibility(sc, userId, perms.callerCtx).catch(() => {
+      failed.add("stamps");
+      failed.add("memories");
+      return { stamps: false, memories: false };
+    }),
+    buildJourneys(sc, userId, journeyPerms).catch(() => {
+      failed.add("journeys");
+      return { userId, years: [], featured: null, totalJourneys: 0 } as JourneysProjection;
+    }),
+    buildUnifiedStamps(sc, userId).catch(() => {
+      failed.add("stamps");
+      return { stamps: [] as UnifiedStamp[], count: 0, breakdown: { v1: 0, v2: 0, deduped: 0 } };
+    }),
+    loadMemories(sc, userId).catch(() => {
+      failed.add("memories");
+      return [] as any[];
+    }),
+    // Prefs only refine the DNA reading; losing them narrows nothing the owner
+    // can see, so it is not a collection-level exclusion.
     loadTravelDnaPrefs(sc, userId).catch(() => ({ prefs: new Map(), applied: false }) as TravelDnaPrefs),
   ]);
 
-  const canSeeStamps = visibility.stamps === true;
-  const canSeeMemories = visibility.memories === true;
+  const canSeeStamps = visibility.stamps === true && !failed.has("stamps");
+  const canSeeMemories = visibility.memories === true && !failed.has("memories");
+  // Journeys are gated by the trips permission, NOT by whether any trip exists:
+  // an owner with zero trips is fully included and simply has an empty year.
+  const canSeeJourneys = (perms.isSelf === true || perms.canSeeTrips === true) && !failed.has("journeys");
 
   // Stamps: gated by the collection tier, oldest first so cumulative milestones
   // are real running totals rather than a per-year restart.
+  //
+  // Only stamps that carry a parseable date take part: an undated stamp lands
+  // in no year card and in no `year.stampCount`, so counting it in the running
+  // milestone total would number a milestone over stamps the yearbook never
+  // shows — the total and the per-year counts must agree by construction.
   const orderedStamps = canSeeStamps
-    ? [...(unified.stamps as UnifiedStamp[])].sort(
-        (a, b) => (a.earnedAt ? Date.parse(a.earnedAt) : 0) - (b.earnedAt ? Date.parse(b.earnedAt) : 0),
-      )
+    ? (unified.stamps as UnifiedStamp[])
+        .filter((s) => yearOfIso(s.earnedAt) !== null)
+        .sort((a, b) => Date.parse(a.earnedAt as string) - Date.parse(b.earnedAt as string))
     : [];
 
   // Memories: the §29 step-9 per-item gate AND the collection tier.
@@ -667,8 +744,8 @@ export async function buildYearbook(
   }
 
   const orderedYears = [...buckets.keys()].sort((a, b) => a - b); // oldest → newest
-  const included = {
-    journeys: journeysProjection.totalJourneys > 0,
+  const included: Record<YearbookCollection, boolean> = {
+    journeys: canSeeJourneys,
     stamps: canSeeStamps,
     memories: canSeeMemories,
     travelDna: true,
@@ -682,6 +759,7 @@ export async function buildYearbook(
       emptyMessage:
         requestedYear !== null ? `Nothing recorded for ${requestedYear}.` : EMPTY_MESSAGE,
       included,
+      exclusions: exclusionsFor(included, failed),
     };
   }
 
@@ -694,6 +772,7 @@ export async function buildYearbook(
   } catch {
     readings.clear();
     included.travelDna = false;
+    failed.add("travelDna"); // a reading failure, never a visibility choice
   }
 
   // ── Assemble each year ─────────────────────────────────────────────────────
@@ -760,6 +839,7 @@ export async function buildYearbook(
       empty: !one || one.empty,
       emptyMessage: one && !one.empty ? null : `Nothing recorded for ${requestedYear}.`,
       included,
+      exclusions: exclusionsFor(included, failed),
     };
   }
 
@@ -771,5 +851,6 @@ export async function buildYearbook(
     empty: !anyContent,
     emptyMessage: anyContent ? null : EMPTY_MESSAGE,
     included,
+    exclusions: exclusionsFor(included, failed),
   };
 }

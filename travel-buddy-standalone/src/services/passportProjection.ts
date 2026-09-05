@@ -300,19 +300,33 @@ export interface YearbookYear {
   emptyMessage: string | null;
 }
 
+/** The four collections a yearbook aggregates over. */
+export type YearbookCollection = 'journeys' | 'stamps' | 'memories' | 'travelDna';
+
+/**
+ * Why a collection is absent. `visibility` is the owner's passport visibility
+ * settings; `unavailable` is a failed read and says nothing about privacy. The
+ * screen must never state one reason when the server said the other.
+ */
+export interface YearbookExclusion {
+  collection: YearbookCollection;
+  reason: 'visibility' | 'unavailable';
+}
+
 export interface YearbookProjection {
   userId: string;
   /** Newest first. */
   years: YearbookYear[];
   empty: boolean;
   emptyMessage: string | null;
-  /** Which collections the server was permitted to aggregate over. */
-  included: {
-    journeys: boolean;
-    stamps: boolean;
-    memories: boolean;
-    travelDna: boolean;
-  };
+  /**
+   * Which collections the server was permitted to aggregate over — a
+   * permission flag, never a has-content flag. An included-but-empty
+   * collection stays `true`.
+   */
+  included: Record<YearbookCollection, boolean>;
+  /** One entry per collection whose `included` is false, naming the reason. */
+  exclusions: YearbookExclusion[];
 }
 
 interface YearbookEnvelope {

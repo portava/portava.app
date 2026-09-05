@@ -9,11 +9,14 @@
  *   3. The Share entry delegates to the `onShare` callback (it opens the QR
  *      sheet, whose data lives with the owner's passport hook — not a route
  *      push from this component).
+ *   4. The Yearbook entry routes through passportNav's `yearbookHref()`, so the
+ *      route has a single definition rather than one per call site.
  */
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 import { PassportQuickLinks } from '../PassportQuickLinks.tsx';
 import { router } from 'expo-router';
+import { yearbookHref } from '../../../features/passport/passportNav.ts';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 // NOTE: intentionally exhaustive — expo-router needs Expo native navigation
@@ -56,6 +59,18 @@ describe('PassportQuickLinks', () => {
 
     expect(mockPush).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith(route);
+  });
+
+  // The Yearbook route string has ONE definition (passportNav.yearbookHref);
+  // this asserts the quick link is that definition's caller, so the builder and
+  // the call site cannot drift into two different routes.
+  it('builds the Yearbook route with yearbookHref() rather than its own string', async () => {
+    await render(<PassportQuickLinks onShare={jest.fn()} />);
+
+    fireEvent.press(screen.getByTestId('quicklink-yearbook'));
+
+    expect(mockPush).toHaveBeenCalledWith(yearbookHref());
+    expect(yearbookHref()).toBe('/passport/yearbook');
   });
 
   it('delegates Share to onShare (no route push)', async () => {

@@ -52,9 +52,10 @@ import {
 import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
 import { useYearbook, type UseYearbookResult } from './useYearbook.ts';
 import type {
+  YearbookCollection,
+  YearbookExclusion,
   YearbookLine,
   YearbookLineKind,
-  YearbookProjection,
   YearbookYear,
 } from '../../services/passportProjection.ts';
 
@@ -194,17 +195,42 @@ function ErrorView({ message, onRetry }: { message: string; onRetry: () => void 
   );
 }
 
-/** Explains a collection the server could not include, rather than under-counting silently. */
-function IncludedNote({ included }: { included: YearbookProjection['included'] }) {
-  const missing: string[] = [];
-  if (!included.stamps) missing.push('stamps');
-  if (!included.memories) missing.push('memories');
-  if (!included.journeys) missing.push('journeys');
-  if (missing.length === 0) return null;
+const COLLECTION_LABEL: Record<YearbookCollection, string> = {
+  journeys: 'journeys',
+  stamps: 'stamps',
+  memories: 'memories',
+  travelDna: 'Travel DNA',
+};
+
+/**
+ * Explains a collection the server could not include, rather than
+ * under-counting silently — and gives the REASON the server actually reported.
+ *
+ * The reason is never inferred here. A collection that is simply empty is not
+ * excluded at all and produces no note: telling an owner with no trips that
+ * their journeys were "hidden by your visibility settings" is a false
+ * statement about their own settings, which is exactly what this note exists
+ * to avoid.
+ */
+function IncludedNote({ exclusions }: { exclusions: YearbookExclusion[] }) {
+  const hidden = exclusions.filter((e) => e.reason === 'visibility');
+  const unavailable = exclusions.filter((e) => e.reason === 'unavailable');
+  if (hidden.length === 0 && unavailable.length === 0) return null;
+  const names = (list: YearbookExclusion[]) =>
+    list.map((e) => COLLECTION_LABEL[e.collection] ?? e.collection).join(', ');
   return (
-    <Text style={s.includedNote} testID="yearbook-included-note">
-      {`Not counted here: ${missing.join(', ')} — hidden by your passport visibility settings.`}
-    </Text>
+    <View testID="yearbook-included-note">
+      {hidden.length > 0 ? (
+        <Text style={s.includedNote} testID="yearbook-hidden-note">
+          {`Not counted here: ${names(hidden)} — hidden by your passport visibility settings.`}
+        </Text>
+      ) : null}
+      {unavailable.length > 0 ? (
+        <Text style={s.includedNote} testID="yearbook-unavailable-note">
+          {`Not counted here: ${names(unavailable)} — couldn't be loaded just now, so this is not the full picture.`}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -213,18 +239,13 @@ function IncludedNote({ included }: { included: YearbookProjection['included'] }
 export interface YearbookScreenProps {
   /** Optional single year to load (defaults to every year with content). */
   year?: number | null;
-  /** Test seam: inject a prebuilt yearbook to bypass the data hook. */
-  yearbookOverride?: YearbookProjection;
 }
 
-export default function YearbookScreen({ year, yearbookOverride }: YearbookScreenProps = {}) {
+export default function YearbookScreen({ year }: YearbookScreenProps = {}) {
   const insets = useSafeAreaInsets();
   const hook: UseYearbookResult = useYearbook(year ?? null);
 
-  const yearbook = yearbookOverride ?? hook.yearbook;
-  const loading = yearbookOverride ? false : hook.loading;
-  const error = yearbookOverride ? null : hook.error;
-  const restricted = yearbookOverride ? false : hook.restricted;
+  const { yearbook, loading, error, restricted } = hook;
 
   return (
     <View style={[s.root, { paddingTop: insets.top }]}>
@@ -285,7 +306,7 @@ export default function YearbookScreen({ year, yearbookOverride }: YearbookScree
                 holds.
               </Text>
             </View>
-            <IncludedNote included={yearbook.included} />
+            <IncludedNote exclusions={yearbook.exclusions ?? []} />
             <View style={s.years}>
               {yearbook.years.map((y) => (
                 <YearCard key={y.year} year={y} />

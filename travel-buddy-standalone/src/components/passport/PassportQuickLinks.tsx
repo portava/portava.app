@@ -31,6 +31,7 @@ import {
 } from 'lucide-react-native';
 import { space, radius, avatar, icon } from '../../theme/tokens.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
+import { yearbookHref } from '../../features/passport/passportNav.ts';
 
 export interface PassportQuickLinksProps {
   /** Opens the Passport QR / Bump share sheet (§25). */
@@ -88,7 +89,10 @@ export function PassportQuickLinks({ onShare }: PassportQuickLinksProps) {
       label: 'Yearbook',
       sublabel: 'Your travel year by year, with the receipts',
       Icon: BookOpen,
-      onPress: () => router.push('/passport/yearbook' as any),
+      // The §9 Yearbook route is built by passportNav's yearbookHref() rather
+      // than hard-coded here, so the route string (and its year param) has a
+      // single definition that this call site cannot drift away from.
+      onPress: () => router.push(yearbookHref() as any),
       testID: 'quicklink-yearbook',
     },
     {

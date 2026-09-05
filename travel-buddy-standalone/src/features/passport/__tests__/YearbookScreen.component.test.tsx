@@ -116,6 +116,7 @@ function fullYearbook(): YearbookProjection {
     empty: false,
     emptyMessage: null,
     included: { journeys: true, stamps: true, memories: true, travelDna: true },
+    exclusions: [],
   };
 }
 
@@ -126,7 +127,10 @@ function emptyYearbook(): YearbookProjection {
     empty: true,
     emptyMessage:
       'No travel recorded yet. Your yearbook fills in as you take trips, earn stamps and save memories.',
-    included: { journeys: false, stamps: true, memories: true, travelDna: true },
+    // An owner with no history at all: every collection is still INCLUDED —
+    // nothing was withheld, there is simply nothing yet.
+    included: { journeys: true, stamps: true, memories: true, travelDna: true },
+    exclusions: [],
   };
 }
 
@@ -220,14 +224,60 @@ describe('YearbookScreen — empty states are honest', () => {
     ).toBeTruthy();
   });
 
-  it('explains a collection the server could not include instead of under-counting silently', async () => {
+  it('explains a collection the visibility settings withheld, naming that reason', async () => {
     const yb = fullYearbook();
     yb.included = { journeys: true, stamps: false, memories: true, travelDna: true };
+    yb.exclusions = [{ collection: 'stamps', reason: 'visibility' }];
     mockGetYearbook.mockResolvedValue({ ok: true, data: { yearbook: yb, restricted: false } });
     await render(<YearbookScreen />);
-    const note = await screen.findByTestId('yearbook-included-note');
-    expect(note).toBeTruthy();
-    expect(screen.getByText(/Not counted here: stamps/)).toBeTruthy();
+    expect(await screen.findByTestId('yearbook-included-note')).toBeTruthy();
+    expect(screen.getByTestId('yearbook-hidden-note')).toBeTruthy();
+    expect(
+      screen.getByText('Not counted here: stamps — hidden by your passport visibility settings.'),
+    ).toBeTruthy();
+    expect(screen.queryByTestId('yearbook-unavailable-note')).toBeNull();
+  });
+
+  it('does not blame the visibility settings for a collection that merely failed to load', async () => {
+    const yb = fullYearbook();
+    yb.included = { journeys: true, stamps: true, memories: false, travelDna: true };
+    yb.exclusions = [{ collection: 'memories', reason: 'unavailable' }];
+    mockGetYearbook.mockResolvedValue({ ok: true, data: { yearbook: yb, restricted: false } });
+    await render(<YearbookScreen />);
+    expect(await screen.findByTestId('yearbook-unavailable-note')).toBeTruthy();
+    expect(screen.getByText(/couldn't be loaded just now/)).toBeTruthy();
+    // The false explanation this note exists to prevent.
+    expect(screen.queryByTestId('yearbook-hidden-note')).toBeNull();
+    expect(screen.queryByText(/hidden by your passport visibility settings/)).toBeNull();
+  });
+
+  it('tells an owner with no trips nothing about visibility settings (the note stays away)', async () => {
+    // A traveller with stamps and memories but zero journeys: every collection
+    // is included, so no collection may be named as withheld.
+    const yb = fullYearbook();
+    yb.included = { journeys: true, stamps: true, memories: true, travelDna: true };
+    yb.exclusions = [];
+    for (const y of yb.years) y.journeyCount = 0;
+    mockGetYearbook.mockResolvedValue({ ok: true, data: { yearbook: yb, restricted: false } });
+    await render(<YearbookScreen />);
+    await screen.findByTestId('yearbook-year-2025');
+    expect(screen.queryByTestId('yearbook-included-note')).toBeNull();
+    expect(screen.queryByText(/Not counted here/)).toBeNull();
+  });
+
+  it('names both reasons separately when one collection is hidden and another failed', async () => {
+    const yb = fullYearbook();
+    yb.included = { journeys: true, stamps: false, memories: false, travelDna: true };
+    yb.exclusions = [
+      { collection: 'stamps', reason: 'visibility' },
+      { collection: 'memories', reason: 'unavailable' },
+    ];
+    mockGetYearbook.mockResolvedValue({ ok: true, data: { yearbook: yb, restricted: false } });
+    await render(<YearbookScreen />);
+    expect(
+      await screen.findByText('Not counted here: stamps — hidden by your passport visibility settings.'),
+    ).toBeTruthy();
+    expect(screen.getByText(/Not counted here: memories — couldn't be loaded just now/)).toBeTruthy();
   });
 });
 

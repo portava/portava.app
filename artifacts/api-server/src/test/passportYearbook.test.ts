@@ -464,3 +464,158 @@ describe("isHiddenGemStamp", () => {
     assert.equal(isHiddenGemStamp({ ...base, stampType: "city", name: "Da Nang" }), false);
   });
 });
+
+// ── 7. What was counted, and WHY something was not ───────────────────────────
+//
+// `included` is a PERMISSION flag, never a has-content flag, and `exclusions`
+// names the real reason per collection. The surface renders that reason
+// verbatim, so a wrong flag here becomes a false statement to the owner about
+// their own privacy settings.
+
+/** A client that throws for one table, so a reader genuinely fails. */
+function seedWithBrokenTable(table: string, overrides: Record<string, any[]> = {}) {
+  const inner = seed(overrides);
+  return {
+    ...inner,
+    from(t: string) {
+      if (t === table) throw new Error(`simulated read failure on ${t}`);
+      return inner.from(t);
+    },
+  } as any;
+}
+
+/** The fixture minus every trip — an owner who simply has not travelled yet. */
+function seedWithoutTrips() {
+  return seed({ trips: [], trip_members: [] });
+}
+
+describe("yearbook says what it counted and why", () => {
+  it("still counts journeys as included for an owner who simply has no trips", async () => {
+    const yb = await buildYearbook(seedWithoutTrips(), OWNER, ownerPerms());
+
+    // The owner has stamps and memories, so the yearbook is not empty…
+    assert.ok(yb.years.length > 0, "fixture must still produce years");
+    for (const y of yb.years) assert.equal(y.journeyCount, 0);
+    // …and having no trips is NOT an exclusion: nothing was withheld.
+    assert.equal(yb.included.journeys, true);
+    assert.deepEqual(
+      yb.exclusions.filter((e) => e.collection === "journeys"),
+      [],
+      "an owner with no trips must not be told their journeys were withheld",
+    );
+  });
+
+  it("excludes journeys as a visibility exclusion for a viewer the trips gate blocks", async () => {
+    const yb = await buildYearbook(seed(), OWNER, {
+      isSelf: false, canSeeTrips: false, canSeeRestricted: false, callerCtx: "public",
+      viewerId: VIEWER,
+    });
+    assert.equal(yb.included.journeys, false);
+    assert.deepEqual(
+      yb.exclusions.filter((e) => e.collection === "journeys"),
+      [{ collection: "journeys", reason: "visibility" }],
+    );
+  });
+
+  it("names a private stamp collection as a visibility exclusion", async () => {
+    const yb = await buildYearbook(
+      seed({
+        passport_visibility_preferences: [
+          { user_id: OWNER, stamps_visible: "private", memories_visible: "public" },
+        ],
+      }),
+      OWNER,
+      publicPerms(),
+    );
+    assert.equal(yb.included.stamps, false);
+    assert.deepEqual(
+      yb.exclusions.filter((e) => e.collection === "stamps"),
+      [{ collection: "stamps", reason: "visibility" }],
+    );
+    // The collections that WERE counted carry no exclusion at all.
+    assert.deepEqual(yb.exclusions.map((e) => e.collection), ["stamps"]);
+  });
+
+  it("reports a failed reader as unavailable, never as the owner's visibility choice", async () => {
+    const yb = await buildYearbook(seedWithBrokenTable("passport_memories"), OWNER, ownerPerms());
+
+    assert.equal(yb.included.memories, false, "a collection that could not be read is not included");
+    assert.deepEqual(
+      yb.exclusions.filter((e) => e.collection === "memories"),
+      [{ collection: "memories", reason: "unavailable" }],
+      "a read failure must not be reported as a privacy setting",
+    );
+    // Everything else still counted — the failure is scoped to its collection.
+    assert.equal(yb.included.stamps, true);
+    assert.equal(yb.included.journeys, true);
+  });
+
+  it("gives an owner with nothing at all an empty yearbook with no invented exclusion", async () => {
+    const yb = await buildYearbook(
+      seed({ trips: [], trip_members: [], user_stamps: [], passport_memories: [] }),
+      OWNER,
+      ownerPerms(),
+    );
+    assert.equal(yb.empty, true);
+    assert.equal(yb.years.length, 0);
+    assert.deepEqual(yb.exclusions, [], "an empty history is not an exclusion");
+    assert.deepEqual(yb.included, { journeys: true, stamps: true, memories: true, travelDna: true });
+  });
+});
+
+// ── 8. Milestone totals agree with the per-year counts ───────────────────────
+
+describe("yearbook stamp milestones", () => {
+  const UNDATED = {
+    id: "s-undated", user_id: OWNER, source_type: "posts", city: "Hue", country: "Vietnam",
+    is_revoked: false, earned_at: null, catalog_id: "c-u",
+    stamp_definitions: { name: "Undated Stamp", stamp_type: "place" },
+  };
+
+  it("numbers milestones over dated stamps only, so the running total matches the year cards", async () => {
+    // The fixture's six dated stamps plus one whose earned_at never parsed.
+    const db = seed({
+      user_stamps: [
+        UNDATED,
+        { id: "s-bkk", user_id: OWNER, source_type: "posts", city: "Bangkok", country: "Thailand", is_revoked: false, earned_at: "2024-11-11", catalog_id: "c-bkk", stamp_definitions: { name: "Chatuchak", stamp_type: "market" } },
+        { id: "s-night1", user_id: OWNER, source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-10", catalog_id: "c-n1", stamp_definitions: { name: "Night Market", stamp_type: "nightlife" } },
+        { id: "s-night2", user_id: OWNER, source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-12", catalog_id: "c-n2", stamp_definitions: { name: "Sky Bar", stamp_type: "nightlife" } },
+        { id: "s-trip", user_id: OWNER, source_type: "trips", source_id: T_VN, city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-30", catalog_id: "c-t", stamp_definitions: { name: "Da Nang", stamp_type: "city" } },
+        { id: "s-gem1", user_id: OWNER, source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-04-02", catalog_id: "c-g1", stamp_definitions: { name: "Quiet Alley Cafe", stamp_type: "hidden_gem" } },
+        { id: "s-gem2", user_id: OWNER, source_type: "posts", city: "Hue", country: "Vietnam", is_revoked: false, earned_at: "2025-04-03", catalog_id: "c-g2", stamp_definitions: { name: "Rooftop Garden", stamp_type: "hidden_gem" } },
+      ],
+    });
+    const yb = await buildYearbook(db, OWNER, ownerPerms());
+
+    // #1 is the first DATED stamp — the undated one anchors no year and must not
+    // consume the first slot (which would delete the "First stamp earned" line).
+    const first = lineByKey(yb, 2024, "stamps-total:1");
+    assert.ok(first, "the first dated stamp must still produce a first-stamp milestone");
+    assert.ok(
+      first!.evidence.some((e) => e.includes("Chatuchak")),
+      `first-stamp milestone anchored to the wrong stamp: ${JSON.stringify(first!.evidence)}`,
+    );
+
+    // #5 is still the fifth DATED stamp.
+    const fifth = lineByKey(yb, 2025, "stamps-total:5");
+    assert.ok(fifth, "expected a 5-stamp milestone");
+    assert.ok(
+      fifth!.evidence.some((e) => e.includes("Quiet Alley Cafe")),
+      `5-stamp milestone anchored to the wrong stamp: ${JSON.stringify(fifth!.evidence)}`,
+    );
+
+    // The invariant behind both: no milestone may be numbered over more stamps
+    // than the year cards actually show.
+    const shown = yb.years.reduce((n, y) => n + y.stampCount, 0);
+    for (const l of allLines(yb)) {
+      const m = /^stamps-total:(\d+)$/.exec(l.key);
+      if (!m) continue;
+      assert.ok(
+        Number(m[1]) <= shown,
+        `milestone ${l.key} counts stamps that appear in no year card (year cards show ${shown})`,
+      );
+    }
+    // The undated stamp is in no year, so it is named nowhere.
+    assert.ok(!JSON.stringify(yb).includes("Undated Stamp"));
+  });
+});
