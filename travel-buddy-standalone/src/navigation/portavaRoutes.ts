@@ -796,6 +796,19 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: true,
   },
+  {
+    // Map spec §36 Phase 6. The whole screen is behind
+    // `map_journey_intelligence_enabled` (migration 2292, seeded OFF): with the
+    // flag off both endpoints answer enabled:false and the panel says the
+    // capability is not switched on, rather than showing an empty shortlist.
+    key: 'trip-journey',
+    path: 'trip/journey',
+    title: 'Deciding Together',
+    parent: 'trip-detail',
+    icon: null,
+    requiresAuth: true,
+    featureFlag: 'map_journey_intelligence_enabled',
+  },
 
   // ── Places ────────────────────────────────────────────────────────────────
 

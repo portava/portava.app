@@ -24,6 +24,9 @@
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import type { MapObject, MapObjectKind } from '../types/mapObjects.ts';
+// The wire encoding lives in a PURE module (no react-native import) so
+// node:test can reach it — see features/map/journey/projectionQuery.
+import { buildProjectionParams } from '../features/map/journey/projectionQuery.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -60,7 +63,48 @@ export interface MapProjectionEnvelope {
    * present the result as a complete live picture.
    */
   liveEnrichment: { considered: number; enriched: number; skipped: number } | null;
+  /**
+   * §36 Phase 6 "Along My Way". Null when no corridor was requested. A
+   * `refusal` of 'flag_off' means `map_journey_intelligence_enabled` is off and
+   * the server IGNORED the corridor — so `objects` is the whole bbox, not the
+   * corridor, and the caller must not present it as "along your way".
+   */
+  corridor: MapCorridorReport | null;
+  /**
+   * Detour estimates for the objects on THIS page, in page order. An
+   * aggregated cell has no entry: a cell is not a place you can step off your
+   * route to reach.
+   */
+  corridorMatches: MapCorridorMatch[] | null;
   generatedAt: string;
+}
+
+/** What the server's corridor filter did. Counts only, by construction. */
+export interface MapCorridorReport {
+  refusal: 'flag_off' | 'invalid_corridor' | null;
+  meters: number | null;
+  points: number | null;
+  considered: number;
+  kept: number;
+  droppedOffRoute: number;
+  droppedNoGeometry: number;
+}
+
+/**
+ * One object's detour cost. `basis` is the machine-readable half of the §37
+ * promise: this is straight-line geometry, never a measured travel time, and
+ * `line` already carries the "Est." the UI must not strip.
+ */
+export interface MapCorridorMatch {
+  objectId: string;
+  detour: {
+    offsetMeters: number;
+    extraMeters: number;
+    extraMinutes: number;
+    alongMeters: number;
+    basis: 'straight_line_estimate';
+  };
+  line: string;
 }
 
 export type MapProjectionResult =
@@ -77,6 +121,8 @@ function disabledEnvelope(): MapProjectionEnvelope {
     nextCursor: null,
     sources: [],
     liveEnrichment: null,
+    corridor: null,
+    corridorMatches: null,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -88,6 +134,19 @@ export interface FetchProjectionOptions {
   kinds?: MapObjectKind[];
   limit?: number;
   cursor?: string | null;
+  /**
+   * §36 Phase 6 "Along My Way": the VIEWER'S OWN route polyline, in order. The
+   * server keeps only the objects within `corridorMeters` of it and attaches a
+   * detour estimate to each. Two or more DISTINCT points, or the server refuses
+   * with `corridor.refusal = 'invalid_corridor'` — a single point is a location,
+   * not a route, and would silently become a radius search.
+   *
+   * The corridor can only ever REMOVE objects from the answer the same bbox
+   * would give, so requesting one never widens what this client can see.
+   */
+  corridor?: Array<{ lat: number; lng: number }>;
+  /** Corridor half-width in metres. The server clamps it to [50, 5000]. */
+  corridorMeters?: number;
   signal?: AbortSignal;
 }
 
@@ -102,15 +161,7 @@ export async function fetchMapProjection(
   const token = await freshApiToken();
   if (!token) return { ok: false, error: 'Not authenticated' };
 
-  const { west, south, east, north } = opts.bbox;
-  const params = new URLSearchParams({
-    // Wire order is w,s,e,n — the server's parseBbox reads it positionally.
-    bbox: `${west},${south},${east},${north}`,
-    zoom: String(opts.zoom),
-  });
-  if (opts.kinds && opts.kinds.length > 0) params.set('kinds', opts.kinds.join(','));
-  if (opts.limit != null) params.set('limit', String(opts.limit));
-  if (opts.cursor) params.set('cursor', opts.cursor);
+  const params = buildProjectionParams(opts);
 
   try {
     const res = await fetch(`${apiBase()}/api/map/projection?${params}`, {
@@ -132,6 +183,10 @@ export async function fetchMapProjection(
         enabled: body.enabled === true,
         objects: Array.isArray(body.objects) ? body.objects : [],
         sources: Array.isArray(body.sources) ? body.sources : [],
+        // A malformed corridor block must read as "no corridor ran", never as
+        // a corridor that kept everything.
+        corridor: body.corridor ?? null,
+        corridorMatches: Array.isArray(body.corridorMatches) ? body.corridorMatches : null,
       },
     };
   } catch (err: any) {

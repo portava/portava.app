@@ -487,8 +487,14 @@ router.get(
     // bespoke /api/map/along-my-way would have to restate every one of this
     // route's privacy-complete reads, which is exactly the second
     // implementation src/test/gatewayBypassGuard.test.ts exists to prevent.
-    const journeyEnabled = await isFlagEnabled(sc, "map_journey_intelligence_enabled");
     const corridorRaw = req.query.corridor;
+    // The flag is read ONLY when a corridor was actually asked for, so a
+    // request that does not use Phase 6 costs nothing extra — and so the
+    // overwhelmingly common path through this endpoint is untouched by it.
+    const journeyEnabled =
+      corridorRaw === undefined
+        ? false
+        : await isFlagEnabled(sc, "map_journey_intelligence_enabled");
     const corridor = journeyEnabled
       ? buildCorridor(parseCorridorPath(corridorRaw), parseCorridorMeters(req.query.corridorMeters))
       : null;
