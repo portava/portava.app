@@ -37,7 +37,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 // ── Env ───────────────────────────────────────────────────────────────────────
 
@@ -95,7 +95,7 @@ const TABLE = "local_guide_profiles";
 
 async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const sc = adminClient();
-  const email = `${PREFIX}${tag}@example.com`;
+  const email = fixtureEmail(`${PREFIX}${tag}@example.com`);
   const { data: created, error: cErr } = await sc.auth.admin.createUser({
     email, password: PASSWORD, email_confirm: true,
   });
@@ -126,9 +126,9 @@ before(async () => {
   if (!CREDS_AVAILABLE) return;
 
   await purgeFixtureUsers(adminClient(), [
-    `${PREFIX}guide@example.com`,
-    `${PREFIX}other@example.com`,
-    `${PREFIX}outsider@example.com`,
+    fixtureEmail(`${PREFIX}guide@example.com`),
+    fixtureEmail(`${PREFIX}other@example.com`),
+    fixtureEmail(`${PREFIX}outsider@example.com`),
   ]);
 
   ({ id: guideId, token: guideToken } = await makeUser("guide"));

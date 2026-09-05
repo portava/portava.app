@@ -17,7 +17,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -38,7 +38,7 @@ let ownerId = "", ownerToken = "", ownerBuddyId = "", strangerBuddyId = "", pkgI
 
 async function makeBuddy(tag: string): Promise<{ id: string; token: string; buddyId: string }> {
   const sc = adminClient();
-  const email = `${PREFIX}${tag}@example.com`;
+  const email = fixtureEmail(`${PREFIX}${tag}@example.com`);
   const { data: c, error: cErr } = await sc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (cErr || !c?.user) throw new Error(`createUser(${tag}): ${cErr?.message}`);
   const id = c.user.id;
@@ -64,7 +64,7 @@ async function seedPkg(buddyId: string, title: string): Promise<string> {
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}owner@example.com`, `${PREFIX}stranger@example.com`]);
+  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}owner@example.com`), fixtureEmail(`${PREFIX}stranger@example.com`)]);
   ({ id: ownerId, token: ownerToken, buddyId: ownerBuddyId } = await makeBuddy("owner"));
   ({ buddyId: strangerBuddyId } = await makeBuddy("stranger"));
   pkgId = await seedPkg(ownerBuddyId, "Island hop");
@@ -74,7 +74,7 @@ after(async () => {
   const sc = adminClient();
   for (const b of [ownerBuddyId, strangerBuddyId]) if (b) await sc.from(TABLE).delete().eq("buddy_id", b);
   for (const b of [ownerBuddyId, strangerBuddyId]) if (b) await sc.from("rent_buddy_profiles").delete().eq("id", b);
-  await purgeFixtureUsers(sc, [`${PREFIX}owner@example.com`, `${PREFIX}stranger@example.com`]);
+  await purgeFixtureUsers(sc, [fixtureEmail(`${PREFIX}owner@example.com`), fixtureEmail(`${PREFIX}stranger@example.com`)]);
 });
 
 function assertDenied(error: any, what: string): void {

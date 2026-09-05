@@ -49,6 +49,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { fixtureEmail, matchesFixtureEmail } from "./liveFixtureUsers.js";
 
 // ── Env-var checks ────────────────────────────────────────────────────────────
 
@@ -133,8 +134,8 @@ const RLS_TEST_PREFIX = "rls_hardening_test_";
  * a superseded run would trade this failure for a different red.
  */
 const FIXTURE_EMAILS = [
-  `${RLS_TEST_PREFIX}private@example.com`,
-  `${RLS_TEST_PREFIX}public@example.com`,
+  fixtureEmail(`${RLS_TEST_PREFIX}private@example.com`),
+  fixtureEmail(`${RLS_TEST_PREFIX}public@example.com`),
 ] as const;
 
 const FIXTURE_HANDLES = [`${RLS_TEST_PREFIX}private`, `${RLS_TEST_PREFIX}public`] as const;
@@ -157,9 +158,16 @@ const createdUserIds: string[] = [];
 const MAX_USER_PAGES = 20;
 const USERS_PER_PAGE = 1000;
 
-/** Ids of any auth user currently holding one of this suite's fixture emails. */
+/**
+ * Ids of any auth user currently holding one of this suite's fixture emails.
+ *
+ * Matching is delegated to matchesFixtureEmail so it covers BOTH this run's
+ * `+r<run>`-scoped addresses and any stranded variant a previous run left
+ * behind. An exact-string set stopped working the moment the addresses became
+ * run-scoped: it would have swept only its own users and reported the project
+ * clean while leftovers accumulated.
+ */
 async function findFixtureUserIds(admin: SupabaseClient): Promise<string[]> {
-  const wanted = new Set<string>(FIXTURE_EMAILS.map((e) => e.toLowerCase()));
   const found: string[] = [];
 
   for (let page = 1; page <= MAX_USER_PAGES; page++) {
@@ -172,7 +180,7 @@ async function findFixtureUserIds(admin: SupabaseClient): Promise<string[]> {
     const users = data?.users ?? [];
     for (const u of users) {
       const email = (u as { email?: string | null }).email;
-      if (email && wanted.has(email.toLowerCase())) found.push(u.id);
+      if (email && FIXTURE_EMAILS.some((base) => matchesFixtureEmail(email, base))) found.push(u.id);
     }
     // A short page is the last page.
     if (users.length < USERS_PER_PAGE) return found;
@@ -472,7 +480,7 @@ describe("RLS hardening — wrong-user (signed-in non-member) reads", { skip: !C
           auth: { persistSession: false },
         });
         const { error } = await client.auth.signInWithPassword({
-          email: `${RLS_TEST_PREFIX}public@example.com`,
+          email: fixtureEmail(`${RLS_TEST_PREFIX}public@example.com`),
           password: "test-password-123",
         });
         if (error) throw new Error(`Test sign-in failed: ${error.message}`);
@@ -617,7 +625,7 @@ describe("auth.uid() resolution — positive control", { skip: !CREDS_AVAILABLE 
           auth: { persistSession: false },
         });
         const { error } = await client.auth.signInWithPassword({
-          email: `${RLS_TEST_PREFIX}private@example.com`,
+          email: fixtureEmail(`${RLS_TEST_PREFIX}private@example.com`),
           password: "test-password-123",
         });
         if (error) throw new Error(`Test sign-in failed: ${error.message}`);
