@@ -33,7 +33,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { findUserByEmail, deleteFixtureUser, fixtureEmail } from "./liveFixtureUsers.js";
+import { findUserByEmail, deleteFixtureUser, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -100,7 +100,17 @@ async function ensureUser(email: string, handle: string): Promise<string> {
     id = await findUserByEmail(sc, email);
   }
   if (!id) throw new Error(`could not create or find test user ${email}`);
-  await sc.from("profiles").upsert({ id, handle, name: handle }, { onConflict: "id" });
+  // The error is CHECKED, not discarded. `handle` carries a UNIQUE constraint, so
+  // a leftover profile from a dead run holding this handle makes the upsert fail —
+  // and swallowing that returned an id with no profile row behind it, which then
+  // surfaced far away as `insert or update on table "memory_projections" violates
+  // foreign key constraint "memory_projections_user_fk"`. Measured on 2026-09-05:
+  // four such rows (memlife_live_a/b/c1c/c1d) stranded by run r2fa23449df took
+  // main's live tier red, and the seed error named a table nothing here writes.
+  const { error: pErr } = await sc
+    .from("profiles")
+    .upsert({ id, handle, name: handle }, { onConflict: "id" });
+  if (pErr) throw new Error(`could not upsert profile ${handle} for ${email}: ${pErr.message}`);
   return id;
 }
 
@@ -116,8 +126,8 @@ async function purge(userId: string): Promise<void> {
 before(async () => {
   if (!CREDS) return;
   sc = admin();
-  userA = await ensureUser(EMAIL_A, `${TAG}a`);
-  userB = await ensureUser(EMAIL_B, `${TAG}b`);
+  userA = await ensureUser(EMAIL_A, fixtureLabel(`${TAG}a`));
+  userB = await ensureUser(EMAIL_B, fixtureLabel(`${TAG}b`));
   await purge(userA);
   await purge(userB);
 });
@@ -530,8 +540,8 @@ describe("MEM·C1 — the fan-out must not resurrect a tombstoned (deleted) acco
 
   before(async () => {
     if (!CREDS) return;
-    ctl = await ensureUser(EMAIL_CTL, `${TAG}c1c`);
-    del = await ensureUser(EMAIL_DEL, `${TAG}c1d`);
+    ctl = await ensureUser(EMAIL_CTL, fixtureLabel(`${TAG}c1c`));
+    del = await ensureUser(EMAIL_DEL, fixtureLabel(`${TAG}c1d`));
     await purge(ctl); await purge(del);
     // A reused fixture from a crashed run could still be tombstoned; ensureUser's
     // upsert does not touch account_status, so reset it explicitly.

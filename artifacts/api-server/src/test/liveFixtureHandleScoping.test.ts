@@ -91,7 +91,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -384,12 +384,61 @@ describe("geo_zones sweep — run A's teardown must not delete run B's zones", (
 // SOURCE GUARDS — a correct helper that the suites do not call fixes nothing.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The suite list is DERIVED FROM THE FILESYSTEM, not curated.
+ *
+ * It used to be a hand-written array of 22 names, pinned by
+ * `assert.equal(new Set(HANDLE_SUITES).size, 22)`. That pin guards against a name
+ * being silently DELETED from the list. It is blind to one that was never ADDED —
+ * and on 2026-09-05 three live suites had never been added:
+ * memoryLifecycleLive, memoryProjectionLifecycleLive and rlsHardening.
+ *
+ * The two memory suites were, at that moment, actually broken. They had been
+ * run-scoped on the EMAIL (so every run mints a NEW auth-user id) while their
+ * handle stayed the bare `${TAG}a`. Four leftover profiles stranded by a dead run
+ * held those handles, so each new run's `profiles` upsert failed 23505, the error
+ * was discarded, and the missing profile surfaced minutes later and a table away
+ * as `insert or update on table "memory_projections" violates foreign key
+ * constraint "memory_projections_user_fk"`. Main's live tier went red and stayed
+ * red. A guard whose scope is a hand-written list cannot see the file nobody
+ * thought to list.
+ *
+ * So: every test file that imports the live fixture helpers AND writes `profiles`
+ * is in scope, automatically. `liveFixtureHandleScoping.test.ts` itself is the one
+ * exclusion — it carries deliberately unscoped literals as its own test data.
+ */
+const HANDLE_SUITE_FLOOR = 25;
+
+function derivedHandleSuites(): string[] {
+  const dir = fileURLToPath(new URL(".", import.meta.url));
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".test.ts") && f !== "liveFixtureHandleScoping.test.ts")
+    .filter((f) => {
+      const s = readFileSync(`${dir}${f}`, "utf8");
+      return s.includes("liveFixtureUsers.js") && /from\("profiles"\)/.test(s);
+    })
+    .sort();
+}
+
 describe("every live suite writes profiles.handle/username through fixtureLabel()", () => {
-  it("covers all twenty-two suites, with none silently dropped from the list", () => {
-    assert.equal(new Set(HANDLE_SUITES).size, 22);
+  const suites = derivedHandleSuites();
+
+  it("derives its own scope, and the derivation cannot silently collapse", () => {
+    // A derivation that returns nothing would make every assertion below vacuous:
+    // zero suites, zero failures, green. The floor is what makes that impossible.
+    assert.ok(
+      suites.length >= HANDLE_SUITE_FLOOR,
+      `only ${suites.length} live suites matched (floor ${HANDLE_SUITE_FLOOR}). Either the ` +
+        `derivation broke, or suites were deleted. It must never be able to return an empty ` +
+        `set and report success.`,
+    );
+    // The previously curated names must all still be in scope — the derivation is
+    // allowed to grow, never to lose ground the hand-written list already held.
+    const missing = HANDLE_SUITES.filter((f) => !suites.includes(f));
+    assert.deepEqual(missing, [], "the derivation dropped suites the curated list covered");
   });
 
-  for (const file of HANDLE_SUITES) {
+  for (const file of suites) {
     it(`${file} has no unscoped handle/username literal`, () => {
       const source = readTest(file);
       const unscoped = [...source.matchAll(/\b(handle|username): (`[^`]*`)/g)].map((m) => `${m[1]}: ${m[2]}`);
@@ -401,12 +450,26 @@ describe("every live suite writes profiles.handle/username through fixtureLabel(
           `second concurrent run inserts the same handle under a different auth-user id and fails 23505. ` +
           `Wrap the value in fixtureLabel().`,
       );
+      // The same literal, one indirection away: `ensureUser(EMAIL, `${TAG}a`)`.
+      // This is the shape the two memory suites used, and it is why matching only
+      // on `handle:` missed them even after they were in scope.
+      const viaHelper = [...source.matchAll(/\bensureUser\([^,)]+,\s*(`[^`]*`)/g)].map((m) => m[1]);
+      assert.deepEqual(
+        viaHelper,
+        [],
+        `${file} passes a bare template literal as a handle argument. Scoping at the call site ` +
+          `is fine, but the value must still go through fixtureLabel().`,
+      );
       assert.match(
         source,
         /import \{[^}]*\bfixtureLabel\b[^}]*\} from "\.\/liveFixtureUsers\.js";/,
         `${file} must take fixtureLabel from the shared helper rather than rebuild the scheme`,
       );
-      assert.match(source, /handle: fixtureLabel\(/, `${file} no longer scopes handle at all`);
+      assert.match(
+        source,
+        /fixtureLabel\(/,
+        `${file} imports fixtureLabel but never calls it — it no longer scopes anything`,
+      );
     });
   }
 });
