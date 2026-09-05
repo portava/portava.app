@@ -123,6 +123,11 @@ export const LIVE_PULSE_SERVE_EVENT = "live_pulse_serve";
 export const OUTCOME_TO_ANALYTICS_EVENT: Partial<Record<string, RankingEventType>> = {
   tap:      RankingEvent.ITEM_OPENED,
   save:     RankingEvent.ITEM_SAVED,
+  // 'dismiss' is the negative outcome admitted by migration 2294. It reuses the
+  // existing ITEM_HIDDEN constant rather than inventing an event_type: the fact
+  // recorded is the same one ("the viewer put this away"), and a second name for
+  // it would split the corpus for no gain.
+  dismiss:  RankingEvent.ITEM_HIDDEN,
   hide:     RankingEvent.ITEM_HIDDEN,
   report:   RankingEvent.ITEM_REPORTED,
 };

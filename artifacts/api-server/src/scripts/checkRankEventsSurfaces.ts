@@ -818,7 +818,16 @@ const WRITTEN_SURFACES = [
   "watch_feed",
 ] as const;
 
-/** Outcome values the codebase writes. 'analytics' was added by 0197. */
+/**
+ * Outcome values the codebase writes. 'analytics' was added by 0197.
+ *
+ * 'dismiss' is added by 2294_rank_events_dismiss_outcome.sql and is written by
+ * POST /api/rank-events/outcome. Until that migration is applied live it will
+ * print ABSENT here — correctly: the code writes it and the live CHECK does not
+ * yet permit it. This comparison is INFORMATIONAL ONLY (see the header) and
+ * carries no exit code, so naming it here reports the pending state rather than
+ * blocking on it.
+ */
 const WRITTEN_OUTCOMES = [
   "impression",
   "tap",
@@ -827,6 +836,7 @@ const WRITTEN_OUTCOMES = [
   "rsvp",
   "attended",
   "analytics",
+  "dismiss",
 ] as const;
 
 /**
