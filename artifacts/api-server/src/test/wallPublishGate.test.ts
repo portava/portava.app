@@ -178,6 +178,13 @@ async function serve(mode: "for_you" | "following", honorPostStatus: boolean) {
   return { res, captured };
 }
 
+/** Run one request with a flag temporarily flipped, then restore it. */
+async function withFlag<T>(flag: string, value: boolean, fn: () => Promise<T>): Promise<T> {
+  const prev = FLAGS[flag];
+  FLAGS[flag] = value;
+  try { return await fn(); } finally { FLAGS[flag] = prev!; }
+}
+
 describe("Wall route — delayed-publish gate + Postcard discriminator", () => {
   before(async () => {
     const app = express();
@@ -230,6 +237,37 @@ describe("Wall route — delayed-publish gate + Postcard discriminator", () => {
       const ids = idsOf(res.json);
       for (const id of PENDING_IDS) assert.ok(!ids.includes(id), `${id} (status='active', pending post_status) must never be served`);
       assert.deepEqual([...ids].sort(), ["legacy-1", "published-1"], "published + legacy (absent ⇒ published) are served");
+    });
+
+    it(`${mode}: rows fed PAST the query filter are still refused in memory; absent post_status reads as published — with discovery insertions ON (D1)`, async () => {
+      // The discovery-insertion query (for_you only, behind
+      // wall_discovery_insertions_enabled) is a SECOND posts read that reaches
+      // OUTSIDE the follow graph. It carries the same predicate, but with the
+      // flag off in every other case here nothing exercised it: deleting
+      // `.eq("post_status", "published")` from it left this file green.
+      const { res, captured } = await withFlag("wall_discovery_insertions_enabled", true, () =>
+        serve(mode, true),
+      );
+      assert.deepEqual(idsOf(res.json), ["published-1"], "only the published post is served");
+
+      const spine = captured.filter(
+        (q) => q.table === "posts" && !q.ins["id"] && !q.select.includes("post_media("),
+      );
+      assert.ok(spine.length >= 1, "the Post spine read posts");
+      for (const q of spine) {
+        assert.equal(q.eqs.post_status, "published", "every posts read carries the canonical predicate");
+      }
+      if (mode === "for_you") {
+        // The discovery read is the spine query with no author_id restriction —
+        // it deliberately reaches outside the follow graph.
+        const discovery = spine.filter((q) => !q.ins["author_id"]);
+        assert.ok(discovery.length >= 1, "the discovery-insertion query ran with the flag on");
+        for (const q of discovery) {
+          assert.equal(q.eqs.visibility, "public");
+          assert.equal(q.eqs.post_status, "published",
+            "the discovery-insertion query carries the canonical predicate");
+        }
+      }
     });
 
     it(`${mode}: a post is a Postcard only via its live passport_postcards row — add_to_passport=true decides nothing (D2)`, async () => {

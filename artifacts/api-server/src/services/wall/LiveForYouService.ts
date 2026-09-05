@@ -52,6 +52,9 @@ import {
 // with the Map's meeting-point producer for the same reason.
 import { meetingPointExpiryMs } from "../../lib/mapProducers/meetingPointProducer.js";
 import { haversineMeters } from "../../lib/protectedLocations.js";
+// The RAB master gate (`rent_buddy_enabled`), re-read inside the buddy producer
+// so a globally disabled product can never be advertised by the strip.
+import { isRentBuddyMasterEnabled } from "./wallRabGate.js";
 import { logger } from "../../lib/logger.js";
 import type {
   FreshnessState,
@@ -444,8 +447,16 @@ export async function buildSocialPresenceLiveCandidates(
 /**
  * buddy strip items (spec §19 / TABLE 0). A Rent-a-Buddy available now in the
  * place's AREA (city granularity only — never a precise Buddy coordinate).
- * Behind the RAB flag (the caller passes `rabEnabled`); reads only the honest
- * `available_now` flag, so paid promotion cannot manufacture a strip item.
+ * Reads only the honest `available_now` flag, so paid promotion cannot
+ * manufacture a strip item.
+ *
+ * BOTH FLAGS, FAIL-CLOSED. `opts.rabEnabled` carries the Wall's own
+ * `wall_rab_integration_enabled` from the caller; that is NECESSARY BUT NOT
+ * SUFFICIENT. The RAB master `rent_buddy_enabled` is re-read HERE rather than
+ * trusted from the caller's boolean, so this producer can never advertise a
+ * globally disabled product — the same contract
+ * loadContextualOpportunityCandidates already holds. The master read sits after
+ * the cheap guards: on the current OFF path it costs nothing.
  */
 export async function buildBuddyLiveCandidates(
   sc: any,
@@ -460,6 +471,7 @@ export async function buildBuddyLiveCandidates(
   const cities = new Map<string, PublicPlaceRef>();
   for (const p of places) if (p.city && !cities.has(p.city)) cities.set(p.city, p);
   if (cities.size === 0) return [];
+  if (!(await isRentBuddyMasterEnabled(sc))) return [];
   try {
     const { data, error } = await sc
       .from("rent_buddy_profiles")

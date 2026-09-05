@@ -7,6 +7,12 @@
  * distribution gate) and the SHARED coarse projector
  * (lib/media/mediaProjection.toMediaProjection), then assembles the §43 shapes.
  *
+ * Every non-owner-facing projection is shaped by `projectCandidatesProtected`,
+ * NOT by the raw projector: `toMediaProjection` copies the stored venue name and
+ * canonical place id verbatim (it is the field whitelist, not the policy), so it
+ * is passed through the lib/mediaLocationVisibility choke point, which folds in
+ * the owner's `location_privacy_mode` and any hosting Hidden Gem's ceiling.
+ *
  * It owns NO truth. Current/live state comes ONLY from the gated live-claim read
  * (lib/liveClaimRead.readLiveClaimEnvelopes), which is fail-closed: if live is
  * off/stale/unpromoted it returns [], and this service emits NO live badge. It
@@ -28,11 +34,18 @@ import {
   MEDIA_PROJECTION_POST_COLUMNS,
   MEDIA_PROJECTION_POST_MEDIA_COLUMNS,
   MEDIA_PROJECTION_PROFILE_COLUMNS,
-  projectMediaCandidates,
+  applyLocationDisclosure,
   toMediaProjection,
   type MediaCandidateRow,
   type MediaProjection,
 } from "../../lib/media/mediaProjection.js";
+import {
+  loadRestrictiveGems,
+  gemCeilingForItem,
+  resolveMediaPlaceDisclosure,
+  type MediaPlaceDisclosure,
+  type RestrictiveGem,
+} from "../../lib/mediaLocationVisibility.js";
 import { readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
 import { aggregateFreshness, type FreshnessState } from "../../lib/media/mediaFreshness.js";
 import {
@@ -208,6 +221,114 @@ export async function loadEligibleCandidates(
   return eligible as unknown as MediaCandidateRow[];
 }
 
+// ── Location disclosure: the choke point, applied to every projection ────────
+
+/**
+ * Batch Hidden-Gem context for a page of rows. `determined=false` means the
+ * restrictive-gem lookup FAILED and every item must be coarsened defensively
+ * (fail-closed) — never treated as "no gem here". Mirrors mediaFeed.ts's
+ * FeedGemContext so the two paths share one shape as well as one policy.
+ */
+export interface ProjectionGemContext {
+  gems: RestrictiveGem[];
+  determined: boolean;
+}
+
+/** A context that constrains nothing — for callers holding only owner content. */
+export const OWNER_ONLY_GEM_CONTEXT: ProjectionGemContext = { gems: [], determined: true };
+
+/**
+ * Load, in ONE query pair, the restrictive Hidden Gems that could constrain any
+ * row on this page, keyed by the rows' canonical_place_id and city. Fail-closed:
+ * a lookup error yields determined=false so every item is coarsened.
+ */
+export async function loadProjectionGemContext(
+  sc: SupabaseClient,
+  rows: MediaCandidateRow[],
+): Promise<ProjectionGemContext> {
+  if (rows.length === 0) return { gems: [], determined: true };
+  try {
+    const gems = await loadRestrictiveGems(sc, {
+      placeIds: rows.map((r) => (r as any).canonical_place_id ?? null),
+      cities: rows.map((r) => (r as any).location_city ?? null),
+    });
+    return { gems, determined: true };
+  } catch (err) {
+    logger.warn(
+      { err },
+      "mediaProjection: Hidden-Gem location protection lookup failed; coarsening every item",
+    );
+    return { gems: [], determined: false };
+  }
+}
+
+/**
+ * Resolve one row's full location disclosure for this viewer.
+ *
+ * NOTE ON COORDINATES: the projection layer deliberately does not select
+ * `location_lat` / `location_lng` (see MEDIA_PROJECTION_POST_COLUMNS), so the
+ * gem cross-check here runs on the canonical-place arm only — a post is
+ * constrained when it is AT the gem's canonical place. mediaFeed.ts, which does
+ * hold coordinates for ranking, additionally runs the proximity arm. Not reading
+ * coordinates in order to protect coordinates is the correct trade: the
+ * projection can never disclose a point it never loaded.
+ */
+export function disclosureForRow(
+  row: MediaCandidateRow,
+  viewerId: string,
+  ctx: ProjectionGemContext,
+): MediaPlaceDisclosure {
+  const placeId = typeof row.canonical_place_id === "string" ? row.canonical_place_id : null;
+  const ceiling = ctx.determined
+    ? gemCeilingForItem(ctx.gems, { placeId, lat: null, lng: null })
+    : null;
+  return resolveMediaPlaceDisclosure(
+    {
+      name: typeof row.location_name === "string" ? row.location_name : null,
+      city: typeof row.location_city === "string" ? row.location_city : null,
+      country: typeof row.location_country === "string" ? row.location_country : null,
+      lat: null,
+      lng: null,
+    },
+    {
+      isOwner: (row as any).author_id === viewerId,
+      // `posts` carries no independent §33 tier column (that is media_assets);
+      // legacy posts default to 'place', exactly as mediaFeed.ts does.
+      locationVisibility: (row as any).location_visibility ?? "place",
+      locationPrivacyMode: row.location_privacy_mode ?? null,
+      postStatus: row.post_status ?? null,
+      coarsenSeed: row.id ?? null,
+      // The World shell has never emitted coordinates and must not start.
+      emitCoarseCoords: false,
+      gem: { ceiling, determined: ctx.determined },
+    },
+  );
+}
+
+/**
+ * Project a page of candidate rows THROUGH the location/gem choke point.
+ *
+ * This is the only projection entry point the World-shell builders may use.
+ * `projectMediaCandidates` (the raw projector) copies stored labels verbatim and
+ * is therefore not servable to a non-owner on its own.
+ */
+export async function projectCandidatesProtected(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  rows: MediaCandidateRow[],
+  nowMs: number,
+): Promise<MediaProjection[]> {
+  if (rows.length === 0) return [];
+  const ctx = await loadProjectionGemContext(sc, rows);
+  const out: MediaProjection[] = [];
+  for (const row of rows) {
+    const p = toMediaProjection(row, nowMs);
+    if (!p) continue;
+    out.push(applyLocationDisclosure(p, disclosureForRow(row, viewer.viewerId, ctx)));
+  }
+  return out;
+}
+
 // ── Live current-state (gated, fail-closed) ──────────────────────────────────
 
 export interface CurrentState {
@@ -299,7 +420,7 @@ export async function buildWorldProjection(
     city: city ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs);
+  const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
 
   const forYouNow = buildCategoryBuckets(media, nowMs);
 
@@ -402,7 +523,7 @@ export async function buildPlaceProjection(
     placeId,
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs);
+  const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
   if (!placeCity) placeCity = media.find((m) => m.city)?.city ?? null;
   if (!placeName) placeName = media.find((m) => m.placeLabel)?.placeLabel ?? null;
 
@@ -444,7 +565,7 @@ export async function buildPeopleProjection(
     feedType: "following",
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs);
+  const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
 
   const byContributor = new Map<string, MediaProjection[]>();
   for (const m of media) {
@@ -499,6 +620,13 @@ export interface MyWorldProjection {
  * point of the owner-only buckets) and still projects COARSE (no coordinates,
  * no live labels). Other domains' expressions (Postcards / Memories / Gems) are
  * declared buckets, populated best-effort.
+ *
+ * This is the ONE builder that uses the raw projector rather than
+ * `projectCandidatesProtected`, and deliberately: every row here is the viewer's
+ * own (`author_id = viewer.viewerId`), which is exactly the case the choke point
+ * passes through untouched — an owner's `location_privacy_mode` governs what
+ * OTHERS see, not what they see of their own library. The query is owner-scoped
+ * at line level, so there is no path by which a non-owner row reaches here.
  */
 export async function buildMyWorldProjection(
   sc: SupabaseClient,
@@ -687,7 +815,7 @@ export async function buildTimelineProjection(
     placeId: opts.placeId ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs).sort(
+  const media = (await projectCandidatesProtected(sc, viewer, candidates, nowMs)).sort(
     (a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime(),
   );
 
@@ -769,7 +897,7 @@ export async function buildMediaMapProjection(
     city: city ?? undefined,
     limit: DEFAULT_CANDIDATE_LIMIT,
   });
-  const media = projectMediaCandidates(candidates, nowMs);
+  const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
 
   const zoneMap = groupZones(media);
   const clusters: MapCluster[] = [...zoneMap.values()]

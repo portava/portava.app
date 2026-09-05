@@ -47,7 +47,7 @@ import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
 import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
 import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
-import { fetchBlockedSet } from "../lib/blocks.js";
+import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
 import { pruneAndBound } from "../lib/boundedMapCache.js";
 import { createInflightDedup } from "../lib/inflightDedup.js";
 import {
@@ -869,14 +869,14 @@ export function evictCacheEntriesForEntity(entityId: string): void {
  * uncertain. Either way only the community subset is affected: canonical
  * `places` rows and OSM rows have no author at all.
  *
- * Exported so tests can pin the rule without reaching through a route.
+ * THE RULE ITSELF now lives in lib/blocks.ts, beside fetchBlockedSet, because
+ * this route is NOT the only reader of `discovery_places`: routes/
+ * discoverySearch.ts queries the same table for serve points 8 and 9
+ * (`/discovery/search`, `/discovery/suggest`) and, while the rule lived here,
+ * silently skipped it. Re-exported so existing importers and the source guards
+ * in test/discoveryBlockedSubmitter.test.ts keep working unchanged.
  */
-export function submitterIsVisible(submittedBy: unknown, blockedIds: Set<string> | null): boolean {
-  const author = (submittedBy ?? null) as string | null;
-  if (!author) return true;               // venue fact — no voice attached to it
-  if (blockedIds === null) return false;  // block state unknown → fail closed
-  return !blockedIds.has(author);
-}
+export { submitterIsVisible };
 
 /**
  * @param blockedIds bidirectional block set for the viewer, or null when it

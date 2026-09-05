@@ -142,6 +142,11 @@ const BASE_FLAGS: Record<string, boolean> = {
   wall_enabled: true,
   wall_live_for_you_enabled: true,
   wall_rab_integration_enabled: true,
+  // RAB needs BOTH: the Wall's own integration flag AND the product master
+  // (`rent_buddy_enabled`, re-read inside buildBuddyLiveCandidates via
+  // wallRabGate). The default world has both ON so the buddy kind is exercised;
+  // the two tests below turn each one off independently.
+  rent_buddy_enabled: true,
   wall_input_intelligence_enabled: false,
   wall_discovery_insertions_enabled: false,
   wall_compass_handoff_enabled: false,
@@ -303,8 +308,19 @@ describe("Live For You strip — the routes serve the full multi-kind set (§4/T
     assert.ok(!kinds.has("event_state") && !kinds.has("trip_signal"));
   });
 
-  it("the buddy kind stays behind the RAB flag", async () => {
+  it("the buddy kind stays behind the Wall's RAB integration flag", async () => {
     useWorld({ tables: { trip_plan_items: [], events: [] }, flags: { wall_rab_integration_enabled: false } });
+    const res = await get("/api/wall/live?limit=4");
+    assert.ok(!kindsOf(res.json.liveForYou as any[]).has("buddy"));
+  });
+
+  it("the buddy kind stays behind the RAB MASTER too, even with the Wall flag on", async () => {
+    // The Wall flag is necessary, never sufficient: a globally disabled product
+    // must not be advertised by the strip (wallRabGate).
+    useWorld({
+      tables: { trip_plan_items: [], events: [] },
+      flags: { wall_rab_integration_enabled: true, rent_buddy_enabled: false },
+    });
     const res = await get("/api/wall/live?limit=4");
     assert.ok(!kindsOf(res.json.liveForYou as any[]).has("buddy"));
   });

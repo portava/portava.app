@@ -347,10 +347,12 @@ export async function loadUnderexposedItemIds(
 // paginating session sees a stable allocation.
 //
 // APPLY vs OBSERVE: `apply=false` computes everything and changes nothing —
-// the returned order IS the input order. That is how the governor runs with
-// the modifiers flag off: its allocation is written into the impression
-// feature vector (lib/discoveryPde.ts) and can be read back from rank_events,
-// so the decision is observable before it is ever taken.
+// the returned order IS the input order. NOTE that this is not how the OFF
+// state of `discovery_ranking_modifiers_enabled` is expressed: with that flag
+// off lib/discoveryPde.ts does not call this function at all, because the
+// allocation would otherwise be stamped into the impression feature vector and
+// persisted to rank_events for a feature nobody enabled. `apply=false` is a
+// mode for callers that have the feature ON and want observation only.
 
 /** The budget bounds, as the roadmap states them. Clamped, not configurable past. */
 export const GOVERNOR_BUDGET_MIN_PCT = 15;
