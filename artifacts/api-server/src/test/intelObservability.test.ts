@@ -314,7 +314,16 @@ function makeClient(opts: RouteOpts = {}) {
     intel_claims: [{ subject_id: PLACE_A, claim_type: "crowd.level", status: "active", observed_at: PAST, superseded_by: null }],
     intel_state_snapshots: [{ privacy_eligible: true, confidence_band: "live", expires_at: FUTURE, conflict_state: "none" }],
     intel_confirmations: [{ stance: "agree" }],
-    canonical_events: [{ subject_id: PLACE_A, occurred_at: PAST, confidence: 0.8, payload: { intel: { snapshot_id: "s1", outcome: "same", subject_id: PLACE_A } } }],
+    // ONE real outcome event (verb 'completion', the 'same' outcome) plus the
+    // three NON-outcome intel domain events lib/intelDomainEvents emits. All
+    // four carry a payload.intel envelope, so a reader that filters only on
+    // `payload->intel is not null` counts the system transitions as outcomes.
+    canonical_events: [
+      { verb: "completion", subject_id: PLACE_A, occurred_at: PAST, confidence: 0.8, payload: { intel: { snapshot_id: "s1", outcome: "same", subject_id: PLACE_A } } },
+      { verb: "intel.observation.recorded", subject_id: PLACE_A, occurred_at: PAST, confidence: null, payload: { intel: { observation_id: "o1", subject_id: PLACE_A, claim_type: "crowd.level", actor_id: "a" } } },
+      { verb: "intel.claim.promoted", subject_id: PLACE_A, occurred_at: PAST, confidence: 0.8, payload: { intel: { claim_id: "c1", subject_id: PLACE_A, claim_type: "crowd.level", promotion_source: "system" } } },
+      { verb: "intel.state.changed", subject_id: PLACE_A, occurred_at: PAST, confidence: 0.8, payload: { intel: { snapshot_id: "s9", subject_id: PLACE_A, transition: "appeared" } } },
+    ],
     intel_reward_ledger: [{ qiu: 2, earned_units: 4, cash_amount: 0 }],
     intel_attributions: [{ outcome: "same", counterfactual: true, contradiction: false }],
   };
@@ -331,11 +340,17 @@ function makeClient(opts: RouteOpts = {}) {
         const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { account_status: "active", role: opts.role ?? "admin" }, error: null }) };
         return q;
       }
-      const q: any = { select: () => q, eq: () => q, gte: () => q, gt: () => q, or: () => q, not: () => q, order: () => q };
+      // `.in()` is applied for real, not swallowed: a passthrough fake would let
+      // a reader that forgot its verb filter still look correct here.
+      const ins: [string, readonly unknown[]][] = [];
+      const q: any = {
+        select: () => q, eq: () => q, gte: () => q, gt: () => q, or: () => q, not: () => q, order: () => q,
+        in: (col: string, vals: readonly unknown[]) => { ins.push([col, vals]); return q; },
+      };
       q.limit = () => Promise.resolve(
         opts.fail === table
           ? { data: null, error: { message: "boom" } }
-          : { data: tables[table] ?? [], error: null },
+          : { data: (tables[table] ?? []).filter((r) => ins.every(([c, vs]) => vs.includes((r as any)[c]))), error: null },
       );
       return q;
     },
@@ -399,6 +414,35 @@ describe("GET /v1/internal/intel/observability — internal, admin-only", () => 
     assert.equal(find("counterfactualSameChoice").value, 1, "attribution ledger read");
     assert.equal(find("outcomesReported").value, 1, "outcome events read");
     assert.equal(find("sourceClassesRepresented").value, 1, "observation source_class read");
+  });
+
+  it("counts ONLY outcome-verb events — an intel domain event is not a reported outcome", async () => {
+    // Regression: `payload->intel is not null` alone matches every intel domain
+    // event. The fixture holds 1 real outcome + 3 system transitions
+    // (intel.observation.recorded / intel.claim.promoted / intel.state.changed).
+    // Without the OUTCOME_VERBS filter this read returned 4 outcomes, and since
+    // decisionSection derives arrival as total − did_not_go, all 3 transitions
+    // were reported as travelers who successfully arrived.
+    _setTestClient(makeClient(), true);
+    const { body } = await req(app, PATH);
+    const find = (k: string) => body.sections.flatMap((s: any) => s.metrics).find((m: any) => m.key === k);
+    const dist = (k: string) => body.sections.flatMap((s: any) => s.distributions ?? []).find((d: any) => d.key === k);
+
+    assert.equal(find("outcomesReported").value, 1, "3 non-outcome intel events must not be counted as outcomes");
+    assert.equal(find("arrivalSuccess").value, 1);
+    assert.equal(find("arrivalSuccess").denominator, 1, "denominator is outcomes, not all intel events");
+    assert.equal(find("entrySuccess").value, 1);
+    assert.equal(find("entrySuccess").denominator, 1);
+
+    // The served-band and outcome distributions must not carry the transitions
+    // either — a promoted claim has no `outcome`, so it would land in a null
+    // bucket and look like an unclassifiable traveler report.
+    const byBand = dist("outcomesByServedConfidenceBand");
+    assert.equal(byBand.buckets.reduce((n: number, b: any) => n + b.count, 0), 1);
+    const byOutcome = dist("outcomeDistribution");
+    assert.equal(byOutcome.buckets.reduce((n: number, b: any) => n + b.count, 0), 1);
+    assert.equal(byOutcome.buckets.find((b: any) => b.key === "same").count, 1);
+    assert.deepEqual(byOutcome.unknownValues ?? [], [], "no unclassifiable outcome values survive the verb filter");
   });
 
   it("still returns 'not instrumented' (never zero) over the wire", async () => {

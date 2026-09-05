@@ -41,6 +41,7 @@ import {
   type ObsSnapshotRow,
   type RewardLedgerRow,
 } from "../lib/intelObservabilityReport.js";
+import { OUTCOME_VERBS } from "../lib/intelOutcomes.js";
 import type { ConfirmationRow } from "../lib/intelFunnelReport.js";
 
 const router = Router();
@@ -81,8 +82,18 @@ router.get("/v1/internal/intel/observability", asyncHandler(async (req, res) => 
       ctx.sc.from("intel_confirmations")
         .select("stance").gte("created_at", sinceIso).limit(FETCH_CAP),
       // The outcome events carry the SERVED confidence in the envelope column.
+      // The VERB filter is load-bearing, not a narrowing optimisation:
+      // payload.intel is the envelope of EVERY intel domain event (§ lib/
+      // intelDomainEvents builds intel.observation.recorded, intel.claim.promoted
+      // and intel.state.changed with one), so `payload->intel is not null` alone
+      // sweeps up system transitions that are not outcomes at all. Those rows
+      // carry no `outcome`, and the decision section derives arrival as
+      // total − did_not_go — so every promoted claim would be reported as a
+      // traveler who successfully arrived. OUTCOME_VERBS is what the production
+      // readers filter on (lib/intelOutcomes dedup, intelAttributionScheduler).
       ctx.sc.from("canonical_events")
         .select("subject_id, occurred_at, confidence, payload")
+        .in("verb", OUTCOME_VERBS as unknown as string[])
         .not("payload->intel", "is", null).gte("occurred_at", sinceIso).limit(FETCH_CAP),
       ctx.sc.from("intel_reward_ledger")
         .select("qiu, earned_units, cash_amount").gte("created_at", sinceIso).limit(FETCH_CAP),
