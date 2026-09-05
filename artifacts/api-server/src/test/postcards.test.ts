@@ -21,6 +21,7 @@ import http from 'node:http';
 import app from '../app.js';
 import { _setTestClient } from '../lib/http.js';
 import sharp from 'sharp';
+import { FIXTURE_ISO6709, mp4WithLocation, webmWithLocationTag } from './videoFixtures.js';
 
 // Tiny valid JPEG served by the fake storage download (built once).
 let __jpegPromise: Promise<Buffer> | null = null;
@@ -53,6 +54,14 @@ let __videoTotalBytes = 500_000;
 let __videoHeadBytes: Buffer = __testMp4Head();
 /** When true the stub omits Content-Range, as a server ignoring Range would. */
 let __omitContentRange = false;
+/**
+ * Full bytes the fake storage returns when /complete DOWNLOADS a video object
+ * to strip its container location metadata. Geotagged by default, exactly as a
+ * phone capture is, so the scrub path is exercised on every video completion.
+ */
+let __videoObjectBytes: Buffer = mp4WithLocation();
+/** Every object written through the fake storage, in order. */
+const __storageUploads: Array<{ path: string; buf: Buffer }> = [];
 
 const __realFetch = globalThis.fetch;
 
@@ -297,13 +306,21 @@ function buildFakeClient(tokenToId: Record<string, string>) {
             data: { signedUrl: `https://storage.test/signed/${path}` },
             error: null,
           }),
-          // /complete now downloads image bytes server-side to strip EXIF and
-          // measure real dimensions — serve a valid jpeg for image paths.
+          // /complete downloads the stored bytes server-side: images to strip
+          // EXIF and measure real dimensions, videos to strip the container's
+          // capture-location atoms. Serve bytes that match the object's kind —
+          // a fake that handed a jpeg back for a .mp4 would make the video path
+          // pass on media it will never actually see.
           download: async (_path: string) => ({
-            data: new Blob([new Uint8Array(await __testJpeg())]),
+            data: _path.endsWith('.mp4')
+              ? new Blob([new Uint8Array(__videoObjectBytes)])
+              : new Blob([new Uint8Array(await __testJpeg())]),
             error: null,
           }),
-          upload: async (_path: string, _buf: unknown, _opts?: unknown) => ({ data: { path: _path }, error: null }),
+          upload: async (_path: string, _buf: unknown, _opts?: unknown) => {
+            __storageUploads.push({ path: _path, buf: _buf as Buffer });
+            return { data: { path: _path }, error: null };
+          },
         };
       },
     },
@@ -377,6 +394,8 @@ beforeEach(() => {
   __videoTotalBytes = 500_000;
   __videoHeadBytes = __testMp4Head();
   __omitContentRange = false;
+  __videoObjectBytes = mp4WithLocation();
+  __storageUploads.length = 0;
   _setTestClient(buildFakeClient({ [TOKEN_OWNER]: OWNER_ID, [TOKEN_OTHER]: OTHER_ID }), true);
 });
 
@@ -642,6 +661,78 @@ describe('POST /api/postcards/:id/media/:mediaId/complete', () => {
     assert.equal(posts[POST_ID]?.primary_media_type, 'video');
     const row = allPostMedia.find((m) => m.id === MEDIA_ID);
     assert.equal(row?.duration_seconds, 30);
+  });
+
+  // ── Container location metadata (the video counterpart of the EXIF strip) ──
+  //
+  // On this transport the client PUTs straight to Storage, so the server never
+  // saw the bytes. The image branch of /complete already downloads, strips EXIF
+  // and re-uploads for exactly that reason. Video did not: `moov/udta/©xyz` —
+  // the ISO-6709 capture point that both iPhone and Android write — was stored
+  // untouched and served to every authorized viewer, defeating the app's
+  // location-privacy model for video only.
+  it('video complete: strips the container location metadata and re-uploads the scrubbed object', async () => {
+    seedPendingImage(MEDIA_ID, 'video');
+    // The stored object must genuinely be geotagged, or the assertions below
+    // would pass on a file that never carried coordinates.
+    assert.ok(
+      __videoObjectBytes.includes(Buffer.from(FIXTURE_ISO6709, 'latin1')),
+      'the stored video fixture must carry capture coordinates',
+    );
+
+    const { status } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'video/mp4', fileSizeBytes: 10_000_000, durationSeconds: 30, width: 1920, height: 1080 },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 200);
+
+    const rewritten = __storageUploads.filter((u) => u.path.endsWith('.mp4'));
+    assert.equal(rewritten.length, 1, 'the scrubbed video must be written back over the original');
+    const stored = rewritten[0].buf;
+    assert.equal(
+      stored.includes(Buffer.from(FIXTURE_ISO6709, 'latin1')), false,
+      'the re-uploaded object must NOT carry the capture coordinates',
+    );
+    assert.equal(
+      stored.includes(Buffer.from('©xyz', 'latin1')), false,
+      'the ©xyz location box must be gone',
+    );
+    assert.equal(
+      stored.length, __videoObjectBytes.length,
+      'the scrub must be length-preserving — chunk offsets into mdat must stay valid',
+    );
+  });
+
+  it('video complete: writes nothing back when the video has no location metadata', async () => {
+    __videoObjectBytes = mp4WithLocation({ xyz: false, appleMeta: false });
+    seedPendingImage(MEDIA_ID, 'video');
+    const { status } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'video/mp4', fileSizeBytes: 10_000_000, durationSeconds: 30, width: 1920, height: 1080 },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 200);
+    assert.equal(
+      __storageUploads.filter((u) => u.path.endsWith('.mp4')).length, 0,
+      'a clean video costs one read and no write',
+    );
+  });
+
+  it('video complete: refuses (does not mark ready) a container whose location cannot be removed', async () => {
+    // WebM geo SimpleTags need an EBML rewriter this tier does not have, so the
+    // documented fail-closed alternative applies: refuse rather than store.
+    __videoObjectBytes = webmWithLocationTag();
+    seedPendingImage(MEDIA_ID, 'video');
+    const { status, body } = await apiReq(
+      'POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'video/webm', fileSizeBytes: 1_000_000, durationSeconds: 5, width: 1920, height: 1080 },
+      TOKEN_OWNER,
+    );
+    assert.equal(status, 400, `expected refusal, got ${status}: ${JSON.stringify(body)}`);
+    assert.equal(body.error, 'invalid_payload');
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID);
+    assert.equal(row?.processing_status, 'pending', 'the row must stay pending, never ready');
   });
 
   it('rejects a video complete without width — cannot reach ready with NULL dimensions', async () => {
