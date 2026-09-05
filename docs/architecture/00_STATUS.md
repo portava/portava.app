@@ -84,9 +84,10 @@ because the ranker is on owner HOLD:
 4. **graph node kinds** — `circle` + `experience` admitted to the graph (migration `2290`), plus
    the world-model **city-confidence** consumed as a bounded, documented ranker input.
 
-## What landed after D3 (2026-09-04 → 2026-09-05)
+## What landed after D3's snapshot — same day, 2026-09-04
 
-Recorded here because D3's list above is dated and reads as current otherwise.
+Recorded here because the list above is dated and reads as current otherwise. Both of these
+merged **after** `cf43e560f` on the same day, so D3's pass could not have seen them.
 
 1. **`/discovery/feed` has callers** (#382). Serve point 7 was implemented, instrumented and
    **called by nothing in the repository**, so it could never contribute a row. It now has two

@@ -1,6 +1,6 @@
 # Discovery serve-point report — 2026-08-28
 
-> ## ⚠️ THIS IS A DATED RUN. TWO OF ITS INPUTS HAVE SINCE CHANGED.
+> ## ⚠️ THIS IS A DATED RUN. THREE OF ITS INPUTS HAVE SINCE CHANGED.
 >
 > Added 2026-09-05. **The reading below is preserved exactly as taken** — it is a
 > record, not a live status — but do not compare it with a run taken today, and
