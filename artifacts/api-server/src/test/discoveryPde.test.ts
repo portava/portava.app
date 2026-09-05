@@ -528,7 +528,7 @@ describe("PDE modifiers (ROADMAP step 7/8) — OFF is inert, ON is bounded", () 
     };
   }
 
-  it("OFF (no flag row): modifiers inert, order identical to the inert record, governor OBSERVES and records", async () => {
+  it("OFF (no flag row): modifiers inert, order identical to the inert record, governor DOES NOT RUN", async () => {
     const { client, writes } = recordingClient();          // the flag read resolves null ⇒ off
     const input = places(20);
     const off = await rankForViewer(input, VIEWER, { sc: client, served: false, nowMs: NOW_MS });
@@ -541,20 +541,52 @@ describe("PDE modifiers (ROADMAP step 7/8) — OFF is inert, ON is bounded", () 
     });
     assert.deepEqual(ids(off), ids(inert), "the flag-off path and the inert record rank identically");
 
-    // The governor computed an allocation but did not touch the order …
-    assert.equal(off.stages.governor, "observed");
-    assert.ok(off.governor);
-    assert.equal(off.governor!.applied, false);
-    assert.ok(off.governor!.slotCount > 0);
-    assert.deepEqual(off.governor!.order, ids(off));
-    // … and the decision is on every item's feature vector, which logImpression writes verbatim.
-    let slots = 0;
-    for (const s of off.scoredById.values()) {
-      assert.equal(s.features.governorApplied, 0);
-      assert.equal(s.features.governorBudgetPct, off.governor!.budgetPct);
-      if (s.features.governorSlot === 1) slots += 1;
+    // The governor stage did not run at all — no outcome, nothing to observe.
+    assert.equal(off.stages.governor, "skipped");
+    assert.equal(off.governor, null);
+  });
+
+  /**
+   * THE OFF PATH LEAVES NO TRACE IN THE FEATURE VECTOR.
+   *
+   * `scoredById[...].features` is not a local diagnostic: routes/discovery.ts
+   * hands it to logImpression, which writes it VERBATIM into
+   * `rank_events.features`, one row per served candidate, keyed by the viewer's
+   * user_id (lib/rankLog.ts). A governor that "only observes" with the flag off
+   * is therefore still writing per-user production rows for a feature nobody
+   * enabled — the flag's OFF state was not off.
+   *
+   * So the contract is byte-identity, not merely "same order": with the flag
+   * OFF, no candidate may carry ANY governor key.
+   */
+  it("OFF: no governor key reaches the feature vector at all (rank_events stays clean)", async () => {
+    const { client } = recordingClient();                  // flag read resolves null ⇒ off
+    const off = await rankForViewer(places(20), VIEWER, { sc: client, served: false, nowMs: NOW_MS });
+    assert.equal(off.modifiers.enabled, false);
+    assert.ok(off.scoredById.size > 0, "the fixture must produce scored candidates to assert over");
+    for (const [id, s] of off.scoredById) {
+      const governorKeys = Object.keys(s.features).filter((k) => k.toLowerCase().startsWith("governor"));
+      assert.deepEqual(
+        governorKeys, [],
+        `flag OFF must stamp no governor feature; ${id} carried ${governorKeys.join(", ")}`,
+      );
     }
-    assert.equal(slots, off.governor!.slotCount);
+  });
+
+  it("ON: the governor keys ARE stamped — the control for the OFF assertion", async () => {
+    const on = await rankForViewer(places(20), VIEWER, {
+      sc: null, served: false, nowMs: NOW_MS, modifiers: onModifiers(),
+    });
+    assert.equal(on.modifiers.enabled, true);
+    for (const [id, s] of on.scoredById) {
+      const governorKeys = Object.keys(s.features).filter((k) => k.toLowerCase().startsWith("governor"));
+      assert.ok(
+        governorKeys.includes("governorApplied") &&
+        governorKeys.includes("governorBudgetPct") &&
+        governorKeys.includes("governorSlot"),
+        `flag ON must stamp the governor decision; ${id} carried ${governorKeys.join(", ") || "nothing"}`,
+      );
+    }
   });
 
   it("ON: the governor APPLIES a budgeted allocation — a permutation, picks at their slots, inside the budget", async () => {

@@ -66,9 +66,12 @@ function seedDb() {
       budget_style: "budget", travel_group_style: ["social"], open_to_meet: true,
       created_at: "2023-01-01",
     }],
+    // `user_stamps.visibility` is NOT NULL DEFAULT 'public' in the live schema,
+    // so every real row carries a tier; the projection reads it per-stamp and
+    // fails closed on an absent one. Staged explicitly so the fixture matches.
     user_stamps: [
-      { user_id: OWNER, city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-30", stamp_definitions: { category: "trip", name: "Vietnam" } },
-      { user_id: OWNER, city: "Bangkok", country: "Thailand", is_revoked: false, earned_at: "2025-02-01", stamp_definitions: { category: "city", name: "Bangkok" } },
+      { user_id: OWNER, city: "Da Nang", country: "Vietnam", is_revoked: false, visibility: "public", earned_at: "2025-03-30", stamp_definitions: { category: "trip", name: "Vietnam" } },
+      { user_id: OWNER, city: "Bangkok", country: "Thailand", is_revoked: false, visibility: "public", earned_at: "2025-02-01", stamp_definitions: { category: "city", name: "Bangkok" } },
     ],
     passport_stamps: [],
     trip_members: [

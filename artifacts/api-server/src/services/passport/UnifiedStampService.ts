@@ -19,6 +19,14 @@
  * counts remain authoritative.
  */
 
+import {
+  isVisible,
+  isVisibleV2,
+  type CallerContext,
+  type VisibilityTier,
+  type StampV2VisibilityTier,
+} from "./PassportPrivacyGuard.js";
+
 export const UNIFIED_FLAG = "stamp_unified_view_enabled";
 
 /** Which live table a unified stamp was read from (storage origin, not provenance). */
@@ -54,6 +62,16 @@ export interface UnifiedStamp {
   stampSource: StampSource;
   /** TABLE 16 verification assertion, derived from provenance (§12). */
   verification: StampVerification;
+  /**
+   * The owner's PER-STAMP visibility, read verbatim from the live row so every
+   * consumer can gate on it. The two systems use different tier vocabularies —
+   * v1 `passport_stamps.visibility` is public|circle_only|trip_crew|private and
+   * v2 `user_stamps.visibility` is public|friends_only|private — so the tier is
+   * carried alongside `source` and interpreted with the matching
+   * PassportPrivacyGuard predicate. `null` when the row carries no tier at all;
+   * consumers must treat that (and any unknown label) as NOT public.
+   */
+  visibility: string | null;
   /** v2 user_stamps.id when source is v2; null for v1 GPS rows. */
   userStampId: string | null;
   /** v2 user_stamps.stamp_definition_id; null for v1 GPS rows. */
@@ -160,7 +178,7 @@ async function readV2(sc: any, userId: string): Promise<UnifiedStamp[]> {
     const { data, error } = await sc
       .from("user_stamps")
       .select(
-        "id, stamp_definition_id, source_type, city, country, earned_at, is_revoked, catalog_id, " +
+        "id, stamp_definition_id, source_type, city, country, earned_at, is_revoked, visibility, catalog_id, " +
         "stamp_definitions(name, rarity, stamp_type)",
       )
       .eq("user_id", userId)
@@ -178,6 +196,9 @@ async function readV2(sc: any, userId: string): Promise<UnifiedStamp[]> {
       // role (never self-inserted), so they are canonical facts → verified (§12).
       stampSource: mapStampSource(r.source_type),
       verification: "verified" as const,
+      // v2 tier vocabulary (public|friends_only|private). Absent → null, which
+      // every consumer treats as not-public.
+      visibility: typeof r.visibility === "string" ? r.visibility : null,
       userStampId: r.id ?? null,
       definitionId: r.stamp_definition_id ?? null,
       catalogId: r.catalog_id ?? null,
@@ -212,6 +233,9 @@ async function readV1(sc: any, userId: string): Promise<UnifiedStamp[]> {
         // as verified (§12).
         stampSource: mapStampSource(r.source_type),
         verification: verificationFromLevel(r.verification_level),
+        // v1 tier vocabulary (public|circle_only|trip_crew|private). Absent →
+        // null, which every consumer treats as not-public.
+        visibility: typeof r.visibility === "string" ? r.visibility : null,
         userStampId: null,
         definitionId: null,
         catalogId: r.catalog_id ?? null,
@@ -282,6 +306,30 @@ export async function buildUnifiedStamps(sc: any, userId: string): Promise<Unifi
     count: stamps.length,
     breakdown: { v2: v2.length, v1: v1.length, deduped: dedupedFromV1 },
   };
+}
+
+/**
+ * Per-stamp visibility gate for a unified stamp (§22).
+ *
+ * The owner's per-row tier is authoritative and is applied with the predicate
+ * that matches the row's own vocabulary — `isVisible` for a v1 `passport_stamps`
+ * row (public|circle_only|trip_crew|private), `isVisibleV2` for a v2
+ * `user_stamps` row (public|friends_only|private). Both predicates already fail
+ * CLOSED on a label they do not recognise; an absent tier is likewise refused
+ * here rather than defaulted to public.
+ */
+export function isUnifiedStampVisible(stamp: UnifiedStamp, callerCtx: CallerContext): boolean {
+  if (callerCtx === "owner") return true;
+  const tier = norm(stamp.visibility);
+  if (!tier) return false; // absent tier → fail closed
+  return stamp.source === "v2_achievement"
+    ? isVisibleV2(tier as StampV2VisibilityTier, callerCtx)
+    : isVisible(tier as VisibilityTier, callerCtx);
+}
+
+/** Filter a unified stamp collection by the owner's per-stamp visibility. */
+export function filterUnifiedStamps(stamps: UnifiedStamp[], callerCtx: CallerContext): UnifiedStamp[] {
+  return stamps.filter((s) => isUnifiedStampVisible(s, callerCtx));
 }
 
 /** Convenience: just the unified count (for passport stat). */
