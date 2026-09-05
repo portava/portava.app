@@ -129,6 +129,48 @@ export function matchesFixtureEmail(candidateEmail: string, base: string): boole
 const MAX_PAGES = 50;
 const PER_PAGE = 200;
 
+/**
+ * Find one auth user by exact email, across EVERY page.
+ *
+ * `admin.auth.admin.listUsers()` with no arguments returns the first page only
+ * — 50 users — and the suites that reused a fixture user by looking it up that
+ * way silently stopped finding it once the CI project passed 50 accounts. It
+ * surfaced as `could not create or find test user memlife_live_a@…`, which
+ * reads like the user is missing rather than like the search was truncated.
+ *
+ * Throws on a listing error rather than returning null: "not found" and "could
+ * not look" are different answers and only one of them is safe to act on.
+ */
+export async function findUserByEmail(admin: any, email: string): Promise<string> {
+  const target = email.toLowerCase();
+  const users = await listAllUsers(admin);
+  return users.find((u) => String(u?.email ?? "").toLowerCase() === target)?.id ?? "";
+}
+
+/**
+ * Delete one fixture auth user BY ID, reporting a refusal instead of dropping
+ * it. Never throws, for the same reason purgeFixtureUsers does not.
+ *
+ * Replaces `deleteUser(id).catch(() => {})`, which discarded nothing: supabase-js
+ * resolves with `{ error }` rather than rejecting, so the `.catch` never ran and
+ * the refusal was never even reachable. Every such call site looked like it had
+ * considered failure and had not.
+ */
+export async function deleteFixtureUser(admin: any, id: string): Promise<boolean> {
+  if (!id) return false;
+  try {
+    const { error } = await admin.auth.admin.deleteUser(id);
+    if (error) {
+      console.error(`[liveFixtureUsers] CLEANUP FAILED for auth user ${id} — ${error.message ?? String(error)}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[liveFixtureUsers] CLEANUP FAILED for auth user ${id} — ${String(err)}`);
+    return false;
+  }
+}
+
 export type PurgeOutcome = {
   /** Fixture users found and successfully deleted. */
   deleted: string[];
