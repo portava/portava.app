@@ -139,7 +139,7 @@ describe("intelProjection — projectClaim", () => {
 describe("intelProjection — projectAndStore", () => {
   beforeEach(() => invalidateFreshnessPolicyCache());
 
-  it("writes nothing when the projection flag is off", async () => {
+  it("AT-18: writes nothing when the projection flag is off", async () => {
     const c = client({ flag: false });
     const t = await projectAndStore(c, "place-1", [passing], { now: NOW });
     assert.deepEqual(t, { written: 0, suppressed: 0, skipped: 0 });

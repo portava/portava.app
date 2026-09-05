@@ -58,8 +58,15 @@ function makeFakeClient(store: Record<string, Row[]> = {}) {
       return out;
     }
 
+    // `not` was in this pass-through set, so a negated filter was a NO-OP.
+    // That is exactly the blindness the dead-literal class lived in: while
+    // production said `.neq("state","banned")` (a label the enum does not
+    // have, 22P02 in reality) this double happily excluded nothing and the
+    // test passed. Now that production carries the real predicate
+    // `.not("state","in",'("draft","cancelled","archived")')`, the double has
+    // to be able to honour it or the cancelled fixture leaks into the rail.
     const passthrough = new Set([
-      "select", "order", "or", "like", "ilike", "in", "not", "is",
+      "select", "order", "or", "like", "ilike", "in", "is",
       "contains", "overlaps", "range", "textSearch", "filter", "match",
     ]);
 
@@ -76,6 +83,20 @@ function makeFakeClient(store: Record<string, Row[]> = {}) {
         }
         if (prop === "eq")  return (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; };
         if (prop === "neq") return (k: string, v: unknown) => { filters.push((r) => r[k] !== v); return b; };
+        if (prop === "not") return (k: string, op: string, v: any) => {
+          const o = String(op).toLowerCase();
+          if (o === "eq") filters.push((r) => r[k] !== v);
+          else if (o === "neq") filters.push((r) => r[k] === v);
+          else if (o === "is") filters.push((r) => (v === null ? r[k] != null : true));
+          else if (o === "in") {
+            const set = new Set(
+              String(v).replace(/^\(/, "").replace(/\)$/, "").split(",")
+                .map((s) => s.trim().replace(/^"(.*)"$/, "$1").replace(/^'(.*)'$/, "$1")),
+            );
+            filters.push((r) => !set.has(String(r[k])));
+          }
+          return b;
+        };
         if (prop === "gte") return (k: string, v: any) => { filters.push((r) => String(r[k] ?? "") >= String(v)); return b; };
         if (prop === "lte") return (k: string, v: any) => { filters.push((r) => String(r[k] ?? "") <= String(v)); return b; };
         if (prop === "insert" || prop === "upsert" || prop === "update" || prop === "delete") {
@@ -155,7 +176,12 @@ function eventRow(id: string, title: string, startsAt: string, hostId = "host-1"
   return {
     id, title, description: null, city: "Cebu", country: "PH",
     starts_at: startsAt, category: "music", host_id: hostId,
-    state: "published", visibility: "public",
+    // FIXTURE REPAIRED: `state: "published"` is not a label of the
+    // `event_state` enum (draft | open | full | waitlist | started | completed
+    // | cancelled | archived) — the fixture invented it, and the double never
+    // asked whether it was real. `open` is the state a live public event
+    // actually carries (routes/events.ts:1794).
+    state: "open", visibility: "public",
   };
 }
 

@@ -484,7 +484,7 @@ describe("intelProjection scheduler — runIntelProjectionPass (flag-gated, fail
     assert.equal(db._snaps[0].privacy_eligible, false);
   });
 
-  it("groups claims by (subject, zone) and fails closed on a claim-read error", async () => {
+  it("AT-03: groups claims by (subject, zone) — one snapshot per zone, no cross-zone conflict — and fails closed on a claim-read error", async () => {
     const err = await runIntelProjectionPass({ client: makeDb({ ...cfgBase, flags: { intel_claim_projection_crowd: true }, errorTable: "intel_claims" }) as any, now: NOW });
     assert.equal(err.reason, "error");
     assert.equal(err.skippedRun, true);
@@ -539,7 +539,7 @@ describe("intelProjection scheduler — runIntelProjectionPass (flag-gated, fail
   });
 
   // ── I1 / §24: completion status of a correction's invalidation targets ──────
-  it("expires an ORPHANED servable snapshot and emits intel.correction.invalidation.completed naming it (§24 completion status)", async () => {
+  it("AT-09: expires an ORPHANED servable snapshot and emits intel.correction.invalidation.completed naming it (§24 completion status)", async () => {
     // A servable snapshot whose claim has been superseded (a correction's
     // invalidation target) — no live-eligible claim stands behind its key.
     const orphan = { ...tailSnapshot(), id: "snap-orphan", claim_type: "crowd.level" };

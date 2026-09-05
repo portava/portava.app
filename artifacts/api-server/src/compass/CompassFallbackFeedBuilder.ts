@@ -281,7 +281,11 @@ async function fetchActiveTrips(
     const [ownedRes, memberRes] = await Promise.allSettled([
       db.from("trips")
         .select("id, destination_city, start_date, end_date, status, owner_id")
-        .in("status", ["in_progress", "upcoming"])
+        // `in_progress` is not a `trip_status` label (draft | planning |
+        // upcoming | active | completed | cancelled | archived), so PostgREST
+        // rejected this read 22P02 and the fallback feed never carried a trip.
+        // `["active","upcoming"]` is CompassSocialEngine:296's predicate verbatim.
+        .in("status", ["active", "upcoming"])
         .eq("owner_id", userId)
         .limit(5),
       db.from("trip_members")

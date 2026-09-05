@@ -195,14 +195,17 @@ describe("static schema-reference check — catches the recurrence", () => {
     ]);
     assert.ok(sites.length > 500, `only ${sites.length} references outside routes+services`);
     const found = findUndeclaredReferences(schema(), sites).map((f) => `${f.table}.${f.column}`);
-    // The places.country recurrence this test was written against was fixed in
-    // 9e82e8450 (duplicateDetection.ts now reads `country_code`), so it can no
-    // longer serve as the coverage probe. close_friends.friend_id in
-    // src/lib/mediaAccess.ts is the next src/lib entry on the ratchet; when it is
-    // fixed too, move this probe to whichever src/lib dead reference remains.
+    // The probe moves as the ratchet shrinks, exactly as this test's own
+    // instruction says. places.country was fixed in 9e82e8450;
+    // close_friends.friend_id (src/lib/mediaAccess.ts) was fixed by the
+    // dead-literals batch, which struck the whole mediaAccess entry off the
+    // ratchet — those two reads were media AUTHORIZATION decisions failing
+    // 42703 into a `false` verdict. posts.view_count in
+    // src/lib/places/placeCollectionsWorker.ts is the next src/lib entry;
+    // when it is fixed too, move this probe to whichever one remains.
     assert.ok(
-      found.includes("close_friends.friend_id"),
-      "the src/lib dead reference close_friends.friend_id is no longer detected — " +
+      found.includes("posts.view_count"),
+      "the src/lib dead reference posts.view_count is no longer detected — " +
         `either it was fixed (update this test) or coverage regressed. Found: ${found.join(", ")}`,
     );
     // And the founding defect must not come back a FOURTH time.

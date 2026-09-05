@@ -33,7 +33,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { findUserByEmail, deleteFixtureUser } from "./liveFixtureUsers.js";
+import { findUserByEmail, deleteFixtureUser, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -46,10 +46,42 @@ const admin = (): SupabaseClient =>
 const anon = (): SupabaseClient =>
   createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false } });
 
-/** Deterministic fixtures so cleanup is reliable even after a crashed run. */
+/**
+ * RUN-SCOPED fixtures. These were deliberately left on stable reuse-by-email
+ * addresses while the rest of the live suites moved to `fixtureEmail()`, on the
+ * reasoning that `ensureUser` reuses by email and a stable address is therefore
+ * load-bearing. On 2026-09-05 that reasoning was shown to be wrong in the one
+ * way that matters: it is load-bearing WITHIN a process, not ACROSS runs.
+ *
+ * Two live-DB jobs ran against the shared CI project at once (a
+ * `gh run rerun --failed` re-enters the DB job without re-running the
+ * slot-acquire job, so it never asks for the slot). Both resolved
+ * `memlife_live_a@portava-test.invalid` to the SAME auth user, and both ran
+ * `before`/`after` against it. The observed damage was exactly what that
+ * predicts: each run's `purge()` erased the other's memory rows mid-assertion,
+ * and one run's `after` hook deleted the shared auth user while the other was
+ * still projecting — surfacing as
+ * `memory_events violates foreign key constraint "memory_events_user_fk"` and
+ * as the MEM·C1 control account ("the fan-out must still project a live,
+ * identically-sourced control account") having been tombstoned by its twin.
+ *
+ * `fixtureEmail()` fixes that without touching `ensureUser`'s semantics: it is
+ * a pure function of the base address and this PROCESS's FIXTURE_RUN_ID, so the
+ * address is still constant for the whole file — setup, every nested `before`,
+ * and teardown all resolve to the same account, and `ensureUser`'s
+ * create-or-find fallback is unchanged and still reached on a retry within the
+ * process. What changes is only that a CONCURRENT run resolves a different
+ * account, which is the sharing that had to stop.
+ *
+ * Note what is deliberately NOT added here: a prefix-scoped
+ * `purgeFixtureUsers()` sweep in `before`. `matchesFixtureEmail` matches
+ * `stem+anything@domain`, so such a sweep deletes every OTHER run's live
+ * fixtures too — it would reintroduce the same cross-run deletion one level
+ * down. Teardown deletes by id, which can only ever be this run's own user.
+ */
 const TAG = "memlife_live_";
-const EMAIL_A = `${TAG}a@portava-test.invalid`;
-const EMAIL_B = `${TAG}b@portava-test.invalid`;
+const EMAIL_A = fixtureEmail(`${TAG}a@portava-test.invalid`);
+const EMAIL_B = fixtureEmail(`${TAG}b@portava-test.invalid`);
 
 let sc: SupabaseClient;
 let userA = "";
@@ -68,7 +100,17 @@ async function ensureUser(email: string, handle: string): Promise<string> {
     id = await findUserByEmail(sc, email);
   }
   if (!id) throw new Error(`could not create or find test user ${email}`);
-  await sc.from("profiles").upsert({ id, handle, name: handle }, { onConflict: "id" });
+  // The error is CHECKED, not discarded. `handle` carries a UNIQUE constraint, so
+  // a leftover profile from a dead run holding this handle makes the upsert fail —
+  // and swallowing that returned an id with no profile row behind it, which then
+  // surfaced far away as `insert or update on table "memory_projections" violates
+  // foreign key constraint "memory_projections_user_fk"`. Measured on 2026-09-05:
+  // four such rows (memlife_live_a/b/c1c/c1d) stranded by run r2fa23449df took
+  // main's live tier red, and the seed error named a table nothing here writes.
+  const { error: pErr } = await sc
+    .from("profiles")
+    .upsert({ id, handle, name: handle }, { onConflict: "id" });
+  if (pErr) throw new Error(`could not upsert profile ${handle} for ${email}: ${pErr.message}`);
   return id;
 }
 
@@ -84,8 +126,8 @@ async function purge(userId: string): Promise<void> {
 before(async () => {
   if (!CREDS) return;
   sc = admin();
-  userA = await ensureUser(EMAIL_A, `${TAG}a`);
-  userB = await ensureUser(EMAIL_B, `${TAG}b`);
+  userA = await ensureUser(EMAIL_A, fixtureLabel(`${TAG}a`));
+  userB = await ensureUser(EMAIL_B, fixtureLabel(`${TAG}b`));
   await purge(userA);
   await purge(userB);
 });
@@ -461,8 +503,12 @@ describe("memory lifecycle (live DB)", () => {
  * the exclusion is by account_status, not by a dead pass.
  */
 describe("MEM·C1 — the fan-out must not resurrect a tombstoned (deleted) account", () => {
-  const EMAIL_CTL = `${TAG}c1_ctl@portava-test.invalid`;
-  const EMAIL_DEL = `${TAG}c1_del@portava-test.invalid`;
+  // Run-scoped for the reason at the top of the file, and most acutely here:
+  // step 3 tombstones EMAIL_DEL and step 6 asserts EMAIL_CTL is still live. On a
+  // shared address a concurrent run's step 3 tombstones this run's control, and
+  // the control assertion fails while the code under test is correct.
+  const EMAIL_CTL = fixtureEmail(`${TAG}c1_ctl@portava-test.invalid`);
+  const EMAIL_DEL = fixtureEmail(`${TAG}c1_del@portava-test.invalid`);
   let ctl = "";
   let del = "";
 
@@ -494,8 +540,8 @@ describe("MEM·C1 — the fan-out must not resurrect a tombstoned (deleted) acco
 
   before(async () => {
     if (!CREDS) return;
-    ctl = await ensureUser(EMAIL_CTL, `${TAG}c1c`);
-    del = await ensureUser(EMAIL_DEL, `${TAG}c1d`);
+    ctl = await ensureUser(EMAIL_CTL, fixtureLabel(`${TAG}c1c`));
+    del = await ensureUser(EMAIL_DEL, fixtureLabel(`${TAG}c1d`));
     await purge(ctl); await purge(del);
     // A reused fixture from a crashed run could still be tombstoned; ensureUser's
     // upsert does not touch account_status, so reset it explicitly.

@@ -1245,8 +1245,15 @@ const TRIP_DEL = "td000000-0000-4000-a000-000000000041";
 const PLAN_LIVE = "pd000000-0000-4000-a000-000000000042";
 const TRIP_LIVE = "td000000-0000-4000-a000-000000000043";
 
-describe("GET /api/discovery/search — plans: deleted/cancelled/banned trip exclusion", () => {
-  it("excludes plan items from a deleted trip", async () => {
+// FIXTURE REPAIRED. This suite seeded `status: "deleted"`, which is not a
+// label of the `trip_status` enum (draft | planning | upcoming | active |
+// completed | cancelled | archived) — so the fake client excluded the row on a
+// value PostgREST would have rejected 22P02 on BOTH sides, and the test proved
+// only that the code matched the fixture. `cancelled` is the real excluded
+// label, and the production predicate is now
+// `.not("status","in",'("draft","cancelled","archived")')`.
+describe("GET /api/discovery/search — plans: draft/cancelled/archived trip exclusion", () => {
+  it("excludes plan items from a cancelled trip", async () => {
     setup({
       profiles: [
         { id: ALICE, handle: "alice", name: "Alice", avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
@@ -1256,7 +1263,7 @@ describe("GET /api/discovery/search — plans: deleted/cancelled/banned trip exc
       user_follows: [],
       trips: [
         { id: TRIP_LIVE, visibility: "public", owner_id: ALICE, status: "planning", show_in_discovery: true },
-        { id: TRIP_DEL,  visibility: "public", owner_id: ALICE, status: "deleted",  show_in_discovery: true },
+        { id: TRIP_DEL,  visibility: "public", owner_id: ALICE, status: "cancelled", show_in_discovery: true },
       ],
       trip_plan_items: [
         { id: PLAN_LIVE, title: "Visit Museum",  notes: null, trip_id: TRIP_LIVE, creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z" },
@@ -1270,7 +1277,7 @@ describe("GET /api/discovery/search — plans: deleted/cancelled/banned trip exc
     const { results } = await r.json() as any;
     const ids = (results as any[]).map((p: any) => p.id as string);
     assert.ok(ids.includes(PLAN_LIVE),  "Plan from active trip should appear");
-    assert.ok(!ids.includes(PLAN_DEL), "Plan from deleted trip must NOT appear");
+    assert.ok(!ids.includes(PLAN_DEL), "Plan from cancelled trip must NOT appear");
   });
 });
 

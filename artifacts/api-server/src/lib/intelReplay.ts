@@ -156,6 +156,11 @@ export function replayVersion(
   };
 }
 
+/** The column list a replay reads. One spelling, so the single-row read and the
+ *  batch audit below cannot drift apart. */
+export const REPLAY_COLUMNS =
+  "id, subject_id, zone_id, claim_type, confidence, confidence_band, confidence_components, algorithm_version, generated_at";
+
 export type ReplayOutcome =
   | ReplayResult
   | { status: "not_found"; versionId: string }
@@ -175,7 +180,7 @@ export async function replaySnapshotVersion(
   try {
     const { data, error } = await sc
       .from("intel_state_snapshot_versions")
-      .select("id, subject_id, zone_id, claim_type, confidence, confidence_band, confidence_components, algorithm_version, generated_at")
+      .select(REPLAY_COLUMNS)
       .eq("id", versionId)
       .maybeSingle();
     if (error) {
@@ -192,5 +197,134 @@ export async function replaySnapshotVersion(
   } catch (err) {
     logger.warn({ err, versionId }, "intelReplay: replay threw");
     return { status: "error", versionId, detail: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// ── §21 nightly lineage / correction consistency audit ────────────────────────
+/**
+ * THE DRIVER THIS UNIT WAS MISSING.
+ *
+ * Migration 2273 exists so that every projection is replayable (spec §1 "every
+ * model decision is reproducible from versioned features, claims, policies and
+ * algorithm versions"; Appendix B "every projection is replayable"), and §21
+ * requires a "lineage and correction consistency audit nightly". Until now
+ * `replayVersion` and `replaySnapshotVersion` had no non-test caller at all:
+ * the lineage was written on every projection and NOTHING ever replayed it, so
+ * an undetectably non-deterministic formula, a hand-edited row or a silently
+ * shipped algorithm change would have sat in the table indefinitely. The audit
+ * is what turns a stored lineage into a checked one.
+ *
+ * READ-ONLY. Selects version rows, re-runs each through `replayVersion`, and
+ * tallies. Nothing is written, nothing is repaired — a divergence is a finding
+ * for a human, never something to auto-correct (a "fix" would destroy the very
+ * evidence that the row and the code disagree).
+ *
+ * ABSENCE OF EVIDENCE IS NOT EVIDENCE OF ABSENCE (the discoveryServePointReport
+ * invariant, shared with lib/intelFunnelReport). Zero rows scanned means the
+ * projection was not exercised in this window — NOT that replay is proven. So
+ * `clean` is true only when rows were actually scanned AND every one replayed
+ * equal; an empty scan and a read error both report `clean: false`.
+ */
+export interface ReplayAuditOptions {
+  /** Max version rows to replay in one pass. */
+  limit?: number;
+  /** Only versions generated at/after this ISO instant. */
+  since?: string | null;
+  /** Narrow to one projection subject. */
+  subjectId?: string | null;
+  /** Replay "as of" a specific algorithm version (defaults to the running code's). */
+  algorithmVersion?: string;
+  /** Cap on the diverged version ids carried in the report. */
+  maxReported?: number;
+}
+
+export interface ReplayAuditReport {
+  scanned: number;
+  equal: number;
+  diverged: number;
+  /** Divergence reason → how many rows raised it (a row may raise several). */
+  reasons: Partial<Record<ReplayDivergence, number>>;
+  /** Version ids that diverged, capped at `maxReported`. */
+  divergedVersionIds: string[];
+  /** True iff the reported list is shorter than the real one. */
+  divergedTruncated: boolean;
+  /** Set when the read itself failed; `scanned` is then 0 and nothing is proven. */
+  readError: string | null;
+  /**
+   * True ONLY when at least one row was scanned and every one replayed equal.
+   * An empty table is not a pass.
+   */
+  clean: boolean;
+}
+
+/** Default batch size — large enough for a night's projections, small enough to page. */
+export const REPLAY_AUDIT_DEFAULT_LIMIT = 500;
+const REPLAY_AUDIT_DEFAULT_MAX_REPORTED = 50;
+
+/** Tally already-replayed results. Pure, so the arithmetic is testable on its own. */
+export function tallyReplayResults(
+  results: readonly ReplayResult[],
+  maxReported: number = REPLAY_AUDIT_DEFAULT_MAX_REPORTED,
+): Omit<ReplayAuditReport, "readError"> {
+  const reasons: Partial<Record<ReplayDivergence, number>> = {};
+  const divergedIds: string[] = [];
+  let equal = 0;
+  for (const r of results) {
+    if (r.status === "equal") { equal++; continue; }
+    divergedIds.push(r.versionId);
+    for (const reason of r.reasons) reasons[reason] = (reasons[reason] ?? 0) + 1;
+  }
+  const cap = Number.isFinite(maxReported) && maxReported > 0 ? Math.floor(maxReported) : REPLAY_AUDIT_DEFAULT_MAX_REPORTED;
+  return {
+    scanned: results.length,
+    equal,
+    diverged: divergedIds.length,
+    reasons,
+    divergedVersionIds: divergedIds.slice(0, cap),
+    divergedTruncated: divergedIds.length > cap,
+    // Zero scanned is NOT clean: nothing was proven.
+    clean: results.length > 0 && divergedIds.length === 0,
+  };
+}
+
+/** Read a batch of stored version rows and replay every one. Read-only. */
+export async function auditSnapshotReplays(
+  sc: any,
+  opts: ReplayAuditOptions = {},
+): Promise<ReplayAuditReport> {
+  const empty = (readError: string | null): ReplayAuditReport => ({
+    scanned: 0, equal: 0, diverged: 0, reasons: {}, divergedVersionIds: [],
+    divergedTruncated: false, readError, clean: false,
+  });
+  if (!sc) return empty("client is required");
+
+  const limit = Number.isFinite(opts.limit) && (opts.limit as number) > 0
+    ? Math.floor(opts.limit as number)
+    : REPLAY_AUDIT_DEFAULT_LIMIT;
+
+  try {
+    let q = sc.from("intel_state_snapshot_versions").select(REPLAY_COLUMNS);
+    if (typeof opts.since === "string" && opts.since !== "") q = q.gte("generated_at", opts.since);
+    if (typeof opts.subjectId === "string" && opts.subjectId !== "") q = q.eq("subject_id", opts.subjectId);
+    const { data, error } = await q.order("generated_at", { ascending: false }).limit(limit);
+    if (error) {
+      logger.warn({ err: error }, "intelReplay: audit read failed");
+      return empty(String((error as { message?: string }).message ?? "read failed"));
+    }
+    const rows = (data as SnapshotVersionForReplay[]) ?? [];
+    const results = rows.map((row) => replayVersion(row, { algorithmVersion: opts.algorithmVersion }));
+    const tally = tallyReplayResults(results, opts.maxReported);
+    logger.info(
+      {
+        event: "intel.projection.replay.audit",
+        scanned: tally.scanned, equal: tally.equal, diverged: tally.diverged,
+        reasons: tally.reasons, clean: tally.clean,
+      },
+      "intel projection replay audit",
+    );
+    return { ...tally, readError: null };
+  } catch (err) {
+    logger.warn({ err }, "intelReplay: audit threw");
+    return empty(err instanceof Error ? err.message : String(err));
   }
 }

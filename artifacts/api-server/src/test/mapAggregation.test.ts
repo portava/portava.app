@@ -716,7 +716,15 @@ describe("mapAggregation — aggregateForViewport", () => {
   it("kinds that must never collapse pass through at every aggregating zoom", () => {
     assert.deepEqual(
       [...NEVER_AGGREGATED_KINDS],
-      ["safety_notice", "crew_member", "meeting_point", "crowd_flow"],
+      [
+        "safety_notice", "crew_member", "meeting_point", "crowd_flow",
+        // §36 Phase 7: three already-gated aggregates whose cohort is published
+        // as a BUCKET (so re-binning would fold it back into an exact count and
+        // `cohortWeightOf` would read their absent `count` as 1), and one
+        // private per-viewer summary that must never contribute a body to a
+        // cell drawn as public activity.
+        "world_pulse", "traveler_flow", "city_model", "personal_city",
+      ],
     );
     for (const kind of NEVER_AGGREGATED_KINDS) {
       assert.equal(isNeverAggregated(kind), true);

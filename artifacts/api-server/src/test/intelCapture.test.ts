@@ -102,7 +102,7 @@ const baseInput = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("IG-03 capture — flag gate + validation fail closed", () => {
-  it("flag OFF is an inert no-op — nothing stored", async () => {
+  it("AT-18: flag OFF is an inert no-op — nothing stored", async () => {
     const db = makeDb({ intel_capture_quick_signal: false }, { places: [PLACE] });
     const r = await writeObservation(db as any, ACTOR, baseInput() as any);
     assert.equal(r.ok, false);
@@ -156,7 +156,7 @@ describe("IG-03 capture — presence attestation gate (H2)", () => {
   const rank = (lvl: string) => PRESENCE_LEVELS.indexOf(lvl as (typeof PRESENCE_LEVELS)[number]);
   const liveFloor = rank(MIN_PRESENCE_FOR_LIVE_CLAIM);
 
-  it("a forged live-grade presence (P4) with no attestation is NOT stored/weighted as live-grade", async () => {
+  it("AT-15: a forged live-grade presence (P4) with no attestation is NOT stored/weighted as live-grade", async () => {
     const db = makeDb({ intel_capture_quick_signal: true }, { places: [PLACE] });
     const r = await writeObservation(db as any, ACTOR, baseInput({ presenceLevel: "P4" }) as any);
     assert.equal(r.ok, true);
@@ -360,7 +360,7 @@ describe("IG-03 propose — idempotent per (observation, claim_type), with Table
 });
 
 // ── I1 / §24: correction invalidation targets + completion status ─────────────
-describe("IG-03 correction — §24 invalidation targets are named and logged", () => {
+describe("AT-09 / IG-03 correction — §24 invalidation targets are named and logged", () => {
   /** Capture every logger.info record while `fn` runs; restore afterwards. */
   async function withInfoLog<T>(fn: () => Promise<T>): Promise<{ result: T; records: any[] }> {
     const records: any[] = [];

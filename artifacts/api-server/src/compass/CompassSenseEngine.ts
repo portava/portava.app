@@ -315,7 +315,12 @@ async function fetchActiveTrip(
       .from("trips")
       .select("id, destination_city, status")
       .in("id", tripIds)
-      .eq("status", "in_progress")
+      // `in_progress` is not a label of the `trip_status` enum (draft |
+      // planning | upcoming | active | completed | cancelled | archived), so
+      // PostgREST rejected the literal 22P02 and this read failed whole — the
+      // two trip-grounded Sense nudges could never fire. `active` is the label
+      // every other current-trip reader uses.
+      .eq("status", "active")
       .limit(1);
     const t = ((trips ?? []) as any[])[0];
     if (!t) return null;

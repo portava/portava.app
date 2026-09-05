@@ -613,6 +613,23 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     deepLink: '/passport/[username]',
   },
   {
+    key: 'passport-event',
+    path: 'passport/event/[token]',
+    title: 'Event Passport',
+    // Reached by scanning/opening someone ELSE's temporary event Passport
+    // (spec §25/§31, Phase 8), so it hangs off the passport viewer, not the
+    // owner's tab, and is never ownerOnly. Auth is required: the share is
+    // event-scoped and the server refuses an anonymous resolve outright.
+    parent: 'passport-viewer',
+    icon: null,
+    requiresAuth: true,
+    // The §25/§31 capability flag, same one the server reads fail-closed. The
+    // server already refuses when it is off; declaring it here keeps the
+    // registry's own picture of the surface honest, as `passport-viewer` does.
+    featureFlag: 'passport_event_share_enabled',
+    deepLink: '/passport/event/[token]',
+  },
+  {
     key: 'passport-country',
     path: 'passport/country/[country]',
     title: 'Country Stamps',
@@ -1707,6 +1724,42 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     key: 'admin-geocode-cache',
     path: 'admin/geocode-cache',
     title: 'Geocode Cache',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+  {
+    key: 'admin-intel-truth-health',
+    path: 'admin/intel-truth-health',
+    title: 'Intel Truth Health',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+  {
+    key: 'admin-intel-calibration',
+    path: 'admin/intel-calibration',
+    title: 'Intel Calibration',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+  {
+    key: 'admin-intel-decision',
+    path: 'admin/intel-decision',
+    title: 'Intel Decision',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    adminOnly: true,
+  },
+  {
+    key: 'admin-intel-economy',
+    path: 'admin/intel-economy',
+    title: 'Intel Economy',
     parent: null,
     icon: null,
     requiresAuth: true,

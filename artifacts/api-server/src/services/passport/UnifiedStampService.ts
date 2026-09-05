@@ -259,7 +259,15 @@ async function readArtwork(sc: any, catalogIds: string[]): Promise<Map<string, s
   try {
     const { data, error } = await sc
       .from("universal_stamp_catalog")
-      .select("id, stamp_artwork_versions!active_version_id(public_url)")
+      // FK CONSTRAINT NAME, not the column name. PostgREST cannot resolve the
+      // `!active_version_id` column hint on this relationship — it returns null
+      // for every catalog row rather than erroring, so composited artwork was
+      // silently absent from every unified-stamp consumer (the §29 passport
+      // projection, the yearbook and GET /api/stamps/me's unified view).
+      // routes/stamps.ts:911 and routes/passport.ts:1019 already carry the same
+      // fix and the same warning; this was the last site still on the dead hint.
+      // Guarded by stampArtworkFkHint.test.ts.
+      .select("id, stamp_artwork_versions!fk_catalog_active_version(public_url)")
       .in("id", catalogIds)
       .eq("status", "approved");
     if (error || !Array.isArray(data)) return map;

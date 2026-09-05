@@ -25,7 +25,12 @@ import { computeTrustScore } from "../lib/trustScore.js";
 // verification, reputation summary, availability, §24 block/unavailable
 // propagation) from the ONE assembler instead of re-deriving privacy locally.
 import { buildConsumerProjection, type BuddyProjection } from "../services/passport/PassportConsumerProjections.js";
-import { adjustBuddyCounter, syncFavoritesCount } from "../services/rentBuddy/ReliabilityCounters.js";
+import {
+  adjustBuddyCounter,
+  syncFavoritesCount,
+  recordBuddyResponseTime,
+  hoursSince,
+} from "../services/rentBuddy/ReliabilityCounters.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
 import { endFairExposure } from "../compass/CompassFairExposureEngine.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
@@ -39,6 +44,12 @@ import {
   isOneOf,
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
+import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+import {
+  findLaunchControlRow,
+  normalizeLaunchControlKey,
+  upsertLaunchControlRow,
+} from "../lib/rentBuddyLaunchControls.js";
 // The ONE bidirectional, fail-closed block resolver. Marketplace search filters
 // against the same set the map layer does.
 import { fetchBlockedSet } from "../lib/blocks.js";
@@ -152,7 +163,53 @@ async function checkRentBuddyEnabled(sc: any): Promise<boolean> {
   return !!data && !!(data as any).enabled;
 }
 
-async function requireRentBuddyEnabled(sc: any, res: any): Promise<boolean> {
+/**
+ * THE Rent-a-Buddy master-switch guard. Every non-admin handler that MUTATES
+ * Rent-a-Buddy state must clear this before it writes.
+ *
+ * ── WHY IT IS EXPORTED ──────────────────────────────────────────────────────
+ * It used to be module-private, and the file header's claim — "All non-admin
+ * routes are gated by requireRentBuddyEnabled" — was true of THIS file and of
+ * nothing else. The lane's four routers are:
+ *
+ *   rentABuddy.ts             70 call sites   (the honest one)
+ *   rentABuddyMarketplace.ts   0 call sites
+ *   rentABuddySpec.ts          0 call sites
+ *   rentABuddyRollout.ts       0 call sites   (admin + checkRentBuddyAccess)
+ *
+ * so 41 non-admin write handlers in the other three routers wrote
+ * rent_buddy_* rows without ever reading `rent_buddy_enabled`. "The master
+ * flag is off in production" therefore did NOT mean the lane was inert: a
+ * signed-in user could still create requests and offers, publish packages and
+ * add-ons, flip `available_now`, tip, save, join the waitlist, submit and
+ * resume a buddy profile, and open/close availability — all on a product the
+ * flag says does not exist yet.
+ *
+ * The gate is not new and is not re-implemented per file: this ONE function is
+ * imported by the other routers. It is also step 1 of checkRentBuddyAccess
+ * (rentABuddyRollout.ts), so a handler that calls checkRentBuddyAccess already
+ * satisfies it and does not need both.
+ *
+ * FAIL-CLOSED: checkRentBuddyEnabled returns `!!data && !!data.enabled`, so a
+ * missing flag row, a null client and a failed read all deny.
+ *
+ * ── ADMIN AND MODERATION ARE DELIBERATELY EXEMPT ────────────────────────────
+ * Admin/moderation handlers do NOT take this gate, and that is the rule, not
+ * an oversight:
+ *
+ *   • an admin queue that hides its rows cannot moderate them — applications,
+ *     policy flags, disputes, support reports and payouts all outlive a flag
+ *     flip and must stay triageable while the lane is dark;
+ *   • the flag is administered THROUGH admin endpoints, so gating them on the
+ *     switch they exist to operate is a lockout;
+ *   • those handlers are not ungoverned — they carry a `profiles.role`
+ *     check, and src/test/rentBuddyHandlerGating.test.ts fails if any admin
+ *     RAB write handler loses it.
+ *
+ * The exemption is scoped to ADMIN, never to "an ordinary user acting on their
+ * own row".
+ */
+export async function requireRentBuddyEnabled(sc: any, res: any): Promise<boolean> {
   const enabled = await checkRentBuddyEnabled(sc);
   if (!enabled) {
     res.status(403).json({ error: "feature_disabled", message: "Rent a Buddy is not available yet." });
@@ -809,6 +866,35 @@ router.get("/rent-a-buddy/buddies/:buddyId", async (req, res) => {
 
   // reviewee_id references profiles.id (user_id), not rent_buddy_profiles.id
   const buddyUserIdForReviews: string = profileRes.data ? (profileRes.data as any).user_id : "";
+
+  // Profile-view counter. `rent_buddy_profiles.profile_views` is surfaced to the
+  // buddy on GET /rent-a-buddy/me/dashboard (`profileViews`) and NOTHING in src/
+  // ever incremented it, so every buddy saw a hard 0 no matter the traffic. (The
+  // `profile_views` TABLE that routes/profile.ts writes is a different object and
+  // does not touch this column.) This detail route is the one place a buddy's
+  // marketplace card is actually opened.
+  //
+  // A buddy opening their own card is not a view. Anonymous viewers are counted —
+  // they are real traffic — so the guard is on identity, not on being signed in.
+  // Fire-and-forget through the service-role RPC: profile_views is one of the
+  // authority/derived columns migration 2145 withholds from `authenticated`, and
+  // routing the only writer through rb_adjust_buddy_counter keeps it that way.
+  // A suspended profile does not accrue views: the counter is shown to the buddy
+  // as marketplace interest, and interest in a listing that should not be live is
+  // not interest. The sibling route GET /rent-a-buddy/by-user/:userId already
+  // filters on status === "active".
+  //
+  // `status` only — NOT admin_status. admin_status is not in BUDDY_PUBLIC_COLUMNS
+  // (lib/buddyMapRead.ts), so it is `undefined` on this row and a condition on it
+  // would be permanently false: the increment would never fire and the test
+  // covering it would pass anyway against a fake that ignores the projection.
+  if (
+    profileRes.data
+    && userId !== (profileRes.data as any).user_id
+    && (profileRes.data as any).status === "active"
+  ) {
+    void adjustBuddyCounter(serviceClient, buddyId, "profile_views", 1);
+  }
   const reviewsRes = buddyUserIdForReviews
     ? await serviceClient
         .from("rent_buddy_reviews")
@@ -1434,6 +1520,27 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   })) return;
 
   // New Buddy restrictions
+  //
+  // SILENT GATE — FAIL DIRECTION: RESTRICTIVE BRANCH ALWAYS TAKEN.
+  // `new_buddy_public_only` is `boolean DEFAULT true NOT NULL` and
+  // `new_buddy_max_hours` is `integer DEFAULT 2 NOT NULL`; NEITHER has a writer
+  // in src/, in a migration, or in a trigger (only the dev seed script sets
+  // them). `buddy_level` DOES have two writers — PATCH /admin/buddies/:id/level
+  // and POST /admin/profiles/:id/city-ambassador — and neither touches these
+  // columns, so promoting a buddy to elite or city_ambassador does not lift
+  // anything: EVERY buddy on the platform is permanently inside this branch and
+  // permanently capped at 2 hours per booking.
+  //
+  // Left in place, not relaxed. Denial is the safe direction, and the promotion
+  // rule ("which level clears which restriction") is a product decision this
+  // change is not entitled to invent. Two consequences worth knowing:
+  //   • rentABuddy.ts's `publicMeetupOnly` search filter
+  //     (`.eq("new_buddy_public_only", true)`) matches everyone and so filters
+  //     nothing; and
+  //   • CompatibilityScoreService's `publicOnly` exclusion is a no-op for the
+  //     same reason — but the traveller is NOT exposed, because this branch
+  //     rejects private meetup locations for every buddy anyway.
+  // src/test/rentBuddyWriterlessGateDirection.test.ts pins both directions.
   if (buddyProfile.new_buddy_public_only) {
     if (isPrivateLocation(city)) {
       return res.status(400).json({
@@ -1510,6 +1617,13 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   if (error) return sendError(res, "db_error", error.message);
 
   if (booking) {
+    // Estimated earnings-ledger row. GET /rent-a-buddy/me/earnings/ledger reads
+    // this table and nothing else, and the writer was module-private inside
+    // rentABuddyMarketplace.ts — so the CANONICAL booking route never wrote one
+    // and a buddy booked the ordinary way saw a permanently empty ledger.
+    // Best-effort: the booking is already committed.
+    await createEarningsLedgerEntry(serviceClient, booking, buddyId).catch(() => {});
+
     void serviceClient.from("buddy_booking_events").insert({
       booking_id: (booking as any).id,
       actor_user_id: user.id,
@@ -1775,6 +1889,16 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
     from_status: (booking as any).status, to_status: "scheduled", metadata: {},
   });
 
+  // Responsiveness signal. rent_buddy_profiles.response_time_h feeds the
+  // buddy-search ranker (+15/+10/+5) and had NO writer in src/ — every buddy
+  // scored 0 on it forever. Accept and decline are the two moments a buddy
+  // answers a request, so they are the two moments the latency exists.
+  // Fire-and-forget: the write is best-effort and must not fail the accept.
+  {
+    const elapsed = hoursSince((booking as any).created_at);
+    if (elapsed !== null) void recordBuddyResponseTime(serviceClient, (bp as any).id, elapsed);
+  }
+
   // Positive trust event: buddy accepted and committed to the booking
   void recordTrustEvent(serviceClient, {
     userId: auth.user.id,
@@ -1837,9 +1961,11 @@ router.post("/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
   if (!bp) return res.status(403).json({ error: "forbidden" });
 
   const now = new Date().toISOString();
+  // created_at is selected for the responsiveness signal below — a decline is
+  // just as much an answer to the traveller's request as an accept is.
   const { data: booking } = await serviceClient
     .from("rent_buddy_bookings")
-    .select("id, status, traveler_id")
+    .select("id, status, traveler_id, created_at")
     .eq("id", req.params.bookingId)
     .eq("buddy_id", (bp as any).id)
     .maybeSingle();
@@ -1863,6 +1989,12 @@ router.post("/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
     booking_id: req.params.bookingId, actor_user_id: auth.user.id, event: "declined",
     from_status: (booking as any).status, to_status: "declined", metadata: { decline_reason: decline_reason ?? null },
   });
+
+  // Responsiveness signal — see the accept handler. Best-effort.
+  {
+    const elapsed = hoursSince((booking as any).created_at);
+    if (elapsed !== null) void recordBuddyResponseTime(serviceClient, (bp as any).id, elapsed);
+  }
 
   // Push notification to traveler
   const travelerId: string = (booking as any).traveler_id ?? "";
@@ -2810,6 +2942,10 @@ router.post("/rent-a-buddy/bookings/:bookingId/review", async (req, res) => {
       severity: "minor",
       sourceType: "review",
       sourceId: (review as any)?.id,
+      // The reviewer earns; the reviewee is the counterpart. Two people who
+      // review each other and almost nobody else are the exact shape the
+      // mutual-ring scan looks for.
+      counterpartyUserId: revieweeId,
     });
   }
 
@@ -3739,10 +3875,16 @@ router.get("/rent-a-buddy/waitlist", async (req, res) => {
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
+  // `.neq("status","cancelled")`: DELETE /rent-a-buddy/waitlist/:waitlistId is a
+  // SOFT cancel (status = 'cancelled'), so without this filter a cancelled entry
+  // kept coming back in this list and the cancel read as a no-op. 'cancelled' is
+  // a real label of rent_buddy_waitlist_status_check
+  // (active | matched | expired | cancelled — baseline:rent_buddy_waitlist).
   const { data } = await serviceClient
     .from("rent_buddy_waitlist")
     .select("id, city, category, created_at")
     .eq("user_id", auth.user.id)
+    .neq("status", "cancelled")
     .order("created_at", { ascending: false });
 
   return res.json({ waitlist: (data ?? []).map((r: any) => ({ id: r.id, city: r.city, category: r.category, createdAt: r.created_at })) });
@@ -3787,7 +3929,29 @@ router.post("/rent-a-buddy/waitlist", async (req, res) => {
   return res.status(201).json({ ok: true });
 });
 
-router.delete("/rent-a-buddy/waitlist/:city", async (req, res) => {
+/**
+ * DELETE /rent-a-buddy/waitlist/:city — leave the waitlist for a CITY.
+ *
+ * ROUTE SHADOWING. rentABuddyMarketplace.ts also declares
+ * `DELETE /rent-a-buddy/waitlist/:waitlistId`, which cancels ONE waitlist entry
+ * by its id. routes/index.ts mounts rentABuddy BEFORE rentABuddyMarketplace, so
+ * this handler matched first and swallowed every id-shaped request:
+ * `GET /rent-a-buddy/waitlist` hands the client `{ id, city, category }` rows,
+ * the client deleted by `id`, and this handler compared that uuid against the
+ * `city` column, deleted 0 rows and answered `{ ok: true }` — silent success,
+ * the entry still on the waitlist.
+ *
+ * A uuid is not a city name, so the two paths are unambiguous in practice. When
+ * the parameter is a uuid this handler hands the request on with next(), and the
+ * marketplace handler — which owns the by-id semantics (soft cancel, ownership
+ * scoped by user_id) — serves it. Anything else is a city and is served here.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.delete("/rent-a-buddy/waitlist/:city", async (req, res, next) => {
+  const raw = decodeURIComponent(req.params.city);
+  if (UUID_RE.test(raw)) return next();
+
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
@@ -3796,7 +3960,7 @@ router.delete("/rent-a-buddy/waitlist/:city", async (req, res) => {
   await serviceClient.from("rent_buddy_waitlist")
     .delete()
     .eq("user_id", auth.user.id)
-    .eq("city", decodeURIComponent(req.params.city));
+    .eq("city", raw);
 
   return res.json({ ok: true });
 });
@@ -5063,12 +5227,16 @@ async function getLaunchControl(
   { countryCode, city, category }: { countryCode?: string; city?: string; category?: string },
 ): Promise<ResolvedLaunchControl | null> {
   for (const q of launchControlPrecedence({ countryCode, city, category })) {
-    let query = client.from("rent_buddy_launch_controls").select("*");
-    query = q.country_code === null ? query.is("country_code", null) : query.eq("country_code", q.country_code);
-    query = q.city === null ? query.is("city", null) : query.eq("city", q.city);
-    query = q.category === null ? query.is("category", null) : query.eq("category", q.category);
-    const { data } = await query.maybeSingle();
-    if (data) return mapLaunchControlRow(data);
+    // findLaunchControlRow, not an inline `.maybeSingle()`. Any database in which
+    // an admin pressed one of the four (now fixed) onConflict upserts carries
+    // duplicate rows for an all-NULL key, and `.maybeSingle()` reports those as
+    // an error with `data: null` — i.e. it reads a DUPLICATED control as a
+    // MISSING one, which silently sends every booking that depends on it into
+    // enforceBookingCreationGates' deny-by-default branch. The list read takes
+    // the first match, exactly as resolveLaunchControlFromRows' `.find()` does,
+    // so the DB-backed and in-memory resolvers agree instead of diverging.
+    const { row } = await findLaunchControlRow(client, q);
+    if (row) return mapLaunchControlRow(row);
   }
   return null;
 }
@@ -5260,13 +5428,11 @@ router.post("/rent-a-buddy/admin/launch-controls", async (req, res) => {
     fullPaymentRequired = false, minDepositPct = 30, notes,
   } = req.body ?? {};
 
-  // PostgreSQL NULLs do not satisfy UNIQUE equality, so onConflict with nullable columns
-  // is unreliable. Use an explicit select-then-update/insert pattern instead.
-  let findQuery = serviceClient.from("rent_buddy_launch_controls").select("id");
-  findQuery = countryCode ? findQuery.eq("country_code", countryCode) : findQuery.is("country_code", null);
-  findQuery = city ? findQuery.eq("city", city) : findQuery.is("city", null);
-  findQuery = category ? findQuery.eq("category", category) : findQuery.is("category", null);
-  const { data: existing } = await findQuery.maybeSingle();
+  // PostgreSQL NULLs do not satisfy UNIQUE equality, so onConflict with nullable
+  // columns is unreliable. This handler was fixed by hand with a select-then-
+  // update/insert; it now shares that fix with the four rentABuddySpec.ts admin
+  // writers via lib/rentBuddyLaunchControls.ts, so the five cannot drift apart.
+  const controlKey = normalizeLaunchControlKey({ countryCode, city, category });
 
   const controlPayload: Record<string, unknown> = {
     enabled,
@@ -5278,24 +5444,11 @@ router.post("/rent-a-buddy/admin/launch-controls", async (req, res) => {
     full_payment_required: fullPaymentRequired,
     min_deposit_pct: minDepositPct,
     notes: notes ?? null,
-    updated_at: new Date().toISOString(),
   };
 
-  let data: unknown, error: unknown;
-  if (existing) {
-    ({ data, error } = await serviceClient
-      .from("rent_buddy_launch_controls")
-      .update(controlPayload)
-      .eq("id", (existing as any).id)
-      .select()
-      .maybeSingle());
-  } else {
-    ({ data, error } = await serviceClient
-      .from("rent_buddy_launch_controls")
-      .insert({ ...controlPayload, country_code: countryCode, city, category, created_by: userId })
-      .select()
-      .maybeSingle());
-  }
+  const { data, error } = await upsertLaunchControlRow(
+    serviceClient, controlKey, controlPayload, userId,
+  );
 
   if (error) return sendError(res, "db_error", String((error as any).message ?? error));
 
@@ -5406,6 +5559,7 @@ router.post("/rent-a-buddy/tag-consents/:consentId/approve", async (req, res) =>
   if (!auth) return;
   const { user, client } = auth;
   const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { consentId } = req.params;
   const { data: consent } = await serviceClient
@@ -5426,6 +5580,7 @@ router.post("/rent-a-buddy/tag-consents/:consentId/decline", async (req, res) =>
   if (!auth) return;
   const { user, client } = auth;
   const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { consentId } = req.params;
   const { data: consent } = await serviceClient
@@ -5448,6 +5603,7 @@ router.delete("/rent-a-buddy/tag-consents/:consentId", async (req, res) => {
   if (!auth) return;
   const { user, client } = auth;
   const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { consentId } = req.params;
   const { data: consent } = await serviceClient
@@ -5818,6 +5974,7 @@ router.post("/rent-a-buddy/me/training-checklist/:itemKey", async (req, res) => 
   if (!auth) return;
   const { user, client } = auth;
   const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { itemKey } = req.params;
   const validKeys = TRAINING_CHECKLIST_ITEMS.map((i) => i.key);
@@ -5976,7 +6133,38 @@ router.patch("/rent-a-buddy/admin/users/:userId/verification", async (req, res) 
   const { idVerified, phoneVerified, ageVerified, dateOfBirth, note } = req.body ?? {};
 
   const patch: Record<string, any> = {};
-  if (idVerified !== undefined) patch.id_verified = idVerified;
+  if (idVerified !== undefined) {
+    patch.id_verified = idVerified;
+    // ── verification_status / verified / verified_at ────────────────────────
+    // These three had NO writer anywhere in src/. `verification_status` is read
+    // as a gate in five places — the search ranker's +20 (scoreProfile), the
+    // `?verified=true` search filter (`.eq("verification_status","verified")`),
+    // the high-risk two-sided booking check, and rentABuddySpec's
+    // `needsVerification` 422 — and the legacy boolean `verified` backs a
+    // marketplace section filter (`.eq("verified", true)`). With no writer,
+    // every buddy sat at the column default 'unverified' forever: nobody ever
+    // scored the +20, both filters returned empty, and the high-risk surface
+    // refused every buddy.
+    //
+    // The DB trigger trg_sync_buddy_verification_status was meant to close this
+    // (BEFORE UPDATE OF verified -> set verification_status), but it fires only
+    // on a write to `verified`, which also never happened, so it has never run.
+    //
+    // This admin override is the sanctioned MANUAL verification path — it
+    // already sets id_verified/phone_verified/age_verified/date_of_birth behind
+    // requireAdmin on the service-role client — so it is the correct and only
+    // place to move the derived status with them. No client-facing write path
+    // is opened: these stay outside migration 2145's `authenticated` column
+    // grants, and a buddy still cannot self-verify.
+    //
+    // Automated KYC remains deliberately unbuilt (see lib/rentBuddyKycGate.ts:
+    // both real identity providers are stubs and mock is refused in production).
+    // This does not substitute for it — it only makes the admin decision that
+    // already exists actually reach the columns that read it.
+    patch.verification_status = idVerified ? "verified" : "unverified";
+    patch.verified = !!idVerified;
+    patch.verified_at = idVerified ? new Date().toISOString() : null;
+  }
   if (phoneVerified !== undefined) patch.phone_verified = phoneVerified;
   if (ageVerified !== undefined) patch.age_verified = ageVerified;
   if (dateOfBirth !== undefined) patch.date_of_birth = dateOfBirth;
@@ -6602,6 +6790,11 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
     .maybeSingle();
 
   if (error) return sendError(res, "db_error", error.message);
+
+  // Same shared estimated-ledger write as the canonical route — see above.
+  if (newBooking) {
+    await createEarningsLedgerEntry(serviceClient, newBooking, buddyProfileId).catch(() => {});
+  }
 
   void serviceClient.from("buddy_booking_events").insert({
     booking_id: (newBooking as any)?.id,
