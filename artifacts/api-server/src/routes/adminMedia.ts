@@ -190,7 +190,13 @@ router.get("/admin/media/processing-failures", asyncHandler(async (req, res) => 
       "id, post_id, media_type, processing_status, moderation_status, public_url, thumbnail_url, storage_path, storage_bucket, created_at, updated_at",
       { count: "exact" },
     )
-    .in("processing_status", ["failed", "error", "processing", "pending", "queued"])
+    // `post_media.processing_status` is TEXT with a CHECK permitting exactly
+    // pending | ready | failed. "error", "processing" and "queued" are not
+    // among them — three of the five arms could never match a row. The column
+    // is CHECK-constrained rather than an enum, so PostgREST did not raise and
+    // the queue merely under-reported rather than emptying. Both real
+    // non-terminal-success states are kept.
+    .in("processing_status", ["failed", "pending"])
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
