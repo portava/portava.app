@@ -18,6 +18,7 @@ import { deriveIntentMode } from "../compass/CompassIntentModeEngine";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime";
 import { excludePrivateAuthorPosts } from '../lib/privacyFilter';
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
+import { isPostPublished } from "../lib/postVisibility.js";
 
 /**
  * Pulse feed routes
@@ -69,9 +70,12 @@ const pulseQuerySchema = z.object({
   lng:  z.coerce.number().optional(),
 });
 
-// Safe columns — exact GPS is never projected
+// Safe columns — exact GPS is never projected.
+// `post_status` is the delayed-publish state machine (lib/postVisibility
+// isPostPublished). It was not selected here at all, so Pulse had no way to
+// tell a published post from one still waiting for its author to leave.
 const POST_SAFE_COLUMNS =
-  "id, author_id, trip_id, content, media_urls, visibility, status, created_at, updated_at, " +
+  "id, author_id, trip_id, content, media_urls, visibility, status, post_status, created_at, updated_at, " +
   "location_name, location_city, location_country, location_source, canonical_place_id";
 
 const GEO_TAG_COLUMNS =
@@ -157,6 +161,11 @@ router.get("/pulse", async (req, res) => {
     .select(`${POST_SAFE_COLUMNS}, post_media(${POST_MEDIA_COLUMNS}${await stampOverlayCol(sc)}), pulse_geo_tags(${GEO_TAG_COLUMNS}), profiles!author_id(id, username, display_name, name, full_name, avatar_url, verified, is_official)`)
     .eq("status", "active")
     .eq("visibility", "public")
+    // Delayed-publish gate (§23/§37) — same canonical predicate as the Wall,
+    // the global feed and the Following feed. `status='active'` is exactly what
+    // POST /posts writes for a delayed-geotag post; without this, Pulse served
+    // the post the moment it was created.
+    .eq("post_status", "published")
     .order("created_at", { ascending: false })
     .limit(limit);
 
@@ -185,7 +194,9 @@ router.get("/pulse", async (req, res) => {
 
   // Apply visibility tab filter client-side (pulse_geo_tags may be null for older posts)
   const visibilityFilter = TAB_VISIBILITY[tab];
-  let rows = (data as any[]) ?? [];
+  // In-memory re-check of the delayed-publish gate (same predicate as the query
+  // filter above): a row fed past the DB filter must still never be served.
+  let rows = ((data as any[]) ?? []).filter((r) => isPostPublished(r));
   if (visibilityFilter !== null && tab !== "trip" && tab !== "crew") {
     rows = rows.filter((row) => {
       const geoTag = Array.isArray(row.pulse_geo_tags)
@@ -196,9 +207,9 @@ router.get("/pulse", async (req, res) => {
     });
   }
 
-  // ── Pre-shape: blocked-author filter + delayed-location guard ─────────────
-  // Both guards run on raw rows (before camelCase shaping) so they can access
-  // the snake_case DB column names (author_id, location_source).
+  // ── Pre-shape: blocked-author filter ─────────────────────────────────────
+  // Runs on raw rows (before camelCase shaping) so it can access the snake_case
+  // DB column names (author_id).
   //
   // Fail-closed: if block state cannot be determined, return an empty feed
   // rather than risk surfacing content from blocked users. blockedSet is hoisted
@@ -235,23 +246,23 @@ router.get("/pulse", async (req, res) => {
   // doesn't follow. Must run after the block filter.
   rows = await excludePrivateAuthorPosts(rows, user.id, sc);
 
-  // Delayed-posting location guard: posts whose location has not yet been
-  // cleared by the delayed-publish job must have location fields scrubbed
-  // before they enter the response — real-time GPS must never reach other users.
-  rows = rows.map((row: any) => {
-    if (row.location_source === "delayed_pending" || row.location_source === "pending_location_exit") {
-      return {
-        ...row,
-        location_name:    null,
-        location_city:    null,
-        location_country: null,
-        venue_name:       null,
-        // Keep visibility label generic so clients don't infer location
-        pulse_geo_tags: null,
-      };
-    }
-    return row;
-  });
+  // The delayed-posting LOCATION-SCRUB guard that used to sit here is gone, and
+  // the publish gate above replaces it. Two reasons:
+  //
+  //  1. It was INERT. It tested `location_source` — the Postgres enum
+  //     `location_source`, whose only labels are 'gps' | 'manual' | 'none'
+  //     (baseline 20260819_baseline_structure.sql; database.types.ts) — against
+  //     'delayed_pending' and 'pending_location_exit', which are labels of a
+  //     DIFFERENT enum (`delayed_post_status`) belonging to a DIFFERENT column
+  //     (`post_status`). Neither string can ever appear in `location_source`, so
+  //     the condition was false on every row and the scrub never ran once. It
+  //     also nulled `venue_name`, which POST_SAFE_COLUMNS does not even select.
+  //  2. It was the wrong remedy anyway. Scrubbing location still served the
+  //     post BODY of a post its author had asked to keep hidden until they had
+  //     left the place. The canonical readers (Wall, global feed, Following
+  //     feed, GET /posts/:postId) do not serve a pending post at all, and Pulse
+  //     now does the same at the query and in memory above — which subsumes
+  //     scrubbing, because a row that is never returned discloses nothing.
 
   // Post-level moderation guard: exclude posts whose media was entirely
   // rejected or failed.  A post that *had* media but has zero ready items

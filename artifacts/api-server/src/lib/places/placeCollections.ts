@@ -16,6 +16,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient } from "../supabase.js";
+import { isPostPublished } from "../postVisibility.js";
 
 // ── Engagement score formula ──────────────────────────────────────────────────
 
@@ -92,17 +93,26 @@ function rowsToBestOf(rows: any[], mediaType: string | null, limit: number): Bes
     }));
 }
 
-/** Real-time best-of fallback query. */
+/** Real-time best-of fallback query.
+ *
+ *  Delayed-publish gate (§23/§37): this read is keyed on canonical_place_id and
+ *  its output is rendered on that place's page, so serving a post whose
+ *  post_status is still pending announces "this person is at this place" —
+ *  exactly what delayed geotagging exists to prevent. `status = 'active'` is
+ *  what POST /posts writes for a delayed post, so it was not a publication
+ *  filter. Same canonical predicate as every other serving surface, applied at
+ *  the query and again in memory (lib/postVisibility.isPostPublished). */
 async function fetchBestOfRealtime(sc: SupabaseClient, placeId: string): Promise<BestOf> {
   const { data, error } = await sc
     .from("posts")
-    .select("id, content, media_type, media_urls, media_thumbnail_url, like_count, save_count, share_count")
+    .select("id, content, media_type, media_urls, media_thumbnail_url, like_count, save_count, share_count, post_status")
     .eq("canonical_place_id", placeId)
     .eq("status", "active")
+    .eq("post_status", "published")
     .order("created_at", { ascending: false })
     .limit(200);
 
-  const rows = error ? [] : ((data as any[]) ?? []);
+  const rows = error ? [] : ((data as any[]) ?? []).filter((r) => isPostPublished(r));
 
   // Extract the first media URL from media_urls array
   const enriched = rows.map((r) => ({
