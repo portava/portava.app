@@ -29,15 +29,30 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { findUserByEmail, deleteFixtureUser } from "./liveFixtureUsers.js";
+import { findUserByEmail, deleteFixtureUser, fixtureEmail } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 const CREDS = Boolean(SUPABASE_URL && SERVICE_ROLE_KEY);
 
+/**
+ * RUN-SCOPED fixtures — see the long note in memoryLifecycleLive.test.ts.
+ *
+ * This suite is the more exposed of the two, because its assertions are ABOUT
+ * concurrency ("memory_events is deduped by a unique key; concurrency must not
+ * defeat it", "concurrent passes must not create or drop rows", "the append-only
+ * ledger must not double-write"). It creates the concurrency it means to test
+ * itself, over one user id. A second CI job resolving the same stable address to
+ * the same user id adds a projector it did not account for, so those assertions
+ * fail on interference rather than on the invariant they guard — and the
+ * assertions are right, which is why they are unchanged here.
+ *
+ * The scoping helper is stable within this process, so `ensureUser`'s
+ * reuse-by-email behaviour is untouched; it differs only across runs.
+ */
 const TAG = "memproj_live_";
-const EMAIL_A = `${TAG}a@portava-test.invalid`;
-const EMAIL_B = `${TAG}b@portava-test.invalid`;
+const EMAIL_A = fixtureEmail(`${TAG}a@portava-test.invalid`);
+const EMAIL_B = fixtureEmail(`${TAG}b@portava-test.invalid`);
 
 let sc: SupabaseClient;
 let userA = "";
