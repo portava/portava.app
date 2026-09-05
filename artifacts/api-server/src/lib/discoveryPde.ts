@@ -292,7 +292,11 @@ export interface PdeStages {
   /**
    * `applied`  the governor reordered the page (modifiers on)
    * `observed` it computed an allocation and recorded it, order untouched
-   * `skipped`  too few candidates to govern, or the stage threw
+   * `skipped`  the modifiers are OFF (the stage does not run at all), too few
+   *            candidates to govern, or the stage threw
+   *
+   * `observed` is reachable only with the modifiers ON — see the governor block
+   * for why the OFF path may not so much as compute an allocation.
    */
   governor: "applied" | "observed" | "skipped";
   /**
@@ -374,10 +378,12 @@ export interface PdeRankOutcome<T extends PdePlace> {
   modifiers: DiscoveryModifiers;
   /**
    * The governor's allocation — reason codes and slots — whether or not it was
-   * applied. Null only when the stage was skipped. The same information is
-   * written per item into `scoredById[...].features` (governorSlot,
-   * governor_<reason>, governorApplied, governorBudgetPct) so it reaches
-   * rank_events through logImpression without a new writer.
+   * applied. Null when the stage was skipped, which INCLUDES every run with the
+   * modifiers flag off: the governor does not run at all there. The same
+   * information is written per item into `scoredById[...].features`
+   * (governorSlot, governor_<reason>, governorApplied, governorBudgetPct) so it
+   * reaches rank_events through logImpression without a new writer — which is
+   * exactly why the OFF path must leave the feature vector alone.
    */
   governor: GovernorOutcome | null;
 }
@@ -720,44 +726,56 @@ export async function rankForViewer<T extends PdePlace>(
 
   // ── Exploration GOVERNOR (ROADMAP step 8) ──────────────────────────────────
   // Runs over the FINAL order (after DRS) so its slots are positions on the
-  // page the user would receive. `apply` follows the flag: off ⇒ observe only,
-  // order untouched, allocation recorded; on ⇒ the picks move into their slots.
-  // Either way the decision lands in every candidate's feature vector, which
-  // logImpression writes verbatim — analytics visible before the behaviour is.
+  // page the user would receive. `apply` follows the flag: with the modifiers
+  // ON but the allocation not applicable it observes — order untouched,
+  // allocation recorded; applied ⇒ the picks move into their slots. Either way
+  // the decision lands in every candidate's feature vector.
+  //
+  // WHY THE WHOLE STAGE IS BEHIND `modifiers.enabled` AND NOT JUST `apply`.
+  // The feature vector is not a local diagnostic: logImpression writes it
+  // verbatim into `rank_events.features`, one row per served candidate, keyed
+  // by the VIEWER's user_id (lib/rankLog.ts). So an "observe only" governor is
+  // not inert — with the flag off it was still stamping governorApplied,
+  // governorBudgetPct, governorSlot and governor_<reason> into per-user rows in
+  // production, on a feature nobody had enabled. A flag that is off must leave
+  // no trace: the OFF feature vector has to be byte-identical to what the
+  // pre-governor pipeline produced. Observation is a thing you turn ON.
   let governor: GovernorOutcome | null = null;
-  try {
-    const gc: GovernorCandidate[] = ranked.map((p) => ({
-      id: p.id,
-      category: p.category ?? null,
-      socialProof: p.savedCount ?? null,
-      momentum: modifiers.enabled ? (modifiers.localMomentum[p.id] ?? null) : null,
-    }));
-    governor = allocateExplorationBudget(gc, {
-      userId: viewer.userId,
-      budgetPct: modifiers.explorationBudgetPct,
-      categoryAffinities: viewer.categoryAffinities,
-      nowMs,
-    }, modifiers.enabled);
+  if (modifiers.enabled) {
+    try {
+      const gc: GovernorCandidate[] = ranked.map((p) => ({
+        id: p.id,
+        category: p.category ?? null,
+        socialProof: p.savedCount ?? null,
+        momentum: modifiers.localMomentum[p.id] ?? null,
+      }));
+      governor = allocateExplorationBudget(gc, {
+        userId: viewer.userId,
+        budgetPct: modifiers.explorationBudgetPct,
+        categoryAffinities: viewer.categoryAffinities,
+        nowMs,
+      }, true);
 
-    const slotById = new Map(governor.allocations.map((a) => [a.id, a]));
-    for (const [id, scoredC] of scoredById) {
-      scoredC.features.governorApplied   = governor.applied ? 1 : 0;
-      scoredC.features.governorBudgetPct = governor.budgetPct;
-      const a = slotById.get(id);
-      scoredC.features.governorSlot = a ? 1 : 0;
-      if (a) for (const r of a.reasons) scoredC.features[`governor_${r}`] = 1;
-    }
+      const slotById = new Map(governor.allocations.map((a) => [a.id, a]));
+      for (const [id, scoredC] of scoredById) {
+        scoredC.features.governorApplied   = governor.applied ? 1 : 0;
+        scoredC.features.governorBudgetPct = governor.budgetPct;
+        const a = slotById.get(id);
+        scoredC.features.governorSlot = a ? 1 : 0;
+        if (a) for (const r of a.reasons) scoredC.features[`governor_${r}`] = 1;
+      }
 
-    if (governor.applied) {
-      const pos = new Map(governor.order.map((id, i) => [id, i]));
-      ranked.sort((a, b) => (pos.get(a.id) ?? ranked.length) - (pos.get(b.id) ?? ranked.length));
-      stages.governor = "applied";
-    } else {
-      stages.governor = governor.slotCount > 0 ? "observed" : "skipped";
+      if (governor.applied) {
+        const pos = new Map(governor.order.map((id, i) => [id, i]));
+        ranked.sort((a, b) => (pos.get(a.id) ?? ranked.length) - (pos.get(b.id) ?? ranked.length));
+        stages.governor = "applied";
+      } else {
+        stages.governor = governor.slotCount > 0 ? "observed" : "skipped";
+      }
+    } catch {
+      governor = null;
+      stages.governor = "skipped";
     }
-  } catch {
-    governor = null;
-    stages.governor = "skipped";
   }
 
   return {

@@ -542,7 +542,20 @@ export async function approveClaim(sc: any, claimId: string): Promise<{ ok: bool
   return { ok: true };
 }
 
-/** Record one independent confirmation. One-per-actor is enforced by a unique index. */
+/**
+ * Record one independent confirmation. One-per-actor is enforced by a unique index.
+ *
+ * PRESENCE IS NOT TAKEN ON THE CLIENT'S WORD (parity with writeObservation).
+ * `presenceLevel` arrives from the request body, and intel_confirmations is a
+ * truth table: a row saying P4 asserts "verified assigned visitor". It was
+ * stored verbatim, so any caller could write that about itself. It is now put
+ * through the SAME gate capture uses — resolvePresenceAttestation, with no
+ * verifier — so a live-grade claim with nothing backing it clamps to the
+ * unverified ceiling (P1) and only below-floor levels pass through. A
+ * confirmation carries no subject/claim context and no attestation payload, so
+ * there is nothing for PresenceVerifier to verify here; if a confirmation
+ * surface ever offers evidence, this is the seam that consumes it.
+ */
 export async function confirmClaim(
   sc: any, claimId: string, actorId: string,
   stance: "agree" | "disagree" | "unsure", observedAt: string, presenceLevel = "P0",
@@ -555,8 +568,10 @@ export async function confirmClaim(
   if (!(await hasValidIntelConsent(sc, actorId))) return { ok: false, reason: "consent_required" };
   const clamped = clampObservedAt(observedAt);
   if (!clamped) return { ok: false, reason: "invalid_observed_at" };
+  // Server-derived, never the client's number (see the header). Malformed ⇒ P0.
+  const presence = resolvePresenceAttestation(presenceLevel, null);
   const { error } = await sc.from("intel_confirmations").insert({
-    claim_id: claimId, actor_id: actorId, stance, presence_level: presenceLevel, observed_at: clamped.observedAt,
+    claim_id: claimId, actor_id: actorId, stance, presence_level: presence.presenceLevel, observed_at: clamped.observedAt,
   });
   if (error) {
     if (String((error as any).code) === "23505") return { ok: true, deduped: true };

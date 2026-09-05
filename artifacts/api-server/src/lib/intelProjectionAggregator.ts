@@ -23,7 +23,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ProjectionInput, InputClaimVersion, ProjectionCandidateLineage } from "./intelProjection.js";
 import type { ConfidenceComponents, ConfidencePenalties } from "./confidenceScore.js";
-import { PRIVACY_THRESHOLD_V1, PILOT_CLAIMABLE_MODERATION_STATES, CLAIM_TYPES } from "./intelContracts.js";
+import {
+  PRIVACY_THRESHOLD_V1,
+  PILOT_CLAIMABLE_MODERATION_STATES,
+  CLAIM_TYPES,
+  SOURCE_CLASSES,
+  mayCountAsConsensus,
+  type SourceClass,
+} from "./intelContracts.js";
 import { getPolicy, freshnessFromRatio, mayExtendFreshness, isQualifyingExtensionSource } from "./freshnessPolicy.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { observationsHaveEligibleMediaEvidence } from "./media/mediaEvidenceLink.js";
@@ -238,10 +245,40 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     (m, o) => ((PRESENCE_STRENGTH[o.presence_level] ?? 0) > (PRESENCE_STRENGTH[m] ?? 0) ? o.presence_level : m),
     "P0",
   );
-  const sourceClass = freshObs.reduce(
-    (m, o) => ((SOURCE_RELIABILITY[o.source_class] ?? 0) > (SOURCE_RELIABILITY[m] ?? 0) ? o.source_class : m),
-    "firsthand_unverified",
-  );
+  // COHORT SOURCE CLASS. Strongest class among the classes the cohort ACTUALLY
+  // carries — never a seed value the cohort does not contain.
+  //
+  // THE DEFECT THIS FIXES. This used to fold with 'firsthand_unverified' as the
+  // reduce seed, so a class the cohort really holds only won if it scored ABOVE
+  // 0.5. Every class below that — 'sponsored' (0.4, what
+  // intelContracts.disclosureSourceClass assigns to EVERY disclosed commercial
+  // relationship: employee/owner/hosted/complimentary/affiliate/paid) and
+  // 'hearsay' (0.2) — was overwritten by a class no observation claimed. A cohort
+  // of nothing but disclosed-commercial reports was therefore scored at
+  // firsthand_unverified reliability AND, once the class reaches the snapshot,
+  // would have worn a full independent-consensus badge: exactly the §22 Table 30
+  // "official/community separation" the NON_INDEPENDENT_SOURCE_CLASSES set exists
+  // to enforce. Folding over the present classes only makes the guard bite:
+  // when nothing in the cohort mayCountAsConsensus, the winner is itself
+  // non-independent (all of official_signed / sponsored / imported_owned are in
+  // that set), so lib/liveClaimRead withholds the cohort badge.
+  //
+  // Only canonical SOURCE_CLASSES values participate; an unrecognised label is
+  // ignored rather than trusted, and an empty/unclassified cohort keeps the
+  // honest Phase-1 default (the same default deriveSourceClass uses on read).
+  const cohortSourceClasses = freshObs
+    .map((o) => (typeof o.source_class === "string" ? o.source_class : null))
+    .filter((c): c is SourceClass => c !== null && (SOURCE_CLASSES as readonly string[]).includes(c));
+  const sourceClass: SourceClass = cohortSourceClasses.length > 0
+    ? cohortSourceClasses.reduce((m, c) => ((SOURCE_RELIABILITY[c] ?? 0) > (SOURCE_RELIABILITY[m] ?? 0) ? c : m))
+    : "firsthand_unverified";
+  // Invariant, stated in code: a cohort in which NOTHING may count as consensus
+  // can never project a class that may. Holds by construction above; asserted
+  // here so a future edit to SOURCE_RELIABILITY cannot quietly reopen the hole.
+  const cohortMayCountAsConsensus =
+    cohortSourceClasses.length === 0 || cohortSourceClasses.some((c) => mayCountAsConsensus(c));
+  const projectedSourceClass: SourceClass =
+    !cohortMayCountAsConsensus && mayCountAsConsensus(sourceClass) ? "sponsored" : sourceClass;
 
   // Confirmation stances for this claim.
   const { data: confs } = await sc.from("intel_confirmations").select("stance").eq("claim_id", claim.id);
@@ -290,6 +327,24 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   }
   const hasPlurality = topCount > 0 && !tieAtTop;
   const derivedValue = hasPlurality ? topValue : claim.value;
+
+  // ── FAIL CLOSED ON A TIE: never resurrect an unsupported value ──────────────
+  // The anchor fallback above is safe in exactly one case — the cohort supplied
+  // NO value at all (nothing to contradict it, and the k-anon gate suppresses
+  // such an aggregate anyway). It is NOT safe on a TIE: there the cohort did
+  // speak, and falling back to the frozen DISTINCT-ON anchor republishes an
+  // answer that no live cohort member gives. Worse, the anchor's author may have
+  // WITHDRAWN CONSENT — freshObs already dropped them from the count, so the tie
+  // is precisely how their answer keeps serving under someone else's cohort size
+  // (the H4 defect, one layer deeper).
+  //
+  // So on a tie the anchor may stand ONLY when it is one of the tied values,
+  // i.e. a consented, non-withdrawn actor currently asserts it. Otherwise the
+  // claim is WITHHELD (projectClaim writes no snapshot) — withholding beats
+  // publishing an unsupported value.
+  const cohortSuppliedValues = valueVotes.size > 0;
+  const anchorStillSupported = valueVotes.has(stableValueKey(claim.value));
+  const cohortSupportsValue = hasPlurality || !cohortSuppliedValues || anchorStillSupported;
 
   // Reachable 'conflicting' path (the disagreement penalty derivePenalties/the
   // gate already handle but nothing ever produced). The cohort genuinely disagrees
@@ -463,7 +518,7 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     disagrees,
     maxPresenceLevel,
     hasEvidence,
-    sourceClass,
+    sourceClass: projectedSourceClass,
     ageRatio,
     // Reachable now: either the frozen claim status (still honoured) OR a
     // genuinely disagreeing live cohort (a tie at the top, or ≥half disagree
@@ -476,6 +531,8 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     claimType: claim.claim_type,
     // Cohort plurality, not the frozen single-anchor value (H1/H4).
     value: derivedValue,
+    // ... and on a tie, only when a live cohort member still asserts it.
+    cohortSupportsValue,
     // Snapshot observed_at + expires_at derive from the freshest observation so a
     // key stays live while fresh reports arrive (see effectiveObservedAt above).
     observedAt: effectiveObservedAt,
@@ -498,5 +555,9 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     // conflict_state, migration 2275) so the read path can suppress the strong
     // Live label and surface "Reports differ" without recomputing the cohort.
     conflictState: conflict.state,
+    // §5 source class of the cohort, persisted on the snapshot (2279) so the read
+    // path enforces the truth boundary and the consensus-badge rule on a REAL
+    // class rather than the Phase-1 default.
+    sourceClass: projectedSourceClass,
   };
 }

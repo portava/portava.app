@@ -108,8 +108,15 @@ describe("toCallerContext", () => {
     assert.equal(toCallerContext("trip_crew", perms()), "trip_crew");
     assert.equal(toCallerContext("trip_host", perms()), "trip_crew");
   });
-  it("full-profile relationship ⇒ circle", () => {
-    assert.equal(toCallerContext("following", perms({ canViewFullProfile: true })), "circle");
+  it("a VERIFIED circle relationship ⇒ circle", () => {
+    assert.equal(toCallerContext("following", perms({ canSeeFriendOnlyPosts: true })), "circle");
+  });
+  // canViewFullProfile is a literal `true` for every non-blocked viewer in
+  // resolveInteractionPermissions ("the profile page is not gated"), so it must
+  // NOT promote a caller to the circle tier — that made circle_only == public.
+  it("canViewFullProfile alone does NOT grant the circle tier", () => {
+    assert.equal(toCallerContext("public", perms({ canViewFullProfile: true })), "public");
+    assert.equal(toCallerContext("follower", perms({ canViewFullProfile: true })), "public");
   });
   it("plain public ⇒ public", () => {
     assert.equal(toCallerContext("public", perms()), "public");

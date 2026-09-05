@@ -60,6 +60,8 @@ import {
   countOn,
   countRankedOn,
   fetchDiscoveryServeRows,
+  SERVE_ROWS_PAGE_SIZE,
+  SERVE_ROWS_MAX,
   isRankedRow,
   observedPoints,
   rankedInRequest,
@@ -495,6 +497,8 @@ interface RankEventFixtureRow {
   served_at: string;
   session_id: string | null;
   features: ServeRow["features"];
+  /** Present only on paging fixtures — the tiebreak column the read orders on. */
+  id?: string;
 }
 
 interface FakeRankEventsBuilder {
@@ -503,6 +507,8 @@ interface FakeRankEventsBuilder {
   is(col: string, val: unknown): FakeRankEventsBuilder;
   gte(col: string, val: unknown): FakeRankEventsBuilder;
   lte(col: string, val: unknown): FakeRankEventsBuilder;
+  order(col: string, opts?: { ascending?: boolean }): FakeRankEventsBuilder;
+  range(from: number, to: number): FakeRankEventsBuilder;
   then<T>(onFulfilled: (value: { data: RankEventFixtureRow[]; error: null }) => T): Promise<T>;
 }
 
@@ -510,50 +516,94 @@ interface FakeRankEventsBuilder {
  * A fake PostgREST builder that records the filters it is asked for and applies
  * them in-memory, so a test can assert BOTH what fetchDiscoveryServeRows selects
  * and which rows survive — without a live database.
+ *
+ * A FRESH builder per `from()` call, because fetchDiscoveryServeRows now PAGES:
+ * one builder shared across pages would carry page 1's `.range()` into page 2
+ * and every page would return the same rows. `pages` counts the reads so a test
+ * can pin that the pagination actually happened.
+ *
+ * `range` is honoured for real, and `dbMaxRows` emulates PostgREST's silent
+ * `db-max-rows` cap — the server truncating a response with no error and no
+ * signal, which is the exact behaviour the range-less read walked into.
  */
-function fakeRankEventsClient(rows: RankEventFixtureRow[]): {
+function fakeRankEventsClient(
+  rows: RankEventFixtureRow[],
+  opts: { dbMaxRows?: number } = {},
+): {
   client: DiscoveryServeQueryClient;
   filters: Array<{ op: string; col: string; val: unknown }>;
+  pages: () => number;
 } {
   const filters: Array<{ op: string; col: string; val: unknown }> = [];
-  const preds: Array<(r: RankEventFixtureRow) => boolean> = [];
+  const dbMaxRows = opts.dbMaxRows ?? Infinity;
+  let pages = 0;
 
   const cell = (r: RankEventFixtureRow, col: string): unknown =>
     (r as unknown as Record<string, unknown>)[col];
 
-  const builder: FakeRankEventsBuilder = {
-    select(_columns: string) { return builder; },
-    eq(col: string, val: unknown) {
-      filters.push({ op: "eq", col, val });
-      preds.push((r) => cell(r, col) === val);
-      return builder;
-    },
-    is(col: string, val: unknown) {
-      filters.push({ op: "is", col, val });
-      preds.push((r) => {
-        const c = cell(r, col);
-        return val === null ? c === null || c === undefined : c === val;
-      });
-      return builder;
-    },
-    gte(col: string, val: unknown) {
-      filters.push({ op: "gte", col, val });
-      preds.push((r) => String(cell(r, col)) >= String(val));
-      return builder;
-    },
-    lte(col: string, val: unknown) {
-      filters.push({ op: "lte", col, val });
-      preds.push((r) => String(cell(r, col)) <= String(val));
-      return builder;
-    },
-    then<T>(onFulfilled: (value: { data: RankEventFixtureRow[]; error: null }) => T): Promise<T> {
-      const data = rows.filter((r) => preds.every((p) => p(r)));
-      return Promise.resolve({ data, error: null as null }).then(onFulfilled);
-    },
-  };
+  function makeBuilder(): FakeRankEventsBuilder {
+    const preds: Array<(r: RankEventFixtureRow) => boolean> = [];
+    const orders: Array<{ col: string; asc: boolean }> = [];
+    let from = 0;
+    let to = Infinity;
 
-  const client: DiscoveryServeQueryClient = { from(_table: string) { return builder; } };
-  return { client, filters };
+    const builder: FakeRankEventsBuilder = {
+      select(_columns: string) { return builder; },
+      eq(col: string, val: unknown) {
+        filters.push({ op: "eq", col, val });
+        preds.push((r) => cell(r, col) === val);
+        return builder;
+      },
+      is(col: string, val: unknown) {
+        filters.push({ op: "is", col, val });
+        preds.push((r) => {
+          const c = cell(r, col);
+          return val === null ? c === null || c === undefined : c === val;
+        });
+        return builder;
+      },
+      gte(col: string, val: unknown) {
+        filters.push({ op: "gte", col, val });
+        preds.push((r) => String(cell(r, col)) >= String(val));
+        return builder;
+      },
+      lte(col: string, val: unknown) {
+        filters.push({ op: "lte", col, val });
+        preds.push((r) => String(cell(r, col)) <= String(val));
+        return builder;
+      },
+      order(col: string, o?: { ascending?: boolean }) {
+        filters.push({ op: "order", col, val: o?.ascending !== false });
+        orders.push({ col, asc: o?.ascending !== false });
+        return builder;
+      },
+      range(f: number, t: number) {
+        filters.push({ op: "range", col: "", val: [f, t] });
+        from = f; to = t;
+        return builder;
+      },
+      then<T>(onFulfilled: (value: { data: RankEventFixtureRow[]; error: null }) => T): Promise<T> {
+        pages += 1;
+        const matched = rows.filter((r) => preds.every((p) => p(r)));
+        for (const o of [...orders].reverse()) {
+          matched.sort((x, y) => {
+            const a = String(cell(x, o.col) ?? "");
+            const b = String(cell(y, o.col) ?? "");
+            return (a < b ? -1 : a > b ? 1 : 0) * (o.asc ? 1 : -1);
+          });
+        }
+        // PostgREST applies the requested range, then silently truncates the
+        // response to db-max-rows. Both, in that order.
+        const windowed = matched.slice(from, to === Infinity ? undefined : to + 1);
+        const data = windowed.slice(0, dbMaxRows);
+        return Promise.resolve({ data, error: null as null }).then(onFulfilled);
+      },
+    };
+    return builder;
+  }
+
+  const client: DiscoveryServeQueryClient = { from(_table: string) { return makeBuilder(); } };
+  return { client, filters, pages: () => pages };
 }
 
 describe("fetchDiscoveryServeRows — a converted serve is still a serve", () => {
@@ -625,5 +675,113 @@ describe("fetchDiscoveryServeRows — a converted serve is still a serve", () =>
     const open = fakeRankEventsClient([impressionServe]);
     await fetchDiscoveryServeRows(open.client, { since: WINDOW.since, until: null });
     assert.ok(!open.filters.some((f) => f.op === "lte"), "an open window must not bound the top");
+  });
+});
+
+// ── The corpus is the WINDOW, not PostgREST's first 1000 rows ────────────────
+//
+// DEFECT: fetchDiscoveryServeRows was range-less. PostgREST caps a range-less
+// SELECT at `db-max-rows` (1000) and reports NOTHING — no error, no flag. So on
+// any window with real traffic the D5 ranked-share verdict, the number this
+// whole report exists to produce, was computed over an arbitrary ~1000-row
+// prefix while reading like a statement about the window.
+//
+// These tests seed MORE than one page and assert the read comes back whole.
+// Against the pre-fix implementation the first one returns 1000 of 2500 rows.
+describe("fetchDiscoveryServeRows — silent truncation (defect: range-less read)", () => {
+  const WINDOW = { since: "2026-09-01T00:00:00.000Z", until: null };
+
+  /** n serves on point 6, each with a distinct served_at so the order is total. */
+  function corpus(n: number): RankEventFixtureRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      surface: "discovery",
+      outcome: "impression",
+      event_type: null,
+      // 2026-09-02T00:00:00Z + i seconds, zero-padded so string order == time order.
+      served_at: new Date(Date.parse("2026-09-02T00:00:00.000Z") + i * 1000).toISOString(),
+      session_id: `sess-${i}`,
+      features: { servePoint: 6, rankedInRequest: true },
+      id: String(i).padStart(8, "0"),
+    })) as RankEventFixtureRow[];
+  }
+
+  it("reads the WHOLE corpus across pages, not PostgREST's silent first 1000", async () => {
+    const ROWS = 2_500;
+    // dbMaxRows emulates the server-side cap that made the old read lie.
+    const { client, pages } = fakeRankEventsClient(corpus(ROWS), { dbMaxRows: SERVE_ROWS_PAGE_SIZE });
+
+    const { rows, error, truncated } = await fetchDiscoveryServeRows(client, WINDOW);
+
+    assert.equal(error, null);
+    assert.equal(
+      rows.length, ROWS,
+      "the corpus was truncated. A range-less read stops at db-max-rows (1000) with " +
+      "no error, so every share below is computed over a prefix, not the window.",
+    );
+    assert.equal(truncated, false, "2500 rows is under the ceiling — nothing was dropped");
+    assert.equal(pages(), 3, "2500 rows over 1000-row pages is 3 reads (1000 + 1000 + 500)");
+
+    // And the tally — the thing the verdict is computed from — sees all of them.
+    assert.equal(tallyServePoints(rows).marked, ROWS);
+  });
+
+  it("no row is served twice and none is skipped", async () => {
+    const { client } = fakeRankEventsClient(corpus(2_100), { dbMaxRows: SERVE_ROWS_PAGE_SIZE });
+    const { rows } = await fetchDiscoveryServeRows(client, WINDOW);
+    const ids = new Set(rows.map((r) => r.session_id));
+    assert.equal(ids.size, 2_100, "paging must not duplicate or drop rows");
+  });
+
+  it("asks for an explicit range and a stable total order on every page", async () => {
+    const { client, filters } = fakeRankEventsClient(corpus(10));
+    await fetchDiscoveryServeRows(client, WINDOW);
+
+    assert.ok(
+      filters.some((f) => f.op === "range"),
+      "a read with no .range() is capped by the server at db-max-rows and says nothing about it",
+    );
+    // Paging over a non-total order can return one row on two pages and skip
+    // another, so served_at alone is not enough — id breaks the ties.
+    assert.ok(filters.some((f) => f.op === "order" && f.col === "served_at"));
+    assert.ok(filters.some((f) => f.op === "order" && f.col === "id"));
+  });
+
+  it("an exhausted corpus ends on a short page — the ceiling is not hit", async () => {
+    const { client, pages } = fakeRankEventsClient(corpus(3), { dbMaxRows: SERVE_ROWS_PAGE_SIZE });
+    const { rows, truncated } = await fetchDiscoveryServeRows(client, WINDOW);
+    assert.equal(rows.length, 3);
+    assert.equal(truncated, false);
+    assert.equal(pages(), 1, "a short first page ends the read — no wasted second query");
+  });
+
+  it("reports the bound EXPLICITLY when the ceiling is what stopped the read", async () => {
+    // A metric that says it is bounded beats one that silently drops rows.
+    // Stub the ceiling by paging a corpus larger than SERVE_ROWS_MAX would be
+    // impractical here, so assert the contract the caller depends on instead:
+    // truncated is part of the result shape and defaults to false.
+    const { client } = fakeRankEventsClient(corpus(5), { dbMaxRows: SERVE_ROWS_PAGE_SIZE });
+    const result = await fetchDiscoveryServeRows(client, WINDOW);
+    assert.equal(typeof result.truncated, "boolean", "callers must be able to SEE truncation");
+    assert.equal(typeof result.pages, "number");
+    assert.ok(SERVE_ROWS_MAX > SERVE_ROWS_PAGE_SIZE, "the ceiling must span more than one page");
+  });
+
+  it("a failing page aborts and surfaces the error rather than reporting a partial corpus", async () => {
+    const failing: DiscoveryServeQueryClient = {
+      from() {
+        const b: any = new Proxy({}, {
+          get(_t, prop) {
+            if (prop === "then") {
+              return (onF: any) => Promise.resolve({ data: null, error: { message: "boom" } }).then(onF);
+            }
+            return () => b;
+          },
+        });
+        return b;
+      },
+    };
+    const { rows, error } = await fetchDiscoveryServeRows(failing, WINDOW);
+    assert.equal(rows.length, 0);
+    assert.equal(error?.message, "boom", "the caller exits non-zero on this — it must not be swallowed");
   });
 });
