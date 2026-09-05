@@ -16,7 +16,43 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient } from "../supabase.js";
-import { isPostPublished } from "../postVisibility.js";
+import { isPostPublished, canReadPost, type ReadablePost } from "../postVisibility.js";
+
+// ── Who may appear on a place's PUBLIC rails ─────────────────────────────────
+
+/**
+ * A place's public rails — Best-Of and the Top-Contributor credit — are
+ * assembled for a PLACE, cached (`place_best_of`, `place_top_contributors`,
+ * and the `place_living_cache` payload built from them) and served to every
+ * viewer of that place. routes/placeLiving passes no viewer at all, so there is
+ * no viewer whose trip membership or follow graph could unlock a restricted
+ * post here: the only posts that belong on a public rail are the ones a
+ * STRANGER may read.
+ *
+ * This sentinel is that stranger. It is deliberately not a uuid, so it can never
+ * collide with a real `author_id` and accidentally admit a post through
+ * decidePostReadable's author branch.
+ */
+const PLACE_RAIL_STRANGER = "place-rail:no-viewer";
+
+/**
+ * May this post feed a place's PUBLIC rails?
+ *
+ * ONE rule, the canonical one, not a second implementation:
+ *   • lib/postVisibility.isPostPublished — the delayed-publish gate (§23/§37).
+ *     `status = 'active'` is what POST /posts writes for a delayed post, so it
+ *     was never a publication filter.
+ *   • lib/postVisibility.canReadPost with the no-viewer stranger — the same
+ *     predicate WallProjectionService.passesVisibility and GET /posts/:postId
+ *     apply. It admits `public` (and legacy rows with no visibility column) and
+ *     refuses `private`, `trip_only`, `followers_only` and any tier it does not
+ *     recognise. FAIL CLOSED is its documented default, which is exactly what a
+ *     rail with no viewer needs — a visibility tier added tomorrow is invisible
+ *     to strangers until someone teaches decidePostReadable about it.
+ */
+export function isPublicPlaceRailPost(row: ReadablePost & { post_status?: string | null }): boolean {
+  return isPostPublished(row) && canReadPost(row, PLACE_RAIL_STRANGER, false, false);
+}
 
 // ── Engagement score formula ──────────────────────────────────────────────────
 
