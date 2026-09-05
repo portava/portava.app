@@ -203,6 +203,21 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:schema-references
 
+      # The VALUE half of the same contract. check:schema-references asks whether
+      # a column exists; this asks whether a literal is something that column can
+      # HOLD. A 2026-09-05 audit found thirty-two live sites filtering on a value
+      # the column cannot hold — `trips.status = 'in_progress'`, `events.state <>
+      # 'banned'`, `posts.status = 'published'` — where an unknown enum label is
+      # rejected 22P02 and fails the WHOLE request. No test could see it: every
+      # fake Supabase client in the repo asks "does my fixture's value appear in
+      # what you passed?", never "is what you passed a real label?", so a fixture
+      # written from a fiction pinned the fiction. Static, so like its sibling it
+      # needs no database and cannot be starved. See src/scripts/checkEnumLiterals.ts.
+      - name: 'check:enum-literals (static; no DB, cannot be starved)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:enum-literals
+
       - name: 'check:async-handlers'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash

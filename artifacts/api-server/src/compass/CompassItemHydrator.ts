@@ -352,7 +352,15 @@ async function fetchHiddenGems(
       .from("hidden_gems")
       .select("id, name, description, city, country, submitted_by, category, created_at")
       .ilike("city", profile.currentCity)
-      .in("status", ["approved", "active"])
+      // `hidden_gem_status` is an ENUM: pending | active | hidden | merged.
+      // "approved" is NOT a label, and Postgres rejects an unknown enum literal
+      // outright (22P02) rather than matching nothing — so this read failed
+      // WHOLE and the Compass feed has never surfaced a hidden gem. This module
+      // destructures `{ data }` without inspecting `error`, and
+      // logCompassSourceFailure only fires on a rejected promise (supabase-js
+      // RETURNS PostgREST errors), so the loss had zero telemetry.
+      // `["active"]` is discoverySearch's GEM_SEARCHABLE_STATUSES.
+      .in("status", ["active"])
       .order("created_at", { ascending: false })
       .limit(MAX_HIDDEN_GEMS);
 

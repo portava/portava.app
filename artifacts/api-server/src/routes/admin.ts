@@ -516,7 +516,11 @@ router.get("/admin/geofence/:tripId/suspicious-checkins", async (req, res) => {
     .from("plan_attendance_events")
     .select("id, user_id, event_type, metadata, created_at")
     .eq("trip_id", tripId)
-    .eq("event_type", "suspicious_check_in")
+    // `plan_attendance_events.event_type` is TEXT with a CHECK permitting
+    // suspicious | late | override | excused. "suspicious_check_in" is not
+    // among them, so this admin view returned an empty list for every trip
+    // regardless of what the table held. The real label is `suspicious`.
+    .eq("event_type", "suspicious")
     .order("created_at", { ascending: false })
     .limit(100);
 

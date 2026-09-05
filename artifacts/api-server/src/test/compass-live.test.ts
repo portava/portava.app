@@ -208,7 +208,12 @@ function atHour(h: number, m = 0): string {
 }
 
 function seedTrip(store: Record<string, Row[]>, city = "Cebu City"): void {
-  store.trips = [{ id: "trip-1", owner_id: USER_ID, destination_city: city, status: "in_progress" }];
+  // FIXTURE REPAIRED: `status: "in_progress"` is not a label of the
+  // `trip_status` enum (draft | planning | upcoming | active | completed |
+  // cancelled | archived), so the fake client matched the production
+  // filter while PostgREST would have rejected BOTH with 22P02. The test
+  // proved the code matched the fixture and nothing about the database.
+  store.trips = [{ id: "trip-1", owner_id: USER_ID, destination_city: city, status: "active" }];
   store.trip_members = [];
   // Neutral cached forecast (not rainy, not clear) so the Phase 11 weather
   // evaluator neither fires nor reaches out to the live Open-Meteo API.

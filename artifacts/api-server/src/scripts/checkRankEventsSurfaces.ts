@@ -816,6 +816,11 @@ const WRITTEN_SURFACES = [
   "compass",
   "live_pulse",
   "watch_feed",
+  // routes/wall.ts:145 has written surface='wall' since the Wall shipped. It
+  // was absent from this list, so the one report built to surface exactly this
+  // failure class could never name the surface that was losing every row.
+  // Migration 2298 admits 'wall' to rank_events_surface_check.
+  "wall",
 ] as const;
 
 /** Outcome values the codebase writes. 'analytics' was added by 0197. */

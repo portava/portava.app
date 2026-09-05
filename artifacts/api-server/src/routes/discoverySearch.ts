@@ -705,9 +705,15 @@ async function searchTrips(
       .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
       .eq("visibility", "public")
       .eq("show_in_discovery", true)
-      .neq("status", "cancelled")
-      .neq("status", "deleted")
-      .neq("status", "banned")
+      // `trip_status` is an ENUM: draft | planning | upcoming | active |
+      // completed | cancelled | archived. "deleted" and "banned" are NOT
+      // labels, and Postgres rejects an unknown enum literal outright (22P02)
+      // rather than matching nothing — so `type=trips` search errored out and
+      // fell into the `if (error || !data) return []` below on every request.
+      //
+      // Same shape as the events fix above: a denylist of real labels that also
+      // drops unpublished `draft` trips the broken filter would have surfaced.
+      .not("status", "in", '("draft","cancelled","archived")')
       .order("start_date", { ascending: true });
     // Apply time-intent date bounds to trip start_date when present
     if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
@@ -782,9 +788,12 @@ async function searchPlans(
       .from("trips")
       .select("id, visibility, show_in_discovery, owner_id, status, start_date")
       .in("id", tripIds)
-      .neq("status", "deleted")
-      .neq("status", "cancelled")
-      .neq("status", "banned");
+      // Same dead literals as searchTrips above ("deleted" / "banned" are not
+      // `trip_status` labels), and worse here: the result is destructured as
+      // `const { data: trips }` with the error never inspected, so `trips` was
+      // undefined, `allowedTrips` empty, and EVERY plan was dropped as
+      // "no allowed parent trip". `type=plans` returned [] on every request.
+      .not("status", "in", '("draft","cancelled","archived")');
 
     const allowedTrips = (trips ?? []).filter(
       (t: any) =>
@@ -1073,8 +1082,17 @@ async function searchPosts(
       .ilike("content", pat)
       .eq("visibility", "public")
       .eq("post_status", "published")
-      .neq("status", "deleted")
-      .neq("status", "banned")
+      // `post_status` (the enum typing posts.status — not the `post_status`
+      // COLUMN filtered on the line above, which is `delayed_post_status`) has
+      // labels active | hidden | reported | deleted. "banned" is NOT one, so
+      // PostgREST rejected the literal 22P02 and `type=posts` search failed
+      // whole, returning [] on every request.
+      //
+      // Replaced with the allowlist every other posts-serving surface uses
+      // (`.eq("status","active")` — ~20 call sites incl. mediaFeed, pulse,
+      // placeLiving, featured), which is strictly narrower than the denylist it
+      // replaces: `hidden` and `reported` posts are now excluded too.
+      .eq("status", "active")
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 

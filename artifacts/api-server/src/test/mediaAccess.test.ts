@@ -484,7 +484,13 @@ describe("authorizeMediaAccess — the matrix", () => {
     assert.equal(await authorizeMediaAccess(mkStory({}), VIEWER, "post-media", path), true);
     _clearMediaAccessCache();
     assert.equal(await authorizeMediaAccess(
-      mkStory({ close_friends_only: true }, [{ user_id: OWNER, friend_id: VIEWER }]), VIEWER, "post-media", path), true);
+      // FIXTURE REPAIRED. This row said `{ user_id, friend_id }`, the same
+      // non-existent column names the production read carried — so the double
+      // agreed with the code while the real table (owner_id, friend_user_id)
+      // would have failed the query 42703 and denied every close friend their
+      // own close-friends story. routes/stories.ts has always spelled these
+      // correctly; the fixture and mediaAccess.ts now match it.
+      mkStory({ close_friends_only: true }, [{ owner_id: OWNER, friend_user_id: VIEWER }]), VIEWER, "post-media", path), true);
     _clearMediaAccessCache();
     assert.equal(await authorizeMediaAccess(mkStory({ close_friends_only: true }), VIEWER, "post-media", path), false);
     _clearMediaAccessCache();
