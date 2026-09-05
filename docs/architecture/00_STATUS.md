@@ -33,7 +33,7 @@ the discovery roadmap (`docs/discovery/ROADMAP.md`), which records the owner rul
   chain lands as `save` instead of 404ing — but the tap is still overwritten, so the
   *transition* is still unrecoverable. And `report:discovery-serve-points` no longer reads the
   corpus through the mutable column at all: it selects by **`event_type IS NULL`** (#387,
-  `lib/discoveryServePointReport.ts:587#event_type`), because the old `outcome='impression'` filter
+  `lib/discoveryServePointReport.ts:589#event_type`), because the old `outcome='impression'` filter
   dropped every serve that converted — **differentially, against the serve points that rank.**
   Instruments have been moved off the mutable column; the column is unchanged.
 
