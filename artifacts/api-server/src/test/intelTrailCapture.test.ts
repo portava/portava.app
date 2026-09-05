@@ -36,6 +36,25 @@ import { mapQuickSignal, PHASE1_CAPTURE_CLAIM_TYPES } from "../lib/quickSignal.j
 import { PHASE1_TRAIL_CAPTURE_CLAIM_TYPES, mapTrailSignal, MOVEMENT_PRIVACY_V1 } from "../lib/trailFollowup.js";
 import { CLAIM_TYPES } from "../lib/intelContracts.js";
 import { readTrailMovement, cohortFloorMet, TRAIL_SIGNAL_MAX_AGE_MINUTES } from "../lib/trailServe.js";
+import { INTEL_FLAG_DEPENDENCIES, type IntelFlag } from "../lib/intelContracts.js";
+
+/**
+ * Flags for a fixture, DERIVED from the §26 dependency graph (a flag may only be
+ * honoured when everything it depends on is also on). Hard-coding the set would
+ * turn every "the write lands" assertion vacuous the moment the chain grows: the
+ * fixture would stop clearing the gate and the test would pass on the refusal.
+ */
+function chainOn(flag: IntelFlag): Record<string, boolean> {
+  const out: Record<string, boolean> = { [flag]: true };
+  const frontier = [...INTEL_FLAG_DEPENDENCIES[flag]];
+  while (frontier.length) {
+    const next = frontier.pop()!;
+    if (next in out) continue;
+    out[next] = true;
+    frontier.push(...INTEL_FLAG_DEPENDENCIES[next]);
+  }
+  return out;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -190,7 +209,7 @@ async function get(path: string, as: string) {
   return { status: res.status, body: (await res.json()) as any };
 }
 
-const bothOn = { intel_capture_quick_signal: true, intel_trail_followup: true };
+const bothOn = chainOn("intel_trail_followup");
 const captureDb = (flags: Record<string, boolean>, over: Partial<FakeOpts> = {}) =>
   makeDb({ flags, places: [PLACE], consent: { [ACTOR]: true }, profiles: { [ACTOR]: {} }, ...over });
 
@@ -282,6 +301,20 @@ describe("IG-06 — POST /v1/intel/observations reaches the trail surface", () =
     assert.equal(db._tables.intel_observations.length, 0);
   });
 
+  it("the §26 chain is enforced over HTTP: the trail flag alone is not enough to store a declaration", async () => {
+    // The surface's own flag is ON; every flag it DEPENDS on is off. §26:
+    // "a flag may only be honoured when everything it depends on is also on".
+    const deps = INTEL_FLAG_DEPENDENCIES.intel_trail_followup;
+    assert.ok(deps.length > 0, "the trail flag must declare a dependency for this test to mean anything");
+    const flags: Record<string, boolean> = { intel_trail_followup: true };
+    for (const d of deps) flags[d] = false;
+    const db = captureDb(flags);
+    _setTestClient(db, true);
+    const r = await post("/v1/intel/observations", trailBody(), ACTOR, "trail-http-chain");
+    assert.equal(r.body.error, "feature_disabled", JSON.stringify(r.body));
+    assert.equal(db._tables.intel_observations.length, 0);
+  });
+
   it("the D4 consent gate applies on the trail surface too — no consent row → 403, nothing stored", async () => {
     const db = captureDb(bothOn, { consent: {} });
     _setTestClient(db, true);
@@ -345,8 +378,10 @@ const nextMoveRow = (actor: string, over: Row = {}): Row => ({
   expires_at: new Date(Date.parse(OBSERVED) + NEXT_MOVE_TTL_MS).toISOString(),
   ...over,
 });
+// The dependency chain is always on unless a case overrides it explicitly, so a
+// case that flips `intel_trail_followup` is testing that flag and nothing else.
 const serveDb = (flags: Record<string, boolean>, over: Partial<FakeOpts> = {}) =>
-  makeDb({ flags, consent: { [A]: true, [B]: true, [C]: true }, ...over });
+  makeDb({ flags: { ...chainOn("intel_trail_followup"), ...flags }, consent: { [A]: true, [B]: true, [C]: true }, ...over });
 
 describe("IG-06 — lib/trailServe is the production caller of the aggregate + AT-10 filter", () => {
   it("refuses with flag_off and reads NOTHING when intel_trail_followup is off", async () => {
@@ -355,6 +390,19 @@ describe("IG-06 — lib/trailServe is the production caller of the aggregate + A
     assert.equal(read.refusal, "flag_off");
     assert.deepEqual(read.buckets, []);
     assert.ok(!db._reads.includes("intel_observations"), "no observation read behind an off flag");
+    assert.ok(!db._reads.includes("blocks"));
+  });
+
+  it("refuses with flag_off — and reads NOTHING — when a DEPENDENCY of the trail flag is off (§26 chain)", async () => {
+    const deps = INTEL_FLAG_DEPENDENCIES.intel_trail_followup;
+    assert.ok(deps.length > 0, "the trail flag must declare a dependency for this test to mean anything");
+    const flags: Record<string, boolean> = { intel_trail_followup: true };
+    for (const d of deps) flags[d] = false;
+    const db = serveDb(flags, { observations: [nextMoveRow(A), nextMoveRow(B)] });
+    const read = await readTrailMovement(db as any, VIEWER, { now: NOW });
+    assert.equal(read.refusal, "flag_off");
+    assert.deepEqual(read.buckets, []);
+    assert.ok(!db._reads.includes("intel_observations"), "no observation read behind an unhonourable flag");
     assert.ok(!db._reads.includes("blocks"));
   });
 
