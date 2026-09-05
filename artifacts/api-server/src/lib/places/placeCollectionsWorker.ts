@@ -34,7 +34,6 @@
 import { randomUUID } from "crypto";
 import { getServiceClient } from "../supabase.js";
 import { placePostScore } from "./placeCollections.js";
-import { isPostPublished } from "../postVisibility.js";
 
 const WORKER_ID = `place-worker-${randomUUID()}`;
 
@@ -373,37 +372,23 @@ export async function runCollectionsTick(scOverride?: any): Promise<CollectionsT
 async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): Promise<void> {
   const nowIso = new Date().toISOString();
 
-  // Fetch all active PUBLISHED posts for this place with engagement metrics.
+  // Fetch all active posts for this place with engagement metrics.
   // Limit 5 000 — Supabase default cap is 1 000 without an explicit limit.
-  //
-  // Delayed-publish gate (§23/§37) — the cached twin of the gate on
-  // placeCollections.fetchBestOfRealtime. getBestOf reads place_best_of FIRST
-  // and only falls back to the realtime query when the cached row is stale, so
-  // a gate that lives only on the fallback is bypassed on the path that is
-  // normally served: whatever this worker writes here IS the place page. This
-  // read is keyed on canonical_place_id, so a post whose post_status is still
-  // pending would be baked into the place's best-of rails and its top-contributor
-  // list — announcing "this person is at this place" for as long as the cache
-  // lives, which outlasts the delay itself.
-  //
-  // Same canonical predicate as every serving surface (lib/postVisibility),
-  // applied at the query and again in memory.
   const { data: postRows, error: postErr } = await sc
     .from("posts")
     .select(
       "id, author_id, content, media_type, media_urls, media_thumbnail_url, " +
-      "post_buckets, like_count, save_count, share_count, view_count, qualified_view_count, post_status",
+      "post_buckets, like_count, save_count, share_count, view_count, qualified_view_count",
     )
     .eq("canonical_place_id", placeId)
     .eq("status", "active")
-    .eq("post_status", "published")
     .limit(5_000);
 
   if (postErr) {
     throw new Error(`posts fetch failed: ${postErr.message}`);
   }
 
-  const posts = ((postRows ?? []) as any[]).filter((r) => isPostPublished(r));
+  const posts = ((postRows ?? []) as any[]);
 
   // A. Best-of computation → upsert place_best_of.
   const bestOf = computeBestOf(posts);

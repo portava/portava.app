@@ -15,8 +15,8 @@
  *
  * PR #360 closed this on the Wall; PR #397 closed it on GET /trips/:tripId/posts,
  * GET /pulse, GET /airport/pulse, discovery search and
- * placeCollections.fetchBestOfRealtime. Three readers were still open, and all
- * three are the "gate landed on one path and not its twin" shape:
+ * placeCollections.fetchBestOfRealtime. Two readers were still open, and both
+ * are the "gate landed on one path and not its twin" shape:
  *
  *   • compass/CompassItemHydrator.fetchPosts — the Compass feed's MAIN post
  *     source. It never selected post_status at all, and postToItem copies
@@ -36,12 +36,10 @@
  *     the existing test drives buildFallbackFeed with a NULL city and this lane
  *     returns [] before its query when there is no city. These cases pass a city.
  *
- *   • lib/places/placeCollectionsWorker.processPlace — writes place_best_of and
- *     place_top_contributors. getBestOf reads the CACHED place_best_of row first
- *     and only falls back to the realtime query when it is stale, so #397's gate
- *     on fetchBestOfRealtime is bypassed on the path normally served: whatever
- *     this worker bakes into the cache IS the place page, for as long as the
- *     cache lives — which outlasts the delay itself.
+ * A third, lib/places/placeCollectionsWorker.processPlace, has the same defect
+ * (getBestOf serves the CACHED place_best_of row first, so #397's gate on the
+ * realtime fallback is bypassed on the path normally served) but is already
+ * fixed by PR #405 on the same lines, and fixed better — see section 3 below.
  *
  * Each is proven at BOTH layers, as routes/wall.ts is:
  *   • the query CARRIES the DB-layer predicate — asserted against captured
@@ -67,7 +65,6 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import adminCompassRouter from "../routes/adminCompass.js";
 import { hydrateCompassItems } from "../compass/CompassItemHydrator.js";
 import { buildFallbackFeed } from "../compass/CompassFallbackFeedBuilder.js";
-import { runCollectionsTick, _setTestAwardStamp } from "../lib/places/placeCollectionsWorker.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import type { CompassProfile } from "../compass/types.js";
 
@@ -385,121 +382,16 @@ describe("CompassFallbackFeedBuilder.fetchVerifiedEvents — the second dead `de
 });
 
 // ── 3. placeCollectionsWorker.processPlace → place_best_of ────────────────────
-
-describe("placeCollectionsWorker — the CACHED twin of the best-of gate", () => {
-  beforeEach(() => {
-    _setTestAwardStamp(() => Promise.resolve({ awarded: false, reason: "test" }));
-    invalidateFlagsCache();
-  });
-
-  /**
-   * Queue-aware fake: reuses the predicate-recording builder above for `posts`
-   * and drives one claim→process→done cycle for a single place.
-   */
-  function workerClient(opts: {
-    posts:         Record<string, any>[];
-    captured?:     Captured[];
-    ignoreEqCols?: string[];
-    upserts:       Array<{ table: string; row: any }>;
-  }) {
-    const inner = makeClient({
-      posts:        opts.posts,
-      captured:     opts.captured,
-      ignoreEqCols: opts.ignoreEqCols,
-    });
-    let queue: Record<string, any>[] = [
-      { place_id: PLACE, status: "pending", queued_at: "2026-09-01T00:00:00Z", locked_until: null, locked_by: null },
-    ];
-
-    return {
-      from(table: string) {
-        if (table === "posts") return inner.from(table);
-
-        if (table === "place_cache_invalidation_queue") {
-          let patch: any = null;
-          let returning = false;
-          const b: any = {
-            select: () => { if (patch) returning = true; return b; },
-            update: (p: any) => { patch = p; return b; },
-            upsert: () => Promise.resolve({ data: null, error: null }),
-            eq: () => b, in: () => b, or: () => b, lt: () => b, gt: () => b,
-            is: () => b, not: () => b, order: () => b,
-            limit: (n: number) => Promise.resolve({
-              data: queue.filter((r) => r.status === "pending").slice(0, n),
-              error: null,
-            }),
-            then: (resolve: any) => {
-              if (patch) {
-                const matched = queue.map((r) => ({ ...r, ...patch }));
-                queue = matched;
-                return resolve({ data: returning ? matched : null, error: null });
-              }
-              return resolve({ data: [], error: null });
-            },
-          };
-          return b;
-        }
-
-        // Every other table the worker touches: accept writes, capture upserts,
-        // read back nothing.
-        const b: any = {
-          select: () => b, eq: () => b, in: () => b, is: () => b, not: () => b,
-          or: () => b, gt: () => b, gte: () => b, lt: () => b, lte: () => b,
-          order: () => b, limit: () => Promise.resolve({ data: [], error: null }),
-          range: () => b, delete: () => b, update: () => b,
-          insert: () => Promise.resolve({ data: null, error: null }),
-          upsert: (row: any) => { opts.upserts.push({ table, row }); return Promise.resolve({ data: null, error: null }); },
-          maybeSingle: () => Promise.resolve({ data: null, error: null }),
-          single: () => Promise.resolve({ data: null, error: null }),
-          then: (resolve: any) => resolve({ data: [], error: null, count: 0 }),
-        };
-        return b;
-      },
-    } as any;
-  }
-
-  /** Every post id baked into the place_best_of row this tick wrote. */
-  function cachedIds(upserts: Array<{ table: string; row: any }>): string[] {
-    const row = upserts.find((u) => u.table === "place_best_of")?.row;
-    assert.ok(row, "the tick wrote a place_best_of row");
-    const lanes = ["top_videos", "top_photos", "top_viewpoints", "food_nearby", "top_experiences"];
-    return [...new Set(lanes.flatMap((k) => (row[k] ?? []).map((i: any) => i.postId ?? i.post_id)))].sort();
-  }
-
-  it("the precompute query CARRIES post_status='published' (the DB-layer predicate)", async () => {
-    const captured: Captured[] = [];
-    const upserts: Array<{ table: string; row: any }> = [];
-    const res = await runCollectionsTick(workerClient({ posts: fixture(), captured, upserts }));
-
-    assert.equal(res.processed, 1, "the tick processed the claimed place");
-    assert.deepEqual(cachedIds(upserts), ["published-1"],
-      "only the published post is baked into the served cache");
-
-    const reads = postReads(captured);
-    assert.ok(reads.length >= 1, "the worker read posts");
-    for (const q of reads) {
-      assert.equal(q.eqs.canonical_place_id, PLACE);
-      assert.equal(q.eqs.status, "active");
-      assert.equal(q.eqs.post_status, "published", "the query carries the canonical predicate");
-    }
-  });
-
-  it("pending rows fed PAST the query filter are still refused in memory", async () => {
-    const upserts: Array<{ table: string; row: any }> = [];
-    await runCollectionsTick(workerClient({ posts: fixture(), ignoreEqCols: ["post_status"], upserts }));
-    assert.deepEqual(cachedIds(upserts), ["published-1"],
-      "a pending post must not be cached onto the place its author is still standing at — " +
-      "the cache outlives the delay, and getBestOf prefers it over the realtime query");
-  });
-
-  it("a legacy row with NO post_status reads as published (absent ⇒ published)", async () => {
-    const legacy = postRow("legacy-1");
-    delete legacy.post_status;
-    const upserts: Array<{ table: string; row: any }> = [];
-    await runCollectionsTick(workerClient({ posts: [legacy], ignoreEqCols: ["post_status"], upserts }));
-    assert.deepEqual(cachedIds(upserts), ["legacy-1"], "absent must not fail closed");
-  });
-});
+//
+// NOT covered here, deliberately. lib/places/placeCollectionsWorker.processPlace
+// has the same defect — getBestOf serves the CACHED place_best_of row first and
+// only falls back to the gated realtime query, so a gate on the fallback alone
+// fixes nothing in practice — but PR #405 already fixes it, on the same lines,
+// and fixes it better: it gates Best-Of through placeCollections.isPublicPlaceRailPost
+// (publication AND visibility) while deliberately leaving contributor counting
+// over every active post at the place, which narrowing the query would have
+// changed as a side effect. Duplicating it here would only guarantee a conflict.
+// Its proof lives in src/test/placeBestOfVisibility.test.ts on that branch.
 
 // ── 4. adminCompass dashboard — the OTHER dead `delayed_post` literal ─────────
 //
