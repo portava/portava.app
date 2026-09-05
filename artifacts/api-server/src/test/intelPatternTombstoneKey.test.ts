@@ -36,6 +36,7 @@ import assert from "node:assert/strict";
 import { runPatternLearningPass } from "../lib/intelPatternScheduler.js";
 import { readTypicalPatterns } from "../lib/liveClaimRead.js";
 import { currentlyServedPatterns, type StoredPatternRow } from "../lib/intelPatternLearning.js";
+import { PRIVACY_THRESHOLD_V1 } from "../lib/intelContracts.js";
 
 const NOW = new Date("2026-09-04T20:00:00.000Z"); // Friday → dow 5, hour_20 UTC
 const DOW = NOW.getUTCDay();
@@ -54,7 +55,13 @@ function servedPatternRow(over: Record<string, any> = {}): Record<string, any> {
     dow: DOW,
     value_json: { level: "busy" },
     cohort_size: 30,
-    distinct_contributors: 12,
+    // readTypicalPatterns applies the §k-anonymity floor BEFORE it resolves the
+    // newest row per scope. A fixture below the floor is withheld outright, which
+    // makes the "served before retraction" assertion fail AND the "withheld after
+    // retraction" assertion pass vacuously — the tombstone would never be
+    // exercised at all. Derive from the constant so a future change to the floor
+    // moves the fixture with it instead of silently hollowing this suite out.
+    distinct_contributors: PRIVACY_THRESHOLD_V1.minUniqueActors,
     distinct_dates: 9,
     window_days: 120,
     confidence: 0.6,
@@ -162,6 +169,35 @@ describe("§12 tombstones are written with the key their READER matches on", () 
     // The REAL reader must now serve nothing for this scope.
     const after = await readTypicalPatterns(readerFor(tables), SUBJECT, { now: NOW });
     assert.deepEqual(after, [], "a retracted pattern must stop being served");
+  });
+
+  /**
+   * Guards the test above against going vacuous. That test proves "served, then
+   * NOT served"; it only means something while the "served" half is real. The
+   * reader applies the k-anonymity floor before it ever resolves the newest row
+   * per scope, so a fixture under the floor is withheld for a reason that has
+   * nothing to do with tombstones — and the suite would still pass. Pin both
+   * sides of the floor here so that failure mode is loud instead of silent.
+   */
+  it("the read path withholds a pattern under the k-anonymity floor", async () => {
+    const under = servedPatternRow({
+      distinct_contributors: PRIVACY_THRESHOLD_V1.minUniqueActors - 1,
+    });
+    const withheld = await readTypicalPatterns(
+      readerFor({ intel_historical_patterns: [under] }),
+      SUBJECT,
+      { now: NOW },
+    );
+    assert.deepEqual(withheld, [], "under the floor, the reader must serve nothing");
+
+    // ...and the fixture the tombstone tests rely on is ON or above it, so their
+    // "served before retraction" precondition is genuine.
+    const atFloor = await readTypicalPatterns(
+      readerFor({ intel_historical_patterns: [servedPatternRow()] }),
+      SUBJECT,
+      { now: NOW },
+    );
+    assert.equal(atFloor.length, 1, "the shared fixture must clear the floor on its own");
   });
 
   it("re-running the nightly pass does not duplicate the tombstone", async () => {
