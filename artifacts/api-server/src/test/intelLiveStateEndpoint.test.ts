@@ -23,6 +23,7 @@ import { createServer } from "node:http";
 import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _clearPromotedScopeCache, resolvePlaceIntelState } from "../lib/liveClaimRead.js";
+import { PRIVACY_THRESHOLD_V1 } from "../lib/intelContracts.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const PLACE_ID = "22222222-2222-4222-8222-222222222222";
@@ -154,6 +155,14 @@ function patternForNow() {
     value_json: { level: "quiet" },
     confidence: 0.6,
     cohort_size: 40,
+    // The typical rung enforces the SAME k-anonymity floor as the live rung
+    // (lib/liveClaimRead: meetsKAnonymity(distinct_contributors,
+    // PRIVACY_THRESHOLD_V1.minUniqueActors)), and a row with no contributor
+    // count reads as 0 and is withheld. A fixture that is meant to SERVE must
+    // therefore declare a cohort AT the floor — derived from the constant, never
+    // a literal, so a future floor change moves the fixture with it instead of
+    // silently turning this case into an 'unknown' that proves nothing.
+    distinct_contributors: PRIVACY_THRESHOLD_V1.minUniqueActors,
     window_days: 30,
     is_invalidation: false,
     computed_at: PAST,
