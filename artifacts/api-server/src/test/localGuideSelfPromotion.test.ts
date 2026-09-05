@@ -37,7 +37,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
 
 // ── Env ───────────────────────────────────────────────────────────────────────
 
@@ -104,7 +104,7 @@ async function makeUser(tag: string): Promise<{ id: string; token: string }> {
 
   // handle_new_user() may already have made the profile; upsert so either way works.
   const { error: pErr } = await sc.from("profiles").upsert(
-    { id, handle: `${PREFIX}${tag}`, username: `${PREFIX}${tag}`, name: `guide promo ${tag}` },
+    { id, handle: fixtureLabel(`${PREFIX}${tag}`), username: fixtureLabel(`${PREFIX}${tag}`), name: `guide promo ${tag}` },
     { onConflict: "id" },
   );
   if (pErr) throw new Error(`profile(${tag}): ${pErr.message}`);

@@ -67,7 +67,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -159,8 +159,8 @@ async function makeUser(tag: string): Promise<{ id: string; token: string }> {
 
   const { error: pErr } = await sc.from("profiles").insert({
     id,
-    handle: `${PREFIX}${tag}`,
-    username: `${PREFIX}${tag}`,
+    handle: fixtureLabel(`${PREFIX}${tag}`),
+    username: fixtureLabel(`${PREFIX}${tag}`),
     name: `is_official guard ${tag}`,
   });
   if (pErr) throw new Error(`profile(${tag}): ${pErr.message}`);
@@ -339,8 +339,8 @@ describe("5. an ordinary INSERT carrying is_official is refused", { skip: !CREDS
 
       await userClient(token).from("profiles").insert({
         id: freshId,
-        handle: `${PREFIX}fresh`,
-        username: `${PREFIX}fresh`,
+        handle: fixtureLabel(`${PREFIX}fresh`),
+        username: fixtureLabel(`${PREFIX}fresh`),
         name: "is_official guard fresh",
         is_official: true,
       });
@@ -383,8 +383,8 @@ describe("5. an ordinary INSERT carrying is_official is refused", { skip: !CREDS
 
       const { error } = await userClient(token).from("profiles").insert({
         id: normalId,
-        handle: `${PREFIX}normal`,
-        username: `${PREFIX}normal`,
+        handle: fixtureLabel(`${PREFIX}normal`),
+        username: fixtureLabel(`${PREFIX}normal`),
         name: "is_official guard normal",
       });
       assert.equal(error, null, `ordinary signup INSERT was blocked: ${error?.message}`);
