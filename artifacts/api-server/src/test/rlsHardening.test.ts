@@ -49,7 +49,12 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { fixtureEmail, matchesFixtureEmail } from "./liveFixtureUsers.js";
+import {
+  fixtureEmail,
+  fixtureLabel,
+  isSweepableFixtureUser,
+  purgeFixtureRowsDetailed,
+} from "./liveFixtureUsers.js";
 
 // ── Env-var checks ────────────────────────────────────────────────────────────
 
@@ -138,9 +143,41 @@ const FIXTURE_EMAILS = [
   fixtureEmail(`${RLS_TEST_PREFIX}public@example.com`),
 ] as const;
 
-const FIXTURE_HANDLES = [`${RLS_TEST_PREFIX}private`, `${RLS_TEST_PREFIX}public`] as const;
-const FIXTURE_EVENT_TITLE = `${RLS_TEST_PREFIX}private_event`;
-const FIXTURE_TRIP_TITLE = `${RLS_TEST_PREFIX}private_trip`;
+/**
+ * ── AND THE OTHER HALF OF THE SAME COLLISION, FIXED 2026-09-05 ──────────────
+ *
+ * `FIXTURE_EMAILS` above was run-scoped when the auth-user collision was fixed.
+ * The rows this suite creates ALONGSIDE those users were not: the two profile
+ * handles, the event title and the trip title were plain constants, identical
+ * in every process. `purgeFixtures()` then deleted `trips` by
+ * `title = FIXTURE_TRIP_TITLE`, `events` by `title = FIXTURE_EVENT_TITLE` and
+ * `profiles` by handle — so two overlapping runs, or two attempts of one run,
+ * deleted each other's trip, event and profile rows mid-suite. The tests below
+ * read those rows by id; a peer's purge between `before` and the assertions
+ * turns "RLS blocked the read" and "the row is gone" into the same green.
+ *
+ * The handles were worse than the titles: `profiles_handle_key` is UNIQUE, so
+ * the second run's `upsert` did not merely race, it could fail outright on a
+ * peer's row.
+ *
+ * `fixtureLabel()` appends `_r<run id>`, the label counterpart of the
+ * `+r<run id>` sub-address `fixtureEmail()` appends. `profiles.handle` is
+ * `text NOT NULL` with a UNIQUE constraint and no check constraint, no length
+ * cap and no format validator anywhere in the repo, so the suffix is legal;
+ * `trips.title` and `events.title` are unconstrained `text NOT NULL`. All three
+ * tables carry `created_at timestamptz NOT NULL DEFAULT now()`, which is what
+ * makes the age half of the sweep rule available to them.
+ *
+ * BASE_* are the unscoped stems, kept because the sweep must still RECOGNISE a
+ * stranded row from a dead run — which carries somebody else's suffix.
+ */
+const BASE_HANDLES = [`${RLS_TEST_PREFIX}private`, `${RLS_TEST_PREFIX}public`] as const;
+const BASE_EVENT_TITLE = `${RLS_TEST_PREFIX}private_event`;
+const BASE_TRIP_TITLE = `${RLS_TEST_PREFIX}private_trip`;
+
+const FIXTURE_HANDLES = [fixtureLabel(BASE_HANDLES[0]), fixtureLabel(BASE_HANDLES[1])] as const;
+const FIXTURE_EVENT_TITLE = fixtureLabel(BASE_EVENT_TITLE);
+const FIXTURE_TRIP_TITLE = fixtureLabel(BASE_TRIP_TITLE);
 
 /**
  * Every auth user THIS process created, appended the instant the id exists.
@@ -159,16 +196,21 @@ const MAX_USER_PAGES = 20;
 const USERS_PER_PAGE = 1000;
 
 /**
- * Ids of any auth user currently holding one of this suite's fixture emails.
+ * Ids of any auth user this suite is ALLOWED TO DELETE.
  *
- * Matching is delegated to matchesFixtureEmail so it covers BOTH this run's
- * `+r<run>`-scoped addresses and any stranded variant a previous run left
- * behind. An exact-string set stopped working the moment the addresses became
- * run-scoped: it would have swept only its own users and reported the project
- * clean while leftovers accumulated.
+ * The decision is delegated to isSweepableFixtureUser, which is the same one
+ * purgeFixtureUsers makes, so there is one answer to "may I delete this" rather
+ * than two that can disagree. It covers this run's `+r<run>`-scoped addresses
+ * at any age, and a stranded variant from another run only once that account is
+ * old enough that no live run can still own it.
+ *
+ * This used to match on address ALONE (matchesFixtureEmail), which swept a
+ * concurrent run's live fixtures out from under it — measured 2026-09-05, five
+ * suites red across two overlapping runs. See liveFixtureUsers.ts.
  */
 async function findFixtureUserIds(admin: SupabaseClient): Promise<string[]> {
   const found: string[] = [];
+  const now = Date.now();
 
   for (let page = 1; page <= MAX_USER_PAGES; page++) {
     const { data, error } = await admin.auth.admin.listUsers({
@@ -179,8 +221,7 @@ async function findFixtureUserIds(admin: SupabaseClient): Promise<string[]> {
 
     const users = data?.users ?? [];
     for (const u of users) {
-      const email = (u as { email?: string | null }).email;
-      if (email && FIXTURE_EMAILS.some((base) => matchesFixtureEmail(email, base))) found.push(u.id);
+      if (isSweepableFixtureUser(u, FIXTURE_EMAILS, now)) found.push(u.id);
     }
     // A short page is the last page.
     if (users.length < USERS_PER_PAGE) return found;
@@ -194,27 +235,38 @@ async function findFixtureUserIds(admin: SupabaseClient): Promise<string[]> {
 
 /**
  * Remove every row this suite owns, whether this process created it or a
- * previous crashed run left it. Safe to call on a clean project.
+ * previous crashed run left it — and NOTHING a concurrent run owns.
  *
  * Deletion order follows the FK chain: trips and events reference profiles,
- * profiles hang off auth users. Matched by EXACT value, never by a LIKE
- * pattern — `_` is a single-character wildcard in SQL LIKE, so
- * `rls_hardening_test_%` matches far more than it appears to.
+ * profiles hang off auth users.
+ *
+ * Each row sweep goes through `purgeFixtureRowsDetailed`, which is the SAME
+ * two-part rule the auth-user sweep uses: a label carrying this run's id is
+ * deleted at any age (that is the teardown path), a label carrying another
+ * run's id — or no id at all, from before scoping existed — only once the row
+ * is older than FIXTURE_SWEEP_MIN_AGE_MS, and a row whose age cannot be read is
+ * never deleted. Deleting by a bare `eq` on the unscoped constant, which is
+ * what this used to do, took a live peer's rows with it.
+ *
+ * Refusals are collected and thrown as one error: `before()` must not proceed
+ * on a database that refused to clean up, and `after()` catches.
  */
 async function purgeFixtures(admin: SupabaseClient): Promise<void> {
-  const { error: tErr } = await admin.from("trips").delete().eq("title", FIXTURE_TRIP_TITLE);
-  if (tErr) throw new Error(`purgeFixtures: delete trips: ${tErr.message}`);
+  const now = Date.now();
+  const sweeps: Array<[string, Awaited<ReturnType<typeof purgeFixtureRowsDetailed>>]> = [
+    ["trips", await purgeFixtureRowsDetailed(admin, "trips", "title", [BASE_TRIP_TITLE], now)],
+    ["events", await purgeFixtureRowsDetailed(admin, "events", "title", [BASE_EVENT_TITLE], now)],
+    // Deleting the auth user cascades to its profile, but a profile whose user
+    // is already gone would keep the unique handle and break the upsert below.
+    ["profiles", await purgeFixtureRowsDetailed(admin, "profiles", "handle", BASE_HANDLES, now)],
+  ];
 
-  const { error: eErr } = await admin.from("events").delete().eq("title", FIXTURE_EVENT_TITLE);
-  if (eErr) throw new Error(`purgeFixtures: delete events: ${eErr.message}`);
-
-  // Deleting the auth user cascades to its profile, but a profile whose user is
-  // already gone would keep the unique handle and break the upsert below.
-  const { error: pErr } = await admin
-    .from("profiles")
-    .delete()
-    .in("handle", [...FIXTURE_HANDLES]);
-  if (pErr) throw new Error(`purgeFixtures: delete profiles: ${pErr.message}`);
+  const refusals = sweeps.flatMap(([table, outcome]) =>
+    outcome.failed.map(({ label, reason }) => `${table}[${label}]: ${reason}`),
+  );
+  if (refusals.length > 0) {
+    throw new Error(`purgeFixtures: ${refusals.join("; ")}`);
+  }
 
   const ids = new Set<string>([...(await findFixtureUserIds(admin)), ...createdUserIds]);
   for (const id of ids) {
