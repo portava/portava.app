@@ -914,7 +914,9 @@ describe("a single traveller can never be resolved from a flow edge", () => {
     const { body } = await projection(worldState(nowMs, plans), "traveler_flow");
     assert.equal(ofKind(body, "traveler_flow").length, 0);
     assert.equal(body.worldIntelligence.travelerFlow.published, 0);
-    assert.ok(body.worldIntelligence.travelerFlow.withheld >= 1);
+    // …and the REPORT does not make up for it. A sub-k cohort is counted
+    // nowhere; see "the report is gated by the same floor as the objects".
+    assert.equal(body.worldIntelligence.travelerFlow.publishableButUnusable, 0);
   });
 
   it("ONE person's A→B→C itinerary publishes neither leg", async () => {
@@ -971,6 +973,152 @@ describe("a single traveller can never be resolved from a flow edge", () => {
     const plans = planRows(nowMs, { agoMs: (TRAVELER_FLOW_WINDOW_DAYS + 1) * 24 * 60 * 60_000 });
     const { body } = await projection(worldState(nowMs, plans), "traveler_flow");
     assert.equal(ofKind(body, "traveler_flow").length, 0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2b. THE REPORT IS GATED BY THE SAME FLOOR AS THE OBJECTS.
+//
+// The objects clear k or they do not exist. The REPORT used to publish raw
+// per-viewport counts of the ungated rows behind them (`hops`, `hopsSkipped`,
+// `transitions`, `withheld`), and `bbox` picks the cities those counts are
+// taken over — so a two-city viewport turned "1 pair withheld" into "exactly
+// this many people, below the floor, moved Da Nang → Bangkok", and a wider
+// second request differenced the rest out. Nothing was served in either case.
+//
+// The fixture below is that disclosure, at its floor: ONE person A→B and THREE
+// A→C, so every pair is sub-k and NO object may exist at any viewport.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A+B in view, C outside it EVEN AFTER `expandBbox` grows it one viewport. */
+const BBOX_AB_ONLY = "104.0,13.0,109.0,17.0";
+/** A alone, same expansion rule. */
+const BBOX_A_ONLY = "107.5,15.5,108.9,16.6";
+
+async function projectionAt(state: FakeState, bbox: string, kinds = "traveler_flow") {
+  _setTestClient(makeClient(state) as any, true);
+  return get(`/map/projection?bbox=${bbox}&zoom=${ZOOM}&kinds=${kinds}`);
+}
+
+/** 1 consented person A→B and 3 A→C. Every pair below k; nothing publishable. */
+function subKWorld(nowMs: number) {
+  return worldState(
+    nowMs,
+    mergePlans(
+      planRows(nowMs, { count: 1, prefix: "ab", from: STOP_IN_A, to: STOP_IN_B, offset: 0 }),
+      planRows(nowMs, { count: 3, prefix: "ac", from: STOP_IN_A, to: STOP_IN_C, offset: 100 }),
+    ),
+  );
+}
+
+/** The same world with the LONE A→B traveller removed. Nothing else changes. */
+function subKWorldWithoutTheOne(nowMs: number) {
+  return worldState(
+    nowMs,
+    planRows(nowMs, { count: 3, prefix: "ac", from: STOP_IN_A, to: STOP_IN_C, offset: 100 }),
+  );
+}
+
+describe("the traveler-flow REPORT is gated by the same floor as its objects", () => {
+  it("publishes no raw hop, skip or transition count — at any viewport", async () => {
+    // `hops` and `hopsSkipped` had NO test at all. They count LEGS, so no band
+    // could rescue them either: fifteen legs can be one person's fifteen trips.
+    const nowMs = Date.now();
+    for (const bbox of [BBOX, BBOX_AB_ONLY, BBOX_A_ONLY]) {
+      const { body } = await projectionAt(subKWorld(nowMs), bbox);
+      const flow = body.worldIntelligence.travelerFlow;
+      assert.ok(flow, `no traveler-flow report at bbox ${bbox}`);
+      for (const banned of ["hops", "hopsSkipped", "transitions", "withheld"]) {
+        assert.ok(
+          !(banned in flow),
+          `"${banned}" is a viewport-scoped count of UNGATED rows and reached the wire at ${bbox}`,
+        );
+      }
+      assert.deepEqual(Object.keys(flow).sort(), [
+        "publishableButUnusable", "published", "refusal",
+      ]);
+    }
+  });
+
+  it("a sub-k world reports IDENTICALLY to a world with nobody in it", async () => {
+    // THE PROPERTY. One consented person with an accepted Da Nang → Bangkok
+    // plan must be indistinguishable from none, at the viewport that names
+    // exactly those two cities and nothing else.
+    const nowMs = Date.now();
+    const withOne = await projectionAt(subKWorld(nowMs), BBOX_AB_ONLY);
+    const withNone = await projectionAt(subKWorldWithoutTheOne(nowMs), BBOX_AB_ONLY);
+    assert.equal(ofKind(withOne.body, "traveler_flow").length, 0);
+    assert.equal(ofKind(withNone.body, "traveler_flow").length, 0);
+    assert.deepEqual(
+      withOne.body.worldIntelligence.travelerFlow,
+      withNone.body.worldIntelligence.travelerFlow,
+      "the lone A→B traveller changed the report, so the report discloses them",
+    );
+  });
+
+  it("two overlapping viewports cannot be DIFFERENCED into a pair count", async () => {
+    // The wide viewport sees A, B and C; the narrow one only A and B. Before
+    // the fix these answered `hops:4 … withheld:2` and `hops:1 … withheld:1`,
+    // and 4 − 1 = 3 named the size of the Da Nang → Kuala Lumpur cohort.
+    // Every pair here is sub-k, so all three viewports must agree — and agree
+    // with the report over an EMPTY world, which is the only honest answer.
+    const nowMs = Date.now();
+    const world = subKWorld(nowMs);
+    const wide = await projectionAt(world, BBOX);
+    const narrow = await projectionAt(world, BBOX_AB_ONLY);
+    const single = await projectionAt(world, BBOX_A_ONLY);
+    const empty = await projectionAt(
+      worldState(nowMs, { route_plans: [], route_stops: [], route_legs: [] }),
+      BBOX,
+    );
+    for (const r of [wide, narrow, single, empty]) {
+      assert.equal(ofKind(r.body, "traveler_flow").length, 0);
+    }
+    const reportOf = (r: any) => r.body.worldIntelligence.travelerFlow;
+    assert.deepEqual(reportOf(wide), reportOf(narrow));
+    assert.deepEqual(reportOf(narrow), reportOf(single));
+    assert.deepEqual(reportOf(single), reportOf(empty));
+    // NOT VACUOUS: the same three viewports over a world that DOES clear the
+    // floor differ, so the reports are not simply constant.
+    const busy = await projectionAt(worldState(nowMs), BBOX);
+    assert.equal(reportOf(busy).published, 1);
+  });
+
+  it("`publishableButUnusable` counts only pairs that already cleared every gate", async () => {
+    // The one thing the report may still say out loud: "a pair we were allowed
+    // to publish was lost to a defect in the data". Pure-producer level, so the
+    // defect can be injected exactly.
+    const nowMs = Date.now();
+    const broken = deriveTravelerFlowEdges(
+      [transition(nowMs, { to: { lat: Number.NaN, lng: CITY_B.lng } } as any)],
+      { now: nowMs },
+    );
+    assert.equal(broken.edges.length, 0);
+    assert.deepEqual(broken.rejected.map((r) => r.reason), ["invalid_geometry"]);
+    assert.equal(broken.publishableButUnusable, 1);
+
+    // …and a SUB-K pair with the identical defect is counted NOWHERE, which is
+    // the whole distinction.
+    const subK = deriveTravelerFlowEdges(
+      [transition(nowMs, {
+        distinctActors: WORLD_INTELLIGENCE_K - 1,
+        to: { lat: Number.NaN, lng: CITY_B.lng },
+      } as any)],
+      { now: nowMs },
+    );
+    assert.equal(subK.edges.length, 0);
+    assert.equal(subK.rejected.length, 1);
+    assert.equal(subK.publishableButUnusable, 0, "a sub-k pair was counted on the wire");
+
+    // Nor is a pair the privacy gate refused for a NON-cohort reason: the
+    // refusal itself would state that a full cohort moved between two named
+    // cities before the publication delay let it be said.
+    const tooFresh = deriveTravelerFlowEdges(
+      [transition(nowMs, { observedAt: new Date(nowMs).toISOString() })],
+      { now: nowMs },
+    );
+    assert.deepEqual(tooFresh.rejected.map((r) => r.reason), ["privacy_gate"]);
+    assert.equal(tooFresh.publishableButUnusable, 0);
   });
 });
 
@@ -1308,6 +1456,31 @@ describe("Phase 7 fails closed", () => {
     const labels = ofKind(body, "city_model").map((m: any) => m.payload.cityLabel);
     assert.ok(!labels.includes(CITY_B.name), "a suppressed city still published its model");
     assert.ok(body.worldIntelligence.withheldForProtection >= 1);
+  });
+
+  it("`published` is what SURVIVED §24, not what the producer minted", async () => {
+    // Each producer counts its own output BEFORE the §24 gate runs over it, and
+    // the crowd-flow arm has always subtracted its removals. Phase 7 did not:
+    // a legitimate, fully k-clearing A→B cohort under a zone covering city B
+    // reported `published: 1` beside an EMPTY objects array — #393's "the kept
+    // count included the suppressed objects", one layer along.
+    const { body } = await projection(
+      worldState(Date.now(), { protected_zones: [zoneRow({ at: CITY_B })] }),
+      "traveler_flow,personal_city",
+    );
+    assert.equal(ofKind(body, "traveler_flow").length, 0);
+    assert.equal(
+      body.worldIntelligence.travelerFlow.published, 0,
+      "a report claimed a published edge §24 had already removed",
+    );
+    // …and the companion count still discloses the removal honestly, so the
+    // reconciliation shrinks `published` rather than hiding the event.
+    assert.ok(body.worldIntelligence.withheldForProtection >= 1);
+    // NOT VACUOUS: the untouched city's own pin still publishes AND is still
+    // counted, so the subtraction is per-kind and not a blanket zeroing.
+    const pins = ofKind(body, "personal_city");
+    assert.deepEqual(pins.map((p: any) => p.payload.cityLabel), [CITY_A.name]);
+    assert.equal(body.worldIntelligence.personalCities.published, 1);
   });
 });
 

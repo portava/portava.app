@@ -1106,8 +1106,7 @@ router.get(
             }).catch(() => null);
             if (!flow) {
               report.travelerFlow = {
-                refusal: "read_failed", hops: 0, hopsSkipped: 0,
-                transitions: 0, published: 0, withheld: 0,
+                refusal: "read_failed", published: 0, publishableButUnusable: 0,
               };
             } else {
               report.travelerFlow = flow.report;
@@ -1194,6 +1193,32 @@ router.get(
           // for an unusable coarsened rung, as one number. Which zone removed
           // which object is exactly what `ProtectionReport` refuses to say.
           report.withheldForProtection = servableProduced.length - wiSurvived.length;
+
+          // ── EVERY `published` COUNT IS RECONCILED AGAINST THE WIRE ─────────
+          // Each producer counted what IT published, before §24 ran. Left
+          // alone, a Phase 7 report says `published: 1` next to an empty
+          // objects array — the same defect as #393's "kept count included
+          // suppressed objects", and the crowd-flow arm above already subtracts
+          // its own removals (see `crowdFlow.report.published`). This closes
+          // the inconsistency for all four Phase 7 producers at once, keyed by
+          // kind so no producer's counter can absorb another's removal.
+          //
+          // `produced`, NOT `servableProduced`, is the baseline: an object the
+          // pre-gate `servableOnly` dropped never reached the wire either, and
+          // a count that survived it would be just as wrong.
+          const countOfKind = (objs: readonly MapObject[], kind: string): number =>
+            objs.reduce((n, o) => n + (o.kind === kind ? 1 : 0), 0);
+          for (const [kind, layer] of [
+            ["world_pulse", report.worldPulse],
+            ["traveler_flow", report.travelerFlow],
+            ["city_model", report.cityModels],
+            ["personal_city", report.personalCities],
+          ] as const) {
+            if (!layer) continue;
+            const removed = countOfKind(produced, kind) - countOfKind(wiSurvived, kind);
+            if (removed > 0) layer.published = Math.max(0, layer.published - removed);
+          }
+
           finalObjects = [...finalObjects, ...wiSurvived];
         }
       }

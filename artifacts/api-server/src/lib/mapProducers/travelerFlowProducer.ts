@@ -69,6 +69,17 @@
  *   so a reader learns "a lot of people" and never a number that changes by one
  *   when one person's plan changes.
  *
+ *   THE REPORT IS GATED TOO.  §10's crowd-flow report reasons that a bare
+ *   `withheld` COUNT is "enough to prove something was withheld, not enough to
+ *   describe it". THAT REASONING DOES NOT SURVIVE A CALLER-CHOSEN, TWO-CITY
+ *   DENOMINATOR. `bbox` picks the cities; the cities are the whole universe the
+ *   counts are taken over; at two cities there is exactly one possible pair, so
+ *   the count IS the shape — "1 pair withheld" says a sub-k number of people
+ *   moved between the two cities the caller just named, and a second, wider
+ *   request differences the rest out. So this producer gates its REPORT with
+ *   the same floor it gates its OBJECTS with: nothing the privacy gates refused
+ *   is counted anywhere a caller can read. See `TravelerFlowReport`.
+ *
  * ── PURITY ───────────────────────────────────────────────────────────────────
  * `deriveTravelerFlowEdges` is pure; `readTravelerFlowEdges` is the single I/O
  * function, and it REFUSES before reading when it could not produce a usable
@@ -139,6 +150,15 @@ export interface TravelerFlowRejection {
   fromCityId: string;
   toCityId: string;
   reason: TravelerFlowRejectionReason;
+  /**
+   * MAY THE FACT THAT THIS PAIR EXISTED BE COUNTED ON THE WIRE AT ALL?
+   *
+   * True only when the pair cleared EVERY privacy gate on its own — see
+   * `mayDiscloseExistence`. False for anything the gates refused, which is why
+   * a sub-k pair contributes to no number a caller can read. SERVER-SIDE ONLY
+   * either way: this array never leaves the process.
+   */
+  disclosable: boolean;
 }
 
 export interface TravelerFlowPayload {
@@ -172,6 +192,13 @@ export interface DeriveTravelerFlowResult {
   edges: MapObject<TravelerFlowPayload>[];
   /** Why each rejected transition produced nothing. Never a silent drop. */
   rejected: TravelerFlowRejection[];
+  /**
+   * How many of `rejected` may be COUNTED on the wire — the ones that cleared
+   * every privacy gate and were then lost to a defect in the data (unusable
+   * geometry, undateable observation). Every other rejection is counted
+   * nowhere, deliberately: see the header's note on two-city viewports.
+   */
+  publishableButUnusable: number;
 }
 
 const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
@@ -196,6 +223,10 @@ function toEpochMs(t: string | number | Date | null | undefined): number | null 
  *   3. DATEABLE       an edge whose observation cannot be dated is not an
  *                     observation. It is NOT required to be live: see header.
  *   4. GEOMETRY       both endpoints must be finite city centroids.
+ *
+ * Each rejection also records whether it may be COUNTED on the wire — gates 1
+ * and 2 are what decide that, and nothing below them can rescue a pair. See
+ * the header's "THE COUNT IS THE SHAPE" note.
  */
 export function deriveTravelerFlowEdges(
   transitions: readonly ZoneTransition[],
@@ -203,7 +234,12 @@ export function deriveTravelerFlowEdges(
 ): DeriveTravelerFlowResult {
   const edges: MapObject<TravelerFlowPayload>[] = [];
   const rejected: TravelerFlowRejection[] = [];
-  if (!Array.isArray(transitions) || transitions.length === 0) return { edges, rejected };
+  const result = (): DeriveTravelerFlowResult => ({
+    edges,
+    rejected,
+    publishableButUnusable: rejected.reduce((n, r) => n + (r.disclosable ? 1 : 0), 0),
+  });
+  if (!Array.isArray(transitions) || transitions.length === 0) return result();
 
   const threshold = opts.threshold ?? PRIVACY_THRESHOLD_V1;
   const now = opts.now ?? Date.now();
@@ -229,11 +265,12 @@ export function deriveTravelerFlowEdges(
   for (const t of ordered) {
     const id = { fromCityId: t?.fromZoneId ?? "", toCityId: t?.toZoneId ?? "" };
     if (!t || !id.fromCityId || !id.toCityId) {
-      rejected.push({ ...id, reason: "invalid_input" });
+      // A pair we cannot even name has cleared no gate. Never countable.
+      rejected.push({ ...id, reason: "invalid_input", disclosable: false });
       continue;
     }
     if (id.fromCityId === id.toCityId) {
-      rejected.push({ ...id, reason: "not_a_transition" });
+      rejected.push({ ...id, reason: "not_a_transition", disclosable: false });
       continue;
     }
 
@@ -249,24 +286,33 @@ export function deriveTravelerFlowEdges(
       threshold,
     );
     if (!decision.publishable) {
-      rejected.push({ ...id, reason: "privacy_gate" });
+      // THE PAIR ITSELF IS THE SECRET. A privacy refusal is never countable —
+      // at a two-city viewport a caller who learns that one pair was refused
+      // has learned that a sub-k cohort moved between the two cities it named.
+      rejected.push({ ...id, reason: "privacy_gate", disclosable: false });
       continue;
     }
 
     const cohortBucket = bucketCohort(t.distinctActors, k);
     if (cohortBucket === null) {
-      rejected.push({ ...id, reason: "below_cohort_floor" });
+      // Same rule, and the reason it is a SEPARATE arm: an override may tighten
+      // `k` above the threshold's own floor, and the tightened floor governs
+      // disclosure too.
+      rejected.push({ ...id, reason: "below_cohort_floor", disclosable: false });
       continue;
     }
 
+    // From here the pair has cleared EVERY gate that governs whether its
+    // existence may be spoken about, so a rejection below is a statement about
+    // the DATA, not about the people: it is countable on the wire.
     const observedMs = toEpochMs(t.observedAt);
     if (observedMs === null) {
-      rejected.push({ ...id, reason: "undateable" });
+      rejected.push({ ...id, reason: "undateable", disclosable: true });
       continue;
     }
     const freshness = deriveFreshness(t.observedAt, t.expiresAt ?? null, now);
     if (freshness === "unknown") {
-      rejected.push({ ...id, reason: "undateable" });
+      rejected.push({ ...id, reason: "undateable", disclosable: true });
       continue;
     }
 
@@ -277,7 +323,7 @@ export function deriveTravelerFlowEdges(
       Math.abs(t.from.lat) > 90 || Math.abs(t.to.lat) > 90 ||
       Math.abs(t.from.lng) > 180 || Math.abs(t.to.lng) > 180
     ) {
-      rejected.push({ ...id, reason: "invalid_geometry" });
+      rejected.push({ ...id, reason: "invalid_geometry", disclosable: true });
       continue;
     }
 
@@ -350,7 +396,7 @@ export function deriveTravelerFlowEdges(
     edges.push(obj);
   }
 
-  return { edges, rejected };
+  return result();
 }
 
 function weaker(a: ConfidenceState, b: ConfidenceState): ConfidenceState {
@@ -381,18 +427,51 @@ export interface ReadTravelerFlowOptions {
   k?: number;
 }
 
+/**
+ * What the traveler-flow layer did, ON THE WIRE.
+ *
+ * ── THE COUNT IS THE SHAPE ───────────────────────────────────────────────────
+ * `CrowdFlowReport`'s rule — "a bare count is enough to prove something was
+ * withheld, not enough to describe it" — DOES NOT SURVIVE HERE, and this report
+ * is the shape it takes instead.
+ *
+ * The reason is the denominator. A caller supplies `bbox`, `bbox` selects the
+ * cities, and the cities are the entire universe the counts are taken over. At
+ * a viewport holding exactly two cities there is only one possible pair, so a
+ * count of one is not an anonymous total at all: it says "between Da Nang and
+ * Bangkok, specifically, some number of people below the floor moved in the
+ * last 30 days" — a sharper statement than any object the layer would ever
+ * publish, and one a second request over a wider viewport can then difference
+ * against. `hops`, `hopsSkipped` and `transitions` were exactly that, and are
+ * gone: no band rescues them either, because they count LEGS, and fifteen legs
+ * can be one person's fifteen trips.
+ *
+ * So the only quantities here are ones a caller could already see:
+ *   `published` — the edges actually served, each independently k-gated;
+ *   `publishableButUnusable` — pairs that cleared EVERY privacy gate and were
+ *                              then lost to a defect in the data.
+ *
+ * WHAT KEEPS A REFUSAL VISIBLE. `refusal`. It is set from the wiring — flag
+ * off, no city model, the hop read threw — and never from a cohort, so "we
+ * could not look" stays distinguishable from "we looked and nothing cleared
+ * the floor" without either one describing a person. That is the whole of the
+ * doctrine this report exists to serve; the per-pair counts were never part of
+ * it.
+ */
 export interface TravelerFlowReport {
   refusal: WorldIntelligenceRefusal | "hop_read_failed" | null;
-  /** Hops the consented, quarantined read produced. */
-  hops: number;
-  /** Hops the reader discarded (stale, unresolved city, modified stop, …). */
-  hopsSkipped: number;
-  /** City-pair buckets assembled. */
-  transitions: number;
+  /** Edges that cleared every gate. Exactly the objects the caller receives. */
   published: number;
-  /** Pairs the gates refused. COUNT only — a per-gate breakdown would describe
-   *  the shape of the cohorts that did not clear the floor. */
-  withheld: number;
+  /**
+   * City pairs that cleared every privacy gate — k distinct actors,
+   * independent groups, no dominant group, publication delay elapsed — and
+   * were then dropped for an unusable centroid or an undateable observation.
+   *
+   * A WIRING ALARM, NOT A COHORT STATEMENT: every pair counted here was
+   * already publishable, so the count discloses nothing its edge would not
+   * have. Pairs the privacy gates refused are counted NOWHERE.
+   */
+  publishableButUnusable: number;
 }
 
 export interface ReadTravelerFlowResult {
@@ -414,7 +493,7 @@ export async function readTravelerFlowEdges(
 ): Promise<ReadTravelerFlowResult> {
   const empty = (refusal: TravelerFlowReport["refusal"]): ReadTravelerFlowResult => ({
     edges: [],
-    report: { refusal, hops: 0, hopsSkipped: 0, transitions: 0, published: 0, withheld: 0 },
+    report: { refusal, published: 0, publishableButUnusable: 0 },
   });
 
   if (!sc) return empty("no_service_client");
@@ -457,15 +536,27 @@ export async function readTravelerFlowEdges(
     k: opts.k,
   });
 
-  return {
-    edges: derived.edges,
-    report: {
-      refusal: null,
+  // The raw hop and transition counts stay HERE, in the process, where an
+  // operator reading logs already has the database. They are not returned:
+  // see TravelerFlowReport's header for why no viewport-scoped count of
+  // ungated rows can be put on the wire safely.
+  logger.debug(
+    {
       hops: hops.signals.length,
       hopsSkipped: hops.skipped.length,
       transitions: transitions.length,
       published: derived.edges.length,
-      withheld: derived.rejected.length,
+      rejected: derived.rejected.length,
+    },
+    "travelerFlowProducer: hop read",
+  );
+
+  return {
+    edges: derived.edges,
+    report: {
+      refusal: null,
+      published: derived.edges.length,
+      publishableButUnusable: derived.publishableButUnusable,
     },
   };
 }
