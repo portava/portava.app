@@ -76,6 +76,8 @@ import {
   buildGemLiveCandidates,
   buildSocialPresenceLiveCandidates,
   buildBuddyLiveCandidates,
+  buildEventStateLiveCandidates,
+  buildTripSignalLiveCandidates,
   MAX_LIVE_FOR_YOU,
   type LiveForYouCandidate,
 } from "../services/wall/LiveForYouService.js";
@@ -619,16 +621,25 @@ async function buildLiveStrip(
 
 /**
  * Assemble the FULL multi-kind Live For You candidate set for a bounded set of
- * viewer-relevant places (spec §4 / TABLE 0). place_state (and event_state) come
- * from the intel projection inside buildLiveForYou (a bare candidate ⇒ the
- * envelope read); the other kinds come from their own canonical readers here so
+ * viewer-relevant places (spec §4 / TABLE 0). place_state comes from the intel
+ * projection inside buildLiveForYou (a bare candidate ⇒ the envelope read); ALL
+ * FIVE other TABLE 0 kinds come from their own canonical readers here so
  * LiveForYouService.actionFor's per-kind mapping binds:
+ *   • trip_signal     — buildTripSignalLiveCandidates (trip-scoped; the viewer's
+ *                       own accepted trips, anchored on a saved stop)
+ *   • event_state     — buildEventStateLiveCandidates (loadNearbyEvents, the
+ *                       privacy-complete events reader the Map gateway uses)
  *   • hidden_gem      — buildGemLiveCandidates (public/approximate, fresh state)
  *   • social_presence — buildSocialPresenceLiveCandidates (k-anonymity floor)
  *   • buddy           — buildBuddyLiveCandidates (behind the RAB flag, city-area)
  * Each producer is fail-soft; a resolved candidate wins the per-subject slot over
- * a bare place_state one inside buildLiveForYou. event_state and trip_signal have
- * no existing canonical live reader and are deliberately not produced here.
+ * a bare place_state one inside buildLiveForYou.
+ *
+ * ORDER IS PRIORITY. buildLiveForYou assembles in candidate order and stops at
+ * the ≤4 bound, so the most decision-relevant, time-bound kinds come first: the
+ * viewer's OWN trip milestone, then an event that is on at the place, then who
+ * was there, then the gem, then buddy availability, then the speculative
+ * place-state read.
  */
 async function assembleLiveCandidates(
   sc: any,
@@ -642,7 +653,7 @@ async function assembleLiveCandidates(
     liveObjectType: "place_state" as const,
     subject: p,
   }));
-  const [gems, social, buddies] = await Promise.all([
+  const [gems, social, buddies, events, tripSignals] = await Promise.all([
     buildGemLiveCandidates(sc, placeRefs).catch((err) => {
       logger.warn({ err }, "wall: gem live producer failed");
       return [] as LiveForYouCandidate[];
@@ -655,11 +666,19 @@ async function assembleLiveCandidates(
       logger.warn({ err }, "wall: buddy live producer failed");
       return [] as LiveForYouCandidate[];
     }),
+    buildEventStateLiveCandidates(sc, viewerId, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: event state live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildTripSignalLiveCandidates(sc, viewerId, viewer.viewerTripIds, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: trip signal live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
   ]);
   // Resolved kinds first so, on a per-subject collision, the concrete fact wins
   // the slot over a speculative place_state intel read (buildLiveForYou prefers a
   // resolved candidate anyway; this ordering makes the intent explicit).
-  return [...social, ...gems, ...buddies, ...placeState];
+  return [...tripSignals, ...events, ...social, ...gems, ...buddies, ...placeState];
 }
 
 // ── Schemas ────────────────────────────────────────────────────────────────
@@ -941,7 +960,8 @@ router.get(
     // Live-strip candidates are the places from the viewer's recent followed
     // content — a viewer-relevant, bounded set, NOT a city-wide scan (spec §4).
     // The strip is multi-kind (§4/TABLE 0): place_state from the intel projection
-    // plus hidden_gem / social_presence / buddy from their own canonical readers.
+    // plus trip_signal / event_state / social_presence / hidden_gem / buddy from
+    // their own canonical readers (assembleLiveCandidates).
     const viewer = await loadViewerContext(sc, user.id);
     const rabEnabled = await isFlagEnabled(sc, "wall_rab_integration_enabled");
     const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
