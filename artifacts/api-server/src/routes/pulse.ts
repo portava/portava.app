@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { enrichSpans } from '../lib/enrichSpans';
 import { rankCandidates } from '../lib/portavaRank';
-import { logImpression, logLivePulseServe } from '../lib/rankLog';
+import { logImpression, logLivePulseServe, selectServedImpressions } from '../lib/rankLog';
 import { isFlagEnabled } from '../lib/featureFlags';
 import {
   enforceCreatorCapsGeneric,
@@ -391,6 +391,14 @@ router.get("/pulse", async (req, res) => {
   let rankedCandidates: Array<{ kind: string; item: unknown }> = [];
   let prompts: Array<{ type: string; id: string; title: string; body: string; action: string }> = [];
 
+  /**
+   * The scored candidates the ranker produced, hoisted so the impression logger
+   * below can be reached AFTER the response body is final. Empty when the
+   * Compass ranking block did not run (flag off) or threw — in which case
+   * nothing was ranked and nothing is logged, exactly as before.
+   */
+  let rankedScored: ReturnType<typeof rankCandidates> = [];
+
   try {
     const compassEnabled = await sc
       .from("feature_flags")
@@ -661,7 +669,16 @@ router.get("/pulse", async (req, res) => {
         },
         { publisherBoost: publisherBoostEnabled },
       );
-      void logImpression(ranked, user.id, "pulse", sessionId);
+      // NOT logged here. `ranked` is the CANDIDATE POOL — posts + events +
+      // plans + buddies, ~60 rows — and at this point it has not been re-ordered
+      // by DRS, has not been through the creator-frequency caps, and has not had
+      // the intent-mode overlays applied. Logging it wrote ~60 impressions for a
+      // response that serves ~20 posts and strips every other kind
+      // ("perf-trim: rankedCandidates stripped", below), which inflated
+      // content_distribution_stats.eligible_impressions — the exposure
+      // DENOMINATOR — by roughly an order of magnitude, and with it every rate
+      // computed from it. The impressions are written from the SERVED page,
+      // after res.json(); see the logImpression call at the end of this handler.
 
       // ── DiscoveryRankingService re-ranking pass ────────────────────────────
       // Wraps (does not replace) portavaRank: applies activity boosts, new-
@@ -776,6 +793,10 @@ router.get("/pulse", async (req, res) => {
         .filter((x) => !!(x.candidate as any).__post)
         .map((x) => (x.candidate as any).__post);
 
+      // Hoisted for the impression logger at the end of the handler, which
+      // resolves the SERVED posts back to their scored candidates.
+      rankedScored = ranked;
+
       rankedCandidates = ranked
         .map((x) => {
           const c = x.candidate as any;
@@ -879,6 +900,26 @@ router.get("/pulse", async (req, res) => {
 
   // perf-trim: rankedCandidates stripped — not rendered by any client component; internal ranking state only
   res.json({ posts: orderedPosts, total: orderedPosts.length, tab, prompts, placeCards, sessionId });
+
+  // ── Impressions: the SERVED page ────────────────────────────────────────────
+  // Logged HERE, after res.json, because `orderedPosts` is only final here: the
+  // DRS re-order, the creator-frequency caps and the intent-mode overlays all
+  // run after ranking, and the response strips every non-post kind. One
+  // impression row per item the viewer actually received, in the order they
+  // received it — which is also what content_distribution_stats.eligible_
+  // impressions counts, so the exposure denominator now equals the served page
+  // size instead of the ~60-row candidate pool.
+  //
+  // Fire-and-forget and un-awaited: logImpression never throws, and the response
+  // has already been sent.
+  if (rankedScored.length > 0) {
+    void logImpression(
+      selectServedImpressions(rankedScored, orderedPosts.map((p: any) => p.id as string)),
+      user.id,
+      "pulse",
+      sessionId,
+    );
+  }
 });
 
 /* ---------------------------------------------------------------------------

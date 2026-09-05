@@ -197,7 +197,10 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
     file: 'src/scripts/reportDiscoveryServePoints.ts',
     reason:
       'One SELECT on rank_events (features, session_id, served_at) filtered to surface=discovery, ' +
-      'outcome=impression and a served_at window, tallied in memory. It answers the question P1 Stage 0 ' +
+      'event_type IS NULL and a served_at window, tallied in memory. The corpus predicate is event_type ' +
+      'IS NULL and NOT outcome=impression: rank_events is mutable state, the outcome route upgrades a ' +
+      "served row's outcome in place, and the old outcome filter therefore dropped every serve that " +
+      'converted — differentially, against the serve points that rank. It answers the question P1 Stage 0 ' +
       'exists to answer — what fraction of discovery serves reached a ranker — and that is a question about ' +
       'production, since the whole finding is that the ranked path scarcely runs there. It writes nothing and ' +
       'prints a verdict for a human to act on; the D5 revisit clause is the action it feeds.',

@@ -17,6 +17,9 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import mediaFeedRouter from "../routes/mediaFeed.js";
@@ -1415,6 +1418,243 @@ describe("GET /media/:id (single item)", () => {
     _setTestClient(client, true);
     const { status } = await jsonFetch(base, `/media/not-a-uuid`);
     assert.equal(status, 400);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── H2. GET /media/:id — the private-account guard its two siblings apply ────
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// filterEligibleMediaCandidates gates blocks, mutes, suspension, status,
+// post_status, publish_at, visibility and moderation. It knows NOTHING about
+// `profiles.is_private`. That rule lives in lib/privacyFilter, and both feed
+// readers of this exact row shape call it: mode=grid (routes/mediaFeed.ts) and
+// GET /media/feed. The single-item reader did not, so a private account's
+// visibility='public' post was served in full to any authenticated stranger
+// holding the id.
+//
+// Non-vacuous by construction: the post is `visibility: "public"` and otherwise
+// perfectly eligible, so the ONLY thing that can 404 it is the private-account
+// guard. Delete the guard from the route and the first test goes green-to-red.
+
+describe("GET /media/:id — private-account guard", () => {
+  let server: http.Server;
+  let base: string;
+
+  before(async () => {
+    const app = makeApp();
+    ({ server, base } = await startServer(app));
+  });
+
+  after(() => { server.close(); });
+
+  /** A fully eligible public post whose AUTHOR is a private account. */
+  function privateAuthorState(overrides: { userFollows?: any[] } = {}) {
+    const privateProfile = makeProfile({ id: CREATOR_A, is_private: true });
+    return {
+      posts: [
+        makePost({
+          id: POST_1,
+          author_id: CREATOR_A,
+          visibility: "public",
+          status: "active",
+          post_status: "published",
+          moderation_status: "approved",
+          profiles: privateProfile,
+        }),
+      ],
+      profiles: [privateProfile, makeProfile({ id: VIEWER_ID, username: "viewer" })],
+      userFollows: overrides.userFollows ?? [],
+    };
+  }
+
+  it("a non-follower gets 404 for a private account's public post", async () => {
+    _setTestClient(makeClient(privateAuthorState()), true);
+    const { status, body } = await jsonFetch(base, `/media/${POST_1}`);
+    assert.equal(
+      status,
+      404,
+      `a private account's post must not be served to a stranger by id; got ${status} ` +
+        `with body ${JSON.stringify(body)}`,
+    );
+  });
+
+  it("an approved follower still gets the item — the guard is not a blanket 404", async () => {
+    // Positive control. Without this, deleting the whole route would also make
+    // the test above pass.
+    _setTestClient(
+      makeClient(
+        privateAuthorState({ userFollows: [{ follower_id: VIEWER_ID, following_id: CREATOR_A }] }),
+      ),
+      true,
+    );
+    const { status, body } = await jsonFetch(base, `/media/${POST_1}`);
+    assert.equal(status, 200, `an approved follower must still see it; got ${status}`);
+    assert.equal(body?.item?.id, POST_1);
+  });
+
+  it("a PUBLIC account's public post is unaffected", async () => {
+    // Second positive control: proves the guard keys on is_private and has not
+    // quietly become "404 everything by id".
+    const publicProfile = makeProfile({ id: CREATOR_A, is_private: false });
+    _setTestClient(
+      makeClient({
+        posts: [makePost({ id: POST_1, author_id: CREATOR_A, visibility: "public", profiles: publicProfile })],
+        profiles: [publicProfile],
+        userFollows: [],
+      }),
+      true,
+    );
+    const { status, body } = await jsonFetch(base, `/media/${POST_1}`);
+    assert.equal(status, 200, `a public account's public post must still be served; got ${status}`);
+    assert.equal(body?.item?.id, POST_1);
+  });
+
+  it("verifyMediaAccess honours it too — comments on a private account's public post are 404", async () => {
+    // The engagement endpoints (comments / like / save / share / react / report)
+    // resolve through verifyMediaAccess, a THIRD reader of the same row that
+    // gated the post's own `visibility` but not the author's account privacy.
+    const privateProfile = makeProfile({ id: CREATOR_A, is_private: true });
+    _setTestClient(
+      makeClient({
+        posts: [makePost({ id: POST_1, author_id: CREATOR_A, visibility: "public", profiles: privateProfile })],
+        profiles: [privateProfile],
+        userFollows: [],
+        featureFlags: [{ flag: "MEDIA_COMMENTS_ENABLED", enabled: true }],
+      }),
+      true,
+    );
+    const { status } = await jsonFetch(base, `/media/${POST_1}/comments`);
+    assert.equal(status, 404, `a stranger must not read a private account's comments; got ${status}`);
+  });
+
+  it("verifyMediaAccess still admits an approved follower", async () => {
+    const privateProfile = makeProfile({ id: CREATOR_A, is_private: true });
+    _setTestClient(
+      makeClient({
+        posts: [makePost({ id: POST_1, author_id: CREATOR_A, visibility: "public", profiles: privateProfile })],
+        profiles: [privateProfile],
+        userFollows: [{ follower_id: VIEWER_ID, following_id: CREATOR_A }],
+        featureFlags: [{ flag: "MEDIA_COMMENTS_ENABLED", enabled: true }],
+      }),
+      true,
+    );
+    const { status } = await jsonFetch(base, `/media/${POST_1}/comments`);
+    assert.equal(status, 200, `an approved follower must still read comments; got ${status}`);
+  });
+
+  it("the owner always sees their own item even with a private account", async () => {
+    const ownProfile = makeProfile({ id: VIEWER_ID, username: "viewer", is_private: true });
+    _setTestClient(
+      makeClient({
+        posts: [makePost({ id: POST_1, author_id: VIEWER_ID, visibility: "public", profiles: ownProfile })],
+        profiles: [ownProfile],
+        userFollows: [],
+      }),
+      true,
+    );
+    const { status } = await jsonFetch(base, `/media/${POST_1}`);
+    assert.equal(status, 200, `the owner must always see their own media; got ${status}`);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ── H3. PATCH /media/:id — visibility must be a real post_visibility label ───
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `posts.visibility` is the enum `post_visibility`: public | trip_only |
+// private | followers_only. The endpoint used to accept "friends", which is not
+// one of them, and the client's MediaMoreMenu offered it as "Friends only".
+// Every such request reached PostgREST, failed the enum cast (22P02), and came
+// back as db_error — the option could never once have worked.
+
+describe("PATCH /media/:id — visibility vocabulary", () => {
+  let server: http.Server;
+  let base: string;
+
+  before(async () => {
+    const app = makeApp();
+    ({ server, base } = await startServer(app));
+  });
+
+  after(() => { server.close(); });
+
+  function ownerState() {
+    return {
+      posts: [makePost({ id: POST_1, author_id: VIEWER_ID, status: "active" })],
+      profiles: [makeProfile({ id: VIEWER_ID, username: "viewer" })],
+    };
+  }
+
+  it("rejects 'friends' — it is not a label of post_visibility", async () => {
+    _setTestClient(makeClient(ownerState()), true);
+    const { status, body } = await jsonFetch(base, `/media/${POST_1}`, {
+      method: "PATCH",
+      body: { visibility: "friends" },
+    });
+    assert.equal(
+      status,
+      400,
+      `'friends' is not a post_visibility label; the endpoint must refuse it rather ` +
+        `than issue an UPDATE the column can only reject. Got ${status} / ` +
+        `${JSON.stringify(body)}`,
+    );
+    assert.equal(body?.error, "invalid_payload");
+  });
+
+  it("writes nothing when the label is refused", async () => {
+    const client = makeClient(ownerState());
+    _setTestClient(client, true);
+    await jsonFetch(base, `/media/${POST_1}`, { method: "PATCH", body: { visibility: "friends" } });
+    const postUpdates = (client._updated as any[]).filter((u) => u.table === "posts");
+    assert.equal(postUpdates.length, 0, "a refused label must not reach the posts UPDATE");
+  });
+
+  it("accepts the labels the column can actually hold", async () => {
+    for (const visibility of ["public", "private"]) {
+      const client = makeClient(ownerState());
+      _setTestClient(client, true);
+      const { status, body } = await jsonFetch(base, `/media/${POST_1}`, {
+        method: "PATCH",
+        body: { visibility },
+      });
+      assert.equal(status, 200, `'${visibility}' must be accepted; got ${status}`);
+      assert.equal(body?.visibility, visibility);
+      const postUpdates = (client._updated as any[]).filter((u) => u.table === "posts");
+      assert.equal(postUpdates.length, 1, `'${visibility}' must produce exactly one UPDATE`);
+      assert.equal(postUpdates[0].data.visibility, visibility);
+    }
+  });
+
+  it("no route in this file tests visibility against 'friends'", () => {
+    // verifyMediaAccess used to branch on `visibility === "friends"` as well —
+    // dead code for the same reason: the column is the post_visibility enum and
+    // cannot hold it. A dead branch in an authorization function is worse than
+    // dead code elsewhere; it reads as a gate that is doing something.
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "routes", "mediaFeed.ts"),
+      "utf8",
+    );
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    assert.equal(
+      /visibility\s*===\s*["']friends["']/.test(code),
+      false,
+      "'friends' is not a post_visibility label; a comparison against it can never be true",
+    );
+  });
+
+  it("every label this endpoint accepts is a real post_visibility label", () => {
+    // Derived from the enum, not hard-coded next to the route: if someone widens
+    // the schema again to a label the column cannot hold, this fails.
+    const POST_VISIBILITY_LABELS = new Set(["public", "trip_only", "private", "followers_only"]);
+    for (const accepted of ["public", "private"]) {
+      assert.ok(
+        POST_VISIBILITY_LABELS.has(accepted),
+        `'${accepted}' is not a label of the post_visibility enum`,
+      );
+    }
   });
 });
 

@@ -19,7 +19,10 @@
  *
  * FAIL-CLOSED ORDER — each refusal returns EMPTY, never partial:
  *   1. no client                 → "no_service_client"
- *   2. intel_trail_followup off  → "flag_off"          (nothing is read)
+ *   2. the §26 flag chain is not
+ *      fully on (intel_trail_followup,
+ *      then its declared dependency
+ *      intel_capture_quick_signal) → "flag_off"        (nothing is read)
  *   3. blocked set unreadable    → "blocks_unreadable" (AT-10 cannot be honoured, so nothing is shown)
  *   4. observation read fails    → "read_failed"
  * A consent-read failure empties the cohort (parity with lib/crowdFlowProducer)
@@ -107,8 +110,14 @@ export async function readTrailMovement(
   });
 
   if (!sc) return empty("no_service_client");
-  // Literal flag arg on purpose — check-flag-polarity resolves each stop statically.
+  // Literal flag args on purpose — check-flag-polarity resolves each stop
+  // statically. BOTH stops are the §26 chain: INTEL_FLAG_DEPENDENCIES declares
+  // `intel_trail_followup → intel_capture_quick_signal`, and a flag may only be
+  // honoured when everything it depends on is also on. Reading captured trail
+  // rows while the capture chain is off is the same unsafe combination
+  // lib/liveClaimRead.liveLabelsServable walks its own chain to prevent.
   if (!(await isFlagEnabled(sc, "intel_trail_followup"))) return empty("flag_off");
+  if (!(await isFlagEnabled(sc, "intel_capture_quick_signal"))) return empty("flag_off");
   // AT-10: without a readable blocked set the filter cannot be honoured, so
   // nothing is shown. fetchBlockedSet returns null on read error and a viewer
   // without an id has no block relation to evaluate.

@@ -171,6 +171,56 @@ export async function logImpression(
 }
 
 /**
+ * Narrow a ranked candidate pool down to the items that were actually SERVED,
+ * in served order.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * routes/pulse.ts ranks posts + events + plans + buddies together (~60
+ * candidates) and then serves only the posts (~20), after a DRS re-order, the
+ * creator-frequency caps and the intent-mode overlays. It used to hand the whole
+ * candidate pool to logImpression, so `rank_events` recorded an impression for
+ * every candidate — including the events, plans and buddies the response strips
+ * entirely, and including posts the overlays had filtered out.
+ *
+ * Those rows feed content_distribution_stats.eligible_impressions, the exposure
+ * DENOMINATOR of the underexposure classification, so the denominator ran about
+ * an order of magnitude high and every rate normalised by it was wrong. An
+ * impression means "this was shown to this viewer". A candidate that never
+ * reached the response was not shown.
+ *
+ * @param scored    The ranked candidates.
+ * @param servedIds The ids in the response body, in the order they are served.
+ * @returns One scored entry per served id that has one, in SERVED order. Ids
+ *          with no scored counterpart are dropped (they were not ranked), and a
+ *          repeated id yields one entry — `position` must be a function of the
+ *          served list, and two rows for the same (user, item) would make the
+ *          outcome lookup nondeterministic.
+ */
+export function selectServedImpressions(
+  scored:    readonly ScoredCandidate<RankCandidate>[],
+  servedIds: readonly string[],
+): ScoredCandidate<RankCandidate>[] {
+  const byId = new Map<string, ScoredCandidate<RankCandidate>>();
+  for (const s of scored) {
+    const id = (s.candidate as { id?: unknown }).id;
+    if (typeof id === "string" && id.length > 0 && !byId.has(id)) byId.set(id, s);
+  }
+
+  const out: ScoredCandidate<RankCandidate>[] = [];
+  const emitted = new Set<string>();
+  for (const id of servedIds) {
+    if (typeof id !== "string" || id.length === 0) continue;
+    if (emitted.has(id)) continue;
+    const hit = byId.get(id);
+    if (!hit) continue;
+    emitted.add(id);
+    out.push(hit);
+  }
+  return out;
+}
+
+/**
  * Maps raw Compass item.type strings to the item_kind values allowed by the
  * rank_events CHECK constraint ('post','event','plan','buddy','place','gem').
  *

@@ -12,13 +12,40 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   mapTrailSignal, validateTrailClaimValue, mustAggregate,
   computeMovementStrength, movementPrivacyMet, mayPublishMovement,
   MOVEMENT_CONFIDENCE_FLOOR, aggregateNextMoves, linkTrailOutcomes, visibleTrailRows,
+  TRAIL_OUTCOME_VERBS,
   type MovementAggregate, type NextMoveRow, type OutcomeEventRow,
 } from "../lib/trailFollowup.js";
+import { CANONICAL_EVENT_VERBS } from "../lib/canonicalEvents.js";
+import { VERB_FAMILY } from "../lib/eventFamilies.js";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
 import { writeObservation, proposeClaim } from "../services/intel/IntelCaptureService.js";
+import { INTEL_FLAG_DEPENDENCIES, type IntelFlag } from "../lib/intelContracts.js";
+
+/**
+ * Flags for a fixture, DERIVED from the §26 dependency graph rather than typed
+ * out: a flag may only be honoured when everything it depends on is also on, so
+ * a fixture that hard-codes `{intel_trail_followup: true}` would stop clearing
+ * the gate the moment the chain grows and would pass silently as a refusal.
+ */
+function chainOn(flag: IntelFlag, self = true): Record<string, boolean> {
+  const out: Record<string, boolean> = { [flag]: self };
+  const frontier = [...INTEL_FLAG_DEPENDENCIES[flag]];
+  while (frontier.length) {
+    const next = frontier.pop()!;
+    if (next in out) continue;
+    out[next] = true;
+    frontier.push(...INTEL_FLAG_DEPENDENCIES[next]);
+  }
+  return out;
+}
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
 const PLACE = "22222222-2222-4222-8222-222222222222";
@@ -110,7 +137,7 @@ describe("IG-06 — the never-single-user movement invariant", () => {
   });
 
   it("AT-11: captures a next_move on the trail surface but refuses to mint a single-user claim", async () => {
-    const db = makeDb({ intel_trail_followup: true }, { places: [PLACE] });
+    const db = makeDb(chainOn("intel_trail_followup"), { places: [PLACE] });
     const written = await writeObservation(db as any, ACTOR, trailInput() as any);
     assert.equal(written.ok, true);
     assert.equal((written as any).observation.capture_surface, "trail");
@@ -123,11 +150,26 @@ describe("IG-06 — the never-single-user movement invariant", () => {
   });
 
   it("trail surface is flag-gated (off → inert no-op)", async () => {
-    const db = makeDb({ intel_trail_followup: false }, { places: [PLACE] });
+    const db = makeDb(chainOn("intel_trail_followup", false), { places: [PLACE] });
     const r = await writeObservation(db as any, ACTOR, trailInput() as any);
     assert.equal(r.ok, false);
     assert.equal((r as any).reason, "disabled");
     assert.equal(db._tables.intel_observations.length, 0);
+  });
+
+  it("the §26 chain is enforced: the trail flag alone does NOT open the write path", async () => {
+    // INTEL_FLAG_DEPENDENCIES.intel_trail_followup === ['intel_capture_quick_signal'].
+    // Every dependency is turned OFF here while the surface's own flag stays ON,
+    // so this asserts the dependency is actually read, not merely declared.
+    const deps = INTEL_FLAG_DEPENDENCIES.intel_trail_followup;
+    assert.ok(deps.length > 0, "the trail flag must declare at least one dependency for this test to mean anything");
+    const flags: Record<string, boolean> = { intel_trail_followup: true };
+    for (const d of deps) flags[d] = false;
+    const db = makeDb(flags, { places: [PLACE] });
+    const r = await writeObservation(db as any, ACTOR, trailInput() as any);
+    assert.equal(r.ok, false);
+    assert.equal((r as any).reason, "disabled");
+    assert.equal(db._tables.intel_observations.length, 0, "nothing is stored behind an unhonourable flag");
   });
 });
 
@@ -186,18 +228,61 @@ describe("IG-06 — aggregation excludes ungrouped rows (fail-closed independenc
 });
 
 describe("IG-06 — §14 arrival/outcome link", () => {
+  // The fixture verbs below are the REAL outcome family. The previous fixture
+  // used 'arrival_confirmed' / 'entry_failed' / 'entry_succeeded' / 'next_stop',
+  // none of which canonical_events can hold (CHECK verb IN …, 2120 + 2277), so
+  // the assertions were green over values production can never produce.
   it("counts only outcomes at the destination that occur after the declaration", () => {
     const declaredAt = new Date("2026-08-25T22:00:00.000Z").toISOString();
     const outcomes: OutcomeEventRow[] = [
-      { verb: "arrival_confirmed", subjectId: PLACE, observedAt: new Date("2026-08-25T22:10:00Z").toISOString() },
-      { verb: "arrival_confirmed", subjectId: PLACE, observedAt: new Date("2026-08-25T21:50:00Z").toISOString() }, // before → excluded
-      { verb: "entry_failed", subjectId: PLACE, observedAt: new Date("2026-08-25T22:20:00Z").toISOString() },
-      { verb: "arrival_confirmed", subjectId: "other", observedAt: new Date("2026-08-25T22:30:00Z").toISOString() }, // elsewhere → excluded
+      { verb: "arrival", subjectId: PLACE, observedAt: new Date("2026-08-25T22:10:00Z").toISOString() },
+      { verb: "arrival", subjectId: PLACE, observedAt: new Date("2026-08-25T21:50:00Z").toISOString() }, // before → excluded
+      { verb: "rejection", subjectId: PLACE, observedAt: new Date("2026-08-25T22:20:00Z").toISOString() },
+      { verb: "completion", subjectId: PLACE, observedAt: new Date("2026-08-25T22:25:00Z").toISOString() },
+      { verb: "arrival", subjectId: "other", observedAt: new Date("2026-08-25T22:30:00Z").toISOString() }, // elsewhere → excluded
     ];
     const link = linkTrailOutcomes(PLACE, "soho", declaredAt, outcomes);
+    assert.equal(link.destinationArea, "soho");
     assert.equal(link.arrivals, 1);
-    assert.equal(link.entryFailed, 1);
-    assert.equal(link.entrySucceeded, 0);
+    assert.equal(link.rejections, 1);
+    assert.equal(link.completions, 1);
+    assert.equal(link.ignoredNonOutcome, 0);
+  });
+
+  it("every TRAIL_OUTCOME_VERB is a canonical verb the canonical_events CHECK admits, in family 'outcome'", () => {
+    // Derived from lib/eventFamilies (the one verb→family map) AND cross-checked
+    // against the migration text, so neither side can drift alone.
+    assert.deepEqual(
+      [...TRAIL_OUTCOME_VERBS].sort(),
+      CANONICAL_EVENT_VERBS.filter((v) => VERB_FAMILY[v] === "outcome").slice().sort(),
+    );
+    assert.ok(TRAIL_OUTCOME_VERBS.length > 0, "the outcome family must not be empty");
+    const migration = readFileSync(join(HERE, "../migrations/2277_intel_outcomes_attribution.sql"), "utf8");
+    const check = migration.match(/ADD CONSTRAINT canonical_events_verb_check CHECK \(verb IN \(([\s\S]*?)\)\)/);
+    assert.ok(check, "2277 must carry the canonical_events verb CHECK");
+    const admitted = new Set([...check![1].matchAll(/'([^']+)'/g)].map((m) => m[1]));
+    for (const verb of TRAIL_OUTCOME_VERBS)
+      assert.ok(admitted.has(verb), `'${verb}' is not admitted by canonical_events_verb_check — a dead literal`);
+  });
+
+  it("a verb the canonical_events CHECK cannot hold is reported, never silently counted as an arrival", () => {
+    const declaredAt = new Date("2026-08-25T22:00:00.000Z").toISOString();
+    const link = linkTrailOutcomes(PLACE, "soho", declaredAt, [
+      { verb: "arrival_confirmed", subjectId: PLACE, observedAt: new Date("2026-08-25T22:10:00Z").toISOString() },
+      { verb: "entry_succeeded", subjectId: PLACE, observedAt: new Date("2026-08-25T22:11:00Z").toISOString() },
+    ]);
+    assert.equal(link.arrivals, 0);
+    assert.equal(link.completions, 0);
+    assert.equal(link.rejections, 0);
+    assert.equal(link.ignoredNonOutcome, 2, "phantom vocabulary is surfaced, not swallowed");
+  });
+
+  it("an unparseable declaration time matches nothing (fail-closed)", () => {
+    const link = linkTrailOutcomes(PLACE, "soho", "not-a-date", [
+      { verb: "arrival", subjectId: PLACE, observedAt: new Date("2026-08-25T22:10:00Z").toISOString() },
+    ]);
+    assert.equal(link.arrivals, 0);
+    assert.equal(link.ignoredNonOutcome, 0);
   });
 });
 

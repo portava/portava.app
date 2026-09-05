@@ -24,7 +24,11 @@ import {
   isLocationSafe,
   scrubPreciseLocation,
 } from "../lib/media/mediaLocationSafety.js";
-import { toMediaProjection, type MediaCandidateRow } from "../lib/media/mediaProjection.js";
+import {
+  toMediaProjection,
+  MEDIA_PROJECTION_PROFILE_COLUMNS,
+  type MediaCandidateRow,
+} from "../lib/media/mediaProjection.js";
 import {
   resolveViewer,
   buildWorldProjection,
@@ -107,6 +111,8 @@ interface PostOverrides {
   withCoords?: boolean;
   mediaType?: "image" | "video";
   tripId?: string | null;
+  /** `profiles.is_private` on the AUTHOR — input to the private-account guard. */
+  authorIsPrivate?: boolean;
 }
 
 let seq = 0;
@@ -156,6 +162,7 @@ function makePost(o: PostOverrides = {}): any {
       verified: true,
       is_official: false,
       account_status: "active",
+      is_private: o.authorIsPrivate ?? false,
     },
   };
   // The posts table carries precise coordinates. The projection layer must
@@ -319,6 +326,122 @@ describe("viewer eligibility before projection", () => {
     const viewer = await resolveViewer(sc, VIEWER);
     const w = await buildWorldProjection(sc, viewer, "Da Nang", Date.now());
     assert.equal(w.totalPerspectives, 1, "private post excluded from for-you world");
+  });
+});
+
+// ── 5b. The private-ACCOUNT guard at the shared candidate loader ─────────────
+//
+// Distinct from the private-POST case above. `visibility` is the post's own
+// setting; `profiles.is_private` is the AUTHOR'S account setting, and the
+// platform rule (lib/privacyFilter.excludePrivateAuthorPosts) is that a private
+// account's posts are visible only to approved followers — whatever the post's
+// own visibility says.
+//
+// filterEligibleMediaCandidates does not implement that rule and never has. Both
+// LEGACY media feeds call excludePrivateAuthorPosts separately; every net-new
+// Media v2 surface loads its candidates through loadEligibleCandidates, which
+// did not. So a private account's visibility='public' post was projected —
+// media, place label, and contributor credit — into the World shell, the
+// experience/action rails and the Wall's Quick Media, while being correctly
+// hidden by the two feeds it sat next to.
+//
+// These tests bite at the choke point: revert the guard in
+// MediaProjectionService.loadEligibleCandidates and the first one goes red.
+
+describe("private-ACCOUNT guard — applied at loadEligibleCandidates, not per caller", () => {
+  it("a private account's PUBLIC post is not projected to a non-follower", async () => {
+    const sc = makeSc(
+      baseData({
+        posts: [
+          makePost({ id: "open", author_id: AUTHOR_A, visibility: "public", authorIsPrivate: false }),
+          makePost({ id: "locked", author_id: AUTHOR_B, visibility: "public", authorIsPrivate: true }),
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER);
+    const w = await buildWorldProjection(sc, viewer, "Da Nang", Date.now());
+    assert.equal(
+      w.totalPerspectives,
+      1,
+      "only the public account's post may be projected; a private account's post " +
+        "is for approved followers, whatever its own visibility says",
+    );
+  });
+
+  it("an approved follower still sees it — the guard is not a blanket exclusion", async () => {
+    // Positive control: without it, a loader that returned [] unconditionally
+    // would satisfy the test above.
+    const sc = makeSc(
+      baseData({
+        posts: [makePost({ id: "locked", author_id: AUTHOR_B, visibility: "public", authorIsPrivate: true })],
+        user_follows: [{ follower_id: VIEWER, following_id: AUTHOR_B }],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER);
+    const w = await buildWorldProjection(sc, viewer, "Da Nang", Date.now());
+    assert.equal(w.totalPerspectives, 1, "an approved follower must still be projected the item");
+  });
+
+  it("a public account's post is untouched", async () => {
+    // Second positive control: proves the guard keys on is_private rather than
+    // having become "drop everything".
+    const sc = makeSc(
+      baseData({ posts: [makePost({ id: "open", author_id: AUTHOR_A, authorIsPrivate: false })] }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER);
+    const w = await buildWorldProjection(sc, viewer, "Da Nang", Date.now());
+    assert.equal(w.totalPerspectives, 1);
+  });
+
+  it("My World still returns the owner's own media when the OWNER is private", async () => {
+    // The guard must never hide a user's library from themselves. buildMyWorldProjection
+    // reads the owner's rows directly (`author_id = viewer`) rather than through
+    // loadEligibleCandidates, so this is a REGRESSION guard: it pins that the
+    // private-account rule stays a non-owner rule, and would catch a future
+    // refactor routing My World through the choke point with an owner-blind guard.
+    const sc = makeSc(
+      baseData({
+        posts: [makePost({ id: "mine", author_id: VIEWER, visibility: "public", authorIsPrivate: true })],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER);
+    const me = await buildMyWorldProjection(sc, viewer, Date.now());
+    const ownIds = me.buckets.flatMap((b) => b.media.map((m) => m.id));
+    assert.ok(
+      ownIds.includes("mine"),
+      `the owner must still see their own media in My World; buckets held ${JSON.stringify(ownIds)}`,
+    );
+  });
+
+  it("the profiles SELECT carries is_private — the guard's input, not a display field", () => {
+    // The fake client above hands back whole fixture objects, so it cannot
+    // notice a column missing from the SELECT string. In production the guard
+    // reads `row.profiles.is_private` through `{ profilesKey: "profiles" }`, and
+    // excludePrivateAuthorPosts is FAIL-OPEN on a missing value: drop the column
+    // from the projection SELECT and every private account silently reads as
+    // public again, with the guard still sitting there looking correct.
+    const cols = MEDIA_PROJECTION_PROFILE_COLUMNS.split(",").map((c) => c.trim());
+    assert.ok(
+      cols.includes("is_private"),
+      "loadEligibleCandidates' private-account guard reads profiles.is_private; " +
+        "without it in the SELECT the guard is fail-open and inert",
+    );
+  });
+
+  it("is_private is NOT projected onto the contributor credit", () => {
+    // It is a gate input. Reading it must not turn it into an output field.
+    const row = makePost({ id: "shape", author_id: AUTHOR_A, authorIsPrivate: true });
+    const projection = toMediaProjection(row as MediaCandidateRow, Date.now());
+    assert.equal(
+      JSON.stringify(projection).includes("is_private"),
+      false,
+      "the account-privacy flag must not leave the server on a projection",
+    );
+    assert.equal(
+      JSON.stringify(projection).includes("isPrivate"),
+      false,
+      "the account-privacy flag must not leave the server on a projection",
+    );
   });
 });
 
