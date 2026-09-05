@@ -17,7 +17,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -40,7 +40,7 @@ let gemId = "";
 
 async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const sc = adminClient();
-  const email = `${PREFIX}${tag}@example.com`;
+  const email = fixtureEmail(`${PREFIX}${tag}@example.com`);
   const { data: c, error: cErr } = await sc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (cErr || !c?.user) throw new Error(`createUser(${tag}): ${cErr?.message}`);
   const id = c.user.id;
@@ -57,7 +57,7 @@ async function readGem(id: string): Promise<any | null> {
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}owner@example.com`]);
+  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}owner@example.com`)]);
   ({ id: ownerId, token: ownerToken } = await makeUser("owner"));
   const { data, error } = await adminClient().from(TABLE)
     .insert({ name: "probe gem", category: "food", city: "Cebu", submitted_by: ownerId, status: "pending", description: "before", verification_level: "unverified", moderation_status: "pending" })
