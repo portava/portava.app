@@ -4,10 +4,13 @@
  *   GET /v1/experiences/:id/live-state
  *     The spec-literal §19 name for "what is true at this experience right now?".
  *     A THIN ALIAS over lib/liveClaimRead.resolvePlaceIntelState — the SAME
- *     reader routes/placeLiving.ts serves the place card from. It adds no query,
- *     no second gate and no second truth: every flag (the intel_live_label_crowd
- *     dependency chain, the disable_intel_live_labels kill switch, the IG-09
- *     intel_limited_live master switch), the per-scope promotion allowlist, the
+ *     reader routes/placeLiving.ts serves the place card from, entered the same
+ *     way: a merged place id is resolved to its surviving canonical id first,
+ *     as loadPlaceGroup does, because the projection writes for the canonical
+ *     subject. It adds no second gate and no second truth: every flag (the
+ *     intel_live_label_crowd dependency chain, the disable_intel_live_labels
+ *     kill switch, the IG-09 intel_limited_live master switch), the per-scope
+ *     promotion allowlist, the
  *     privacy_eligible k-anonymity verdict and the TTL check all live in that one
  *     reader and are inherited here. The response is the §19 envelope
  *     (schema_version / source_label / generated_at / valid_until / state_version
@@ -85,6 +88,42 @@ function stateSourceLabel(state: "live" | "emerging" | "typical" | "unknown"): s
   return "consensus";
 }
 
+/**
+ * Resolve a merged place id to its surviving canonical id, exactly as
+ * routes/placeLiving.ts (loadPlaceGroup) does before the SAME reader.
+ *
+ * The projection writes intel snapshots and §12 patterns for the CANONICAL
+ * subject, so a request naming a merged-away place id resolves to no rows: the
+ * alias would answer 'unknown' while the place card — which resolves first —
+ * shows Live for the very same experience. That is precisely the disagreement
+ * this route's header promises can never happen, so the resolution belongs
+ * here, ahead of the reader, not inside it.
+ *
+ * One hop, like loadPlaceGroup: `merged_into_place_id` names the survivor, and
+ * a survivor is not itself merged away. Fail-SAFE in every other case — a
+ * missing row or a failed read falls back to the requested id, which can only
+ * under-serve (state 'unknown'); it can never invent a subject or widen what is
+ * exposed, and every privacy/flag gate still lives wholly in the reader.
+ */
+async function resolveSurvivorSubjectId(sc: any, placeId: string): Promise<string> {
+  try {
+    const { data, error } = await sc
+      .from("places")
+      .select("merged_into_place_id")
+      .eq("id", placeId)
+      .maybeSingle();
+    if (error) {
+      logger.warn({ err: error, placeId }, "live-state: merge resolution read failed; using the requested id");
+      return placeId;
+    }
+    const survivor = (data as any)?.merged_into_place_id;
+    return typeof survivor === "string" && survivor.length > 0 ? survivor : placeId;
+  } catch (err) {
+    logger.warn({ err, placeId }, "live-state: merge resolution threw; using the requested id");
+    return placeId;
+  }
+}
+
 // ── GET /v1/experiences/:id/live-state ────────────────────────────────────────
 // The spec-literal §19 read model. Delegates wholly to resolvePlaceIntelState —
 // see the file header for why this is an alias and not a second reader.
@@ -97,11 +136,15 @@ router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
   if (!sc) return sendError(res, "server_not_configured", "no client");
 
   const now = new Date();
+  // Resolve a merged place id to its survivor FIRST — the place card does the
+  // same before this very reader, and skipping it is the one way an alias that
+  // adds no gates can still disagree with the card (see resolveSurvivorSubjectId).
+  const subjectId = await resolveSurvivorSubjectId(sc, id.data);
   // ONE call. Every gate (flags, kill switch, pilot promotion, privacy_eligible,
   // TTL) and the degradation order Live → Emerging → Typical → Unknown are the
   // reader's; this route adds none of its own and can therefore never disagree
   // with the place card about whether something is live.
-  const resolved = await resolvePlaceIntelState(sc, id.data, { now });
+  const resolved = await resolvePlaceIntelState(sc, subjectId, { now });
 
   // state_version must change whenever the served SET changes — its size, its
   // standing, or the freshness of any member. validUntil is included because an
@@ -115,7 +158,10 @@ router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
       earliestValidUntil = c.validUntil;
     }
   }
-  const stateVersion = `${resolved.state}:${resolved.claims.length}:${maxObservedMs || "-"}:${earliestValidUntil ?? "-"}`;
+  // The resolved subject is part of the version: if this id is merged away after
+  // a client cached the answer, the survivor's state may coincidentally have the
+  // same shape, and a stale 304 would keep serving the wrong subject_id.
+  const stateVersion = `${subjectId}:${resolved.state}:${resolved.claims.length}:${maxObservedMs || "-"}:${earliestValidUntil ?? "-"}`;
   const etag = etagOf(stateVersion);
   if (notModified(req, res, etag)) return;
   res.set("ETag", etag);
@@ -123,7 +169,11 @@ router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
   res.json({
     schema_version: SCHEMA_VERSION,
     source_label: stateSourceLabel(resolved.state),
-    subject_id: id.data,
+    // The CANONICAL subject the claims describe. For an unmerged place this is
+    // the requested id; for a merged-away one it is the survivor, so the caller
+    // can see which experience answered rather than being told the merged id
+    // carries claims of its own.
+    subject_id: subjectId,
     state: resolved.state,
     state_version: stateVersion,
     generated_at: now.toISOString(),

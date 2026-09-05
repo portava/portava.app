@@ -38,6 +38,8 @@ interface FixtureOpts {
   promoted?: string[];
   snapshots?: any[];
   patterns?: any[];
+  /** places rows, for the merged-place (canonical subject) resolution. */
+  places?: any[];
 }
 
 /**
@@ -77,6 +79,22 @@ function makeClient(opts: FixtureOpts) {
             if (flagName === "intel_limited_live") return { data: { enabled: opts.pilot ?? true }, error: null };
             return { data: { enabled: opts.flag ?? true }, error: null };
           },
+        };
+        return q;
+      }
+      if (table === "places") {
+        // The merged-place resolution the place card does before the reader.
+        // Filters are applied for real so a route that read the wrong id (or
+        // ignored merged_into_place_id) cannot pass by luck.
+        let wanted: unknown = undefined;
+        const q: any = {
+          select: () => q,
+          eq: (k: string, v: unknown) => { if (k === "id") wanted = v; return q; },
+          // eslint-disable-next-line @typescript-eslint/require-await
+          maybeSingle: async () => ({
+            data: (opts.places ?? []).find((p) => p.id === wanted) ?? null,
+            error: null,
+          }),
         };
         return q;
       }
@@ -298,6 +316,95 @@ describe("§19 live-state — the SAME reader, gate for gate (no second source o
     assert.deepEqual(body.claims, []);
     assert.equal(body.source_label, "none");
     assert.equal(body.valid_until, null);
+  });
+});
+
+describe("§19 live-state — a merged place id resolves to the survivor, like the place card", () => {
+  before(async () => { app = await makeApp(); });
+  after(() => { _setTestClient(null, false); });
+
+  // routes/placeLiving.ts (loadPlaceGroup) resolves merged_into_place_id before
+  // calling this same reader, because the projection writes snapshots for the
+  // CANONICAL subject. An alias that skipped that step answered 'unknown' for a
+  // merged id while the place card showed Live for the same experience — the one
+  // disagreement a gate-free alias can still produce.
+  const MERGED_ID = "33333333-3333-4333-8333-333333333333";
+  const MERGED_PATH = `/api/v1/experiences/${MERGED_ID}/live-state`;
+  const mergedPlaces = [
+    { id: MERGED_ID, merged_into_place_id: PLACE_ID },
+    { id: PLACE_ID, merged_into_place_id: null },
+  ];
+
+  it("serves the survivor's live state for a merged id — and names the canonical subject", async () => {
+    const opts: FixtureOpts = { snapshots: [liveSnapshot], places: mergedPlaces };
+
+    // The reader alone, entered with the RAW merged id, finds nothing: the
+    // snapshot belongs to the survivor. That is exactly the stale answer the
+    // route must no longer serve.
+    const rawReader = await resolvePlaceIntelState(makeClient(opts), MERGED_ID, { now: new Date() });
+    assert.equal(rawReader.state, "unknown", "the snapshot is keyed to the survivor, not the merged id");
+
+    // The place card's path: resolve first, then read.
+    const cardReader = await resolvePlaceIntelState(makeClient(opts), PLACE_ID, { now: new Date() });
+    assert.equal(cardReader.state, "live");
+
+    _setTestClient(makeClient(opts), true);
+    const { status, body } = await req(app, MERGED_PATH);
+    assert.equal(status, 200);
+    assert.equal(body.state, "live", "the alias must agree with the place card, not with the raw read");
+    assert.equal(body.subject_id, PLACE_ID, "the canonical subject the claims actually describe");
+    assert.equal(body.claims.length, cardReader.claims.length);
+    assert.deepEqual(
+      body.claims.map((c: any) => c.claimType).sort(),
+      cardReader.claims.map((c) => c.claimType).sort(),
+    );
+  });
+
+  it("distinguishes the merged id from the survivor in state_version, so a cached 304 cannot outlive a merge", async () => {
+    const opts: FixtureOpts = { snapshots: [liveSnapshot], places: mergedPlaces };
+    _setTestClient(makeClient(opts), true);
+    const viaMerged = await req(app, MERGED_PATH);
+    _setTestClient(makeClient(opts), true);
+    const viaSurvivor = await req(app, PATH);
+    // Same subject, so the SAME version — a client holding either etag is current.
+    assert.equal(viaMerged.body.state_version, viaSurvivor.body.state_version);
+    assert.ok(viaMerged.body.state_version.startsWith(`${PLACE_ID}:`), "the resolved subject is part of the version");
+
+    // An UNMERGED place with an identically-shaped answer must not share it.
+    _setTestClient(makeClient({ snapshots: [], places: [{ id: MERGED_ID, merged_into_place_id: null }] }), true);
+    const unmerged = await req(app, MERGED_PATH);
+    assert.equal(unmerged.body.state, "unknown");
+    assert.notEqual(unmerged.body.state_version, viaMerged.body.state_version);
+  });
+
+  it("changes nothing for an unmerged place, and falls back to the requested id when there is no place row", async () => {
+    // merged_into_place_id null ⇒ the requested id is the subject.
+    _setTestClient(makeClient({ snapshots: [liveSnapshot], places: [{ id: PLACE_ID, merged_into_place_id: null }] }), true);
+    const unmerged = await req(app, PATH);
+    assert.equal(unmerged.body.state, "live");
+    assert.equal(unmerged.body.subject_id, PLACE_ID);
+
+    // No row at all (deleted, or an id that was never a place) ⇒ fail-safe: use
+    // the requested id, which can only under-serve. It never invents a subject.
+    _setTestClient(makeClient({ snapshots: [liveSnapshot], places: [] }), true);
+    const noRow = await req(app, PATH);
+    assert.equal(noRow.status, 200);
+    assert.equal(noRow.body.subject_id, PLACE_ID);
+    assert.equal(noRow.body.state, "live");
+  });
+
+  it("does not leak a coordinate or an actor id through the merged path either", async () => {
+    _setTestClient(makeClient({
+      snapshots: [{ ...liveSnapshot, distinct_actors: 31, actor_id: USER_ID, lat: 16.05, lng: 108.2 }],
+      places: mergedPlaces,
+    }), true);
+    const { body } = await req(app, MERGED_PATH);
+    assert.equal(body.state, "live");
+    assert.equal(body.claims[0].sourceCountBucket, "several");
+    const serialized = JSON.stringify(body);
+    for (const forbidden of ["distinct_actors", "actor_id", "\"lat\"", "\"lng\"", "sourceCount\":", USER_ID]) {
+      assert.ok(!serialized.includes(forbidden), `body must not carry ${forbidden}`);
+    }
   });
 });
 
