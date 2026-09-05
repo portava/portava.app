@@ -1,6 +1,20 @@
 /**
  * Intelligence Gathering — §19 read models (internal decision-support APIs).
  *
+ *   GET /v1/experiences/:id/live-state
+ *     The spec-literal §19 name for "what is true at this experience right now?".
+ *     A THIN ALIAS over lib/liveClaimRead.resolvePlaceIntelState — the SAME
+ *     reader routes/placeLiving.ts serves the place card from. It adds no query,
+ *     no second gate and no second truth: every flag (the intel_live_label_crowd
+ *     dependency chain, the disable_intel_live_labels kill switch, the IG-09
+ *     intel_limited_live master switch), the per-scope promotion allowlist, the
+ *     privacy_eligible k-anonymity verdict and the TTL check all live in that one
+ *     reader and are inherited here. The response is the §19 envelope
+ *     (schema_version / source_label / generated_at / valid_until / state_version
+ *     + ETag) around exactly the LiveClaimEnvelope[] the place card already
+ *     carries — derived intelligence only, never a contributor id, a coordinate
+ *     or the exact k-anonymity cohort size.
+ *
  *   GET /v1/experiences/:id/typical-patterns
  *     The §12 historical patterns for an experience, projected to DERIVED fields
  *     only (no contributor ids, no exact cohort — a coarse bucket). A pattern is
@@ -52,6 +66,73 @@ function notModified(req: any, res: any, etag: string): boolean {
   }
   return false;
 }
+
+/**
+ * The §19 envelope's top-level `source_label` for a resolved state. It describes
+ * WHAT KIND of answer the body is, and it is derived from the state the reader
+ * returned — never asserted independently of it, so the label can never claim a
+ * standing the claims do not have:
+ *   live / emerging → 'consensus'          (independent first-hand observations)
+ *   typical         → 'historical_pattern' (a §12 pattern — a Typical answer)
+ *   unknown         → 'none'               (silence; the claims array is empty)
+ * §37: 'portava_prediction' can never appear here — readLiveClaims drops any
+ * class that mayRenderAsLive() rejects before it reaches an envelope, and a
+ * pattern is labelled historical_pattern by readTypicalPatterns itself.
+ */
+function stateSourceLabel(state: "live" | "emerging" | "typical" | "unknown"): string {
+  if (state === "typical") return "historical_pattern";
+  if (state === "unknown") return "none";
+  return "consensus";
+}
+
+// ── GET /v1/experiences/:id/live-state ────────────────────────────────────────
+// The spec-literal §19 read model. Delegates wholly to resolvePlaceIntelState —
+// see the file header for why this is an alias and not a second reader.
+router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) return sendError(res, "invalid_payload", "experience id (uuid) required");
+  const sc = auth.client ?? getServiceClient();
+  if (!sc) return sendError(res, "server_not_configured", "no client");
+
+  const now = new Date();
+  // ONE call. Every gate (flags, kill switch, pilot promotion, privacy_eligible,
+  // TTL) and the degradation order Live → Emerging → Typical → Unknown are the
+  // reader's; this route adds none of its own and can therefore never disagree
+  // with the place card about whether something is live.
+  const resolved = await resolvePlaceIntelState(sc, id.data, { now });
+
+  // state_version must change whenever the served SET changes — its size, its
+  // standing, or the freshness of any member. validUntil is included because an
+  // expiring claim changes the answer even when nothing was re-observed.
+  let maxObservedMs = 0;
+  let earliestValidUntil: string | null = null;
+  for (const c of resolved.claims) {
+    const o = Date.parse(c.observedAt);
+    if (!Number.isNaN(o) && o > maxObservedMs) maxObservedMs = o;
+    if (c.validUntil && (earliestValidUntil === null || c.validUntil < earliestValidUntil)) {
+      earliestValidUntil = c.validUntil;
+    }
+  }
+  const stateVersion = `${resolved.state}:${resolved.claims.length}:${maxObservedMs || "-"}:${earliestValidUntil ?? "-"}`;
+  const etag = etagOf(stateVersion);
+  if (notModified(req, res, etag)) return;
+  res.set("ETag", etag);
+
+  res.json({
+    schema_version: SCHEMA_VERSION,
+    source_label: stateSourceLabel(resolved.state),
+    subject_id: id.data,
+    state: resolved.state,
+    state_version: stateVersion,
+    generated_at: now.toISOString(),
+    // §19 "valid_until where operational" — the earliest horizon in the set, i.e.
+    // when this answer first stops being wholly current. Null when there is none.
+    valid_until: earliestValidUntil,
+    claims: resolved.claims,
+  });
+}));
 
 // ── GET /v1/experiences/:id/typical-patterns ──────────────────────────────────
 router.get("/v1/experiences/:id/typical-patterns", asyncHandler(async (req, res) => {
