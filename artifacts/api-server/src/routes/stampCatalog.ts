@@ -224,7 +224,16 @@ router.get("/admin/stamps/catalog", asyncHandler(async (req, res) => {
       .from("stamp_generation_queue")
       .select("catalog_id, status")
       .in("catalog_id", entries.map((e) => e.id))
-      .in("status", ["queued", "processing"]);
+      // `stamp_generation_queue.status` is TEXT with a CHECK permitting
+      // queued | generating | review_required | retryable_failed |
+      // permanently_failed | archived. "processing" is not among them — the
+      // in-flight status the worker actually writes is `generating`. Because
+      // the column is CHECK-constrained rather than an enum PostgREST did not
+      // raise; the arm silently dropped, so an operator saw the "regenerating"
+      // badge for a job sitting in the QUEUE and never for a job actively
+      // generating — the exact partial-failure window this block exists to
+      // surface was invisible for its whole duration.
+      .in("status", ["queued", "generating"]);
     const activeByCatalog = new Map<string, string>(
       ((activeRows ?? []) as any[]).map((r) => [r.catalog_id, r.status])
     );

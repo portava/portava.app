@@ -41,8 +41,13 @@
  * profiles row cascades into intel_presence_verifications. 2137 had removed
  * exactly that trigger from the original intel tables, for exactly this reason;
  * three later migrations copied 2130's shape and reintroduced it.
- * 2291_intel_stmt_trigger_removal_round2.sql removes it again, and
- * src/test/appendOnlyStatementTriggers.test.ts refuses the next copy.
+ * 2292_intel_stmt_trigger_removal_ig_campaign.sql removes it again, and
+ * src/test/appendOnlyCascade.test.ts refuses the next copy.
+ *
+ * (2292 arrived on main from the IG campaign while this branch was in flight,
+ * doing the same three tables. This branch had written its own 2291 for the
+ * same removal; the duplicate was dropped rather than merged, and the DDL was
+ * applied to portava-ci once.)
  *
  * ── AND WHY LAYER 3 THEN BROKE LAYER 1 (2026-09-05, ROUND 2) ────────────────
  * Layer 3 below sweeps "every stranded run-scoped variant" of a fixture

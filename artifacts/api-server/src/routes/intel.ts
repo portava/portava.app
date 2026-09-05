@@ -354,7 +354,8 @@ router.get("/v1/internal/intel/trail/movement", asyncHandler(async (req: Request
   const q = z.object({ subjectId: z.string().uuid().optional() }).safeParse(req.query ?? {});
   if (!q.success) return sendError(res, "invalid_payload", "subjectId must be a uuid when supplied");
   const read = await readTrailMovement(getServiceClient()!, ctx.userId, { originId: q.data.subjectId ?? null });
-  if (read.refusal === "flag_off") return sendError(res, "feature_disabled", "intel_trail_followup is off");
+  if (read.refusal === "flag_off")
+    return sendError(res, "feature_disabled", "the intel_trail_followup flag chain is not fully enabled");
   if (read.refusal !== null) return sendError(res, "db_error", read.refusal);
   res.json(read);
 }));

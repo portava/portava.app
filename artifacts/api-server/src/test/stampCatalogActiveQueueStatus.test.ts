@@ -29,7 +29,7 @@ import stampCatalogRouter from "../routes/stampCatalog.js";
 
 const ADMIN_ID          = "aaaaaaaa-0000-4000-8000-000000000001";
 const REJECTED_QUEUED   = "dddddddd-0000-4000-8000-000000000001"; // rejected + queued job
-const REJECTED_PROCESS  = "dddddddd-0000-4000-8000-000000000002"; // rejected + processing job
+const REJECTED_PROCESS  = "dddddddd-0000-4000-8000-000000000002"; // rejected + generating job
 const APPROVED_NO_QUEUE = "dddddddd-0000-4000-8000-000000000003"; // approved, no queue row
 const REVIEW_INACTIVE   = "dddddddd-0000-4000-8000-000000000004"; // review_required, inactive queue row
 
@@ -157,7 +157,15 @@ let currentClient: ReturnType<typeof makeClient>;
 beforeEach(() => {
   const queueRows = [
     { id: "eeeeeeee-0000-4000-8000-000000000001", catalog_id: REJECTED_QUEUED,  status: "queued",          last_error: null },
-    { id: "eeeeeeee-0000-4000-8000-000000000002", catalog_id: REJECTED_PROCESS, status: "processing",      last_error: null },
+    // FIXTURE REPAIRED. This row said `status: "processing"`, which
+    // stamp_generation_queue_status_check does not permit — the real in-flight
+    // status the worker writes is `generating` (queued | generating |
+    // review_required | retryable_failed | permanently_failed | archived). The
+    // route filtered on the same impossible value, so the test proved the code
+    // matched the fixture and nothing about the database: an operator saw the
+    // "regenerating" badge for a job sitting in the QUEUE and never for one
+    // actively generating.
+    { id: "eeeeeeee-0000-4000-8000-000000000002", catalog_id: REJECTED_PROCESS, status: "generating",     last_error: null },
     { id: "eeeeeeee-0000-4000-8000-000000000003", catalog_id: REVIEW_INACTIVE,  status: "review_required", last_error: "candidate_shortfall" },
   ];
   currentClient = makeClient(makeRows(), queueRows);
@@ -182,13 +190,13 @@ describe("GET /admin/stamps/catalog — active queue status enrichment", () => {
     );
   });
 
-  it("rejected entry with a processing job carries queue_status 'processing'", async () => {
+  it("rejected entry with a generating job carries queue_status 'generating'", async () => {
     const { status, body } = await get("/admin/stamps/catalog");
     assert.equal(status, 200);
 
     const entry = body.entries.find((e: any) => e.id === REJECTED_PROCESS);
     assert.ok(entry);
-    assert.equal(entry.queue_status, "processing");
+    assert.equal(entry.queue_status, "generating");
   });
 
   it("entry with no queue row gets no queue_status key", async () => {

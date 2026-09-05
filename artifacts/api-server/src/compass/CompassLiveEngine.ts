@@ -194,7 +194,16 @@ async function fetchInProgressTrip(
       .from("trips")
       .select("id, destination_city, status")
       .in("id", tripIds)
-      .eq("status", "in_progress")
+      // `trip_status` is an ENUM: draft | planning | upcoming | active |
+      // completed | cancelled | archived. `in_progress` is NOT a label, and
+      // Postgres rejects an unknown enum literal outright (22P02) rather than
+      // matching nothing — so this read failed WHOLE and `{ data }` was
+      // undefined on every request. Compass Live therefore had no trip
+      // grounding at all: tripId / currentStop / nextItem were permanently
+      // null and no reached_stop or next_item_changed event could ever fire.
+      // `active` is the label every other current-trip reader uses
+      // (CompassTools:415, CompassSocialEngine:296, wall.ts:273, compass.ts:3414).
+      .eq("status", "active")
       .limit(1);
     const t = ((trips ?? []) as any[])[0];
     if (!t) return null;

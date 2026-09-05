@@ -11,8 +11,27 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { COUNTERPARTY_METADATA_KEY } from "./TrustEventService.js";
 
 const logger = rootLogger.child({ service: "TrustGamingDetectionService" });
+
+/**
+ * Read the counterpart user id out of a trust_events.metadata value.
+ *
+ * jsonb comes back as an object from supabase-js, but a hand-written row or an
+ * older client can deliver a JSON string, and metadata is nullable — so this
+ * tolerates all three and returns null rather than throwing inside a scan whose
+ * failure mode is "flag nobody".
+ */
+function readCounterparty(metadata: unknown): string | null {
+  let m = metadata;
+  if (typeof m === "string") {
+    try { m = JSON.parse(m); } catch { return null; }
+  }
+  if (!m || typeof m !== "object") return null;
+  const v = (m as Record<string, unknown>)[COUNTERPARTY_METADATA_KEY];
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
 
 interface GamingSettings {
   gaming_checkin_cluster_limit: number;
@@ -75,6 +94,26 @@ async function createGamingReview(
 }
 
 /**
+ * The `plan_attendance_events.event_type` values that represent a member
+ * ACTUALLY ARRIVING somewhere — the only rows a check-in farming cluster can be
+ * built from.
+ *
+ * These are exactly the two strings `routes/geofence.ts` writes on a successful
+ * check-in (see `upsertCheckin`, geofence.ts:610). They are NOT the whole
+ * vocabulary of the table: 'suspicious_check_in' is a REJECTED check-in (the
+ * route returns ok:false and writes no plan_checkins row), and
+ * 'host_manual_override' is the host acting, not the member — counting either
+ * as a check-in would let a host manufacture a cluster against a guest, or let
+ * a user farm reviews by failing GPS repeatedly.
+ *
+ * This list previously read `'checked_in'`, a string no writer has ever
+ * produced and the table's CHECK constraint has never admitted, so the scan
+ * matched zero rows in every environment. Migration 2302 admits the real
+ * vocabulary; this constant names the subset that means "arrived".
+ */
+export const CHECKIN_CLUSTER_EVENT_TYPES = ["checked_in_successfully", "late_check_in"] as const;
+
+/**
  * Scan for same-location check-in clusters.
  * Flags users with more than gaming_checkin_cluster_limit check-ins
  * at the same geofence within 24 hours.
@@ -90,7 +129,7 @@ async function detectCheckinClusters(
       .from("plan_attendance_events")
       .select("user_id, geofence_id")
       .gt("created_at", since)
-      .eq("event_type", "checked_in");
+      .in("event_type", CHECKIN_CLUSTER_EVENT_TYPES as unknown as string[]);
 
     if (error) {
       logger.warn({ err: error }, "detectCheckinClusters query failed");
@@ -127,6 +166,25 @@ async function detectCheckinClusters(
  * Detect mutual upvote rings.
  * Looks for pairs of users where > threshold% of each other's positive events
  * come from the same counterpart.
+ *
+ * ── WHAT THIS USED TO DO, AND WHY IT COULD NEVER FIRE ────────────────────────
+ * The query filtered `source_type = 'user_action'`. `recordTrustEvent` defaults
+ * `sourceType` to 'system', and not one of the ~30 production call sites has
+ * ever passed 'user_action' — the emitted values are trips | events | booking |
+ * hidden_gem | review | message_request | geofence_checkin | passport | gps |
+ * moderation | admin | appeal | safe_return | local_guide | pulse_post.
+ * `trust_events.source_type` carries no CHECK constraint, so the filter did not
+ * error; it simply matched zero rows, in every environment, always.
+ *
+ * The pair analysis was dead a second time over: it keyed on `source_id`, which
+ * is the OBJECT id (the dedup key), so `totalPerUser.get(sourceId)` was always
+ * 0 and the reverse rate always 0. Removing only the source_type filter would
+ * have left the detector just as incapable of flagging anyone.
+ *
+ * Both are fixed here: the scan reads every positive event, and pairs on the
+ * counterpart recorded in `metadata[COUNTERPARTY_METADATA_KEY]` — a field that
+ * means "the other user", written by the reciprocal surfaces a ring would
+ * actually exploit (rent-a-buddy reviews, accepted connection requests).
  */
 async function detectMutualRings(
   db: SupabaseClient,
@@ -137,10 +195,9 @@ async function detectMutualRings(
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await db
       .from("trust_events")
-      .select("user_id, source_type, source_id")
+      .select("user_id, source_type, source_id, metadata")
       .gt("created_at", since)
-      .gt("delta", 0)
-      .eq("source_type", "user_action");
+      .gt("delta", 0);
 
     if (error) {
       logger.warn({ err: error }, "detectMutualRings query failed");
@@ -156,27 +213,30 @@ async function detectMutualRings(
 
     for (const row of rows) {
       totalPerUser.set(row.user_id, (totalPerUser.get(row.user_id) ?? 0) + 1);
-      if (row.source_id) {
-        const key = `${row.user_id}:${row.source_id}`;
+      const counterparty = readCounterparty(row.metadata);
+      // A self-referential counterpart is not a pair and must never be counted:
+      // it would score a user's own activity as a 100% mutual rate with herself.
+      if (counterparty && counterparty !== row.user_id) {
+        const key = `${row.user_id}:${counterparty}`;
         pairCounts.set(key, (pairCounts.get(key) ?? 0) + 1);
       }
     }
 
     for (const [key, count] of pairCounts) {
-      const [userId, sourceId] = key.split(":");
+      const [userId, counterpartyId] = key.split(":");
       const total = totalPerUser.get(userId) ?? 0;
       if (total === 0) continue;
       const rate = count / total;
-      // Check mutual: sourceId also heavily depends on userId
-      const reverseKey = `${sourceId}:${userId}`;
+      // Check mutual: the counterpart also heavily depends on userId
+      const reverseKey = `${counterpartyId}:${userId}`;
       const reverseCount = pairCounts.get(reverseKey) ?? 0;
-      const reverseTotal = totalPerUser.get(sourceId) ?? 0;
+      const reverseTotal = totalPerUser.get(counterpartyId) ?? 0;
       const reverseRate = reverseTotal > 0 ? reverseCount / reverseTotal : 0;
 
       if (rate > settings.gaming_mutual_rate_threshold && reverseRate > settings.gaming_mutual_rate_threshold) {
         await createGamingReview(db, userId, {
           pattern: "mutual_ring",
-          withUserId: sourceId,
+          withUserId: counterpartyId,
           rate,
           reverseRate,
         });

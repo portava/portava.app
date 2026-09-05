@@ -19,7 +19,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail, fixtureLabel, deleteFixtureUser } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -38,6 +38,17 @@ const PASSWORD = "test-password-123";
 const TABLE = "hidden_gem_visits";
 let ownerId = "", ownerToken = "", strangerId = "", gemId = "", gem2Id = "";
 const gemIds: string[] = [];
+
+/**
+ * Every fixture address this suite owns, including the five created inside the
+ * gps_verified test. Naming them here is what lets the purge sweep them when
+ * that test does not reach its own cleanup.
+ */
+const FIXTURE_EMAILS = [
+  fixtureEmail(`${PREFIX}owner@example.com`),
+  fixtureEmail(`${PREFIX}stranger@example.com`),
+  ...[0, 1, 2, 3, 4].map((i) => fixtureEmail(`${PREFIX}v${i}@example.com`)),
+] as const;
 
 async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const sc = adminClient();
@@ -63,7 +74,7 @@ async function readVisit(gem: string, user: string): Promise<any | null> {
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}owner@example.com`), fixtureEmail(`${PREFIX}stranger@example.com`)]);
+  await purgeFixtureUsers(adminClient(), FIXTURE_EMAILS);
   ({ id: ownerId, token: ownerToken } = await makeUser("owner"));
   ({ id: strangerId } = await makeUser("stranger"));
   gemId = await makeGem();
@@ -74,7 +85,11 @@ after(async () => {
   const sc = adminClient();
   for (const g of gemIds) await sc.from(TABLE).delete().eq("gem_id", g);
   for (const g of gemIds) await sc.from("hidden_gems").delete().eq("id", g);
-  for (const id of [ownerId, strangerId]) if (id) { await sc.from(TABLE).delete().eq("user_id", id); await sc.from("profiles").delete().eq("id", id); await sc.auth.admin.deleteUser(id); }
+  for (const id of [ownerId, strangerId]) if (id) { await sc.from(TABLE).delete().eq("user_id", id); await sc.from("profiles").delete().eq("id", id); await deleteFixtureUser(sc, id); }
+  // The v0..v4 users are created inside a test and deleted at the end of it, so
+  // they leak whenever that test fails partway. They were the only fixtures
+  // still stranded in the CI project after the teardown cascade was unblocked.
+  await purgeFixtureUsers(sc, FIXTURE_EMAILS);
 });
 
 function assertDenied(error: any, what: string): void {
@@ -121,6 +136,6 @@ describe("hidden_gem_visits trust_level server-ownership", { skip: !CREDS_AVAILA
     assert.ifError(error);
     const { data } = await adminClient().from(TABLE).select("id").eq("gem_id", g).eq("trust_level", "gps_verified");
     assert.equal((data ?? []).length, 5, "the service role must be able to seed the 5 gps_verified confirmations");
-    for (const u of users) { await adminClient().from(TABLE).delete().eq("user_id", u); await adminClient().from("profiles").delete().eq("id", u); await adminClient().auth.admin.deleteUser(u); }
+    for (const u of users) { await adminClient().from(TABLE).delete().eq("user_id", u); await adminClient().from("profiles").delete().eq("id", u); await deleteFixtureUser(adminClient(), u); }
   });
 });

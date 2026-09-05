@@ -70,7 +70,17 @@ describe('§16 core layers', () => {
 
   it('adds Relevant Places, which §16 names in its defaults line', () => {
     assert.ok(MAP_LAYER_IDS.includes('relevant_places'));
-    assert.equal(MAP_LAYER_IDS.length, 12);
+    // 11 core + relevant_places + the two §36 Phase 7 layers.
+    assert.equal(MAP_LAYER_IDS.length, 14);
+  });
+
+  it('adds the two §36 Phase 7 layers, and keeps the private one separate', () => {
+    // World Intelligence is three PUBLIC aggregates; My Cities is the viewer's
+    // OWN history. One toggle over both would mean switching on a private
+    // summary to see what the world is doing.
+    assert.ok(MAP_LAYER_IDS.includes('world_intelligence'));
+    assert.ok(MAP_LAYER_IDS.includes('my_cities'));
+    assert.notEqual(layerForKind('world_pulse'), layerForKind('personal_city'));
   });
 
   it('gives every layer presentation metadata', () => {
@@ -110,6 +120,14 @@ describe('§16 suggested defaults, verbatim', () => {
     assert.equal(LAYER_DEFAULTS.memories, 'off');
   });
 
+  it('leaves the private §36 Phase 7 layer off and the public one contextual', () => {
+    // My Cities is the viewer's own history: it follows Memories, not Saved.
+    assert.equal(LAYER_DEFAULTS.my_cities, 'off');
+    // World Intelligence only has kinds to draw at the world/city bands, so an
+    // `on` default would be a permanently empty layer at every other zoom.
+    assert.equal(LAYER_DEFAULTS.world_intelligence, 'contextual');
+  });
+
   it('leaves the unassigned layers off — §16 forbids turning everything on', () => {
     // §16 names Transport and Hidden Gems as core layers but assigns them no
     // default. `off` is the only reading its governing rule permits.
@@ -129,12 +147,16 @@ describe('§16 suggested defaults, verbatim', () => {
     );
     // The four §16 "on" layers plus forced Safety, and nothing else in a
     // neutral context.
+    // The four §16 "on" layers plus forced Safety, and — in the neutral
+    // context, whose zoomBand is 'city' — World Intelligence, which is
+    // contextual on exactly that band. My Cities stays off: it is private.
     assert.deepEqual(visible.sort(), [
       'events',
       'live_activity',
       'relevant_places',
       'safety',
       'saved',
+      'world_intelligence',
     ]);
   });
 });
@@ -333,7 +355,8 @@ describe('layerForKind', () => {
       );
     }
     // Belt and braces: the kind list itself must not have shrunk silently.
-    assert.equal(MAP_OBJECT_KINDS.length, 14);
+    // 14 through M5, plus the four §36 Phase 7 World Intelligence kinds.
+    assert.equal(MAP_OBJECT_KINDS.length, 18);
   });
 
   it('places each kind on the layer §16/§11 puts it on', () => {
@@ -352,6 +375,10 @@ describe('layerForKind', () => {
       memory: 'memories',
       prediction: 'live_activity',
       saved_place: 'saved',
+      world_pulse: 'world_intelligence',
+      traveler_flow: 'world_intelligence',
+      city_model: 'world_intelligence',
+      personal_city: 'my_cities',
     };
     for (const kind of MAP_OBJECT_KINDS) {
       assert.equal(layerForKind(kind), expected[kind], `wrong layer for '${kind}'`);
