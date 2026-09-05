@@ -260,9 +260,12 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
     .from("profiles")
     .select("id, username, display_name, avatar_url, account_status, verified, is_private")
     .in("id", filteredIds)
-    .not("account_status", "eq", "deleted")
-    .not("account_status", "eq", "banned")
-    .not("account_status", "eq", "suspended");
+    // `profiles.account_status` is TEXT with a CHECK permitting exactly
+    // active | deactivated | pending_deletion | deleted. Only the first of the
+    // three exclusions below was a real value: "banned" and "suspended" matched
+    // nothing, so `deactivated` and `pending_deletion` accounts were listed in
+    // the likes roster. Replaced with the allowlist form used everywhere else.
+    .eq("account_status", "active");
 
   if (profileErr) {
     req.log.error({ err: profileErr }, "engagement/likes profiles fetch failed");

@@ -653,6 +653,14 @@ const KIND_PROMPTS: Record<MapObjectKind, readonly MapContributionKind[]> = {
   safety_notice: [],
   memory: [],
   prediction: [],
+  // §36 Phase 7 — mirrors the server's KIND_PROMPTS (routes/mapObservations.ts),
+  // pinned by src/test/mapContributionClaimTypes.test.ts. Three are already
+  // aggregates with no anchorable place subject; personal_city is private
+  // history, like `memory`.
+  world_pulse: [],
+  traveler_flow: [],
+  city_model: [],
+  personal_city: [],
 };
 
 /** Prompts that only make sense at a single fixed premises with a door. */
