@@ -158,6 +158,16 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "memory_projections",
   "memory_events",
   "memory_feedback",
+  // Map spec §36 Phase-6 group decision (migration 2292). user_id REFERENCES
+  // auth.users(id) ON DELETE CASCADE, and deletion step 5 calls
+  // auth.admin.deleteUser — so this cascade is one that ACTUALLY FIRES, the
+  // same reasoning that puts passport_stamps_gps in this bucket. The table was
+  // deliberately keyed to auth.users rather than profiles for exactly that
+  // reason: the tombstone profile means a profiles cascade would never run and
+  // a departed member's votes would outlive them. The plan item they voted on
+  // is trip content and is governed by the trip's own retention, not this row's.
+  // Registered in the SAME change that creates the table.
+  "trip_plan_item_votes",
 ];
 
 /**
@@ -501,6 +511,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "journey_shadow_ground_truth",
   "journey_shadow_qa_reports",
   "journey_shadow_session_issuances",
+  // Map §36 Phase-6 group-decision votes, added by migration 2292
+  // (post-baseline). Classified in ERASED_BY_CASCADE above.
+  "trip_plan_item_votes",
 ];
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */

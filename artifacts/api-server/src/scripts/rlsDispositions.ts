@@ -125,6 +125,18 @@ export const POST_BASELINE_RLS_DISPOSITIONS: Record<string, RlsDisposition & { m
       "anon and authenticated hold nothing (REVOKE ALL, no grant). Readers reach live state through intel_state_snapshots " +
       "via the server projection, never this table. UPDATE/DELETE refused by trigger AND by grant.",
   },
+  "trip_plan_item_votes": {
+    class: "DENY_ALL_BY_DESIGN",
+    policyCount: 0,
+    migration: "2292_map_journey_intelligence.sql",
+    reason:
+      "Map spec §36 Phase-6 group decision: one accept/decline per crew member per trip plan item. RLS enabled, zero " +
+      "policies: service_role (which bypasses RLS) holds SELECT/INSERT/UPDATE/DELETE; anon and authenticated are " +
+      "REVOKEd explicitly and hold nothing, so no PostgREST client can read or write a vote at all. The membership " +
+      "check that decides who may vote and who may read a tally lives in routes/mapJourney.ts (accepted trip members " +
+      "only), which is the same place every other trip-scoped write is authorized — a policy here would be a second, " +
+      "divergent answer to 'who is on this trip'.",
+  },
 };
 
 export const RLS_DISPOSITIONS: Record<string, RlsDisposition> = {
