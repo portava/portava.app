@@ -31,9 +31,10 @@
  *     and never re-reads `trips`.
  *   • memories  — `loadMemories` + `filterMemories(callerCtx)`: the exact §29
  *     step-9 gate, PLUS the collection tier (`memories_visible`).
- *   • stamps    — `buildUnifiedStamps` behind the collection tier
- *     (`stamps_visible`) via `loadCollectionVisibility` — the same function the
- *     aggregate's step 7 gate is built from.
+ *   • stamps    — `buildUnifiedStamps` behind BOTH of step 7's gates: the
+ *     collection tier (`stamps_visible`) via `loadCollectionVisibility`, and the
+ *     per-stamp §22 tier via `filterUnifiedStamps(callerCtx)` — the same two
+ *     functions, in the same order, the aggregate's step 7 gate is built from.
  *   • travel DNA — `buildTravelIdentity` + `filterTravelIdentityForViewer`, so
  *     an axis the owner marked Hidden / "Not Me" is absent for a viewer here
  *     exactly as it is absent from the aggregate.
@@ -62,7 +63,7 @@ import {
   type JourneyProjection,
   type JourneysProjection,
 } from "./PassportJourneyService.js";
-import { buildUnifiedStamps, type UnifiedStamp } from "./UnifiedStampService.js";
+import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp } from "./UnifiedStampService.js";
 import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories, type CallerContext } from "./PassportPrivacyGuard.js";
 import {
@@ -702,15 +703,25 @@ export async function buildYearbook(
   // an owner with zero trips is fully included and simply has an empty year.
   const canSeeJourneys = (perms.isSelf === true || perms.canSeeTrips === true) && !failed.has("journeys");
 
-  // Stamps: gated by the collection tier, oldest first so cumulative milestones
-  // are real running totals rather than a per-year restart.
+  // Stamps: BOTH gates, in the same order the projection applies them (§22) —
+  //      a) the collection-level tier the owner set on the whole stamp shelf
+  //         (`canSeeStamps`), and
+  //      b) the PER-STAMP visibility the owner set on each individual stamp
+  //         (`filterUnifiedStamps`, which fails closed on an absent/unknown
+  //         tier and is a no-op for the owner's own view).
+  // The yearbook is a RETELLING of the passport, so it must never widen it: with
+  // (b) missing, a stamp the owner marked private / circle_only was narrated to
+  // any viewer that cleared (a) even though the projection withheld it.
+  //
+  // Then oldest first, so cumulative milestones are real running totals rather
+  // than a per-year restart.
   //
   // Only stamps that carry a parseable date take part: an undated stamp lands
   // in no year card and in no `year.stampCount`, so counting it in the running
   // milestone total would number a milestone over stamps the yearbook never
   // shows — the total and the per-year counts must agree by construction.
   const orderedStamps = canSeeStamps
-    ? (unified.stamps as UnifiedStamp[])
+    ? filterUnifiedStamps(unified.stamps as UnifiedStamp[], perms.callerCtx)
         .filter((s) => yearOfIso(s.earnedAt) !== null)
         .sort((a, b) => Date.parse(a.earnedAt as string) - Date.parse(b.earnedAt as string))
     : [];

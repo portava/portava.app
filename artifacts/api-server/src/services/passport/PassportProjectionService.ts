@@ -25,12 +25,16 @@ import {
   resolveInteractionPermissions,
   type InteractionPermissions,
 } from "../interactionPermissions.js";
-import type { CallerContext } from "./PassportPrivacyGuard.js";
+import {
+  loadOwnerFieldVisibility,
+  type CallerContext,
+  type OwnerFieldVisibility,
+} from "./PassportPrivacyGuard.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyGuard.js";
 import { getDisplayTrustScore, getTrustProfile } from "../trust/TrustScoreService.js";
 import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
-import { buildUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
+import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
 import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
 import { countUserTrips } from "../../lib/tripCounts.js";
@@ -56,6 +60,11 @@ import {
   type ViewerRelationship as WindowViewerRelationship,
 } from "./OpenToPlansService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+
+// The TABLE 24 owner field opt-outs now live in PassportPrivacyGuard so the
+// projection and Shared Context share ONE reader. Re-exported for callers that
+// imported the type from here.
+export type { OwnerFieldVisibility } from "./PassportPrivacyGuard.js";
 
 /**
  * §8 availability-windows capability flag (seeded OFF, migration 2260). A local
@@ -606,51 +615,27 @@ function norm(s: unknown): string {
   return typeof s === "string" ? s.trim().toLowerCase() : "";
 }
 
-/** PassportViewerContext → PassportPrivacyGuard.CallerContext for stamp/memory gating. */
+/**
+ * PassportViewerContext → PassportPrivacyGuard.CallerContext for stamp/memory gating.
+ *
+ * The "circle" tier must rest on a REAL, verified relationship. It deliberately
+ * does NOT consult `canViewFullProfile`: the canonical interaction-permission
+ * engine returns that as a literal `true` for every non-blocked viewer (it means
+ * "the profile page is not gated", not "this viewer is in the owner's circle"),
+ * so gating on it made `circle_only` equivalent to `public` for any stranger.
+ *
+ * `canSeeFriendOnlyPosts` is the canonical circle predicate: it is set from the
+ * single `user_friendships` normalized-pair read in `resolveInteractionPermissions`
+ * — the SAME verified membership reader that routes/passportStamps.ts and
+ * routes/stamps.ts use to promote a caller to "circle". No second rule is
+ * invented here. Absent a verified relationship the caller stays "public"
+ * (fail closed).
+ */
 export function toCallerContext(context: PassportViewerContext, permissions: ViewerPermissions): CallerContext {
   if (context === "self") return "owner";
   if (context === "trip_crew" || context === "trip_host") return "trip_crew";
-  // Friend/full-profile relationships act as the "circle" proxy for tiered items.
-  if (permissions.canViewFullProfile || permissions.canSeeFriendOnlyPosts) return "circle";
+  if (permissions.canSeeFriendOnlyPosts) return "circle";
   return "public";
-}
-
-/**
- * The owner's TABLE 24 location opt-outs (§22) from profile_privacy_settings.
- * Only the columns that exist there are read — nothing is invented.
- */
-export interface OwnerFieldVisibility {
-  /** profile_privacy_settings.show_home_country — gates identity.homeCountry (+ homeBase). */
-  showHomeCountry: boolean;
-  /** profile_privacy_settings.show_current_city — gates travelerState.city/label. */
-  showCurrentCity: boolean;
-}
-
-const OWNER_FIELDS_HIDDEN: OwnerFieldVisibility = { showHomeCountry: false, showCurrentCity: false };
-
-/**
- * Load the owner's location opt-outs. The model is show-by-default, so an
- * absent settings row shows; but a READ ERROR fails CLOSED (hide), since these
- * guard the known location-after-opt-out privacy class (same posture as the
- * public-passport reader in routes/follows.ts). The self view never consults
- * the result — the owner always sees their own data.
- */
-async function loadOwnerFieldVisibility(sc: SupabaseClient, userId: string): Promise<OwnerFieldVisibility> {
-  try {
-    const { data, error } = await sc
-      .from("profile_privacy_settings")
-      .select("show_home_country, show_current_city")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (error) return OWNER_FIELDS_HIDDEN;
-    const row = (data as any) ?? null;
-    return {
-      showHomeCountry: row?.show_home_country !== false,
-      showCurrentCity: row?.show_current_city !== false,
-    };
-  } catch {
-    return OWNER_FIELDS_HIDDEN;
-  }
 }
 
 function buildIdentity(
@@ -1541,10 +1526,17 @@ export async function buildPassportProjection(
   const trust = await buildTrust(sc, userId, context, stats, identity.verified, buddyRep !== null);
   const credentials = buildCredentials(profile, trust, stats, reputation, buddyRep);
 
-  // 7. Stamps (collection-level visibility + per-item privacy already earned).
+  // 7. Stamps — BOTH gates, in order (§22):
+  //      a) the collection-level tier the owner set on the whole stamp shelf, and
+  //      b) the PER-STAMP visibility the owner set on each individual stamp.
+  //    (b) was previously dropped on this path, so a stamp the owner marked
+  //    private / circle_only was projected to any viewer that cleared (a).
+  //    filterUnifiedStamps fails closed on an absent/unknown tier.
   let stamps: StampProjection[] = [];
   if (tierPermits(prefs?.stamps_visible, callerCtx)) {
-    stamps = (unified.stamps as UnifiedStamp[]).slice(0, 24).map(mapStamp);
+    stamps = filterUnifiedStamps(unified.stamps as UnifiedStamp[], callerCtx)
+      .slice(0, 24)
+      .map(mapStamp);
   }
 
   // 8. Featured journey + upcoming plans.

@@ -519,32 +519,103 @@ export interface DiscoveryServeQueryClient {
 }
 
 /**
+ * Page size for the serve-corpus read. PostgREST's `db-max-rows` caps a
+ * range-less SELECT at 1000 rows and reports NOTHING — no error, no flag, no
+ * `Content-Range` the client inspects — so a read without `.range()` returns a
+ * silently truncated corpus that looks complete. Ask for pages of exactly this
+ * size and stop on the first short page.
+ */
+export const SERVE_ROWS_PAGE_SIZE = 1_000;
+
+/**
+ * Hard ceiling on rows accumulated across pages. Not a silent cap: hitting it
+ * sets `truncated` on the result and the report says so in the output, next to
+ * the number it affects. A metric that quietly drops rows is worse than one
+ * that says it is bounded.
+ */
+export const SERVE_ROWS_MAX = 500_000;
+
+/** The outcome of a paginated serve-corpus read. */
+export interface DiscoveryServeRowsResult {
+  rows: ServeRow[];
+  error: { message: string } | null;
+  /**
+   * True when SERVE_ROWS_MAX stopped the read before the corpus ran out — the
+   * rows here are a PREFIX of the window, not the window. Every share computed
+   * from them is a share of that prefix. Callers MUST surface this rather than
+   * printing the derived percentage as if it described the window.
+   */
+  truncated: boolean;
+  /** Pages actually read. Diagnostic; also lets a test pin the pagination. */
+  pages: number;
+}
+
+/**
  * Fetch the discovery SERVE rows for a window — every `surface='discovery'`
  * `rank_events` row with `event_type IS NULL`, regardless of its current outcome
  * rung. See the section header above for why this is not `outcome='impression'`.
  *
- * Returns `{ rows, error }`; `error` is the PostgREST error (never thrown) so the
- * caller can decide how to surface it.
+ * FULLY PAGINATED. This read used to be range-less, which meant PostgREST cut it
+ * at `db-max-rows` (1000) without saying so, and the D5 ranked-share verdict —
+ * the number the whole report exists to produce — was computed over whatever
+ * arbitrary ~1000 rows came back rather than over the corpus. On any window with
+ * real traffic that is not a rounding error; it is a different question being
+ * answered under the same name.
+ *
+ * A page that errors aborts the read and returns the error with the rows read so
+ * far. The caller (scripts/reportDiscoveryServePoints.ts) exits non-zero on a
+ * non-null error rather than reporting a partial corpus as a verdict.
+ *
+ * Returns `{ rows, error, truncated, pages }`; `error` is the PostgREST error
+ * (never thrown) so the caller can decide how to surface it.
  */
 export async function fetchDiscoveryServeRows(
   sc: DiscoveryServeQueryClient,
   window: { since: string; until: string | null },
-): Promise<{ rows: ServeRow[]; error: { message: string } | null }> {
-  let query = sc
-    .from("rank_events")
-    .select("features, session_id, served_at")
-    .eq("surface", "discovery")
-    // NOT .eq("outcome","impression") — that drops every converted serve. See
-    // the section header: a serve keeps its servePoint marker after the funnel
-    // upgrades its outcome in place, and event_type IS NULL is the serve corpus.
-    .is("event_type", null)
-    .gte("served_at", window.since);
+): Promise<DiscoveryServeRowsResult> {
+  const rows: ServeRow[] = [];
+  let pages = 0;
 
-  // Only bound the top when one was asked for. An unconditional `.lte(now)`
-  // would look harmless and would quietly exclude rows written between the
-  // query being built and the query being served.
-  if (window.until !== null) query = query.lte("served_at", window.until);
+  for (let offset = 0; ; offset += SERVE_ROWS_PAGE_SIZE) {
+    let query = sc
+      .from("rank_events")
+      .select("features, session_id, served_at")
+      .eq("surface", "discovery")
+      // NOT .eq("outcome","impression") — that drops every converted serve. See
+      // the section header: a serve keeps its servePoint marker after the funnel
+      // upgrades its outcome in place, and event_type IS NULL is the serve corpus.
+      .is("event_type", null)
+      .gte("served_at", window.since);
 
-  const { data, error } = await query;
-  return { rows: (data as ServeRow[] | null) ?? [], error: error ?? null };
+    // Only bound the top when one was asked for. An unconditional `.lte(now)`
+    // would look harmless and would quietly exclude rows written between the
+    // query being built and the query being served.
+    if (window.until !== null) query = query.lte("served_at", window.until);
+
+    // A stable total order is required for paging to mean anything: without it
+    // Postgres may return the same physical row on two pages and skip another,
+    // so the "complete" corpus would be neither complete nor deduplicated.
+    // served_at alone is not unique, so `id` breaks the ties.
+    query = query
+      .order("served_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + SERVE_ROWS_PAGE_SIZE - 1);
+
+    const { data, error } = await query;
+    pages += 1;
+    if (error) return { rows, error, truncated: false, pages };
+
+    const page = (data as ServeRow[] | null) ?? [];
+    rows.push(...page);
+
+    // A short page is the end of the corpus. A full page is not proof of more
+    // rows, but costs one extra empty read to confirm — cheap, and it is the
+    // only way to know rather than guess.
+    if (page.length < SERVE_ROWS_PAGE_SIZE) {
+      return { rows, error: null, truncated: false, pages };
+    }
+    if (rows.length >= SERVE_ROWS_MAX) {
+      return { rows, error: null, truncated: true, pages };
+    }
+  }
 }

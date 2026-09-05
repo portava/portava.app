@@ -13,11 +13,18 @@
  *
  * USER CONTROL (§19): every dimension and trait can be Shown, Hidden or marked
  * "Not Me". That state is stored per-user in `passport_travel_dna_prefs`
- * (migration 2261) and is read here best-effort — a missing table or an OFF
- * feature flag simply yields the default ("shown", no overrides), and the
- * inference still runs. Hidden / Not-Me items are still RETURNED to the owner
- * (so they can toggle them back) but are filtered out of any non-owner view by
+ * (migration 2261) and is read here best-effort — a missing table yields the
+ * default ("shown", no overrides), and the inference still runs. Hidden /
+ * Not-Me items are still RETURNED to the owner (so they can toggle them back)
+ * but are filtered out of any non-owner view by
  * `filterTravelIdentityForViewer`.
+ *
+ * THE FLAG GATES EDITING, NOT CONCEALMENT. `passport_travel_dna_enabled` gates
+ * the WRITE path (`writeTravelDnaPref`), so no new Show/Hide/Not-Me choice can
+ * be stored while the feature is dark. It deliberately does NOT gate the READ:
+ * "no prefs" resolves downstream to "show everything", so gating the read would
+ * make turning the flag OFF un-hide what a traveller had chosen to hide. A
+ * rollback must never widen disclosure.
  *
  * NON-GOALS: this never invents a "compatibility" or "match" number, and it
  * never reads or writes trip/stamp storage of its own — it is a pure projection
@@ -63,7 +70,12 @@ export interface TravelIdentityProjection {
   userId: string;
   dimensions: TravelDimension[];
   traits: TravelTrait[];
-  /** True when stored Show/Hide/Not-Me prefs were applied (flag ON + table present). */
+  /**
+   * True when the stored Show/Hide/Not-Me prefs were read and applied — i.e.
+   * the table was present and readable. NOT conditioned on
+   * `passport_travel_dna_enabled`: an existing concealment is honoured whether
+   * or not the editing feature is currently switched on.
+   */
   preferencesApplied: boolean;
   /** Owner-only: whether the owner may edit these (self view). */
   editable: boolean;
@@ -386,7 +398,7 @@ type PrefMap = Map<string, TravelDnaState>;
 
 /**
  * The owner's stored Show/Hide/Not-Me state plus whether it was actually
- * applied (flag ON + table readable). Exposed so a caller that builds MANY
+ * applied (i.e. the table was readable). Exposed so a caller that builds MANY
  * identity readings for one owner (the Yearbook builds one per year) can read
  * the prefs ONCE and pass them in — the same gate, not a second copy of it.
  */
@@ -395,12 +407,32 @@ export interface TravelDnaPrefs {
   applied: boolean;
 }
 
-/** Read stored Show/Hide/Not-Me prefs. Best-effort: OFF flag or missing table → empty. */
+/**
+ * Read stored Show/Hide/Not-Me prefs. Best-effort: a missing table → empty.
+ *
+ * DELIBERATELY NOT BEHIND `passport_travel_dna_enabled`.
+ * ======================================================
+ * This read used to be flag-gated, and that made the flag UNSAFE TO TURN OFF.
+ * `buildTravelIdentity` defaults every dimension and trait to "shown" and then
+ * applies whatever this returns, and `filterTravelIdentityForViewer` removes
+ * exactly the non-"shown" ones from a non-owner's view. So "no prefs" does not
+ * mean "no opinion" downstream — it means SHOW EVERYTHING. With the read gated,
+ * flipping the flag back OFF silently republished every dimension and trait a
+ * traveller had deliberately marked Hidden or Not Me. A rollback that widens
+ * disclosure is not a rollback.
+ *
+ * The flag gates the EDITING surface — `writeTravelDnaPref` still refuses with
+ * `feature_disabled` when it is off, so no NEW pref can be stored while the
+ * feature is dark. Honouring a concealment the user already chose is not part
+ * of the feature being rolled out; it is a privacy choice that outlives it.
+ *
+ * The residual widening — the table itself being unreadable — is unavoidable
+ * and is not the rollback case: it cannot be distinguished from "the table does
+ * not exist yet", which is the true state before migration 2261 is applied.
+ */
 export async function loadTravelDnaPrefs(sc: SupabaseClient, userId: string): Promise<TravelDnaPrefs> {
   const empty = { prefs: new Map<string, TravelDnaState>(), applied: false };
   try {
-    const on = await isFlagEnabled(sc, TRAVEL_DNA_FLAG);
-    if (!on) return empty;
     const { data, error } = await sc
       .from("passport_travel_dna_prefs")
       .select("dimension_key, state")

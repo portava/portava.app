@@ -14,6 +14,7 @@
  */
 
 import { isFreshEnoughForLabel } from "./mediaFreshness.js";
+import type { MediaPlaceDisclosure } from "../mediaLocationVisibility.js";
 
 /**
  * The columns a projection route may SELECT from `posts`.
@@ -34,6 +35,10 @@ import { isFreshEnoughForLabel } from "./mediaFreshness.js";
 export const MEDIA_PROJECTION_POST_COLUMNS =
   "id, author_id, trip_id, content, media_urls, visibility, status, post_status, " +
   "created_at, category, " +
+  // `location_privacy_mode` is the OWNER's own coarseness choice. It is a coarse
+  // enum, NOT a coordinate — reading it is what lets the projection HONOUR the
+  // owner instead of overriding them (see applyLocationDisclosure below).
+  "location_privacy_mode, " +
   "location_name, location_city, location_country, canonical_place_id";
 
 /** post_media child columns safe for projection. No coordinate columns exist here. */
@@ -92,6 +97,9 @@ export interface MediaCandidateRow {
   location_city?: string | null;
   location_country?: string | null;
   canonical_place_id?: string | null;
+  /** The owner's coarseness choice (`post_location_privacy_mode`). Coarse enum. */
+  location_privacy_mode?: string | null;
+  post_status?: string | null;
   post_media?: any[] | null;
   media_urls?: string[] | null;
   profiles?: any;
@@ -223,6 +231,38 @@ export function classifyFreshness(capturedAt: string, nowMs: number): "fresh" | 
   if (isFreshEnoughForLabel(ageMs)) return "fresh"; // < 1h
   if (ageMs < 24 * 60 * 60 * 1000) return "recent"; // < 24h
   return "historical";
+}
+
+// ── Location disclosure (the choke point applied to a shaped projection) ──────
+
+/**
+ * Apply a resolved `MediaPlaceDisclosure` to a projection.
+ *
+ * `toMediaProjection` copies the row's stored labels verbatim — which is correct
+ * for a projector (it is the whitelist, not the policy) but is NOT servable on
+ * its own: the stored `location_name` IS the venue, and `canonical_place_id`
+ * resolves to that same venue through the Map gateway. Every non-owner-facing
+ * caller must pass the projection through here with a disclosure resolved by
+ * `lib/mediaLocationVisibility.resolveMediaPlaceDisclosure`, so the owner's
+ * privacy mode and any hosting Hidden Gem's ceiling actually bind.
+ *
+ * PURE. In the unconstrained case (owner, no privacy mode, no restrictive gem)
+ * the projection comes back materially unchanged.
+ */
+export function applyLocationDisclosure(
+  p: MediaProjection,
+  d: MediaPlaceDisclosure,
+): MediaProjection {
+  return {
+    ...p,
+    // Withheld below place-level: the id is a place-level identifier (see
+    // MediaPlaceDisclosure.mayDisclosePlaceId).
+    placeId: d.mayDisclosePlaceId ? p.placeId : null,
+    placeLabel: d.name,
+    neighborhood: d.neighborhood,
+    city: d.city,
+    country: d.country,
+  };
 }
 
 /** Project a page of candidate rows, dropping the ones with no renderable media. */

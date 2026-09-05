@@ -75,12 +75,12 @@ function seed(overrides: Record<string, any[]> = {}) {
       { id: "m-solo", user_id: OWNER, status: "active", title: "Solo sunset", city: "Bangkok", country: "Thailand", trip_id: null, visibility: "public", earned_at: "2024-11-11" },
     ],
     user_stamps: [
-      { id: "s-bkk", user_id: OWNER, source_type: "posts", city: "Bangkok", country: "Thailand", is_revoked: false, earned_at: "2024-11-11", catalog_id: "c-bkk", stamp_definitions: { name: "Chatuchak", stamp_type: "market" } },
-      { id: "s-night1", user_id: OWNER, source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-10", catalog_id: "c-n1", stamp_definitions: { name: "Night Market", stamp_type: "nightlife" } },
-      { id: "s-night2", user_id: OWNER, source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-12", catalog_id: "c-n2", stamp_definitions: { name: "Sky Bar", stamp_type: "nightlife" } },
-      { id: "s-trip", user_id: OWNER, source_type: "trips", source_id: T_VN, city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-30", catalog_id: "c-t", stamp_definitions: { name: "Da Nang", stamp_type: "city" } },
-      { id: "s-gem1", user_id: OWNER, source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-04-02", catalog_id: "c-g1", stamp_definitions: { name: "Quiet Alley Cafe", stamp_type: "hidden_gem" } },
-      { id: "s-gem2", user_id: OWNER, source_type: "posts", city: "Hue", country: "Vietnam", is_revoked: false, earned_at: "2025-04-03", catalog_id: "c-g2", stamp_definitions: { name: "Rooftop Garden", stamp_type: "hidden_gem" } },
+      { id: "s-bkk", user_id: OWNER, visibility: "public", source_type: "posts", city: "Bangkok", country: "Thailand", is_revoked: false, earned_at: "2024-11-11", catalog_id: "c-bkk", stamp_definitions: { name: "Chatuchak", stamp_type: "market" } },
+      { id: "s-night1", user_id: OWNER, visibility: "public", source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-10", catalog_id: "c-n1", stamp_definitions: { name: "Night Market", stamp_type: "nightlife" } },
+      { id: "s-night2", user_id: OWNER, visibility: "public", source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-12", catalog_id: "c-n2", stamp_definitions: { name: "Sky Bar", stamp_type: "nightlife" } },
+      { id: "s-trip", user_id: OWNER, visibility: "public", source_type: "trips", source_id: T_VN, city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-30", catalog_id: "c-t", stamp_definitions: { name: "Da Nang", stamp_type: "city" } },
+      { id: "s-gem1", user_id: OWNER, visibility: "public", source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-04-02", catalog_id: "c-g1", stamp_definitions: { name: "Quiet Alley Cafe", stamp_type: "hidden_gem" } },
+      { id: "s-gem2", user_id: OWNER, visibility: "public", source_type: "posts", city: "Hue", country: "Vietnam", is_revoked: false, earned_at: "2025-04-03", catalog_id: "c-g2", stamp_definitions: { name: "Rooftop Garden", stamp_type: "hidden_gem" } },
     ],
     passport_stamps: [],
     ...overrides,
@@ -306,6 +306,32 @@ describe("yearbook is a subset of the passport projection", () => {
     assert.ok(!blob.includes("Secret spot"));
   });
 
+  it("applies the PER-STAMP visibility tier, not only the stamp-shelf tier (§22)", async () => {
+    // The collection tier (`stamps_visible`) says whether the shelf is shown at
+    // all; the per-stamp tier says which stamps on it are. The projection gates
+    // on BOTH, so the yearbook — a retelling of the projection — must too.
+    const withPrivate = {
+      user_stamps: [
+        { id: "s-open", user_id: OWNER, visibility: "public", source_type: "posts", city: "Hue", country: "Vietnam", is_revoked: false, earned_at: "2025-05-01", catalog_id: "c-o", stamp_definitions: { name: "Open Stamp", stamp_type: "place" } },
+        { id: "s-shut", user_id: OWNER, visibility: "private", source_type: "posts", city: "Hue", country: "Vietnam", is_revoked: false, earned_at: "2025-05-02", catalog_id: "c-s", stamp_definitions: { name: "Private Stamp", stamp_type: "place" } },
+        // No tier at all: `isUnifiedStampVisible` fails closed rather than
+        // defaulting an absent tier to public.
+        { id: "s-untiered", user_id: OWNER, source_type: "posts", city: "Hue", country: "Vietnam", is_revoked: false, earned_at: "2025-05-03", catalog_id: "c-u2", stamp_definitions: { name: "Untiered Stamp", stamp_type: "place" } },
+      ],
+    };
+    const viewer = await buildYearbook(seed(withPrivate), OWNER, publicPerms());
+    const viewerBlob = JSON.stringify(viewer);
+    assert.ok(viewerBlob.includes("Open Stamp"), "a public stamp must still be narrated");
+    assert.ok(!viewerBlob.includes("Private Stamp"), "yearbook narrated a stamp the owner marked private");
+    assert.ok(!viewerBlob.includes("Untiered Stamp"), "yearbook narrated a stamp with no visibility tier");
+    assert.equal(year(viewer, 2025).stampCount, 1, "only the one public stamp may be counted");
+
+    // …and the owner's own yearbook still counts all three: the gate is a
+    // viewer-side filter, not a deletion.
+    const own = await buildYearbook(seed(withPrivate), OWNER, ownerPerms());
+    assert.equal(year(own, 2025).stampCount, 3, "the owner must still see every stamp they earned");
+  });
+
   it("a viewer's years are a subset of the owner's own years and places", async () => {
     const own = await buildYearbook(seed(), OWNER, ownerPerms());
     const viewer = await buildYearbook(seed(), OWNER, publicPerms());
@@ -451,7 +477,7 @@ describe("yearbook truth boundary (§37)", () => {
 describe("isHiddenGemStamp", () => {
   const base = {
     source: "v2_achievement" as const, stampSource: "system_observed" as const,
-    verification: "verified" as const, userStampId: null, definitionId: null,
+    verification: "verified" as const, visibility: "public", userStampId: null, definitionId: null,
     catalogId: null, city: null, country: null, earnedAt: null, rarity: null, artworkUrl: null,
   };
   it("matches on the stamp type", () => {
@@ -577,12 +603,12 @@ describe("yearbook stamp milestones", () => {
     const db = seed({
       user_stamps: [
         UNDATED,
-        { id: "s-bkk", user_id: OWNER, source_type: "posts", city: "Bangkok", country: "Thailand", is_revoked: false, earned_at: "2024-11-11", catalog_id: "c-bkk", stamp_definitions: { name: "Chatuchak", stamp_type: "market" } },
-        { id: "s-night1", user_id: OWNER, source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-10", catalog_id: "c-n1", stamp_definitions: { name: "Night Market", stamp_type: "nightlife" } },
-        { id: "s-night2", user_id: OWNER, source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-12", catalog_id: "c-n2", stamp_definitions: { name: "Sky Bar", stamp_type: "nightlife" } },
-        { id: "s-trip", user_id: OWNER, source_type: "trips", source_id: T_VN, city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-30", catalog_id: "c-t", stamp_definitions: { name: "Da Nang", stamp_type: "city" } },
-        { id: "s-gem1", user_id: OWNER, source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-04-02", catalog_id: "c-g1", stamp_definitions: { name: "Quiet Alley Cafe", stamp_type: "hidden_gem" } },
-        { id: "s-gem2", user_id: OWNER, source_type: "posts", city: "Hue", country: "Vietnam", is_revoked: false, earned_at: "2025-04-03", catalog_id: "c-g2", stamp_definitions: { name: "Rooftop Garden", stamp_type: "hidden_gem" } },
+        { id: "s-bkk", user_id: OWNER, visibility: "public", source_type: "posts", city: "Bangkok", country: "Thailand", is_revoked: false, earned_at: "2024-11-11", catalog_id: "c-bkk", stamp_definitions: { name: "Chatuchak", stamp_type: "market" } },
+        { id: "s-night1", user_id: OWNER, visibility: "public", source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-10", catalog_id: "c-n1", stamp_definitions: { name: "Night Market", stamp_type: "nightlife" } },
+        { id: "s-night2", user_id: OWNER, visibility: "public", source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-12", catalog_id: "c-n2", stamp_definitions: { name: "Sky Bar", stamp_type: "nightlife" } },
+        { id: "s-trip", user_id: OWNER, visibility: "public", source_type: "trips", source_id: T_VN, city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-30", catalog_id: "c-t", stamp_definitions: { name: "Da Nang", stamp_type: "city" } },
+        { id: "s-gem1", user_id: OWNER, visibility: "public", source_type: "posts", city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-04-02", catalog_id: "c-g1", stamp_definitions: { name: "Quiet Alley Cafe", stamp_type: "hidden_gem" } },
+        { id: "s-gem2", user_id: OWNER, visibility: "public", source_type: "posts", city: "Hue", country: "Vietnam", is_revoked: false, earned_at: "2025-04-03", catalog_id: "c-g2", stamp_definitions: { name: "Rooftop Garden", stamp_type: "hidden_gem" } },
       ],
     });
     const yb = await buildYearbook(db, OWNER, ownerPerms());

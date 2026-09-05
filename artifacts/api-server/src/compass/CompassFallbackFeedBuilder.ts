@@ -33,6 +33,7 @@ import type { CompassItem, CompassItemType, CompassProfile } from "./types.js";
 import { runSafetyFilterBatch }                              from "./CompassSafetyFilter.js";
 import { sanitizeItem }                                      from "./CompassPrivacyGuard.js";
 import { getFlags }                                          from "./flags.js";
+import { isPostPublished }                                   from "../lib/postVisibility.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -490,18 +491,33 @@ async function fetchPopularPosts(
   blockedIds: Set<string>,
 ): Promise<FallbackItem[]> {
   try {
-    const now = new Date().toISOString();
+    // Delayed-publish gate (§23/§37). This query used to say
+    // `.not("post_status", "eq", "delayed_post")`. `delayed_post` is not a label
+    // of the `delayed_post_status` enum that types posts.post_status — the
+    // labels are draft / private / pending_location_exit / pending_delay /
+    // pending_safety_review / published / canceled / expired (migration 0049) —
+    // so PostgREST could never match it: at best the filter excluded nothing,
+    // at worst the whole read failed 22P02 (invalid input value for enum) and
+    // this best-effort catch swallowed it, making the popular-posts lane return
+    // nothing at all. Either way the gate it was written to be did not exist.
+    //
+    // The eligibility-clock `or` is gone with it: post_status is the authority
+    // on publication (the sweeper that sets it applies the safety-review hold
+    // and the manual-release path), and a manually released post keeps a future
+    // publish_eligible_at, which that clause would have wrongly excluded.
     const { data } = await db
       .from("posts")
       .select("id, author_id, content, like_count, comment_count, post_status, publish_eligible_at")
       .eq("visibility", "public")
       .eq("status", "active")
-      // Exclude delayed posts that are not yet eligible
-      .not("post_status", "eq", "delayed_post")
-      .or(`publish_eligible_at.is.null,publish_eligible_at.lte.${now}`)
+      .eq("post_status", "published")
       .order("like_count", { ascending: false })
       .limit(8);
     return ((data as any[]) ?? [])
+      // No in-memory publish filter here on purpose: this module's second layer
+      // IS the safety filter, and `isDelayedPost` below is what feeds it. A row
+      // fed past the query predicate is refused there, so duplicating the check
+      // in this map would only make one of the two guards unfalsifiable.
       .filter((r: any) => !blockedIds.has(r.author_id as string))
       .map((r: any): FallbackItem => ({
         id:          r.id as string,
@@ -512,8 +528,11 @@ async function fetchPopularPosts(
         data:        {
           likeCount:    r.like_count,
           commentCount: r.comment_count,
-          // Carry the flag so toCompassItem can re-surface it to the safety filter
-          isDelayedPost: r.post_status === "delayed_post",
+          // Carry the flag so toCompassItem can re-surface it to the safety
+          // filter. Same dead literal as the query filter above: this compared
+          // against `delayed_post`, which no row can hold, so the downstream
+          // delayed-post gate in CompassSafetyFilter never saw a true value.
+          isDelayedPost: !isPostPublished(r),
         },
       }));
   } catch { return []; }
