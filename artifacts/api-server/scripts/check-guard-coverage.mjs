@@ -229,6 +229,20 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'fail-closed (never-certifiable-from-here) density-gate readout for a human to act on.',
   },
   {
+    file: 'src/scripts/reportIntelLineageAudit.ts',
+    reason:
+      'ONE SELECT, one table, no writes: intel_state_snapshot_versions (id, subject_id, zone_id, claim_type, ' +
+      'confidence, confidence_band, confidence_components, algorithm_version, generated_at), optionally ' +
+      'narrowed by generated_at and subject_id, ordered by generated_at desc and row-limited. Every stored ' +
+      'row is then re-scored IN MEMORY through the same lib/confidenceScore path the writer used and compared ' +
+      'with what was stored. It answers the §1 / Appendix B question — is the lineage every projection writes ' +
+      'actually replayable — which is a question about production, since only production rows carry real ' +
+      'lineage. It issues no INSERT/UPDATE/DELETE/DDL, no RPC and no auth-admin call, and deliberately does ' +
+      'NOT repair a diverged row: a divergence is the evidence that the row and the code disagree, and ' +
+      '"fixing" it would destroy that evidence. It prints a tally and exits non-zero on divergence, or on an ' +
+      'EMPTY scan (zero rows proves nothing and must never read as a pass).',
+  },
+  {
     file: 'src/scripts/auditShadowAppendOnly.ts',
     reason:
       'Three SELECTs through the Management API — pg_class for relrowsecurity, ' +
