@@ -17,6 +17,7 @@
  * a per-subject or per-contributor row.
  */
 import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
+import { normalizeConflictState } from "./intelConflict.js";
 
 /** Minimum distinct subjects before a neighborhood aggregate may be exposed. */
 export const MIN_PULSE_SUBJECTS = 3;
@@ -27,6 +28,15 @@ export interface PulseSnapshotInput {
   claimType: string;
   value: unknown;
   observedAt: string;
+  /**
+   * §10 conflict state of the cohort behind the snapshot (intel_state_snapshots
+   * .conflict_state, 2275). A MATERIAL conflict contributes NOTHING to the
+   * distribution — see computeNeighborhoodPulse. Read through
+   * lib/intelConflict.normalizeConflictState, the same policy lib/liveClaimRead
+   * applies, so absent/null is 'none' (pre-2275 rows) and an unrecognised marker
+   * is 'material'.
+   */
+  conflictState?: unknown;
 }
 
 export interface NeighborhoodPulse {
@@ -63,6 +73,13 @@ export function computeNeighborhoodPulse(
   const perSubject = new Map<string, { level: string; observedAt: string }>();
   for (const s of snapshots) {
     if (s.claimType !== "crowd.level") continue;
+    // §10 / invariant §1: a subject whose cohort MATERIALLY disagrees has no
+    // single current value, and this aggregate has nowhere to carry a "reports
+    // differ" marker — folding its plurality into the distribution would be the
+    // silent averaging the conflict state exists to prevent. It is dropped, not
+    // averaged; a subject with no other snapshot then simply does not count
+    // toward subjectCount, so the k-threshold gets STRICTER, never looser.
+    if (normalizeConflictState(s.conflictState) === "material") continue;
     const level = crowdLevelOf(s.value);
     if (!level) continue;
     const prev = perSubject.get(s.subjectId);
