@@ -27,6 +27,11 @@
 // runtime source of the verb vocabulary here.
 import type { CanonicalEventVerb } from "./canonicalEvents.js";
 import { VERB_FAMILY } from "./eventFamilies.js";
+// Value import on purpose. lib/intelContracts is declarations plus pure
+// functions with NO imports of its own, so pulling PRIVACY_THRESHOLD_V1 in at
+// runtime preserves this module's load-bearing "no runtime effect" property —
+// the same reason canonicalEvents above is imported for types only.
+import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -145,13 +150,30 @@ export function computeMovementStrength(c: MovementCounts): number {
   return c.verifiedArrivals + 0.6 * c.headingTo + 0.25 * c.saves - 0.5 * c.cancellations;
 }
 
-/** §13 Privacy threshold v1 — the defaults that gate any movement publication. */
+/**
+ * §13 Privacy threshold v1 — the values that gate any movement publication.
+ *
+ * DERIVED, NEVER RESTATED. Until 2026-09-05 every number here was written out
+ * as a literal under a comment claiming these were "the defaults". They were a
+ * COPY of lib/intelContracts.PRIVACY_THRESHOLD_V1, and a copy of a threshold is
+ * a threshold that silently stops tracking: tightening the shared gate (the one
+ * the A0 packet §09 requires to cover the Compass aggregate path too) would have
+ * left every movement reader — lib/trailServe's cohort floor included — on the
+ * old, looser floor with nothing red to show for it. This is the same
+ * hard-coded-mirror class as the phantom TRAIL_OUTCOME_VERBS vocabulary below.
+ *
+ * The names differ from the shared record's on purpose (`minGroups` vs
+ * `minIndependentGroups`, `minTimeBucketMinutes` vs `timeBucketMinutes`) — this
+ * is the movement-side vocabulary and callers depend on it — so the mapping is
+ * spelled out here, once, rather than left to a spread that would also drag in
+ * `minVenueCohortForVenueGeography`, which is a GEOGRAPHY rule, not a floor.
+ */
 export const MOVEMENT_PRIVACY_V1 = {
-  minUniqueActors: 15,
-  minGroups: 5,
-  maxSingleGroupShare: 0.2,
-  minTimeBucketMinutes: 30,
-  minPublicationDelayMinutes: 10,
+  minUniqueActors: PRIVACY_THRESHOLD_V1.minUniqueActors,
+  minGroups: PRIVACY_THRESHOLD_V1.minIndependentGroups,
+  maxSingleGroupShare: PRIVACY_THRESHOLD_V1.maxSingleGroupShare,
+  minTimeBucketMinutes: PRIVACY_THRESHOLD_V1.timeBucketMinutes,
+  minPublicationDelayMinutes: PRIVACY_THRESHOLD_V1.publicationDelayMinutes,
 } as const;
 
 export const MOVEMENT_CONFIDENCE_FLOOR = 0.65;
