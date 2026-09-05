@@ -167,11 +167,12 @@ const BLOCKED_BY_VIEWER = "blk-viewer-p";
 const BLOCKED_BY_OWNER = "blk-owner-p";
 const INVITEE = "invitee-p";   // invited, not accepted
 
-function dbWithPeople(
+/** The table map behind `dbWithPeople`, so a case can override one table. */
+function tablesWithPeople(
   blocks: Array<{ blocker_id: string; blocked_id: string }> = [],
   includeBlockCandidates = true,
-) {
-  return makePassportDb({
+): Record<string, any[]> {
+  return {
     trip_members: [
       { trip_id: T_VN, user_id: OWNER, role: "owner", status: "accepted" },
       { trip_id: T_VN, user_id: FRIEND, role: "member", status: "accepted" },
@@ -198,8 +199,26 @@ function dbWithPeople(
       { id: BLOCKED_BY_OWNER, display_name: "Blk O", name: "Blk", username: "blko", handle: "blko", avatar_url: null, show_profile_picture_publicly: true },
       { id: "declined-p", display_name: "Declined", name: "D", username: "dec", handle: "dec", avatar_url: null, show_profile_picture_publicly: true },
     ],
+    // These cases are about block-filtering and coarseness, not name visibility:
+    // every companion has opted in to `show_real_name`, so the universal
+    // display-name rule is satisfied and the name assertions stay meaningful.
+    // (The rule itself is covered by passportProjectionNameVisibility.test.ts.)
+    profile_privacy_settings: [
+      { user_id: FRIEND, show_real_name: true },
+      { user_id: MATE, show_real_name: true },
+      { user_id: BLOCKED_BY_VIEWER, show_real_name: true },
+      { user_id: BLOCKED_BY_OWNER, show_real_name: true },
+      { user_id: "declined-p", show_real_name: true },
+    ],
     blocks,
-  });
+  };
+}
+
+function dbWithPeople(
+  blocks: Array<{ blocker_id: string; blocked_id: string }> = [],
+  includeBlockCandidates = true,
+) {
+  return makePassportDb(tablesWithPeople(blocks, includeBlockCandidates));
 }
 
 function peopleOfTVN(r: Awaited<ReturnType<typeof buildJourneys>>) {
@@ -227,6 +246,48 @@ describe("buildJourneys — §14 people context", () => {
     assert.deepEqual(Object.keys(friend).sort(), ["avatarUrl", "handle", "id", "name"]);
     // Invited-but-not-accepted member never appears.
     assert.ok(!ids.includes(INVITEE));
+  });
+
+  it("honors each companion's show_real_name — the strip is a third-party identity list", async () => {
+    // FRIEND opted in; MATE did not. Same fixture, one row flipped.
+    const db = dbWithPeople([], false);
+    const r = await buildJourneys(db, OWNER, { isSelf: false, canSeeTrips: true, canSeeRestricted: true, viewerId: VIEWER });
+    const people = peopleOfTVN(r);
+    // POSITIVE CONTROL: the opted-in companion is still named.
+    assert.equal(people.find((p) => p.id === FRIEND)!.name, "Friend F");
+    assert.equal(people.find((p) => p.id === MATE)!.name, "Mate M");
+
+    // Now the same trip with MATE opted OUT (no privacy row at all ⇒ unknown ⇒ hidden).
+    const optedOut = makePassportDb({
+      ...tablesWithPeople([], false),
+      profile_privacy_settings: [{ user_id: FRIEND, show_real_name: true }],
+    });
+    const r2 = await buildJourneys(optedOut, OWNER, { isSelf: false, canSeeTrips: true, canSeeRestricted: true, viewerId: VIEWER });
+    const p2 = peopleOfTVN(r2);
+    assert.equal(p2.find((p) => p.id === MATE)!.name, null, "a companion who did not opt in must not be named");
+    assert.equal(p2.find((p) => p.id === MATE)!.handle, "matem", "…but still renders by handle");
+    assert.equal(p2.find((p) => p.id === FRIEND)!.name, "Friend F", "POSITIVE CONTROL: the opted-in companion is unaffected");
+  });
+
+  it("fails CLOSED when the privacy table is unreadable", async () => {
+    const base = makePassportDb({
+      ...tablesWithPeople([], false),
+      profile_privacy_settings: [
+        { user_id: FRIEND, show_real_name: true },
+        { user_id: MATE, show_real_name: true },
+      ],
+    });
+    const broken: any = {
+      ...base,
+      from(t: string) {
+        if (t === "profile_privacy_settings") throw new Error("privacy table unavailable");
+        return base.from(t);
+      },
+    };
+    const r = await buildJourneys(broken, OWNER, { isSelf: false, canSeeTrips: true, canSeeRestricted: true, viewerId: VIEWER });
+    const people = peopleOfTVN(r);
+    assert.ok(people.length >= 2, "the people strip still renders");
+    for (const p of people) assert.equal(p.name, null, `unknown visibility must hide ${p.handle}'s name, not show it`);
   });
 
   it("block-filters people in BOTH directions (viewer-blocked and owner-blocked) — §24", async () => {
