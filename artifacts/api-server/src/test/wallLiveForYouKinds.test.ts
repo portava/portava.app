@@ -119,17 +119,63 @@ describe("social_presence producer — k-anonymity floor, viewer-relevant (spec 
   });
 });
 
-describe("buddy producer — behind the RAB flag, city-area only (spec §19)", () => {
+describe("buddy producer — behind BOTH RAB flags, city-area only (spec §19)", () => {
   const PLACES = [{ placeId: "p1", name: "Rooftop", city: "Bangkok" }];
-  const buddyClient = (rows: any[]) => tableClient({ rent_buddy_profiles: rows });
 
-  it("returns nothing when the RAB flag is off", async () => {
-    const sc = buddyClient([{ id: "b1", city: "Bangkok", categories: ["nightlife"] }]);
+  /**
+   * Flag-AWARE fake: `feature_flags` resolves per requested flag name, so the
+   * Wall flag and the RAB master can be set independently. `tableClient` above
+   * cannot express that — its maybeSingle returns the same row for every flag.
+   */
+  function buddyClient(rows: any[], flags: Record<string, boolean>) {
+    return {
+      from(table: string) {
+        const eqs: Record<string, unknown> = {};
+        const b: any = {
+          select: () => b, in: () => b, limit: () => b,
+          eq: (col: string, val: unknown) => { eqs[col] = val; return b; },
+          maybeSingle: () => Promise.resolve(
+            table === "feature_flags"
+              ? { data: { enabled: flags[String(eqs["flag"])] === true }, error: null }
+              : { data: null, error: null },
+          ),
+          then: (onF: any, onR: any) =>
+            Promise.resolve({ data: table === "rent_buddy_profiles" ? rows : [], error: null }).then(onF, onR),
+        };
+        return b;
+      },
+    };
+  }
+
+  const BUDDY = [{ id: "b1", city: "Bangkok", categories: ["nightlife"] }];
+
+  it("returns nothing when the Wall RAB flag is off", async () => {
+    const sc = buddyClient(BUDDY, { wall_rab_integration_enabled: false, rent_buddy_enabled: true });
     assert.deepEqual(await buildBuddyLiveCandidates(sc, PLACES, { rabEnabled: false, now: NOW }), []);
   });
 
-  it("surfaces an available Buddy in the place's city when the flag is on", async () => {
-    const sc = buddyClient([{ id: "b1", city: "Bangkok", categories: ["nightlife"] }]);
+  /**
+   * REGRESSION — a producer must not advertise a globally disabled product.
+   *
+   * `rabEnabled` is the Wall's own flag, handed down by the route. This producer
+   * used to treat it as sufficient, so pressing `wall_rab_integration_enabled`
+   * would have surfaced "Buddy around" strip items while the RAB master
+   * `rent_buddy_enabled` was false — as it is in production — offering a booking
+   * nobody could complete. The master is now re-read HERE, not trusted from the
+   * caller, so no caller can reintroduce the misfire.
+   */
+  it("returns nothing when the RAB MASTER is off, even with the Wall flag on", async () => {
+    const sc = buddyClient(BUDDY, { wall_rab_integration_enabled: true, rent_buddy_enabled: false });
+    assert.deepEqual(await buildBuddyLiveCandidates(sc, PLACES, { rabEnabled: true, now: NOW }), []);
+  });
+
+  it("returns nothing when the flag table is unreadable (fail-closed)", async () => {
+    const sc = { from: () => { throw new Error("flag table down"); } };
+    assert.deepEqual(await buildBuddyLiveCandidates(sc, PLACES, { rabEnabled: true, now: NOW }), []);
+  });
+
+  it("surfaces an available Buddy in the place's city when BOTH flags are on", async () => {
+    const sc = buddyClient(BUDDY, { wall_rab_integration_enabled: true, rent_buddy_enabled: true });
     const cands = await buildBuddyLiveCandidates(sc, PLACES, { rabEnabled: true, now: NOW });
     assert.equal(cands.length, 1);
     assert.equal(cands[0].liveObjectType, "buddy");

@@ -31,6 +31,7 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser, sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isWallRabEnabled } from "../services/wall/wallRabGate.js";
 import { isPostPublished } from "../lib/postVisibility.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
@@ -714,7 +715,8 @@ router.get(
         isFlagEnabled(sc, "wall_discovery_insertions_enabled"),
         isFlagEnabled(sc, "wall_live_for_you_enabled"),
         isFlagEnabled(sc, "wall_compass_handoff_enabled"),
-        isFlagEnabled(sc, "wall_rab_integration_enabled"),
+        // BOTH the Wall flag and the RAB master — see isWallRabEnabled.
+        isWallRabEnabled(sc),
       ]);
 
     const viewer = await loadViewerContext(sc, user.id);
@@ -943,7 +945,8 @@ router.get(
     // The strip is multi-kind (§4/TABLE 0): place_state from the intel projection
     // plus hidden_gem / social_presence / buddy from their own canonical readers.
     const viewer = await loadViewerContext(sc, user.id);
-    const rabEnabled = await isFlagEnabled(sc, "wall_rab_integration_enabled");
+    // BOTH the Wall flag and the RAB master — see isWallRabEnabled.
+    const rabEnabled = await isWallRabEnabled(sc);
     const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
     const seen = new Set<string>();
     const placeRefs: PublicPlaceRef[] = [];

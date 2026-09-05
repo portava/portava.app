@@ -115,14 +115,54 @@ describe("inferTravelIdentity (pure)", () => {
 });
 
 describe("buildTravelIdentity + viewer filtering", () => {
-  it("with the flag OFF, reads no prefs and everything shows", async () => {
+  /**
+   * ROLLBACK MUST NOT WIDEN DISCLOSURE.
+   *
+   * `passport_travel_dna_enabled` used to gate the PREFS READ as well as the
+   * write. Because "no prefs" resolves to "everything shown" — buildTravelIdentity
+   * defaults each item to "shown" and filterTravelIdentityForViewer removes only
+   * the non-"shown" ones — flipping the flag back OFF silently republished every
+   * dimension and trait the traveller had marked Hidden or Not Me.
+   *
+   * The flag gates the editing surface (writeTravelDnaPref still refuses while
+   * it is off — see passportTravelDnaWrite.test.ts). A concealment already
+   * chosen outlives the feature flag.
+   */
+  it("flag OFF: a stored Hide is still honoured — a rollback must not un-hide", async () => {
     // feature_flags empty ⇒ passport_travel_dna_enabled is OFF (fail-closed).
-    const db = makePassportDb({ passport_travel_dna_prefs: [{ user_id: USER, dimension_key: "spend_style", state: "hidden" }] });
+    const db = makePassportDb({
+      passport_travel_dna_prefs: [
+        { user_id: USER, dimension_key: "spend_style", state: "hidden" },
+        { user_id: USER, dimension_key: "night_explorer", state: "not_me" },
+      ],
+    });
     const ti = await buildTravelIdentity(db, USER, PROFILE, SIGNALS, { isSelf: true });
-    assert.equal(ti.preferencesApplied, false, "prefs must not apply when flag is off");
-    const spend = ti.dimensions.find((d) => d.key === "spend_style")!;
-    assert.equal(spend.state, "shown", "default state with flag off");
+    assert.equal(ti.preferencesApplied, true, "concealment is read regardless of the flag");
+    // The owner still sees the item (so they can toggle it back) with its state.
+    assert.equal(ti.dimensions.find((d) => d.key === "spend_style")!.state, "hidden");
+    assert.equal(ti.traits.find((t) => t.key === "night_explorer")!.state, "not_me");
     assert.equal(ti.editable, true);
+
+    // THE ASSERTION THAT MATTERS: a VIEWER still cannot see them with the flag off.
+    const viewerView = filterTravelIdentityForViewer(ti, false);
+    assert.ok(
+      !viewerView.dimensions.some((d) => d.key === "spend_style"),
+      "a dimension hidden while the flag was ON must stay hidden after the flag goes OFF",
+    );
+    assert.ok(
+      !viewerView.traits.some((t) => t.key === "night_explorer"),
+      "a trait marked Not Me must stay hidden after the flag goes OFF",
+    );
+    // Non-concealed content is unaffected — this is not a blanket suppression.
+    assert.ok(viewerView.dimensions.some((d) => d.key === "travel_pace"));
+  });
+
+  it("flag OFF and no stored prefs: everything shows (absence of a choice is not a choice)", async () => {
+    const db = makePassportDb({ passport_travel_dna_prefs: [] });
+    const ti = await buildTravelIdentity(db, USER, PROFILE, SIGNALS, { isSelf: true });
+    for (const d of ti.dimensions) assert.equal(d.state, "shown");
+    const viewerView = filterTravelIdentityForViewer(ti, false);
+    assert.equal(viewerView.dimensions.length, ti.dimensions.length);
   });
 
   it("with the flag ON, applies stored Show/Hide/Not-Me and filters for viewers", async () => {
