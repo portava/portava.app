@@ -41,8 +41,13 @@
  * profiles row cascades into intel_presence_verifications. 2137 had removed
  * exactly that trigger from the original intel tables, for exactly this reason;
  * three later migrations copied 2130's shape and reintroduced it.
- * 2291_intel_stmt_trigger_removal_round2.sql removes it again, and
- * src/test/appendOnlyStatementTriggers.test.ts refuses the next copy.
+ * 2292_intel_stmt_trigger_removal_ig_campaign.sql removes it again, and
+ * src/test/appendOnlyCascade.test.ts refuses the next copy.
+ *
+ * (2292 arrived on main from the IG campaign while this branch was in flight,
+ * doing the same three tables. This branch had written its own 2291 for the
+ * same removal; the duplicate was dropped rather than merged, and the DDL was
+ * applied to portava-ci once.)
  *
  * ── SO THERE ARE NOW THREE LAYERS, AND THEY ARE INDEPENDENT ─────────────────
  *   1. RUN-SCOPED EMAILS (`fixtureEmail`). A leftover row from a previous run
