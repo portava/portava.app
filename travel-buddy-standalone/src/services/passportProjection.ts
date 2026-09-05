@@ -262,6 +262,106 @@ export async function getTravelIdentity(
   return { ok: true, data: res.data?.projection?.travelIdentity ?? null };
 }
 
+// ── Yearbook (§9 Phase 9 — Intelligence) ─────────────────────────────────────
+
+/**
+ * §37 truth boundary. `observed` restates recorded facts (trips, stamps,
+ * memories); `inferred` is a model reading (a Travel DNA shift). The screen MUST
+ * label an inferred line — it is never presented as a record.
+ */
+export type YearbookBasis = 'observed' | 'inferred';
+
+export type YearbookLineKind =
+  | 'places'
+  | 'journey'
+  | 'stamp_milestone'
+  | 'memories'
+  | 'dna_shift';
+
+/** One explainable claim about a year. The server guarantees `evidence` is non-empty. */
+export interface YearbookLine {
+  key: string;
+  kind: YearbookLineKind;
+  headline: string;
+  basis: YearbookBasis;
+  evidence: string[];
+}
+
+export interface YearbookYear {
+  year: number;
+  /** Coarse place labels only (§23) — never coordinates. */
+  countries: string[];
+  cities: string[];
+  journeyCount: number;
+  stampCount: number;
+  memoryCount: number;
+  lines: YearbookLine[];
+  empty: boolean;
+  emptyMessage: string | null;
+}
+
+/** The four collections a yearbook aggregates over. */
+export type YearbookCollection = 'journeys' | 'stamps' | 'memories' | 'travelDna';
+
+/**
+ * Why a collection is absent. `visibility` is the owner's passport visibility
+ * settings; `unavailable` is a failed read and says nothing about privacy. The
+ * screen must never state one reason when the server said the other.
+ */
+export interface YearbookExclusion {
+  collection: YearbookCollection;
+  reason: 'visibility' | 'unavailable';
+}
+
+export interface YearbookProjection {
+  userId: string;
+  /** Newest first. */
+  years: YearbookYear[];
+  empty: boolean;
+  emptyMessage: string | null;
+  /**
+   * Which collections the server was permitted to aggregate over — a
+   * permission flag, never a has-content flag. An included-but-empty
+   * collection stays `true`.
+   */
+  included: Record<YearbookCollection, boolean>;
+  /** One entry per collection whose `included` is false, naming the reason. */
+  exclusions: YearbookExclusion[];
+}
+
+interface YearbookEnvelope {
+  yearbook?: YearbookProjection | null;
+  restricted?: boolean;
+}
+
+export interface YearbookResult {
+  yearbook: YearbookProjection | null;
+  /** True when the server withheld the yearbook (it is owner-private). */
+  restricted: boolean;
+}
+
+/**
+ * Fetch the owner's Yearbook — `GET /api/passport/:userId/yearbook`.
+ *
+ * The endpoint is OWNER-PRIVATE: it serves only the signed-in caller's own
+ * yearbook and answers `{ yearbook: null, restricted: true }` for anyone else,
+ * so this binding passes the literal `me` rather than inviting a caller to ask
+ * for another traveller's year summary. All aggregation and all privacy
+ * filtering happen server-side (§4/§30) — this is a thin fetch layer.
+ */
+export async function getPassportYearbook(year?: number | null): Promise<ApiResult<YearbookResult>> {
+  const query = typeof year === 'number' && Number.isInteger(year) ? `?year=${year}` : '';
+  const res = await apiGet<YearbookEnvelope>(`/passport/me/yearbook${query}`);
+  if (!res.ok) return { ok: false, message: res.message };
+  return {
+    ok: true,
+    data: {
+      yearbook: res.data?.yearbook ?? null,
+      restricted: res.data?.restricted === true,
+    },
+  };
+}
+
 // ── Plans + QR projection view (§16 / §30 / TABLE 24 / TABLE 29) ──────────────
 
 export type PassportViewerContext =

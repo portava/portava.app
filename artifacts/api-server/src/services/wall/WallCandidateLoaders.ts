@@ -28,11 +28,12 @@
  * loader costs the feed one object TYPE, never the feed itself. The Post spine
  * is untouched by any loader here.
  */
-import type {
-  DisplayMedia,
-  PublicActorRef,
-  PublicPlaceRef,
-  WallObjectType,
+import {
+  serverAutoplayHint,
+  type DisplayMedia,
+  type PublicActorRef,
+  type PublicPlaceRef,
+  type WallObjectType,
 } from "../../lib/wallProjection.js";
 import type { WallRankSignals } from "./WallRankingService.js";
 import { dedupeCandidates, type WallCandidate } from "./WallProjectionService.js";
@@ -268,9 +269,10 @@ function readyMediaToDisplay(rows: any[]): DisplayMedia[] {
       width: typeof m.width === "number" ? m.width : null,
       height: typeof m.height === "number" ? m.height : null,
       durationMs: typeof m.duration_seconds === "number" ? Math.round(m.duration_seconds * 1000) : null,
-      // Autoplay is deferred to client product/device/reduced-motion policy
-      // (§11/§36); the server never forces it on.
-      autoplayEligible: m.media_type === "video" ? false : undefined,
+      // Autoplay is CLIENT policy (device, reduced motion, user setting,
+      // viewport visibility — §11/§36). The server only notes that the media is
+      // playable; it never forces autoplay on and never vetoes it.
+      autoplayEligible: serverAutoplayHint(m.media_type === "video" ? "video" : "image"),
       processing: false,
     }));
 }
@@ -548,7 +550,7 @@ export async function loadVideoMediaCandidates(
         width: proj.width,
         height: proj.height,
         durationMs: proj.durationSeconds != null ? Math.round(proj.durationSeconds * 1000) : null,
-        autoplayEligible: proj.mediaType === "video" ? false : undefined,
+        autoplayEligible: serverAutoplayHint(proj.mediaType),
         processing: false,
       };
 
@@ -847,7 +849,7 @@ function buddyMediaToDisplay(row: any): DisplayMedia[] {
       kind,
       url: url.trim(),
       thumbnailUrl: null,
-      autoplayEligible: kind === "video" ? false : undefined,
+      autoplayEligible: serverAutoplayHint(kind),
       processing: false,
     });
   };
@@ -1330,7 +1332,7 @@ export async function loadQuickMediaItems(
         width: typeof a.width === "number" ? a.width : null,
         height: typeof a.height === "number" ? a.height : null,
         durationMs: typeof a.duration_ms === "number" ? a.duration_ms : null,
-        autoplayEligible: kind === "video" ? false : undefined,
+        autoplayEligible: serverAutoplayHint(kind),
         processing: false,
       },
       postId,

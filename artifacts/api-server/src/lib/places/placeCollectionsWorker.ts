@@ -33,7 +33,7 @@
 
 import { randomUUID } from "crypto";
 import { getServiceClient } from "../supabase.js";
-import { placePostScore } from "./placeCollections.js";
+import { placePostScore, isPublicPlaceRailPost } from "./placeCollections.js";
 
 const WORKER_ID = `place-worker-${randomUUID()}`;
 
@@ -374,10 +374,18 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
 
   // Fetch all active posts for this place with engagement metrics.
   // Limit 5 000 — Supabase default cap is 1 000 without an explicit limit.
+  //
+  // The gate columns (author_id / trip_id / visibility / post_status) ride along
+  // because the two consumers below need DIFFERENT sets: Best-Of is a public rail
+  // and must see only publicly-readable published posts, while contributor
+  // counting keeps working from every active post at the place as it always has.
+  // That is why the visibility/publication predicate is applied in memory here
+  // rather than narrowed at the query — one read, two rules, neither imposed on
+  // the other.
   const { data: postRows, error: postErr } = await sc
     .from("posts")
     .select(
-      "id, author_id, content, media_type, media_urls, media_thumbnail_url, " +
+      "id, author_id, trip_id, visibility, post_status, content, media_type, media_urls, media_thumbnail_url, " +
       "post_buckets, like_count, save_count, share_count, view_count, qualified_view_count",
     )
     .eq("canonical_place_id", placeId)
@@ -391,7 +399,16 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
   const posts = ((postRows ?? []) as any[]);
 
   // A. Best-of computation → upsert place_best_of.
-  const bestOf = computeBestOf(posts);
+  //
+  // THE SAME GATES getBestOf's realtime path applies (lib/postVisibility, via
+  // isPublicPlaceRailPost), because this worker WRITES `place_best_of` and
+  // getBestOf serves that cache FIRST — a post the realtime path refuses but the
+  // cache baked in is served all the same, so gating only the fallback would fix
+  // nothing in practice. `status = 'active'` is not a publication filter (a
+  // delayed post is written active + pending), and there was no visibility
+  // filter at all, so a private / trip_only post attached to this place was
+  // cached onto its public rails.
+  const bestOf = computeBestOf(posts.filter((r) => isPublicPlaceRailPost(r)));
 
   const { error: bestOfErr } = await sc
     .from("place_best_of")

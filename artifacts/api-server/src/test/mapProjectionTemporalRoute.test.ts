@@ -425,6 +425,108 @@ describe("forecast — accepted_plan arrivals", () => {
   });
 });
 
+// ── §24 protection gate over the temporal layer ───────────────────────────────
+//
+// The route had NO protection-gate coverage at all: its `protected_zones`
+// fixture was `[]` for every case above, so the one path that matters for a
+// forecast served inside a hospital was never exercised. What that path did:
+// `prediction` was absent from AMBIENT_PRESENCE_KINDS, so a coarsen-class zone
+// took the COARSEN branch, `coarsenForZone` deleted only TOP-LEVEL fields, and
+// the object reached the wire with `payload.cohort` and `payload.predictedFor`
+// intact — "20 people are due to arrive at this clinic at 13:00", which is the
+// exact §24 association disclosure the gate exists to prevent, restated one
+// level down. Same class as crowd_flow's `payload.observed`.
+describe("§24 — a prediction inside a protected zone", () => {
+  /** A coarsen-class zone (medical_facility) centred on the arrival zone. */
+  const CLINIC_ZONE = {
+    id: "tm-protected-clinic",
+    category: "medical_facility",
+    action: null,
+    privacy_floor: null,
+    shape: "circle",
+    center_lat: ZONE_A.lat,
+    center_lng: ZONE_A.lng,
+    radius_meters: 1_000,
+    ring: null,
+    jurisdiction: null,
+    policy_ref: null,
+    active: true,
+  };
+
+  function protectedPlanState(nowMs: number): FakeState {
+    return baseState(nowMs, {
+      feature_flags: [
+        { flag: "map_projection_enabled", enabled: true },
+        { flag: "map_crowd_flow_enabled", enabled: true },
+      ],
+      protected_zones: [CLINIC_ZONE],
+      ...planCohort(nowMs, PRIVACY_THRESHOLD_V1.minUniqueActors, 60),
+    });
+  }
+
+  it("is WITHHELD, not coarsened — no cohort size or predicted time on the wire", async () => {
+    const now = Date.now();
+    const res = await temporal(protectedPlanState(now), `bbox=${BBOX}&offsetMinutes=60`);
+    assert.equal(res.status, 200);
+
+    const zonePred = predictions(res.body).find((o: any) => o.id === `prediction:zone:${ZONE_A.id}`);
+    assert.equal(zonePred, undefined, "a prediction inside a medical facility must not be served");
+
+    // The association disclosure must be gone from the SERIALIZED objects, not
+    // merely from the top-level fields: `payload` survives coarsening untouched,
+    // which is exactly what shipped the defect. (`sources` legitimately still
+    // names accepted_plan — that the layer was consulted for this viewport is
+    // not a claim about any place.)
+    const objectsRaw = JSON.stringify(res.body.objects ?? []);
+    assert.ok(!objectsRaw.includes("cohort"), "payload.cohort leaked the cohort size");
+    assert.ok(!objectsRaw.includes("predictedFor"), "payload.predictedFor leaked the predicted time");
+    assert.ok(!objectsRaw.includes(ZONE_A.id), "the arrival zone id leaked");
+    assert.ok(!objectsRaw.includes("accepted_plan"), "payload.source leaked the provenance");
+
+    // And the removal is REPORTED, not silent.
+    assert.ok(res.body.protection.suppressed >= 1, "the withheld prediction must be counted");
+  });
+
+  it("the same cohort with NO protected zone is served — the gate is what removed it", async () => {
+    const now = Date.now();
+    const state = protectedPlanState(now);
+    state.protected_zones = [];
+    const res = await temporal(state, `bbox=${BBOX}&offsetMinutes=60`);
+    const zonePred = predictions(res.body).find((o: any) => o.id === `prediction:zone:${ZONE_A.id}`);
+    assert.ok(zonePred, "control: without a protected zone the aggregate is served");
+    assert.equal(zonePred.payload.cohort, PRIVACY_THRESHOLD_V1.minUniqueActors);
+  });
+
+  it("an event prediction inside the same zone is withheld too (not a plan-only fix)", async () => {
+    const now = Date.now();
+    const state = baseState(now, {
+      protected_zones: [CLINIC_ZONE],
+      events: [
+        {
+          id: "tm-ev-clinic",
+          host_id: OTHER_HOST,
+          title: "Blood drive",
+          location_name: "Clinic",
+          location_lat: ZONE_A.lat,
+          location_lng: ZONE_A.lng,
+          show_exact_location: true,
+          starts_at: new Date(now + 40 * MIN).toISOString(),
+          ends_at: new Date(now + 100 * MIN).toISOString(),
+          visibility: "public",
+          state: "published",
+          age_min: null,
+          age_max: null,
+          trust_score_min: null,
+          verified_only: false,
+        },
+      ],
+    });
+    const res = await temporal(state, `bbox=${BBOX}&offsetMinutes=60`);
+    assert.equal(predictions(res.body).length, 0, "an event prediction in a protected zone must be withheld");
+    assert.ok(!res.raw.includes("tm-ev-clinic"), "the event id leaked");
+  });
+});
+
 // ── historical: read, never reconstruct ───────────────────────────────────────
 
 describe("historical — read, never reconstruct", () => {

@@ -20,7 +20,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -40,7 +40,7 @@ let attackerId = "", attackerToken = "", victimId = "";
 
 async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const sc = adminClient();
-  const email = `${PREFIX}${tag}@example.com`;
+  const email = fixtureEmail(`${PREFIX}${tag}@example.com`);
   const { data: c, error: cErr } = await sc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (cErr || !c?.user) throw new Error(`createUser(${tag}): ${cErr?.message}`);
   const id = c.user.id;
@@ -58,14 +58,14 @@ async function readVerification(id: string): Promise<{ status: string; level: st
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}attacker@example.com`, `${PREFIX}victim@example.com`, `${PREFIX}fresh@example.com`]);
+  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}attacker@example.com`), fixtureEmail(`${PREFIX}victim@example.com`), fixtureEmail(`${PREFIX}fresh@example.com`)]);
   ({ id: attackerId, token: attackerToken } = await makeUser("attacker"));
   ({ id: victimId } = await makeUser("victim"));
   assert.equal((await readVerification(attackerId)).status, "unverified", "fixture must start unverified");
 });
 after(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}attacker@example.com`, `${PREFIX}victim@example.com`, `${PREFIX}fresh@example.com`]);
+  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}attacker@example.com`), fixtureEmail(`${PREFIX}victim@example.com`), fixtureEmail(`${PREFIX}fresh@example.com`)]);
 });
 
 describe("profiles verification columns are not self-writable", { skip: !CREDS_AVAILABLE }, () => {
@@ -111,12 +111,12 @@ describe("profiles verification columns are not self-writable", { skip: !CREDS_A
   });
   it("a fresh signup inserting default verification is allowed; forged verification at insert is refused", async () => {
     const admin = adminClient();
-    const { data: fresh, error: cErr } = await admin.auth.admin.createUser({ email: `${PREFIX}fresh@example.com`, password: PASSWORD, email_confirm: true });
+    const { data: fresh, error: cErr } = await admin.auth.admin.createUser({ email: fixtureEmail(`${PREFIX}fresh@example.com`), password: PASSWORD, email_confirm: true });
     if (cErr) throw new Error(`fresh: ${cErr.message}`);
     const freshId = fresh.user.id;
     try {
       await admin.from("profiles").delete().eq("id", freshId); // handle_new_user made the row; make this a true INSERT
-      const { data: s } = await anonClient().auth.signInWithPassword({ email: `${PREFIX}fresh@example.com`, password: PASSWORD });
+      const { data: s } = await anonClient().auth.signInWithPassword({ email: fixtureEmail(`${PREFIX}fresh@example.com`), password: PASSWORD });
       const freshToken = s!.session!.access_token;
       // default insert (no verification columns) must succeed
       const { error: okErr } = await userClient(freshToken).from("profiles").insert({ id: freshId, handle: `${PREFIX}fresh`, name: "Fresh" });
