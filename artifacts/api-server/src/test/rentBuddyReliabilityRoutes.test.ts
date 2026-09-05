@@ -447,8 +447,18 @@ function makeMatchFakeClient(buddyRow: Record<string, any>) {
       order:     () => b,
       limit:     () => b,
       range:     () => b,
-      single:      () => Promise.resolve({ data: null, error: null }),
-      maybeSingle: () => Promise.resolve({ data: null, error: null }),
+      // FIXTURE, not behaviour: `feature_flags` answers `{ enabled: true }`,
+      // matching makeFakeClient's singleRowFor above. POST /rent-a-buddy/match
+      // upserts rent_buddy_match_scores and inserts a rent_buddy_search_event,
+      // so it now clears the Rent-a-Buddy master switch like every other write
+      // handler in the lane. This fake previously returned `null` for EVERY
+      // maybeSingle, which a real database reports as "the flag row does not
+      // exist" — i.e. the lane is off — and the handler correctly 403s. The
+      // counter-precedence assertions below are about mapProfile, not about the
+      // master switch, so the fixture is corrected to describe a database in
+      // which Rent-a-Buddy is enabled rather than the assertions being relaxed.
+      single:      () => Promise.resolve({ data: table === "feature_flags" ? { enabled: true } : null, error: null }),
+      maybeSingle: () => Promise.resolve({ data: table === "feature_flags" ? { enabled: true } : null, error: null }),
       then: (resolve: any, reject: any) => {
         // The match endpoint fetches rent_buddy_profiles as an array and
         // trust_profiles as an array. Everything else is a write or unused.

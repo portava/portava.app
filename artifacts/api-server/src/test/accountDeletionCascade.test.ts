@@ -338,6 +338,7 @@ describe("executeAccountDeletion — full cascade", () => {
       ["availability_windows", "delete_availability_windows"],
       ["passport_travel_dna_prefs", "delete_travel_dna_prefs"],
       ["wall_session_intents", "delete_wall_session_intent"],
+      ["event_passport_shares", "delete_event_passport_shares"],
     ] as const) {
       const del = opFor(c, table, "delete");
       assert.ok(del, `the cascade must delete ${table}`);

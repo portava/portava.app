@@ -62,8 +62,9 @@ import { useInputAssistance } from '../../platform/input-assistance/hooks/useInp
 import { suggestionToPlace } from '../../platform/input-assistance/geographic/geoSuggestions.ts';
 import { captureCanonicalBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
 import { foldForMatch } from '../../platform/input-assistance/services/queryNormalization.ts';
+import { recordSuggestionSelection } from '../../platform/input-assistance/services/selectionRecorder.ts';
 import type { InputContext } from '../../platform/input-assistance/types/inputContext.ts';
-import type { InputSessionContext } from '../../platform/input-assistance/types/inputSuggestion.ts';
+import type { InputSessionContext, InputSuggestion } from '../../platform/input-assistance/types/inputSuggestion.ts';
 import type { CanonicalPlaceBinding } from '../../platform/input-assistance/geographic/canonicalBinding.ts';
 
 function apiBase(): string {
@@ -176,7 +177,7 @@ export function GlobalPlacePicker({
     }
     return base;
   }, [assistContext, sessionContext, nearbyCoords]);
-  const { suggestions: gatewaySuggestions } = useInputAssistance({
+  const { suggestions: gatewaySuggestions, policy: assistPolicy } = useInputAssistance({
     fieldId: assistFieldId ?? assistContext ?? '__geo_no_assist__',
     text: query,
     context: assistContext,
@@ -185,8 +186,19 @@ export function GlobalPlacePicker({
   });
   // Map gateway suggestions → Places, deduped by canonical id / folded name, so
   // they can render + resolve through the picker's existing pipeline.
-  const gatewayPlaces = React.useMemo<Place[]>(() => {
-    if (!assistContext || gatewaySuggestions.length === 0) return [];
+  //
+  // `gatewayById` keeps the ORIGINATING suggestion for each mapped Place. The
+  // picker's selection pipeline speaks `Place`, but §35 selection memory has to
+  // record the canonical (entityType, entityId) the user actually accepted — so
+  // the mapping is retained here rather than reconstructed from the Place.
+  const { gatewayPlaces, gatewayById } = React.useMemo<{
+    gatewayPlaces: Place[];
+    gatewayById: Map<string, InputSuggestion>;
+  }>(() => {
+    const byId = new Map<string, InputSuggestion>();
+    if (!assistContext || gatewaySuggestions.length === 0) {
+      return { gatewayPlaces: [], gatewayById: byId };
+    }
     const out: Place[] = [];
     const seen = new Set<string>();
     for (const s of gatewaySuggestions) {
@@ -196,8 +208,9 @@ export function GlobalPlacePicker({
       if (!key || seen.has(key)) continue;
       seen.add(key);
       out.push(p);
+      byId.set(p.id, s);
     }
-    return out;
+    return { gatewayPlaces: out, gatewayById: byId };
   }, [assistContext, gatewaySuggestions]);
 
   // Reset + silent nearby detection on open. GPS must NEVER block the sheet:
@@ -265,12 +278,25 @@ export function GlobalPlacePicker({
       // §17/§53 — capture the canonical binding (city id + country + timezone +
       // coordinates) so dependent fields can prefill. No-op unless a caller opted in.
       onCanonicalBinding?.(captureCanonicalBinding(resolved));
+      // §35 Phase 8 — record this EXPLICIT accept as selection memory when the
+      // row came from the gateway. Without this the picker was a READER of
+      // personalization with no writer: every geographic context
+      // (trip_destination, city_picker, place_picker …) could only ever read an
+      // empty `input_selection_history`, because the only recorder in the app
+      // was SmartInput, which is mounted on `global_search` alone — and the
+      // memory read is scoped per (user, context), so a global_search row can
+      // never reach a picker context. Fire-and-forget + fail-soft: it never
+      // awaits, never throws, and never gates the selection above.
+      const originating = gatewayById.get(place.id);
+      if (originating) {
+        recordSuggestionSelection(originating, { policy: assistPolicy, query });
+      }
       onSelect(resolved);
       onClose();
     } finally {
       if (aliveRef.current) setResolvingId(null);
     }
-  }, [onSelect, onClose, saveRecent, usedFor, resolvingId, onCanonicalBinding]);
+  }, [onSelect, onClose, saveRecent, usedFor, resolvingId, onCanonicalBinding, gatewayById, assistPolicy, query]);
 
   async function useGPS() {
     setGpsState('loading');

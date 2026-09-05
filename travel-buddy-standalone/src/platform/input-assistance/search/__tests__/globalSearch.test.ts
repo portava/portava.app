@@ -11,6 +11,7 @@ import {
   mapSuggestionsToGroups,
   getSubmitQuery,
   isResolvableRow,
+  findSuggestionForRow,
   QUERY_GROUP_TYPE,
 } from '../globalSearch.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
@@ -265,4 +266,39 @@ test('sequenced stage rows (submit_search) render as ordered "Search for" rows',
   const q = groups.find((g) => g.type === QUERY_GROUP_TYPE)!;
   assert.deepEqual(q.items.map((i) => getSubmitQuery(i)), ['dinner', 'nightlife', 'late night food']);
   assert.deepEqual(q.items.map((i) => i.title), ['1. Dinner', '2. Nightlife', '3. Late-night food']);
+});
+
+// ── §35 round-trip: a mapped row must lead back to its originating suggestion ──
+//
+// The search screen's pick handler receives a `UnifiedSearchResult`, which drops
+// `entityType`. Without this round-trip an accepted global_search row cannot be
+// recorded as selection memory — the defect the re-audit found on this surface.
+
+test('findSuggestionForRow recovers the originating suggestion for an entity row', () => {
+  const s = sug({ label: 'Bangkok', entityType: 'city', entityId: 'city_bangkok' });
+  const rows = allRows(mapSuggestionsToGroups([s], 'bang'));
+  const entityRow = rows.find((r) => r.title === 'Bangkok');
+  assert.ok(entityRow, 'the entity row must be mapped');
+  assert.equal(findSuggestionForRow([s], entityRow!), s);
+});
+
+test('findSuggestionForRow recovers the originating suggestion for a query-completion row', () => {
+  const s = sug({
+    id: 'gs:completion:rooftop bars',
+    type: 'completion',
+    label: 'Search "rooftop bars"',
+    action: { type: 'submit_search', query: 'rooftop bars' },
+  });
+  const rows = allRows(mapSuggestionsToGroups([s], 'roof'));
+  const queryRow = rows.find((r) => getSubmitQuery(r) === 'rooftop bars');
+  assert.ok(queryRow, 'the completion row must be mapped');
+  assert.equal(findSuggestionForRow([s], queryRow!), s);
+});
+
+test('findSuggestionForRow returns null for a row that did not come from the gateway', () => {
+  const s = sug({ label: 'Bangkok', entityType: 'city', entityId: 'city_bangkok' });
+  assert.equal(findSuggestionForRow([s], { id: 'legacy-row-42' }), null);
+  assert.equal(findSuggestionForRow([s], { id: '' }), null);
+  assert.equal(findSuggestionForRow([s], null), null);
+  assert.equal(findSuggestionForRow(null, { id: 'city_bangkok' }), null);
 });

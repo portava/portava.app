@@ -256,9 +256,15 @@ export function zoomRenderBand(zoom: number): ZoomBand {
  */
 const BAND_INTRODUCES: Record<ZoomBand, readonly MapObjectKind[]> = {
   // "Countries visited, upcoming Trips, Passport, major destinations; no POI pins."
-  world: ['safety_notice', 'trip_stop', 'memory'],
+  // §36 Phase 7 puts three kinds in this row and nowhere else: `world_pulse` IS
+  // the world-band answer to "major destinations", `traveler_flow` is city→city
+  // movement (whose two endpoints are only both on screen when zoomed out), and
+  // `personal_city` is the viewer's own Passport-shaped city history, which §17
+  // names on this exact line.
+  world: ['safety_notice', 'trip_stop', 'memory', 'world_pulse', 'traveler_flow', 'personal_city'],
   // "Neighborhoods, activity zones, major events, major flow, key Compass recommendations."
-  city: ['activity_zone', 'crowd_flow', 'prediction', 'event'],
+  // `city_model` is the per-city profile, so it enters with the city band.
+  city: ['activity_zone', 'crowd_flow', 'prediction', 'event', 'city_model'],
   // "Live places, events, gems, social opportunities, Trip objects."
   district: ['place', 'hidden_gem', 'social_zone', 'buddy_zone', 'saved_place'],
   // "Individual places, entrances, authorized crew, meeting points, route context."

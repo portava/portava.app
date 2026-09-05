@@ -1072,9 +1072,21 @@ const ZERO_COMPONENTS: ScoreComponents = {
 //   • lib/discoveryServeLog logDiscoveryServe    (the discovery serve points)
 // Not counted: Live Pulse serve rows (urgency-assembled, never ranked), the
 // living_page place_view direct write (a view event, not a serve) and media
-// watch impressions (their own stats pipeline). Negative signals are a
-// separate question this module does not answer: no route reports one today,
-// and the RPC's p_negative_signal is therefore always false here.
+// watch impressions (their own stats pipeline).
+//
+// NEGATIVE SIGNALS are the numerator, and they are a different write. An
+// impression is never one, so `p_negative_signal` is always false on this path
+// — that literal is correct and must stay. The numerator is written by
+// recordNegativeDistributionSignal below, from the outcome route, when a viewer
+// reports outcome='dismiss'.
+//
+// THE DEFECT THAT FIXES: until migration 2297 there was NO writer of
+// negative_signal_count at all. Nothing anywhere incremented it, so v_negatives
+// was 0 for every row, 0/N is never >= the 0.3 suppression rate, and every item
+// that crossed the 100-impression threshold classified 'boosting'
+// unconditionally. The classifier could not produce a negative verdict — it was
+// a constant that read like a measurement, and both FeedSlotAllocator and
+// applyModifiers grant a real ranking boost off it.
 
 const UNDEREXPOSURE_THRESHOLD_IMPRESSIONS = 100;
 const SUPPRESSION_NEGATIVE_SIGNAL_RATE    = 0.3;
@@ -1082,9 +1094,10 @@ const SUPPRESSION_NEGATIVE_SIGNAL_RATE    = 0.3;
 /**
  * Upper bound on increment_distribution_stats calls in flight for one batch.
  *
- * The RPC is per-item, and an impression batch can be large — routes/pulse.ts
- * logs every RANKED candidate (~60), not only the served page — so the batch
- * is drained through a small worker pool rather than fired all at once.
+ * The RPC is per-item, and an impression batch can still be large — a served
+ * discovery page runs to 100 items — so the batch is drained through a small
+ * worker pool rather than fired all at once. (routes/pulse.ts used to log every
+ * RANKED candidate, ~60, rather than the served page; it now logs the page.)
  */
 const DISTRIBUTION_STATS_CONCURRENCY = 6;
 
@@ -1156,5 +1169,53 @@ export async function recordImpressionDistributionStats(
   } catch (err) {
     // Never throws into the caller — but never silently either.
     logger.warn({ err }, "distributionStats: recording impressions threw");
+  }
+}
+
+/**
+ * RPC that writes the underexposure NUMERATOR (migration 2297).
+ *
+ * Deliberately a different function from `increment_distribution_stats`: that
+ * one moves eligible_impressions and negative_signal_count in the same
+ * statement, so reusing it here would make an outcome inflate the exposure
+ * DENOMINATOR — the defect PR #365 removed. Two names, two jobs.
+ */
+export const NEGATIVE_SIGNAL_RPC = "record_distribution_negative_signal";
+
+/**
+ * Record one negative signal against an item's underexposure classification.
+ *
+ * The ONLY writer of `content_distribution_stats.negative_signal_count`. Called
+ * from POST /api/rank-events/outcome when the reported outcome is 'dismiss',
+ * which is the only negative outcome the vocabulary carries (2297).
+ *
+ * Fire-and-forget: never throws, never rejects, and never touches
+ * eligible_impressions. A failure is warned once and dropped — a lost negative
+ * signal must not fail the outcome write that produced it.
+ */
+export async function recordNegativeDistributionSignal(
+  db:       SupabaseClient | null,
+  itemId:   string,
+  viewerId: string,
+): Promise<void> {
+  try {
+    if (!db || typeof (db as any).rpc !== "function") return;
+    if (typeof itemId !== "string" || itemId.length === 0) return;
+
+    // supabase-js RESOLVES with { error } on a DB error rather than throwing,
+    // so the returned error must be inspected or a rejected numerator write is
+    // invisible — the failure mode that let living_page impressions vanish for
+    // months (migration 0202).
+    const { error } = await db.rpc(NEGATIVE_SIGNAL_RPC, {
+      p_item_id:          itemId,
+      p_viewer_id:        viewerId,
+      p_threshold:        UNDEREXPOSURE_THRESHOLD_IMPRESSIONS,
+      p_suppression_rate: SUPPRESSION_NEGATIVE_SIGNAL_RATE,
+    });
+    if (error) {
+      logger.warn({ err: error, itemId }, "distributionStats: negative signal rejected");
+    }
+  } catch (err) {
+    logger.warn({ err }, "distributionStats: recording a negative signal threw");
   }
 }

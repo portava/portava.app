@@ -19,7 +19,7 @@
  *     off the full projection) — a field a variant does not list can never leak,
  *     because it is never copied across.
  *
- * The four variants map to the TABLE 22 consumers:
+ * The variants map to the TABLE 22 consumers:
  *   discovery_card → Discovery cards AND Compass person cards (§8 pairs them:
  *                    identity, verification, availability, Open to Plans, current
  *                    intent, permitted trust summary + capabilities, shared
@@ -28,6 +28,20 @@
  *   buddy          → buddy card identity + Buddy verification + availability +
  *                    reputation summary (services / service-area / completion
  *                    stay buddy-domain and are merged by the route).
+ *   trips          → TABLE 22 Trips row: "Identity, relevant trust eligibility,
+ *                    languages, travel style, host/guest context". A crew list
+ *                    needs to know WHO is on the trip and whether they may host /
+ *                    join / use crew location — not their stamps, memories,
+ *                    plans, availability or shared context. Strictly a NARROWING
+ *                    of the aggregate the trip_crew / trip_host viewer contexts
+ *                    already resolve to (see `toTripsProjection`).
+ *   event          → the temporary/event Passport share (§25/§31, TABLE 31
+ *                    Phase 8). The §25 QR family's minimal shape — photo, FIRST
+ *                    name, @handle, verification, permitted home country, what
+ *                    they are up for, Follow/Connect — plus the broad city when
+ *                    the owner is genuinely at an event. Reached only through
+ *                    EventPassportService, which adds the bounded TTL,
+ *                    revocation and co-attendance checks around it.
  *   safety         → restricted, purpose-specific context only.
  *
  * §8 (Open to Plans and Intent): the discovery_card variant's `intent` is the
@@ -52,6 +66,7 @@ import {
   type TravelerStateKind,
 } from "./PassportProjectionService.js";
 import type { SharedContextProjection } from "./SharedContextService.js";
+import type { TravelDimension } from "./PassportTravelIdentityService.js";
 import {
   getActiveWindows,
   projectPublicWindows,
@@ -64,7 +79,13 @@ import {
 // Variant kinds
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type PassportConsumerVariant = "discovery_card" | "telegraph" | "buddy" | "safety";
+export type PassportConsumerVariant =
+  | "discovery_card"
+  | "telegraph"
+  | "buddy"
+  | "trips"
+  | "event"
+  | "safety";
 
 type SocialAvailability = "open" | "maybe" | "crew_only" | "following_only" | "not_open";
 
@@ -175,6 +196,110 @@ export interface BuddyProjection {
   availability?: DiscoveryCardAvailability;
   stats: TravelStats;
   capabilities: { owner: PassportPositiveCapabilities; actions: PassportViewerActions };
+  restricted?: { reason: string };
+}
+
+/** Trips crew/host card identity (TABLE 22 Trips row). */
+export interface TripsProjectionIdentity {
+  userId: string;
+  name: string | null;
+  handle: string | null;
+  avatarUrl: string | null;
+  verified: boolean;
+  verificationLevel: string | null;
+  isOfficial: boolean;
+}
+
+/**
+ * "Relevant trust ELIGIBILITY" (TABLE 22 Trips row) — the four TABLE 14 owner
+ * capabilities a Trip surface actually acts on. Server-projected (§30): a Trips
+ * client renders these flags and never re-derives "if trust > 60 …".
+ */
+export interface TripsTrustEligibility {
+  canJoinPublicTrip: boolean;
+  canHostTrip: boolean;
+  canCreateLargePlan: boolean;
+  canUseCrewLocation: boolean;
+}
+
+/** Whether the OWNER is the host or a crew member of the trip they share with the viewer. */
+export type TripsHostGuestContext = "host" | "crew" | "none";
+
+/**
+ * TABLE 22 Trips variant. Deliberately carries NO stamps, memories, plans,
+ * availability, intent, shared context, numeric trust score, cover image, home
+ * base or home country — a crew list has no use for any of them.
+ */
+export interface TripsProjection {
+  variant: "trips";
+  userId: string;
+  viewerContext: PassportViewerContext;
+  identity: TripsProjectionIdentity;
+  /** Trip-relevant owner capabilities (§30), never a score. */
+  eligibility: TripsTrustEligibility;
+  /**
+   * TABLE 12 trip-domain presentations ONLY (trip_guest / trip_host) — a
+   * qualitative word each, never the 0-100 score (§9/§34 "not a leaderboard").
+   */
+  trustDomains: Array<{ key: string; domain: string; presentation: string; applicable: boolean }>;
+  /** Languages the owner permitted into the aggregate's travel identity (§19). */
+  languages: string[];
+  /** Travel-style axes only (pace / planning / social / group style) (TABLE 20). */
+  travelStyle: Array<{ key: string; label: string; value: string }>;
+  /** Host/guest context, derived from the ALREADY-resolved viewer context. */
+  hostGuestContext: TripsHostGuestContext;
+  /** Per-viewer trip actions (§30). */
+  actions: Pick<PassportViewerActions, "can_message" | "can_invite_trip" | "can_make_plan">;
+  restricted?: { reason: string };
+}
+
+/**
+ * Temporary/event Passport identity (§25). Deliberately the QR family's shape:
+ * "photo, first name, @handle, verification, permitted home country/interests".
+ * FIRST NAME ONLY — the family name is never projected into an event share.
+ */
+export interface EventPassportIdentity {
+  userId: string;
+  firstName: string | null;
+  handle: string | null;
+  avatarUrl: string | null;
+  verified: boolean;
+  verificationLevel: string | null;
+  /** Already TABLE 24-gated by the assembler; null when not permitted. */
+  homeCountry: string | null;
+}
+
+/**
+ * The `event` variant — the projection behind a temporary event Passport share
+ * (§25 / §31 / TABLE 31 Phase 8).
+ *
+ * TWO properties this shape exists to guarantee:
+ *
+ *   • It exposes ONLY what an event context warrants: who you are, whether you
+ *     are verified, whether you are at this event (broad city, never a
+ *     coordinate — §23/TABLE 25), what you are currently up for, and
+ *     Follow/Connect. No stamps, journeys, memories, plans, trust words, trust
+ *     score, availability grid, capabilities block or shared context.
+ *
+ *   • It NEVER WIDENS. Every value is copied from the aggregate the ordinary
+ *     resolver already built for THIS viewer — the share does not elevate the
+ *     viewer's relationship, it only makes a narrow, expiring, revocable view
+ *     reachable (§25 "Scanning a QR never bypasses privacy policy").
+ */
+export interface EventPassportProjection {
+  variant: "event";
+  userId: string;
+  viewerContext: PassportViewerContext;
+  identity: EventPassportIdentity;
+  /**
+   * Broad city ONLY, and only while the owner's own projection says they are
+   * at an event right now. Null otherwise — never a coordinate, never a venue.
+   */
+  atEventCity: string | null;
+  /** Current intent (§8) the aggregate already permitted this viewer to see. */
+  intents: string[];
+  /** §25 "Follow/Connect" — server-projected (§30), never re-derived. */
+  actions: Pick<PassportViewerActions, "can_follow" | "can_message">;
   restricted?: { reason: string };
 }
 
@@ -499,6 +624,156 @@ function toBuddyProjection(full: PassportProjection): BuddyProjection {
   return buddy;
 }
 
+/** TABLE 12 domains a Trip surface may show — the two trip-role domains only. */
+const TRIPS_TRUST_DOMAIN_KEYS = new Set(["trip_guest", "trip_host"]);
+
+/**
+ * Travel-identity axes the Trips row warrants. `languages` is pulled out
+ * separately; the rest are the "travel style" axes a crew list uses to know who
+ * it is travelling with. Interests, spend style, discovery, energy and rhythm
+ * are deliberately absent — they are Discovery/Compass signals, not trip ones.
+ */
+const TRIPS_TRAVEL_STYLE_KEYS = ["travel_pace", "planning", "social", "group_style"] as const;
+
+/** Split the (already viewer-filtered) travel-identity dimensions into the two slices. */
+function tripsTravelIdentity(dimensions: readonly TravelDimension[] | undefined): {
+  languages: string[];
+  travelStyle: Array<{ key: string; label: string; value: string }>;
+} {
+  const dims = dimensions ?? [];
+  // The languages dimension is a VALUE LIST: `value` is the owner's spoken
+  // languages joined with ", ", and `inferred` is true exactly when the list was
+  // empty (the axis then reads "Not set"). Split the same rendered list the
+  // aggregate already exposes to this viewer — an inferred/absent axis yields
+  // [] rather than a fabricated "Not set" entry.
+  const languagesDim = dims.find((d) => d.key === "languages");
+  const languages =
+    languagesDim && !languagesDim.inferred
+      ? languagesDim.value.split(",").map((s) => s.trim()).filter((s) => s.length > 0)
+      : [];
+  const travelStyle: Array<{ key: string; label: string; value: string }> = [];
+  for (const key of TRIPS_TRAVEL_STYLE_KEYS) {
+    const d = dims.find((x) => x.key === key);
+    if (d) travelStyle.push({ key: d.key, label: d.label, value: d.value });
+  }
+  return { languages, travelStyle };
+}
+
+/**
+ * TABLE 22 Trips variant. A pure NARROWING: every field is copied from the full
+ * aggregate the assembler already produced for THIS viewer, so a Trips consumer
+ * can only ever see less than the full projection would have shown it — the
+ * `hostGuestContext` is read off the resolved viewer context rather than
+ * re-queried, so it cannot assert a trip relationship the resolver did not.
+ */
+function toTripsProjection(full: PassportProjection): TripsProjection {
+  const hostGuestContext: TripsHostGuestContext =
+    full.viewerContext === "trip_host" ? "host" : full.viewerContext === "trip_crew" ? "crew" : "none";
+
+  const trips: TripsProjection = {
+    variant: "trips",
+    userId: full.userId,
+    viewerContext: full.viewerContext,
+    identity: {
+      userId: full.identity.userId,
+      name: full.identity.name,
+      handle: full.identity.handle,
+      avatarUrl: full.identity.avatarUrl,
+      verified: full.identity.verified,
+      verificationLevel: full.identity.verificationLevel,
+      isOfficial: full.identity.isOfficial,
+      // homeCountry / homeBase / coverUrl deliberately omitted — a crew list
+      // is not a place to re-publish TABLE 24 user-controlled location fields.
+    },
+    eligibility: {
+      canJoinPublicTrip: full.capabilities.owner.canJoinPublicTrip,
+      canHostTrip: full.capabilities.owner.canHostTrip,
+      canCreateLargePlan: full.capabilities.owner.canCreateLargePlan,
+      canUseCrewLocation: full.capabilities.owner.canUseCrewLocation,
+    },
+    trustDomains: [],
+    languages: [],
+    travelStyle: [],
+    hostGuestContext,
+    actions: {
+      can_message: full.capabilities.actions.can_message,
+      can_invite_trip: full.capabilities.actions.can_invite_trip,
+      can_make_plan: full.capabilities.actions.can_make_plan,
+    },
+  };
+
+  if (full.restricted) {
+    trips.restricted = full.restricted;
+    // A blocked / unavailable relationship keeps identity + server-projected
+    // action flags only; no trust words, languages or travel style.
+    return trips;
+  }
+
+  if (full.trust) {
+    trips.trustDomains = full.trust.domains
+      .filter((d) => TRIPS_TRUST_DOMAIN_KEYS.has(d.key))
+      .map((d) => ({ key: d.key, domain: d.domain, presentation: d.presentation, applicable: d.applicable }));
+  }
+  const { languages, travelStyle } = tripsTravelIdentity(full.travelIdentity?.dimensions);
+  trips.languages = languages;
+  trips.travelStyle = travelStyle;
+  return trips;
+}
+
+/**
+ * First name only (§25). Never returns anything beyond the first whitespace-
+ * separated token of the display name the aggregate already permitted.
+ */
+export function firstNameOnly(name: string | null): string | null {
+  if (typeof name !== "string") return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  return trimmed.split(/\s+/)[0] ?? null;
+}
+
+/**
+ * The `event` variant. A pure NARROWING of `full`: no field is read from
+ * anywhere but the aggregate the ordinary resolver produced for this viewer.
+ */
+function toEventPassport(full: PassportProjection): EventPassportProjection {
+  const ev: EventPassportProjection = {
+    variant: "event",
+    userId: full.userId,
+    viewerContext: full.viewerContext,
+    identity: {
+      userId: full.identity.userId,
+      firstName: firstNameOnly(full.identity.name),
+      handle: full.identity.handle,
+      avatarUrl: full.identity.avatarUrl,
+      verified: full.identity.verified,
+      verificationLevel: full.identity.verificationLevel,
+      homeCountry: full.identity.homeCountry,
+    },
+    atEventCity: null,
+    intents: [],
+    actions: {
+      can_follow: full.capabilities.actions.can_follow,
+      can_message: full.capabilities.actions.can_message,
+    },
+  };
+
+  if (full.restricted) {
+    ev.restricted = full.restricted;
+    // A blocked / unavailable relationship gets identity + action flags only —
+    // the assembler has already blanked homeCountry on the restricted card.
+    return ev;
+  }
+
+  // §5/§23: broad event city, and only while the owner is genuinely at an event.
+  if (full.travelerState && full.travelerState.state === "at_event") {
+    ev.atEventCity = full.travelerState.city;
+  }
+  if (full.intent && Array.isArray(full.intent.current)) {
+    ev.intents = full.intent.current.slice(0, 6);
+  }
+  return ev;
+}
+
 function toSafetyProjection(full: PassportProjection): SafetyProjection {
   const safety: SafetyProjection = {
     variant: "safety",
@@ -525,6 +800,8 @@ export type ConsumerProjectionFor<V extends PassportConsumerVariant> =
   V extends "discovery_card" ? DiscoveryCardProjection :
   V extends "telegraph" ? TelegraphHeaderProjection :
   V extends "buddy" ? BuddyProjection :
+  V extends "trips" ? TripsProjection :
+  V extends "event" ? EventPassportProjection :
   V extends "safety" ? SafetyProjection :
   never;
 
@@ -558,5 +835,7 @@ export async function buildConsumerProjection<V extends PassportConsumerVariant>
   }
   if (variant === "telegraph") return toTelegraphHeader(full) as ConsumerProjectionFor<V>;
   if (variant === "buddy") return toBuddyProjection(full) as ConsumerProjectionFor<V>;
+  if (variant === "trips") return toTripsProjection(full) as ConsumerProjectionFor<V>;
+  if (variant === "event") return toEventPassport(full) as ConsumerProjectionFor<V>;
   return toSafetyProjection(full) as ConsumerProjectionFor<V>;
 }

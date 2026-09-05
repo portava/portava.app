@@ -291,3 +291,32 @@ export function getSubmitQuery(item: { metadata?: Record<string, unknown> | null
 export function isResolvableRow(item: UnifiedSearchResult): boolean {
   return !!item.destinationRoute || getSubmitQuery(item) !== null;
 }
+
+/**
+ * Recover the ORIGINATING `InputSuggestion` for a mapped row (§35).
+ *
+ * `mapSuggestionsToGroups` projects each suggestion into a `UnifiedSearchResult`
+ * whose `id` is the canonical entity id (entity rows) or the suggestion id
+ * (query rows), and drops `entityType` — so the search screen's pick handler
+ * cannot, on its own, tell the backend WHICH canonical entity was accepted.
+ * Without that, `global_search` selections are unrecordable and Phase 8
+ * selection memory has a reader with no writer on this surface.
+ *
+ * Pure and total: returns null for a row that did not come from `suggestions`
+ * (e.g. a legacy-typeahead row), so a caller can fire unconditionally.
+ */
+export function findSuggestionForRow(
+  suggestions: readonly InputSuggestion[] | null | undefined,
+  row: { id?: string | null } | null | undefined,
+): InputSuggestion | null {
+  const id = (row?.id ?? '').trim();
+  if (!id) return null;
+  for (const s of suggestions ?? []) {
+    if (!s) continue;
+    const { entityId } = entityIdentity(s);
+    // Mirrors the two id derivations in tryEntityRow / trySubmitRow.
+    if ((entityId ?? s.destination?.entityId ?? s.id) === id) return s;
+    if (s.id === id) return s;
+  }
+  return null;
+}
