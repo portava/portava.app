@@ -151,7 +151,7 @@ export default function SearchScreen() {
   // Routes through the P1 gateway (`global_search`) additively: gateway rows are
   // shown when available, else it degrades to the proven legacy typeahead.
   const suggestActive = !submitted && query.trim().length >= 2;
-  const { groups: suggestGroups, actionSuggestions, loading: suggestLoading } = useGlobalSearchSuggestions(query, {
+  const { groups: suggestGroups, actionSuggestions, loading: suggestLoading, recordPick } = useGlobalSearchSuggestions(query, {
     lat: userCoords?.lat,
     lng: userCoords?.lng,
     city: userCoords?.city,
@@ -377,6 +377,10 @@ export default function SearchScreen() {
   // is saved to history (fire-and-forget) so it shows up under Recent.
   function handleSuggestionPick(result: UnifiedSearchResult) {
     const trimmed = query.trim();
+    // §35 — an explicit accept feeds this user's own selection memory (Phase 8).
+    // Fire-and-forget + fail-soft, and a no-op for a legacy-typeahead row, so it
+    // can never block or change the navigation below.
+    recordPick(result);
     if (trimmed.length >= 2) {
       saveSearchHistory(trimmed, 'all').then((serverId) => {
         if (!serverId) return;

@@ -22,11 +22,12 @@
  * This hook is the reversible seam: to disable the gateway wiring, the search
  * screen imports `useSearchSuggestions` again — nothing else changes.
  */
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useSearchSuggestions, type UseSearchSuggestionsOpts } from './useSearchSuggestions.ts';
 import type { SuggestGroup } from '../services/discovery.ts';
 import { useInputAssistance } from '../platform/input-assistance/hooks/useInputAssistance.ts';
-import { mapSuggestionsToGroups } from '../platform/input-assistance/search/globalSearch.ts';
+import { mapSuggestionsToGroups, findSuggestionForRow } from '../platform/input-assistance/search/globalSearch.ts';
+import { recordSuggestionSelection } from '../platform/input-assistance/services/selectionRecorder.ts';
 import { extractActionSuggestions } from '../platform/input-assistance/search/smartActions.ts';
 import { registerSearchFields, SEARCH_FIELD_IDS } from '../platform/input-assistance/search/searchFields.ts';
 import type { InputSessionContext, InputSuggestion } from '../platform/input-assistance/types/inputSuggestion.ts';
@@ -51,6 +52,13 @@ export interface GlobalSearchSuggestionsResult {
   /** Which source produced the shown groups — 'gateway' when P1 rows are live,
    *  'legacy' when the proven typeahead is (the default + fallback). */
   source: 'gateway' | 'legacy';
+  /**
+   * §35 — record an EXPLICIT pick of a shown row as selection memory. Call it
+   * from the screen's suggestion-pick handler. Fire-and-forget, fail-soft, and a
+   * no-op for a legacy-typeahead row or a non-recordable one, so a caller may
+   * invoke it unconditionally and must never gate navigation on it.
+   */
+  recordPick: (row: { id?: string | null } | null | undefined) => void;
 }
 
 export function useGlobalSearchSuggestions(
@@ -98,10 +106,27 @@ export function useGlobalSearchSuggestions(
   // back to the legacy list (never empty over a live list).
   const preferGateway = enabled && !gateway.unavailable && (gatewayHasRows || gatewayActions.length > 0);
 
+  // §35 — the write half of Phase 8 personalization for this surface. Before
+  // this existed, `global_search` selection memory had exactly one writer in the
+  // whole app (SmartInput, mounted only on the Wall header pill), so the search
+  // SCREEN read a memory it could never contribute to. Only fires for rows this
+  // hook actually served from the gateway; a legacy row maps to no suggestion
+  // and is silently skipped.
+  const recordPick = useCallback(
+    (row: { id?: string | null } | null | undefined) => {
+      if (!preferGateway) return;
+      const suggestion = findSuggestionForRow(gateway.suggestions, row);
+      if (!suggestion) return;
+      recordSuggestionSelection(suggestion, { policy: gateway.policy, query });
+    },
+    [preferGateway, gateway.suggestions, gateway.policy, query],
+  );
+
   return {
     groups: preferGateway ? gatewayGroups : legacy.groups,
     actionSuggestions: preferGateway ? gatewayActions : [],
     loading: preferGateway ? gateway.loading : legacy.loading,
     source: preferGateway ? 'gateway' : 'legacy',
+    recordPick,
   };
 }
