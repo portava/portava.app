@@ -42,6 +42,30 @@ export type FeedType = "for_you" | "following";
  */
 export const DISTRIBUTABLE_MODERATION_STATES: ReadonlySet<string> = new Set(["approved", "active"]);
 
+/**
+ * Account statuses that are NOT `active` — the creators whose media must not be
+ * distributed.
+ *
+ * This read used to say `.in("account_status", ["suspended", "banned"])`.
+ * `profiles.account_status` is TEXT with a CHECK permitting exactly
+ * active | deactivated | pending_deletion | deleted (baseline:1067), so NEITHER
+ * of those two values could ever match a row. The column is CHECK-constrained
+ * rather than an enum, so PostgREST raised nothing and logged nothing: the gate
+ * was a permanent no-op and every non-active creator's media was served.
+ *
+ * lib/circleLocationsRead.ts:245-250 rules in-tree that a denylist here is the
+ * wrong shape because it "would silently start serving any status added later".
+ * That objection is answered by construction rather than by preference: this
+ * list is asserted, in src/test/enumLiteralGuard.test.ts, to be EXACTLY the
+ * CHECK vocabulary minus `active`, derived from the baseline plus every
+ * migration. Widen the CHECK without widening this and the test goes red.
+ */
+export const NON_ACTIVE_ACCOUNT_STATUSES = [
+  "deactivated",
+  "pending_deletion",
+  "deleted",
+] as const;
+
 export interface ViewerCtx {
   viewerUserId: string;
   feedType: FeedType;
@@ -203,7 +227,7 @@ export async function filterEligibleMediaCandidates(
         .from("profiles")
         .select("id, account_status")
         .in("id", creatorIds)
-        .in("account_status", ["suspended", "banned"]);
+        .in("account_status", NON_ACTIVE_ACCOUNT_STATUSES);
       // Same shape as the mute read above, with a heavier consequence: an empty
       // result means "nobody on this page is suspended", and a rejected query
       // means "we do not know" — indistinguishable here, so a schema/query

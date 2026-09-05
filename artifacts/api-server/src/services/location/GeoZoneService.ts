@@ -59,7 +59,12 @@ export async function findZonesAt(
     const { data, error } = await db
       .from("geo_zones")
       .select("id, zone_type, name, city, country_code, center_lat, center_lng, radius_meters, safety_rating, featured")
-      .in("zone_type", ["neighborhood", "district"])
+      // `geo_zones.zone_type` is TEXT with a CHECK permitting
+      // city | neighborhood | venue | airport | hotel | custom. "district" is
+      // not among them, so it could never match a row — this is the silent
+      // half of the class (a CHECK, not an enum, so PostgREST does not raise).
+      // `neighborhood` is the label this function's own name refers to.
+      .in("zone_type", ["neighborhood"])
       .limit(100);
 
     if (error || !data) return [];
