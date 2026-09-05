@@ -18,6 +18,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchPostMediaMap, mergePostMedia } from "./postMediaResolve.js";
+import { isPostPublished } from "./postVisibility.js";
 
 // ── Demo-event guard ───────────────────────────────────────────────────────────
 
@@ -182,11 +183,21 @@ function postPassesStaticFilters(
   if (post.visibility !== "public") return false;
   if (post.status !== "active") return false;
   if (post.deleted_at != null) return false;
-  if (post.post_status === "delayed_post") {
-    // Allow if publish_eligible_at is in the past
-    if (!post.publish_eligible_at) return false;
-    if (new Date(post.publish_eligible_at).getTime() > Date.now()) return false;
-  }
+  // Delayed-publish gate (§23/§37). This branch used to read
+  // `post.post_status === "delayed_post"`. `delayed_post` is not a label of the
+  // `delayed_post_status` enum — the real labels are draft / private /
+  // pending_location_exit / pending_delay / pending_safety_review / published /
+  // canceled / expired (migration 0049) — so the comparison was false on every
+  // row and the gate never fired once. Every pending delayed-geotag post walked
+  // straight through into event discovery.
+  //
+  // The canonical predicate is publication state, not a clock: the sweeper that
+  // flips post_status to 'published' is the single writer of that decision, and
+  // it applies the safety-review hold and the manual-release path that a bare
+  // `publish_eligible_at <= now` comparison cannot see. A pending post is
+  // refused even when its eligibility time has passed but the sweeper has not
+  // run yet — fail closed, never guess on the reader's side.
+  if (!isPostPublished(post)) return false;
   return true;
 }
 

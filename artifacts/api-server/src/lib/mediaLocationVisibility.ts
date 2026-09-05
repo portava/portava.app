@@ -374,6 +374,118 @@ export function resolveMediaLocationWithGemProtection(
   return coarsenMediaLocation(input, { ...opts, locationVisibility: effectiveTier, isOwner: false });
 }
 
+// ── Owner privacy mode → media location ceiling ───────────────────────────────
+
+/**
+ * The `posts.location_privacy_mode` enum (migration 20260720 / DB enum
+ * `post_location_privacy_mode`). This is the OWNER's own choice about how
+ * precisely their post may be located — an axis independent of both the §33
+ * LocationVisibility tier and the Hidden-Gem ceiling.
+ */
+export const POST_LOCATION_PRIVACY_MODES = [
+  "none",
+  "hidden",
+  "city_only",
+  "delayed_until_exit",
+  "delayed_until_time",
+  "trusted_circle_only",
+] as const;
+export type PostLocationPrivacyMode = (typeof POST_LOCATION_PRIVACY_MODES)[number];
+
+/**
+ * The finest tier a post may be disclosed at given its OWNER's privacy mode,
+ * for a non-owner viewer. `null` means the mode imposes no constraint.
+ *
+ * This mirrors `lib/postSchemas.mapPublicPost` — the redactor routes/posts.ts
+ * has always applied — rather than inventing a second owner-privacy policy:
+ *
+ *   • mapPublicPost nulls `location_name` (the venue) and keeps city/country for
+ *     hidden / city_only / trusted_circle_only, and for a delayed mode until the
+ *     post is published. In tier terms that disclosure boundary IS 'city'.
+ *   • 'none' (and an absent mode) redacts nothing → no constraint.
+ *
+ * `mediaPrivacyModeParity` in the test suite asserts the two stay in lockstep,
+ * so this table cannot drift away from the redactor it mirrors.
+ *
+ * FAIL CLOSED: an unrecognised mode returns 'city', never null.
+ */
+export function locationPrivacyModeToCeiling(
+  mode: PostLocationPrivacyMode | string | null | undefined,
+  postStatus?: string | null,
+): LocationVisibilityTier | null {
+  if (mode == null || mode === "" || mode === "none") return null;
+  switch (mode) {
+    case "hidden":
+    case "city_only":
+    case "trusted_circle_only":
+      return "city";
+    case "delayed_until_exit":
+    case "delayed_until_time":
+      // Suppressed until the delayed-publish worker releases it (the same
+      // `post_status === 'published'` condition mapPublicPost checks).
+      return postStatus === "published" ? null : "city";
+    default:
+      return "city";
+  }
+}
+
+// ── The full media place disclosure (tier + owner mode + gem ceiling) ─────────
+
+export interface MediaPlaceDisclosureOpts extends CoarsenOpts {
+  /** Hidden-Gem protection for this item. Absent ⇒ undetermined ⇒ fail-closed. */
+  gem?: GemProtection;
+  /** The owner's `posts.location_privacy_mode`. */
+  locationPrivacyMode?: PostLocationPrivacyMode | string | null;
+  /** `posts.post_status` — only read to resolve the delayed-publish modes. */
+  postStatus?: string | null;
+}
+
+export interface MediaPlaceDisclosure extends MediaLocationDisclosure {
+  /**
+   * Whether the opaque canonical place id may be disclosed.
+   *
+   * A canonical place id is a PLACE-LEVEL identifier: handing it to a client
+   * that can resolve it through the Map/place gateway discloses the venue just
+   * as precisely as printing its name. It therefore rides the same tier as the
+   * venue label — true only for the owner, or when the effective tier is the
+   * finest public tier ('place'). At city/neighborhood/country/hidden it is
+   * withheld, which is what makes a gem's 'city' ceiling actually bind.
+   */
+  mayDisclosePlaceId: boolean;
+}
+
+/**
+ * THE media location choke point for surfaces that also emit a canonical place
+ * id. Folds all THREE independent constraints together and takes the strictest:
+ *
+ *   1. the item's own §33 LocationVisibility tier,
+ *   2. the OWNER's `location_privacy_mode` (their explicit choice),
+ *   3. the hosting Hidden Gem's ceiling (undetermined ⇒ fail-closed).
+ *
+ * The media OWNER bypasses all three for their own item — serving their own
+ * location back to them de-anonymizes nothing.
+ */
+export function resolveMediaPlaceDisclosure(
+  input: MediaLocationInput,
+  opts: MediaPlaceDisclosureOpts = {},
+): MediaPlaceDisclosure {
+  if (opts.isOwner === true) {
+    const owned = coarsenMediaLocation(input, { ...opts, isOwner: true });
+    return { ...owned, mayDisclosePlaceId: true };
+  }
+
+  const ownTier = normalizeTier(opts.locationVisibility);
+  const modeCeiling = locationPrivacyModeToCeiling(opts.locationPrivacyMode, opts.postStatus);
+  const withMode = modeCeiling == null ? ownTier : stricterTier(ownTier, modeCeiling);
+
+  const d = resolveMediaLocationWithGemProtection(input, {
+    ...opts,
+    isOwner: false,
+    locationVisibility: withMode,
+  });
+  return { ...d, mayDisclosePlaceId: d.visibility === "place" };
+}
+
 // ── Gem cross-check (DB + pure) ────────────────────────────────────────────────
 
 /** Restrictive gem row shape needed to compute a ceiling for a place/coordinate. */
