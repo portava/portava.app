@@ -1782,6 +1782,28 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
     return;
   }
 
+  // ── Private-account guard ─────────────────────────────────────────────────
+  // filterEligibleMediaCandidates does NOT know about `profiles.is_private` —
+  // it gates blocks, mutes, suspension, status, post_status, publish_at,
+  // visibility and moderation, and nothing else. The private-account rule lives
+  // in lib/privacyFilter.excludePrivateAuthorPosts, and BOTH sibling readers of
+  // this same row shape apply it: the grid feed (mode=grid) and the Watch feed
+  // (GET /media/feed). This reader did not, so a private account's
+  // visibility='public' post — its media, caption and coarse location — was
+  // served in full to any authenticated non-follower who had the id (a share
+  // link, a stamp, a notification deep link). The joined `profiles` row already
+  // carries is_private, so this costs no extra round trip.
+  const singleItemSafe = await excludePrivateAuthorPosts(
+    [row as any],
+    user.id,
+    sc,
+    { profilesKey: "profiles" },
+  );
+  if (singleItemSafe.length === 0) {
+    sendError(res, "not_found", "Media item not found");
+    return;
+  }
+
   const postMedia = Array.isArray((row as any).post_media) ? (row as any).post_media : [];
 
   // Fetch stamp-it count and like count (content_stamps) for this single item
@@ -2005,8 +2027,12 @@ async function verifyMediaAccess(
       .or(`and(blocker_id.eq.${viewerUserId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${viewerUserId})`);
     if (blockError || (blockCount ?? 0) > 0) return null;
 
-    // Visibility check — private AND friends-only posts require follow or ownership
-    if ((visibility === "private" || visibility === "friends") && authorId !== viewerUserId) {
+    // Visibility check — a private post requires follow or ownership.
+    // ("friends" used to be tested here too. `posts.visibility` is the enum
+    // `post_visibility` — public | trip_only | private | followers_only — so no
+    // row can ever hold it and the branch could never fire. Removed with the
+    // PATCH schema that was the only thing trying to write it.)
+    if (visibility === "private" && authorId !== viewerUserId) {
       const { data: followRow } = await sc
         .from("user_follows")
         .select("follower_id")
@@ -2020,6 +2046,22 @@ async function verifyMediaAccess(
     if (visibility === "trip_only" && authorId !== viewerUserId) {
       if (!tripId || !(await isAcceptedTripMember(sc, tripId, viewerUserId))) return null;
     }
+
+    // Private-ACCOUNT gate. The check above is about the POST's own visibility;
+    // this is about the AUTHOR'S account. A private account's posts are for
+    // approved followers whatever the post says — the platform rule in
+    // lib/privacyFilter, which both media feeds apply and this resolver did not.
+    // Without it, a stranger holding the id could read a private account's
+    // comments and register likes/saves/shares/reactions against its media.
+    // Uses the SHARED helper rather than a second hand-rolled follow lookup, so
+    // there is one implementation of the rule. Costs nothing on the owner's own
+    // item (the helper short-circuits) and one profiles read otherwise.
+    const accountVisible = await excludePrivateAuthorPosts(
+      [{ author_id: authorId }],
+      viewerUserId,
+      sc,
+    );
+    if (accountVisible.length === 0) return null;
 
     return { kind: "post", authorId };
   }
@@ -2317,8 +2359,21 @@ router.patch("/media/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
 
+  // `posts.visibility` is the enum `post_visibility`, whose ONLY labels are
+  // public | trip_only | private | followers_only (baseline structure line 361).
+  // This schema used to accept "friends", which is not one of them: the client's
+  // "Friends only" row in MediaMoreMenu sent it, PostgREST cast it to the enum,
+  // and every such request died 22P02 → db_error. The capability never worked
+  // once. It is removed here rather than mapped, because choosing which real
+  // label "friends" means (followers_only? trip_only?) is a product decision,
+  // not a repair.
+  //
+  // trip_only is deliberately NOT settable here: it carries a cross-field rule
+  // (the post must HAVE a trip — lib/postSchemas.ts + PATCH /posts/:id enforce
+  // it) that this endpoint does not implement. Owners set it through the post
+  // editor, which does.
   const bodySchema = z.object({
-    visibility: z.enum(["public", "friends", "private"]),
+    visibility: z.enum(["public", "private"]),
   });
   const parsed = bodySchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
