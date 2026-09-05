@@ -1048,8 +1048,10 @@ router.get(
       worldIntelligence.report = report;
 
       // The flag is checked HERE as well as inside each producer so a disabled
-      // capability costs nothing: no city-zone read, no plan read, no stamp
-      // read. A LITERAL, not the constant, so check:flag-polarity can resolve
+      // capability costs ONE read rather than five: no city-zone read, no plan
+      // read, no city-model read, no stamp read — the `isFlagEnabled` read
+      // itself still happens, and is the whole cost of an off layer.
+      // A LITERAL, not the constant, so check:flag-polarity can resolve
       // it — WORLD_INTELLIGENCE_FLAG_PIN below stops the two drifting apart.
       if (!(await isFlagEnabled(sc, "map_world_intelligence_enabled"))) {
         report.refusal = "flag_off";
@@ -1126,6 +1128,11 @@ router.get(
               activityZones: aggregation.objects.filter((o) => o.kind === "activity_zone"),
             }).catch(() => null);
             if (!read) {
+              // A THROWN read is "we could not look", and a zero-count report
+              // with no refusal would render as "there is nothing here" — the
+              // one confusion this whole report exists to prevent. The refusal
+              // is set exactly as the traveler-flow arm above sets its own.
+              if (report.refusal === null) report.refusal = "read_failed";
               report.cityModels = {
                 cities: viewportCities.length, capped: false, modelsRead: 0,
                 published: 0, slicesWithheld: 0, slicesPublished: 0,
@@ -1147,7 +1154,17 @@ router.get(
               bbox,
               cities: viewportCities,
             }).catch(() => null);
-            if (read && read.ok) {
+            if (!read) {
+              // Thrown. Same rule as every other arm: "we could not look" must
+              // never be served as "nothing here".
+              if (report.refusal === null) report.refusal = "read_failed";
+            } else if (!read.ok) {
+              // The producer's OWN refusal — read_failed, no_viewer,
+              // no_city_model — carried through rather than swallowed. Before
+              // this, `personalCities: null` was the only trace, and it is also
+              // what "the layer was not requested" looks like.
+              if (report.refusal === null) report.refusal = read.reason;
+            } else {
               report.personalCities = read.report;
               for (const p of read.pins) produced.push(p);
               sources.push("personal_cities");
@@ -1159,8 +1176,19 @@ router.get(
           const wiGate = withholdCoarsenableAggregates(servableProduced, zones);
           const wiProtection = applyProtection(wiGate.objects, zones);
           // servableOnly again AFTER protection: coarsening can drop an object
-          // to a rung that must not be serialized, and that decision is made
+          // to a rung that must not be serialized (a `policy_defined` row may
+          // ask for COARSEN with a floor of `none`), and that decision is made
           // downstream of the gate.
+          //
+          // IT IS A BACKSTOP, NOT THE ONLY GUARD, AND THAT IS DELIBERATE.
+          // `applyProtection` already re-checks `isServable` on its own coarsen
+          // path, so removing EITHER of the two leaves the wire correct and
+          // removing BOTH publishes a `privacyClass: 'none'` object. Neither is
+          // therefore individually mutation-provable, and neither is dead: the
+          // test "an object coarsened onto the `none` rung never reaches the
+          // wire" pins the composite invariant the pair exists to hold, and it
+          // goes red the moment both are gone. Do not delete one because a
+          // coverage tool called it redundant.
           const wiSurvived = servableOnly(wiProtection.objects);
           // A COUNT of what §24 removed — withheld plus suppressed plus dropped
           // for an unusable coarsened rung, as one number. Which zone removed

@@ -71,8 +71,17 @@ import {
 import {
   SINGLE_FAMILY_CONFIDENCE_CAP,
   TRAVELER_FLOW_WINDOW_DAYS,
+  deriveTravelerFlowEdges,
 } from "../lib/mapProducers/travelerFlowProducer.js";
 import { WITHHELD_RATHER_THAN_COARSENED_KINDS } from "../lib/mapProjection.js";
+import {
+  AMBIENT_PRESENCE_KINDS,
+  COARSEN_UNSAFE_KINDS,
+  classifyAgainstProtected,
+  type ProtectedZone,
+} from "../lib/protectedLocations.js";
+import { CONFIDENCE_STATES } from "../lib/mapObjects.js";
+import type { ZoneTransition } from "../lib/mapAggregation.js";
 
 // ── ids and sentinels ─────────────────────────────────────────────────────────
 
@@ -90,7 +99,13 @@ const ACTOR = (n: number) => `wi-actor-sentinel-${n}`;
 const STOP_IN_A = { lat: 16.0491234, lng: 108.2013579 };
 const STOP_IN_B = { lat: 13.7539876, lng: 100.5017531 };
 const STOP_IN_C = { lat: 3.1391357, lng: 101.6869246 };
-/** A city only the OTHER user has been to. Must never reach this viewer. */
+/**
+ * A city only the OTHER user has been to, and which has NO CURATED GEOGRAPHY.
+ * It is a sentinel for the `unplaced` drop path ONLY — it proves nothing about
+ * ownership, because it would be dropped whether or not the owner filter ran.
+ * The load-bearing stranger rows are the ones in CURATED cities; see
+ * `worldState`'s `passport_stamps`.
+ */
 const STRANGER_CITY = "Reykjavik";
 
 /** Three curated CITY zones, far apart, with round centroids. */
@@ -118,7 +133,17 @@ const ACCEPTED_AGO_MS = 15 * 60_000;
 
 // ── fake Supabase client ──────────────────────────────────────────────────────
 
-interface TableSpec { rows?: any[]; error?: { message: string } }
+interface TableSpec {
+  rows?: any[];
+  error?: { message: string };
+  /**
+   * THROW instead of returning a PostgREST error. The two are different
+   * failures and the route treats them on different arms — `error` reaches the
+   * producer's own refusal, a THROW unwinds into the route's `.catch(() => null)`
+   * — so a fixture that can only produce the first cannot test the second.
+   */
+  throws?: string;
+}
 type FakeState = Record<string, TableSpec | any[]>;
 
 function specOf(state: FakeState, table: string): TableSpec {
@@ -180,7 +205,11 @@ function makeClient(state: FakeState) {
           ? { data: { user: { id: USER } }, error: null }
           : { data: { user: null }, error: { message: "Unauthorized" } },
     },
-    from: (table: string) => buildQuery(specOf(state, table)),
+    from: (table: string) => {
+      const spec = specOf(state, table);
+      if (spec.throws) throw new Error(spec.throws);
+      return buildQuery(spec);
+    },
   };
 }
 
@@ -278,6 +307,27 @@ function cityModelRow(label: string, opts: { actorsPerSlice?: number; slices?: s
   };
 }
 
+/**
+ * Public venues, so the flag-off comparison below runs over a NON-EMPTY object
+ * list. Nothing Phase 7 does reads this table.
+ */
+const PLACE_ROWS: any[] = Array.from({ length: COHORT_ACTORS + 5 }, (_, i) => ({
+  id: `pl-${i + 1}`,
+  name: `Venue ${i + 1}`,
+  // Clustered around CITY_A so §31 folds them into ONE activity zone at the
+  // city band — a lone venue is suppressed for k-anonymity and would leave the
+  // comparison empty again.
+  latitude: CITY_A.lat + i * 0.001,
+  longitude: CITY_A.lng + i * 0.001,
+  status: "active",
+  merged_into_place_id: null,
+  primary_category: "cafe",
+  city: CITY_A.name,
+  neighborhood: null,
+  country_code: "VN",
+  updated_at: "2026-09-01T00:00:00.000Z",
+}));
+
 function stampRow(id: string, userId: string, city: string, awardedAt: string) {
   return { id, user_id: userId, city, country: "VN", awarded_at: awardedAt, stamp_type: "city" };
 }
@@ -299,8 +349,22 @@ function worldState(nowMs: number, over: FakeState = {}): FakeState {
       stampRow("s1", USER, CITY_A.name, "2026-01-02T00:00:00.000Z"),
       stampRow("s2", USER, CITY_A.name, "2026-03-04T00:00:00.000Z"),
       stampRow("s3", USER, CITY_B.name, "2026-05-06T00:00:00.000Z"),
-      // Another person's history. Must never reach this viewer.
-      stampRow("s4", OTHER_USER, STRANGER_CITY, "2026-06-07T00:00:00.000Z"),
+      // ── ANOTHER PERSON'S HISTORY, DELIBERATELY IN CURATED GEOGRAPHY ────────
+      // A stranger row in an UNCURATED city is excluded by the `unplaced` path
+      // whether or not `.eq("user_id", viewerId)` runs, so it can never show
+      // that the owner filter is doing anything. These two are inside the
+      // viewport's own curated cities, which leaves the owner predicate as the
+      // ONLY thing that can keep them out:
+      //   s4  a city the viewer has NEVER been to  ⇒ an unfiltered read
+      //       publishes a THIRD personal_city pin.
+      //   s5  the viewer's OWN city                ⇒ an unfiltered read inflates
+      //       CITY_A's stampCount from 2 to 3, which no per-city filter could
+      //       ever correct.
+      stampRow("s4", OTHER_USER, CITY_C.name, "2026-06-07T00:00:00.000Z"),
+      stampRow("s5", OTHER_USER, CITY_A.name, "2026-07-08T00:00:00.000Z"),
+      // …and one in a city with no curated geography, so the sentinel grep
+      // covers the drop path too.
+      stampRow("s6", OTHER_USER, STRANGER_CITY, "2026-08-09T00:00:00.000Z"),
     ],
     ...plans,
     ...over,
@@ -368,9 +432,14 @@ beforeEach(() => {
 
 const ALL_KINDS = WORLD_INTELLIGENCE_KINDS.join(",");
 
-async function projection(state: FakeState, kinds = ALL_KINDS, zoom = ZOOM) {
+/**
+ * `extraQuery` is appended verbatim (leading `&` included). It exists for ONE
+ * purpose: driving request parameters that must NOT be able to change the
+ * answer — see the 2182 test below.
+ */
+async function projection(state: FakeState, kinds = ALL_KINDS, zoom = ZOOM, extraQuery = "") {
   _setTestClient(makeClient(state) as any, true);
-  return get(`/map/projection?bbox=${BBOX}&zoom=${zoom}&kinds=${kinds}`);
+  return get(`/map/projection?bbox=${BBOX}&zoom=${zoom}&kinds=${kinds}${extraQuery}`);
 }
 
 const ofKind = (body: any, kind: string): any[] =>
@@ -453,6 +522,57 @@ describe("§36 Phase 7 borrows its floor and never lowers one", () => {
     // personal_city is deliberately NOT there: it discloses nothing about who
     // is at the protected place. It still follows the zone's own action.
     assert.equal(WITHHELD_RATHER_THAN_COARSENED_KINDS.includes("personal_city" as any), false);
+  });
+
+  it("personal_city is deliberately NOT an ambient-presence kind either", () => {
+    // THE SIBLING LIST, CONSIDERED RATHER THAN OMITTED. An omitted kind in a
+    // per-kind list is this codebase's most-repeated Map defect (it is how the
+    // `prediction` hole reached the wire), so the absence is pinned here with
+    // the reasoning attached rather than left to be rediscovered.
+    //
+    // AMBIENT_PRESENCE_KINDS escalates coarsen⇒suppress for objects that assert
+    // A PERSON WAS AT THE PROTECTED PLACE, because that association survives
+    // every amount of coordinate blurring. `memory` qualifies exactly: it is a
+    // VENUE-level pin whose title is the venue's own name, so a coarsened
+    // memory snapped to the zone anchor still reads "you have a history with
+    // this clinic".
+    //
+    // `personal_city` cannot make that assertion. Its geometry is a CITY
+    // CENTROID, its title is the city's label and its payload names a cityKey,
+    // a country and the viewer's own stamp count — the association it publishes
+    // is with a CITY, never with a place inside one. Snapping a city centroid
+    // to a zone anchor removes nothing because there was nothing place-shaped
+    // to remove, and "you have been to Da Nang" is not a fact any protected
+    // zone exists to withhold. Owner-onlyness is NOT the discriminator here —
+    // `memory` is owner-only too; the discriminator is what the object asserts
+    // about the protected place.
+    //
+    // It still follows the zone's own action, so inside a SUPPRESS-class zone
+    // it is withheld like anything else. That is asserted by execution below.
+    assert.ok(AMBIENT_PRESENCE_KINDS.includes("memory"), "memory left the ambient list");
+    assert.equal(AMBIENT_PRESENCE_KINDS.includes("personal_city" as any), false);
+    // Not in either escalation table — one statement, so a future edit that
+    // moves it into one has to come here and say why.
+    assert.equal(COARSEN_UNSAFE_KINDS.includes("personal_city" as any), false);
+
+    // The decision is only defensible while personal_city stays a CITY-CENTROID
+    // object with no venue in it. Pin the two properties the reasoning rests on.
+    const coarsenZone: ProtectedZone = {
+      id: "z", category: "medical_facility", shape: "circle",
+      center: { lat: CITY_A.lat, lng: CITY_A.lng }, radiusMeters: 50_000,
+    };
+    const cityPin: MapObject = {
+      id: "mycity:city-a", kind: "personal_city", geometry: point(CITY_A.lat, CITY_A.lng),
+      title: CITY_A.name, privacyClass: "place_level", renderingPriority: 30,
+    };
+    const memoryPin: MapObject = { ...cityPin, id: "memory:m1", kind: "memory" };
+    // Same zone, same coordinate, different answers — which is the whole
+    // content of the decision.
+    assert.equal(classifyAgainstProtected(cityPin, [coarsenZone]).action, "coarsen");
+    assert.equal(classifyAgainstProtected(memoryPin, [coarsenZone]).action, "suppress");
+    // …and a SUPPRESS-class zone still takes the city pin.
+    const shelter: ProtectedZone = { ...coarsenZone, category: "shelter" };
+    assert.equal(classifyAgainstProtected(cityPin, [shelter]).action, "suppress");
   });
 });
 
@@ -568,9 +688,36 @@ describe("World Pulse is built only from already-aggregated sources", () => {
   });
 
   it("produces nothing below the city band (§17)", () => {
-    const res = deriveWorldPulse([zoneObj("az:1", 200)], { bbox: PULSE_BBOX, zoom: 14 });
-    assert.equal(res.pulses.length, 0);
+    // ZOOM 12, NOT 14, AND THE DIFFERENCE IS THE WHOLE TEST. The pulse grid is
+    // drawn WORLD_PULSE_ZOOM_OFFSET steps coarser, so zoom 14 grids at 12 —
+    // where CELL_SIZE_DEGREES_BY_ZOOM is null and `cellFor` returns null, which
+    // drops every contributor on its own. At 14 this test passed with the band
+    // gate DELETED: it was pinned at the one district zoom where it could not
+    // fail. Zoom 12 grids at 10, a real cell, so the band gate is the only
+    // thing left that can produce nothing.
+    const res = deriveWorldPulse([zoneObj("az:1", 200)], { bbox: PULSE_BBOX, zoom: 12 });
     assert.equal(res.report.band, "district");
+    assert.ok(
+      res.report.cellSizeDegrees !== null,
+      "the grid was unusable at this zoom, so the band gate is not what refused",
+    );
+    assert.equal(res.pulses.length, 0);
+    assert.equal(res.report.cells, 0, "a contributor was binned below the city band");
+    // The whole district band, both ends: 12 has a usable grid, 14 does not, and
+    // neither may publish.
+    for (const zoom of [12, 13, 14]) {
+      assert.equal(
+        deriveWorldPulse([zoneObj("az:1", 200)], { bbox: PULSE_BBOX, zoom }).pulses.length,
+        0,
+        `zoom ${zoom} published below the city band`,
+      );
+    }
+    // …and the band immediately above it does publish, so "nothing" is the
+    // band's answer rather than the fixture's.
+    assert.equal(
+      deriveWorldPulse([zoneObj("az:1", 200)], { bbox: PULSE_BBOX, zoom: 11 }).pulses.length,
+      1,
+    );
   });
 
   it("its grid is COARSER than the aggregation grid it summarizes", () => {
@@ -659,6 +806,104 @@ describe("the traveler-flow graph publishes a city→city edge", () => {
     assert.equal(e.confidence, SINGLE_FAMILY_CONFIDENCE_CAP);
     assert.equal(e.payload.windowDays, TRAVELER_FLOW_WINDOW_DAYS);
     assert.match(String(e.provenance.lines[0].text), /uncorroborated/);
+  });
+});
+
+/**
+ * A transition that clears every privacy clause, so each test below removes
+ * exactly one property and nothing else can explain the result.
+ */
+function transition(nowMs: number, over: Partial<ZoneTransition> = {}): ZoneTransition {
+  return {
+    fromZoneId: CITY_A.id,
+    toZoneId: CITY_B.id,
+    from: { lat: CITY_A.lat, lng: CITY_A.lng },
+    to: { lat: CITY_B.lat, lng: CITY_B.lng },
+    distinctActors: COHORT_ACTORS,
+    distinctGroups: PRIVACY_THRESHOLD_V1.minIndependentGroups,
+    maxGroupShare: PRIVACY_THRESHOLD_V1.maxSingleGroupShare,
+    signalFamilies: ["accepted_plan"],
+    observedAt: isoAgo(nowMs, ACCEPTED_AGO_MS),
+    ...over,
+  } as ZoneTransition;
+}
+
+describe("an edge never claims more than its evidence supports", () => {
+  it("a single-family edge is CAPPED even when its transition declares more", async () => {
+    // WHY THIS IS A UNIT TEST. Through the route the cap is invisible:
+    // `deriveZoneTransitions` already scores a one-family transition at the
+    // weakest band, so `weaker(declared, cap)` returns the same value with or
+    // without the cap and deleting the cap left the whole suite green. The cap
+    // exists precisely for the case that fixture cannot reach — a transition
+    // that arrives declaring a STRONGER band — so that is what is driven here.
+    const nowMs = Date.now();
+    const strongest = CONFIDENCE_STATES[CONFIDENCE_STATES.length - 1];
+    assert.notEqual(strongest, SINGLE_FAMILY_CONFIDENCE_CAP, "the ladder collapsed to one rung");
+
+    const { edges } = deriveTravelerFlowEdges(
+      [transition(nowMs, { confidence: strongest, signalFamilies: ["accepted_plan"] })],
+      { now: nowMs },
+    );
+    assert.equal(edges.length, 1);
+    const e = edges[0];
+    assert.equal(
+      e.confidence,
+      SINGLE_FAMILY_CONFIDENCE_CAP,
+      "an uncorroborated edge published the confidence it was handed",
+    );
+    assert.ok(e.payload);
+    assert.equal(e.payload.singleFamily, true);
+    // The payload's own copy is capped too — a renderer reading either field
+    // must get the same answer.
+    assert.equal(e.provenance?.confidence, SINGLE_FAMILY_CONFIDENCE_CAP);
+  });
+
+  it("a CORROBORATED edge keeps its declared band, so the cap is not a blanket floor", () => {
+    // The other side of the same rule: without this, "always return the cap"
+    // would pass the test above.
+    const nowMs = Date.now();
+    const strongest = CONFIDENCE_STATES[CONFIDENCE_STATES.length - 1];
+    const { edges } = deriveTravelerFlowEdges(
+      [transition(nowMs, {
+        confidence: strongest,
+        signalFamilies: ["accepted_plan", "checkin", "live_signal"],
+      })],
+      { now: nowMs },
+    );
+    assert.equal(edges.length, 1);
+    const e = edges[0];
+    assert.ok(e.payload);
+    assert.equal(e.payload.singleFamily, false);
+    assert.equal(e.confidence, strongest);
+  });
+
+  it("an edge whose freshness cannot be established is not published", async () => {
+    // §37 / §6: an object that carries a live band it did not earn is worse
+    // than no object. A FUTURE observation (clock skew beyond the tolerance)
+    // is perfectly DATEABLE — `toEpochMs` succeeds — but `deriveFreshness`
+    // returns 'unknown', and the producer refuses it.
+    //
+    // Under PRIVACY_THRESHOLD_V1 the publication-delay clause rejects a future
+    // timestamp first, which is why the route-level fixture cannot reach this
+    // gate. The threshold is an injected parameter, so the delay is set to zero
+    // here to hand the freshness gate the decision on its own. Nothing else is
+    // relaxed: k, groups and dominant-group share are the product's own.
+    const nowMs = Date.now();
+    const noDelay = { ...PRIVACY_THRESHOLD_V1, publicationDelayMinutes: 0 };
+
+    const future = deriveTravelerFlowEdges(
+      [transition(nowMs, { observedAt: new Date(nowMs + 10 * 60_000).toISOString() })],
+      { now: nowMs, threshold: noDelay },
+    );
+    assert.equal(future.edges.length, 0, "an edge with unknown freshness was published");
+    assert.deepEqual(future.rejected.map((r) => r.reason), ["undateable"]);
+
+    // NOT VACUOUS: the identical transition with a dateable past observation
+    // publishes under the same relaxed threshold, so the freshness gate is what
+    // refused and not the delay change.
+    const past = deriveTravelerFlowEdges([transition(nowMs)], { now: nowMs, threshold: noDelay });
+    assert.equal(past.edges.length, 1);
+    assert.notEqual(past.edges[0].freshness, "unknown");
   });
 });
 
@@ -821,13 +1066,62 @@ describe("the personal city model is the viewer's own history and nobody else's"
 
   it("another person's stamp never appears, in any field", async () => {
     const { body } = await projection(worldState(Date.now()), "personal_city");
+    const mine = ofKind(body, "personal_city");
     // NOT VACUOUS: the viewer's OWN summaries must be present, or an empty
     // response would satisfy every absence check below.
-    assert.equal(ofKind(body, "personal_city").length, 2);
+    assert.equal(mine.length, 2);
+
+    // ── WHAT MAKES THE OWNER PREDICATE LOAD-BEARING ──────────────────────────
+    // Greps alone cannot do it: a stranger's row in an uncurated city never
+    // reaches the payload anyway, so an absence check passes with the owner
+    // filter deleted. These two assertions read the CONTENT the filter decides.
+    // The stranger holds stamps in CITY_C (a curated city the viewer has never
+    // visited) and in CITY_A (the viewer's own), so removing
+    // `.eq("user_id", viewerId)` publishes a third pin AND raises CITY_A's
+    // stampCount to 3. Both are asserted.
+    assert.deepEqual(
+      mine.map((m: any) => m.payload.cityLabel).sort(),
+      [CITY_A.name, CITY_B.name].sort(),
+      "a city only ANOTHER user has stamps in was published",
+    );
+    const a = mine.find((m: any) => m.payload.cityLabel === CITY_A.name);
+    assert.ok(a);
+    assert.equal(a.payload.stampCount, 2, "another user's stamps were counted into the viewer's city");
+
     const wire = JSON.stringify(body);
     assert.ok(!wire.includes(OTHER_USER), "another user's id reached the wire");
     assert.ok(!wire.includes(STRANGER_CITY), "another user's city reached the wire");
-    assert.ok(!wire.includes("s4"), "another user's stamp id reached the wire");
+    assert.ok(!wire.includes(CITY_C.name), "a city only another user has been to reached the wire");
+    for (const id of ["s4", "s5", "s6"]) {
+      assert.ok(!wire.includes(`"${id}"`), `another user's stamp id ${id} reached the wire`);
+    }
+  });
+
+  it("the owner is the SESSION identity — no request parameter can redirect it (2182)", async () => {
+    // THE 2182 LESSON, MADE EXECUTABLE. personalCityProducer's header and the
+    // route's own comment both say the owner "must never come from a query
+    // parameter", and until this test nothing checked it: swapping `user.id`
+    // for `req.query.viewerId` left the whole suite green.
+    //
+    // Every plausible spelling is sent at once, naming the OTHER user, whose
+    // curated-city stamps would produce a visibly different answer. The result
+    // must be identical to the request that named nobody.
+    const state = worldState(Date.now());
+    const clean = await projection(state, "personal_city");
+    const spoof = [
+      "viewerId", "viewer_id", "userId", "user_id", "ownerId", "owner_id", "asUser",
+    ].map((p) => `&${p}=${encodeURIComponent(OTHER_USER)}`).join("");
+    const spoofed = await projection(state, "personal_city", ZOOM, spoof);
+
+    assert.equal(spoofed.status, 200);
+    assert.deepEqual(
+      ofKind(spoofed.body, "personal_city").map((m: any) => m.payload.cityLabel).sort(),
+      [CITY_A.name, CITY_B.name].sort(),
+      "a query parameter changed whose history was read",
+    );
+    assert.deepEqual(spoofed.body.objects, clean.body.objects);
+    assert.deepEqual(spoofed.body.worldIntelligence.personalCities, clean.body.worldIntelligence.personalCities);
+    assert.ok(!JSON.stringify(spoofed.body).includes(CITY_C.name));
   });
 
   it("carries no live band — it is history, not a claim about now", async () => {
@@ -869,23 +1163,43 @@ describe("with the flag OFF nothing changes", () => {
     assert.equal(body.worldIntelligence.travelerFlow, null);
   });
 
-  it("the served map is byte-identical to one where Phase 7 was never asked for", async () => {
-    // The whole behavioural claim of "gated behind a flag seeded OFF": with the
-    // flag off, everything the renderer consumes is EXACTLY what it was before
-    // Phase 7 existed. Only the diagnostic report differs — and that is the
-    // same shape `crowdFlow`, `producers` and `places` already added.
+  it("the RENDERED map is identical to one where Phase 7 was never asked for", async () => {
+    // THE CLAIM, STATED ACCURATELY. The response is NOT byte-identical to the
+    // pre-Phase-7 one and this test does not pretend it is: a default
+    // projection now always carries a top-level `worldIntelligence` key, which
+    // with the flag off holds `refusal: "flag_off"`. That is deliberate — the
+    // report's whole job is to keep "the gates said no" distinguishable from
+    // "nothing asked" — and it is the same shape `crowdFlow`, `producers` and
+    // `places` already added. What IS unchanged is everything the RENDERER
+    // consumes: the object list and every pre-existing report field.
+    //
+    // The comparison is made over a NON-EMPTY object list on purpose. An
+    // earlier version compared two empty arrays, which would have held equally
+    // well if the whole projection were broken.
     const nowMs = Date.now();
     const flagOff = worldState(nowMs, {
       feature_flags: [{ flag: "map_projection_enabled", enabled: true }],
+      places: PLACE_ROWS,
     });
-    const asked = await projection(flagOff, ALL_KINDS);
+    const asked = await projection(flagOff, `${ALL_KINDS},place`);
     const notAsked = await projection(flagOff, "place");
 
+    assert.ok(asked.body.objects.length > 0, "the pre-Phase-7 map produced nothing to compare");
     assert.deepEqual(asked.body.objects, notAsked.body.objects);
-    assert.deepEqual(asked.body.objects, []);
     for (const field of ["aggregation", "protection", "liveEnrichment", "crowdFlow", "total"]) {
       assert.deepEqual(asked.body[field], notAsked.body[field], `${field} differed`);
     }
+    // The ONE documented difference, asserted rather than glossed: the
+    // diagnostic key, and nothing else.
+    const strip = (b: any) => {
+      // `generatedAt` is a clock reading and legitimately differs between two
+      // requests; it is not part of the claim.
+      const { worldIntelligence, generatedAt, ...rest } = b;
+      return rest;
+    };
+    assert.deepEqual(strip(asked.body), strip(notAsked.body));
+    assert.equal(asked.body.worldIntelligence.refusal, "flag_off");
+    assert.equal(notAsked.body.worldIntelligence, null);
     // …and nothing was read for a layer that cannot publish: no source claims
     // an answer it never obtained.
     for (const s of ["world_pulse", "traveler_flow", "city_models", "personal_cities"]) {
@@ -919,13 +1233,62 @@ describe("Phase 7 fails closed", () => {
     assert.equal(body.worldIntelligence.refusal, "read_failed");
   });
 
-  it("an unreadable stamp table publishes no personal city", async () => {
+  it("an unreadable stamp table publishes no personal city, AND says so", async () => {
     const { body } = await projection(
       worldState(Date.now(), { passport_stamps: { error: { message: "boom" } } }),
       "personal_city",
     );
     assert.equal(ofKind(body, "personal_city").length, 0);
     assert.equal(body.worldIntelligence.personalCities, null);
+    // "WE COULD NOT LOOK" MUST NOT READ AS "NOTHING HERE". `personalCities:
+    // null` is also what a request that never asked for the layer produces, so
+    // without a refusal the two are indistinguishable — which is the exact
+    // confusion this report exists to prevent.
+    assert.equal(body.worldIntelligence.refusal, "read_failed");
+  });
+
+  it("a THROWN personal-city read is a refusal, not a silent absence", async () => {
+    // The other failure shape: the route wraps the read in `.catch(() => null)`,
+    // and that arm used to set nothing at all.
+    const { body } = await projection(
+      worldState(Date.now(), { passport_stamps: { throws: "connection reset" } }),
+      "personal_city",
+    );
+    assert.equal(ofKind(body, "personal_city").length, 0);
+    assert.equal(body.worldIntelligence.personalCities, null);
+    assert.equal(body.worldIntelligence.refusal, "read_failed");
+    assert.ok(!body.sources.includes("personal_cities"));
+  });
+
+  it("a THROWN city-model read is a refusal, not a zero-count report", async () => {
+    // This arm wrote `modelsRead: 0, published: 0` and left `refusal` null: a
+    // city with no published aggregate and a city we could not ask about
+    // rendered identically. The traveler-flow arm beside it already did this
+    // correctly; this is the same shape.
+    const { body } = await projection(
+      worldState(Date.now(), { compass_city_models: { throws: "connection reset" } }),
+      "city_model",
+    );
+    assert.equal(ofKind(body, "city_model").length, 0);
+    assert.equal(body.worldIntelligence.refusal, "read_failed");
+    // The counts still travel — they say what was ATTEMPTED — but they can no
+    // longer be mistaken for an answer.
+    assert.equal(body.worldIntelligence.cityModels.published, 0);
+    assert.ok(!body.sources.includes("city_models"));
+  });
+
+  it("a THROWN traveler-flow read already refuses, and still does", async () => {
+    // The arm the two above were made to match. Pinned so a future edit cannot
+    // regress the one that was right.
+    const { body } = await projection(
+      worldState(Date.now(), { route_plans: { throws: "connection reset" } }),
+      "traveler_flow",
+    );
+    assert.equal(ofKind(body, "traveler_flow").length, 0);
+    // The producer names WHICH read failed; what matters is that a refusal is
+    // present at all rather than a zero-count report with none.
+    assert.match(String(body.worldIntelligence.travelerFlow.refusal), /read_failed/);
+    assert.ok(!body.sources.includes("traveler_flow"));
   });
 
   it("no curated city geography at all is a refusal, and nothing is read", async () => {
@@ -938,19 +1301,141 @@ describe("Phase 7 fails closed", () => {
     // A suppress-class zone covering city B's centroid: the A→B edge and B's
     // own city model both go, because the gate runs over Phase 7's output too.
     const { body } = await projection(
-      worldState(Date.now(), {
-        protected_zones: [{
-          id: "pz-1", category: "shelter", action: null, privacy_floor: null,
-          shape: "circle", center_lat: CITY_B.lat, center_lng: CITY_B.lng,
-          radius_meters: 50_000, ring: null, jurisdiction: null, policy_ref: null,
-          active: true,
-        }],
-      }),
+      worldState(Date.now(), { protected_zones: [zoneRow({ at: CITY_B })] }),
       "traveler_flow,city_model",
     );
     assert.equal(ofKind(body, "traveler_flow").length, 0);
     const labels = ofKind(body, "city_model").map((m: any) => m.payload.cityLabel);
     assert.ok(!labels.includes(CITY_B.name), "a suppressed city still published its model");
+    assert.ok(body.worldIntelligence.withheldForProtection >= 1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. §24 over Phase 7's OWN output — the gate, not just the pre-filter.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One protected-zone row. `category`/`action`/`floor` default to a plain
+ * SUPPRESS-class shelter; the radius comfortably covers the named city centroid
+ * without reaching any other city (the three are thousands of km apart).
+ */
+function zoneRow(opts: {
+  at: { lat: number; lng: number };
+  id?: string;
+  category?: string;
+  action?: string | null;
+  floor?: string | null;
+  offsetDeg?: number;
+}): any {
+  const d = opts.offsetDeg ?? 0;
+  return {
+    id: opts.id ?? "pz-1",
+    category: opts.category ?? "shelter",
+    action: opts.action ?? null,
+    privacy_floor: opts.floor ?? null,
+    shape: "circle",
+    center_lat: opts.at.lat + d,
+    center_lng: opts.at.lng + d,
+    radius_meters: 50_000,
+    ring: null,
+    jurisdiction: null,
+    policy_ref: null,
+    active: true,
+  };
+}
+
+describe("the §24 gate itself runs over Phase 7 output, not only the pre-filter", () => {
+  // WHY THIS BLOCK EXISTS. The §24 test above uses `traveler_flow` and
+  // `city_model`, both of which `withholdCoarsenableAggregates` removes BEFORE
+  // `applyProtection` is ever reached — so replacing `applyProtection` with a
+  // pass-through left it, and the whole suite, green. `personal_city` is
+  // deliberately absent from COARSEN_UNSAFE_KINDS, so the pre-filter passes it
+  // through untouched and `applyProtection` is the ONLY thing that can act on
+  // it. Every test here is therefore a direct measurement of the gate.
+  //
+  // This is not hypothetical bookkeeping: on the sibling Map unit #393 a filter
+  // running on the wrong side of `applyProtection` was proven by execution to
+  // publish protected coordinates.
+
+  it("a SUPPRESS zone removes an object the pre-filter never touches", async () => {
+    const { body } = await projection(
+      worldState(Date.now(), { protected_zones: [zoneRow({ at: CITY_A })] }),
+      "personal_city",
+    );
+    const labels = ofKind(body, "personal_city").map((m: any) => m.payload.cityLabel);
+    // NOT VACUOUS: the city OUTSIDE the zone must still publish, or an empty
+    // layer (a broken pipeline) would satisfy the absence check.
+    assert.deepEqual(labels, [CITY_B.name]);
+    assert.equal(body.worldIntelligence.withheldForProtection, 1);
+  });
+
+  it("a COARSEN zone rewrites the object rather than publishing it as minted", async () => {
+    // A coarsen-class category. `personal_city` is in neither escalation table,
+    // so it takes the zone's own action: it survives, snapped to the ZONE's
+    // anchor and dropped to the category's privacy floor. Both are properties
+    // only `coarsenForZone` — reached only through `applyProtection` — produces.
+    const { body } = await projection(
+      worldState(Date.now(), {
+        protected_zones: [zoneRow({ at: CITY_A, category: "medical_facility", offsetDeg: 0.1 })],
+      }),
+      "personal_city",
+    );
+    const pins = ofKind(body, "personal_city");
+    assert.equal(pins.length, 2, "the coarsen path dropped an object it should have kept");
+    const a = pins.find((m: any) => m.payload.cityLabel === CITY_A.name);
+    assert.ok(a, "the city inside the coarsen zone disappeared instead of being coarsened");
+    assert.equal(a.privacyClass, "approximate", "the object kept its minted precision rung");
+    // Compared with a tolerance: `zoneAnchor` runs the longitude through
+    // `normalizeLng`, whose modular arithmetic is not bit-exact.
+    const near = (got: number, want: number) => Math.abs(got - want) < 1e-9;
+    assert.ok(
+      near(a.geometry.coordinates[0], CITY_A.lng + 0.1) &&
+        near(a.geometry.coordinates[1], CITY_A.lat + 0.1),
+      `the object kept its own coordinate instead of the zone anchor: ${JSON.stringify(a.geometry.coordinates)}`,
+    );
+    // …and the city outside the zone was NOT rewritten.
+    const b = pins.find((m: any) => m.payload.cityLabel === CITY_B.name);
+    assert.equal(b.privacyClass, "place_level");
+    assert.deepEqual(b.geometry.coordinates, [CITY_B.lng, CITY_B.lat]);
+  });
+
+  it("an object coarsened onto the `none` rung never reaches the wire", async () => {
+    // `policy_defined` is the one category whose row IS the policy, so it can
+    // ask for COARSEN with a floor of `none` — the rung `isServable` refuses.
+    // The object therefore takes the coarsen path and is then withheld at the
+    // wire boundary, which is the composite §39/§24 invariant.
+    const { body } = await projection(
+      worldState(Date.now(), {
+        protected_zones: [
+          zoneRow({ at: CITY_A, category: "policy_defined", action: "coarsen", floor: "none" }),
+        ],
+      }),
+      "personal_city",
+    );
+    const pins = ofKind(body, "personal_city");
+    assert.deepEqual(pins.map((m: any) => m.payload.cityLabel), [CITY_B.name]);
+    for (const p of pins) assert.notEqual(p.privacyClass, "none");
+    assert.equal(body.worldIntelligence.withheldForProtection, 1);
+  });
+
+  it("the gate is not bypassed by asking for every kind at once", async () => {
+    // The pre-filter and the gate must BOTH run in one request: the aggregate
+    // kinds go by escalation, personal_city goes by the gate, and the count is
+    // the sum rather than either half.
+    const { body } = await projection(
+      worldState(Date.now(), { protected_zones: [zoneRow({ at: CITY_A })] }),
+      ALL_KINDS,
+    );
+    for (const o of body.objects) {
+      const c = o.geometry?.type === "Point" ? o.geometry.coordinates : null;
+      if (c) {
+        assert.ok(
+          Math.abs(c[1] - CITY_A.lat) > 0.5 || Math.abs(c[0] - CITY_A.lng) > 0.5,
+          `a Phase 7 object survived inside the protected zone: ${o.id}`,
+        );
+      }
+    }
     assert.ok(body.worldIntelligence.withheldForProtection >= 1);
   });
 });

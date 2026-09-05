@@ -39,13 +39,27 @@
 -- movement half of the same world view. Four switches would invite the
 -- half-enabled state where a viewer sees an aggregate they cannot interrogate.
 --
--- RUNTIME EFFECT: NONE. With the flag absent or false, GET /api/map/projection
--- returns exactly what it returned before this migration: the four Phase 7
--- kinds are collected by nothing, `worldIntelligence` reports refusal
--- 'flag_off', and no Phase 7 read of any kind is issued (the flag is checked
--- BEFORE the first query, so a disabled layer costs zero round-trips).
--- src/test/mapWorldIntelligenceLayer.test.ts asserts the flag-off response is
--- byte-identical to the pre-Phase-7 one.
+-- RUNTIME EFFECT ON THE RENDERED MAP: NONE. With the flag absent or false, the
+-- OBJECT LIST GET /api/map/projection serves is exactly what it was before this
+-- migration, and so is every report field that existed before it: the four
+-- Phase 7 kinds are collected by nothing, and no Phase 7 read of any kind is
+-- issued.
+--
+-- THE RESPONSE IS NOT BYTE-IDENTICAL, AND SAYING SO WOULD BE WRONG. A default
+-- projection (no `kinds=` filter) now always carries a top-level
+-- `worldIntelligence` key, holding refusal 'flag_off' when the flag is off.
+-- That is deliberate and is the same shape `crowdFlow`, `producers` and
+-- `places` already added: a disabled layer that reported nothing at all would
+-- be indistinguishable from a broken one, which is the confusion the whole
+-- report exists to prevent. src/test/mapWorldIntelligenceLayer.test.ts ("the
+-- RENDERED map is identical to one where Phase 7 was never asked for") asserts
+-- exactly that — objects and every pre-existing field equal, one new
+-- diagnostic key, and nothing else — over a NON-EMPTY object list.
+--
+-- COST WHEN OFF: one `isFlagEnabled` read, not zero. The flag is checked BEFORE
+-- the first Phase 7 query, so the layer's own reads (city zones, accepted-plan
+-- hops, compass_city_models, passport_stamps) are never issued; the flag read
+-- itself is the one round-trip a disabled layer still costs.
 
 BEGIN;
 
