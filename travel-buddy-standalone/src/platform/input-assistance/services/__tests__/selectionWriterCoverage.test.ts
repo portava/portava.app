@@ -29,10 +29,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const HERE = fileURLToPath(new URL('.', import.meta.url));
+// `dirname(fileURLToPath(import.meta.url))`, not `fileURLToPath(new URL('.', …))`.
+// This workspace's tsconfig pulls in the DOM lib, so `new URL()` resolves to the
+// DOM's URL while `fileURLToPath` accepts node:url's — two structurally different
+// types with the same name, which fails as
+// `Argument of type 'URL' is not assignable to parameter of type 'string | URL'`.
+// Every other test file here passes the string form for exactly this reason.
+// Resolves to the same APP_ROOT: join() normalises away the trailing separator.
+const HERE = dirname(fileURLToPath(import.meta.url));
 // …/src/platform/input-assistance/services/__tests__ → the standalone app root.
 const APP_ROOT = join(HERE, '..', '..', '..', '..', '..');
 
