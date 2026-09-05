@@ -65,8 +65,19 @@ export interface MediaMoreMenuProps {
   isOwner: boolean;
   /** Whether this is a Gems (hidden gem) item. */
   isGems?: boolean;
-  /** Current visibility for owner controls. */
-  currentVisibility?: 'public' | 'friends' | 'private';
+  /**
+   * Current visibility for owner controls.
+   *
+   * `posts.visibility` is the `post_visibility` enum — public | trip_only |
+   * private | followers_only. 'friends' was never one of them: PATCH
+   * /api/media/:id sent it straight to PostgREST, which failed the enum cast
+   * (22P02), so the "Friends only" row here returned an error 100% of the time
+   * it was tapped. It is gone rather than remapped, because deciding which real
+   * label it meant is a product decision. trip_only is not offered here either:
+   * it requires the post to HAVE a trip, a cross-field rule only the post
+   * editor enforces.
+   */
+  currentVisibility?: 'public' | 'private';
   /** compassExplanation from the media item — passed to Why This? sheet. */
   compassExplanation?: string | null;
   /** Called when the user chooses "Why This?" */
@@ -238,9 +249,8 @@ export function MediaMoreMenu({
   const handleChangeVisibility = useCallback(() => {
     onClose();
     if (!mediaId) return;
-    const options: Array<{ text: string; vis: 'public' | 'friends' | 'private' }> = [
+    const options: Array<{ text: string; vis: 'public' | 'private' }> = [
       { text: 'Public', vis: 'public' },
-      { text: 'Friends only', vis: 'friends' },
       { text: 'Private', vis: 'private' },
     ];
     Alert.alert(
