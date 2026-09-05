@@ -67,6 +67,11 @@ import {
 } from "../lib/canonicalLocations";
 import type { SensitivityLevel } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { nameVisibilitySet } from "../lib/publicIdentity";
+// The canonical author-side block rule for a `discovery_places` row. Shared with
+// routes/discovery.ts (which re-exports it) rather than re-implemented here —
+// two copies of a privacy rule is how these two serve points drifted apart in
+// the first place.
+import { submitterIsVisible } from "../lib/blocks.js";
 import {
   logDiscoveryServe,
   DiscoveryServePoint,
@@ -828,17 +833,38 @@ async function searchPlans(
 }
 
 /**
- * Discovery places — DB-backed curated places (active only).
+ * Discovery places — DB-backed curated places (active only), minus the rows
+ * submitted by someone the viewer is blocked with in either direction.
+ *
+ * The block filter is applied HERE, on this route's own `discovery_places`
+ * query. routes/discovery.ts describes queryDbPlaces as "the single funnel
+ * through which a discovery_places row reaches any discovery serve point" —
+ * that was never true of serve points 8 and 9. `/discovery/search` and
+ * `/discovery/suggest` build this query themselves, so they never passed
+ * through that funnel and served a blocked submitter's row (and its blurb,
+ * photo and rating) straight back to the person who blocked them, long after
+ * every other surface had stopped. Both call the same `submitterIsVisible`
+ * rule from lib/blocks.ts.
+ *
+ * `blockedSet === null` means the blocks table could not be read: return
+ * nothing at all, matching every other search function in this file. Serving
+ * the full unfiltered corpus on an unreadable block list is the failure mode
+ * that matters.
  */
 async function searchPlaces(
-  sc: any, q: string, offset: number, fetchLimit: number,
+  sc: any, q: string, blockedSet: Set<string> | null,
+  offset: number, fetchLimit: number,
   ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
+  if (blockedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
       .from("discovery_places")
-      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, primary_category, lat, lng, canonical_location_id, created_at")
+      // submitted_by is read for the block filter below and for nothing else —
+      // it is never mapped onto the SearchResult, because a submitter's user id
+      // is not the client's business.
+      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, primary_category, lat, lng, canonical_location_id, created_at, submitted_by")
       .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`)
       .eq("status", "active")
       .order("saved_count", { ascending: false })
@@ -846,7 +872,9 @@ async function searchPlaces(
 
     if (error || !data) return [];
 
-    const mapped = (data as any[]).map((p: any): SearchResult => ({
+    const mapped = (data as any[])
+      .filter((p: any) => submitterIsVisible(p.submitted_by, blockedSet))
+      .map((p: any): SearchResult => ({
       id: p.id,
       type: "places",
       title: (p.name as string) ?? "",
@@ -1181,10 +1209,18 @@ async function searchStamps(
 
 /**
  * Activities — discovery_places in activity-category buckets.
+ *
+ * An activity IS a `discovery_places` row under a category filter, so it
+ * carries the same `submitted_by` and needs the same author-side block filter
+ * searchPlaces applies. Without it, blocking a submitter would hide their venue
+ * from the Places group and leave the identical row visible in the Activities
+ * group of the very same response.
  */
 async function searchActivities(
-  sc: any, q: string, offset: number, fetchLimit: number,
+  sc: any, q: string, blockedSet: Set<string> | null,
+  offset: number, fetchLimit: number,
 ): Promise<SearchResult[]> {
+  if (blockedSet === null) return [];
   try {
     const pat = sqlPattern(q);
     const { data, error } = await sc
@@ -1193,7 +1229,8 @@ async function searchActivities(
       // activity is a Place under a category filter, and the client adapter
       // maps `activities` to the same 'place' map type, so it must carry the
       // same position or it silently drops off the map.
-      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, lat, lng, created_at")
+      // submitted_by is read for the block filter only; never mapped out.
+      .select("id, name, city, blurb, image_url, header_image_source, image_source_type, image_accuracy_status, category, lat, lng, created_at, submitted_by")
       .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`)
       .in("category", ["activities", "sports", "adventure", "outdoors", "wellness"])
       .eq("status", "active")
@@ -1202,7 +1239,9 @@ async function searchActivities(
 
     if (error || !data) return [];
 
-    return (data as any[]).map((p: any): SearchResult => ({
+    return (data as any[])
+      .filter((p: any) => submitterIsVisible(p.submitted_by, blockedSet))
+      .map((p: any): SearchResult => ({
       id: p.id,
       type: "activities",
       title: (p.name as string) ?? "",
@@ -1497,13 +1536,13 @@ export async function dispatchSearch(
       const raw = await searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
       return rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true }).slice(offset, offset + fetchLimit);
     }
-    case "places":      return searchPlaces(sc, q, offset, fetchLimit, ctx);
+    case "places":      return searchPlaces(sc, q, blockedSet, offset, fetchLimit, ctx);
     case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit), q);
     case "hashtags":    return rankByMatchTier(await searchHashtags(sc, q, offset, fetchLimit),                                         q);
     case "posts":       return rankByMatchTier(await searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),      q);
     case "circles":     return rankByMatchTier(await searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),    q);
     case "stamps":      return rankByMatchTier(await searchStamps(sc, q, offset, fetchLimit),                                          q);
-    case "activities":  return rankByMatchTier(await searchActivities(sc, q, offset, fetchLimit),                                      q);
+    case "activities":  return rankByMatchTier(await searchActivities(sc, q, blockedSet, offset, fetchLimit),                          q);
     case "cities":      return rankByMatchTier(await searchCities(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),            q);
     case "countries":   return rankByMatchTier(await searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),         q);
     case "languages":   return rankByMatchTier(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", offset, fetchLimit),        q);
@@ -1538,13 +1577,13 @@ async function searchAll(
     searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),           // events
     searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),            // trips
     searchPlans(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT, ctx),            // plans
-    searchPlaces(sc, q, 0, FAN_LIMIT, ctx),                                            // places
+    searchPlaces(sc, q, blockedSet, 0, FAN_LIMIT, ctx),                                 // places
     searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),       // hidden_gems
     searchHashtags(sc, q, 0, FAN_LIMIT),                                               // hashtags
     searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),            // posts
     searchCircles(sc, q, userId, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),          // circles
     searchStamps(sc, q, 0, FAN_LIMIT),                                                 // stamps
-    searchActivities(sc, q, 0, FAN_LIMIT),                                             // activities
+    searchActivities(sc, q, blockedSet, 0, FAN_LIMIT),                                  // activities
     searchCities(sc, q, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),                   // cities
     searchCountries(sc, q, blockedSet, ageRestrictedSet, 0, FAN_LIMIT),                // countries
     Promise.resolve(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", 0, FAN_LIMIT)),
