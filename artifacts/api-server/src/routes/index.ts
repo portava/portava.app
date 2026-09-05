@@ -136,6 +136,7 @@ import contentTranslationRouter from "./contentTranslation.js";
 import sharedMomentsRouter from "./sharedMoments.js";
 import placeRecapsRouter from "./placeRecaps.js";
 import wallRouter from "./wall.js";
+import wallTelemetryRouter from "./wallTelemetry.js";
 
 const router: IRouter = Router();
 
@@ -295,5 +296,10 @@ router.use(intelReadModelsRouter);
 // mounted alongside the other intel routers.
 router.use(intelOutcomesRouter);
 router.use(wallRouter);
+// The §32 telemetry ingest the Wall client has always POSTed to. Its own file
+// so the per-event allow-list stays unit-testable; no path overlap with
+// wallRouter, which owns /wall, /wall/live, /wall/quick-media and the
+// session-intent / impression / action mutations.
+router.use(wallTelemetryRouter);
 
 export default router;

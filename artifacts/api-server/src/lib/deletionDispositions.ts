@@ -166,6 +166,15 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "availability_windows",
   "passport_travel_dna_prefs",
   "wall_session_intents",
+  // Wall §32 telemetry (migration 2308). Unlike the three above, this one is
+  // keyed by viewer_id REFERENCES auth.users(id) ON DELETE CASCADE — the same
+  // mechanism rank_events uses — so the cascade DOES fire: the deletion flow
+  // removes the auth.users row even though it keeps an anonymised profiles
+  // tombstone. That FK was chosen deliberately over a profiles-keyed one for
+  // exactly the reason the comment above records. (map_telemetry_events, the
+  // table this one is modelled on, has NO foreign key at all and therefore
+  // survives deletion; that is a Map-lane defect, not a pattern to copy.)
+  "wall_telemetry_events",
   // Derived memory (migrations 2183-2191). Erased explicitly by
   // AccountDeletionService's `erase_derived_memory` step, which calls the
   // SECURITY DEFINER erase_memory_for_user in one atomic, idempotent statement.
@@ -512,6 +521,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "availability_windows",
   "passport_travel_dna_prefs",
   "wall_session_intents",
+  // Wall §32 telemetry sink, added by migration 2308 (post-baseline).
+  // Classified in ERASED_BY_CASCADE above.
+  "wall_telemetry_events",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",
