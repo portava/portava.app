@@ -67,6 +67,7 @@ import {
   SHORTLIST_STATUS,
   buildShortlist,
   isVote,
+  tallyItem,
   type ShortlistItemRow,
   type VoteRow,
 } from "../lib/journeyGroupDecision.js";
@@ -309,26 +310,14 @@ router.post(
       return;
     }
 
-    const projection = buildShortlist({
-      rows: [
-        {
-          id: planItemId,
-          trip_id: tripId,
-          title: "-",
-          category: null,
-          status: SHORTLIST_STATUS,
-          starts_at: null,
-          location_name: null,
-          sort_order: 0,
-          created_at: null,
-        },
-      ],
-      votes: votes as VoteRow[],
-      eligibleMemberIds: voters,
-      viewerId: user.id,
+    // `tallyItem` directly, not a synthetic one-row shortlist: the tally is the
+    // only thing being echoed, and inventing a plan-item row to carry it would
+    // put a placeholder title one refactor away from the wire.
+    res.json({
+      enabled: true,
+      recorded: true,
+      tally: tallyItem(votes as VoteRow[], new Set(voters), user.id),
     });
-
-    res.json({ enabled: true, recorded: true, tally: projection.items[0]?.tally ?? null });
   }),
 );
 
