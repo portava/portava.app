@@ -8,10 +8,14 @@
  *     right per-kind action, and drops it when its horizon has passed;
  *   • a resolved fact wins the per-subject slot over a bare place_state one;
  *   • the hidden_gem / social_presence / buddy producers read + gate their own
- *     canonical systems (disclosure policy, k-anonymity floor, the RAB flag).
- *
- * event_state and trip_signal have no existing canonical live reader, so they are
- * not produced here (see the unit's notDone).
+ *     canonical systems (disclosure policy, k-anonymity floor, the RAB flag);
+ *   • the event_state producer reads the ONE privacy-complete events reader
+ *     (loadNearbyEvents) and the Map's own timing derivation, drops an event
+ *     that is not AT the place / not time-valid / has no usable coordinate, and
+ *     fails closed when the block set cannot be read;
+ *   • the trip_signal producer is trip-scoped, anchors on a saved stop, drops
+ *     private-location and cancelled-meetup milestones, and fails closed when
+ *     the meetup cross-check cannot be read.
  *
  * Run: node --import tsx/esm --test src/test/wallLiveForYouKinds.test.ts
  */
@@ -22,6 +26,10 @@ import {
   buildGemLiveCandidates,
   buildSocialPresenceLiveCandidates,
   buildBuddyLiveCandidates,
+  buildEventStateLiveCandidates,
+  buildTripSignalLiveCandidates,
+  EVENT_AT_PLACE_METERS,
+  TRIP_SIGNAL_NEAR_METERS,
   type LiveForYouCandidate,
 } from "../services/wall/LiveForYouService.js";
 
@@ -33,7 +41,8 @@ const FUTURE = new Date(NOW.getTime() + 3600_000).toISOString();
 const THROWS = { from() { throw new Error("no intel read expected"); } };
 
 /** A generic table-routed fake: returns the configured rows for a table (unknown
- *  tables ⇒ []), and honours maybeSingle by returning the first row.
+ *  tables ⇒ []), and honours maybeSingle by returning the first row. A table may
+ *  also be given as `{ error }` to simulate a read FAILURE.
  *
  *  It also APPLIES `.eq(col, val)` — as a row filter, but only against rows that
  *  actually carry that column, so fixtures that omit an unrelated column are
@@ -43,12 +52,20 @@ const THROWS = { from() { throw new Error("no intel read expected"); } };
  *  gate that stops a pending delayed-geotag post from revealing that a followed
  *  person was at a place — left all 11 tests green. `captured` records the
  *  predicates too, so a test can assert a query CARRIES one rather than
- *  inferring it from the response. */
-function tableClient(tables: Record<string, any[]>, captured?: Array<{ table: string; eqs: Record<string, any> }>) {
+ *  inferring it from the response; `calls` records every table a builder is
+ *  opened on, so a test can assert a table is never read AT ALL. */
+function tableClient(
+  tables: Record<string, any[] | { error: unknown }>,
+  captured?: Array<{ table: string; eqs: Record<string, any> }>,
+  calls?: string[],
+) {
   function builder(table: string) {
+    calls?.push(table);
+    const entry = tables[table];
+    const failure = entry && !Array.isArray(entry) ? (entry as { error: unknown }).error : null;
     const eqs: Record<string, any> = {};
     const rows = () => {
-      const src = tables[table] ?? [];
+      const src = (Array.isArray(entry) ? entry : []) as any[];
       return src.filter((r) =>
         Object.entries(eqs).every(([c, v]) => !(c in r) || r[c] === v),
       );
@@ -56,11 +73,19 @@ function tableClient(tables: Record<string, any[]>, captured?: Array<{ table: st
     const b: any = {
       select: () => b,
       eq: (c: string, v: any) => { eqs[c] = v; return b; },
-      in: () => b, gte: () => b, lte: () => b, gt: () => b, order: () => b, limit: () => b,
-      maybeSingle: () => { captured?.push({ table, eqs: { ...eqs } }); return Promise.resolve({ data: rows()[0] ?? null, error: null }); },
+      neq: () => b, in: () => b, not: () => b, is: () => b, or: () => b,
+      gte: () => b, lte: () => b, gt: () => b, lt: () => b, order: () => b, limit: () => b,
+      maybeSingle: () => {
+        captured?.push({ table, eqs: { ...eqs } });
+        return Promise.resolve(
+          failure ? { data: null, error: failure } : { data: rows()[0] ?? null, error: null },
+        );
+      },
       then: (onF: any, onR: any) => {
         captured?.push({ table, eqs: { ...eqs } });
-        return Promise.resolve({ data: rows(), error: null }).then(onF, onR);
+        return Promise.resolve(
+          failure ? { data: null, error: failure } : { data: rows(), error: null },
+        ).then(onF, onR);
       },
     };
     return b;
@@ -246,5 +271,341 @@ describe("hidden_gem producer — disclosure policy (spec §20)", () => {
     // deriveGemProjection over empty aggregates ⇒ 'still_hidden' ⇒ no surfaceable state.
     const sc = tableClient({ hidden_gems: [{ id: "g1", canonical_place_id: "p1", sensitivity_level: "public", status: "active", updated_at: PAST }] });
     assert.deepEqual(await buildGemLiveCandidates(sc, PLACES, { now: NOW }), []);
+  });
+});
+
+// ── event_state (spec §4 / TABLE 0) ─────────────────────────────────────────
+
+describe("event_state producer — time-valid, at the place, privacy-complete", () => {
+  const VIEWER = "viewer-1";
+  /** The Wall's place ref carries NO coordinate (routes/wall.ts, §23) — the
+   *  producer resolves the venue coordinate from `places` itself. */
+  const PLACE = { placeId: "p1", name: "An Thuong", city: "Da Nang" };
+  const PLACES = [PLACE];
+  const LAT = 16.041;
+  const LNG = 108.246;
+  const PLACE_ROWS = [{ id: "p1", latitude: LAT, longitude: LNG, status: "active", merged_into_place_id: null }];
+
+  /** An events row shaped as loadNearbyEvents returns it (public, current). */
+  function eventRow(over: Record<string, unknown> = {}) {
+    return {
+      id: "ev-1",
+      host_id: "host-1",
+      title: "Beach Festival",
+      location_name: "An Thuong beach",
+      location_lat: LAT,
+      location_lng: LNG,
+      show_exact_location: true,
+      starts_at: new Date(NOW.getTime() - 30 * 60_000).toISOString(), // started 30m ago
+      ends_at: new Date(NOW.getTime() + 90 * 60_000).toISOString(),
+      cover_url: null,
+      visibility: "public",
+      state: "published",
+      age_min: null, age_max: null, trust_score_min: null, verified_only: false,
+      ...over,
+    };
+  }
+
+  const eventClient = (events: any[], over: Record<string, any> = {}) =>
+    tableClient({ events, places: PLACE_ROWS, blocks: [], event_roles: [], feature_flags: [], ...over });
+
+  it("an event on now at the place becomes one event_state candidate", async () => {
+    const cands = await buildEventStateLiveCandidates(eventClient([eventRow()]), VIEWER, PLACES, { now: NOW });
+    assert.equal(cands.length, 1);
+    assert.equal(cands[0].liveObjectType, "event_state");
+    assert.equal(cands[0].subjectId, "p1");
+    assert.equal(cands[0].resolved!.label, "Beach Festival · happening now");
+    assert.equal(cands[0].resolved!.id, "event-ev-1");
+    // §37: a schedule is not an observation — never a Live badge, never a
+    // fabricated confidence, and never a crowd/capacity phrase.
+    assert.equal(cands[0].resolved!.state, "emerging");
+    assert.equal(cands[0].resolved!.confidence, null);
+    assert.ok(!/peak|busy|crowd|going/i.test(cands[0].resolved!.label));
+    // It ages out on the event's own clock (its end).
+    assert.equal(cands[0].resolved!.validUntil, new Date(NOW.getTime() + 90 * 60_000).toISOString());
+  });
+
+  it("an event starting soon is labelled as a start window, not as happening", async () => {
+    const starts = new Date(NOW.getTime() + 20 * 60_000).toISOString();
+    const cands = await buildEventStateLiveCandidates(
+      eventClient([eventRow({ starts_at: starts, ends_at: null })]), VIEWER, PLACES, { now: NOW },
+    );
+    assert.equal(cands.length, 1);
+    assert.equal(cands[0].resolved!.label, "Beach Festival · starts in 20 min");
+    // The "starts in N min" claim stops being true the moment it starts.
+    assert.equal(cands[0].resolved!.validUntil, starts);
+  });
+
+  it("an event that already ended is not a live state", async () => {
+    const cands = await buildEventStateLiveCandidates(
+      eventClient([
+        eventRow({
+          starts_at: new Date(NOW.getTime() - 6 * 3600_000).toISOString(),
+          ends_at: new Date(NOW.getTime() - 5 * 3600_000).toISOString(),
+        }),
+      ]),
+      VIEWER, PLACES, { now: NOW },
+    );
+    assert.deepEqual(cands, []);
+  });
+
+  it("an event too far away is not AT the place", async () => {
+    // ~0.05 degrees of latitude ≈ 5.5 km, far past EVENT_AT_PLACE_METERS.
+    assert.ok(EVENT_AT_PLACE_METERS < 5_000);
+    const cands = await buildEventStateLiveCandidates(
+      eventClient([eventRow({ location_lat: LAT + 0.05 })]), VIEWER, PLACES, { now: NOW },
+    );
+    assert.deepEqual(cands, []);
+  });
+
+  it("an event whose exact location the host hid is skipped, never approximated", async () => {
+    // loadNearbyEvents NULLs the coordinates of such an event for other viewers.
+    const cands = await buildEventStateLiveCandidates(
+      eventClient([eventRow({ show_exact_location: false })]), VIEWER, PLACES, { now: NOW },
+    );
+    assert.deepEqual(cands, []);
+  });
+
+  it("an unreadable block set yields no event items, and nothing else is read", async () => {
+    const calls: string[] = [];
+    const sc = tableClient(
+      {
+        events: [eventRow()], places: PLACE_ROWS,
+        blocks: { error: { message: "down" } }, event_roles: [], feature_flags: [],
+      },
+      undefined,
+      calls,
+    );
+    assert.deepEqual(await buildEventStateLiveCandidates(sc, VIEWER, PLACES, { now: NOW }), []);
+    // Fail-CLOSED, not fail-by-accident: the producer stops at the unreadable
+    // block set rather than reading events and filtering them against nothing.
+    assert.ok(calls.includes("blocks"), "the block set is read first");
+    assert.ok(!calls.includes("events"), `events must not be read; calls were ${calls.join(",")}`);
+    assert.ok(!calls.includes("places"), `places must not be read; calls were ${calls.join(",")}`);
+  });
+
+  it("an unreadable events table says nothing rather than 'nothing is on'", async () => {
+    const sc = tableClient({
+      events: { error: { message: "down" } }, places: PLACE_ROWS,
+      blocks: [], event_roles: [], feature_flags: [],
+    });
+    assert.deepEqual(await buildEventStateLiveCandidates(sc, VIEWER, PLACES, { now: NOW }), []);
+  });
+
+  it("a place with no canonical public coordinate is never probed", async () => {
+    // The Wall's place ref never carries a coordinate; when `places` has none
+    // either (or the row is merged/inactive), the place cannot be probed — and
+    // is never approximated from its city.
+    const calls: string[] = [];
+    const sc = tableClient(
+      { events: [eventRow()], places: [], blocks: [], event_roles: [], feature_flags: [] },
+      undefined,
+      calls,
+    );
+    assert.deepEqual(await buildEventStateLiveCandidates(sc, VIEWER, PLACES, { now: NOW }), []);
+    assert.ok(!calls.includes("events"), `events must not be read; calls were ${calls.join(",")}`);
+  });
+
+  it("prefers the ongoing event over one starting later at the same place", async () => {
+    const cands = await buildEventStateLiveCandidates(
+      eventClient([
+        eventRow({ id: "ev-later", title: "Night Market", starts_at: new Date(NOW.getTime() + 45 * 60_000).toISOString(), ends_at: null }),
+        eventRow({ id: "ev-now", title: "Beach Festival" }),
+      ]),
+      VIEWER, PLACES, { now: NOW },
+    );
+    assert.equal(cands.length, 1);
+    assert.equal(cands[0].resolved!.id, "event-ev-now");
+  });
+});
+
+// ── trip_signal (spec §4 / TABLE 0) ─────────────────────────────────────────
+
+describe("trip_signal producer — trip-scoped, anchored on a saved stop", () => {
+  const VIEWER = "viewer-1";
+  const PLACE = { placeId: "p1", name: "Riverside", city: "Bangkok" };
+  const PLACES = [PLACE];
+  const LAT = 13.7275;
+  const LNG = 100.5241;
+  const TRIPS = new Set(["trip-1"]);
+  const SAVED = [{ trip_id: "trip-1", place_id: "p1", lat: LAT, lng: LNG }];
+  const PLACE_ROWS = [{ id: "p1", latitude: LAT, longitude: LNG, status: "active", merged_into_place_id: null }];
+
+  function planItem(over: Record<string, unknown> = {}) {
+    return {
+      id: "pi-1",
+      trip_id: "trip-1",
+      title: "Meet at the pier",
+      category: "meeting_point",
+      status: "confirmed",
+      source_type: "manual",
+      source_id: null,
+      starts_at: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
+      ends_at: new Date(NOW.getTime() + 80 * 60_000).toISOString(),
+      lat: LAT,
+      lng: LNG,
+      location_is_private: false,
+      removed_at: null,
+      visibility: "members",
+      ...over,
+    };
+  }
+
+  const tripClient = (items: any[], over: Record<string, any> = {}) =>
+    tableClient({ trip_saved_places: SAVED, places: PLACE_ROWS, trip_plan_items: items, meetups: [], ...over });
+
+  it("a crew gathering near a saved stop becomes one trip_signal candidate", async () => {
+    const cands = await buildTripSignalLiveCandidates(tripClient([planItem()]), VIEWER, TRIPS, PLACES, { now: NOW });
+    assert.equal(cands.length, 1);
+    assert.equal(cands[0].liveObjectType, "trip_signal");
+    assert.equal(cands[0].subjectId, "p1");
+    assert.equal(cands[0].resolved!.label, "Crew gathering in 20 min nearby · Meet at the pier");
+    assert.equal(cands[0].resolved!.id, "trip-pi-1");
+    // §37: a plan is not an observation.
+    assert.equal(cands[0].resolved!.state, "emerging");
+    assert.equal(cands[0].resolved!.confidence, null);
+  });
+
+  it("claims proximity only when both coordinates were known and checked", async () => {
+    const cands = await buildTripSignalLiveCandidates(
+      tripClient([planItem({ lat: null, lng: null })]), VIEWER, TRIPS, PLACES, { now: NOW },
+    );
+    assert.equal(cands.length, 1);
+    assert.ok(cands[0].resolved!.label.includes("on your trip"));
+    assert.ok(!cands[0].resolved!.label.includes("nearby"));
+  });
+
+  it("falls back to the saved stop's own coordinate when the canonical place has none", async () => {
+    const sc = tableClient({
+      trip_saved_places: SAVED, places: [], trip_plan_items: [planItem()], meetups: [],
+    });
+    const cands = await buildTripSignalLiveCandidates(sc, VIEWER, TRIPS, PLACES, { now: NOW });
+    assert.equal(cands.length, 1);
+    assert.ok(cands[0].resolved!.label.includes("nearby"));
+  });
+
+  it("a milestone with a known coordinate far from the stop is not 'near' it", async () => {
+    assert.ok(TRIP_SIGNAL_NEAR_METERS < 20_000);
+    const cands = await buildTripSignalLiveCandidates(
+      tripClient([planItem({ lat: LAT + 0.5 })]), VIEWER, TRIPS, PLACES, { now: NOW },
+    );
+    assert.deepEqual(cands, []);
+  });
+
+  it("never surfaces a milestone the owner marked private-location", async () => {
+    const cands = await buildTripSignalLiveCandidates(
+      tripClient([planItem({ location_is_private: true })]), VIEWER, TRIPS, PLACES, { now: NOW },
+    );
+    assert.deepEqual(cands, []);
+  });
+
+  it("never surfaces a removed or cancelled milestone", async () => {
+    const removed = await buildTripSignalLiveCandidates(
+      tripClient([planItem({ removed_at: PAST })]), VIEWER, TRIPS, PLACES, { now: NOW },
+    );
+    assert.deepEqual(removed, []);
+    const cancelled = await buildTripSignalLiveCandidates(
+      tripClient([planItem({ status: "cancelled" })]), VIEWER, TRIPS, PLACES, { now: NOW },
+    );
+    assert.deepEqual(cancelled, []);
+  });
+
+  it("withholds a milestone whose visibility is not member-visible (fail-closed)", async () => {
+    const cands = await buildTripSignalLiveCandidates(
+      tripClient([planItem({ visibility: "owner_only" })]), VIEWER, TRIPS, PLACES, { now: NOW },
+    );
+    assert.deepEqual(cands, []);
+  });
+
+  it("surfaces a meetup-sourced milestone whose meetup is still live", async () => {
+    const sc = tripClient([planItem({ source_type: "meetup", source_id: "m1" })], {
+      meetups: [{ id: "m1", status: "active" }],
+    });
+    const cands = await buildTripSignalLiveCandidates(sc, VIEWER, TRIPS, PLACES, { now: NOW });
+    assert.equal(cands.length, 1);
+    assert.equal(cands[0].resolved!.id, "trip-pi-1");
+  });
+
+  it("drops a meetup-sourced milestone whose meetup was cancelled", async () => {
+    const sc = tripClient([planItem({ source_type: "meetup", source_id: "m1" })], {
+      meetups: [{ id: "m1", status: "cancelled" }],
+    });
+    assert.deepEqual(await buildTripSignalLiveCandidates(sc, VIEWER, TRIPS, PLACES, { now: NOW }), []);
+  });
+
+  it("withholds ONLY the meetup-sourced milestones when the cross-check cannot be read", async () => {
+    // Two saved stops on the same trip, far enough apart that each milestone can
+    // only pair with its own stop. The meetup-sourced one is withheld because the
+    // cancellation check is unreadable; the manual one is unaffected — the
+    // withholding is targeted, not the whole producer collapsing.
+    const FAR = { placeId: "p2", name: "Old Town", city: "Bangkok" };
+    const FAR_LAT = LAT + 0.5;
+    const sc = tableClient({
+      trip_saved_places: [...SAVED, { trip_id: "trip-1", place_id: "p2", lat: FAR_LAT, lng: LNG }],
+      places: [...PLACE_ROWS, { id: "p2", latitude: FAR_LAT, longitude: LNG, status: "active", merged_into_place_id: null }],
+      trip_plan_items: [
+        planItem({ id: "pi-manual", title: "Breakfast", category: "activity" }),
+        planItem({ id: "pi-meetup", source_type: "meetup", source_id: "m1", lat: FAR_LAT, lng: LNG }),
+      ],
+      meetups: { error: { message: "down" } },
+    });
+    const cands = await buildTripSignalLiveCandidates(sc, VIEWER, TRIPS, [PLACE, FAR], { now: NOW });
+    assert.deepEqual(cands.map((c) => c.resolved!.id), ["trip-pi-manual"]);
+    assert.deepEqual(cands.map((c) => c.subjectId), ["p1"]);
+  });
+
+  it("a trip the viewer does not belong to is never read", async () => {
+    // The saved stop belongs to trip-1; the viewer's membership set has none of it.
+    const cands = await buildTripSignalLiveCandidates(
+      tripClient([planItem()]), VIEWER, new Set<string>(), PLACES, { now: NOW },
+    );
+    assert.deepEqual(cands, []);
+  });
+
+  it("a feed place that is not a saved stop yields nothing", async () => {
+    const sc = tableClient({ trip_saved_places: [], places: PLACE_ROWS, trip_plan_items: [planItem()], meetups: [] });
+    assert.deepEqual(await buildTripSignalLiveCandidates(sc, VIEWER, TRIPS, PLACES, { now: NOW }), []);
+  });
+
+  it("a milestone that has already finished is dropped", async () => {
+    const cands = await buildTripSignalLiveCandidates(
+      tripClient([
+        planItem({
+          starts_at: new Date(NOW.getTime() - 150 * 60_000).toISOString(),
+          ends_at: new Date(NOW.getTime() - 90 * 60_000).toISOString(),
+        }),
+      ]),
+      VIEWER, TRIPS, PLACES, { now: NOW },
+    );
+    assert.deepEqual(cands, []);
+  });
+
+  it("an ongoing non-meeting_point milestone reads as a trip milestone, not a gathering", async () => {
+    const cands = await buildTripSignalLiveCandidates(
+      tripClient([
+        planItem({
+          category: "activity",
+          title: "Sunset cruise",
+          starts_at: new Date(NOW.getTime() - 10 * 60_000).toISOString(),
+          ends_at: new Date(NOW.getTime() + 50 * 60_000).toISOString(),
+        }),
+      ]),
+      VIEWER, TRIPS, PLACES, { now: NOW },
+    );
+    assert.equal(cands.length, 1);
+    assert.equal(cands[0].resolved!.label, "Sunset cruise now · nearby");
+  });
+});
+
+describe("both new kinds bind to actionFor and honour the strip bound", () => {
+  it("event_state maps to see_place and trip_signal to open_map", async () => {
+    const mk = (kind: LiveForYouCandidate["liveObjectType"], id: string): LiveForYouCandidate => ({
+      subjectId: id, liveObjectType: kind, subject: { placeId: id, name: id },
+      resolved: { id: `r-${id}`, label: kind, state: "emerging", confidence: null, observedAt: PAST, validUntil: FUTURE },
+    });
+    const out = await buildLiveForYou(THROWS, [mk("event_state", "e"), mk("trip_signal", "t")], { now: NOW, limit: 4 });
+    const byKind = new Map(out.map((o) => [o.liveObjectType, o.action?.type]));
+    assert.equal(byKind.get("event_state"), "see_place");
+    assert.equal(byKind.get("trip_signal"), "open_map");
   });
 });

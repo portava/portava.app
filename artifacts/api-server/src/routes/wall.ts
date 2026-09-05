@@ -77,6 +77,8 @@ import {
   buildGemLiveCandidates,
   buildSocialPresenceLiveCandidates,
   buildBuddyLiveCandidates,
+  buildEventStateLiveCandidates,
+  buildTripSignalLiveCandidates,
   MAX_LIVE_FOR_YOU,
   type LiveForYouCandidate,
 } from "../services/wall/LiveForYouService.js";
@@ -600,15 +602,29 @@ function applyIntentSteer(candidates: WallCandidate[], intent: StructuredIntent 
 
 // ── Live strip assembly (shared by GET /wall and GET /wall/live) ─────────────
 
+/**
+ * Build the strip, or nothing at all when `wall_live_for_you_enabled` is off.
+ *
+ * `candidates` is a THUNK, not an array, and that is the whole point. The strip's
+ * candidate set is the most expensive thing on the first page — the event
+ * producer alone runs a block read, a places read and up to two spatial event
+ * probes whose per-row privacy pass costs a friendship read plus
+ * checkEventEligibility per candidate row, and the trip producer adds three more
+ * reads. Passing an already-awaited array meant an OFF flag still paid for every
+ * one of them and then threw the result away, which is exactly the TABLE 4 cost
+ * this is supposed to bound. Deferring the assembly behind the flag check makes
+ * the flag structurally disable the WORK, not just the output, for every caller
+ * — there is no shape of this function in which the reads happen first.
+ */
 async function buildLiveStrip(
   sc: any,
   liveEnabled: boolean,
-  candidates: LiveForYouCandidate[],
+  candidates: () => Promise<LiveForYouCandidate[]>,
   opts: { limit: number; dedupeSubjectIds?: Set<string> },
 ): Promise<LiveForYouItem[]> {
   if (!liveEnabled) return [];
   try {
-    return await buildLiveForYou(sc, candidates, {
+    return await buildLiveForYou(sc, await candidates(), {
       limit: opts.limit,
       dedupeSubjectIds: opts.dedupeSubjectIds,
     });
@@ -620,16 +636,25 @@ async function buildLiveStrip(
 
 /**
  * Assemble the FULL multi-kind Live For You candidate set for a bounded set of
- * viewer-relevant places (spec §4 / TABLE 0). place_state (and event_state) come
- * from the intel projection inside buildLiveForYou (a bare candidate ⇒ the
- * envelope read); the other kinds come from their own canonical readers here so
+ * viewer-relevant places (spec §4 / TABLE 0). place_state comes from the intel
+ * projection inside buildLiveForYou (a bare candidate ⇒ the envelope read); ALL
+ * FIVE other TABLE 0 kinds come from their own canonical readers here so
  * LiveForYouService.actionFor's per-kind mapping binds:
+ *   • trip_signal     — buildTripSignalLiveCandidates (trip-scoped; the viewer's
+ *                       own accepted trips, anchored on a saved stop)
+ *   • event_state     — buildEventStateLiveCandidates (loadNearbyEvents, the
+ *                       privacy-complete events reader the Map gateway uses)
  *   • hidden_gem      — buildGemLiveCandidates (public/approximate, fresh state)
  *   • social_presence — buildSocialPresenceLiveCandidates (k-anonymity floor)
  *   • buddy           — buildBuddyLiveCandidates (behind the RAB flag, city-area)
  * Each producer is fail-soft; a resolved candidate wins the per-subject slot over
- * a bare place_state one inside buildLiveForYou. event_state and trip_signal have
- * no existing canonical live reader and are deliberately not produced here.
+ * a bare place_state one inside buildLiveForYou.
+ *
+ * ORDER IS PRIORITY. buildLiveForYou assembles in candidate order and stops at
+ * the ≤4 bound, so the most decision-relevant, time-bound kinds come first: the
+ * viewer's OWN trip milestone, then an event that is on at the place, then who
+ * was there, then the gem, then buddy availability, then the speculative
+ * place-state read.
  */
 async function assembleLiveCandidates(
   sc: any,
@@ -643,7 +668,7 @@ async function assembleLiveCandidates(
     liveObjectType: "place_state" as const,
     subject: p,
   }));
-  const [gems, social, buddies] = await Promise.all([
+  const [gems, social, buddies, events, tripSignals] = await Promise.all([
     buildGemLiveCandidates(sc, placeRefs).catch((err) => {
       logger.warn({ err }, "wall: gem live producer failed");
       return [] as LiveForYouCandidate[];
@@ -656,11 +681,19 @@ async function assembleLiveCandidates(
       logger.warn({ err }, "wall: buddy live producer failed");
       return [] as LiveForYouCandidate[];
     }),
+    buildEventStateLiveCandidates(sc, viewerId, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: event state live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildTripSignalLiveCandidates(sc, viewerId, viewer.viewerTripIds, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: trip signal live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
   ]);
   // Resolved kinds first so, on a per-subject collision, the concrete fact wins
   // the slot over a speculative place_state intel read (buildLiveForYou prefers a
   // resolved candidate anyway; this ordering makes the intent explicit).
-  return [...social, ...gems, ...buddies, ...placeState];
+  return [...tripSignals, ...events, ...social, ...gems, ...buddies, ...placeState];
 }
 
 // ── Schemas ────────────────────────────────────────────────────────────────
@@ -886,10 +919,15 @@ router.get(
         feedPlaceRefs.push(placeRef);
       }
     }
-    const liveCandidates = await assembleLiveCandidates(sc, viewer, user.id, feedPlaceRefs, rabEnabled);
-    const liveForYou = await buildLiveStrip(sc, liveEnabled, liveCandidates, {
-      limit: MAX_LIVE_FOR_YOU,
-    });
+    //    The candidate assembly is deferred behind the strip's own flag (see
+    //    buildLiveStrip): with wall_live_for_you_enabled OFF the first page pays
+    //    for none of the producer reads.
+    const liveForYou = await buildLiveStrip(
+      sc,
+      liveEnabled,
+      () => assembleLiveCandidates(sc, viewer, user.id, feedPlaceRefs, rabEnabled),
+      { limit: MAX_LIVE_FOR_YOU },
+    );
 
     // ── Context Threads (spec §8/§9): attach an OPTIONAL compact bridge beneath
     //    an object ONLY where the §9 gate says it earns its place. Behind
@@ -943,21 +981,32 @@ router.get(
     // Live-strip candidates are the places from the viewer's recent followed
     // content — a viewer-relevant, bounded set, NOT a city-wide scan (spec §4).
     // The strip is multi-kind (§4/TABLE 0): place_state from the intel projection
-    // plus hidden_gem / social_presence / buddy from their own canonical readers.
-    const viewer = await loadViewerContext(sc, user.id);
-    // BOTH the Wall flag and the RAB master — see isWallRabEnabled.
-    const rabEnabled = await isWallRabEnabled(sc);
-    const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
-    const seen = new Set<string>();
-    const placeRefs: PublicPlaceRef[] = [];
-    for (const [, placeRef] of loaded.placeByObject) {
-      if (seen.has(placeRef.placeId)) continue;
-      seen.add(placeRef.placeId);
-      placeRefs.push(placeRef);
-    }
-    const candidates = await assembleLiveCandidates(sc, viewer, user.id, placeRefs, rabEnabled);
-
-    const liveForYou = await buildLiveStrip(sc, liveEnabled, candidates, { limit });
+    // plus trip_signal / event_state / social_presence / hidden_gem / buddy from
+    // their own canonical readers (assembleLiveCandidates).
+    //
+    // ALL of it sits inside the thunk buildLiveStrip only calls when the flag is
+    // ON. The strip IS this route's entire response, so with the flag off the
+    // route must cost nothing beyond the flag reads themselves — not the viewer
+    // context, not the followed-content window, not the producers.
+    const liveForYou = await buildLiveStrip(
+      sc,
+      liveEnabled,
+      async () => {
+        const viewer = await loadViewerContext(sc, user.id);
+        // BOTH the Wall flag and the RAB master — see isWallRabEnabled.
+        const rabEnabled = await isWallRabEnabled(sc);
+        const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
+        const seen = new Set<string>();
+        const placeRefs: PublicPlaceRef[] = [];
+        for (const [, placeRef] of loaded.placeByObject) {
+          if (seen.has(placeRef.placeId)) continue;
+          seen.add(placeRef.placeId);
+          placeRefs.push(placeRef);
+        }
+        return assembleLiveCandidates(sc, viewer, user.id, placeRefs, rabEnabled);
+      },
+      { limit },
+    );
     res.status(200).json({ liveForYou, generatedAt: new Date().toISOString() });
   }),
 );
