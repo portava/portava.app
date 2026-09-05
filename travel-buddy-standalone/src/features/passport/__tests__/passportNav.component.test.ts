@@ -20,6 +20,8 @@ import {
   readViewerUserParam,
   travelIdentityHref,
   trustHref,
+  yearbookHref,
+  PASSPORT_YEARBOOK_ROUTE,
 } from '../passportNav.ts';
 
 // NOTE: intentionally exhaustive — expo-router needs Expo native navigation
@@ -51,6 +53,20 @@ describe('passportNav', () => {
     expect(journeysHref(undefined)).toBe('/passport/journeys');
     expect(travelIdentityHref('')).toBe('/passport/travel-identity');
     expect(myWorldHref()).toBe('/passport/my-world');
+  });
+
+  it('yearbookHref never carries a viewer id and only accepts a real calendar year', () => {
+    expect(PASSPORT_YEARBOOK_ROUTE).toBe('/passport/yearbook');
+    expect(yearbookHref()).toBe('/passport/yearbook');
+    expect(yearbookHref(null)).toBe('/passport/yearbook');
+    expect(yearbookHref(2025)).toBe('/passport/yearbook?year=2025');
+    // Junk years are dropped rather than forwarded to the API.
+    expect(yearbookHref(1800)).toBe('/passport/yearbook');
+    expect(yearbookHref(9999)).toBe('/passport/yearbook');
+    expect(yearbookHref(2025.5)).toBe('/passport/yearbook');
+    expect(yearbookHref(Number.NaN)).toBe('/passport/yearbook');
+    // The yearbook is owner-private: there is no userId variant to build.
+    expect(yearbookHref(2025)).not.toContain('userId');
   });
 
   it('encodes handles and ids safely', () => {

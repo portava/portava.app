@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   Fingerprint,
   Route as RouteIcon,
+  BookOpen,
   CalendarClock,
   CalendarCheck,
   Share2,
@@ -81,6 +82,14 @@ export function PassportQuickLinks({ onShare }: PassportQuickLinksProps) {
       Icon: RouteIcon,
       onPress: () => router.push('/passport/journeys' as any),
       testID: 'quicklink-journeys',
+    },
+    {
+      key: 'yearbook',
+      label: 'Yearbook',
+      sublabel: 'Your travel year by year, with the receipts',
+      Icon: BookOpen,
+      onPress: () => router.push('/passport/yearbook' as any),
+      testID: 'quicklink-yearbook',
     },
     {
       key: 'plans',

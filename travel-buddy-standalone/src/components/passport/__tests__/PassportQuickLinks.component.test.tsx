@@ -35,6 +35,7 @@ describe('PassportQuickLinks', () => {
     expect(screen.getByText('Trust & Credentials')).toBeTruthy();
     expect(screen.getByText('Travel Identity')).toBeTruthy();
     expect(screen.getByText('Journeys')).toBeTruthy();
+    expect(screen.getByText('Yearbook')).toBeTruthy();
     expect(screen.getByText('Plans')).toBeTruthy();
     expect(screen.getByText('Set availability')).toBeTruthy();
     expect(screen.getByText('Share passport')).toBeTruthy();
@@ -45,6 +46,7 @@ describe('PassportQuickLinks', () => {
     ['quicklink-trust', '/passport/trust'],
     ['quicklink-travel-identity', '/passport/travel-identity'],
     ['quicklink-journeys', '/passport/journeys'],
+    ['quicklink-yearbook', '/passport/yearbook'],
     ['quicklink-plans', '/passport/plans'],
     ['quicklink-availability', '/passport/availability'],
   ])('routes %s → %s', async (testID, route) => {
