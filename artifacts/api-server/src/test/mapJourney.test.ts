@@ -260,11 +260,15 @@ describe("group decision — the shortlist is bounded and is the PLAN", () => {
   });
 
   it("caps at SHORTLIST_MAX and REPORTS the overflow", () => {
+    // The BOUND ITSELF, not just the relationship. Building `SHORTLIST_MAX + 5`
+    // rows and asserting `SHORTLIST_MAX` back is true for any value of the
+    // constant — 12 → 100 survived it — and a cap of 100 is not a bounded read.
+    assert.equal(SHORTLIST_MAX, 12, "the cap is 12 candidates; changing it is a product decision");
     const rows = Array.from({ length: SHORTLIST_MAX + 5 }, (_, i) =>
       planRow({ id: `item-${i}`, sort_order: i }),
     );
     const p = buildShortlist({ rows, votes: [], eligibleMemberIds: ["a"], viewerId: "a" });
-    assert.equal(p.items.length, SHORTLIST_MAX);
+    assert.equal(p.items.length, 12);
     assert.equal(p.truncated, 5);
   });
 
@@ -507,6 +511,15 @@ describe("recovery — closure obeys the SAME truth boundary (§37)", () => {
 
 describe("recovery — a missed window is a SCHEDULE fact, not an observation (§37)", () => {
   const past = new Date(Date.now() - (MISSED_WINDOW_GRACE_MINUTES + 10) * MIN).toISOString();
+
+  it("the grace period is THIRTY minutes", () => {
+    // Both tests below are written relative to the constant, so they hold for
+    // any value of it — including 0, which survived mutation and would tell a
+    // traveller their plan had failed the instant its window closed. The grace
+    // is the whole difference between "running late" and "missed it", so the
+    // number is pinned here and the relationships are pinned there.
+    assert.equal(MISSED_WINDOW_GRACE_MINUTES, 30);
+  });
 
   it("fires past the grace period, with schedule evidence and no claim ref", () => {
     const r = recoverWith([], { endsAt: past });
@@ -1028,6 +1041,106 @@ describe("route — the electorate is exactly who the gate lets in", () => {
     });
     const res = await call("GET", `/map/journey/shortlist?tripId=${TRIP}`);
     assert.equal(res.body.eligibleVoters, 2, "owner + the one member");
+  });
+
+  it("an owner whose OWN membership row is non-accepted is not on the electorate either", async () => {
+    // The last piece of the "the two lists cannot drift" claim, and the one
+    // that was false: the owner used to be added straight from `trips.owner_id`
+    // with no predicate at all. `requireTripMember` gives the owner the benefit
+    // of a MISSING row, not of a present one — a row at status 'left' fails
+    // `isAcceptedTripMemberRow` and the vote gate turns them away. Counting
+    // them as a voter anyway leaves `pending` stuck at 1 and `readyToConfirm`
+    // false forever, which is the quorum-breaking direction of the same bug the
+    // paragraphs above are about.
+    state = baseState({
+      trips: [{ id: TRIP, owner_id: "gone-owner" }],
+      trip_members: [
+        { trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" },
+        { trip_id: TRIP, user_id: "crew-1", role: "member", status: "accepted" },
+        { trip_id: TRIP, user_id: "gone-owner", role: "owner", status: "left" },
+      ],
+      trip_plan_item_votes: [
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: VIEWER, vote: "accept" },
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: "crew-1", vote: "accept" },
+      ],
+    });
+    const res = await call("GET", `/map/journey/shortlist?tripId=${TRIP}`);
+    assert.equal(res.body.eligibleVoters, 2, "the departed owner cannot pass the gate, so cannot be a voter");
+    assert.equal(res.body.items[0]!.tally.pending, 0);
+    assert.equal(
+      res.body.items[0]!.tally.readyToConfirm,
+      true,
+      "an owner the gate rejects must not hold the crew's decision open forever",
+    );
+  });
+});
+
+/**
+ * VOICE AND POWER ARE DIFFERENT SETS, ON PURPOSE.
+ *
+ * The electorate is TRIP MEMBERSHIP — every accepted member, role 'viewer'
+ * included. The authority to confirm a candidate is `canEditPlan`, which a trip
+ * at `plan_edit_permission: 'owner_only'` gives to the owner alone. Those two
+ * sets are deliberately not the same set, and neither is derived from the
+ * other, because they answer different questions:
+ *
+ *   - "who is affected by this decision"  → everyone on the trip. A member who
+ *     is going to be standing in that queue may say no to it, whatever their
+ *     editing rights. Silencing viewers would make the sheet a poll of the
+ *     people who were already going to decide anyway.
+ *   - "who may change the plan"           → `canEditPlan` + `canEditPlanItem`,
+ *     unchanged by Phase 6 and not re-implemented here.
+ *
+ * So a decline is ADVISORY: it clears `tally.readyToConfirm` and sets
+ * `blockedBy: 'declined'`, and that is the whole of its effect. It cannot stop
+ * an editor from confirming — the confirm is a PATCH on the existing plan write
+ * path, which never consults the tally — and a `readyToConfirm: true` cannot let
+ * a non-editor confirm. The tests below pin both halves.
+ */
+describe("route — a decline is a VOICE, not a veto over the plan write path", () => {
+  it("a 'viewer' can cast a blocking decline, and it only blocks the READINESS hint", async () => {
+    state = baseState({
+      trips: [{ id: TRIP, owner_id: "crew-1", plan_edit_permission: "owner_only" }],
+      trip_members: [
+        { trip_id: TRIP, user_id: VIEWER, role: "viewer", status: "accepted" },
+        { trip_id: TRIP, user_id: "crew-1", role: "member", status: "accepted" },
+      ],
+      trip_plan_item_votes: [
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: VIEWER, vote: "decline" },
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: "crew-1", vote: "accept" },
+      ],
+    });
+    writes.length = 0;
+    const res = await call("GET", `/map/journey/shortlist?tripId=${TRIP}`);
+    const tally = res.body.items[0]!.tally;
+    assert.equal(tally.declines, 1, "a viewer on the trip may say no to it");
+    assert.equal(tally.readyToConfirm, false);
+    assert.equal(tally.blockedBy, "declined");
+    // …and the decline changed NOTHING about the plan itself.
+    assert.equal(writes.length, 0, "reading the sheet writes nothing");
+    assert.equal(res.body.items[0]!.status, undefined, "the projection does not carry a plan status to change");
+  });
+
+  it("this route never writes a plan-item status, whatever the tally says", async () => {
+    // The confirm is PATCH /api/trips/:tripId/plan/items/:itemId — with
+    // canEditPlan + canEditPlanItem. If a status write ever appeared here it
+    // would be a second answer to "who may change this trip", so the assertion
+    // is on the write log rather than on a comment.
+    state = baseState({
+      trip_plan_item_votes: [
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: VIEWER, vote: "accept" },
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: "crew-1", vote: "accept" },
+      ],
+    });
+    writes.length = 0;
+    const res = await call("POST", `/map/journey/shortlist/${ITEM}/vote`, { tripId: TRIP, vote: "accept" });
+    assert.equal(res.body.tally.readyToConfirm, true, "the crew has agreed…");
+    // …and the ONLY write is the vote row. Nothing touched trip_plan_items.
+    assert.deepEqual(
+      [...new Set(writes.map((w) => w.table))],
+      ["trip_plan_item_votes"],
+      "a ready tally must not promote the candidate by itself",
+    );
   });
 });
 

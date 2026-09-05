@@ -8,19 +8,40 @@
  * active route (the polyline they are already travelling) it keeps the objects
  * within `meters` of that line and drops the rest, then attaches a detour cost.
  *
- * It is NOT a new privacy surface, and the reasoning matters because it is the
- * whole reason this could be built at all:
+ * IT IS ONLY NOT A NEW PRIVACY SURFACE BECAUSE OF WHERE IT IS CALLED. This
+ * module is pure geometry over whatever MapObjects it is handed; it has no way
+ * to tell a served coordinate from a withheld one. Everything below is
+ * therefore a constraint on the CALLER as much as on this file, and the caller
+ * that satisfies it is routes/mapProjection.ts — which invokes
+ * `filterToCorridor` after `servableOnly`, after `withholdCoarsenableAggregates`,
+ * after the §24 `applyProtection` gate and after §31 `aggregateForViewport`.
+ * Nothing else may call it earlier.
  *
- *   * It never reads anything. Every object handed to `filterToCorridor` has
- *     already come out of routes/mapProjection.ts's privacy-complete sources,
- *     already been through `servableOnly`, the §24 protection gate and §31
- *     aggregation. This module receives MapObjects and returns a SUBSET of
+ *   * It never reads anything. It receives MapObjects and returns a SUBSET of
  *     them, unmodified.
+ *   * EVERY NUMBER IT EMITS IS DERIVED FROM `obj.geometry` — the geometry the
+ *     response is about to serialize. When §24 has coarsened an object to its
+ *     zone anchor, `offsetMeters`, `alongMeters` and the detour minutes all
+ *     describe THE ANCHOR. Called before that gate, they described the true
+ *     coordinate the gate had just removed, and two requests with non-parallel
+ *     polylines trilaterated it back — the reported cost was the disclosure.
+ *     That is the defect this call-site rule exists to prevent, and
+ *     src/test/mapCorridorRoute.test.ts pins it as a measured value.
+ *   * ITS COUNTERS COUNT ONLY WHAT SURVIVED THE GATE. `kept` / `droppedOffRoute`
+ *     / `droppedNoGeometry` are computed over the input, so an input containing
+ *     suppressed objects would turn `kept` into a position oracle for things
+ *     the viewer may not see. The caller passes post-gate objects; the counters
+ *     are then honest by construction.
  *   * It can only ever REMOVE. There is no branch here that adds an object,
  *     sharpens a geometry, un-coarsens a zone or lowers a k-anonymity floor.
  *     The corridor's answer is a subset of the answer the same viewer would
  *     get by asking the same endpoint for the same bbox with no corridor at
  *     all — so it cannot reveal anything the gateway would have withheld.
+ *   * IT MUST NOT DECIDE WHO IS IN A K-COHORT. Running after §31 means the
+ *     aggregation cells are binned from a set that does not depend on the
+ *     polyline, so a caller cannot re-partition one cohort by varying their
+ *     route and read each partition's `count`. They can only drop whole cells
+ *     that were already published.
  *   * The polyline is the VIEWER'S OWN. It arrives as a request parameter
  *     describing where the caller is going. It is never another person's
  *     route, and nothing here writes it down.
@@ -40,6 +61,20 @@
  */
 import { centroidOf, type MapObject } from "./mapObjects.js";
 import { KM_PER_DEGREE_LAT, type BBox } from "./mapAggregation.js";
+
+// ── The flag ──────────────────────────────────────────────────────────────────
+
+/**
+ * The ONE capability flag for §36 Phase 6, seeded OFF (migration 2296).
+ *
+ * It lives here, in the phase's own pure lib, so that routes/mapProjection.ts
+ * and routes/mapJourney.ts cannot spell it two different ways. Both keep a
+ * literal at the `isFlagEnabled` call site — check:flag-polarity resolves flag
+ * arguments statically and a constant defeats it — and both PIN that literal
+ * against this constant, so a rename is a type error rather than a silently
+ * divergent second spelling. Same pattern, same reason, as CROWD_FLOW_FLAG.
+ */
+export const JOURNEY_INTELLIGENCE_FLAG = "map_journey_intelligence_enabled";
 
 // ── Bounds ────────────────────────────────────────────────────────────────────
 

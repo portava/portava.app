@@ -9,7 +9,7 @@ import { JourneyDecisionPanel } from '../../src/components/map/JourneyDecisionPa
  * A thin wrapper, like app/trip/chat.tsx: the shortlist, the accept/decline and
  * the recovery list all live in the panel, and every decision they render was
  * made on the server behind `map_journey_intelligence_enabled` (OFF by default,
- * migration 2292).
+ * migration 2296).
  */
 export default function TripJourneyScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

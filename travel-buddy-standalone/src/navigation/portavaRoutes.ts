@@ -809,7 +809,7 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
   },
   {
     // Map spec §36 Phase 6. The whole screen is behind
-    // `map_journey_intelligence_enabled` (migration 2292, seeded OFF): with the
+    // `map_journey_intelligence_enabled` (migration 2296, seeded OFF): with the
     // flag off both endpoints answer enabled:false and the panel says the
     // capability is not switched on, rather than showing an empty shortlist.
     key: 'trip-journey',

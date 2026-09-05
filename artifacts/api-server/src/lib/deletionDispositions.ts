@@ -176,7 +176,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "memory_projections",
   "memory_events",
   "memory_feedback",
-  // Map spec §36 Phase-6 group decision (migration 2292). user_id REFERENCES
+  // Map spec §36 Phase-6 group decision (migration 2296). user_id REFERENCES
   // auth.users(id) ON DELETE CASCADE, and deletion step 5 calls
   // auth.admin.deleteUser — so this cascade is one that ACTUALLY FIRES, the
   // same reasoning that puts passport_stamps_gps in this bucket. The table was
@@ -529,7 +529,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "journey_shadow_ground_truth",
   "journey_shadow_qa_reports",
   "journey_shadow_session_issuances",
-  // Map §36 Phase-6 group-decision votes, added by migration 2292
+  // Map §36 Phase-6 group-decision votes, added by migration 2296
   // (post-baseline). Classified in ERASED_BY_CASCADE above.
   "trip_plan_item_votes",
 ];

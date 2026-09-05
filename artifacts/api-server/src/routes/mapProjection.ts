@@ -102,21 +102,37 @@
  *
  * §36 PHASE 6 — "ALONG MY WAY" IS A PARAMETER HERE, NOT AN ENDPOINT
  * =================================================================
- *   flag: map_journey_intelligence_enabled (OFF by default; migration 2292)
+ *   flag: map_journey_intelligence_enabled (OFF by default; migration 2296)
  *
  * `corridor=lat,lng;lat,lng;…` (+ optional `corridorMeters`) filters this
  * request's already-privacy-complete answer down to the objects within a
  * bounded distance of the VIEWER'S OWN route polyline, keeping §31 rank order
  * and attaching an explicit, explicitly-estimated detour cost per object
- * (lib/mapCorridor). It is a bbox plus a distance predicate — it reads nothing,
- * adds nothing, and can only ever REMOVE objects from the answer this same
- * viewer would get for the same bbox with no corridor at all, so it opens no
- * privacy surface. A separate /api/map/along-my-way would have had to restate
- * all eleven privacy-complete reads above, which is the exact bypass
+ * (lib/mapCorridor). It is a bbox plus a distance predicate — it reads nothing
+ * and adds nothing.
+ *
+ * WHERE IT RUNS IS THE WHOLE ARGUMENT, so it is stated as an order and not as
+ * an adjective: `servableOnly` → `filterKinds` → live enrichment →
+ * `withholdCoarsenableAggregates` → §24 `applyProtection` → §31
+ * `aggregateForViewport` → **the corridor** → `rankObjects` → `paginate`.
+ * Because it runs last of the privacy stages, every number it publishes
+ * (`offsetMeters`, `alongMeters`, the detour minutes, `corridor.kept`) is
+ * derived from the geometry this response actually serializes and counts only
+ * objects that survived the gate. Run any earlier — as it was until the
+ * ordering fix — and the detour is a measurement of the coordinate §24 just
+ * removed, and `kept` is a counter of objects the viewer may not see. See the
+ * long note at the call site and src/test/mapCorridorRoute.test.ts.
+ *
+ * A separate /api/map/along-my-way would have had to restate all eleven
+ * privacy-complete reads above, which is the exact bypass
  * src/test/gatewayBypassGuard.test.ts exists to catch.
  *
- * With the flag off the parameter is IGNORED (reported as `corridor.refusal =
- * "flag_off"`) and this endpoint answers exactly as it did before Phase 6.
+ * With the flag off the parameter is IGNORED: `corridor.refusal` reads
+ * "flag_off", `corridorMatches` is null, and the object list is the one this
+ * endpoint served before Phase 6. The `corridor`/`corridorMatches` KEYS are
+ * still present in the envelope whenever a corridor was asked for — the
+ * response is the same answer, not the same bytes, and a client cannot be told
+ * "ignored" without being told something.
  */
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -143,6 +159,7 @@ import { readSavedPlacePins } from "../lib/mapProducers/savedPlaceProducer.js";
 import { deriveEventCauseHypotheses } from "../lib/mapProducers/eventContextProducer.js";
 import { loadViewportPlaceRows, projectPlace } from "../lib/mapProjectPlace.js";
 import {
+  JOURNEY_INTELLIGENCE_FLAG,
   buildCorridor,
   corridorBBox,
   filterToCorridor,
@@ -151,6 +168,15 @@ import {
   type CorridorMatch,
   type CorridorReport,
 } from "../lib/mapCorridor.js";
+
+/**
+ * Compile-time pin for the Phase-6 flag literal used at the corridor call site,
+ * exactly as CROWD_FLOW_FLAG_PIN does for the crowd-flow one. The literal is
+ * what check:flag-polarity can resolve; this line is what stops the literal and
+ * the constant from drifting apart when either is renamed.
+ */
+const JOURNEY_FLAG_PIN: "map_journey_intelligence_enabled" = JOURNEY_INTELLIGENCE_FLAG;
+void JOURNEY_FLAG_PIN;
 
 /**
  * Compile-time pin for the flag literal used at the crowd-flow call site.
@@ -477,9 +503,14 @@ router.get(
 
     // ── §36 Phase 6 "Along My Way" — a corridor FILTER, not a new surface ────
     //
-    // Behind `map_journey_intelligence_enabled`, seeded OFF (migration 2292).
+    // Behind `map_journey_intelligence_enabled`, seeded OFF (migration 2296).
     // With the flag off the parameter is IGNORED and reported as `flag_off`, so
-    // this endpoint's answer is byte-for-byte what it served before Phase 6.
+    // the OBJECT LIST is what this endpoint served before Phase 6 — the same
+    // answer, deliberately not the same bytes: the envelope still carries
+    // `corridor` (with the refusal) and `corridorMatches: null`, because a
+    // client that asked for a corridor has to be able to tell "off" from "kept
+    // everything". src/test/mapCorridorRoute.test.ts compares the id SETS, and
+    // says so rather than claiming an equality it does not check.
     //
     // The corridor can only ever REMOVE objects from the answer this viewer
     // would already get for the same bbox — see lib/mapCorridor's header. That
@@ -914,22 +945,6 @@ router.get(
 
     objects = filterKinds(objects, kinds);
 
-    // §36 Phase 6 — the corridor filter, applied HERE and not later. It runs
-    // before enrichment so a live-claim read is never spent on an object that
-    // is about to be dropped, and it PRESERVES ORDER, so the §31 ladder that
-    // `rankObjects` applies below is the one that decides what the client sees.
-    // Nothing after this point can re-add what the corridor removed.
-    const corridorMatches = new Map<string, CorridorMatch>();
-    if (corridor && corridorReport) {
-      corridorReport.considered = objects.length;
-      const filtered = filterToCorridor(objects, corridor);
-      objects = filtered.objects;
-      for (const m of filtered.matches) corridorMatches.set(m.objectId, m);
-      corridorReport.kept = filtered.objects.length;
-      corridorReport.droppedOffRoute = filtered.droppedOffRoute;
-      corridorReport.droppedNoGeometry = filtered.droppedNoGeometry;
-    }
-
     // Attach already-computed live claims. Bounded and REPORTED — a capped
     // enrichment must never read as "no live intelligence here".
     const enrichment = await enrichWithLiveClaims(
@@ -1019,15 +1034,67 @@ router.get(
     // Every collapse and suppression is reported — a silently shrunk result is
     // indistinguishable from an empty city.
     const aggregation = aggregateForViewport(objects, { bbox, zoom });
+    let servedObjects = aggregation.objects;
 
-    const ranked = rankObjects(aggregation.objects, { lat, lng });
+    // §36 Phase 6 — the corridor filter, applied HERE: AFTER `applyProtection`
+    // and AFTER `aggregateForViewport`, on exactly the objects this response is
+    // going to serve.
+    //
+    // IT USED TO RUN ~80 LINES EARLIER, right after `filterKinds`, and that was
+    // a privacy defect in two independent ways. Both were proven by execution;
+    // src/test/mapCorridorRoute.test.ts reproduces each as the number the
+    // response must now carry.
+    //
+    //   1. IT MEASURED THE TRUTH AND PUBLISHED THE MEASUREMENT. A place inside
+    //      a coarsen-class zone is served with its Point replaced by the zone
+    //      anchor — but the detour was computed from the real centroid, so
+    //      `offsetMeters` was the exact perpendicular distance to the
+    //      coordinate §24 had just removed. Two requests with non-parallel
+    //      polylines trilaterate it back to ~1 m. Filtering the match list
+    //      afterwards would not have helped: the reported cost WAS the leak.
+    //   2. IT COUNTED WHAT THE GATE REFUSED TO SERVE. A suppressed object still
+    //      incremented `corridor.kept`, so an empty `objects` with `kept: 1`
+    //      told the caller something withheld lay within the half-width —
+    //      sweepable down to CORRIDOR_MIN_METERS as a position oracle.
+    //
+    // AFTER AGGREGATION, not merely after protection, and that is the second
+    // half of the fix. The §31 cells are binned from the whole protected set,
+    // so their membership and their k-floor test do not depend on the caller's
+    // polyline at all. A caller who varies the corridor therefore cannot
+    // partition one k-anonymised cohort into smaller cohorts and read each
+    // partition's `count`; they can only drop whole already-published cells.
+    //
+    // The consequences are deliberate, not oversights:
+    //   * An aggregated cell is a served object, so it IS filtered and IT DOES
+    //     get a detour line — computed from the cell's own published centroid,
+    //     which is the only position the client has for it.
+    //   * `corridor.considered` counts post-gate objects, so it is smaller than
+    //     it was. That is the point: the corridor is never told about an object
+    //     the viewer may not see.
+    //   * Live-claim enrichment now runs before the corridor and can spend its
+    //     cap on objects the corridor will drop. `liveEnrichment.skipped`
+    //     reports it. The bbox is still corridor-derived when the caller sends
+    //     none, so the read stays bounded — and a cheaper answer is not a
+    //     reason to hand the filter coordinates the gateway withheld.
+    // ORDER IS STILL PRESERVED: `filterToCorridor` only removes, so `rankObjects`
+    // below remains the thing that decides what the client sees.
+    const corridorMatches = new Map<string, CorridorMatch>();
+    if (corridor && corridorReport) {
+      corridorReport.considered = servedObjects.length;
+      const filtered = filterToCorridor(servedObjects, corridor);
+      servedObjects = filtered.objects;
+      for (const m of filtered.matches) corridorMatches.set(m.objectId, m);
+      corridorReport.kept = filtered.objects.length;
+      corridorReport.droppedOffRoute = filtered.droppedOffRoute;
+      corridorReport.droppedNoGeometry = filtered.droppedNoGeometry;
+    }
+
+    const ranked = rankObjects(servedObjects, { lat, lng });
     const { page, nextCursor } = paginate(ranked, cursor, limit);
 
     // The detour lines for THIS page, in page order, so a client never has to
-    // join two differently-ordered arrays. An aggregated cell has an id the
-    // corridor never saw, so it simply has no detour line — a cell is not a
-    // place you can step off your route to reach, and inventing a cost for one
-    // would be a number about nothing.
+    // join two differently-ordered arrays. Every page object came through the
+    // corridor, so this is a 1:1 parallel array rather than a partial join.
     const corridorPageMatches: CorridorMatch[] | null = corridor
       ? page.map((o) => corridorMatches.get(o.id)).filter((m): m is CorridorMatch => m != null)
       : null;

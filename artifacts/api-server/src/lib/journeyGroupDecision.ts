@@ -128,7 +128,7 @@ export interface ShortlistItemRow {
   created_at: string | null;
 }
 
-/** One `trip_plan_item_votes` row (migration 2292). */
+/** One `trip_plan_item_votes` row (migration 2296). */
 export interface VoteRow {
   plan_item_id: string;
   user_id: string;
@@ -191,11 +191,19 @@ export interface ShortlistProjection {
 /**
  * Tally one candidate.
  *
- * A DECLINE IS A HARD BLOCK, not a subtracted point. A group decision where
- * one member said no is not "5 – 1 in favour"; it is unresolved, and calling
- * it ready would use the majority to overrule somebody who is on the trip. So
- * `readyToConfirm` requires zero declines, and `blockedBy` says which of the
- * three ways it failed.
+ * A DECLINE IS A HARD BLOCK ON THIS TALLY, not a subtracted point. A group
+ * decision where one member said no is not "5 – 1 in favour"; it is unresolved,
+ * and calling it ready would use the majority to overrule somebody who is on
+ * the trip. So `readyToConfirm` requires zero declines, and `blockedBy` says
+ * which of the three ways it failed.
+ *
+ * "ON THIS TALLY" IS THE WHOLE SCOPE, and it is why the electorate can be wider
+ * than `canEditPlan` without that being an authority bug. Every accepted member
+ * votes, role 'viewer' included; only `canEditPlan` + `canEditPlanItem` may
+ * actually promote 'tentative' → 'confirmed', and that path never reads this
+ * tally. A decline is therefore a VOICE — it withholds the crew's "we agreed"
+ * signal — and never a veto over the plan write path. See routes/mapJourney's
+ * header for the ruling and src/test/mapJourney.test.ts for both halves of it.
  *
  * Votes from users who are no longer eligible members are IGNORED, not counted
  * — a removed member's old vote must not keep deciding the trip.

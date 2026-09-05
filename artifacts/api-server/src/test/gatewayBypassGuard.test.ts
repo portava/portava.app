@@ -29,7 +29,21 @@ const SRC = resolve(__dir, "..");
  * The privacy-complete readers a layer must go through, and every file allowed
  * to call each one. A caller absent from this list is a bypass.
  */
-const READERS: Record<string, { approved: Record<string, string> }> = {
+const READERS: Record<
+  string,
+  {
+    approved: Record<string, string>;
+    /**
+     * FALSE for a privacy-complete reader that is NOT a map-projection layer.
+     * The caller allow-list applies to every entry; only the inverse check
+     * ("the gateway still calls this") is skipped, because asserting that
+     * routes/mapProjection.ts calls a trip-crew reader would be asserting a
+     * bypass rather than forbidding one. Defaults to true, so a new layer that
+     * forgets this field is held to the stricter rule.
+     */
+    gatewayLayer?: boolean;
+  }
+> = {
   listMapTravelers: {
     approved: {
       "lib/mapTravelers.ts": "defines it",
@@ -115,6 +129,27 @@ const READERS: Record<string, { approved: Record<string, string> }> = {
       // unranked POI wall at city zoom, §37) and skip the §7 enrichment that
       // is the only source of a place's live axes. The gateway is the one
       // caller precisely so those three stages cannot be bypassed.
+    },
+  },
+  getCrewMap: {
+    // Not a §19 map layer: the crew map is its own trip-scoped endpoint, and
+    // routes/mapProjection.ts must NOT call it.
+    gatewayLayer: false,
+    approved: {
+      "services/tripCrew/TripCrewLocationService.ts": "defines it",
+      "routes/tripCrewLocation.ts": "GET /api/trips/:tripId/crew/map — the crew map itself",
+      "routes/mapJourney.ts":
+        "§36 Phase-6 group decision, which projects the cards through toCrewAreas " +
+        "(a type with no coordinate field) before they can reach a response",
+      // NOTE ON WHAT THIS ONE PROTECTS. `getCrewMap` is the ONE reader that
+      // applies ghost mode, per-member visibility, the bidirectional block
+      // filter and the fail-closed "no blocks read ⇒ no members" rule to a
+      // trip's crew — and its `CrewMemberCard`s MAY carry `exactCoords` when a
+      // member has granted the viewer a live share. A second caller that read
+      // it and serialized the cards would republish a live-share coordinate on
+      // a surface the share was never granted for (§23). Phase 6 was the first
+      // new caller in a long while and was NOT on this list, which is exactly
+      // the gap this entry closes.
     },
   },
   readBuddyMapPins: {
@@ -220,11 +255,17 @@ describe("gateway bypass guard (§19)", () => {
     // leave the client fetching it per-layer again, which is the §19 violation
     // this whole exercise removed.
     const route = readFileSync(join(SRC, "routes", "mapProjection.ts"), "utf8");
-    for (const reader of Object.keys(READERS)) {
+    let checked = 0;
+    for (const [reader, spec] of Object.entries(READERS)) {
+      if (spec.gatewayLayer === false) continue;
+      checked += 1;
       assert.ok(
         new RegExp(`\\b${reader}\\s*\\(`).test(route),
         `${reader} is no longer called by the gateway — that layer has fallen back to the client`,
       );
     }
+    // The opt-out above must stay an exception. If it ever swallowed the whole
+    // list this test would pass by checking nothing.
+    assert.ok(checked >= Object.keys(READERS).length - 1, "gatewayLayer:false is for exceptions");
   });
 });

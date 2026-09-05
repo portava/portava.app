@@ -218,13 +218,27 @@ describe("mapCorridor — the filter", () => {
 });
 
 describe("mapCorridor — detour cost is an estimate, and says so (§37)", () => {
-  it("is out-and-back at walking pace, rounded up", () => {
+  it("is out-and-back at walking pace", () => {
     // 250 m off the line ⇒ 500 m extra ⇒ 6 min at 5 km/h (83.3 m/min).
     const cost = detourCost({ offsetMeters: 250, alongMeters: 1_000 });
     assert.equal(cost.offsetMeters, 250);
     assert.equal(cost.extraMeters, 500);
     assert.equal(cost.extraMinutes, 6);
     assert.equal(cost.alongMeters, 1_000);
+  });
+
+  it("rounds the minutes UP, on a fixture where up and down differ", () => {
+    // The 250 m fixture above divides exactly (500 / 83.3̇ = 6.0), so it pins
+    // the arithmetic but NOT the rounding: Math.ceil → Math.floor survives it.
+    // 100 m off ⇒ 200 m extra ⇒ 2.4 min, where ceil and floor disagree.
+    const cost = detourCost({ offsetMeters: 100, alongMeters: 0 });
+    assert.equal(cost.extraMeters, 200);
+    assert.equal(cost.extraMinutes, 3, "2.4 min is 3 minutes, not 2 — an under-promise costs the traveller");
+    // And once more where the fraction is small: 10 m off is 0.24 min, which
+    // must still round to a whole minute rather than collapsing to "On your route".
+    const tiny = detourCost({ offsetMeters: 10, alongMeters: 0 });
+    assert.equal(tiny.extraMinutes, 1);
+    assert.match(detourLine(tiny), /^Est\. \+1 min detour/);
   });
 
   it("never claims to be a measurement", () => {

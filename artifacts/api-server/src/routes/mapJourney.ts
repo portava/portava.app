@@ -2,7 +2,7 @@
  * /api/map/journey/* — Map spec §36 Phase 6, the two surfaces that are not a
  * gateway parameter.
  *
- *   flag: map_journey_intelligence_enabled (OFF by default; migration 2292)
+ *   flag: map_journey_intelligence_enabled (OFF by default; migration 2296)
  *
  * The third Phase-6 capability, Along My Way, is NOT here: it is a `corridor=`
  * parameter on GET /api/map/projection, because it is a filter over objects
@@ -41,6 +41,26 @@
  * answer to "who may change this trip's plan", which is exactly the class of
  * defect the gateway-bypass guard exists to prevent one layer over.
  *
+ * THE ELECTORATE AND `canEditPlan` ARE DIFFERENT SETS, AND THAT IS THE RULE
+ * ========================================================================
+ * Any accepted member — role 'viewer' included — may cast a decline, on a trip
+ * whose `plan_edit_permission` may well be 'owner_only'. That asymmetry is
+ * deliberate, not an oversight, because the two sets answer different
+ * questions:
+ *
+ *   WHO IS AFFECTED BY THE DECISION  → the trip's members. Somebody who is
+ *     going to be standing in that queue may say so, whatever their editing
+ *     rights. An electorate narrowed to `canEditPlan` would poll only the
+ *     people who were already going to decide, which is not a group decision.
+ *   WHO MAY CHANGE THE PLAN          → `canEditPlan` + `canEditPlanItem`,
+ *     unchanged by Phase 6.
+ *
+ * So a decline is ADVISORY, and its entire effect is on the TALLY: it clears
+ * `readyToConfirm` and sets `blockedBy: 'declined'`. It cannot stop an editor
+ * from confirming (the PATCH never consults the tally) and a ready tally cannot
+ * let a non-editor confirm. src/test/mapJourney.test.ts pins both halves,
+ * including that the only row this route ever writes is a vote.
+ *
  * §23 — NO CREW COORDINATE CAN REACH THIS RESPONSE
  * ================================================
  * `getCrewMap` returns `CrewMemberCard`s that MAY carry `exactCoords` when a
@@ -61,6 +81,7 @@ import {
   ACCEPTED_TRIP_MEMBER_ROLES,
   isAcceptedTripMember,
   isAcceptedTripMemberRow,
+  requireTripMember,
   requireUser,
   sendError,
 } from "../lib/http.js";
@@ -82,6 +103,7 @@ import {
   type PlannedStop,
   type RecoveryCandidate,
 } from "../lib/journeyRecovery.js";
+import { JOURNEY_INTELLIGENCE_FLAG } from "../lib/mapCorridor.js";
 import { deriveViewerLiveTolerances, resolveLiveSubjects } from "../compass/CompassLiveConstraints.js";
 import type { CompassItem, CompassProfile } from "../compass/types.js";
 
@@ -89,8 +111,15 @@ const router = Router();
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
-/** The Phase-6 flag, read once per request. Fail-closed via isFlagEnabled. */
-const JOURNEY_FLAG = "map_journey_intelligence_enabled";
+/**
+ * The Phase-6 flag, read once per request. Fail-closed via isFlagEnabled.
+ *
+ * PINNED against lib/mapCorridor's JOURNEY_INTELLIGENCE_FLAG, which
+ * routes/mapProjection.ts pins its own corridor literal against too. One
+ * constant, two annotated spellings: renaming the flag is a type error in both
+ * files rather than a silent divergence in one of them.
+ */
+const JOURNEY_FLAG: typeof JOURNEY_INTELLIGENCE_FLAG = "map_journey_intelligence_enabled";
 
 /** Bounded reads: a trip's plan and its votes are small, and must stay small. */
 const MAX_PLAN_ROWS = 200;
@@ -125,6 +154,18 @@ const PLAN_COLUMNS =
  * decide whether to accept) but they are not on the trip yet and their vote
  * must not decide it. Null on a read failure, never [] — an empty electorate
  * would make every candidate trivially "ready to confirm".
+ *
+ * THE OWNER IS ADMITTED BY `requireTripMember`, NOT BY `trips.owner_id`, and
+ * that distinction is the whole reason the call is here rather than an
+ * `ids.add(ownerId)`. `requireTripMember` gives the owner the benefit of a
+ * MISSING trip_members row (trip creation writes none) but NOT of a present
+ * one: an owner row at status 'left' or 'removed', or at a role outside
+ * ACCEPTED_TRIP_MEMBER_ROLES, fails `isAcceptedTripMemberRow` and the gate
+ * turns them away. Adding the owner unconditionally made this list a SECOND
+ * rule — the exact drift the paragraphs above say cannot happen — and it drifted
+ * in the quorum-breaking direction: an owner the gate rejects can never vote,
+ * so `pending` never reaches zero and `readyToConfirm` is false forever. One
+ * extra tiny read is the price of there being one rule.
  */
 async function loadEligibleVoters(sc: any, tripId: string): Promise<string[] | null> {
   const [ownerRes, memberRes] = await Promise.all([
@@ -139,9 +180,9 @@ async function loadEligibleVoters(sc: any, tripId: string): Promise<string[] | n
   if (ownerRes.error || memberRes.error) return null;
   const ids = new Set<string>();
   const ownerId = (ownerRes.data as any)?.owner_id;
-  // The owner is on their own trip whether or not a trip_members row exists —
-  // the same allowance requireTripMember makes when the row is missing.
-  if (typeof ownerId === "string") ids.add(ownerId);
+  if (typeof ownerId === "string" && (await requireTripMember(sc, tripId, ownerId))) {
+    ids.add(ownerId);
+  }
   for (const row of ((memberRes.data as any[]) ?? [])) {
     if (typeof row?.user_id !== "string") continue;
     if (!isAcceptedTripMemberRow(row)) continue;

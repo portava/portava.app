@@ -128,7 +128,7 @@ export const POST_BASELINE_RLS_DISPOSITIONS: Record<string, RlsDisposition & { m
   "trip_plan_item_votes": {
     class: "DENY_ALL_BY_DESIGN",
     policyCount: 0,
-    migration: "2292_map_journey_intelligence.sql",
+    migration: "2296_map_journey_intelligence.sql",
     reason:
       "Map spec §36 Phase-6 group decision: one accept/decline per crew member per trip plan item. RLS enabled, zero " +
       "policies: service_role (which bypasses RLS) holds SELECT/INSERT/UPDATE/DELETE; anon and authenticated are " +

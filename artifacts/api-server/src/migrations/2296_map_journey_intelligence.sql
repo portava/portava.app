@@ -1,8 +1,14 @@
--- 2292_map_journey_intelligence.sql
--- Map spec §36 Phase 6 — Journey Intelligence. Owner-approved 2026-09-05
--- (docs/map/scope-ruling-phases-6-7.md, "SUPERSEDED FOR PHASE 6").
+-- 2296_map_journey_intelligence.sql
+-- Map spec §36 Phase 6 — Journey Intelligence.
+-- Scope taken by the implementing agent 2026-09-05, NOT an owner approval:
+-- see docs/map/scope-ruling-phases-6-7.md, which used to claim one and no
+-- longer does. The flag below is seeded OFF precisely because the owner
+-- decision is the press, and it has not happened.
 --
--- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band). Map band 2292.
+-- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band). Map band 2296.
+-- (Was 2292; renumbered because 2292 is main's
+-- 2292_intel_stmt_trigger_removal_ig_campaign.sql. 2291/2293/2294/2295 are
+-- taken by PRs in flight, so this phase took the next free lane.)
 --
 -- Additive + idempotent. Safe to re-run. Two things, and nothing else:
 --
