@@ -18,6 +18,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem } from "./types.js";
 import type { CompassProfile } from "./types.js";
 import { logger } from "../lib/logger.js";
+import { isPostPublished } from "../lib/postVisibility.js";
 
 /**
  * Logs a Compass candidate-source failure so a degraded feed (a source
@@ -39,6 +40,29 @@ const MAX_HIDDEN_GEMS  = 20;
 
 // ── Posts ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Delayed-publish gate (§23 / §37) — see lib/postVisibility.isPostPublished.
+ *
+ * This producer is the Compass feed's main post source, and postToItem below
+ * copies `location_city`, `location_country` and `canonical_place_id` straight
+ * onto the CompassItem. A post whose `post_status` is still pending is a
+ * delayed-geotag post whose author asked for their location NOT to be released
+ * yet; serving it here publishes exactly the fact the delay exists to withhold.
+ *
+ * `status = 'active'` is not a publication filter: POST /posts writes a delayed
+ * post as active with a PENDING post_status and a sweeper flips it to
+ * 'published' later. The two predicates below were the only ones this query had.
+ *
+ * CompassPrivacyGuard does carry a delayed-post coordinate scrub, but it keys on
+ * `item.isDelayedPost` — a flag only CompassFallbackFeedBuilder sets. This
+ * producer never selected `post_status` at all, so that flag was always
+ * undefined here and the guard could not fire on this path. The gate has to be
+ * at the source, and `post_status` is now selected so the in-memory re-check
+ * below has something to read.
+ */
+const POST_COLUMNS =
+  "id, author_id, content, created_at, location_city, location_country, status, visibility, canonical_place_id, post_status";
+
 async function fetchPosts(
   db: SupabaseClient,
   profile: CompassProfile,
@@ -48,9 +72,10 @@ async function fetchPosts(
 
     let query = db
       .from("posts")
-      .select("id, author_id, content, created_at, location_city, location_country, status, visibility, canonical_place_id")
+      .select(POST_COLUMNS)
       .eq("visibility", "public")
       .eq("status", "active")
+      .eq("post_status", "published")
       .gt("created_at", since)
       .order("created_at", { ascending: false })
       .limit(MAX_POSTS);
@@ -60,9 +85,10 @@ async function fetchPosts(
       // Fetch city posts first, then fill remainder from global
       const cityRes = await db
         .from("posts")
-        .select("id, author_id, content, created_at, location_city, location_country, status, visibility, canonical_place_id")
+        .select(POST_COLUMNS)
         .eq("visibility", "public")
         .eq("status", "active")
+        .eq("post_status", "published")
         .ilike("location_city", profile.currentCity)
         .gt("created_at", since)
         .order("created_at", { ascending: false })
@@ -76,11 +102,11 @@ async function fetchPosts(
       for (const row of [...(cityData ?? []), ...(globalData ?? [])]) {
         if (!seen.has(row.id)) { seen.add(row.id); merged.push(row); }
       }
-      return merged.slice(0, MAX_POSTS).map(postToItem);
+      return merged.filter(isPostPublished).slice(0, MAX_POSTS).map(postToItem);
     }
 
     const { data } = await query;
-    return ((data as any[]) ?? []).map(postToItem);
+    return ((data as any[]) ?? []).filter(isPostPublished).map(postToItem);
   } catch (err) {
     logCompassSourceFailure("posts", err, profile.userId);
     return [];
