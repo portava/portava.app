@@ -62,8 +62,19 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // Unit I3 presence-verification audit rows (migration 2276). observation_id
   // and actor_id both cascade: erase_intel_for_actor deletes the actor's
   // observations inside its erasure declaration, so the cascade is permitted by
-  // the append-only trigger and the rows go with the observation. Coarse
-  // buckets only — never a coordinate — so nothing precise outlives the actor.
+  // the ROW-LEVEL append-only trigger and the rows go with the observation.
+  // Coarse buckets only — never a coordinate — so nothing precise outlives the
+  // actor.
+  //
+  // That was only true on paper until 2292. 2276 also attached the
+  // STATEMENT-level guard that 2137 had removed, and a statement-level BEFORE
+  // trigger fires before any row is examined — so it refused the profiles
+  // cascade even when the user had produced no verification row at all, making
+  // the account undeletable either way. Observed live: every test in
+  // rlsHardening.test.ts failed on PR #402 with "purgeFixtures: delete
+  // profiles: intel_presence_verifications is append-only: DELETE is not
+  // permitted at statement level". 2292 drops it; the row-level guard, which is
+  // what makes this disposition true, is untouched.
   "intel_presence_verifications",
   // IG-02 contribution consent (migration 2172, user_id-keyed). Its ON DELETE
   // CASCADE to profiles never fires because the deletion keeps an anonymised
@@ -88,7 +99,14 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // under the tombstone, but it does not need to — every row hangs off an
   // observation the erasure function already removes. The outcome REPORTER is
   // not named on this table (their id stays on the canonical_events spine row,
-  // whose retention 2120 governs).
+  // whose retention 2120 governs). erase_intel_for_actor (widened by 2278) also
+  // deletes it by actor_id explicitly, so nothing waits on the cascade.
+  //
+  // 2277 also re-attached 2137's removed STATEMENT-level guard here, which
+  // refused any profiles/intel_observations delete that merely TOUCHED the
+  // table, zero rows included. Removed by 2292 — see the note on
+  // intel_presence_verifications above. The row-level guard, the one this
+  // disposition depends on, is untouched.
   "intel_attributions",
   // I4a scoped-trust fold (migration 2278, actor_id = the CONTRIBUTOR). Mutable
   // derived state whose profiles cascade never fires under the tombstone, so it

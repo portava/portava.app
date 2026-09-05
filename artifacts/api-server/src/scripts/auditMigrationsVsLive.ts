@@ -180,7 +180,16 @@ const ALLOWLIST = new Set([
   //
   // The ROW-level intel_append_only() guard that actually enforces append-only is
   // untouched and still audited; only the statement-level variant is gone.
+  //
+  // 2276/2277/2279 re-created the function's triggers on three new tables, and
+  // 2292_intel_stmt_trigger_removal_ig_campaign.sql removed them again for the
+  // same reason (the statement guard refused the profiles/places cascade even at
+  // zero rows, taking the live-DB RLS suite down a second time). The two entries
+  // below are the literal CREATE TRIGGERs 2277 and 2279 still claim; 2276's is
+  // built inside format() so the auditor never sees a name for it.
   "function:intel_append_only_stmt",
+  "trigger:intel_attributions.intel_attributions_no_update_delete_stmt",
+  "trigger:intel_historical_patterns.intel_historical_patterns_no_update_delete_stmt",
   // 0035_plan_geofences.sql claims a single broad policy, FOR ALL, granting any
   // trip member full control. Live CI instead carries the four granular policies
   // from reconciliation-staging/2100_plan_geofences_policy_convergence.sql
