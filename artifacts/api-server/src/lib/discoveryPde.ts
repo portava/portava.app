@@ -66,11 +66,18 @@
  *
  * Gating this module's own analytics calls is NOT sufficient, and the tests
  * caught that. `rankItems` in DiscoveryRankingService writes its own
- * `rank_events` rows, via `writeRankAnalyticAsync` at :768/:867/:879/:888 — an
- * ITEM_ELIGIBLE and an ITEM_SCORED row per candidate, plus boost and fatigue
- * rows. Those fire whenever it is handed a non-null client, and nothing at this
- * layer can ask it not to. A 20-place shadow run would have written 40+ rows
- * into the exact table the ruling forbids.
+ * `rank_events` rows, via `writeRankAnalyticAsync` at
+ * `services/ranking/DiscoveryRankingService.ts:871,991,1004,1013#writeRankAnalyticAsync`
+ * — an ITEM_ELIGIBLE and an ITEM_SCORED row per candidate, plus boost and
+ * fatigue rows. Those fire whenever it is handed a non-null client, and nothing
+ * at this layer can ask it not to. A 20-place shadow run would have written 40+
+ * rows into the exact table the ruling forbids.
+ *
+ * (Those four numbers read :768/:867/:879/:888 until 2026-09-05, by which time
+ * every one of them was 100+ lines out. That is why this file is in the COVERED
+ * registry of `artifacts/api-server/scripts/check-doc-citations.mjs`: the
+ * anchored form above is executable, so the next time the call sites move, the
+ * check goes red instead of the comment quietly becoming fiction.)
  *
  * So `served: false` does not merely skip our own emitters: it replaces the
  * client with one that CANNOT WRITE — every insert/upsert/update/delete and

@@ -427,9 +427,10 @@ produces confident wrong answers, not missing ones.
 ### 3. The caches are IN SERIES, not a fork
 
 `routes/discovery.ts`: Cache A is checked at `:1786` and returns **before** the
-Compass block at `:1882`. *(Line citations re-verified 2026-09-05 at `4cc19af82`;
-they were `:1113` / `:1211` when this was written and the file has since grown
-above them. The control-flow claim is unchanged.)* Cache A's key is
+Compass block at `routes/discovery.ts:1884#callerUserId`. *(Line citations
+re-verified 2026-09-05 at `4cc19af82`; the same two points were at 1113 and 1211
+when this was written and the file has since grown above them. The control-flow
+claim is unchanged.)* Cache A's key is
 `(destination, category, radiusKm)` —
 **user-independent** — with a **2-hour TTL**, and on a cold fetch the *unranked*
 OSM list is written to it while the ranked output goes only to the requesting
@@ -445,17 +446,17 @@ This is the defect D5=B exists to fix, and it is a statement about control flow:
 
 ### 4. `rank_events` is mutable state with a client-input surface
 
-Outcomes arrive from clients and UPDATE existing rows (`routes/rankEvents.ts:194`).
+Outcomes arrive from clients and UPDATE existing rows (`routes/rankEvents.ts:194#outcome_at`).
 One contaminated row corrupting the comparison funnel is disqualifying — which
 is why D7=A put shadow data in its own append-only table.
 
 **Still true after #365 and #387, and both changed something about it.** #365
 made an outcome upgrade any row on a strictly *lower funnel rung* rather than
-only `outcome='impression'` (`routes/rankEvents.ts:111`, `:171`), so a tap
+only `outcome='impression'` (`routes/rankEvents.ts:111#upgradableOutcomesFor`, `:171`), so a tap
 followed by a save no longer 404s — but the update is **still in place**, so the
 tap is still overwritten and the transition is still unrecoverable. #387 stopped
 the serve-point report reading the corpus through `outcome` at all
-(`event_type IS NULL`, `lib/discoveryServePointReport.ts:540`). **Neither makes
+(`event_type IS NULL`, `lib/discoveryServePointReport.ts:540#event_type`). **Neither makes
 `rank_events` an event log.** The mutability is the constraint; only the
 instruments that used to depend on the mutable column have been moved off it.
 
@@ -527,10 +528,10 @@ by row, each row cited to a file and line. The walk is recorded below the table:
 |---|---|---|
 | **A** | Land Stage 2 | **DONE** — PR #50 merged 2026-08-15, 26/26 green |
 | **B** | Make discovery reachable | ⏸️ **PARKED — 2026-08-15. NOT closed, NOT abandoned, and the exit criterion remains UNMET.** Re-checked 2026-09-05: **unchanged**. Blocked on: **no route exists from a browser session to the production API in this workspace** — Replit's path-based routing intercepts `/api/*` on the dev domain to the local dev artifact, and there is no deployed frontend. See **[Phase B — PARKED](#phase-b--parked-2026-08-15)** for the full state: baseline captured, instrument fixed and red-proofed, methodology settled, auth resolved, deploy verified clean. **Parking is not closure.** |
-| **C** | Complete shadow coverage | **IN PROGRESS** — corrected 2026-09-05, it was recorded as `NOT STARTED` while two of its three units had landed. **C1 NOT STARTED** (shadow is wired at serve points 1–3 only: `logDiscoveryShadowServe` has exactly one call site, `routes/discovery.ts:1760`, inside `serveCachedPlaces`). **C2 DONE** — the do-not-wire decision for serve point 6 is written where the phase requires it (`lib/discoveryShadow.ts:22-27`). **C3 DONE** — the divergence report is built, tested and registered (PR #252; `lib/discoveryDivergenceReport.ts`, `scripts/reportDiscoveryDivergence.ts`, `test/discoveryDivergenceReport.test.ts`), **with one requirement outstanding** — it groups by serve-point *class*, so serve points 4/5 land in an unlabelled `other` bucket (`discoveryDivergenceReport.ts:51-55`). The owner ruling still applies: this is measurement infrastructure, downstream of the upstream bottleneck. |
-| **D** | D5=B engine split | **DONE** (the build) · **BLOCKED — owner gate, Phase F gate 2** (the flip). Corrected 2026-09-05. PR #250 wired the pde-mode serve path over Cache A (`routes/discovery.ts:1650-1676`, the `pdeCohort` branch) and the phase's exit criterion is met on its own terms: under mode `legacy` the cached order is returned unchanged, the ranked-on-cache-hit path exists and is tested (`test/discoveryPdeServePath.test.ts`), and it is not taken. **The owner HOLD was never on building it — it is on ENABLING it**, which is Phase F's second gate and remains unruled: `DISCOVERY_ENGINE_MODE` is still seeded `enabled=false`, `metadata.mode='legacy'` (`migrations/2091_discovery_engine_mode_flags.sql:70-73`) and no later migration moves it. |
+| **C** | Complete shadow coverage | **IN PROGRESS** — corrected 2026-09-05, it was recorded as `NOT STARTED` while two of its three units had landed. **C1 NOT STARTED** (shadow is wired at serve points 1–3 only: `logDiscoveryShadowServe` has exactly one call site, `routes/discovery.ts:1760#logDiscoveryShadowServe`, inside `serveCachedPlaces`). **C2 DONE** — the do-not-wire decision for serve point 6 is written where the phase requires it (`lib/discoveryShadow.ts:22-27#cold-fetch`). **C3 IN PROGRESS** — the divergence report is built, tested and registered (PR #252; `lib/discoveryDivergenceReport.ts`, `scripts/reportDiscoveryDivergence.ts`, `test/discoveryDivergenceReport.test.ts`), and **5 of its 6 requirements are met**. Requirement 2 is not: it groups by serve-point *class*, so serve points 4/5 land in an unlabelled `other` bucket (`discoveryDivergenceReport.ts:51-55#classifyServePoint`). The owner ruling still applies: this is measurement infrastructure, downstream of the upstream bottleneck. |
+| **D** | D5=B engine split | **DONE** (the build) · **BLOCKED — owner gate, Phase F gate 2** (the flip). Corrected 2026-09-05. PR #250 wired the pde-mode serve path over Cache A (`routes/discovery.ts:1656-1676#pdeCohort`, the `pdeCohort` branch) and the phase's exit criterion is met on its own terms: under mode `legacy` the cached order is returned unchanged, the ranked-on-cache-hit path exists and is tested (`test/discoveryPdeServePath.test.ts`), and it is not taken. **The owner HOLD was never on building it — it is on ENABLING it**, which is Phase F's second gate and remains unruled: `DISCOVERY_ENGINE_MODE` is still seeded `enabled=false`, `metadata.mode='legacy'` (`migrations/2091_discovery_engine_mode_flags.sql:71-73#DISCOVERY_ENGINE_MODE`) and no later migration moves it. |
 | **E** | Measurement readiness | ❄️ **FROZEN** — superseded destination. Step 3 (the deferred D5 empirical check) is **still owed and still NOT satisfied**; note that the instrument it reads has been corrected twice since it was deferred (#366, #387), so **no reading taken before `4cc19af82` is comparable with one taken after**. |
-| **F** | Owner gates | ❄️ **FROZEN** + **NOT AGENT WORK**. The two gates still stand absolutely, and **both are still unruled** — verified in code 2026-09-05, not assumed: the mode flag ships `legacy`/off (`2091:70-73`) and the step-7/8 modifiers ship behind `discovery_ranking_modifiers_enabled`, seeded OFF with a postcondition that *fails the migration* if it is ever seeded on (`migrations/2289_discovery_ranking_modifiers_flag.sql:70-74`). |
+| **F** | Owner gates | ❄️ **FROZEN** + **NOT AGENT WORK**. The two gates still stand absolutely, and **both are still unruled** — verified in code 2026-09-05, not assumed: the mode flag ships `legacy`/off (`2091:70-73`) and the step-7/8 modifiers ship behind `discovery_ranking_modifiers_enabled`, seeded OFF with a postcondition that *fails the migration* if it is ever seeded on (`migrations/2289_discovery_ranking_modifiers_flag.sql:70-74#on_count`). |
 
 > **Maintain this table in the same PR as the work.** A status table that is
 > updated separately is a status table that is wrong. Use `DONE`, `IN PROGRESS`,
@@ -543,6 +544,32 @@ by row, each row cited to a file and line. The walk is recorded below the table:
 > registered, and said Phase D was on hold while its serve path was wired. The
 > reconciliation below is the repair; the rule above is why it should not have
 > been needed.
+>
+> **And the rule now has a check behind it.** `check:doc-citations`
+> (`artifacts/api-server/scripts/check-doc-citations.mjs`, wired in `ci.yml` and
+> covered by `src/test/docCitations.test.ts`) executes every `file.ts:NNN`
+> citation in `docs/discovery/`, in `00_STATUS.md`, in
+> `01_Portava_Discovery_Engine.md` and in `lib/discoveryPde.ts`: the file must
+> exist and be long enough, and — for a citation written in the anchored form
+> `` `path:209-216#needle` `` — the text `needle` must be on the range's **first
+> line**, 209.
+>
+> **The anchored half is the one that matters**, because a plain range check
+> cannot see a line MOVE: this reconciliation's own first draft cited lines
+> 205-213 of `check-guard-coverage.mjs`, then inserted three lines above that
+> entry in the same diff, and both the old and the new range sit comfortably
+> inside an 1115-line file. **Pinning the first line rather than the whole range
+> is also not a style choice** — with a contains-anywhere rule the same
+> three-line insert still leaves every anchor inside the stale nine-line range,
+> which was checked by mutation and came back green. Anchoring the start line is
+> what makes a citation's first number a claim that can fail. The same class,
+> in reverse, was live in `lib/discoveryPde.ts`, where four
+> `writeRankAnalyticAsync` line numbers had been 100+ lines stale while the
+> identical fact was being corrected here.
+>
+> It cannot check a claim nobody wrote as a citation, and it cannot tell you a
+> `DONE` is wrong. It removes exactly one failure mode — the citation that was
+> true when it was typed.
 
 ### Status reconciliation — 2026-09-05
 
@@ -558,10 +585,10 @@ rows understated what had landed** (C and D), and **six claims were confirmed as
 |---|---|---|
 | **A** | `DONE` — PR #50 | **Unchanged and still true.** The three migrations (`2092`/`2093`/`2094`) and `lib/discoveryShadow.ts`, `lib/discoveryCohort.ts`, `audit:shadow-append-only` are all present |
 | **B** | `PARKED`, exit criterion UNMET | **Unchanged.** Nothing in the tree bears on it: the blocker is a platform routing rule, and the two things that would lift it (a deployed frontend, or a non-browser probe harness) are still recorded-not-scheduled. **Kept exactly as written** |
-| **C1** | `NOT STARTED` (correct, but for the wrong reason) | The **Stage-0 serve-point log** at points 4/5 has existed since 2026-08-14 (`489d26b8a`) — `routes/discovery.ts:1907` (`CACHE_B_HIT`) and `:1967` (`COMPASS_FRESH_RANK`). **That is not C1.** C1 is the *shadow* comparison at 4/5, and `logDiscoveryShadowServe` still has exactly one call site — `routes/discovery.ts:1760`, inside `serveCachedPlaces`, so serve points **1–3 only**. C1 is genuinely NOT STARTED; the instrumentation that looks like it is a different phase's work. |
-| **C2** | (unlabelled) | **DONE.** The exit is "the decision is written down in `lib/discoveryShadow.ts` and in the packet, with the tautology argument". It is: `lib/discoveryShadow.ts:22-27`, naming the extraction, the self-comparison and the tautology. |
-| **C3** | `NOT STARTED` | **DONE** — PR #252, 2026-08-31. `lib/discoveryDivergenceReport.ts` (pure aggregation), `src/scripts/reportDiscoveryDivergence.ts` (read-only CLI behind the audit front door), `src/test/discoveryDivergenceReport.test.ts`, `package.json` → `report:discovery-divergence`, registered in `READ_ONLY_AUDIT_ENTRY_POINTS` with a written reason (`scripts/check-guard-coverage.mjs:205-213`). |
-| **D** | `ON EXPLICIT HOLD` | The **machinery landed inert** — PR #250, 2026-08-31, `routes/discovery.ts:1650-1676`. The hold is real and unchanged, but it is a hold on the *flip*, not on the build; reading the row as "nothing exists" was wrong in a way that would have caused someone to build it twice. |
+| **C1** | `NOT STARTED` (correct, but for the wrong reason) | The **Stage-0 serve-point log** at points 4/5 has existed since 2026-08-14 (`489d26b8a`) — `routes/discovery.ts:1907#CACHE_B_HIT` (`CACHE_B_HIT`) and `:1967` (`COMPASS_FRESH_RANK`). **That is not C1.** C1 is the *shadow* comparison at 4/5, and `logDiscoveryShadowServe` still has exactly one call site — `routes/discovery.ts:1760#logDiscoveryShadowServe`, inside `serveCachedPlaces`, so serve points **1–3 only**. C1 is genuinely NOT STARTED; the instrumentation that looks like it is a different phase's work. |
+| **C2** | (unlabelled) | **DONE.** The exit is "the decision is written down in `lib/discoveryShadow.ts` and in the packet, with the tautology argument". It is: `lib/discoveryShadow.ts:22-27#cold-fetch`, naming the extraction, the self-comparison and the tautology. |
+| **C3** | `NOT STARTED` | **IN PROGRESS** — PR #252, 2026-08-31, **5 of 6 requirements met**. `lib/discoveryDivergenceReport.ts` (pure aggregation), `src/scripts/reportDiscoveryDivergence.ts` (read-only CLI behind the audit front door), `src/test/discoveryDivergenceReport.test.ts`, `package.json` → `report:discovery-divergence`, registered in `READ_ONLY_AUDIT_ENTRY_POINTS` with a written reason (`scripts/check-guard-coverage.mjs:209-216#reportDiscoveryDivergence`). Requirement 2 is unmet — see below. |
+| **D** | `ON EXPLICIT HOLD` | The **machinery landed inert** — PR #250, 2026-08-31, `routes/discovery.ts:1656-1676#pdeCohort`. The hold is real and unchanged, but it is a hold on the *flip*, not on the build; reading the row as "nothing exists" was wrong in a way that would have caused someone to build it twice. |
 | **E** | `❄️ FROZEN` | **Still frozen and still unbuilt** — no Phase-E measurement runbook exists (`phase-b3-probe-runbook.md` is B3's probe, not step 1's sequence), and step 3 is undischarged. One thing changed *around* it: the instrument step 3 reads was corrected by #366 and #387, so the check is owed a **fresh** reading. Recorded on the row rather than left for whoever runs it to discover |
 | **F** | `❄️ FROZEN`, two gates stand | **Both gates verified SHUT in code**, not assumed: `2091:70-73`. A third owner hold — the step-7/8 modifiers behind `discovery_ranking_modifiers_enabled` (`2289:70-74`) — now exists and is **not** one of the two; named so it is not miscounted as a gate opening or a gate added |
 
@@ -570,10 +597,10 @@ rows understated what had landed** (C and D), and **six claims were confirmed as
 C3 requirement 2 is *"breaks down by `serve_point`, and never sums 1–3 with
 4–5."* The report satisfies the second half and not the first: it groups by
 serve-point **class** — `cache_a` (1/2/3), `cold_rank` (6), `other` (everything
-else) — at `lib/discoveryDivergenceReport.ts:51-55`. So 1–3 can never be summed
+else) — at `lib/discoveryDivergenceReport.ts:51-55#classifyServePoint`. So 1–3 can never be summed
 with 4–5, but **4 and 5 are pooled into an unlabelled `other` bucket together
 with 7–10**, and the printed legend explains only `cache_a` and `cold_rank`
-(`scripts/reportDiscoveryDivergence.ts:78-81`).
+(`scripts/reportDiscoveryDivergence.ts:78-81#NEVER`).
 
 That is harmless today — C1 is unwired, so no row can carry serve point 4 or 5 —
 and it becomes a real defect the moment C1 lands, because C1's own exit criterion
@@ -591,7 +618,7 @@ carried forward on trust:
 |---|---|---|
 | **Phase B stays PARKED** | Nothing in this pass touched it and nothing else has: the park is a platform-routing fact, not a code fact | Owner ruling 2026-08-15 — the same-origin proxy was the **last allowed prerequisite** |
 | **The `pde` flip** | `DISCOVERY_ENGINE_MODE` seeded `enabled=false`, `metadata.mode='legacy'`; no migration after `2091` alters that row | Phase F gate 2 — **not ruled** |
-| **Shadow for any cohort** | Same flag; and the D6 cohort gate fails closed to nobody (`lib/discoveryCohort.ts`, applied at `routes/discovery.ts:1743-1746`) | Phase F gate 1 — **not ruled** |
+| **Shadow for any cohort** | Same flag; and the D6 cohort gate fails closed to nobody (`lib/discoveryCohort.ts`, applied at `routes/discovery.ts:1743-1746#shadowCohort`) | Phase F gate 1 — **not ruled** |
 | **Step 7/8 modifiers** | `discovery_ranking_modifiers_enabled` seeded OFF, with a migration postcondition that RAISEs if it is ever seeded on (`2289:70-74`) | The ranker is on owner HOLD |
 | **Migration `2095`** | Still recorded `STAGED, NOT APPLIED` in `../migrations.md:327`. Its presence in the `2254` ledger backfill is **not** evidence of application — that migration says so in its own header: a `backfill` row means only that the filename was on disk | Operator presses it |
 | **Phase E step 3 — the deferred D5 empirical check** | Unsatisfied, and now with an extra caveat: see below | Deferred to post-launch, explicitly NOT satisfied |
@@ -605,13 +632,13 @@ no state at all, so they were invisible there too. It now carries state.
 
 | Landed | Where | Sequence step |
 |---|---|---|
-| **impression-path exposure denominator** (#365) | `content_distribution_stats.eligible_impressions` is incremented where the impression is written (`lib/rankLog.ts:154`, `:248`; `lib/discoveryServeLog.ts:241`), and the outcome route no longer touches it (`routes/rankEvents.ts:235-241`). The denominator was previously a count of **conversions** | Fixes the `03_Trending` defect the architecture status list carried as open |
-| **discovery-surface outcome reporting** (#365) | An outcome now upgrades any row on a strictly **lower funnel rung** rather than only `outcome='impression'` (`routes/rankEvents.ts:111`, `:171`), so a tap→save chain lands as `save` instead of 404ing | Step 2 (Event Truth) is still the answer; this stops one class of loss on the way there |
+| **impression-path exposure denominator** (#365) | `content_distribution_stats.eligible_impressions` is incremented where the impression is written (`lib/rankLog.ts:154#recordImpressionDistributionStats`, `:248`; `lib/discoveryServeLog.ts:241#recordImpressionDistributionStats`), and the outcome route no longer touches it (`routes/rankEvents.ts:235-241#content_distribution_stats`). The denominator was previously a count of **conversions** | Fixes the `03_Trending` defect the architecture status list carried as open |
+| **discovery-surface outcome reporting** (#365) | An outcome now upgrades any row on a strictly **lower funnel rung** rather than only `outcome='impression'` (`routes/rankEvents.ts:111#upgradableOutcomesFor`, `:171`), so a tap→save chain lands as `save` instead of 404ing | Step 2 (Event Truth) is still the answer; this stops one class of loss on the way there |
 | **pde-aware serve-point report** (#366) | Ranked-ness is read from the row — `features.rankedInRequest` (`lib/discoveryServePointReport.ts:171`) — not from a static serve-point set, so a pde-ranked cache-A serve counts as ranked | Instrument for step 1 / Phase E step 3 |
 | **capped `local_momentum`** (#366) | `lib/discoveryLocalMomentum.ts:96` computes a 48h-vs-baseline place velocity; `portavaRank.ts:152` caps its contribution at `LOCAL_MOMENTUM_MAX_CONTRIBUTION = 0.15`, clamped at `:337-338` | **Step 7** — *"capped `local_momentum` as modifiers only"*, built to the words |
 | **exploration governor** (#366) | `allocateExplorationBudget` (`services/ranking/FeedSlotAllocator.ts:461`) — budget clamped to 15–25 % (`:356-357`), slots spread rather than pinned, four **reason codes** per pick (`governorReasonsFor`, `:436`). With the flag off it computes the allocation and applies nothing | **Step 8** — *"budget ~15–25 % with reason codes, not fixed positions"* |
 | **graph node kinds** (#366) | `circle` + `experience` admitted to the Compass graph (`migrations/2290_intelligence_graph_node_kinds.sql`) | Feeds step 7's *graph as modifier* |
-| **serve-point report corpus** (#387) | `fetchDiscoveryServeRows` selects by **`event_type IS NULL`** (`lib/discoveryServePointReport.ts:529`, predicate at `:540`), never by `outcome` | Repairs the instrument Phase E step 3 reads — see below |
+| **serve-point report corpus** (#387) | `fetchDiscoveryServeRows` selects by **`event_type IS NULL`** (`lib/discoveryServePointReport.ts:529#fetchDiscoveryServeRows`, predicate at `:540`), never by `outcome` | Repairs the instrument Phase E step 3 reads — see below |
 | **`/discovery/feed` client callers** (#382) | Serve point 7 had no caller in the repo; it has two now (`travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx`, `ForYouTab.tsx:428`) | Reachability of the surface Phase B measures |
 
 #### #387 changes what an old serve-point reading means, and that is worth stating
@@ -1138,7 +1165,9 @@ Two separate problems, and the second is the more serious:
 
 **The server already has everything needed.**
 `artifacts/api-server/src/lib/foursquarePlaces.ts` calls the *same* endpoint with
-a server-held `FOURSQUARE_API_KEY` (`:35`), same API version (`:15`). A
+a server-held `FOURSQUARE_API_KEY` (`lib/foursquarePlaces.ts:41#FOURSQUARE_API_KEY`),
+same API version (`lib/foursquarePlaces.ts:16#FSQ_API_VERSION`) *(both re-cited
+2026-09-05; they read lines 35 and 15 and the file has moved under them)*. A
 `GET /places/photo` endpoint already exists (`routes/places.ts:430`) but is
 **Google-backed**, so it is a sibling rather than a drop-in.
 
@@ -1258,7 +1287,7 @@ Phase C. Do not fabricate a fix for a bug that cannot be shown to exist.
 
 ---
 
-## Phase C — Complete shadow coverage  ·  **IN PROGRESS** (C2 ✅, C3 ✅, C1 ❌)
+## Phase C — Complete shadow coverage  ·  **IN PROGRESS** (C2 ✅, C3 ◐ 5/6, C1 ❌)
 
 **Entry:** Phase B exit met, or explicitly declared blocked. **Satisfied** — B is
 PARKED WITH EVIDENCE, which is the "explicitly declared blocked" branch, not a
@@ -1268,23 +1297,34 @@ softening of it.
 >
 > | Unit | State | Evidence |
 > |---|---|---|
-> | **C1** — shadow at serve points 4–5 | **NOT STARTED** | `logDiscoveryShadowServe` has one call site, `routes/discovery.ts:1760`, inside `serveCachedPlaces` ⇒ serve points **1–3 only** |
-> | **C2** — decide serve point 6 | **DONE** | The decision and its tautology argument are in `lib/discoveryShadow.ts:22-27` |
-> | **C3** — the divergence report | **DONE, one requirement short** | PR #252. Built, tested, registered; requirement 2's per-serve-point breakdown is a per-*class* breakdown |
+> | **C1** — shadow at serve points 4–5 | **NOT STARTED** | `logDiscoveryShadowServe` has one call site, `routes/discovery.ts:1760#logDiscoveryShadowServe`, inside `serveCachedPlaces` ⇒ serve points **1–3 only** |
+> | **C2** — decide serve point 6 | **DONE** | The decision and its tautology argument are in `lib/discoveryShadow.ts:22-27#cold-fetch` |
+> | **C3** — the divergence report | **IN PROGRESS** (5 of 6 requirements) | PR #252. Built, tested, registered; requirement 2's per-serve-point breakdown is a per-*class* breakdown |
 >
 > **Do not read C3 being built as C1 being unnecessary.** The report has nothing
 > to read at serve points 4/5 until C1 wires them, and it currently has no bucket
 > that would name them if it did.
+>
+> **Why C3 says `IN PROGRESS` and not `DONE`.** An earlier draft of this
+> reconciliation labelled it `DONE, one requirement short` and repeated the
+> caveat at every occurrence. That is not one of the four words this table's own
+> rule allows (`DONE` · `IN PROGRESS` · `BLOCKED — <reason>` · `NOT STARTED`),
+> and a compound label is the crack a status table rots through: the caveat
+> travels only as long as someone keeps copying it, while the word `DONE`
+> travels on its own. A unit with an unmet requirement is `IN PROGRESS`. The
+> count — 5 of 6 — carries the nuance the caveat was carrying, in a form that
+> cannot be separated from the label.
 
 ### C1 — Serve points 4–5 (Compass)  ·  **NOT STARTED**
 
 `CACHE_B_HIT` (4) and `COMPASS_FRESH_RANK` (5), reached inside the
-`category === "for_you" && callerUserId` block at `routes/discovery.ts:1882`
-*(was `:1253` when written; re-verified 2026-09-05)*.
+`category === "for_you" && callerUserId` block at
+`routes/discovery.ts:1884#callerUserId` *(the same block was at 1253 when this
+was written; re-verified 2026-09-05)*.
 
 > **The distinction that made this row read as done when it is not.** Those two
 > serve points already carry **Stage-0 serve-point logging** —
-> `logDiscoveryServe` at `routes/discovery.ts:1907` and `:1967`, landed
+> `logDiscoveryServe` at `routes/discovery.ts:1907#CACHE_B_HIT` and `:1967`, landed
 > 2026-08-14 (`489d26b8a`) as part of the D4=C baseline. **That is not C1.** C1
 > is the **shadow comparison**, and no shadow row can come from serve point 4 or
 > 5 today because `logDiscoveryShadowServe` is never called there. An
@@ -1329,13 +1369,13 @@ packet, with the tautology argument, so that a later reader does not "fix" the
 omission. If the decision is ever reversed, those rows must carry a marker
 distinguishing them.
 
-**MET.** `lib/discoveryShadow.ts:22-27` carries the decision, the extraction
+**MET.** `lib/discoveryShadow.ts:22-27#cold-fetch` carries the decision, the extraction
 reason and the tautology argument verbatim, in the module the exit names. The
 report also encodes it structurally: serve point 6 is its own `cold_rank` class
 (`lib/discoveryDivergenceReport.ts:53`) rather than pooled, so if the decision is
 ever reversed those rows arrive already distinguished.
 
-### C3 — The divergence report  ·  **DONE, one requirement short**
+### C3 — The divergence report  ·  **IN PROGRESS** (5 of 6 requirements)
 
 A read-only report over `discovery_shadow_serves`, modelled on
 `reportDiscoveryServePoints.ts` and inheriting its discipline.
@@ -1368,12 +1408,12 @@ A read-only report over `discovery_shadow_serves`, modelled on
 
 | Req | State | Evidence |
 |---|---|---|
-| 1 — refuses on an empty window | **MET** | `reportDiscoveryDivergence.ts:65-73` prints *"This is NOT evidence that PDE agrees with legacy"* and renders no groups |
-| 2 — breaks down by `serve_point`, never sums 1–3 with 4–5 | **HALF MET** | It groups by serve-point **class** — `cache_a`(1/2/3) · `cold_rank`(6) · `other`(the rest) — `discoveryDivergenceReport.ts:51-55`. 1–3 can never be summed with 4–5, so the prohibition holds; the per-point breakdown does not exist, and **4/5 would land in an unlabelled `other` bucket alongside 7–10** |
-| 3 — breaks down by `cohort_reason` | **MET** | Part of the group key, `discoveryDivergenceReport.ts:91-92` |
+| 1 — refuses on an empty window | **MET** | `reportDiscoveryDivergence.ts:65-73#rows.length` prints *"This is NOT evidence that PDE agrees with legacy"* and renders no groups |
+| 2 — breaks down by `serve_point`, never sums 1–3 with 4–5 | **HALF MET** | It groups by serve-point **class** — `cache_a`(1/2/3) · `cold_rank`(6) · `other`(the rest) — `discoveryDivergenceReport.ts:51-55#classifyServePoint`. 1–3 can never be summed with 4–5, so the prohibition holds; the per-point breakdown does not exist, and **4/5 would land in an unlabelled `other` bucket alongside 7–10** |
+| 3 — breaks down by `cohort_reason` | **MET** | Part of the group key, `discoveryDivergenceReport.ts:91-92#groupKey` |
 | 4 — separates `sort_by` | **MET** | Also part of the group key, same line; `null` renders as `default` |
-| 5 — surfaces `pde_suppressed_writes` | **MET** | `meanSuppressedWrites` per group, printed on the cost line (`formatGroup`, `:144-152`) |
-| 6 — read-only, front door, registered with a reason | **MET** | Guard imported at `reportDiscoveryDivergence.ts:15`; registered with a written reason at `scripts/check-guard-coverage.mjs:205-213` |
+| 5 — surfaces `pde_suppressed_writes` | **MET** | `meanSuppressedWrites` per group, printed on the cost line (`discoveryDivergenceReport.ts:144-152#formatGroup`, in `formatGroup`) |
+| 6 — read-only, front door, registered with a reason | **MET** | Guard imported at `reportDiscoveryDivergence.ts:15#ciProdReadOnlyAuditGuard`; registered with a written reason at `scripts/check-guard-coverage.mjs:209-216#reportDiscoveryDivergence` |
 
 **Exit:** the report runs, and against today's empty table it exits **refusing a
 verdict**. That refusal is the passing state at this point in the timeline.
@@ -1402,7 +1442,7 @@ for one-user-per-city-per-two-hours.**
 > table said `ON EXPLICIT HOLD`. **Both were read as "nothing exists", and that
 > was wrong in the expensive direction: it invites somebody to build it twice.**
 >
-> `routes/discovery.ts:1650-1676` — inside `serveCachedPlaces`, when the mode
+> `routes/discovery.ts:1656-1676#pdeCohort` — inside `serveCachedPlaces`, when the mode
 > resolves to `pde` **and** the authenticated caller is in the D6 cohort, the
 > cached candidates are ranked for that viewer, per request, and that order is
 > served. Anonymous callers, out-of-cohort users and a ranking error all fall
@@ -1410,7 +1450,7 @@ for one-user-per-city-per-two-hours.**
 >
 > **What is held is ENABLING it, and that hold is untouched and unchanged.**
 > `DISCOVERY_ENGINE_MODE` still ships `enabled=false` / `metadata.mode='legacy'`
-> (`migrations/2091_discovery_engine_mode_flags.sql:70-73`); no later migration
+> (`migrations/2091_discovery_engine_mode_flags.sql:71-73#DISCOVERY_ENGINE_MODE`); no later migration
 > alters that row; the flip is **Phase F's second gate and is not ruled**. The
 > owner ruling of 2026-08-15 put *ranker work* on hold, and building a path that
 > serves nobody is not the thing the gate governs — the gate governs the flag.
@@ -1516,7 +1556,7 @@ built ready-to-run.
    > (`features.rankedInRequest`, `lib/discoveryServePointReport.ts:171`) instead
    > of a static serve-point set, so a pde-ranked cache-A serve now counts as
    > ranked. **#387** replaced the serve corpus predicate: it is
-   > `event_type IS NULL` (`:540`), never `outcome='impression'`, because the
+   > `event_type IS NULL` (`lib/discoveryServePointReport.ts:540#event_type`), never `outcome='impression'`, because the
    > outcome route UPDATEs a served row in place and the old filter therefore
    > dropped every serve that converted — **differentially, and against the
    > ranked serve points, which convert best.**
@@ -1547,7 +1587,7 @@ ruled on.**
 
 | Gate | Who decides | State | Re-verified 2026-09-05 |
 |---|---|---|---|
-| Enabling `shadow` for any cohort | **Owner** | **not ruled** | `DISCOVERY_ENGINE_MODE` seeded `enabled=false`, `metadata.mode='legacy'` (`2091:70-73`); the D6 cohort fails closed to nobody (`lib/discoveryCohort.ts`, applied at `routes/discovery.ts:1743-1746`) |
+| Enabling `shadow` for any cohort | **Owner** | **not ruled** | `DISCOVERY_ENGINE_MODE` seeded `enabled=false`, `metadata.mode='legacy'` (`2091:70-73`); the D6 cohort fails closed to nobody (`lib/discoveryCohort.ts`, applied at `routes/discovery.ts:1743-1746#shadowCohort`) |
 | The `pde`-serving flip for real users | **Owner** | **not ruled** | Same flag row; no migration after `2091` alters it. The serve path it would switch on exists (#250) and is unreachable without the flip |
 
 **A third thing now sits behind an owner hold, and it is recorded here so it is
