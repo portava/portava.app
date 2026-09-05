@@ -32,6 +32,7 @@ import {
   buildCanonicalVocabulary,
   type CanonicalVocabulary,
 } from "../../scripts/lib/canonicalVocabulary.js";
+import { projectionKeys, projectRow } from "./selectProjection.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(__dir, "../../..");
@@ -75,6 +76,13 @@ export function makeEnumAwareClient(data: Record<string, Row[]>): any {
   const builder = (table: string): any => {
     let rows: Row[] = (data[table] ?? []).map((r) => ({ ...r }));
     let error: PgError | null = null;
+    // `null` = do not project (the historical behaviour: the whole seeded row).
+    // Narrowing happens on the way OUT only — the real database filters on the
+    // full row, and filtering on an unselected column is legal PostgREST.
+    // See selectProjection.ts.
+    let projection: Array<[string, string]> | null = null;
+    const narrow = (rs: Row[]): Row[] => (projection ? rs.map((r) => projectRow(r, projection!) as Row) : rs);
+    const narrowOne = (r: Row | null): Row | null => (r && projection ? (projectRow(r, projection) as Row) : r);
 
     /**
      * Validate one literal against the column's declared vocabulary.
@@ -99,7 +107,7 @@ export function makeEnumAwareClient(data: Record<string, Row[]>): any {
     };
 
     const b: any = {
-      select: () => b,
+      select: (fields?: string) => { projection = projectionKeys(fields); return b; },
       order: () => b,
       range: () => b,
       gte: () => b,
@@ -144,10 +152,10 @@ export function makeEnumAwareClient(data: Record<string, Row[]>): any {
         }
         return b;
       },
-      maybeSingle: () => Promise.resolve(error ? { data: null, error } : { data: rows[0] ?? null, error: null }),
-      single: () => Promise.resolve(error ? { data: null, error } : { data: rows[0] ?? null, error: null }),
+      maybeSingle: () => Promise.resolve(error ? { data: null, error } : { data: narrowOne(rows[0] ?? null), error: null }),
+      single: () => Promise.resolve(error ? { data: null, error } : { data: narrowOne(rows[0] ?? null), error: null }),
       then: (onF: any, onR: any) =>
-        Promise.resolve(error ? { data: null, error } : { data: rows, error: null }).then(onF, onR),
+        Promise.resolve(error ? { data: null, error } : { data: narrow(rows), error: null }).then(onF, onR),
     };
     return b;
   };
