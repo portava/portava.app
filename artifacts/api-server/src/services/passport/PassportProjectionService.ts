@@ -32,6 +32,7 @@ import { buildUnifiedStamps, type UnifiedStamp } from "./UnifiedStampService.js"
 import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
 import { countUserTrips } from "../../lib/tripCounts.js";
+import { nameVisibilitySet, sanitizeIdentity } from "../../lib/publicIdentity.js";
 import { buildFeaturedJourney, type JourneyProjection, type JourneyPermissions } from "./PassportJourneyService.js";
 import {
   buildSharedContext,
@@ -534,15 +535,45 @@ export function toCallerContext(context: PassportViewerContext, permissions: Vie
   return "public";
 }
 
-function buildIdentity(profile: Record<string, any>, permissions: ViewerPermissions): PassportIdentity {
+/**
+ * Assemble the identity block.
+ *
+ * NAME VISIBILITY (universal display-name rule, `lib/publicIdentity.ts`): a
+ * user's real/display name only leaves the API when THAT user has opted in via
+ * `profile_privacy_settings.show_real_name`. The Passport projection is not
+ * exempt — it is served to followers, buddies, trip crew AND to fully anonymous
+ * callers (`GET /api/passport/:userId/projection`).
+ *
+ * The row is put through the canonical `sanitizeIdentity` choke point BEFORE any
+ * name-derived field is read, rather than a second local predicate. That is
+ * deliberate: every present and future name-derived field on this projection
+ * (`name`, and any later `firstName` / `firstNameOnly` style field) must be
+ * derived from `named`, never from `profile`, so it inherits the rule for free.
+ * A hidden name yields null everywhere — including a first name, which is still
+ * a real name and must not be leaked as a "safe" fragment.
+ *
+ * FAIL-CLOSED: `nameAllowed` comes from `nameVisibilitySet`, which returns an
+ * EMPTY set on a query error, and never contains a user whose settings row is
+ * missing or whose `show_real_name` is anything other than `true`. Unknown ⇒
+ * hidden. `viewerId` short-circuits so the owner always sees their own name.
+ *
+ * Handle, avatar, badges, verification and home context are NOT affected.
+ */
+function buildIdentity(
+  profile: Record<string, any>,
+  permissions: ViewerPermissions,
+  nameAllowed: Set<string>,
+  viewerId: string | null,
+): PassportIdentity {
   const isSelf = permissions.relationshipLabel === "self";
   const showAvatar = isSelf || profile.show_profile_picture_publicly !== false;
   // Home country / base are user-controlled (TABLE 24): shown to self and to
   // full-profile viewers; coarse country may show publicly, home base does not.
   const showHomeBase = isSelf || permissions.canViewFullProfile;
+  const named = sanitizeIdentity(profile, nameAllowed, viewerId);
   return {
     userId: profile.id,
-    name: profile.display_name ?? profile.name ?? null,
+    name: named.display_name ?? named.name ?? null,
     handle: profile.handle ?? profile.username ?? null,
     avatarUrl: showAvatar ? (profile.avatar_url ?? null) : null,
     coverUrl: profile.cover_photo_url ?? null,
@@ -915,7 +946,11 @@ export async function buildPassportProjection(
   const isSelf = context === "self";
   const callerCtx = toCallerContext(context, permissions);
 
-  const identity = buildIdentity(profile, permissions);
+  // Name visibility is resolved through the canonical choke point for EVERY
+  // consumer of this aggregate, before the identity block is assembled — the
+  // restricted/blocked card below is built from the same `identity`.
+  const nameAllowed = await nameVisibilitySet(sc, [userId]);
+  const identity = buildIdentity(profile, permissions, nameAllowed, viewerId);
 
   // 3. Blocked / unavailable → minimal restricted card (§4/§22/§30).
   if (permissions.isBlocked || permissions.isUnavailable) {
