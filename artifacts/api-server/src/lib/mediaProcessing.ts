@@ -15,7 +15,11 @@
  *                       client-declared), so small cards stop fetching originals.
  *
  * Videos are NOT transcoded here (no ffmpeg in this tier) — they are sniffed
- * and size-capped only; that limitation is documented, not hidden.
+ * and size-capped only; that limitation is documented, not hidden. Their
+ * CONTAINER metadata is not left alone, though: lib/videoMetadata.ts strips the
+ * capture-location atoms (`©xyz`, `loci`, Apple location keys) from MP4/MOV
+ * before storage, so the GPS guarantee this module gives stills also holds for
+ * video. Dimensions, thumbnails and pHash remain image-only.
  */
 import sharp from "sharp";
 
