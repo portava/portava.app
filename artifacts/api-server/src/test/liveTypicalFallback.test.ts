@@ -12,6 +12,7 @@ import {
   readTypicalPatterns,
   resolvePlaceIntelState,
 } from "../lib/liveClaimRead.js";
+import { PRIVACY_THRESHOLD_V1 } from "../lib/intelContracts.js";
 
 const NOW = new Date("2026-09-04T20:00:00.000Z"); // Friday (dow 5), hour 20 UTC
 const DOW = NOW.getUTCDay();
@@ -21,6 +22,10 @@ function patternRow(over: Record<string, unknown> = {}) {
   return {
     id: "pat-1", zone_id: null, claim_family: "crowd.level", pattern_kind: "typical_crowd_by_weekday_hour",
     time_band: BAND, dow: DOW, value_json: { level: "busy" }, confidence: 0.6, cohort_size: 30,
+    // The typical rung enforces the same k-anonymity floor as the live rung, so a
+    // fixture that is meant to SERVE must declare a cohort at or above it. (The
+    // floor itself is proven in intelCoreProjectionHardening.test.ts.)
+    distinct_contributors: PRIVACY_THRESHOLD_V1.minUniqueActors,
     window_days: 120, is_invalidation: false, computed_at: "2026-09-01T00:00:00.000Z",
     ...over,
   };

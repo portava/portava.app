@@ -28,7 +28,10 @@
  *     crowd snapshots (lib/intelPulse). Thresholded (Table 28): withheld below the
  *     subject-count floor; never a per-subject or small-cohort row. The LIVE
  *     portion is additionally gated by liveLabelsServable + the pilot promotion
- *     (mayExposeLive semantics) — off ⇒ no live pulse.
+ *     (mayExposeLive semantics) — off ⇒ no live pulse. A subject whose §10
+ *     conflict_state is 'material' contributes NOTHING to the distribution: the
+ *     aggregate has no way to say "reports differ", so counting its plurality
+ *     value would be exactly the silent averaging invariant §1 forbids.
  *
  * CONTRACT (§19): every response carries schema_version, source_label,
  * generated_at, and an ETag/state_version so a caller can revalidate; a matching
@@ -285,7 +288,10 @@ router.get("/v1/neighborhoods/:id/pulse", asyncHandler(async (req, res) => {
     const now = new Date();
     const { data: snapData, error: snapErr } = await sc
       .from("intel_state_snapshots")
-      .select("subject_id, claim_type, value, observed_at, privacy_eligible, expires_at")
+      // conflict_state is SELECTED: computeNeighborhoodPulse drops a materially
+      // conflicted subject rather than fold its plurality value into the
+      // distribution (§10). A column that is not read reads as "no conflict".
+      .select("subject_id, claim_type, value, observed_at, privacy_eligible, expires_at, conflict_state")
       .in("subject_id", subjectIds)
       .eq("claim_type", "crowd.level")
       .eq("privacy_eligible", true)
@@ -297,6 +303,9 @@ router.get("/v1/neighborhoods/:id/pulse", asyncHandler(async (req, res) => {
       claimType: String(r.claim_type),
       value: r.value,
       observedAt: String(r.observed_at),
+      // Normalised inside computeNeighborhoodPulse through the shared helper —
+      // passed through raw so there is only ever ONE conflict policy.
+      conflictState: r.conflict_state,
     }));
   }
 

@@ -21,6 +21,7 @@ import { getServiceClient } from '../lib/supabase.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { processImage, computePHash, makeFeedVariant } from '../lib/mediaProcessing.js';
+import { stripVideoLocationMetadata } from '../lib/videoMetadata.js';
 import {
   guardUploadRequest,
   validateDeclaredUpload,
@@ -604,7 +605,9 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // client-declared. For images: download, strip EXIF/auto-orient, re-upload in
   // place, and measure real dimensions server-side. Fail-closed for images —
   // a corrupt image rejects completion (retryable) rather than skipping the
-  // GPS strip. Videos are untouched (no transcode tier; documented).
+  // GPS strip. Videos are not transcoded (no ffmpeg tier), but their container
+  // location atoms ARE stripped — see the location-metadata scrub in the video
+  // branch below.
   let measuredWidth: number | null = null;
   let measuredHeight: number | null = null;
   let computedPhash: string | null = null;
@@ -737,6 +740,60 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     } catch (err) {
       req.log.error({ err, mediaId }, 'postcards: video verification failed — completion rejected (retryable)');
       sendError(res, 'invalid_payload', 'Video could not be verified. Please re-upload.');
+      return;
+    }
+
+    // LOCATION METADATA SCRUB.
+    //
+    // Everything above proves the object IS a video of a legal size. It does
+    // not touch what the container SAYS. A phone video carries its capture
+    // coordinates in `moov/udta/©xyz` (and, on Apple captures, an Apple
+    // location `meta` key) exactly as a phone photo carries EXIF GPS — and on
+    // this transport the bytes were written straight to Storage, so nothing had
+    // ever looked. The image branch above exists precisely because "the server
+    // never saw the bytes" is not a privacy model; video needs the same answer.
+    //
+    // COST, STATED PLAINLY: this downloads the stored object (ceiling 100 MB,
+    // enforced above) once per completion, which the 64-byte Range probe was
+    // written to avoid. There is no cheaper correct version: `moov` may sit at
+    // either end of the file and can be megabytes, so no fixed window can prove
+    // absence, and Storage has no partial write, so a file that DOES carry
+    // coordinates has to be rewritten whole anyway. The re-upload is skipped
+    // when nothing was found, so a video with no location metadata costs one
+    // read and no write. The image branch already downloads and re-uploads in
+    // exactly this shape.
+    //
+    // Fail-CLOSED, matching images: any failure refuses completion (retryable)
+    // rather than marking ready a video whose coordinates are still in it.
+    try {
+      const dl = await sc.storage.from(STORAGE_BUCKET).download(storagePath);
+      if ((dl as any).error || !(dl as any).data) {
+        throw new Error((dl as any).error?.message ?? 'download failed');
+      }
+      const videoBuf = Buffer.from(await (dl as any).data.arrayBuffer());
+      const verifiedFull = verifyUploadedBytes(videoBuf, 'video');
+      if (!verifiedFull.ok) throw new Error(verifiedFull.failure.message);
+
+      const scrub = stripVideoLocationMetadata(videoBuf, verifiedFull.value);
+      if (!scrub.ok) {
+        // A specific, actionable refusal — not the generic verification error.
+        req.log.warn({ mediaId }, 'postcards: video location metadata could not be stripped — completion rejected');
+        sendError(res, scrub.failure.code, scrub.failure.message);
+        return;
+      }
+      if (scrub.stripped.length > 0) {
+        const { error: reErr } = await sc.storage
+          .from(STORAGE_BUCKET)
+          // Content type from the SNIFFED bytes, not p.mimeType: the declared
+          // value is a client assertion, and this write must not be the thing
+          // that relabels a stored object.
+          .upload(storagePath, scrub.buffer, { contentType: verifiedFull.value.mime, upsert: true });
+        if (reErr) throw new Error(reErr.message);
+        req.log.info({ mediaId, stripped: scrub.stripped }, 'postcards: video location metadata stripped');
+      }
+    } catch (err) {
+      req.log.error({ err, mediaId }, 'postcards: video location scrub failed — completion rejected (retryable)');
+      sendError(res, 'invalid_payload', 'Video could not be processed. Please re-upload.');
       return;
     }
   }

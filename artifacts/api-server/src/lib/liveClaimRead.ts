@@ -37,9 +37,11 @@ import {
   SOURCE_CLASSES,
   MIN_BAND_FOR_LIVE_STATE,
   CONFIDENCE_BAND_FLOOR,
+  PRIVACY_THRESHOLD_V1,
   type ConfidenceBand,
   type SourceClass,
 } from "./intelContracts.js";
+import { meetsKAnonymity } from "./kAnonymity.js";
 import { logger } from "./logger.js";
 import {
   normalizeConflictState,
@@ -137,21 +139,23 @@ export interface LiveClaimEnvelope {
 }
 
 /**
- * The source class of a Phase-1 live snapshot.
+ * The source class of a live snapshot.
  *
- * Enrichment seam. The projection output (intel_state_snapshots, migration 2130)
- * carries NO source_class column today, and readLiveClaims does not SELECT one, so
- * `row.source_class` is undefined here and this returns the honest Phase-1 default
- * (IntelCaptureService only ever emits firsthand_unverified). When the projection
- * begins recording a source class — verified presence, official, imported — this
- * reads it, but only a KNOWN canonical value; an unrecognised label falls back to
- * the default rather than being trusted or mislabelled.
+ * intel_state_snapshots.source_class exists (migration 2279) and
+ * lib/intelProjection now WRITES it from the cohort's real observations, so this
+ * guard is load-bearing: a historical_pattern / portava_prediction is dropped
+ * before it can reach a Live label (mayRenderAsLive), and a wholly
+ * official/sponsored/imported cohort — one party talking about itself — gets no
+ * community-consensus badge (mayCountAsConsensus).
  *
- * Wiring the read now (rather than hard-coding the constant) is what lets
- * mayRenderAsLive / mayCountAsConsensus in the callers actually bite the instant a
- * real class flows: a historical_pattern or portava_prediction is dropped before
- * it can reach a Live label, and a single official/sponsored party gets no
- * community-consensus badge.
+ * It was INERT until the select list below started projecting the column: the
+ * query omitted `source_class`, so `row.source_class` was always undefined and
+ * this always returned the default, whatever the projection had recorded.
+ *
+ * Only a KNOWN canonical value is trusted; an unrecognised label — and a row
+ * from a schema where the column is not yet applied — falls back to the honest
+ * Phase-1 default (IntelCaptureService's own class for an undisclosed report)
+ * rather than being trusted or mislabelled.
  */
 function deriveSourceClass(row: Record<string, unknown>): SourceClass {
   const raw = row?.source_class;
@@ -272,6 +276,24 @@ export async function liveLabelsServable(sc: any): Promise<boolean> {
   return true;
 }
 
+/** The snapshot projection. `source_class` (2279) is REQUIRED, not optional —
+ *  deriveSourceClass cannot enforce anything on a column that is never selected. */
+export const SNAPSHOT_COLUMNS =
+  "id, zone_id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible, conflict_state, source_class, computed_at";
+/** The same projection minus source_class, for a schema predating migration 2279. */
+export const SNAPSHOT_COLUMNS_PRE_2279 =
+  "id, zone_id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible, conflict_state, computed_at";
+
+/** True for the "this column does not exist" family (Postgres 42703 / PostgREST PGRST204). */
+function isUndefinedColumnError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: unknown; message?: unknown };
+  const code = typeof e.code === "string" ? e.code : "";
+  if (code === "42703" || code === "PGRST204") return true;
+  const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
+  return msg.includes("source_class") && (msg.includes("does not exist") || msg.includes("could not find"));
+}
+
 export async function readLiveClaims(
   sc: any,
   subjectId: string | null | undefined,
@@ -295,16 +317,31 @@ export async function readLiveClaims(
   if (promotedScopes.size === 0) return [];
 
   try {
-    let q = sc
-      .from("intel_state_snapshots")
-      .select("id, zone_id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible, conflict_state, computed_at")
-      .eq("subject_id", subjectId)
-      .eq("privacy_eligible", true)
-      .gt("expires_at", now.toISOString());
-    if (opts.claimTypes && opts.claimTypes.length > 0) {
-      q = q.in("claim_type", opts.claimTypes);
+    const runSnapshotQuery = async (columns: string) => {
+      let q = sc
+        .from("intel_state_snapshots")
+        .select(columns)
+        .eq("subject_id", subjectId)
+        .eq("privacy_eligible", true)
+        .gt("expires_at", now.toISOString());
+      if (opts.claimTypes && opts.claimTypes.length > 0) {
+        q = q.in("claim_type", opts.claimTypes);
+      }
+      return await q;
+    };
+
+    // source_class (2279) MUST be in the select list — deriveSourceClass's truth
+    // boundary and the consensus-badge rule read it, and a column that is never
+    // projected reads as undefined, which silently turned both guards off.
+    let { data, error } = await runSnapshotQuery(SNAPSHOT_COLUMNS);
+    if (error && isUndefinedColumnError(error)) {
+      // Tolerate a schema where 2279 has not been applied yet: retry WITHOUT the
+      // column instead of failing the whole read. No row can carry a class in
+      // that schema, so deriveSourceClass's Phase-1 default is the honest answer
+      // — and it is exactly the behaviour before 2279 existed.
+      logger.warn({ err: error }, "liveClaimRead: source_class not present; reading without it");
+      ({ data, error } = await runSnapshotQuery(SNAPSHOT_COLUMNS_PRE_2279));
     }
-    const { data, error } = await q;
     if (error || !data) {
       // Fail-closed: an unreadable projection means "unknown", not "assume last known".
       logger.warn({ err: error }, "liveClaimRead: snapshot read failed");
@@ -438,7 +475,7 @@ export async function readTypicalPatterns(
   try {
     let q = sc
       .from("intel_historical_patterns")
-      .select("id, zone_id, claim_family, pattern_kind, time_band, dow, value_json, confidence, cohort_size, window_days, is_invalidation, computed_at")
+      .select("id, zone_id, claim_family, pattern_kind, time_band, dow, value_json, confidence, cohort_size, distinct_contributors, window_days, is_invalidation, computed_at")
       .eq("subject_id", subjectId)
       .eq("time_band", timeBand)
       .eq("dow", dow)
@@ -461,6 +498,25 @@ export async function readTypicalPatterns(
       if (seen.has(scope)) continue; // an older row for a scope we already resolved
       seen.add(scope);
       if (row.is_invalidation === true) continue; // latest is a tombstone ⇒ no pattern
+
+      // ── k-ANONYMITY FLOOR (the SAME one the live path enforces) ─────────────
+      // The live rung publishes only snapshots the shared privacy gate marked
+      // privacy_eligible, which is meetsKAnonymity(distinctActors,
+      // PRIVACY_THRESHOLD_V1.minUniqueActors) plus the group clauses. This rung
+      // had NO actor floor at all: the DB's Table-19 minimums count independent
+      // VISITS and DATES, and 'typical_crowd_by_weekday_hour' sets
+      // minContributors to 0 (lib/intelPatternLearning.PATTERN_MINIMUMS), so
+      // eight visits by ONE person across four dates satisfied the CHECK and
+      // served — a one-person routine, published with a cohort badge.
+      //
+      // Same constant, same helper, no second policy: below the floor the
+      // pattern does not serve at all (and so can never carry a badge). The
+      // scope is already in `seen`, so an older row for it is not served either
+      // — the LATEST row governs, fail-closed. A row with no contributor count
+      // reads as 0 and is withheld.
+      const distinctContributors = typeof row.distinct_contributors === "number" ? row.distinct_contributors : 0;
+      if (!meetsKAnonymity(distinctContributors, PRIVACY_THRESHOLD_V1.minUniqueActors)) continue;
+
       const confidence = typeof row.confidence === "number" ? row.confidence : null;
       const computedAt = String(row.computed_at);
       const windowDays = typeof row.window_days === "number" ? row.window_days : 0;
@@ -474,8 +530,9 @@ export async function readTypicalPatterns(
         // A pattern is always historical_pattern — the client renders it 'Typical'.
         sourceClass: "historical_pattern",
         // A pattern is a cohort aggregate over many independent contributors, so a
-        // cohort badge is honest (mayCountAsConsensus true). The exact count stays
-        // withheld — only the coarse bucket leaves.
+        // cohort badge is honest (mayCountAsConsensus true) — but only above the
+        // k-floor checked above, which is what makes "many" true at all. The exact
+        // count stays withheld; only the coarse bucket leaves.
         sourceCountBucket: mayCountAsConsensus("historical_pattern")
           ? sourceCountBucket(typeof row.cohort_size === "number" ? row.cohort_size : 0)
           : null,

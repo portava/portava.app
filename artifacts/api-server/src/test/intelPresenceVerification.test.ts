@@ -677,8 +677,16 @@ describe("I3 presence — migration 2276 contract", () => {
     assert.equal((sql.match(/CREATE POLICY/g) ?? []).length, 1, "exactly one policy (own-row SELECT)");
     assert.equal(/GRANT .*ON public\.intel_presence_verifications TO anon/.test(sql), false);
     assert.match(sql, /public\.intel_append_only\(\)/);
-    assert.match(sql, /public\.intel_append_only_stmt\(\)/);
     assert.match(sql, /_no_truncate/);
+    // 2276 ALSO attached the statement-level guard (intel_append_only_stmt),
+    // which 2137 had removed from the 2130 family because it fires before any
+    // row is examined and so refuses a zero-row profiles cascade — breaking
+    // account deletion and, observably, every test in rlsHardening.test.ts on
+    // PR #402. Migration 2292 drops it. This file is an applied migration and is
+    // not edited; the text below is what 2276 says, and the assertion that it no
+    // longer takes effect lives in src/test/appendOnlyCascade.test.ts.
+    assert.match(sql, /public\.intel_append_only_stmt\(\)/,
+      "2276's text still creates the statement-level trigger; 2292 is what removes it");
   });
 
   it("postconditions RAISE on every contract (table, RLS, single policy, trigger, anon/authenticated privileges)", () => {

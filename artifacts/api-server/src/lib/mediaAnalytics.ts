@@ -44,7 +44,41 @@ export type MediaEventType =
   | "upload_start"
   | "processing_complete"
   | "processing_failure"
-  | "playback_failure";
+  | "playback_failure"
+  // §45 north-star outcome transitions — "did this media cause a real-world
+  // action", which is what §45 defines success as. Mirrors the client union in
+  // travel-buddy-standalone/src/hooks/useMediaAnalytics.ts and the emitter in
+  // features/media/telemetry/mediaTelemetry.ts. `media_route`,
+  // `media_contribution` and `media_arrival` have no trigger on the action rail
+  // yet; they are named here so the surfaces that will emit them reuse the
+  // canonical name instead of inventing one.
+  | "media_place_open"
+  | "media_compass"
+  | "media_route"
+  | "media_trip_add"
+  | "media_plan"
+  | "media_contribution"
+  | "media_correction"
+  | "media_arrival";
+
+/**
+ * The eight §45 north-star events, as a runtime list.
+ *
+ * Exported so the HTTP allow-list (routes/mediaAnalyticsBatch.ts) enumerates
+ * the same eight names this type declares, rather than keeping a second hand-
+ * written copy that can drift — which is exactly how these events came to be
+ * accepted by the client, typed by the server, and dropped by the route.
+ */
+export const MEDIA_NORTH_STAR_EVENT_TYPES: readonly MediaEventType[] = [
+  "media_place_open",
+  "media_compass",
+  "media_route",
+  "media_trip_add",
+  "media_plan",
+  "media_contribution",
+  "media_correction",
+  "media_arrival",
+];
 
 // ── Safe payload fields (allow-list) ─────────────────────────────────────────
 
@@ -69,6 +103,15 @@ const ALLOWED_PAYLOAD_KEYS = new Set([
   "event_id",          // non-private entity reference
   "trip_id",           // non-private entity reference
   "gems_filter",
+  // §44/§45 north-star funnel dimensions. Both are coarse and opaque by
+  // construction — `action_id` is a fixed action identifier from
+  // services/mediaActions.ts ('add_to_trip', 'ask_compass', …) and
+  // `entity_kind` is one of 'media' | 'place' | 'trip' | 'gem'. Without them
+  // every north-star event collapsed to an undifferentiated row: the funnel
+  // could not say WHICH transition fired or what kind of thing it acted on,
+  // which is the entire question §45 asks.
+  "action_id",
+  "entity_kind",
   "from_mode",
   "to_mode",
   "failure_code",

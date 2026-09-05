@@ -5,6 +5,7 @@ import {
   isLivePlacesCapabilityEnabled,
   resolveFeatureFlags,
 } from "../lib/featureFlags.js";
+import { isRentBuddyMasterEnabled, isWallRabEnabled } from "../services/wall/wallRabGate.js";
 
 function flagClient(flags: Record<string, boolean>) {
   return {
@@ -63,5 +64,33 @@ describe("Live Places flag hierarchy", () => {
     for (const capability of Object.keys(LIVE_PLACES_REQUIREMENTS) as Array<keyof typeof LIVE_PLACES_REQUIREMENTS>) {
       assert.equal(await isLivePlacesCapabilityEnabled(client, capability), true, capability);
     }
+  });
+});
+// ── Rent-a-Buddy on the Wall — a two-flag capability ─────────────────────────
+
+/**
+ * The Wall surfaces RAB from three independent producers. Only one of the three
+ * consulted the RAB master `rent_buddy_enabled`; the other two treated
+ * `wall_rab_integration_enabled` as sufficient, so pressing the Wall flag would
+ * have advertised a globally disabled product. These are the shared readers all
+ * three now use.
+ */
+describe("Wall RAB gate — both flags, fail-closed", () => {
+  it("is true only when the Wall flag AND the RAB master are both on", async () => {
+    assert.equal(await isWallRabEnabled(flagClient({ wall_rab_integration_enabled: true,  rent_buddy_enabled: true  })), true);
+    assert.equal(await isWallRabEnabled(flagClient({ wall_rab_integration_enabled: true,  rent_buddy_enabled: false })), false);
+    assert.equal(await isWallRabEnabled(flagClient({ wall_rab_integration_enabled: false, rent_buddy_enabled: true  })), false);
+    assert.equal(await isWallRabEnabled(flagClient({})), false, "absent rows are off");
+  });
+
+  it("fails closed when the flag table cannot be read", async () => {
+    const detonator: any = { from() { throw new Error("flag table down"); } };
+    assert.equal(await isWallRabEnabled(detonator), false);
+    assert.equal(await isRentBuddyMasterEnabled(detonator), false);
+  });
+
+  it("isRentBuddyMasterEnabled reads the master alone", async () => {
+    assert.equal(await isRentBuddyMasterEnabled(flagClient({ rent_buddy_enabled: true, wall_rab_integration_enabled: false })), true);
+    assert.equal(await isRentBuddyMasterEnabled(flagClient({ rent_buddy_enabled: false, wall_rab_integration_enabled: true })), false);
   });
 });

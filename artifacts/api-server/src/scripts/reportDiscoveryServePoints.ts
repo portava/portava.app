@@ -128,6 +128,7 @@ import {
   countOn,
   countRankedOn,
   fetchDiscoveryServeRows,
+  SERVE_ROWS_MAX,
   observedPoints,
   rankedOutsideLegacyPoints,
   resolveReportWindow,
@@ -175,12 +176,27 @@ async function main(): Promise<void> {
   // served row's outcome IN PLACE (routes/rankEvents.ts), so filtering on
   // 'impression' silently dropped every converted serve and biased the D5 share
   // down by the serves that converted. See fetchDiscoveryServeRows.
-  const { rows, error } = await fetchDiscoveryServeRows(sc, window);
+  // Paginated: a range-less read is capped at PostgREST's db-max-rows (1000)
+  // with no error and no signal, so this verdict used to be computed over an
+  // arbitrary ~1000-row prefix while reading like a statement about the window.
+  const { rows, error, truncated, pages } = await fetchDiscoveryServeRows(sc, window);
 
   if (error) {
     console.error("Query failed:", error.message);
     process.exit(2);
   }
+
+  console.log(`Corpus: ${rows.length} serve row(s) read over ${pages} page(s).`);
+  if (truncated) {
+    // Explicit and LOUD. The alternative — printing the shares as if they
+    // described the window — is the defect this replaced.
+    console.log("");
+    console.log(`  ⚠ TRUNCATED: the read stopped at the ${SERVE_ROWS_MAX} row ceiling.`);
+    console.log("  Every count and percentage below describes THAT PREFIX of the window,");
+    console.log("  not the window. Narrow the window (--since/--until) and re-run before");
+    console.log("  quoting the D5 verdict.");
+  }
+  console.log("");
 
   // ── Tally ──────────────────────────────────────────────────────────────────
   const tally = tallyServePoints(rows as ServeRow[]);
@@ -431,6 +447,16 @@ async function main(): Promise<void> {
   const RANKED_SHARE_THRESHOLD = 0.33;
 
   console.log("── 3. D5 revisit clause ──");
+  // A verdict computed over a truncated prefix is a verdict about the prefix.
+  // Refuse rather than dress a partial corpus up as a window-wide finding —
+  // the same refusal shape the endpointRows === 0 branch already uses.
+  if (truncated) {
+    console.log("  VERDICT: NOT ESTABLISHED — the serve corpus was TRUNCATED.");
+    console.log(`  The read stopped at the ${SERVE_ROWS_MAX} row ceiling, so the ranked`);
+    console.log("  share above describes a prefix of this window and not the window.");
+    console.log("  Narrow the window with --since/--until and re-run.");
+    process.exit(0);
+  }
   if (endpointRows === 0) {
     console.log("  VERDICT: NOT ESTABLISHED — no GET /discovery serves in this window.");
     console.log(`  ${marked} marked row(s) present, all on other discovery surfaces`);

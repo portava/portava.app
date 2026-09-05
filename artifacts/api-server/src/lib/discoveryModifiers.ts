@@ -38,9 +38,15 @@
  * `loadDiscoveryModifiers` performs ONE read (the flag, cached 30 s) and
  * returns an inert record: no momentum map, no confidence read, the default
  * budget. lib/discoveryPde.ts then ranks exactly as it did before this module
- * existed. The governor still computes what it WOULD have done — it is pure
- * CPU over data the ranker already holds — and records that in the impression
- * feature vector, so the allocation is observable before it is ever applied.
+ * existed — and the exploration governor does not run at all.
+ *
+ * The governor used to run in "observe" mode with the flag off, recording its
+ * hypothetical allocation in the impression feature vector. That was not inert:
+ * logImpression writes the feature vector verbatim into `rank_events.features`
+ * against the viewer's user_id, so an OFF flag was still shaping per-user rows
+ * in production. The OFF path now stamps nothing — the feature vector is
+ * byte-identical to the pre-governor pipeline's, which is what "off" has to
+ * mean before a flag can be trusted as a rollback.
  */
 import { isFlagEnabled } from "./featureFlags.js";
 import { loadLocalMomentum } from "./discoveryLocalMomentum.js";
