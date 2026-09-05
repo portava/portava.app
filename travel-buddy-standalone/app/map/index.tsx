@@ -43,7 +43,7 @@ import {
 } from '../../src/components/map/MapFilterSheet.tsx';
 import type { MapEntity, ToggleableEntityType, PassportCountryPayload } from '../../src/types/mapTypes.ts';
 import { objectOf, placeCardPayload } from '../../src/types/mapCardPayloads.ts';
-import { TOGGLEABLE_LAYERS, KIND_TO_ENTITY_TYPE } from '../../src/types/mapTypes.ts';
+import { TOGGLEABLE_LAYERS, KIND_TO_ENTITY_TYPE, mapObjectsToEntities } from '../../src/types/mapTypes.ts';
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 import { MapStoreProvider, useMapStore, deriveMapCapabilities } from '../../src/stores/mapStore.tsx';
@@ -1534,10 +1534,36 @@ function FullScreenMapScreenInner() {
   }, [entityTypes, effectiveLayerPrefs]);
 
   /**
+   * §15 — is the Time Machine scrubbed AWAY from now?
+   *
+   * Passport mode is excluded outright: it never opens the §15 control, has no
+   * temporal payload, and taking the branch below there would blank it.
+   */
+  const atTemporalOffset = mode !== 'passport' && !offsetsEqual(timeOffset, NOW_OFFSET);
+
+  /**
    * The objects the §16 decision is made over: the pipeline's INPUT, before any
    * filtering, so a marker can be matched to the object it came from.
+   *
+   * §15 — AT A NON-NOW OFFSET THE INPUT IS THE TEMPORAL PAYLOAD, and this is
+   * the whole of the fix for "the Time Machine shows the wrong data". Only the
+   * `permittedObjects` memo used to swap the base, far below; everything
+   * upstream of it — this base, the §16 hidden-id set and, decisively, the
+   * ENTITY list the marker layer draws from — stayed pinned to the NOW map. So
+   * scrubbing to Yesterday drew today's live markers (the entity ids were not
+   * in `pipelineJudgedIds`, so the "pass anything the pipeline never judged"
+   * escape hatch waved every one of them through) while the historical payload,
+   * which has no entity at all, drew nothing. The user saw today and was told
+   * it was yesterday.
+   *
+   * Swapping it HERE means one base feeds §16 filtering, the entity list, §17
+   * band culling and §31 collision, so those five stages cannot disagree about
+   * which instant is on screen. An offset the producer had nothing for yields
+   * an EMPTY base — the honest empty state — never a fallback to today.
    */
-  const pipelineBase = compassPickObjects ?? (tripObjects ?? defaultObjects);
+  const pipelineBase = atTemporalOffset
+    ? temporal.objects
+    : (compassPickObjects ?? (tripObjects ?? defaultObjects));
 
   /**
    * Ids the layers say NO to.
@@ -1566,9 +1592,25 @@ function FullScreenMapScreenInner() {
   //   1. Compass override (active search result)
   //   2. Passport entities when mode=passport
   //   3. Default hook-sourced entities + place entities
-  const allEntities = compassOverrideEntities ?? (
-    mode === 'passport' ? passportEntities : [...defaultEntities, ...placeEntities]
+  //
+  // §15 — at a non-NOW offset the entities ARE the temporal payload, projected
+  // through the same envelope useMapEntities uses (`mapObjectsToEntities`
+  // copies `obj.id` verbatim, which is what lets the marker filter below match
+  // them back to their objects). The NOW sources are all excluded on purpose:
+  // `defaultEntities` is today's live map, `placeEntities` is today's Discovery
+  // fetch, and a Compass override is a search over the present. None of them is
+  // evidence about another instant, and drawing them under a past or future
+  // label is exactly §37's "predictions must not look like observations" read
+  // in both directions.
+  const temporalEntities = useMemo(
+    () => mapObjectsToEntities(temporal.objects) as MapEntity[],
+    [temporal.objects],
   );
+  const allEntities = atTemporalOffset
+    ? temporalEntities
+    : compassOverrideEntities ?? (
+      mode === 'passport' ? passportEntities : [...defaultEntities, ...placeEntities]
+    );
 
   // One list drives the markers AND the carousel, so a card can never advertise
   // a pin the map is not drawing. Identity is preserved when nothing is hidden,
@@ -1744,12 +1786,13 @@ function FullScreenMapScreenInner() {
     // 1. §16 layers, then §3's chip. homeVisibleObjects composes them in that
     //    order so a chip can only ever narrow what the layers already permit —
     //    a chip must never switch a layer back on.
-    // §15 — at a non-NOW offset the base is the REAL per-offset payload from the
-    // temporal producer (predictions / observed history), NOT the NOW map: the
-    // old `toTemporalObjects(pipelineBase, offset)` could only relabel today's
-    // objects, which is exactly §37's "predictions looking like observations".
-    // At NOW `temporal.objects` is empty and this stays byte-identical to before.
-    const base = offsetsEqual(timeOffset, NOW_OFFSET) ? pipelineBase : temporal.objects;
+    // §15 — `pipelineBase` IS the per-offset payload at a non-NOW offset now
+    // (predictions / observed history), so this stage no longer picks a second
+    // base of its own. It used to, and that was the bug: this memo swapped to
+    // `temporal.objects` while the entity list and the §16 hidden-id set kept
+    // reading the NOW map, so the two halves of the screen drew different
+    // instants. One base, decided once, above.
+    const base = pipelineBase;
     // §16 layers still narrow the per-offset payload. In TIME_MACHINE mode the
     // layer context forces `live_activity` on (predictions map to it) and leaves
     // relevant_places on (historical places map to that), so the real payload
@@ -1783,11 +1826,9 @@ function FullScreenMapScreenInner() {
   // CityTimeline renders as its honest "no city trend" state — never a blank that
   // reads as "nothing is happening".
   const temporalView = useMemo(() => {
-    const source = offsetsEqual(timeOffset, NOW_OFFSET)
-      ? (compassPickObjects ?? defaultObjects)
-      : temporal.objects;
+    const source = atTemporalOffset ? temporal.objects : (compassPickObjects ?? defaultObjects);
     return buildTemporalView(source, timeOffset);
-  }, [timeOffset, temporal.objects, compassPickObjects, defaultObjects]);
+  }, [atTemporalOffset, timeOffset, temporal.objects, compassPickObjects, defaultObjects]);
 
   // §31 — collision only among the point-shaped markers. `dropped` is surfaced
   // rather than swallowed: a hidden object the user cannot reach is a silent

@@ -7,9 +7,10 @@
  *
  *   - Muted autoplay ONLY while the item is on-screen (FlatList viewability via
  *     useWallItemVisible); scrolling away pauses playback (§11).
- *   - The server never forces autoplay: `DisplayMedia.autoplayEligible` is a hint
- *     that can only VETO, never force — the decision stays client policy
- *     (resolveVideoAutoplay, §11).
+ *   - The decision is CLIENT policy end to end (resolveVideoAutoplay, §11): the
+ *     server never forces autoplay on and never vetoes it. `DisplayMedia
+ *     .autoplayEligible` is an advisory note ("this media is playable"), so a
+ *     `false`/absent value means the server has no opinion, not "forbidden".
  *   - Reduced motion (AccessibilityInfo) falls back to the still poster and never
  *     autoplays (§36).
  *
@@ -56,10 +57,11 @@ export function VideoWallItem({ projection }: { projection: VideoProjection }) {
     if (isVisible && !activated) setActivated(true);
   }, [isVisible, activated]);
 
+  // Client-owned policy (§11/§36). The projection's `autoplayEligible` is an
+  // advisory note, not a command, so it is deliberately not consulted here.
   const { autoplay, muted } = resolveVideoAutoplay({
     visible: isVisible,
     reduceMotion,
-    serverEligible: media?.autoplayEligible,
   });
 
   // The inline player is used when there is a playable source, reduce-motion is

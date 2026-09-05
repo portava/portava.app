@@ -26,6 +26,8 @@ export const PASSPORT_TRUST_ROUTE = '/passport/trust';
 export const PASSPORT_JOURNEYS_ROUTE = '/passport/journeys';
 export const PASSPORT_TRAVEL_IDENTITY_ROUTE = '/passport/travel-identity';
 export const PASSPORT_MY_WORLD_ROUTE = '/passport/my-world';
+/** The §9 Yearbook — owner-only, so it has no viewer variant (see yearbookHref). */
+export const PASSPORT_YEARBOOK_ROUTE = '/passport/yearbook';
 
 /** Query-param name the viewer-capable route wrappers read (mirrors plans.tsx). */
 export const VIEWER_USER_PARAM = 'userId';
@@ -64,6 +66,20 @@ export function travelIdentityHref(userId?: string | null): string {
 /** My World is the owner's own geographic history (§26) — no viewer variant. */
 export function myWorldHref(): string {
   return PASSPORT_MY_WORLD_ROUTE;
+}
+
+/**
+ * The Yearbook (§9) for the signed-in owner, optionally focused on one year.
+ *
+ * There is deliberately no `userId` variant: the yearbook endpoint is
+ * owner-private and answers `restricted` for any other traveller, so a viewer
+ * href would only ever produce a dead screen. `year` is validated as a plain
+ * calendar year before it reaches the query string.
+ */
+export function yearbookHref(year?: number | null): string {
+  const valid =
+    typeof year === 'number' && Number.isInteger(year) && year >= 1900 && year <= 2200;
+  return withParams(PASSPORT_YEARBOOK_ROUTE, { year: valid ? String(year) : null });
 }
 
 /** Open the single availability editor (F6). */

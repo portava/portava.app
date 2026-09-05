@@ -16,7 +16,44 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient } from "../supabase.js";
-import { isPostPublished } from "../postVisibility.js";
+import { isPostPublished, canReadPost, type ReadablePost } from "../postVisibility.js";
+
+// ── Who may appear on a place's Best-Of rails ────────────────────────────────
+
+/**
+ * Best-Of is a PUBLIC rail on the Living Destination Page: it is assembled for a
+ * place, cached in `place_best_of`, and served to every viewer of that place
+ * (routes/placeLiving passes no viewer at all). There is therefore no viewer
+ * whose trip membership or follow graph could unlock a restricted post here —
+ * the only posts that belong on it are the ones a STRANGER may read.
+ *
+ * This sentinel is that stranger. It is deliberately not a uuid, so it can never
+ * collide with a real `author_id` and accidentally admit a post through
+ * decidePostReadable's author branch.
+ */
+const PLACE_RAIL_STRANGER = "place-best-of:no-viewer";
+
+/**
+ * May this post appear on a place's Best-Of rails?
+ *
+ * ONE rule, the canonical one, not a second implementation:
+ *   • lib/postVisibility.isPostPublished — the delayed-publish gate (§23/§37).
+ *     `status = 'active'` is what POST /posts writes for a delayed post, so it
+ *     was never a publication filter.
+ *   • lib/postVisibility.canReadPost with the no-viewer stranger — the same
+ *     predicate WallProjectionService.passesVisibility and GET /posts/:postId
+ *     apply. It admits `public` (and legacy rows with no visibility column) and
+ *     refuses `private`, `trip_only`, `followers_only` and any tier it does not
+ *     recognise. FAIL CLOSED is its documented default, which is exactly what a
+ *     rail with no viewer needs.
+ *
+ * Best-Of had NO visibility filter at all, so a `private` or `trip_only` post
+ * attached to a place reached that place's public rails — the post's author
+ * placed at the venue, for anyone who opened the page.
+ */
+export function isPublicPlaceRailPost(row: ReadablePost & { post_status?: string | null }): boolean {
+  return isPostPublished(row) && canReadPost(row, PLACE_RAIL_STRANGER, false, false);
+}
 
 // ── Engagement score formula ──────────────────────────────────────────────────
 
@@ -95,24 +132,35 @@ function rowsToBestOf(rows: any[], mediaType: string | null, limit: number): Bes
 
 /** Real-time best-of fallback query.
  *
- *  Delayed-publish gate (§23/§37): this read is keyed on canonical_place_id and
- *  its output is rendered on that place's page, so serving a post whose
- *  post_status is still pending announces "this person is at this place" —
- *  exactly what delayed geotagging exists to prevent. `status = 'active'` is
- *  what POST /posts writes for a delayed post, so it was not a publication
- *  filter. Same canonical predicate as every other serving surface, applied at
- *  the query and again in memory (lib/postVisibility.isPostPublished). */
+ *  TWO gates, both canonical, both applied at the query AND again in memory so a
+ *  row fed past a query filter still cannot leak (lib/postVisibility is the one
+ *  definition for each):
+ *
+ *  1. Delayed-publish (§23/§37): this read is keyed on canonical_place_id and its
+ *     output is rendered on that place's page, so serving a post whose
+ *     post_status is still pending announces "this person is at this place" —
+ *     exactly what delayed geotagging exists to prevent. `status = 'active'` is
+ *     what POST /posts writes for a delayed post, so it was not a publication
+ *     filter.
+ *  2. VISIBILITY: Best-Of is a public rail with no viewer, so only a post a
+ *     STRANGER may read belongs on it. There was no visibility filter here at
+ *     all, so a `private` or `trip_only` post attached to the place reached the
+ *     rails. `isPublicPlaceRailPost` composes both gates. */
 async function fetchBestOfRealtime(sc: SupabaseClient, placeId: string): Promise<BestOf> {
   const { data, error } = await sc
     .from("posts")
-    .select("id, content, media_type, media_urls, media_thumbnail_url, like_count, save_count, share_count, post_status")
+    .select(
+      "id, author_id, trip_id, visibility, content, media_type, media_urls, media_thumbnail_url, " +
+      "like_count, save_count, share_count, post_status",
+    )
     .eq("canonical_place_id", placeId)
     .eq("status", "active")
     .eq("post_status", "published")
+    .eq("visibility", "public")
     .order("created_at", { ascending: false })
     .limit(200);
 
-  const rows = error ? [] : ((data as any[]) ?? []).filter((r) => isPostPublished(r));
+  const rows = error ? [] : ((data as any[]) ?? []).filter((r) => isPublicPlaceRailPost(r));
 
   // Extract the first media URL from media_urls array
   const enriched = rows.map((r) => ({

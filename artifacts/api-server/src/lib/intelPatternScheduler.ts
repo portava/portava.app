@@ -7,7 +7,10 @@
  *   2. derives recurring cohort patterns (lib/intelPatternLearning.derivePatterns),
  *      Table-19 minimums enforced there and re-verified by the DB CHECK,
  *   3. writes invalidation tombstones for patterns whose source claim family was
- *      retracted/superseded/corrected (spec §12 "Pattern invalidation"),
+ *      retracted/superseded/corrected (spec §12 "Pattern invalidation") — one per
+ *      CURRENTLY SERVED pattern, carrying the full read key (time_band AND dow)
+ *      so liveClaimRead.readTypicalPatterns can actually match it, and skipping
+ *      scopes already retired so the pass is idempotent night over night,
  *   4. INSERTs the derived patterns (append-only — supersession is a new row).
  *
  * Gated on `intel_pattern_learning`, fail-closed, self-rescheduling — the house
@@ -20,12 +23,14 @@ import { isFlagEnabled } from "./featureFlags.js";
 import {
   derivePatterns,
   deriveInvalidations,
+  currentlyServedPatterns,
   scopeKeysOf,
   PATTERN_MINIMUMS,
   CLAIM_TYPE_PATTERN_KIND,
   type FinalizedObservation,
   type InvalidatingClaim,
   type ExistingPattern,
+  type StoredPatternRow,
   type PatternKind,
 } from "./intelPatternLearning.js";
 
@@ -102,21 +107,29 @@ export async function runPatternLearningPass(opts: { client?: any; now?: Date } 
 
     let currentPatterns: ExistingPattern[] = [];
     if (invalidating.length > 0) {
+      // Read tombstones TOO (no is_invalidation filter): a scope whose newest row
+      // is already a tombstone is not served, so it must not be tombstoned again.
+      // Filtering them out here is what made the pass re-insert the same tombstone
+      // every night. currentlyServedPatterns applies the reader's own rule —
+      // newest row per (subject, zone, family, kind, time_band, dow) — so the
+      // invalidation pass is idempotent.
       const { data: curData, error: curErr } = await db
         .from("intel_historical_patterns")
-        .select("id, subject_id, zone_id, claim_family, pattern_kind, time_band, computed_at, is_invalidation")
-        .eq("is_invalidation", false)
+        .select("id, subject_id, zone_id, claim_family, pattern_kind, time_band, dow, computed_at, is_invalidation")
         .limit(MAX_CURRENT_PATTERNS);
       if (curErr) logger.warn({ err: curErr }, "pattern pass: current-pattern read failed (non-fatal)");
-      currentPatterns = ((curData ?? []) as any[]).map((r) => ({
+      const stored: StoredPatternRow[] = ((curData ?? []) as any[]).map((r) => ({
         id: String(r.id),
         subjectId: String(r.subject_id),
         zoneId: r.zone_id ?? null,
         claimFamily: String(r.claim_family),
         patternKind: String(r.pattern_kind) as PatternKind,
         timeBand: String(r.time_band),
+        dow: typeof r.dow === "number" ? r.dow : r.dow == null ? null : Number(r.dow),
         computedAt: String(r.computed_at),
+        isInvalidation: r.is_invalidation === true,
       }));
+      currentPatterns = currentlyServedPatterns(stored);
     }
     const tombstones = deriveInvalidations(invalidating, currentPatterns, scopeKeysOf(patterns));
 
@@ -129,6 +142,12 @@ export async function runPatternLearningPass(opts: { client?: any; now?: Date } 
         claim_family: t.claimFamily,
         pattern_kind: t.patternKind,
         time_band: t.timeBand,
+        // THE READER MATCHES ON dow. liveClaimRead.readTypicalPatterns filters
+        // `.eq("time_band", …).eq("dow", …)` before it takes the newest row per
+        // scope, so a tombstone written without dow lands as NULL, matches
+        // nothing, and the retracted pattern keeps serving indefinitely. The
+        // tombstone carries the full key of the row it supersedes.
+        dow: t.dow,
         value_json: {},
         is_invalidation: true,
         invalidation_reason: t.reason,

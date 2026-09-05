@@ -1119,6 +1119,37 @@ async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<
   }
 }
 
+/**
+ * Which passport COLLECTIONS this caller may aggregate over (§22 / TABLE 24).
+ *
+ * This is the very gate step 7 (stamps) and step 9 (memories) of
+ * `buildPassportProjection` apply, exposed so a second read surface — the §9
+ * Yearbook — enforces the identical boundary instead of inventing one. There is
+ * one rule (`tierPermits`) and one preference read (`loadVisibilityPrefs`); this
+ * only composes them, so a viewer can never be shown more by the aggregate than
+ * by the yearbook or the reverse.
+ *
+ * Fail-closed inputs: an unreadable preference row resolves to `null`, which
+ * `tierPermits` treats as the default "public" tier — exactly as the aggregate
+ * already does, so the two surfaces stay identical even in the degraded case.
+ */
+export interface PassportCollectionVisibility {
+  stamps: boolean;
+  memories: boolean;
+}
+
+export async function loadCollectionVisibility(
+  sc: SupabaseClient,
+  userId: string,
+  caller: CallerContext,
+): Promise<PassportCollectionVisibility> {
+  const prefs = await loadVisibilityPrefs(sc, userId);
+  return {
+    stamps: tierPermits(prefs?.stamps_visible, caller),
+    memories: tierPermits(prefs?.memories_visible, caller),
+  };
+}
+
 /** Does a collection-level "public|friends_only|private" tier permit this caller? */
 function tierPermits(tier: string | null | undefined, caller: CallerContext): boolean {
   const t = norm(tier);
@@ -1346,8 +1377,14 @@ async function loadTravelerActivity(sc: SupabaseClient, userId: string): Promise
   return { atEvent, withCrew, exploring };
 }
 
-/** Derive light Travel-DNA signals from unified stamps + stats. */
-function deriveTravelSignals(profile: Record<string, any>, stamps: UnifiedStamp[], stats: TravelStats, hiddenGems: number): TravelIdentitySignals {
+/**
+ * Derive light Travel-DNA signals from a set of unified stamps.
+ *
+ * Exported because the §9 Yearbook derives the SAME signals from a single
+ * year's slice of the same stamps — one derivation rule, so a per-year reading
+ * and the current reading can never disagree about what a stamp means.
+ */
+export function deriveTravelSignals(stamps: UnifiedStamp[], countriesCount: number, hiddenGems: number): TravelIdentitySignals {
   let nightlife = 0;
   let food = 0;
   const tags = new Set<string>();
@@ -1362,7 +1399,7 @@ function deriveTravelSignals(profile: Record<string, any>, stamps: UnifiedStamp[
     hiddenGemCount: hiddenGems,
     nightlifeCount: nightlife,
     foodCount: food,
-    countriesCount: stats.countries,
+    countriesCount,
   };
 }
 
@@ -1540,7 +1577,7 @@ export async function buildPassportProjection(
   }
 
   // 10. Travel identity (Travel DNA).
-  const signals = deriveTravelSignals(profile, unified.stamps as UnifiedStamp[], stats, statsRaw.hiddenGemStamps ?? 0);
+  const signals = deriveTravelSignals(unified.stamps as UnifiedStamp[], stats.countries, statsRaw.hiddenGemStamps ?? 0);
   let travelIdentity: TravelIdentityProjection | undefined;
   try {
     const ti = await buildTravelIdentity(sc, userId, profile, signals, { isSelf });

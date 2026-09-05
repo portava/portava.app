@@ -63,6 +63,7 @@ import {
   parseKinds,
   rankObjects,
   servableOnly,
+  withholdCoarsenableAggregates,
   FLOW_ZONE_TYPES,
   type FlowZone,
 } from "../lib/mapProjection.js";
@@ -590,8 +591,33 @@ router.get(
       });
       return;
     }
+    // §24, one step ahead of the gate, exactly as routes/mapProjection.ts does
+    // it — and the step whose ABSENCE here was the defect. Every object this
+    // route serves in forecast mode is a `prediction`, and coarsening a
+    // prediction is not a weaker disclosure: `coarsenForZone` deletes the
+    // top-level `count` and snaps the point to the zone anchor, but the object
+    // reached the wire with `payload.cohort` and `payload.predictedFor` intact
+    // — "20 people are due to arrive at this clinic at 13:00", which is the
+    // §24 association disclosure restated one level down. `prediction` is now
+    // in protectedLocations.COARSEN_UNSAFE_KINDS, so `applyProtection` below
+    // would suppress it on its own; this pre-filter reports the removal in the
+    // forecast block, where the client is already reading refusal counts.
+    const predictionGate = withholdCoarsenableAggregates(objects, zones);
+    objects = predictionGate.objects;
+
     const protection = applyProtection(objects, zones);
     objects = protection.objects;
+
+    // The pre-filter's removals are folded into the protection report rather
+    // than left silent. A silently shrunk result is indistinguishable from an
+    // empty city, which is how a protection bug survives for months — the same
+    // argument ProtectionReport makes for existing at all. Both counters move
+    // together so `evaluated === allowed + coarsened + suppressed +
+    // safetyExempt` still holds.
+    if (predictionGate.withheld > 0) {
+      protection.report.evaluated += predictionGate.withheld;
+      protection.report.suppressed += predictionGate.withheld;
+    }
 
     const aggregation = aggregateForViewport(objects, { bbox, zoom });
     const ranked = rankObjects(aggregation.objects, { lat, lng });
