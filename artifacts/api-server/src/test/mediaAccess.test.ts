@@ -216,7 +216,7 @@ describe("authorizeMediaAccess — bare-key column values (post-2081)", () => {
     );
   });
 
-  it("3b — a bare key in a PRIVATE post still denies", async () => {
+  it("AT-16: 3b — a bare key in a PRIVATE post still denies", async () => {
     // The fix must widen which encodings are recognised, never which objects
     // are reachable. If this ever passes, the fix has become a fail-open.
     const sc = makeClient({

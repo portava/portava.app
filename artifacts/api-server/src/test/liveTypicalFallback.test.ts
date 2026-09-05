@@ -81,7 +81,7 @@ describe("readTypicalPatterns", () => {
   });
 });
 
-describe("resolvePlaceIntelState — degradation order live → typical → unknown", () => {
+describe("AT-08: resolvePlaceIntelState — degradation order live → typical → unknown", () => {
   it("falls to 'typical' when no live claim exists but a pattern does", async () => {
     const r = await resolvePlaceIntelState(client({ liveFlag: false, patterns: [patternRow()] }), "p1", { now: NOW });
     assert.equal(r.state, "typical");

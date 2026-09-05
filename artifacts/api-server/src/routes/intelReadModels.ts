@@ -1,10 +1,29 @@
 /**
  * Intelligence Gathering — §19 read models (internal decision-support APIs).
  *
+ *   GET /v1/experiences/:id/live-state
+ *     The spec-literal §19 name for "what is true at this experience right now?".
+ *     A THIN ALIAS over lib/liveClaimRead.resolvePlaceIntelState — the SAME
+ *     reader routes/placeLiving.ts serves the place card from, entered the same
+ *     way: a merged place id is resolved to its surviving canonical id first,
+ *     as loadPlaceGroup does, because the projection writes for the canonical
+ *     subject. It adds no second gate and no second truth: every flag (the
+ *     intel_live_label_crowd dependency chain, the disable_intel_live_labels
+ *     kill switch, the IG-09 intel_limited_live master switch), the per-scope
+ *     promotion allowlist, the
+ *     privacy_eligible k-anonymity verdict and the TTL check all live in that one
+ *     reader and are inherited here. The response is the §19 envelope
+ *     (schema_version / source_label / generated_at / valid_until / state_version
+ *     + ETag) around exactly the LiveClaimEnvelope[] the place card already
+ *     carries — derived intelligence only, never a contributor id, a coordinate
+ *     or the exact k-anonymity cohort size.
+ *
  *   GET /v1/experiences/:id/typical-patterns
  *     The §12 historical patterns for an experience, projected to DERIVED fields
  *     only (no contributor ids, no exact cohort — a coarse bucket). A pattern is
  *     always source_label 'historical_pattern' — a Typical answer, never Live.
+ *     Enters by the SAME merge hop as /live-state, so the two cannot disagree
+ *     about whether a merged-away experience has patterns.
  *
  *   GET /v1/neighborhoods/:id/pulse
  *     A k-ANONYMOUS coarse aggregate of the neighborhood's privacy-eligible live
@@ -56,6 +75,125 @@ function notModified(req: any, res: any, etag: string): boolean {
   return false;
 }
 
+/**
+ * The §19 envelope's top-level `source_label` for a resolved state. It describes
+ * WHAT KIND of answer the body is, and it is derived from the state the reader
+ * returned — never asserted independently of it, so the label can never claim a
+ * standing the claims do not have:
+ *   live / emerging → 'consensus'          (independent first-hand observations)
+ *   typical         → 'historical_pattern' (a §12 pattern — a Typical answer)
+ *   unknown         → 'none'               (silence; the claims array is empty)
+ * §37: 'portava_prediction' can never appear here — readLiveClaims drops any
+ * class that mayRenderAsLive() rejects before it reaches an envelope, and a
+ * pattern is labelled historical_pattern by readTypicalPatterns itself.
+ */
+function stateSourceLabel(state: "live" | "emerging" | "typical" | "unknown"): string {
+  if (state === "typical") return "historical_pattern";
+  if (state === "unknown") return "none";
+  return "consensus";
+}
+
+/**
+ * Resolve a merged place id to its surviving canonical id, exactly as
+ * routes/placeLiving.ts (loadPlaceGroup) does before the SAME reader.
+ *
+ * The projection writes intel snapshots and §12 patterns for the CANONICAL
+ * subject, so a request naming a merged-away place id resolves to no rows: the
+ * alias would answer 'unknown' while the place card — which resolves first —
+ * shows Live for the very same experience. That is precisely the disagreement
+ * this route's header promises can never happen, so the resolution belongs
+ * here, ahead of the reader, not inside it.
+ *
+ * EVERY subject-addressed read model in this file goes through this hop —
+ * /live-state, /typical-patterns and /intel/prompt-eligibility. One resolving
+ * and one not is strictly worse than neither resolving: it makes two endpoints
+ * in the SAME file disagree about one experience.
+ *
+ * One hop, like loadPlaceGroup: `merged_into_place_id` names the survivor, and
+ * a survivor is not itself merged away. Fail-SAFE in every other case — a
+ * missing row or a failed read falls back to the requested id, which can only
+ * under-serve (state 'unknown'); it can never invent a subject or widen what is
+ * exposed, and every privacy/flag gate still lives wholly in the reader.
+ */
+async function resolveSurvivorSubjectId(sc: any, placeId: string): Promise<string> {
+  try {
+    const { data, error } = await sc
+      .from("places")
+      .select("merged_into_place_id")
+      .eq("id", placeId)
+      .maybeSingle();
+    if (error) {
+      logger.warn({ err: error, placeId }, "intel read model: merge resolution read failed; using the requested id");
+      return placeId;
+    }
+    const survivor = (data as any)?.merged_into_place_id;
+    return typeof survivor === "string" && survivor.length > 0 ? survivor : placeId;
+  } catch (err) {
+    logger.warn({ err, placeId }, "intel read model: merge resolution threw; using the requested id");
+    return placeId;
+  }
+}
+
+// ── GET /v1/experiences/:id/live-state ────────────────────────────────────────
+// The spec-literal §19 read model. Delegates wholly to resolvePlaceIntelState —
+// see the file header for why this is an alias and not a second reader.
+router.get("/v1/experiences/:id/live-state", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) return sendError(res, "invalid_payload", "experience id (uuid) required");
+  const sc = auth.client ?? getServiceClient();
+  if (!sc) return sendError(res, "server_not_configured", "no client");
+
+  const now = new Date();
+  // Resolve a merged place id to its survivor FIRST — the place card does the
+  // same before this very reader, and skipping it is the one way an alias that
+  // adds no gates can still disagree with the card (see resolveSurvivorSubjectId).
+  const subjectId = await resolveSurvivorSubjectId(sc, id.data);
+  // ONE call. Every gate (flags, kill switch, pilot promotion, privacy_eligible,
+  // TTL) and the degradation order Live → Emerging → Typical → Unknown are the
+  // reader's; this route adds none of its own and can therefore never disagree
+  // with the place card about whether something is live.
+  const resolved = await resolvePlaceIntelState(sc, subjectId, { now });
+
+  // state_version must change whenever the served SET changes — its size, its
+  // standing, or the freshness of any member. validUntil is included because an
+  // expiring claim changes the answer even when nothing was re-observed.
+  let maxObservedMs = 0;
+  let earliestValidUntil: string | null = null;
+  for (const c of resolved.claims) {
+    const o = Date.parse(c.observedAt);
+    if (!Number.isNaN(o) && o > maxObservedMs) maxObservedMs = o;
+    if (c.validUntil && (earliestValidUntil === null || c.validUntil < earliestValidUntil)) {
+      earliestValidUntil = c.validUntil;
+    }
+  }
+  // The resolved subject is part of the version: if this id is merged away after
+  // a client cached the answer, the survivor's state may coincidentally have the
+  // same shape, and a stale 304 would keep serving the wrong subject_id.
+  const stateVersion = `${subjectId}:${resolved.state}:${resolved.claims.length}:${maxObservedMs || "-"}:${earliestValidUntil ?? "-"}`;
+  const etag = etagOf(stateVersion);
+  if (notModified(req, res, etag)) return;
+  res.set("ETag", etag);
+
+  res.json({
+    schema_version: SCHEMA_VERSION,
+    source_label: stateSourceLabel(resolved.state),
+    // The CANONICAL subject the claims describe. For an unmerged place this is
+    // the requested id; for a merged-away one it is the survivor, so the caller
+    // can see which experience answered rather than being told the merged id
+    // carries claims of its own.
+    subject_id: subjectId,
+    state: resolved.state,
+    state_version: stateVersion,
+    generated_at: now.toISOString(),
+    // §19 "valid_until where operational" — the earliest horizon in the set, i.e.
+    // when this answer first stops being wholly current. Null when there is none.
+    valid_until: earliestValidUntil,
+    claims: resolved.claims,
+  });
+}));
+
 // ── GET /v1/experiences/:id/typical-patterns ──────────────────────────────────
 router.get("/v1/experiences/:id/typical-patterns", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
@@ -65,10 +203,18 @@ router.get("/v1/experiences/:id/typical-patterns", asyncHandler(async (req, res)
   const sc = auth.client ?? getServiceClient();
   if (!sc) return sendError(res, "server_not_configured", "no client");
 
+  // Same merge hop as /live-state, for the same reason and with the same
+  // fail-safe fallback. §12 patterns are written for the CANONICAL subject, so
+  // querying a merged-away id matches no rows. Without this hop the two §19
+  // endpoints in THIS file disagree about one experience: /live-state resolves
+  // and answers state 'typical' WITH patterns, while /typical-patterns does not
+  // resolve and answers []. One subject, one answer — resolve here too.
+  const subjectId = await resolveSurvivorSubjectId(sc, id.data);
+
   const { data, error } = await sc
     .from("intel_historical_patterns")
     .select("id, zone_id, claim_family, pattern_kind, time_band, dow, value_json, confidence, cohort_size, window_days, is_invalidation, computed_at, source_label")
-    .eq("subject_id", id.data)
+    .eq("subject_id", subjectId)
     .order("computed_at", { ascending: false })
     .limit(MAX_PATTERNS);
   if (error) { logger.warn({ err: error }, "typical-patterns read failed"); return sendError(res, "db_error", "pattern read failed"); }
@@ -103,14 +249,20 @@ router.get("/v1/experiences/:id/typical-patterns", asyncHandler(async (req, res)
     });
   }
 
-  const stateVersion = `${patterns.length}:${maxComputedMs || "-"}`;
+  // The resolved subject is part of the version for the same reason it is on
+  // /live-state: if this id is merged away after a client cached the answer, the
+  // survivor's pattern set may coincidentally have the same shape, and a stale
+  // 304 would keep serving the wrong subject_id.
+  const stateVersion = `${subjectId}:${patterns.length}:${maxComputedMs || "-"}`;
   const etag = etagOf(stateVersion);
   if (notModified(req, res, etag)) return;
   res.set("ETag", etag);
   res.json({
     schema_version: SCHEMA_VERSION,
     source_label: "historical_pattern",
-    subject_id: id.data,
+    // The CANONICAL subject these patterns describe — the survivor for a
+    // merged-away id, exactly as /live-state names it.
+    subject_id: subjectId,
     state_version: stateVersion,
     generated_at: new Date().toISOString(),
     patterns,
@@ -217,11 +369,19 @@ router.get("/v1/intel/prompt-eligibility", asyncHandler(async (req, res) => {
   const now = new Date();
   const windowIso = new Date(now.getTime() - PROMPT_THROTTLE_WINDOW_MS).toISOString();
 
+  // Same merge hop as the two §19 read models above, and applied ONCE for every
+  // signal below — observations, evidence and the throttle key must share one id
+  // space or shouldPrompt's `o.subjectId !== args.subjectId` match silently fails
+  // open (no match ⇒ "not throttled" ⇒ a prompt we already earned the right to
+  // suppress). Resolving here keeps eligibility answering about the same
+  // experience the place card and /live-state answer about.
+  const canonicalSubjectId = await resolveSurvivorSubjectId(sc, subjectId.data);
+
   // This actor's recent observations for this subject — the "recent prompt" signal.
   const { data: obsData, error: obsErr } = await sc
     .from("intel_observations")
     .select("subject_id, observed_at")
-    .eq("subject_id", subjectId.data)
+    .eq("subject_id", canonicalSubjectId)
     .eq("actor_id", auth.user.id)
     .gte("observed_at", windowIso);
   if (obsErr) { logger.warn({ err: obsErr }, "prompt-eligibility: observation read failed"); return sendError(res, "db_error", "observation read failed"); }
@@ -232,11 +392,11 @@ router.get("/v1/intel/prompt-eligibility", asyncHandler(async (req, res) => {
 
   // Fresh qualifying evidence = a live/emerging claim exists (typical/unknown do NOT
   // count — a prompt is exactly how a stale/absent live family gets refreshed).
-  const resolved = await resolvePlaceIntelState(sc, subjectId.data, { now });
+  const resolved = await resolvePlaceIntelState(sc, canonicalSubjectId, { now });
   const hasFreshQualifyingEvidence = resolved.state === "live" || resolved.state === "emerging";
 
   const decision = shouldPrompt({
-    subjectId: subjectId.data,
+    subjectId: canonicalSubjectId,
     recentObservations,
     hasFreshQualifyingEvidence,
     now,
@@ -245,7 +405,8 @@ router.get("/v1/intel/prompt-eligibility", asyncHandler(async (req, res) => {
 
   res.json({
     schema_version: SCHEMA_VERSION,
-    subject_id: subjectId.data,
+    // The CANONICAL subject the decision was made about, as on the read models.
+    subject_id: canonicalSubjectId,
     prompt: decision.prompt,
     reason: decision.reason,
     throttle_window_ms: PROMPT_THROTTLE_WINDOW_MS,

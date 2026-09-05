@@ -136,7 +136,7 @@ describe("IG-06 — the never-single-user movement invariant", () => {
     assert.equal(mustAggregate("crowd.level"), false);
   });
 
-  it("captures a next_move on the trail surface but refuses to mint a single-user claim", async () => {
+  it("AT-11: captures a next_move on the trail surface but refuses to mint a single-user claim", async () => {
     const db = makeDb(chainOn("intel_trail_followup"), { places: [PLACE] });
     const written = await writeObservation(db as any, ACTOR, trailInput() as any);
     assert.equal(written.ok, true);
@@ -193,7 +193,7 @@ describe("IG-06 — §13 movement inference math + gates", () => {
     uniqueActors: 15, groups: 5, maxSingleGroupShare: 0.2,
     timeBucketMinutes: 30, publicationDelayMinutes: 10, sensitiveSubject: false,
   };
-  it("passes exactly at the threshold and fails just under any single rule", () => {
+  it("AT-11: passes exactly at the threshold and fails just under any single rule", () => {
     assert.equal(movementPrivacyMet(ok), true);
     assert.equal(movementPrivacyMet({ ...ok, uniqueActors: 14 }), false);
     assert.equal(movementPrivacyMet({ ...ok, groups: 4 }), false);
