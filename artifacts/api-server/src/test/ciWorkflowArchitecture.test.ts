@@ -180,9 +180,6 @@ describe("CI architecture — concurrency cannot cancel unrelated work", () => {
     // can observe a half-applied schema and report a confident, wrong result —
     // the same class of failure this workflow exists to eliminate.
     //
-    // Only this edge is serialized. api-server-check-all stays parallel (it is
-    // read-only apart from an INSERT probe that aborts by construction), which
-    // is why this asserts the narrow ordering and not a full chain.
     for (const job of ["post-media-revocation-rehearsal", "live-db-security-suites"]) {
       const i = liveDb.indexOf(`\n  ${job}:\n`);
       assert.ok(i > 0, `job ${job} not found`);
@@ -192,13 +189,60 @@ describe("CI architecture — concurrency cannot cancel unrelated work", () => {
           "run against a database mid-migration",
       );
     }
-    // The read-only job must NOT be dragged into the chain — that would cost
-    // wall-clock for no isolation gain (measured: +55s narrow vs +2m52s wide).
+
+    // api-server-check-all BELONGS IN THAT CATEGORY. This assertion used to deny
+    // it: it required the edge to be ABSENT, reasoning that the job is "read-only
+    // apart from a self-aborting probe, so this costs time and buys nothing
+    // (measured: +55s narrow vs +2m52s wide)".
+    //
+    // The measurement was right. The premise was wrong, and main run 33988500200
+    // is the counterexample. check:all contains TWO checks that assert live schema
+    // state:
+    //   • check:write-path-columns fetches the live schema and fails on any table
+    //     the code references but the database lacks;
+    //   • check:rank-events-surfaces probes the live rank_events CHECK constraint
+    //     to prove every surface literal is actually accepted.
+    // On that run the two jobs started one second apart, the schema fetch landed
+    // at 20:01:19, and schema-drift's applier did not finish until 20:02:04. So
+    // check:write-path-columns read a schema from BEFORE its own run's migrations
+    // and reported event_passport_shares — created by 2294, merged minutes earlier
+    // in #394 — as missing from nine call sites. Main went red on a table that its
+    // own run created 45 seconds later.
+    //
+    // READ-ONLY IS NOT ORDER-INDEPENDENT. Being read-only is what makes this
+    // failure mode SILENT rather than absent: the job cannot corrupt the schema,
+    // so it just reports, confidently and wrongly, whatever it happened to see.
+    // That is the "confident, wrong result" this test's own opening paragraph
+    // exists to prevent — the earlier wording scoped it to mid-migration
+    // interleaving and missed not-yet-applied entirely.
+    //
+    // The edge is therefore REQUIRED, and the +2m52s is the price of not emitting
+    // a false red on every commit that adds a table alongside its migration.
     const k = liveDb.indexOf("\n  api-server-check-all:\n");
-    assert.ok(
-      !/needs:\s*\[[^\]]*schema-drift/.test(liveDb.slice(k, k + 600)),
-      "api-server-check-all was serialized behind schema-drift; it is read-only " +
-        "apart from a self-aborting probe, so this costs time and buys nothing",
+    assert.ok(k > 0, "job api-server-check-all not found");
+    const afterJobStart = liveDb.slice(k + 1);
+    const nextJob = afterJobStart.search(/\n {2}[a-z0-9-]+:\n/);
+    const checkAll = nextJob > 0 ? afterJobStart.slice(0, nextJob) : afterJobStart;
+    assert.match(
+      checkAll, /needs:\s*\[[^\]]*schema-drift/,
+      "api-server-check-all asserts live schema state (check:write-path-columns, " +
+        "check:rank-events-surfaces) but does not wait for schema-drift, so it can " +
+        "read a schema from before its own run's migrations and report a table that " +
+        "its own run creates seconds later as missing",
+    );
+    // ORDERING, NOT GATING — this half is load-bearing. On a PR branch the branch's
+    // own migration is never applied to the CI project, so schema-drift legitimately
+    // FAILS whenever a PR creates an object. A plain `needs:` reads that expected
+    // failure as a reason to SKIP, which is exactly what happens to the two jobs
+    // above. Letting it skip check:all too would silently disable the primary
+    // code-quality gate on precisely the PRs that change the schema — and a job that
+    // silently skips is indistinguishable from one that passed, which is the failure
+    // this whole workflow exists to eliminate.
+    assert.match(
+      checkAll, /if:\s*\$\{\{\s*!\s*cancelled\(\)\s*\}\}/,
+      "api-server-check-all waits for schema-drift but has no `if: ${{ !cancelled() }}`, " +
+        "so a schema-drift failure now SKIPS it — turning the primary code-quality " +
+        "gate off for every PR that creates a database object",
     );
   });
 });
