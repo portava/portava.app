@@ -56,8 +56,8 @@ import {
 } from "./confidenceScore.js";
 import { evaluatePrivacy, type PrivacyDecision, type SuppressionReason } from "./privacyGate.js";
 import { expiresAt as policyExpiresAt, FRESHNESS_CURVE_VERSION } from "./freshnessPolicy.js";
-import { LIVE_ELIGIBLE_CLAIM_STATUSES } from "./intelContracts.js";
-import type { ConflictState } from "./intelConflict.js";
+import { LIVE_ELIGIBLE_CLAIM_STATUSES, SOURCE_CLASSES, type SourceClass } from "./intelContracts.js";
+import { toStoredConflictState, type ConflictState, type StoredConflictState } from "./intelConflict.js";
 
 /**
  * The projection algorithm version stamped on every snapshot and version row
@@ -141,6 +141,25 @@ export interface ProjectionInput {
    * score here — the aggregator already folded the penalty into `penalties`.
    */
   conflictState?: ConflictState;
+  /**
+   * The epistemic class of the cohort behind this claim (§5 source classes), as
+   * derived by lib/intelProjectionAggregator from the observations themselves.
+   * Persisted onto intel_state_snapshots.source_class (2279) so the read path
+   * (lib/liveClaimRead.deriveSourceClass) can apply the truth boundary
+   * (mayRenderAsLive) and the consensus-badge rule (mayCountAsConsensus) instead
+   * of assuming the Phase-1 default. Absent / unrecognised ⇒ not written.
+   */
+  sourceClass?: SourceClass;
+  /**
+   * FAIL-CLOSED VALUE SUPPORT. False when the live cohort supplies NO currently
+   * supported value for this claim — e.g. the cohort's most-recent values TIE
+   * for the lead and the frozen anchor `claim.value` is not among them (its
+   * author may have withdrawn consent). Publishing the anchor there would
+   * republish an answer nobody in the live cohort gives. `projectClaim` then
+   * WITHHOLDS the snapshot entirely rather than serve an unsupported value.
+   * Absent ⇒ supported (hand-built inputs are unaffected).
+   */
+  cohortSupportsValue?: boolean;
 }
 
 /**
@@ -172,9 +191,11 @@ export interface ProjectedSnapshot {
   confidence_components: ConfidenceReplayRecord;
   algorithm_version: string;
   input_claim_versions: InputClaimVersion[];
-  /** Table 17 conflict_state. Column added in I1; unit I2 (2275) populates it —
-   *  projectClaim leaves it null and projectAndStore writes the assessed state. */
-  conflict_state: ConflictState | null;
+  /** Table 17 conflict_state, in the PERSISTED vocabulary the 2273 CHECKs admit
+   *  ('none' | 'contextualized' | 'material'). Column added in I1; unit I2 (2275)
+   *  populates it — projectClaim leaves it null and projectAndStore writes the
+   *  assessed state through toStoredConflictState. */
+  conflict_state: StoredConflictState | null;
 }
 
 /** One row of intel_state_snapshot_versions, as this writer inserts it. */
@@ -188,7 +209,7 @@ export interface ProjectionResult {
   snapshot: ProjectedSnapshot | null;
   /** Why it is not publishable, when it is not. */
   privacy: PrivacyDecision;
-  skippedReason?: "no_ttl_policy" | "invalid_input";
+  skippedReason?: "no_ttl_policy" | "invalid_input" | "value_not_supported";
   /** The full scored record, for callers that want it without re-reading the snapshot. */
   scored?: ConfidenceResult;
 }
@@ -226,6 +247,16 @@ export async function projectClaim(
 
   if (!subjectId || !input?.claimType || !input.observedAt) {
     return { snapshot: null, privacy: { publishable: false, reason: "invalid_input" }, skippedReason: "invalid_input" };
+  }
+
+  // FAIL CLOSED ON AN UNSUPPORTED VALUE. The aggregator sets this false when no
+  // consented, non-withdrawn cohort member currently asserts the value that
+  // would be served — the tie case, where falling back to the frozen anchor
+  // republishes an answer nobody live gives (and possibly one whose author has
+  // WITHDRAWN CONSENT). Withholding is the honest outcome: no snapshot, so the
+  // read path degrades to 'typical'/'unknown' rather than to a resurrected value.
+  if (input.cohortSupportsValue === false) {
+    return { snapshot: null, privacy: { publishable: false, reason: "invalid_input" }, skippedReason: "value_not_supported" };
   }
 
   // A claim type with no policy has no defined lifetime; freshnessPolicy already
@@ -332,9 +363,20 @@ export async function projectAndStore(
       // conflict_state (2275) rides alongside the projected row: the §10 state
       // the aggregator assessed for this cohort, 'none' when the caller did not
       // assess one. The read path treats NULL/absent as 'none' too.
-      const snapshotRow = { ...r.snapshot, conflict_state: input.conflictState ?? "none" };
+      //
+      // TRANSLATED to the PERSISTED vocabulary. Both CHECKs (2273) admit only
+      // ('none','contextualized','material'); the in-memory middle state is
+      // spelled 'minor'. Writing it raw failed the CHECK, and because the
+      // version append below is the FIRST write and its failure skips the
+      // current-state upsert, every cohort in mild disagreement silently stopped
+      // projecting. normalizeConflictState reads 'contextualized' back as
+      // 'minor', so nothing downstream changes.
+      const snapshotRow = { ...r.snapshot, conflict_state: toStoredConflictState(input.conflictState ?? "none") };
 
       // 1. The record: append the immutable version row FIRST.
+      // NOTE: intel_state_snapshot_versions (2273) has NO source_class column,
+      // so the class below is written to the CURRENT-STATE row only. Adding it
+      // to the history needs a migration and is deliberately not done here.
       const version: SnapshotVersionRow = {
         id: randomUUID(),
         ...snapshotRow,
@@ -352,10 +394,20 @@ export async function projectAndStore(
       }
       funnel.after_version_append++;
 
-      // 2. The cache: the current-state row readers key on.
+      // 2. The cache: the current-state row readers key on. The cohort's source
+      // class (2279 intel_state_snapshots.source_class) travels with it so
+      // lib/liveClaimRead can apply mayRenderAsLive / mayCountAsConsensus to a
+      // REAL class instead of the Phase-1 default — a wholly sponsored (disclosed
+      // commercial) cohort must not wear an independent-consensus badge. Only a
+      // canonical SOURCE_CLASSES value is written; anything else is omitted, and
+      // the reader then falls back to its own default.
+      const currentRow: Record<string, unknown> = { ...snapshotRow };
+      if (input.sourceClass && (SOURCE_CLASSES as readonly string[]).includes(input.sourceClass)) {
+        currentRow.source_class = input.sourceClass;
+      }
       const { error } = await sc
         .from("intel_state_snapshots")
-        .upsert(snapshotRow, { onConflict: "subject_id,zone_id,claim_type" });
+        .upsert(currentRow, { onConflict: "subject_id,zone_id,claim_type" });
       if (error) {
         tally.skipped++;
         logger.warn({ err: error, version_id: version.id }, "intelProjection: upsert failed");

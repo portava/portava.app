@@ -294,16 +294,48 @@ describe("Status filters", () => {
     assert.equal(results.length, 0);
   });
 
-  it("excludes delayed_post that has not yet become eligible", async () => {
-    const futureTime = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 h from now
+  // The fixture used to say post_status: "delayed_post". That is not a label of
+  // the delayed_post_status enum (draft / private / pending_location_exit /
+  // pending_delay / pending_safety_review / published / canceled / expired), so
+  // it could not occur in the database — and the production gate compared
+  // against the same impossible literal. Test and code agreed with each other
+  // and both disagreed with the schema, so the suite was green while every real
+  // pending post walked through. These cases use labels POST /posts and the
+  // moderation path actually write.
+  for (const pending of ["pending_location_exit", "pending_delay", "pending_safety_review"]) {
+    it(`excludes a post whose post_status is '${pending}' (a real, writable label)`, async () => {
+      const post = { ...BASE_POST, post_status: pending, discovery_places: BASE_PLACE };
+      const db = fakeDb({ post_event_links: [], posts: [post] });
+      const results = await fetchEventPostsForDiscovery(makeParams({ db }));
+      assert.equal(results.length, 0, `${pending} must never reach event discovery`);
+    });
+  }
+
+  it("excludes a pending post even when its publish_eligible_at has already passed", async () => {
+    // Fail closed: post_status is written by the sweeper, which also applies the
+    // safety-review hold. A reader must not publish on its own clock reading.
+    const pastTime = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const post = {
       ...BASE_POST,
-      post_status: "delayed_post",
-      publish_eligible_at: futureTime,
+      post_status: "pending_delay",
+      publish_eligible_at: pastTime,
       discovery_places: BASE_PLACE,
     };
     const db = fakeDb({ post_event_links: [], posts: [post] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 0);
+  });
+
+  it("includes a published post whose publish_eligible_at is still in the future (manual release)", async () => {
+    const futureTime = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const post = {
+      ...BASE_POST,
+      post_status: "published",
+      publish_eligible_at: futureTime,
+      discovery_places: BASE_PLACE,
+    };
+    const db = fakeDb({ post_event_links: [], posts: [post] });
+    const results = await fetchEventPostsForDiscovery(makeParams({ db }));
+    assert.equal(results.length, 1);
   });
 });

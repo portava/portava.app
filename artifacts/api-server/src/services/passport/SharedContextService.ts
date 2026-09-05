@@ -18,6 +18,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { areSharedMomentsEnabled } from "../../lib/places/sharedMoments.js";
+import { loadOwnerFieldVisibility } from "./PassportPrivacyGuard.js";
 
 /** One explainable overlap fact. `detail` is safe, coarse, viewer-permitted. */
 export interface SharedContextFact {
@@ -244,7 +245,7 @@ export async function buildSharedContext(
     };
   }
 
-  const [ownerP, viewerP, ownerQuick, viewerQuick, ownerFollows, viewerFollows, ownerCities, viewerCities, ownerTrips, viewerTrips] =
+  const [ownerP, viewerP, ownerQuick, viewerQuick, ownerFollows, viewerFollows, ownerCities, viewerCities, ownerTrips, viewerTrips, ownerVisibility] =
     await Promise.all([
       loadProfileLite(sc, ownerId),
       loadProfileLite(sc, viewerId),
@@ -256,13 +257,27 @@ export async function buildSharedContext(
       loadStampCities(sc, viewerId),
       perms.canSeeTrips ? loadTripIds(sc, ownerId) : Promise.resolve(new Set<string>()),
       perms.canSeeTrips ? loadTripIds(sc, viewerId) : Promise.resolve(new Set<string>()),
+      // TABLE 24 / §22 — the OWNER's location opt-outs, via the one canonical
+      // reader the main projection path also uses (PassportPrivacyGuard). Shared
+      // Context is always a non-owner view (viewer === owner returned above), so
+      // the opt-out always applies here.
+      loadOwnerFieldVisibility(sc, ownerId),
     ]);
 
   // ── Both in city (coarse city only) ─────────────────────────────────────────
+  // Gated on the owner's show_current_city opt-out, the same way the main
+  // projection gates travelerState.city — when the owner has opted out, this
+  // path surfaces no city at all.
+  //
+  // The WHOLE fact is withheld, not merely its `detail`: the viewer knows their
+  // own city, so a bare "Both in the same city" would still disclose the city
+  // the owner opted out of sharing. The home_city fallback is withheld with it,
+  // because a traveler who is currently at home has current_city === home_city
+  // and the fallback would leak exactly the value the opt-out conceals.
   const ownerCity = norm(ownerP?.current_city) || norm(ownerP?.home_city);
   const viewerCity = norm(viewerP?.current_city) || norm(viewerP?.home_city);
   let bothInCity: string | null = null;
-  if (ownerCity && ownerCity === viewerCity) {
+  if (ownerVisibility.showCurrentCity && ownerCity && ownerCity === viewerCity) {
     bothInCity = ownerP?.current_city || ownerP?.home_city || null;
     facts.push({ key: "both_in_city", label: "Both in the same city", detail: bothInCity, magnitude: null });
   }
