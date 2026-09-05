@@ -22,7 +22,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -43,7 +43,7 @@ let publicUserId = "", strangerId = "", strangerToken = "";
 
 async function makeUser(tag: string, isPrivate: boolean): Promise<string> {
   const sc = adminClient();
-  const email = `${PREFIX}${tag}@example.com`;
+  const email = fixtureEmail(`${PREFIX}${tag}@example.com`);
   const { data: c, error: cErr } = await sc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (cErr || !c?.user) throw new Error(`createUser(${tag}): ${cErr?.message}`);
   const id = c.user.id;
@@ -63,10 +63,10 @@ function assertNoData(error: any, data: any, what: string): void {
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}public@example.com`, `${PREFIX}stranger@example.com`]);
+  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}public@example.com`), fixtureEmail(`${PREFIX}stranger@example.com`)]);
   publicUserId = await makeUser("public", false);
   strangerId = await makeUser("stranger", false);
-  const { data: s, error } = await anonClient().auth.signInWithPassword({ email: `${PREFIX}stranger@example.com`, password: PASSWORD });
+  const { data: s, error } = await anonClient().auth.signInWithPassword({ email: fixtureEmail(`${PREFIX}stranger@example.com`), password: PASSWORD });
   if (error || !s?.session) throw new Error(`signIn(stranger): ${error?.message}`);
   strangerToken = s.session.access_token;
   const { error: vErr } = await adminClient().from("profiles")
@@ -76,7 +76,7 @@ before(async () => {
 });
 after(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}public@example.com`, `${PREFIX}stranger@example.com`]);
+  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}public@example.com`), fixtureEmail(`${PREFIX}stranger@example.com`)]);
 });
 
 describe("public_profile_verification view boundary", { skip: !CREDS_AVAILABLE }, () => {
