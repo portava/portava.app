@@ -320,6 +320,21 @@ describe("GET /wall/quick-media", () => {
   let server: http.Server;
   let base = "";
 
+  /**
+   * ROUTE fixtures must be relative to REAL now, not the frozen NOW the loader
+   * unit tests inject. The route calls loadQuickMediaItems with no `nowMs`, so
+   * the loader uses Date.now() and applies the 24-h window against the wall
+   * clock. A fixture pinned to a fixed `NOW` therefore passes only until real
+   * time drifts past NOW + 24 h — after which every run of this suite returns
+   * zero items, on CI and locally alike. Anchoring to Date.now() removes the
+   * expiry.
+   */
+  const REAL_NOW = Date.now();
+  const HAPPY_ROUTE: Fixture = {
+    ...HAPPY,
+    assets: [asset({ created_at: new Date(REAL_NOW - 2 * H).toISOString() })],
+  };
+
   function use(fixture: Fixture) {
     _setTestClient(fakeClient(fixture), true);
   }
@@ -344,7 +359,7 @@ describe("GET /wall/quick-media", () => {
   }
 
   it("is feature_disabled while the Wall is dark", async () => {
-    use({ ...HAPPY, flags: { wall_enabled: false } });
+    use({ ...HAPPY_ROUTE, flags: { wall_enabled: false } });
     const r = await get();
     // The error envelope maps feature_disabled to 404 (lib/http sendError).
     assert.equal(r.status, 404);
@@ -352,7 +367,7 @@ describe("GET /wall/quick-media", () => {
   });
 
   it("returns the items when the Wall is on", async () => {
-    use({ ...HAPPY, flags: { wall_enabled: true } });
+    use({ ...HAPPY_ROUTE, flags: { wall_enabled: true } });
     const r = await get("?limit=5");
     assert.equal(r.status, 200);
     assert.equal(r.body.items.length, 1);
@@ -361,14 +376,14 @@ describe("GET /wall/quick-media", () => {
   });
 
   it("degrades to an empty row (200) when the source throws", async () => {
-    use({ ...HAPPY, flags: { wall_enabled: true }, throwOn: "user_follows" });
+    use({ ...HAPPY_ROUTE, flags: { wall_enabled: true }, throwOn: "user_follows" });
     const r = await get();
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.items, []);
   });
 
   it("rejects an unauthenticated caller", async () => {
-    use({ ...HAPPY, flags: { wall_enabled: true } });
+    use({ ...HAPPY_ROUTE, flags: { wall_enabled: true } });
     const res = await fetch(`${base}/wall/quick-media`);
     assert.equal(res.status, 401);
   });
