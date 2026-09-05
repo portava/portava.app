@@ -27,6 +27,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MapPin, X as XIcon } from 'lucide-react-native';
 import { color, space, radius, type as t, icon, avatar } from '../../src/theme/tokens.ts';
 import { MapTopControls } from '../../src/components/map/MapTopControls.tsx';
+import { MapFloatingControls } from '../../src/components/map/MapFloatingControls.tsx';
+import { pruneBaseMapRegions } from '../../src/features/map/cache/offlineBaseMap.ts';
 import { AskCompassBar } from '../../src/components/map/AskCompassBar.tsx';
 import { useLocationContext } from '../../src/context/LocationContext.tsx';
 import { getDiscoveryPlaces } from '../../src/services/discovery.ts';
@@ -40,13 +42,20 @@ import {
   loadEnabledLayers,
 } from '../../src/components/map/MapFilterSheet.tsx';
 import type { MapEntity, ToggleableEntityType, PassportCountryPayload } from '../../src/types/mapTypes.ts';
-import { objectOf } from '../../src/types/mapCardPayloads.ts';
-import { TOGGLEABLE_LAYERS, KIND_TO_ENTITY_TYPE } from '../../src/types/mapTypes.ts';
+import { objectOf, placeCardPayload } from '../../src/types/mapCardPayloads.ts';
+import { TOGGLEABLE_LAYERS, KIND_TO_ENTITY_TYPE, mapObjectsToEntities } from '../../src/types/mapTypes.ts';
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 import { MapStoreProvider, useMapStore, deriveMapCapabilities } from '../../src/stores/mapStore.tsx';
 import { resolveBack } from '../../src/features/map/state/mapMachine.ts';
 import { activeIntent } from '../../src/features/map/intent/intentModel.ts';
+import {
+  pulseQueryForMap,
+  reconcileOrDrop,
+  type MapMode,
+  type PulseIntelItem,
+} from '../../src/features/map/pulse/pulseMapBridge.ts';
+import { detectArrivalPick } from '../../src/features/map/arrival/arrivalPromptModel.ts';
 import { NOW_OFFSET } from '../../src/features/map/time/timeMachine.ts';
 import { IntentSheet } from '../../src/components/map/IntentSheet.tsx';
 import { LayersSheet, loadLayerPreferences } from '../../src/components/map/LayersSheet.tsx';
@@ -63,12 +72,21 @@ import { OptimizeTodaySheet } from '../../src/components/map/OptimizeTodaySheet.
 import {
   tripToMapObjects,
   optimizeToday,
-  acceptProposal,
   dismissProposal,
   type TripStop,
   type OptimizeProposal,
 } from '../../src/features/map/trip/tripMapModel.ts';
-import { fetchTripPlanMap } from '../../src/services/tripPlan.ts';
+import {
+  composeTripMap,
+  persistOptimizeAcceptance,
+  type ComposedTripMap,
+} from '../../src/features/map/trip/tripMapSources.ts';
+import { fetchTripPlanMap, reorderPlanItems, createPlanItem } from '../../src/services/tripPlan.ts';
+import { listSaved } from '../../src/services/discoveryBookmarks.ts';
+import { getCrewMap } from '../../src/services/tripCrewLocation.ts';
+import { fetchTripRoutePlan } from '../../src/services/routePlan.ts';
+import { getActiveSession } from '../../src/services/safeReturn.ts';
+import { fetchCompassRecommendations } from '../../src/services/compass.ts';
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import type { MapMediaAsset } from '../../src/features/map/truth/contributionFlow.ts';
 import type { MediaKind } from '../../src/features/map/truth/liveTruth.ts';
@@ -80,8 +98,14 @@ import { LocateFriendsPanel } from '../../src/components/map/LocateFriendsPanel.
 import {
   startLocateFriendsSession,
   publishManualCheckpoint,
+  sharePermittedLocation,
   LOCATE_FRIENDS_PUBLISH_INTERVAL_MS,
 } from '../../src/services/locateFriends.ts';
+import {
+  DEFAULT_LOCATE_FRIENDS_TTL_MINUTES,
+  LOCATE_FRIENDS_TTL_OPTIONS,
+  isTtlWithinBound,
+} from '../../src/features/map/presence/locateFriendsTtl.ts';
 import { useSession } from '../../src/context/SessionContext.tsx';
 import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
 import { countBucket, durationBucketMs } from '../../src/features/map/telemetry/mapTelemetry.ts';
@@ -94,6 +118,7 @@ import {
   objectTarget,
   coordinateOf,
   describeTarget,
+  resolveShareBound,
   type LongPressTarget,
 } from '../../src/features/map/interaction/longPress.ts';
 import { longPressTargetAt } from '../../src/features/map/interaction/pressTarget.ts';
@@ -145,7 +170,9 @@ import {
   toMapObjects as compassPicksToMapObjects,
   type CompassMapCandidate,
 } from '../../src/features/map/compass/compassMapModel.ts';
-import { toTemporalObjects } from '../../src/features/map/time/timeMachine.ts';
+import { toTemporalObjects, offsetsEqual } from '../../src/features/map/time/timeMachine.ts';
+import { buildTemporalView } from '../../src/features/map/time/temporalView.ts';
+import { useTemporalEntities } from '../../src/hooks/useTemporalEntities.ts';
 import type { DiscoveryMapViewProps } from '../../src/components/discovery/DiscoveryMapView.tsx';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
@@ -230,6 +257,13 @@ function haversineKm(
 }
 
 /** Camera zoom per entity type. */
+/**
+ * The legacy Discovery place list while the PROJECTED path is live. Module-level
+ * so it is referentially stable: `placeEntities` and DiscoveryMapView's viewport
+ * fit both key on it.
+ */
+const EMPTY_PLACES: DiscoveryPlace[] = [];
+
 function zoomForEntity(type: MapEntity['type']): number {
   if (type === 'trips') return 10;
   if (type === 'gems' || type === 'places') return 15;
@@ -302,8 +336,13 @@ function rawObjectId(id: string): string {
 function savePayloadForObject(obj: MapObject): AddToTripPayload {
   const c = centroidOf(obj.geometry);
   const precise = precisionRank(obj.privacyClass) >= precisionRank('place_level');
+  // A projected canonical place is saved under its Discovery-SERVED id
+  // (`db/<places.id>`), the key the legacy Discovery path and placeIdBridge
+  // already use — never the bare `places.id`, which would file the same place
+  // under a second key (the saved_places→discovery_places→places bridge).
+  const placeSaveId = placeCardPayload(obj)?.discoveryId ?? null;
   return {
-    id: rawObjectId(obj.id),
+    id: placeSaveId ?? rawObjectId(obj.id),
     name: obj.title,
     category: obj.kind === 'hidden_gem' ? 'hidden_gem' : KIND_TO_ENTITY_TYPE[obj.kind],
     lat: precise ? (c?.lat ?? null) : null,
@@ -782,81 +821,6 @@ function FullScreenMapScreenInner() {
   const userLat = locationState.coords?.lat ?? null;
   const userLng = locationState.coords?.lng ?? null;
 
-  // ── Discovery places ───────────────────────────────────────────────────────
-  // Fetch discovery places when the caller requests the "places" entity layer
-  // and a destination city name is available (passed as the `title` param from
-  // the discovery tab).  Tracks loading / error / empty states so the map can
-  // surface meaningful feedback instead of a silent blank pin layer.
-  const [places, setPlaces] = useState<DiscoveryPlace[]>([]);
-  const [placesLoading, setPlacesLoading] = useState(false);
-  const [placesError, setPlacesError] = useState<string | null>(null);
-  // Increment to re-trigger the places fetch (retry mechanism).
-  const [placesRetryCount, setPlacesRetryCount] = useState(0);
-  // Tracks whether at least one places fetch has settled (success or error).
-  // Uses a ref so flipping it never causes an extra render; the accompanying
-  // setPlacesLoading(false) call provides the re-render trigger.
-  const placesFetchedRef = useRef(false);
-
-  const handlePlacesRetry = useCallback(() => {
-    setPlacesRetryCount((n) => n + 1);
-  }, []);
-
-  const destination = title; // city name string, e.g. "Cebu City"
-
-  // Whether the places layer has been requested and a destination is available.
-  const placesLayerActive =
-    entityTypes.split(',').map((s: string) => s.trim()).includes('places') && !!destination;
-
-  // Zero-results state: fetch completed, no error, but the list is empty.
-  // placesFetchedRef guards against the initial false-positive before the
-  // first fetch settles (setPlacesLoading(false) triggers the re-render that
-  // reads this ref, so it is always current when evaluated).
-  const placesEmpty =
-    placesLayerActive && placesFetchedRef.current && !placesLoading && !placesError && places.length === 0;
-
-  useEffect(() => {
-    if (!placesLayerActive) return;
-
-    let cancelled = false;
-    setPlacesError(null);
-    setPlacesLoading(true);
-
-    getDiscoveryPlaces(
-      destination!,
-      category,
-      { radiusKm: 10, openNow: false, minRating: null },
-      1,
-      null,
-      null,
-      null,
-      null,
-      paramLat,
-      paramLng,
-      userLat,
-      userLng,
-    ).then((res) => {
-      if (cancelled) return;
-      placesFetchedRef.current = true;
-      setPlacesLoading(false);
-      if (res.ok && Array.isArray(res.data?.places)) {
-        setPlaces(res.data.places);
-        setPlacesError(null);
-      } else {
-        setPlaces([]);
-        setPlacesError((!res.ok && res.error) ? res.error : 'Could not load nearby places');
-      }
-    }).catch((e: unknown) => {
-      if (cancelled) return;
-      placesFetchedRef.current = true;
-      setPlaces([]); // clear any stale pins so the error card is visible
-      setPlacesLoading(false);
-      setPlacesError(e instanceof Error ? e.message : 'Network error');
-    });
-
-    return () => { cancelled = true; };
-  // placesRetryCount is intentionally included to allow retry on demand.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [destination, category, entityTypes, paramLat, paramLng, userLat, userLng, placesRetryCount]);
 
   // ── Passport stamp entities ────────────────────────────────────────────────
   // In passport mode, fetch country-level stamp data and synthesise MapEntities.
@@ -935,76 +899,250 @@ function FullScreenMapScreenInner() {
     loadLayerPreferences().then(setLayerPrefs).catch(() => {});
   }, []);
 
+  /**
+   * §16 Relevant Places through the gateway (spec §19; server
+   * lib/mapProjectPlace.ts). `relevant_places` defaults to `on`, so the kind is
+   * requested unless the viewer has switched the layer off in the Layers sheet.
+   * Passport mode asks for nothing at all. The §16 pipeline below still applies
+   * mode forcing/suppression to whatever arrives; this is only the REQUEST.
+   */
+  const placesWanted = mode !== 'passport' && layerPrefs.relevant_places !== 'off';
+
+  // ── §34 live camera ──────────────────────────────────────────────────────────
+  // Where the camera actually SETTLED, reported by DiscoveryMapView through its
+  // onCameraChange prop. Declared above useMapEntities because the hook now
+  // takes it as the §34 re-query source: it used to be kept out of the fetch
+  // key because "a float that changes on every pinch would refetch the
+  // projection continuously" — the hook now QUANTISES it to a zoom band + a
+  // coarse centre grid and only re-queries after the §34 settle debounce, so a
+  // pan inside the viewport never re-queries and crossing into a new area does
+  // exactly once. It still also drives §17 bands and the §31 collision viewport
+  // (activeZoom / zoomBand, below).
+  const [liveCamera, setLiveCamera] =
+    useState<{ zoom: number; lat: number; lng: number } | null>(null);
+  const handleCameraChange = useCallback(
+    (cam: { zoom: number; center: { lat: number; lng: number } }) => {
+      setLiveCamera((prev) =>
+        prev && prev.zoom === cam.zoom && prev.lat === cam.center.lat && prev.lng === cam.center.lng
+          ? prev
+          : { zoom: cam.zoom, lat: cam.center.lat, lng: cam.center.lng },
+      );
+    },
+    [],
+  );
+
   // passportEntities — React hooks cannot be called conditionally.
   const {
     entities: defaultEntities,
     objects: defaultObjects,
     liveEnrichment,
     staleness,
+    source: entitiesSource,
+    stage: entitiesStage,
   } = useMapEntities({
     enabledLayers: mode === 'passport' ? [] : enabledLayers,
     city: mode === 'passport' ? null : title,
     lat: fallbackLat,
     lng: fallbackLng,
     zoom: cameraZoom ?? paramZoom,
+    // §34: once the camera settles, the viewport intelligence is fetched for
+    // where the user is actually looking, not where the shell last aimed. Null
+    // in passport mode, which fetches nothing regardless.
+    camera: mode === 'passport' ? null : liveCamera,
     // §16 explicit choice only. Passport mode asks for nothing at all, so it
     // must not smuggle a flow request past that intent.
     crowdFlow: mode !== 'passport' && layerPrefs.crowd_flow === 'on',
+    places: placesWanted,
+    // §16 Saved (default on): requested unless the viewer switched it off — the
+    // on-by-default twin of `places`.
+    saved: mode !== 'passport' && layerPrefs.saved !== 'off',
+    // §16 Memories (default off): explicit opt-in only.
+    memories: mode !== 'passport' && layerPrefs.memories === 'on',
+    // §5/§24 Safety (always on): a hazard notice cannot be switched off, so it
+    // is requested on every non-passport load. The §16 pipeline still force-
+    // resolves the layer visible; this is only the REQUEST.
+    safety: mode !== 'passport',
+    // §11/§16 Trip meeting points (trip layer, contextual): requested when a
+    // trip is on the map — trip mode, or the legacy Trips pin that seeds the
+    // §16 trip layer on. Downstream §16 filtering owns final visibility.
+    meetingPoints: mode !== 'passport' && (machine.mode === 'TRIP' || enabledLayers.includes('trips')),
   });
+
+  // ── Places: projected through the gateway, or the legacy Discovery fetch ───
+  //
+  // Map spec §19: canonical places enter the map through the projection, where
+  // §24 protection, §31 aggregation and §7 enrichment act on them. They arrive
+  // in `defaultObjects` above as `kind: 'place'` and take the same road as
+  // every other kind — the §16 pipeline, the §31 collision pass, the §8 sheet
+  // and the §25 rail. `useMapEntities` reports `source === 'gateway'` when the
+  // projection answered, and ONLY then is this the live path.
+  //
+  // The legacy path — GET /api/discovery/places, MapEntity<DiscoveryPlace>
+  // envelopes, DiscoveryMapView's own pin loop — is kept byte-for-byte as the
+  // rollback for `map_projection_enabled` off (or the gateway failing), exactly
+  // as every other layer's rollback works. It is NOT run while the gateway's
+  // first verdict is still pending: firing it and then discarding the result
+  // would flash unprotected pins for the duration of the projection call, and
+  // the §33 stage ladder only leaves `cached_geography` once a network verdict
+  // — gateway or rollback — has actually arrived.
+  const projectedPlacesActive = placesWanted && entitiesSource === 'gateway';
+  const gatewayVerdictPending =
+    placesWanted && entitiesSource !== 'gateway' && entitiesStage === 'cached_geography';
+
+  // Fetch discovery places when the caller requests the "places" entity layer
+  // and a destination city name is available (passed as the `title` param from
+  // the discovery tab).  Tracks loading / error / empty states so the map can
+  // surface meaningful feedback instead of a silent blank pin layer.
+  const [places, setPlaces] = useState<DiscoveryPlace[]>([]);
+  const [placesLoading, setPlacesLoading] = useState(false);
+  const [placesError, setPlacesError] = useState<string | null>(null);
+  // Increment to re-trigger the places fetch (retry mechanism).
+  const [placesRetryCount, setPlacesRetryCount] = useState(0);
+  // Tracks whether at least one places fetch has settled (success or error).
+  // Uses a ref so flipping it never causes an extra render; the accompanying
+  // setPlacesLoading(false) call provides the re-render trigger.
+  const placesFetchedRef = useRef(false);
+
+  const handlePlacesRetry = useCallback(() => {
+    setPlacesRetryCount((n) => n + 1);
+  }, []);
+
+  const destination = title; // city name string, e.g. "Cebu City"
+
+  // Whether the places layer has been requested and a destination is available.
+  const placesLayerActive =
+    entityTypes.split(',').map((s: string) => s.trim()).includes('places') && !!destination;
+  /** The legacy Discovery fetch is live: requested, and the projection is not serving places. */
+  const legacyPlacesActive = placesLayerActive && !projectedPlacesActive && !gatewayVerdictPending;
+  /**
+   * What the legacy renderer and envelopes see. Empty while the projected path
+   * is live, so a list fetched before the gateway's verdict (or on a previous
+   * verdict) can never be drawn beside the projected objects.
+   */
+  const legacyPlaces = projectedPlacesActive ? EMPTY_PLACES : places;
+
+  // Zero-results state: fetch completed, no error, but the list is empty.
+  // placesFetchedRef guards against the initial false-positive before the
+  // first fetch settles (setPlacesLoading(false) triggers the re-render that
+  // reads this ref, so it is always current when evaluated).
+  const placesEmpty =
+    legacyPlacesActive && placesFetchedRef.current && !placesLoading && !placesError && legacyPlaces.length === 0;
+
+  useEffect(() => {
+    if (!legacyPlacesActive) return;
+
+    let cancelled = false;
+    setPlacesError(null);
+    setPlacesLoading(true);
+
+    getDiscoveryPlaces(
+      destination!,
+      category,
+      { radiusKm: 10, openNow: false, minRating: null },
+      1,
+      null,
+      null,
+      null,
+      null,
+      paramLat,
+      paramLng,
+      userLat,
+      userLng,
+    ).then((res) => {
+      if (cancelled) return;
+      placesFetchedRef.current = true;
+      setPlacesLoading(false);
+      if (res.ok && Array.isArray(res.data?.places)) {
+        setPlaces(res.data.places);
+        setPlacesError(null);
+      } else {
+        setPlaces([]);
+        setPlacesError((!res.ok && res.error) ? res.error : 'Could not load nearby places');
+      }
+    }).catch((e: unknown) => {
+      if (cancelled) return;
+      placesFetchedRef.current = true;
+      setPlaces([]); // clear any stale pins so the error card is visible
+      setPlacesLoading(false);
+      setPlacesError(e instanceof Error ? e.message : 'Network error');
+    });
+
+    return () => { cancelled = true; };
+  // placesRetryCount is intentionally included to allow retry on demand.
+  // legacyPlacesActive folds in entityTypes, the destination and the gateway
+  // verdict, so a verdict arriving after mount starts (or never starts) it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [destination, category, legacyPlacesActive, paramLat, paramLng, userLat, userLng, placesRetryCount]);
 
   // ── §11 Trip Map ────────────────────────────────────────────────────────────
   // "Trip Map renders the current Trip geographically without duplicating or
-  // replacing Trip ownership." The itinerary is read, never written: the plan
-  // stays canonical in Trips (§20), and Optimize Today produces a PROPOSAL the
-  // user must accept.
+  // replacing Trip ownership." Every §11 element is read from its OWNING system
+  // (§20) and composed by `composeTripMap`; the plan stays canonical in Trips.
   //
-  // WHAT IS DELIBERATELY ABSENT. §11 also names crew, meeting points, routes,
-  // saved ideas and Safe Return context. Crew cannot be projected: getCrewMap
-  // returns CrewMemberCard, which carries an AREA LABEL and no coordinates —
-  // the server declines to give the client crew positions, and inventing them
-  // from the area label would be exactly the §23 violation that design prevents.
-  // The others have no reachable source on this screen today. They are left out
-  // rather than faked; tripToMapObjects omits any section it is not given.
+  //   lodging / stops / meeting points  ← the trip's plan-map items
+  //   saved ideas                       ← the trip's wishlist (listSaved)
+  //   crew                              ← getCrewMap, as COARSE AREA LABELS ONLY
+  //                                       (§23) — no coordinates are ever invented
+  //   routes                            ← the viewer's route plan for the trip
+  //   Safe Return                       ← the active Safe Return session
+  //   Compass alternatives              ← recommendations for the next stop
+  //
+  // Each source is fetched independently and a failure is swallowed to [] / null,
+  // so one unreachable system never blanks the map (§33). Optimize Today is a
+  // PROPOSAL the user must accept; acceptance persists through the Trips write
+  // path (`persistOptimizeAcceptance`), never a silent rewrite.
   const tripId = firstParam(params.tripId);
-  const [tripStops, setTripStops] = useState<TripStop[]>([]);
+  const tripCity = title;
+  const [composedTrip, setComposedTrip] = useState<ComposedTripMap | null>(null);
   const [proposal, setProposal] = useState<OptimizeProposal | null>(null);
 
-  useEffect(() => {
-    if (!tripId) return;
-    let cancelled = false;
-    void (async () => {
-      const items = await fetchTripPlanMap(tripId).catch(() => []);
-      if (cancelled) return;
-      const stops: TripStop[] = items
-        .filter((i) => i.lat != null && i.lng != null && !i.locationIsPrivate)
-        .map((i) => ({
-          id: i.id,
-          title: i.title,
-          subtitle: i.locationName ?? undefined,
-          lat: i.lat as number,
-          lng: i.lng as number,
-          // The CANONICAL ordering. tripMapModel never renumbers it — a
-          // proposal reorders the array, not these values.
-          orderIndex: i.sortOrder,
-          // 'fixed' is the hard anchor the optimizer may not move; 'flexible'
-          // and 'optional' are both revisable, so neither becomes a reservation.
-          reservationAt: i.lockType === 'fixed' ? i.startsAt : null,
-          eventStartsAt: i.startsAt,
-          eventEndsAt: i.endsAt,
-          plannedArrivalTime: i.startsAt,
-        }));
-      setTripStops(stops);
-    })();
-    return () => { cancelled = true; };
-  }, [tripId]);
+  const buildComposedTrip = useCallback(async (): Promise<ComposedTripMap | null> => {
+    if (!tripId) return null;
+    const nowIso = new Date().toISOString();
+    const [planItems, savedPlaces, crewRes, routePlan, safeRes, compassRes] = await Promise.all([
+      fetchTripPlanMap(tripId).catch(() => []),
+      listSaved(tripId).catch(() => []),
+      getCrewMap(tripId).catch(() => ({ ok: false as const, error: 'unavailable' })),
+      fetchTripRoutePlan(tripId).catch(() => null),
+      getActiveSession().catch(() => ({ session: null })),
+      fetchCompassRecommendations({ surface: 'trip', tripId, city: tripCity ?? undefined }).catch(
+        () => ({ ok: false as const, error: 'unavailable' }),
+      ),
+    ]);
+    // Safe Return is only this trip's context when the active session is bound
+    // to this trip (§24 purpose-bound); an unrelated session is not projected.
+    const safeReturnSession =
+      safeRes.session && safeRes.session.tripId === tripId ? safeRes.session : null;
+    return composeTripMap({
+      tripId,
+      planItems,
+      savedPlaces,
+      crew: crewRes.ok ? crewRes.data.members : [],
+      routePlan,
+      safeReturnSession,
+      compassRecommendations: compassRes.ok ? (compassRes.data?.recommendations ?? []) : [],
+      now: nowIso,
+    });
+  }, [tripId, tripCity]);
 
-  const tripObjects = useMemo(
-    () =>
-      tripId && tripStops.length > 0
-        ? (tripToMapObjects({ tripId, stops: tripStops }, { now: new Date().toISOString() }) as MapObject[])
-        : null,
-    [tripId, tripStops],
+  useEffect(() => {
+    let cancelled = false;
+    void buildComposedTrip().then((c) => { if (!cancelled) setComposedTrip(c); });
+    return () => { cancelled = true; };
+  }, [buildComposedTrip]);
+
+  // The day's stops, in canonical order, for Optimize Today. Never renumbered —
+  // a proposal reorders the array, not the orderIndex values.
+  const tripStops = useMemo<readonly TripStop[]>(
+    () => composedTrip?.source.stops ?? [],
+    [composedTrip],
   );
+
+  const tripObjects = useMemo(() => {
+    if (!tripId || !composedTrip) return null;
+    const objs = tripToMapObjects(composedTrip.source, { now: new Date().toISOString() }) as MapObject[];
+    return objs.length > 0 ? objs : null;
+  }, [tripId, composedTrip]);
 
   // ── §30 capabilities ────────────────────────────────────────────────────────
   // `canEnterMode` fails closed, and nothing in the app ever called
@@ -1029,14 +1167,32 @@ function FullScreenMapScreenInner() {
         // it was opened for. No trip, no session to start, no mode to enter.
         locateFriendsScopeId: tripId,
         viewerId: userId ?? null,
+        // §15 — the temporal producer rides the SAME gateway flag the NOW
+        // projection does, so "the gateway answered for this session" is the
+        // honest presence check that the per-offset source is reachable. Legacy
+        // (per-layer) means the gateway is off/unreachable → no source to scrub.
+        timeMachineProducerEnabled: entitiesSource !== 'legacy',
       }),
-    [crowdFlowObjectCount, isFlagEnabled, tripId, userId],
+    [crowdFlowObjectCount, isFlagEnabled, tripId, userId, entitiesSource],
   );
   useEffect(() => {
     // The store bails out when the record says the same thing, so this settles
     // after one dispatch instead of re-rendering on every pass.
     setMapCapabilities(capabilities);
   }, [capabilities, setMapCapabilities]);
+
+  // ── §15 Time Machine — the per-offset payload ────────────────────────────────
+  // When the user scrubs to a non-NOW offset, the map shows a DIFFERENT instant
+  // fetched from GET /api/map/projection/temporal — real predictions/history, not
+  // the NOW map relabelled (§37). At NOW this fetches nothing; the screen keeps
+  // using the useMapEntities objects for the present.
+  const temporal = useTemporalEntities({
+    lat: fallbackLat,
+    lng: fallbackLng,
+    zoom: cameraZoom ?? paramZoom,
+    offset: timeOffset,
+    active: capabilities.TIME_MACHINE === true,
+  });
 
   // ── §3 / §26 Live Pulse ─────────────────────────────────────────────────────
   // "Bottom Live Pulse card summarizes the most important nearby change." The
@@ -1048,11 +1204,26 @@ function FullScreenMapScreenInner() {
     if (mode === 'passport') return;
     let cancelled = false;
     void (async () => {
-      const res = await getLivePulseItems({}).catch(() => null);
+      // §26 Map → Pulse: the narrative feed follows the geographic state. The
+      // reverse of the deep-link tap — mapStateToPulseQuery, via pulseQueryForMap
+      // — turns "where the map is looking" into "which Pulse context/coords to
+      // ask for", so the bottom card summarises the change near what the user is
+      // actually looking at rather than a fixed default.
+      const query = pulseQueryForMap({
+        mode: machine.mode as MapMode,
+        center: cameraCenter ?? null,
+        citySlug: null,
+      });
+      const res = await getLivePulseItems({
+        context: query.context,
+        lat: query.lat,
+        lng: query.lng,
+        citySlug: query.citySlug,
+      }).catch(() => null);
       if (!cancelled && res && res.ok) setPulseItems(res.items);
     })();
     return () => { cancelled = true; };
-  }, [mode]);
+  }, [mode, machine.mode, cameraCenter]);
 
   // ── §35 telemetry ───────────────────────────────────────────────────────────
   // Transport is installed once per map session. Without one the emitter keeps
@@ -1078,6 +1249,18 @@ function FullScreenMapScreenInner() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── §28 offline base-map hygiene ─────────────────────────────────────────────
+  // "Clearly label stale cached intelligence" applies to cached geography too:
+  // drop offline base-map packs past the base_map_region TTL (and any beyond the
+  // class's entry cap) whenever the map opens. Fire-and-forget and fails soft —
+  // it downloads nothing, only prunes, and reports `offline_unavailable` on a
+  // build without the native OfflineManager (web / Jest). Creating a pack is a
+  // deliberate act a §28 "download this area" surface owns; this is the upkeep
+  // that keeps whatever exists inside policy.
+  useEffect(() => {
+    void pruneBaseMapRegions().catch(() => {});
+  }, []);
+
   // ── §30 Back ladder ─────────────────────────────────────────────────────────
   // Overlay -> selection -> secondary mode -> let the router pop. Navigation is
   // deliberately NOT a rung: a stray back must not drop the user out of
@@ -1091,6 +1274,23 @@ function FullScreenMapScreenInner() {
     });
     return () => sub.remove();
   }, [machine, dispatchMapEvent]);
+
+  // ── §30 END_NAVIGATION on return from external routing ───────────────────────
+  // Navigate hands off to the device's maps app (see handleMapAction), which
+  // backgrounds Portava. There is no in-app turn-by-turn to "finish", so the
+  // honest end of the navigation framing is the moment the user comes BACK: the
+  // app returns to the foreground. This listener is mounted ONLY while a
+  // navigation is active, so a plain background/foreground with nothing routing
+  // dispatches nothing, and END_NAVIGATION on a null navigation is a machine
+  // no-op regardless. On return the destination pin's §5 promotion is released.
+  const hasNavigation = machine.navigation !== null;
+  useEffect(() => {
+    if (!hasNavigation) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') dispatchMapEvent({ type: 'END_NAVIGATION' });
+    });
+    return () => sub.remove();
+  }, [hasNavigation, dispatchMapEvent]);
 
   // ── Compass search override ─────────────────────────────────────────────────
   // When a Compass query is active, compassOverrideEntities replaces defaultEntities
@@ -1211,7 +1411,7 @@ function FullScreenMapScreenInner() {
   // remains the sole renderer for place pins — no double rendering.
   const placeEntities = useMemo(
     (): MapEntity<DiscoveryPlace>[] =>
-      places
+      legacyPlaces
         .filter((p) => p.lat != null && p.lng != null)
         .map((p) => ({
           id: `place:${p.id}`,
@@ -1226,36 +1426,19 @@ function FullScreenMapScreenInner() {
           detailRoute: `/place/${encodeURIComponent(p.canonicalPlaceId ?? p.id)}?placeJson=${encodeURIComponent(JSON.stringify(p))}`,
           actionCapabilities: ['save', 'directions', 'add_to_trip', 'share'] as import('../../src/types/mapTypes.ts').MapActionCapability[],
         })),
-    [places],
+    [legacyPlaces],
   );
 
   // ── §16 / §19 the one layer decision on this screen ─────────────────────────
   // Declared here rather than beside the render pipeline below because the
   // MARKERS need it too: `filterByLayers` was imported and never called, so the
   // Layers sheet wrote preferences that could not reach a drawn pin.
-  // `liveCamera` is the camera DiscoveryMapView actually has, reported through
-  // its onCameraChange prop. It is held HERE rather than pushed into mapStore's
-  // cameraZoom because that value is part of useMapEntities' fetch key above —
-  // a float that changes on every pinch would refetch the projection
-  // continuously. What needs the live camera is this pipeline (§17 bands, the
-  // §31 collision viewport), not the fetch.
   //
-  // It takes precedence over cameraZoom/cameraCenter: those are written when
-  // the screen COMMANDS a camera move (a carousel swipe, a marker tap), so they
-  // describe where the camera was sent, and liveCamera describes where it
-  // ended up. When the two disagree the camera is the authority.
-  const [liveCamera, setLiveCamera] =
-    useState<{ zoom: number; lat: number; lng: number } | null>(null);
-  const handleCameraChange = useCallback(
-    (cam: { zoom: number; center: { lat: number; lng: number } }) => {
-      setLiveCamera((prev) =>
-        prev && prev.zoom === cam.zoom && prev.lat === cam.center.lat && prev.lng === cam.center.lng
-          ? prev
-          : { zoom: cam.zoom, lat: cam.center.lat, lng: cam.center.lng },
-      );
-    },
-    [],
-  );
+  // `liveCamera` (declared above, before useMapEntities) is where the camera
+  // ENDED UP. It takes precedence over cameraZoom/cameraCenter, which are
+  // written when the screen COMMANDS a camera move (a carousel swipe, a marker
+  // tap) and describe where the camera was SENT. When the two disagree the
+  // camera is the authority.
   const activeZoom = liveCamera?.zoom ?? cameraZoom ?? paramZoom;
   const zoomBand = zoomRenderBand(activeZoom);
 
@@ -1351,10 +1534,36 @@ function FullScreenMapScreenInner() {
   }, [entityTypes, effectiveLayerPrefs]);
 
   /**
+   * §15 — is the Time Machine scrubbed AWAY from now?
+   *
+   * Passport mode is excluded outright: it never opens the §15 control, has no
+   * temporal payload, and taking the branch below there would blank it.
+   */
+  const atTemporalOffset = mode !== 'passport' && !offsetsEqual(timeOffset, NOW_OFFSET);
+
+  /**
    * The objects the §16 decision is made over: the pipeline's INPUT, before any
    * filtering, so a marker can be matched to the object it came from.
+   *
+   * §15 — AT A NON-NOW OFFSET THE INPUT IS THE TEMPORAL PAYLOAD, and this is
+   * the whole of the fix for "the Time Machine shows the wrong data". Only the
+   * `permittedObjects` memo used to swap the base, far below; everything
+   * upstream of it — this base, the §16 hidden-id set and, decisively, the
+   * ENTITY list the marker layer draws from — stayed pinned to the NOW map. So
+   * scrubbing to Yesterday drew today's live markers (the entity ids were not
+   * in `pipelineJudgedIds`, so the "pass anything the pipeline never judged"
+   * escape hatch waved every one of them through) while the historical payload,
+   * which has no entity at all, drew nothing. The user saw today and was told
+   * it was yesterday.
+   *
+   * Swapping it HERE means one base feeds §16 filtering, the entity list, §17
+   * band culling and §31 collision, so those five stages cannot disagree about
+   * which instant is on screen. An offset the producer had nothing for yields
+   * an EMPTY base — the honest empty state — never a fallback to today.
    */
-  const pipelineBase = compassPickObjects ?? (tripObjects ?? defaultObjects);
+  const pipelineBase = atTemporalOffset
+    ? temporal.objects
+    : (compassPickObjects ?? (tripObjects ?? defaultObjects));
 
   /**
    * Ids the layers say NO to.
@@ -1383,9 +1592,25 @@ function FullScreenMapScreenInner() {
   //   1. Compass override (active search result)
   //   2. Passport entities when mode=passport
   //   3. Default hook-sourced entities + place entities
-  const allEntities = compassOverrideEntities ?? (
-    mode === 'passport' ? passportEntities : [...defaultEntities, ...placeEntities]
+  //
+  // §15 — at a non-NOW offset the entities ARE the temporal payload, projected
+  // through the same envelope useMapEntities uses (`mapObjectsToEntities`
+  // copies `obj.id` verbatim, which is what lets the marker filter below match
+  // them back to their objects). The NOW sources are all excluded on purpose:
+  // `defaultEntities` is today's live map, `placeEntities` is today's Discovery
+  // fetch, and a Compass override is a search over the present. None of them is
+  // evidence about another instant, and drawing them under a past or future
+  // label is exactly §37's "predictions must not look like observations" read
+  // in both directions.
+  const temporalEntities = useMemo(
+    () => mapObjectsToEntities(temporal.objects) as MapEntity[],
+    [temporal.objects],
   );
+  const allEntities = atTemporalOffset
+    ? temporalEntities
+    : compassOverrideEntities ?? (
+      mode === 'passport' ? passportEntities : [...defaultEntities, ...placeEntities]
+    );
 
   // One list drives the markers AND the carousel, so a card can never advertise
   // a pin the map is not drawing. Identity is preserved when nothing is hidden,
@@ -1442,6 +1667,17 @@ function FullScreenMapScreenInner() {
         setActiveIndex(focusIndex);
         carouselRef.current?.scrollToIndex(focusIndex);
         const entity = entities[focusIndex];
+        // §30 FOCUS_OBJECT — frame the deep-linked object WITHOUT selecting it.
+        // This snap centres the camera on a focusId without opening its sheet
+        // (a marker tap does that via SELECT_OBJECT), so the machine's framing
+        // event is FOCUS_OBJECT: camera → the kind's framing, cameraTargetId →
+        // the object, selection untouched. Kind comes off the entity's own
+        // MapObject; the reducer no-ops on a malformed kind, so a payload-less
+        // entity simply leaves the machine framing where it was.
+        const focusObj = objectOf(entity);
+        if (focusObj) {
+          dispatchMapEvent({ type: 'FOCUS_OBJECT', objectId: focusObj.id, objectKind: focusObj.kind });
+        }
         if (cameraRef.current && typeof cameraRef.current.easeTo === 'function') {
           cameraRef.current.easeTo({
             center: [entity.lng, entity.lat],
@@ -1550,12 +1786,26 @@ function FullScreenMapScreenInner() {
     // 1. §16 layers, then §3's chip. homeVisibleObjects composes them in that
     //    order so a chip can only ever narrow what the layers already permit —
     //    a chip must never switch a layer back on.
-    const permitted = homeVisibleObjects(pipelineBase, homeFilter, effectiveLayerPrefs, layerContext);
-    // 2. §15 — a forecast becomes kind 'prediction' and loses any live
-    //    freshness, so zoneStyle gives it the dashed treatment (§37).
+    // §15 — `pipelineBase` IS the per-offset payload at a non-NOW offset now
+    // (predictions / observed history), so this stage no longer picks a second
+    // base of its own. It used to, and that was the bug: this memo swapped to
+    // `temporal.objects` while the entity list and the §16 hidden-id set kept
+    // reading the NOW map, so the two halves of the screen drew different
+    // instants. One base, decided once, above.
+    const base = pipelineBase;
+    // §16 layers still narrow the per-offset payload. In TIME_MACHINE mode the
+    // layer context forces `live_activity` on (predictions map to it) and leaves
+    // relevant_places on (historical places map to that), so the real payload
+    // survives the filter rather than being silently dropped.
+    const permitted = homeVisibleObjects(base, homeFilter, effectiveLayerPrefs, layerContext);
+    // 2. §15 — the ONE construction point: a forecast becomes kind 'prediction'
+    //    and loses any live freshness, so zoneStyle gives it the dashed treatment
+    //    (§37). On the temporal payload this is the enforcement pass (a prediction
+    //    stays a prediction); on the NOW map it is a no-op.
     return toTemporalObjects(permitted, timeOffset) as unknown as MapObject[];
   }, [
     pipelineBase,
+    temporal.objects,
     homeFilter,
     effectiveLayerPrefs,
     layerContext,
@@ -1568,6 +1818,17 @@ function FullScreenMapScreenInner() {
     () => homeChipCounts(compassPickObjects ?? defaultObjects, effectiveLayerPrefs, layerContext),
     [compassPickObjects, defaultObjects, effectiveLayerPrefs, layerContext],
   );
+
+  // §15 — the TimeMachineControl's own view of the offset: the city timeline and
+  // a representative forecast confidence, derived from the SAME real per-offset
+  // payload the map draws (temporal.objects at a non-NOW offset, the NOW map at
+  // NOW). An offset with nothing to show yields an empty timeline, which
+  // CityTimeline renders as its honest "no city trend" state — never a blank that
+  // reads as "nothing is happening".
+  const temporalView = useMemo(() => {
+    const source = atTemporalOffset ? temporal.objects : (compassPickObjects ?? defaultObjects);
+    return buildTemporalView(source, timeOffset);
+  }, [atTemporalOffset, timeOffset, temporal.objects, compassPickObjects, defaultObjects]);
 
   // §31 — collision only among the point-shaped markers. `dropped` is surfaced
   // rather than swallowed: a hidden object the user cannot reach is a silent
@@ -1739,6 +2000,43 @@ function FullScreenMapScreenInner() {
   } | null>(null);
   const [contributeObject, setContributeObject] = useState<MapObject | null>(null);
   /**
+   * §38 arrival prompt. The id of the object whose contribution sheet was opened
+   * BY an arrival (not a manual tap), so `contribution_submitted` can carry
+   * `prompt: 'arrival'` and close the §38 loop. Compared by id in onSubmit so no
+   * manual open path has to know about it; cleared on close.
+   */
+  const [arrivalPromptId, setArrivalPromptId] = useState<string | null>(null);
+  /**
+   * §38: picks we have already surfaced the arrival prompt for this session, so
+   * a one-tap prompt does not re-fire every time GPS re-enters the radius. A ref
+   * (not state) — it must not trigger a re-render or re-run the detector.
+   */
+  const arrivalPromptedIdsRef = useRef<Set<string>>(new Set());
+
+  // ── §38 arrival one-tap prompt ──────────────────────────────────────────────
+  // "The user taps Go There … arrives, and later answers a one-tap prompt about
+  // the crowd. That observation re-enters the Live Intelligence pipeline." When
+  // the user's real position reaches a Compass Pick they have not yet been asked
+  // about, surface the contribution sheet ONCE and mark it arrival-triggered so
+  // contribution_submitted carries prompt:'arrival' and closes the loop. Gated
+  // on no sheet already being open, so it never yanks the user off something
+  // they are already doing. detectArrivalPick is pure and fail-closed.
+  useEffect(() => {
+    if (mode === 'passport') return;
+    if (contributeObject !== null) return; // don't interrupt an open sheet
+    if (userLat == null || userLng == null) return;
+    const pick = detectArrivalPick(
+      { lat: userLat, lng: userLng },
+      compassPickObjects,
+      arrivalPromptedIdsRef.current,
+    );
+    if (!pick) return;
+    arrivalPromptedIdsRef.current.add(pick.id);
+    setArrivalPromptId(pick.id);
+    setContributeObject(pick);
+  }, [mode, userLat, userLng, compassPickObjects, contributeObject]);
+
+  /**
    * §25 `report` on a person or a listing. Held as the OBJECT rather than a
    * boolean so the sheet's subject cannot drift from the thing that was
    * reported when the selection changes underneath it.
@@ -1757,9 +2055,19 @@ function FullScreenMapScreenInner() {
   // stranding bug the un-gated DELETE route was written to prevent.
   const [locateSessionId, setLocateSessionId] = useState<string | null>(null);
   const [locateStarting, setLocateStarting] = useState(false);
+  // §12 "temporary and auto-expiring": the session's lifetime is CHOSEN here,
+  // not baked in. Defaults to two hours (the length the old frozen chip used)
+  // and every offered option is ≤ the server's 12h cap.
+  const [locateTtlMinutes, setLocateTtlMinutes] = useState<number>(
+    DEFAULT_LOCATE_FRIENDS_TTL_MINUTES,
+  );
 
   const startLocateFriends = useCallback(
     async (scope: { kind: 'trip' | 'circle' | 'event' | 'plan'; id: string }, ttlMinutes: number) => {
+      // Last line of defence before a session is started: a TTL outside the
+      // server's [1, 720]-minute window never reaches the API. There is no
+      // default here — an unusable value is refused, not silently corrected.
+      if (!isTtlWithinBound(ttlMinutes)) return;
       setLocateStarting(true);
       const res = await startLocateFriendsSession({
         groupScopeKind: scope.kind,
@@ -1846,6 +2154,18 @@ function FullScreenMapScreenInner() {
       const c = centroidOf(obj.geometry);
       switch (action) {
         case 'navigate':
+          // §30 START_NAVIGATION — §5 gives active navigation standing camera
+          // precedence, so the machine enters FOCUS_ROUTE and promotes THIS
+          // object's pin (renderResult reads navigation.destinationObjectId).
+          // Routing itself is the device's maps app (openInMaps), which has no
+          // in-app session to observe; END_NAVIGATION fires when the user
+          // returns to Portava (the AppState effect below). routeId must be a
+          // non-empty string for the reducer to accept it.
+          dispatchMapEvent({
+            type: 'START_NAVIGATION',
+            routeId: `route:${rawObjectId(obj.id)}`,
+            destinationObjectId: obj.id,
+          });
           if (c) openInMaps(c.lat, c.lng);
           return;
         case 'contribute':
@@ -2092,7 +2412,7 @@ function FullScreenMapScreenInner() {
           Entity layers (Buddies, Events, Gems, Trips, Friends) are injected
           via entities/enabledEntityLayers props. */}
       <MapComponent
-        places={places}
+        places={legacyPlaces}
         onSelectPlace={handleSelectPlace}
         fallbackLat={cameraCenter?.lat ?? fallbackLat}
         fallbackLng={cameraCenter?.lng ?? fallbackLng}
@@ -2106,6 +2426,10 @@ function FullScreenMapScreenInner() {
         onSelectEntity={handleSelectEntity}
         selectedEntityId={selectedEntityId}
         onCameraChange={handleCameraChange}
+        // §30: a user drag/pinch hands the camera to the machine (FREE_EXPLORE).
+        // Gated inside DiscoveryMapView on the SDK's userInteraction flag, so a
+        // programmatic easeTo (recenter, carousel, focus) never lands here.
+        onUserPan={() => dispatchMapEvent({ type: 'USER_PANNED' })}
         filterRowOffset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT + 8}
         onLongPressMap={handleMapLongPress}
       />
@@ -2141,12 +2465,24 @@ function FullScreenMapScreenInner() {
         title={null}
         topInset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT}
         onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'LAYERS' })}
+        // §30 RECENTER — return camera control to the machine (FOLLOW_USER).
+        // The button's own easeTo does the move; this records the intent.
+        onRecenter={() => dispatchMapEvent({ type: 'RECENTER' })}
+      />
+
+      {/* §3 floating controls: zoom in/out + orientation reset (compass → N).
+          Steps from activeZoom — the camera's REAL zoom — so a tap is one level
+          from where the map actually is, not from a stale commanded value. */}
+      <MapFloatingControls
+        cameraRef={cameraRef}
+        zoom={activeZoom}
+        bottomInset={insets.bottom + 220}
       />
 
       {/* Places loading indicator — small spinner overlay while getDiscoveryPlaces
           is in-flight.  Rendered over the map (not in the carousel) so the user
           sees immediate feedback even before the carousel area appears. */}
-      {placesLayerActive && placesLoading ? (
+      {legacyPlacesActive && placesLoading ? (
         <View style={s.placesLoadingOverlay} pointerEvents="none">
           <ActivityIndicator size="small" color="#fff" />
         </View>
@@ -2168,10 +2504,10 @@ function FullScreenMapScreenInner() {
         passportLoading={mode === 'passport' ? passportLoading : undefined}
         passportError={mode === 'passport' ? passportError : undefined}
         onPassportRetry={mode === 'passport' ? handlePassportRetry : undefined}
-        placesLoading={placesLayerActive ? placesLoading : undefined}
-        placesError={placesLayerActive ? placesError : undefined}
-        placesEmpty={placesLayerActive ? placesEmpty : undefined}
-        onPlacesRetry={placesLayerActive ? handlePlacesRetry : undefined}
+        placesLoading={legacyPlacesActive ? placesLoading : undefined}
+        placesError={legacyPlacesActive ? placesError : undefined}
+        placesEmpty={legacyPlacesActive ? placesEmpty : undefined}
+        onPlacesRetry={legacyPlacesActive ? handlePlacesRetry : undefined}
         style={[
           s.carousel,
           { bottom: insets.bottom + 16 },
@@ -2257,14 +2593,33 @@ function FullScreenMapScreenInner() {
         <LivePulseCard
           items={pulseItems}
           bottomInset={insets.bottom + 96}
-          onDeepLink={(deepLink) => {
+          onDeepLink={(deepLink, item) => {
             if (deepLink.mode) dispatchMapEvent({ type: 'ENTER_MODE', mode: deepLink.mode });
             if (deepLink.selectedObjectId) {
-              dispatchMapEvent({
-                type: 'SELECT_OBJECT',
-                objectId: deepLink.selectedObjectId,
-                objectKind: 'place',
-              });
+              // §26 guarantee at the handoff: a card the user just read is about
+              // to become a marker they read. If the two surfaces disagree about
+              // the SAME subject's live state, selecting the marker would show a
+              // second truth — so reconcileOrDrop against the map's own object
+              // and, on divergence, FALL CLOSED: move the camera to the area but
+              // do not open a sheet that contradicts the card (§37: no stale
+              // claim rendered live). Silence on both sides is not a divergence,
+              // so a Pulse item that states no intel axes always selects.
+              const targetObj = objects.find((o) => o.id === deepLink.selectedObjectId) ?? null;
+              const verdict = targetObj
+                ? reconcileOrDrop(item as PulseIntelItem, targetObj)
+                : { ok: true as const };
+              if (verdict.ok) {
+                dispatchMapEvent({
+                  type: 'SELECT_OBJECT',
+                  objectId: deepLink.selectedObjectId,
+                  objectKind: 'place',
+                });
+              } else if (__DEV__) {
+                console.warn(
+                  '[map] §26 Pulse↔Map divergence — deep-link select suppressed',
+                  verdict.divergences,
+                );
+              }
             }
             const target = deepLink.cameraTarget;
             const cam = cameraRef.current;
@@ -2331,6 +2686,8 @@ function FullScreenMapScreenInner() {
         <TimeMachineControl
           offset={timeOffset}
           onChange={setTimeOffset}
+          timeline={temporalView.timeline}
+          forecastConfidence={temporalView.forecastConfidence}
           bottomInset={insets.bottom + 140}
         />
       ) : null}
@@ -2386,14 +2743,19 @@ function FullScreenMapScreenInner() {
       <MapContributionSheet
         visible={contributeObject !== null}
         object={contributeObject}
-        onClose={() => setContributeObject(null)}
+        onClose={() => { setContributeObject(null); setArrivalPromptId(null); }}
         onRequestMedia={requestContributionMedia}
         onSubmit={(contribution) => {
           if (!contributeObject) return;
+          // §38: a submission whose sheet was opened by an arrival carries
+          // prompt:'arrival' — the loop's VERIFY step, attributable to the pick
+          // the user was routed to. Everything else is a manual 'sheet' open.
+          const arrivalTriggered =
+            arrivalPromptId !== null && contributeObject.id === arrivalPromptId;
           emitMapEvent('contribution_submitted', {
             ref: describeMapObject(contributeObject),
             contributionKind: contribution.kind,
-            prompt: 'sheet',
+            prompt: arrivalTriggered ? 'arrival' : 'sheet',
           });
         }}
       />
@@ -2424,15 +2786,23 @@ function FullScreenMapScreenInner() {
       />
 
       {/* ── §11 Optimize Today ──────────────────────────────────────────────
-          A PROPOSAL, never a rewrite: acceptProposal/dismissProposal return
-          data, and persisting it is the caller's job. §11: "the map should not
-          silently rewrite the canonical Trip." */}
+          A PROPOSAL, never a rewrite. Acceptance persists through the Trips
+          write path (persistOptimizeAcceptance → owner-only batch reorder), so
+          the accepted order is durable — not a local-only shuffle. §11: "the
+          map should not silently rewrite the canonical Trip." */}
       {tripId && tripStops.length > 1 ? (
         <Pressable
           style={[s2.optimizeChip, { bottom: insets.bottom + 240 }]}
           onPress={() =>
             setProposal(
-              optimizeToday(tripStops, { now: new Date().toISOString() }),
+              optimizeToday(tripStops, {
+                now: new Date().toISOString(),
+                lodging: composedTrip?.source.lodging ?? null,
+                // §11 saved-ideas factor: an idea barely off the route may be
+                // proposed as an addition (the sheet shows it; the user accepts).
+                savedIdeas: composedTrip?.source.savedIdeas,
+                maxSavedIdeaInsertions: 1,
+              }),
             )
           }
           accessibilityRole="button"
@@ -2451,17 +2821,54 @@ function FullScreenMapScreenInner() {
           setProposal(null);
         }}
         onAccept={(p) => {
-          const change = acceptProposal(p, new Date().toISOString());
-          // `persisted: false` — the write is a Trips concern (§20), and this
-          // screen does not own the itinerary. Reorder locally so the map
-          // reflects the accepted plan; the durable write belongs to TripPage.
-          const byId = new Map(tripStops.map((st) => [st.id, st]));
-          setTripStops(
-            change.orderedStopIds
-              .map((id) => byId.get(id))
-              .filter((st): st is TripStop => st != null),
-          );
-          setProposal(null);
+          const activeTripId = tripId;
+          if (!activeTripId) { setProposal(null); return; }
+          // Append accepted ideas after the existing stops rather than at
+          // sort_order 0 — the batch reorder then places them by the plan.
+          let appendOrder =
+            (composedTrip?.source.stops ?? []).reduce((m, st) => Math.max(m, st.orderIndex), -1) + 1;
+          void (async () => {
+            const result = await persistOptimizeAcceptance(p, new Date().toISOString(), {
+              // Owner-only batch reorder — the durable Trips write (§20).
+              reorder: (ids) => reorderPlanItems(activeTripId, ids),
+              // An accepted saved-idea insertion becomes a real plan item via
+              // the canonical create path, not a fabricated stop.
+              addSavedIdea: async (idea) => {
+                const item = await createPlanItem(activeTripId, {
+                  title: idea.title,
+                  category: 'activity',
+                  sourceType: idea.savedIdeaId ? 'place' : 'manual',
+                  ...(idea.savedIdeaId ? { sourceId: idea.savedIdeaId } : {}),
+                  lat: idea.lat,
+                  lng: idea.lng,
+                  ...(idea.subtitle ? { locationName: idea.subtitle } : {}),
+                  sortOrder: appendOrder++,
+                });
+                return item.id;
+              },
+            });
+            if (result.persisted) {
+              // Durable — re-read the trip so the map reflects the saved order
+              // and any added ideas from the canonical source of truth.
+              const refreshed = await buildComposedTrip();
+              setComposedTrip(refreshed);
+            } else {
+              // The write did not land: reflect the accepted order locally so
+              // the map still shows it, WITHOUT claiming it was saved.
+              setComposedTrip((prev) => {
+                if (!prev) return prev;
+                const byId = new Map((prev.source.stops ?? []).map((st) => [st.id, st]));
+                const reordered = result.orderedStopIds
+                  .map((id) => byId.get(id))
+                  .filter((st): st is TripStop => st != null);
+                const rest = (prev.source.stops ?? []).filter(
+                  (st) => !result.orderedStopIds.includes(st.id),
+                );
+                return { ...prev, source: { ...prev.source, stops: [...reordered, ...rest] } };
+              });
+            }
+            setProposal(null);
+          })();
         }}
       />
 
@@ -2472,7 +2879,14 @@ function FullScreenMapScreenInner() {
         target={longPress?.target ?? null}
         visible={longPress != null}
         anchor={longPress?.anchor}
-        context={{ checkpointScopeId: locateSessionId, now: Date.now() }}
+        context={{
+          checkpointScopeId: locateSessionId,
+          // §25 "Share permitted location" opens onto the active §12 session —
+          // the bounded, expiring, revocable channel. Same value as the
+          // checkpoint scope: with no live session, neither row has anywhere to go.
+          shareChannelSessionId: locateSessionId,
+          now: Date.now(),
+        }}
         onClose={() => setLongPress(null)}
         onSelect={(action, target) => {
           setLongPress(null);
@@ -2500,14 +2914,36 @@ function FullScreenMapScreenInner() {
             void dropCheckpoint(target);
             return;
           }
-          // §25 `share` is NEVER routed here. The row says "Share permitted
-          // location" and carries a §23 rung and a TTL on its second line; the
-          // only share this screen owns is §8's `shareMapObject`, which sends a
-          // link to a place and expires never. Handing this slug to it would
-          // answer a bounded location share with a permanent link — so the menu
-          // refuses the row outright instead (longPress.ts
-          // `BOUNDED_SHARE_CHANNEL_EXISTS`) and nothing arrives here to route.
-          if (action === 'share') return;
+          // §25 "Share permitted location" opens a bounded, expiring share on
+          // the live §12 session — NEVER §8's permanent link (`shareMapObject` /
+          // `Share.share`). The bound is recomputed with `resolveShareBound` so
+          // the publish is capped on the same numbers the menu was gated on. The
+          // menu only enabled this row when a session channel exists, so a null
+          // session here would be a contradiction — but it is still checked, and
+          // a refusal is reported rather than faked as a success.
+          if (action === 'share') {
+            const bound = resolveShareBound(target, {
+              shareChannelSessionId: locateSessionId,
+              now: Date.now(),
+            });
+            const pt = coordinateOf(target);
+            if (!bound || !pt || !locateSessionId) return;
+            void sharePermittedLocation({ sessionId: locateSessionId, point: pt, bound })
+              .then((res) => {
+                if (res.ok && res.data.stored) {
+                  Alert.alert(
+                    'Location shared with your group',
+                    'They can see it until the session ends. Leave the session to stop sharing.',
+                  );
+                } else {
+                  Alert.alert('Could not share your location', 'Please try again.');
+                }
+              })
+              .catch(() => {
+                Alert.alert('Could not share your location', 'Please try again.');
+              });
+            return;
+          }
           // `save` and `add_to_trip` reach the flows the rail already owns —
           // the wishlist picker and the detail-surface handoff — rather than a
           // second copy of either. Both need a place record, so the menu
@@ -2527,17 +2963,45 @@ function FullScreenMapScreenInner() {
           onEndSession={() => setLocateSessionId(null)}
         />
       ) : machine.mode === 'LOCATE_FRIENDS' && tripId ? (
-        <Pressable
-          style={[s2.optimizeChip, { bottom: insets.bottom + 200 }]}
-          disabled={locateStarting}
-          onPress={() => void startLocateFriends({ kind: 'trip', id: tripId }, 120)}
-          accessibilityRole="button"
-          accessibilityLabel="Start locating friends for two hours"
-        >
-          <Text style={s2.optimizeChipText}>
-            {locateStarting ? 'Starting…' : 'Locate my friends · 2h'}
-          </Text>
-        </Pressable>
+        // §12: the session's bounded lifetime is CHOSEN here rather than baked
+        // in. The chips pick a duration (every one ≤ the server's 12h cap); the
+        // Start control opens the session with the chosen TTL — required and
+        // never defaulted on the wire, so the consent stamp on the membership
+        // row is always a stamp on a bounded session.
+        <View style={[s2.ttlChooser, { bottom: insets.bottom + 200 }]}>
+          <Text style={s2.ttlChooserTitle}>Locate my friends · for how long?</Text>
+          <View style={s2.ttlChooserRow}>
+            {LOCATE_FRIENDS_TTL_OPTIONS.map((opt) => {
+              const selected = opt.minutes === locateTtlMinutes;
+              return (
+                <Pressable
+                  key={opt.minutes}
+                  style={[s2.ttlChip, selected && s2.ttlChipSelected]}
+                  disabled={locateStarting}
+                  onPress={() => setLocateTtlMinutes(opt.minutes)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  accessibilityLabel={opt.accessibilityLabel}
+                >
+                  <Text style={[s2.ttlChipText, selected && s2.ttlChipTextSelected]}>
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Pressable
+            style={[s2.optimizeChip, s2.ttlStart]}
+            disabled={locateStarting}
+            onPress={() => void startLocateFriends({ kind: 'trip', id: tripId }, locateTtlMinutes)}
+            accessibilityRole="button"
+            accessibilityLabel="Start locating friends"
+          >
+            <Text style={s2.optimizeChipText}>
+              {locateStarting ? 'Starting…' : 'Start'}
+            </Text>
+          </Pressable>
+        </View>
       ) : null}
 
       {/* ── §25 Meet Here ───────────────────────────────────────────────────
@@ -2732,6 +3196,54 @@ const s2 = StyleSheet.create({
     color: '#FAF9F6',
     fontSize: 13,
     fontWeight: '700',
+  },
+  ttlChooser: {
+    position: 'absolute',
+    alignSelf: 'center',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 18,
+    backgroundColor: 'rgba(11,16,23,0.94)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(250,249,246,0.14)',
+  },
+  ttlChooserTitle: {
+    color: '#FAF9F6',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  ttlChooserRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  ttlChip: {
+    minWidth: 44,
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: 'rgba(19,26,36,0.96)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(250,249,246,0.14)',
+  },
+  ttlChipSelected: {
+    backgroundColor: 'rgba(10,61,74,0.96)',
+    borderColor: 'rgba(84,183,209,0.85)',
+  },
+  ttlChipText: {
+    color: 'rgba(250,249,246,0.72)',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  ttlChipTextSelected: {
+    color: '#FAF9F6',
+  },
+  ttlStart: {
+    position: 'relative',
+    bottom: undefined,
+    marginTop: 2,
   },
   cacheBannerText: {
     color: 'rgba(250,249,246,0.72)',

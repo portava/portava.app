@@ -230,6 +230,7 @@ const COMPASS_PRIVACY: Record<MapObjectKind, PrivacyClass> = {
   safety_notice: 'place_level',
   memory: 'aggregate_only',
   prediction: 'aggregate_only',
+  saved_place: 'place_level',
 };
 
 /** The fields of a Compass recommendation this projector reads. */
@@ -244,13 +245,30 @@ export interface CompassResultLike {
 }
 
 /**
+ * The §14 "Matches current intent" payload carried on a Compass map object.
+ *
+ * The SERVER decides the match (CompassTemporaryIntent.itemMatchesIntent, the
+ * same predicate the ranking boost is built on), so the map never re-derives it
+ * — §19: the client does not reconstruct Portava intelligence rules. It is
+ * surfaced here so compassMapModel can populate a CompassMapCandidate's
+ * `matchesIntent` / `intentLabel` and buildWhyLines can emit the line.
+ */
+export interface CompassIntentMatchPayload {
+  matchesIntent: boolean;
+  intentLabel: string | null;
+}
+
+/**
  * Project one Compass recommendation into the contract.
  *
  * Compass returns a RANKED ANSWER, not an observation, so nothing here carries
  * freshness, confidence or activity — §37: "Do not let Compass invent live
- * conditions." It also carries no per-kind detail payload, so `payload` is
- * deliberately absent: a card renders this from `title` and `subtitle` and shows
- * no type-specific chips, which is honest about how little Compass sent.
+ * conditions." It carries no per-kind DETAIL payload, so a card renders this
+ * from `title` and `subtitle` and shows no type-specific chips, which is honest
+ * about how little Compass sent. The one thing `payload` may carry is the §14
+ * intent-match datum (`matchesIntent` / `intentLabel`), and only when the server
+ * actually decided it — that is a ranking fact Compass DID send, not live state
+ * this projector invented.
  *
  * Before this existed, AskCompassBar handed the raw `CompassRecommendation`
  * through as `entity.payload` — a THIRD shape the cards had to guess at, and the
@@ -267,7 +285,7 @@ export function projectCompassResult(rec: CompassResultLike): MapObject | null {
 
   const title = firstNonEmpty([rec.title, rec.category]) ?? 'Suggestion';
 
-  return {
+  const obj: MapObject<CompassIntentMatchPayload> = {
     id: rec.id,
     kind,
     geometry: point(lat, lng),
@@ -281,6 +299,22 @@ export function projectCompassResult(rec: CompassResultLike): MapObject | null {
       opensSheet: true,
     },
   };
+
+  // §14 "Matches current intent". Carried ONLY when the server actually decided
+  // it (i.e. the request had a live §13 intent) — a boolean is server truth, so
+  // its ABSENCE must not read as "false". The label is the intent's own name
+  // ("Party"), coerced to string|null so a why-line can render "Matches current
+  // Party intent" or the bare fallback.
+  const matches = rec.data?.matchesIntent;
+  if (typeof matches === 'boolean') {
+    const rawLabel = rec.data?.intentLabel;
+    obj.payload = {
+      matchesIntent: matches,
+      intentLabel: typeof rawLabel === 'string' && rawLabel.trim() !== '' ? rawLabel : null,
+    };
+  }
+
+  return obj;
 }
 
 function numberOrNull(v: unknown): number | null {

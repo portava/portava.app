@@ -663,6 +663,17 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     deepLink: '/passport/journeys',
   },
   {
+    key: 'passport-yearbook',
+    path: 'passport/yearbook',
+    title: 'Yearbook',
+    parent: 'tab-passport',
+    icon: 'BookOpen',
+    requiresAuth: true,
+    // The yearbook endpoint serves only the signed-in traveller's own yearbook.
+    ownerOnly: true,
+    deepLink: '/passport/yearbook',
+  },
+  {
     key: 'passport-travel-identity',
     path: 'passport/travel-identity',
     title: 'Travel Identity',
@@ -1015,6 +1026,22 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: true,
     ownerOnly: true,
+  },
+
+  // ── Postcards ───────────────────────────────────────────────────────────────
+
+  {
+    // Canonical Postcard viewer (Wall spec §10/§24). A Postcard is a first-class
+    // travel-story object keyed by the canonical posts row id; opening one from
+    // the Wall or Passport lands here rather than the plain post detail, and it
+    // reads through the shared post-detail fetch. Public-viewable like post-detail.
+    key: 'postcard-viewer',
+    path: 'postcard/[id]',
+    title: 'Postcard',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    deepLink: '/postcard/[id]',
   },
   {
     key: 'pending-posts',

@@ -18,6 +18,7 @@
  * deriveComponents, scoreConfidence and recordEarnedReward are all the shipping
  * implementations.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
@@ -71,6 +72,10 @@ const OBSERVED = new Date(Date.now() - 5 * 60_000).toISOString();
 
 interface FakeOpts {
   places?: string[];
+  /** Full place rows (id + latitude/longitude/status/merged_into_place_id) for the zone-anchor path. */
+  placeRows?: any[];
+  /** geo_zones rows for the §22 zone-anchor resolution path. */
+  geoZones?: any[];
   /** actor -> consent state. Absent actor = NO consent row (fail-closed). */
   consent?: Record<string, boolean | "withdrawn">;
 }
@@ -78,7 +83,8 @@ interface FakeOpts {
 function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
   const tables: Record<string, any[]> = {
     feature_flags: Object.entries(flags).map(([flag, enabled]) => ({ flag, enabled })),
-    places: (opts.places ?? []).map((id) => ({ id })),
+    places: [...(opts.places ?? []).map((id) => ({ id })), ...(opts.placeRows ?? [])],
+    geo_zones: opts.geoZones ?? [],
     intel_contribution_consent: Object.entries(opts.consent ?? {}).map(([user_id, state]) => ({
       user_id,
       enabled: state !== false,
@@ -108,8 +114,12 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
         switch (f.kind) {
           case "in": return (f.val as any[]).includes(cell);
           case "is": return (cell ?? null) === f.val;
-          case "lte": return String(cell ?? "") <= String(f.val);
-          case "gte": return String(cell ?? "") >= String(f.val);
+          // Numeric bounds compare numerically (latitude/longitude); everything
+          // else (timestamps) keeps the lexicographic comparison ISO dates rely on.
+          case "lte": return typeof cell === "number" && typeof f.val === "number"
+            ? cell <= f.val : String(cell ?? "") <= String(f.val);
+          case "gte": return typeof cell === "number" && typeof f.val === "number"
+            ? cell >= f.val : String(cell ?? "") >= String(f.val);
           default: return cell === f.val;
         }
       });
@@ -163,7 +173,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
     return b;
   }
 
-  return { from, _tables: tables, _writes: writes };
+  return { from, _tables: tables, _writes: writes } as unknown as SupabaseClient & { _tables: typeof tables; _writes: typeof writes };
 }
 
 /** Every gate open: both flags on, the place exists, consent granted. */
@@ -550,6 +560,117 @@ describe("ingest — payload validation", () => {
     assert.equal(r.ok, false);
     assert.equal((r as any).reason, "unknown_subject");
     assert.equal((r as any).code, "not_found");
+  });
+});
+
+// ── §22 zone kinds resolve to an anchor place ─────────────────────────────────
+//
+// activity_zone / social_zone / crowd_flow carry a geo_zone id, not a place id.
+// They used to reach the FK subject check verbatim and die as unknown_subject,
+// silently dropping every zone contribution §22 allows. The route now resolves
+// the zone to the nearest active place inside it, observes against THAT place,
+// and records the zone — failing closed when nothing anchors.
+
+describe("ingest — §22 zone kinds resolve to an anchor place", () => {
+  const ZONE = "33333333-3333-4333-8333-333333333333";
+  const ANCHOR = "22222222-2222-4222-8222-2222222222aa";
+
+  function zoneDb(over: { geoZones?: any[]; placeRows?: any[] } = {}) {
+    return makeDb(
+      { map_contributions_enabled: true, intel_capture_quick_signal: true, intel_rewards: true },
+      {
+        consent: { [ACTOR]: true },
+        geoZones: over.geoZones ?? [
+          { id: ZONE, zone_type: "neighborhood", center_lat: 16.06, center_lng: 108.22, radius_meters: null, polygon_geojson: null },
+        ],
+        placeRows: over.placeRows ?? [
+          { id: ANCHOR, latitude: 16.061, longitude: 108.221, status: "active", merged_into_place_id: null },
+        ],
+      },
+    );
+  }
+
+  const zoneContribution = (over: Record<string, unknown> = {}) => ({
+    objectId: ZONE,
+    objectKind: "activity_zone",
+    kind: "crowd_direction",
+    value: CROWD_DIRECTIONS[0],
+    observedAt: OBSERVED,
+    ...over,
+  });
+
+  it("anchors a crowd_direction on a zone to the nearest place and records the zone", async () => {
+    const db = zoneDb();
+    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
+    assert.equal(r.ok, true);
+    const row = db._tables.intel_observations[0];
+    assert.equal(row.subject_id, ANCHOR, "the zone observation is stored against its anchor place");
+    assert.equal(row.zone_id, ZONE, "the geo_zone it came from is recorded");
+    assert.equal(row.claim_type, "crowd.direction");
+  });
+
+  it("picks the NEAREST place when several lie within the zone radius", async () => {
+    const near = "22222222-2222-4222-8222-2222222222bb";
+    const db = zoneDb({
+      geoZones: [
+        { id: ZONE, zone_type: "neighborhood", center_lat: 16.06, center_lng: 108.22, radius_meters: 2000, polygon_geojson: null },
+      ],
+      placeRows: [
+        { id: ANCHOR, latitude: 16.065, longitude: 108.225, status: "active", merged_into_place_id: null }, // ~0.75 km
+        { id: near, latitude: 16.0605, longitude: 108.2205, status: "active", merged_into_place_id: null }, // ~0.08 km
+      ],
+    });
+    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
+    assert.equal(r.ok, true);
+    assert.equal(db._tables.intel_observations[0].subject_id, near);
+  });
+
+  it("resolves a polygon zone by its centroid when it declares no centre", async () => {
+    const db = zoneDb({
+      geoZones: [
+        {
+          id: ZONE, zone_type: "polygon", center_lat: null, center_lng: null, radius_meters: null,
+          polygon_geojson: {
+            type: "Polygon",
+            coordinates: [[[108.220, 16.058], [108.224, 16.058], [108.224, 16.062], [108.220, 16.062], [108.220, 16.058]]],
+          },
+        },
+      ],
+    });
+    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
+    assert.equal(r.ok, true);
+    assert.equal(db._tables.intel_observations[0].subject_id, ANCHOR);
+  });
+
+  it("fails closed (unknown_subject) when the geo_zone is unknown", async () => {
+    const db = zoneDb({ geoZones: [] });
+    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
+    assert.equal(r.ok, false);
+    assert.equal((r as any).reason, "unknown_subject");
+    assert.equal((r as any).code, "not_found");
+    assert.equal(db._tables.intel_observations.length, 0, "nothing is stored when a zone cannot be anchored");
+  });
+
+  it("fails closed when no place lies within the zone radius", async () => {
+    const db = zoneDb({
+      placeRows: [
+        { id: ANCHOR, latitude: 17.5, longitude: 109.5, status: "active", merged_into_place_id: null }, // far outside
+      ],
+    });
+    const r = await ingestMapContribution(db, ACTOR, zoneContribution());
+    assert.equal(r.ok, false);
+    assert.equal((r as any).reason, "unknown_subject");
+  });
+
+  it("does NOT run the zone resolver for a place kind — its own id stays the subject", async () => {
+    const db = makeDb(
+      { map_contributions_enabled: true, intel_capture_quick_signal: true, intel_rewards: true },
+      { consent: { [ACTOR]: true }, places: [PLACE] },
+    );
+    const r = await ingestMapContribution(db, ACTOR, contribution());
+    assert.equal(r.ok, true);
+    assert.equal(db._tables.intel_observations[0].subject_id, PLACE);
+    assert.equal(db._tables.intel_observations[0].zone_id ?? null, null);
   });
 });
 

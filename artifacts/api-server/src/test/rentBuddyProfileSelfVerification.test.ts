@@ -33,7 +33,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -70,7 +70,7 @@ let buddyToken = "";
 
 async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const sc = adminClient();
-  const email = `${PREFIX}${tag}@example.com`;
+  const email = fixtureEmail(`${PREFIX}${tag}@example.com`);
   const { data: created, error: cErr } = await sc.auth.admin.createUser({
     email, password: PASSWORD, email_confirm: true,
   });
@@ -93,7 +93,7 @@ async function readBuddy(userId: string): Promise<any | null> {
 
 before(async () => {
   if (!CREDS_AVAILABLE) return;
-  await purgeFixtureUsers(adminClient(), [`${PREFIX}buddy@example.com`]);
+  await purgeFixtureUsers(adminClient(), [fixtureEmail(`${PREFIX}buddy@example.com`)]);
   ({ id: buddyId, token: buddyToken } = await makeUser("buddy"));
 
   const sc = adminClient();

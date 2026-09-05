@@ -9,7 +9,7 @@
  * THE GATE ORDER IS THE POINT (spec §23/§24). Every candidate passes the
  * canonical eligibility / block / visibility gates BEFORE it is projected:
  *
- *   1. Eligibility  — author not banned/suspended, object not deleted/removed.
+ *   1. Eligibility  — author account 'active' (allowlist), object not deleted/removed.
  *   2. Block        — no block in EITHER direction between viewer and author
  *                     (fail-closed: an unreadable blocks table drops the author).
  *   3. Visibility   — lib/postVisibility.decidePostReadable for post-like objects,
@@ -74,7 +74,8 @@ export interface WallCandidate {
   actor?: PublicActorRef | null;
 
   // ── Eligibility signals (spec §23) ──────────────────────────────────────────
-  /** 'active' | 'banned' | 'suspended' — anything but active drops the object. */
+  /** profiles.account_status ('active' | 'deactivated' | 'pending_deletion' |
+   *  'deleted') — ALLOWLIST: anything but 'active' drops the object. */
   authorAccountStatus?: string | null;
   /** Canonical moderation state; 'removed'/'takedown' drops the object (§37). */
   moderationStatus?: string | null;
@@ -87,6 +88,9 @@ export interface WallCandidate {
   participants?: PublicActorRef[];
   /** contextual_opportunity kind (spec §19). */
   opportunityKind?: "buddy_dispatch" | "buddy_around" | "event" | "trip_signal";
+  /** contextual_opportunity: the COARSE approved area (a city / service zone
+   *  label) the opportunity is about — never a coordinate (spec §19). */
+  opportunityArea?: string | null;
   /**
    * For non-post objects (shared_moment / contextual_opportunity) whose
    * visibility the CALLER has already resolved (membership / service eligibility).
@@ -101,6 +105,9 @@ export interface ProjectViewerContext {
   viewerTripIds: Set<string>;
   /** Creators the viewer already follows — suppresses a redundant follow action. */
   followedCreatorIds?: Set<string>;
+  /** The viewer's current city — the spatial frame for the map Context Thread
+   *  (spec §8/§22). Absent ⇒ no map bridge is offered. */
+  currentCity?: string | null;
   /** Wall Phase 5 (spec §21): when on, a place-linked object may offer an
    *  Ask Compass handoff. Off (default) attaches no Compass action — Compass
    *  never occupies a permanent panel and is opt-in per object. */
@@ -177,8 +184,20 @@ async function loadBlockedAuthorIds(
 /** Object-not-eligible check (author status + moderation + deletion). */
 function passesEligibility(c: WallCandidate): boolean {
   if (c.isDeleted) return false;
+  // ALLOWLIST: only `account_status === 'active'` passes — the canonical
+  // predicate (lib/circleLocationsRead gate 7, lib/mapTravelers, the
+  // `.in("account_status", ["active"])` DB filters in discoverySearch / follows
+  // / compass). This used to be a DENYLIST of 'banned' / 'suspended', two
+  // values the profiles CHECK constraint does not even allow
+  // (profiles_account_status_check: active / deactivated / pending_deletion /
+  // deleted) — so it could never drop anything, and a deactivated or
+  // pending-deletion author's posts kept flowing onto every follower's Wall
+  // (§23: fail closed). A null/absent value reads as 'active' exactly as
+  // lib/http requireUser and gate 7 do: the column is NOT NULL, so absence
+  // only means a loader that could not read the profile, which is the
+  // loaders' own fail-soft default.
   const status = c.authorAccountStatus ?? "active";
-  if (status === "banned" || status === "suspended") return false;
+  if (status !== "active") return false;
   const mod = c.moderationStatus ?? "active";
   if (mod === "removed" || mod === "takedown" || mod === "moderated") return false;
   return true;
@@ -189,10 +208,15 @@ function passesEligibility(c: WallCandidate): boolean {
 function passesVisibility(c: WallCandidate, viewer: ProjectViewerContext): boolean {
   if (POST_LIKE_TYPES.has(c.objectType)) {
     const viewerIsTripMember = !!c.tripId && viewer.viewerTripIds.has(c.tripId);
+    // followers_only is readable by the author's followers: the viewer follows
+    // the author iff the author is in the viewer's followedCreatorIds set (already
+    // loaded for the feed). Absent set ⇒ not a follower ⇒ the tier fails closed.
+    const viewerIsFollower = viewer.followedCreatorIds?.has(c.authorId) ?? false;
     return decidePostReadable(
       { author_id: c.authorId, visibility: c.visibility ?? null, trip_id: c.tripId ?? null },
       viewer.viewerId,
       viewerIsTripMember,
+      viewerIsFollower,
     ).readable;
   }
   // Non-post objects: the caller resolves consent/eligibility. Absent flag ⇒
@@ -225,6 +249,22 @@ function buildActions(c: WallCandidate, viewer: ProjectViewerContext): WallActio
         targetId: c.place.placeId,
       });
     }
+  }
+  // A Buddy opportunity (spec §19) leads into the canonical RAB surface — one
+  // "See Buddy" action carrying only the coarse approved area, never a
+  // coordinate. The candidate loader already ran the consolidated booking gate,
+  // so an action here is one the viewer can actually take.
+  if (
+    c.objectType === "contextual_opportunity" &&
+    (c.opportunityKind === "buddy_dispatch" || c.opportunityKind === "buddy_around")
+  ) {
+    actions.push({
+      type: "book_buddy",
+      label: "See Buddy",
+      targetType: "buddy",
+      targetId: c.canonicalObjectId,
+      ...(c.opportunityArea ? { params: { area: c.opportunityArea } } : {}),
+    });
   }
   // Discovery objects reaching outside the follow graph may offer a follow, only
   // when the viewer does not already follow the actor (spec §13).
@@ -388,7 +428,11 @@ export interface AttachContextThreadsOptions {
   windowSize?: number;
   /** Live For You strip subjects — a thread that repeats one is suppressed (§4). */
   liveStripSubjectIds?: Set<string>;
-  /** wall_rab_integration_enabled — enables the buddy candidate reader. */
+  /**
+   * wall_rab_integration_enabled — NECESSARY but not sufficient for the buddy
+   * candidate reader, which also re-reads the RAB master `rent_buddy_enabled`
+   * itself (fail-closed).
+   */
   rabEnabled?: boolean;
   now?: Date;
 }
@@ -435,9 +479,13 @@ export async function attachContextThreads(
       viewerId: viewer.viewerId,
       followedCreatorIds: viewer.followedCreatorIds,
       viewerTripIds: viewer.viewerTripIds,
+      currentCity: viewer.currentCity ?? null,
       liveStripSubjectIds,
       windowSaturated,
       rabEnabled: opts.rabEnabled === true,
+      // §21: the compass bridge is opt-in per object, gated by the same flag that
+      // adds the Ask Compass action (ProjectViewerContext.compassHandoffEnabled).
+      compassHandoffEnabled: viewer.compassHandoffEnabled === true,
       now: opts.now,
     };
 

@@ -10,18 +10,19 @@ import {
   View, Text, Pressable, Modal, ScrollView, StyleSheet, Linking,
 } from 'react-native';
 import { Platform } from 'react-native';
-import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles, Info, Radio } from 'lucide-react-native';
+import { X, MapPin, Globe, Phone, Tag, Plus, Bookmark, Navigation, Clock, Star, ListPlus, Sparkles, Info, Radio, Check } from 'lucide-react-native';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { useFeatureFlags } from '../../context/FeatureFlagsContext.tsx';
 import { useSession } from '../../context/SessionContext.tsx';
 import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus, WikidataEnrichment } from '../../services/discovery.ts';
-import { getPlaceLiveStatus, getWikidataEnrichment } from '../../services/discovery.ts';
+import { getPlaceLiveStatus, getWikidataEnrichment, recordAlreadyKnown } from '../../services/discovery.ts';
 import { checkSaved, toggleSave } from '../../services/collections.ts';
 import { color, space, radius, type as t, shadow, avatar, dot } from '../../theme/tokens.ts';
 import { categoryColor } from './PlaceCard.tsx';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 import { usePlainBottomInset } from '../../hooks/useBottomInset.ts';
+import { useRankOutcome, type RankSurface } from '../../hooks/useRankOutcome.ts';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { useLocationContext } from '../../context/LocationContext.tsx';
@@ -32,6 +33,12 @@ const SHEET_IMAGE_HEIGHT = 180;
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface PlaceDetailSheetProps {
+  /**
+   * The rank_events surface the shown place's impression was written under,
+   * supplied by the surface that served it ('discovery' on the Discover
+   * screen). Absent — e.g. the Layover map card — the sheet reports nothing.
+   */
+  rankSurface?: RankSurface | null;
   place: DiscoveryPlace | null;
   visible: boolean;
   onClose: () => void;
@@ -40,8 +47,12 @@ interface PlaceDetailSheetProps {
   city?: string | null;
 }
 
-export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }: PlaceDetailSheetProps) {
+export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, rankSurface }: PlaceDetailSheetProps) {
   const plainInset = usePlainBottomInset();
+  // Outcome reporting for the ranking loop — same rules as PlaceCard: tap for
+  // Directions / opening the full place page, save for a confirmed bookmark or
+  // a trip-wishlist add; Plan is intent (opens a picker) and is not emitted.
+  const { reportTap, reportSave } = useRankOutcome({ surface: rankSurface ?? null });
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [liveStatus, setLiveStatus]     = useState<PlaceLiveStatus | null>(null);
@@ -52,6 +63,9 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   // Wikidata enrichment — description, Wikipedia link, Commons image.
   // Fetched lazily when the sheet opens for a place that has a wikidataId.
   const [wikidataEnrichment, setWikidataEnrichment] = useState<WikidataEnrichment | null>(null);
+  // "Already know it" — optimistic confirmation once the already_known signal
+  // is recorded (or already was: the write is idempotent server-side).
+  const [known, setKnown] = useState(false);
 
   // Feature flag + role guard for the "Generate header image" admin action.
   const { isEnabled } = useFeatureFlags();
@@ -70,6 +84,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
   useEffect(() => {
     setLocalAiHeaderUrl(null);
     setWikidataEnrichment(null);
+    setKnown(false);
   }, [place?.id]);
 
   // Fetch Wikidata enrichment lazily when the sheet opens for a place that
@@ -198,6 +213,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
 
   const openDirections = () => {
     if (!hasRealCoords) return;
+    reportTap(place.id);
     if (Platform.OS === 'web') {
       // Open in a new tab on web — navigating the current tab to
       // maps.google.com blanks the PWA instead of just launching directions.
@@ -212,6 +228,18 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
     // business happens to be nearest those coordinates (e.g. "BDO ATM").
     const destination = `${place.lat},${place.lng}(${encodeURIComponent(place.name)})`;
     Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${destination}`).catch(() => {});
+  };
+
+  // "Already know it" — records an already_known memory-feedback signal for this
+  // discovery-served place (drives §7 New-to-Me suppression) AND reports the
+  // discovery rank outcome so the interaction closes the impression→outcome loop
+  // on the surface it was served from. Optimistic: the confirmation shows on tap
+  // and the write is idempotent, so a failure or a repeat both leave it "known".
+  const handleAlreadyKnown = () => {
+    if (!place || known) return;
+    setKnown(true);
+    reportTap(place.id);
+    recordAlreadyKnown(place.id).catch(() => {});
   };
 
   return (
@@ -309,10 +337,15 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
               const next = !saved;
               setSaved(next);
               toggleSave('place', place.id, !next)
-                .then(setSaved)
+                .then((nowSaved) => {
+                  setSaved(nowSaved);
+                  // Outcomes follow the API, not the tap: only a CONFIRMED save.
+                  if (next && nowSaved) reportSave(place.id);
+                })
                 .catch(() => setSaved((s) => !s));
             }}
             hitSlop={8}
+            testID="place-sheet-save"
           >
             <Bookmark size={18} color={saved ? color.signal : color.mute} fill={saved ? color.signal : 'none'} />
           </Pressable>
@@ -456,6 +489,29 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             </View>
           </View>
 
+          {/* "Already know it" — only for discovery-served places (a served
+              rank context exists), so the outcome always has a surface to
+              attribute to. Feeds §7 New-to-Me novelty suppression. */}
+          {rankSurface ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.alreadyKnownBtn,
+                known && styles.alreadyKnownBtnActive,
+                !known && pressed && { opacity: 0.7 },
+              ]}
+              onPress={handleAlreadyKnown}
+              disabled={known}
+              accessibilityRole="button"
+              accessibilityLabel={known ? 'Marked as already known' : 'I already know this place'}
+              testID="place-sheet-already-known"
+            >
+              <Check size={15} color={known ? color.signal : color.mute} />
+              <Text style={[styles.alreadyKnownText, known && { color: color.signal }]}>
+                {known ? 'Marked as known' : 'I already know it'}
+              </Text>
+            </Pressable>
+          ) : null}
+
           {/* Attribution — events are member-hosted activities, not resolved
               venues, so the OSM attribution (which implies venue data) would
               be misleading. */}
@@ -486,7 +542,10 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
             accessibilityRole="button"
             accessibilityLabel="Open the full place page with live signals"
             style={styles.openPlaceBtn}
-            onPress={() => closeThenNavigate(onClose, `/place/${place.canonicalPlaceId}`)}
+            onPress={() => {
+              reportTap(place.id);
+              closeThenNavigate(onClose, `/place/${place.canonicalPlaceId}`);
+            }}
           >
             <Radio size={18} color={color.onInk} />
             <Text style={styles.openPlaceText}>Open place page · live signals</Text>
@@ -496,7 +555,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
         {/* Footer actions */}
         <View style={styles.footer}>
           {hasRealCoords ? (
-            <Pressable style={styles.dirBtn} onPress={openDirections}>
+            <Pressable style={styles.dirBtn} onPress={openDirections} testID="place-sheet-directions">
               <Navigation size={18} color={color.deep} />
               <Text style={styles.dirText}>Directions</Text>
             </Pressable>
@@ -519,7 +578,11 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city }:
         place={place}
         visible={pickerVisible}
         onClose={() => setPickerVisible(false)}
-        onSaved={() => setPickerVisible(false)}
+        onSaved={() => {
+          setPickerVisible(false);
+          // The picker only calls onSaved after the API accepted the add.
+          reportSave(place.id);
+        }}
       />
 
       {canGenerateHeader && (
@@ -773,6 +836,27 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textAlign: 'center',
     marginTop: space.md,
+  },
+  alreadyKnownBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xs,
+    alignSelf: 'center',
+    marginTop: space.md,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderRadius: radius.pill,
+    backgroundColor: color.haze,
+  },
+  alreadyKnownBtnActive: {
+    backgroundColor: color.signal + '18',
+  },
+  alreadyKnownText: {
+    ...t.small,
+    color: color.mute,
+    fontSize: 12,
+    fontWeight: '600',
   },
   generateHeaderBtn: {
     flexDirection: 'row',

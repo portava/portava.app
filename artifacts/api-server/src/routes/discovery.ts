@@ -17,6 +17,7 @@
  * Graceful degradation: any network/parse error returns an empty list.
  */
 
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { provenanceStamp } from "../lib/placeProvenance.js";
 import { z } from "zod";
@@ -46,7 +47,7 @@ import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
 import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
 import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
-import { fetchBlockedSet } from "../lib/blocks.js";
+import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
 import { pruneAndBound } from "../lib/boundedMapCache.js";
 import { createInflightDedup } from "../lib/inflightDedup.js";
 import {
@@ -868,14 +869,14 @@ export function evictCacheEntriesForEntity(entityId: string): void {
  * uncertain. Either way only the community subset is affected: canonical
  * `places` rows and OSM rows have no author at all.
  *
- * Exported so tests can pin the rule without reaching through a route.
+ * THE RULE ITSELF now lives in lib/blocks.ts, beside fetchBlockedSet, because
+ * this route is NOT the only reader of `discovery_places`: routes/
+ * discoverySearch.ts queries the same table for serve points 8 and 9
+ * (`/discovery/search`, `/discovery/suggest`) and, while the rule lived here,
+ * silently skipped it. Re-exported so existing importers and the source guards
+ * in test/discoveryBlockedSubmitter.test.ts keep working unchanged.
  */
-export function submitterIsVisible(submittedBy: unknown, blockedIds: Set<string> | null): boolean {
-  const author = (submittedBy ?? null) as string | null;
-  if (!author) return true;               // venue fact — no voice attached to it
-  if (blockedIds === null) return false;  // block state unknown → fail closed
-  return !blockedIds.has(author);
-}
+export { submitterIsVisible };
 
 /**
  * @param blockedIds bidirectional block set for the viewer, or null when it
@@ -2201,6 +2202,16 @@ router.get("/discovery/counts", async (req, res) => {
 });
 
 router.get("/discovery/feed", async (req, res) => {
+  // One session id per feed load — mirrors the ranked feeds (routes/pulse.ts:112
+  // returns `sessionId` in its envelope). It is returned to the client AND
+  // handed to logDiscoveryServe, so the outcome route can narrow the impression
+  // lookup to exactly this serve (rankEvents.ts:175 applies .eq("session_id")).
+  // Without it a 'discovery' outcome would upgrade the most-recent impression
+  // for the item across ALL discovery serve points — e.g. a stale GET /discovery
+  // cache-hit row from a category tab — instead of the serve-point-7 row it came
+  // from. Generated before the first response so every return path carries it.
+  const feedSessionId = randomUUID();
+
   // ── Params ─────────────────────────────────────────────────────────────────
   const cityParam    = ((req.query.city ?? req.query.destination) as string | undefined)?.trim() || undefined;
   const latParam     = req.query.lat ? parseFloat(req.query.lat as string) : null;
@@ -2239,6 +2250,7 @@ router.get("/discovery/feed", async (req, res) => {
         places: [], events: [], posts: [], memories: [], sections: [],
         nextCursor: null, total: 0, destination: destination ?? null, context: null,
         sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+        sessionId: feedSessionId,
       });
       return;
     }
@@ -2370,16 +2382,20 @@ router.get("/discovery/feed", async (req, res) => {
         osmCount:         totalOsm,
         userCreatedCount: eventPosts.length,
       },
+      sessionId: feedSessionId,
     });
     // Stage 0b — serve point 7. This route ranks nothing and caches nothing;
     // it is instrumented because the baseline must describe everything users
     // receive (D4=C), not only what the flag governs (D4=A). Both the places
-    // page and the event posts are served, so both are logged.
+    // page and the event posts are served, so both are logged. The sessionId is
+    // the same one returned in the envelope above, so an outcome the client
+    // reports against it upgrades exactly these rows.
     if (viewerId) {
       void logDiscoveryServe(getServiceClient(), {
         userId: viewerId,
         servePoint: DiscoveryServePoint.FEED,
         route: "GET /discovery/feed",
+        sessionId: feedSessionId,
         items: [
           ...slice.map((p) => ({ id: p.id })),
           ...eventPosts.map((p: DiscoveryEventPost) => ({ id: String((p as any).id), kind: "post" as const })),
@@ -2393,6 +2409,7 @@ router.get("/discovery/feed", async (req, res) => {
       places: [], events: [], posts: [], memories: [], sections: [],
       nextCursor: null, total: 0, destination: destination ?? null, context: null,
       sourceSummary: { seededDbCount: 0, osmCount: 0, userCreatedCount: 0 },
+      sessionId: feedSessionId,
     });
   }
 });

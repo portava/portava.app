@@ -353,8 +353,9 @@ function bodyAfter(src: string, fromIndex: number): string {
 describe("guard — every passport identity builder goes through the choke point", () => {
   const files = readdirSync(PASSPORT_SERVICES_DIR).filter((f) => f.endsWith(".ts"));
 
-  it("every function returning PassportIdentity calls sanitizeIdentity", () => {
+  it("every function returning PassportIdentity DERIVES its name fields from sanitizeIdentity", () => {
     let checked = 0;
+    let nameFieldsChecked = 0;
     for (const f of files) {
       const src = readFileSync(join(PASSPORT_SERVICES_DIR, f), "utf8");
       // Matches `): PassportIdentity {` and `): Promise<PassportIdentity> {`.
@@ -363,16 +364,43 @@ describe("guard — every passport identity builder goes through the choke point
       while ((m = re.exec(src)) !== null) {
         checked++;
         const body = bodyAfter(src, m.index);
+        // (a) the choke point is called AND its result is bound. Merely calling
+        //     it is not enough — an unused call is not a guard, and a revert of
+        //     the routing typically leaves the call sitting there inert.
+        const bind = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?sanitizeIdentity\s*\(/.exec(body);
         assert.ok(
-          body.includes("sanitizeIdentity("),
-          `${f}: a function returning PassportIdentity does not pass the row through ` +
+          bind,
+          `${f}: a function returning PassportIdentity does not bind the result of ` +
             `sanitizeIdentity() — the universal display-name rule would be bypassed. ` +
             `Import it from lib/publicIdentity.js rather than writing a new predicate.`,
         );
+        const sanitized = bind![1];
+        // (b) EVERY name-derived field on the returned object must read off that
+        //     binding, never off the raw profile row. This is the half that
+        //     actually fails when the routing is reverted.
+        const nameField = /(?:^|\n)[ \t]*\b(name|displayName|fullName|firstName|firstNameOnly)\b\s*:([^\n]*)/g;
+        let nm: RegExpExecArray | null;
+        let sawNameField = false;
+        while ((nm = nameField.exec(body)) !== null) {
+          sawNameField = true;
+          nameFieldsChecked++;
+          assert.match(
+            nm[2],
+            new RegExp(`\\b${sanitized}\\s*\\.`),
+            `${f}: the \`${nm[1]}\` field is not derived from \`${sanitized}\` (the sanitized ` +
+              `row) — a name-derived field must never be read off the raw profile.`,
+          );
+        }
+        assert.ok(
+          sawNameField,
+          `${f}: a PassportIdentity builder returns no name-derived field — the guard's ` +
+            `field list is stale and it can no longer fail.`,
+        );
       }
     }
-    // Non-vacuous: the guard must actually have found the builder.
+    // Non-vacuous: the guard must actually have found the builder AND a field.
     assert.ok(checked >= 1, "guard found no PassportIdentity builder to check — regex is stale");
+    assert.ok(nameFieldsChecked >= 1, "guard checked no name-derived field — regex is stale");
   });
 
   it("no passport service reads a raw display_name outside a sanitized row", () => {

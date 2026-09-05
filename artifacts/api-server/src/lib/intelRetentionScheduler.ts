@@ -21,7 +21,26 @@ import { isFlagEnabled } from "./featureFlags.js";
 import { INTEL_IDENTIFIABLE_RETENTION_SECONDS } from "./locationPurposes.js";
 
 const STARTUP_DELAY_MS = 7 * 60 * 1000;
-const INTERVAL_MS = 60 * 60 * 1000;
+
+/** A positive finite env float, else the default (house pattern: eventWaitlistSweeper). */
+function parseEnvFloat(raw: string | undefined, def: number): number {
+  const v = raw !== undefined ? parseFloat(raw) : NaN;
+  return Number.isFinite(v) && v > 0 ? v : def;
+}
+
+/**
+ * Expiry-sweep cadence. Spec §21 ("Scheduled jobs"): the expiry sweep runs every
+ * minute, so the default is 60 seconds — not the hour this used to hard-code.
+ * Configurable via INTEL_RETENTION_SWEEP_INTERVAL_SECONDS (a positive number of
+ * seconds; anything unset, non-numeric or ≤0 falls back to the 60 s default).
+ * Both sweeps on this timer are flag-gated OFF and idempotent, so tightening the
+ * cadence is inert until an owner enables a flag.
+ */
+export const INTEL_RETENTION_SWEEP_INTERVAL_SECONDS = parseEnvFloat(
+  process.env["INTEL_RETENTION_SWEEP_INTERVAL_SECONDS"],
+  60,
+);
+export const INTERVAL_MS = INTEL_RETENTION_SWEEP_INTERVAL_SECONDS * 1000;
 
 let _timer: ReturnType<typeof setTimeout> | null = null;
 

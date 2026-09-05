@@ -141,11 +141,44 @@ export const GATEWAY_KIND_FOR_LAYER: Record<ToggleableEntityType, MapObjectKind>
  */
 export const GATEWAY_KIND_FOR_OPTIONAL_LAYER: Record<string, MapObjectKind> = {
   crowd_flow: 'crowd_flow',
+  // §16 Relevant Places — canonical `public.places` rows, requested on the
+  // `places` option. Not a legacy pin toggle either: the legacy 'places' layer
+  // was a per-screen Discovery fetch (app/map/index.tsx), never a member of
+  // `ToggleableEntityType`, and it is the shell's §16 preference that decides
+  // whether the kind is asked for.
+  relevant_places: 'place',
+  // ── M5 §16 layers (none is a legacy pin toggle) ───────────────────────────
+  // Each is a §16 layer served by the gateway (routes/mapProjection.ts wantKind
+  // gates) but NOT a member of `ToggleableEntityType`, so — exactly like
+  // crowd_flow and relevant_places above — it rides beside `enabledLayers` on
+  // its own hook option, resolved by the shell from the §16 preferences. Until
+  // each was listed here the server produced them and no client asked: the
+  // §19 asymmetry the guard below exists to catch.
+  //
+  // §16 Saved (default on): the viewer's own saved places. The on-by-default
+  // twin of relevant_places — requested unless the Saved layer is switched off.
+  saved: 'saved_place',
+  // §16 Memories (default off): the viewer's own memory pins. Requested only on
+  // an explicit opt-in, so it never rides a default-on load.
+  memories: 'memory',
+  // §5/§24 Safety (always on): a hazard notice cannot be switched off, so it is
+  // requested on every non-passport load.
+  safety: 'safety_notice',
+  // §11/§16 Trip meeting points (trip layer, contextual): the viewer's own trip
+  // meeting context, requested when a trip is on the map.
+  meeting_point: 'meeting_point',
 };
 
 /** The `sources` name the route pushes for each optional kind. */
 export const GATEWAY_SOURCE_FOR_OPTIONAL_LAYER: Record<string, string> = {
   crowd_flow: 'crowd_flow',
+  relevant_places: 'places',
+  // The route pushes these exact names (routes/mapProjection.ts): meeting_point
+  // reports as "meeting_points", the rest under their §16 layer name.
+  saved: 'saved',
+  memories: 'memories',
+  safety: 'safety',
+  meeting_point: 'meeting_points',
 };
 
 export const GATEWAY_SOURCE_FOR_LAYER: Record<ToggleableEntityType, string> = {
@@ -158,6 +191,48 @@ export const GATEWAY_SOURCE_FOR_LAYER: Record<ToggleableEntityType, string> = {
 
 /** The radius the gateway viewport covers when the caller only knows a centre. */
 const DEFAULT_VIEWPORT_RADIUS_KM = 50;
+
+/**
+ * §34 settle debounce, ms. Sits inside §34's stated 500–800 ms target band:
+ * long enough that a continuous pinch/pan produces ONE re-query when the finger
+ * lifts, short enough that the new viewport's intelligence arrives promptly.
+ */
+export const DEFAULT_SETTLE_DEBOUNCE_MS = 600;
+
+/**
+ * The live camera, reduced to the coarse key the fetch actually depends on.
+ *
+ * Two reductions, each so a movement that does not change what the gateway
+ * would return does not re-query it (§34: "never re-query on every pixel
+ * movement"):
+ *
+ *   ZOOM → a whole-number band. The gateway aggregates by zoom, so a 0.2-level
+ *   pinch that leaves the band unchanged asks it for the same thing.
+ *
+ *   CENTRE → snapped to a grid a fifth of the covered radius. The fetched
+ *   viewport already extends `radiusKm` in every direction, so a pan well
+ *   inside it is already covered; only a pan that crosses a grid cell — a
+ *   genuinely new slice of the world — moves the key.
+ *
+ * Returns primitives, and the caller keys the fetch on those primitives (not on
+ * the camera object), so an unchanged quantised camera is a no-op even though a
+ * fresh camera object arrives on every frame.
+ */
+export function quantizeCameraForFetch(
+  cam: { lat: number; lng: number; zoom: number },
+  radiusKm: number,
+): { lat: number; lng: number; zoom: number } {
+  const zoom = Math.round(cam.zoom);
+  const gridKm = Math.max(1, radiusKm / 5);
+  const latStep = gridKm / 111;
+  const lat = Math.round(cam.lat / latStep) * latStep;
+  // Longitude degrees shrink toward the poles; widen the divisor's floor so the
+  // grid step never blows up near a pole (mirrors bboxFromCenter's clamp).
+  const cos = Math.max(0.2, Math.cos((lat * Math.PI) / 180));
+  const lngStep = gridKm / (111 * cos);
+  const lng = Math.round(cam.lng / lngStep) * lngStep;
+  return { lat, lng, zoom };
+}
 
 // ── Per-layer fetchers (unchanged privacy behaviour, MapObject output) ────────
 
@@ -328,11 +403,85 @@ export function useMapEntities(opts: {
    * trigger, and §16 says it outranks automatic resolution.
    */
   crowdFlow?: boolean;
+  /**
+   * §16 Relevant Places — canonical places through the gateway (Map spec §19,
+   * server lib/mapProjectPlace.ts), so a place on the map has been through §24
+   * protection, §31 aggregation and §7 enrichment like every other kind.
+   *
+   * GATEWAY ONLY — there is NO rollback fetcher for this kind here, on purpose.
+   * The rollback for places is the map shell's legacy Discovery path
+   * (getDiscoveryPlaces in app/map/index.tsx), which owns its own loading,
+   * error, retry and empty-state UI and renders through DiscoveryMapView's own
+   * pin loop. A second transport in this hook would double-fetch and
+   * double-draw every place on the rollback path. The shell reads `source` to
+   * decide which of the two is live.
+   */
+  places?: boolean;
+  /**
+   * §16 Saved (default on) — the viewer's own saved places through the gateway.
+   * The on-by-default twin of `places`: requested unless the viewer switched
+   * the Saved layer off. GATEWAY ONLY — no rollback fetcher here.
+   */
+  saved?: boolean;
+  /**
+   * §16 Memories (default off) — the viewer's own memory pins. Off by default,
+   * so it is requested only on an explicit opt-in and never rides a default-on
+   * load. GATEWAY ONLY.
+   */
+  memories?: boolean;
+  /**
+   * §5/§24 Safety (always on) — hazard and access notices, which cannot be
+   * switched off. Requested on every non-passport load. GATEWAY ONLY.
+   */
+  safety?: boolean;
+  /**
+   * §11/§16 Trip meeting points (trip layer, contextual) — the viewer's own
+   * meeting context, scoped server-side to trips they belong to. Requested when
+   * a trip is on the map; the §16 pipeline owns final visibility. GATEWAY ONLY.
+   */
+  meetingPoints?: boolean;
+  /**
+   * §34 camera-driven re-query. The LIVE camera the map has actually settled
+   * on — reported by DiscoveryMapView's onCameraChange and held in the shell.
+   *
+   * WHY THIS IS SEPARATE FROM `lat`/`lng`/`zoom`. Those three are the COMMANDED
+   * viewport: a deep-link's centre, the city fallback, the store's commanded
+   * zoom — where the screen SENT the camera. They seed the very first fetch so
+   * the map is never blank while the SDK is still reporting its opening frame.
+   * `camera` is where the camera ENDED UP, and once it settles it supersedes
+   * them: §31 viewport aggregation and §7 enrichment must run over what the
+   * user is actually looking at, not over the last place the shell aimed.
+   *
+   * WHY IT COULD NOT BE FED IN BEFORE (app/map/index.tsx ~1291): a float that
+   * changes on every pinch would re-query the gateway continuously, so the live
+   * camera was deliberately kept out of the fetch key. This hook now makes that
+   * safe — it QUANTIZES the camera to a zoom band and a coarse centre grid and
+   * only re-queries after the §34 settle debounce, so a pan inside the fetched
+   * viewport never re-queries and crossing into a new area does exactly once.
+   *
+   * Omitted (or null) ⇒ behaviour is byte-for-byte the pre-camera hook: the
+   * fetch geometry is `lat`/`lng`/`zoom` and nothing debounces.
+   */
+  camera?: { lat: number; lng: number; zoom: number } | null;
+  /**
+   * §34: "Debounce after camera settles; never re-query on every pixel
+   * movement." The window between the camera coming to rest and the re-query,
+   * in ms. §34's target band is 500–800 ms; the default sits inside it. Only
+   * consulted when `camera` is provided.
+   */
+  settleDebounceMs?: number;
 }): UseMapEntitiesResult {
   const {
     enabledLayers, city, lat, lng, zoom = 12,
     radiusKm = DEFAULT_VIEWPORT_RADIUS_KM,
     crowdFlow = false,
+    places = false,
+    saved = false,
+    memories = false,
+    safety = false,
+    meetingPoints = false,
+    camera = null,
+    settleDebounceMs = DEFAULT_SETTLE_DEBOUNCE_MS,
   } = opts;
 
   const [objects, setObjects] = useState<MapObject[]>([]);
@@ -346,13 +495,58 @@ export function useMapEntities(opts: {
   const [staleness, setStaleness] = useState<Staleness | null>(null);
   const [unreadLayers, setUnreadLayers] = useState<ToggleableEntityType[]>([]);
 
-  const inFlight = useRef(false);
   const hasLoaded = useRef(false);
 
-  // Tracks whether another fetch was requested while one was in-flight, so the
-  // hook re-runs once the active fetch resolves rather than silently dropping
-  // the update (e.g. when persisted layer prefs load mid-fetch). Unchanged.
-  const pendingRefetch = useRef(false);
+  // ── §34 request supersession ─────────────────────────────────────────────────
+  // A camera settle can start a new fetch while an older one is still in flight
+  // (the network is slower than the finger). Two guards keep only the newest
+  // answer:
+  //
+  //   `abortRef` cancels the superseded gateway request at the transport, so a
+  //   fetch the user has already panned past stops consuming bandwidth.
+  //
+  //   `seqRef` is the discard: a stamp taken when a fetch starts and checked
+  //   after every await, so a superseded response that resolves late (or an
+  //   abort that lands as a rejection) can never overwrite the current one.
+  //   §34 wants the map to reflect where the camera IS, not the order fetches
+  //   happened to finish.
+  const abortRef = useRef<AbortController | null>(null);
+  const seqRef = useRef(0);
+
+  // ── §34 camera settle ────────────────────────────────────────────────────────
+  // The live camera, quantised (see quantizeCameraForFetch) and committed only
+  // after it has been still for `settleDebounceMs`. Held as state so a settle
+  // moves the fetch key; null until the first settle, so the very first fetch
+  // still runs off the COMMANDED lat/lng/zoom and the map is never blank waiting
+  // for a gesture that may never come.
+  const [settledCamera, setSettledCamera] =
+    useState<{ lat: number; lng: number; zoom: number } | null>(null);
+  // The last quantised key committed, so an equal one neither restarts the
+  // debounce nor re-commits (which would churn the fetch key for a no-op move).
+  const settledKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!camera) return;
+    const q = quantizeCameraForFetch(camera, radiusKm);
+    const key = `${q.lat.toFixed(4)},${q.lng.toFixed(4)},${q.zoom}`;
+    // Already settled here: a pan within the same grid cell / zoom band is not
+    // a re-query, so there is nothing to debounce.
+    if (key === settledKeyRef.current) return;
+    const timer = setTimeout(() => {
+      settledKeyRef.current = key;
+      setSettledCamera(q);
+    }, Math.max(0, settleDebounceMs));
+    // A further move before the window elapses clears this timer, so only the
+    // camera's RESTING position ever commits — never the frames it passed
+    // through (§34: "never re-query on every pixel movement").
+    return () => clearTimeout(timer);
+  }, [camera, camera?.lat, camera?.lng, camera?.zoom, radiusKm, settleDebounceMs]);
+
+  // The geometry the fetch actually keys on: the settled live camera once it
+  // exists, else the commanded viewport. Primitives, so an unchanged settle is
+  // an unchanged fetch key even though `settledCamera` is a fresh object.
+  const effectiveLat = settledCamera?.lat ?? lat;
+  const effectiveLng = settledCamera?.lng ?? lng;
+  const effectiveZoom = settledCamera?.zoom ?? zoom;
 
   // ── §33 cache-first seed ────────────────────────────────────────────────────
   // "The map should progressively improve; it should not blank while live
@@ -378,16 +572,22 @@ export function useMapEntities(opts: {
   }, [city]);
 
   const doFetch = useCallback(async () => {
-    if (inFlight.current) {
-      pendingRefetch.current = true;
-      return;
-    }
-    // Crowd Flow is requested independently of `enabledLayers`, so this guard
-    // must consider it. A viewer who switches every legacy pin layer OFF but
-    // Crowd Flow ON would otherwise be swallowed here and see nothing —
-    // and the early return cannot simply be deleted, because passport mode
-    // passes [] deliberately to mean "fetch nothing".
-    if (enabledLayers.length === 0 && !crowdFlow) {
+    // The optional §16 layers (Crowd Flow, Relevant Places, Saved, Memories,
+    // Safety, Trip meeting points) are requested independently of
+    // `enabledLayers`, so this guard must consider them all. A viewer who
+    // switches every legacy pin layer OFF but any of these ON would otherwise be
+    // swallowed here and see nothing — and the early return cannot simply be
+    // deleted, because passport mode passes [] deliberately to mean "fetch
+    // nothing".
+    if (
+      enabledLayers.length === 0 &&
+      !crowdFlow && !places && !saved && !memories && !safety && !meetingPoints
+    ) {
+      // Abort any in-flight fetch and take the newest stamp so a fetch that
+      // resolves after this "nothing enabled" state cannot repaint the map.
+      // (§34 supersede — this replaces the old inFlight/pendingRefetch guard.)
+      abortRef.current?.abort();
+      seqRef.current += 1;
       setObjects([]);
       setEntities([]);
       // No layer is enabled, so no layer went unread. Leaving a stale list here
@@ -395,8 +595,17 @@ export function useMapEntities(opts: {
       setUnreadLayers([]);
       return;
     }
-    inFlight.current = true;
-    pendingRefetch.current = false;
+
+    // §34: supersede. A camera settle can fire this while an earlier fetch is
+    // still in flight — cancel that one at the transport and stamp this one so
+    // a late/aborted response is discarded rather than allowed to repaint.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const seq = (seqRef.current += 1);
+    /** This fetch is still the newest one the hook cares about. */
+    const current = () => seq === seqRef.current;
+
     if (!hasLoaded.current) setLoading(true);
 
     const now = Date.now();
@@ -410,6 +619,15 @@ export function useMapEntities(opts: {
     // the `crowdFlow` option. kindsForLayer is the §16 model's own mapping, so
     // this cannot drift from the layer definition.
     if (crowdFlow) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.crowd_flow);
+    // §16 Relevant Places ride the same way. Gateway only — see the option.
+    if (places) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.relevant_places);
+    // The remaining §16 layers ride beside enabledLayers the same way — each on
+    // its own option, resolved by the shell from the §16 preferences. Gateway
+    // only; none has a rollback fetcher in this hook.
+    if (saved) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.saved);
+    if (memories) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.memories);
+    if (safety) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.safety);
+    if (meetingPoints) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.meeting_point);
 
     try {
       // ── 1. Try the gateway ────────────────────────────────────────────────
@@ -417,13 +635,20 @@ export function useMapEntities(opts: {
       let gatewaySources: string[] = [];
       let enrichment: UseMapEntitiesResult['liveEnrichment'] = null;
 
-      if (wantedKinds.length > 0 && lat != null && lng != null) {
+      if (wantedKinds.length > 0 && effectiveLat != null && effectiveLng != null) {
         const res = await fetchMapProjection({
-          bbox: bboxFromCenter(lat, lng, radiusKm),
-          zoom,
+          // §34: the viewport the camera has SETTLED on (effective*), not the
+          // commanded one, once a settle has arrived.
+          bbox: bboxFromCenter(effectiveLat, effectiveLng, radiusKm),
+          zoom: effectiveZoom,
           kinds: wantedKinds,
           limit: 200,
+          signal: controller.signal,
         });
+        // A newer fetch superseded this one while the gateway was answering (or
+        // it was aborted, which returns `ok:false`): discard silently. Falling
+        // through would run the legacy path for a viewport the user has left.
+        if (!current()) return;
         // `enabled: false` means the flag is off — fall back, do NOT treat it
         // as an empty world.
         if (res.ok && res.data.enabled) {
@@ -441,14 +666,14 @@ export function useMapEntities(opts: {
       const fetches: Promise<MapObject[]>[] = [];
 
       if (!usedGateway) {
-        if (enabledLayers.includes('events') && lat != null && lng != null) {
-          fetches.push(fetchEvents(lat, lng, now).catch(() => []));
+        if (enabledLayers.includes('events') && effectiveLat != null && effectiveLng != null) {
+          fetches.push(fetchEvents(effectiveLat, effectiveLng, now).catch(() => []));
         }
         if (enabledLayers.includes('gems') && city) {
           fetches.push(fetchGems(city).catch(() => []));
         }
         if (enabledLayers.includes('buddies') && city) {
-          fetches.push(fetchBuddies(city, lat, lng).catch(() => []));
+          fetches.push(fetchBuddies(city, effectiveLat, effectiveLng).catch(() => []));
         }
         if (enabledLayers.includes('trips')) {
           fetches.push(fetchTrips().catch(() => []));
@@ -466,6 +691,9 @@ export function useMapEntities(opts: {
         : [];
 
       const perLayer = await Promise.all(fetches);
+      // A settle superseded this fetch while the legacy transports were in
+      // flight — discard so the newer viewport's answer is the one that paints.
+      if (!current()) return;
       const merged = (gatewayObjects ?? []).concat(...perLayer);
 
       // §31: one ranking over the whole stream, so a gateway object and a
@@ -500,16 +728,36 @@ export function useMapEntities(opts: {
         void mapCache.write('place_intel', city, merged).catch(() => {});
       }
     } catch (err: any) {
-      if (!hasLoaded.current) setError(err?.message ?? 'Failed to load map entities');
+      // Only the newest fetch may surface an error; a superseded one's failure
+      // (an abort included) is not the user's current view.
+      if (current() && !hasLoaded.current) setError(err?.message ?? 'Failed to load map entities');
     } finally {
-      inFlight.current = false;
-      setLoading(false);
-      if (pendingRefetch.current) {
-        pendingRefetch.current = false;
-        void doFetch();
-      }
+      // Only the newest fetch owns the loading flag — a superseded fetch's
+      // finally must not clear the spinner an in-flight newer fetch still needs.
+      if (current()) setLoading(false);
     }
-  }, [enabledLayers, city, lat, lng, zoom, radiusKm]);
+    // EVERY OPTIONAL §16 FLAG IS A FETCH-KEY INPUT, AND THE LIST BELOW IS THE
+    // WHOLE OF IT. Each carries a §16 preference that loads asynchronously and
+    // that the viewer can toggle, so a flag this callback READS but does not
+    // depend on leaves its kind permanently unrequested (or permanently
+    // requested) for the session: the callback identity never changes, the
+    // effect below never re-runs, and the layer simply never loads.
+    //
+    // `crowdFlow` was missing from this list, which is exactly what happened to
+    // §16 Crowd Flow — the layer could be switched on and never arrived. It is
+    // read TWICE in this callback (the all-off early return and the wantedKinds
+    // build), and both readings were stale.
+    //
+    // If you add an option that this callback reads, add it here. The invariant
+    // is mechanical: the array must name every value read inside `doFetch` that
+    // is not a ref, a state setter or a module constant.
+    //
+    // effective{Lat,Lng,Zoom} carry the §34 settled camera; when a settle moves
+    // them the fetch re-keys and re-queries the new viewport.
+  }, [
+    enabledLayers, city, effectiveLat, effectiveLng, effectiveZoom, radiusKm,
+    crowdFlow, places, saved, memories, safety, meetingPoints,
+  ]);
 
   const refresh = useCallback(() => {
     void doFetch();

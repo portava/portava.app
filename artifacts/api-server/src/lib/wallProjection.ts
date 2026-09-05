@@ -90,10 +90,40 @@ export interface DisplayMedia {
   width?: number | null;
   height?: number | null;
   durationMs?: number | null;
-  /** Video only: whether the client may autoplay under product/user/device
-   *  policy (spec §11/§36 — reduced-motion respected client-side). */
+  /**
+   * Video only. An ADVISORY server note, never a command (spec §11/§36).
+   *
+   *   `true`             the server has verified this media is a ready, playable
+   *                      video — i.e. autoplay is technically possible. It does
+   *                      NOT ask for autoplay: the server never forces autoplay
+   *                      on (§11).
+   *   `false` / absent   NO server-side opinion. It is NOT a veto.
+   *
+   * AUTOPLAY IS CLIENT POLICY, FULL STOP. Viewport visibility, reduced motion
+   * (§36) and the user's autoplay preference are resolved on the device and are
+   * the only inputs that decide (travel-buddy-standalone
+   * features/wall/services/videoAutoplayPolicy). This field used to be stamped
+   * `false` on EVERY video while the client read `false` as a hard veto, which
+   * made the shipped inline-Wall autoplay unreachable; the two halves of the
+   * contract now say the same thing.
+   */
   autoplayEligible?: boolean;
   processing?: boolean;
+}
+
+/**
+ * The server's autoplay note for one media descriptor — the ONE place the value
+ * is decided, so the loaders cannot drift apart (they did: four sites each
+ * stamped a blanket `false`).
+ *
+ * A video the server is about to publish in a projection has already cleared the
+ * loader's readiness/URL checks, so the honest note is "playable" — `true`. A
+ * still image has no autoplay concept at all, so the field is omitted. Neither
+ * value commands the client: `true` only says autoplay is possible, and the
+ * client's own policy still has to allow it.
+ */
+export function serverAutoplayHint(kind: DisplayMedia["kind"]): true | undefined {
+  return kind === "video" ? true : undefined;
 }
 
 /**
@@ -338,6 +368,12 @@ export interface LiveForYouItem {
   confidence?: number | null;
   /** 'live' only when the evidence qualifies; otherwise 'emerging' (§ liveClaimRead). */
   state: "live" | "emerging";
+  /**
+   * IG §10 conflict state of the claim behind the item. 'material' ⇒ `state`
+   * is 'emerging' (never 'live') and the client renders "Reports differ"
+   * instead of an Emerging/Live label. Absent ⇒ 'none'.
+   */
+  conflictState?: "none" | "minor" | "material";
   observedAt: string;
   /** Freshness horizon — after this the client degrades to unknown (spec §31). */
   validUntil: string;

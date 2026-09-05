@@ -25,6 +25,12 @@ import {
   EXPLORATION_INTERVAL,
   type AllocatedFeedItem,
 } from "../services/ranking/FeedSlotAllocator.js";
+import {
+  allocateExplorationBudget, clampGovernorBudget, governorReasonsFor,
+  GOVERNOR_BUDGET_MIN_PCT, GOVERNOR_BUDGET_MAX_PCT, GOVERNOR_MIN_CANDIDATES, GOVERNOR_REASONS,
+  GOVERNOR_POOL_START_SHARE, GOVERNOR_RISING_MOMENTUM,
+  type GovernorCandidate, type GovernorInputs,
+} from "../services/ranking/FeedSlotAllocator.js";
 import { RankingEvent } from "../services/ranking/rankingAnalytics.js";
 import type { RankingInput, RankingOutput } from "../services/ranking/DiscoveryRankingService.js";
 
@@ -289,5 +295,122 @@ describe("I. slotIndex is 0-based and contiguous", () => {
     for (let i = 0; i < N; i++) {
       assert.equal(feed[i].slotIndex, i);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Exploration GOVERNOR (ROADMAP step 8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("exploration GOVERNOR — a 15-25 % budgeted allocator with reason codes", () => {
+  const NOW_MS = Date.parse("2026-09-04T12:00:00Z");
+  const CATS = ["food", "nightlife", "culture", "nature", "wellness"];
+  function list(n: number, over: (i: number) => Partial<GovernorCandidate> = () => ({})): GovernorCandidate[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `p${i}`, category: CATS[i % CATS.length], socialProof: i * 2, momentum: 0, ...over(i),
+    }));
+  }
+  const inputs = (over: Partial<GovernorInputs> = {}): GovernorInputs =>
+    ({ userId: "u-1", budgetPct: 20, nowMs: NOW_MS, ...over });
+  const ids = (l: readonly GovernorCandidate[]) => l.map((c) => c.id);
+
+  it("the budget is clamped to the roadmap band; a non-finite request falls to the midpoint", () => {
+    assert.equal(clampGovernorBudget(5), GOVERNOR_BUDGET_MIN_PCT);
+    assert.equal(clampGovernorBudget(40), GOVERNOR_BUDGET_MAX_PCT);
+    assert.equal(clampGovernorBudget(20), 20);
+    assert.equal(clampGovernorBudget(Number.NaN), 20);
+    assert.equal(allocateExplorationBudget(list(20), inputs({ budgetPct: 99 }), true).budgetPct, GOVERNOR_BUDGET_MAX_PCT);
+  });
+
+  it("too few candidates ⇒ nothing to govern: 0 slots, order untouched, not applied", () => {
+    const l = list(GOVERNOR_MIN_CANDIDATES - 1);
+    const out = allocateExplorationBudget(l, inputs(), true);
+    assert.equal(out.applied, false);
+    assert.equal(out.slotCount, 0);
+    assert.deepEqual(out.order, ids(l));
+    assert.deepEqual(out.allocations, []);
+  });
+
+  it("OBSERVE (apply=false) computes the whole allocation and changes NOTHING", () => {
+    const l = list(20);
+    const out = allocateExplorationBudget(l, inputs(), false);
+    assert.equal(out.applied, false);
+    assert.deepEqual(out.order, ids(l), "the returned order IS the input order");
+    assert.equal(out.slotCount, Math.floor((20 * 20) / 100));
+    assert.equal(out.allocations.length, out.slotCount);
+    const poolStart = Math.ceil(20 * GOVERNOR_POOL_START_SHARE);
+    for (const a of out.allocations) {
+      assert.ok(a.slotIndex >= 1, "the top slot stays the ranker's");
+      assert.ok(a.fromIndex >= poolStart, "picks come from the tail");
+      assert.ok(a.reasons.length >= 1, "every pick carries a reason");
+      for (const r of a.reasons) assert.ok((GOVERNOR_REASONS as readonly string[]).includes(r));
+    }
+  });
+
+  it("APPLY is a permutation: every pick sits at its slot, non-picks keep their relative order, slot 0 is untouched", () => {
+    const l = list(20);
+    const out = allocateExplorationBudget(l, inputs({ budgetPct: 25 }), true);
+    assert.equal(out.applied, true);
+    assert.equal(out.slotCount, 5);
+    assert.deepEqual([...out.order].sort(), [...ids(l)].sort());
+    for (const a of out.allocations) assert.equal(out.order[a.slotIndex], a.id);
+    assert.equal(out.order[0], "p0");
+    const picks = new Set(out.allocations.map((a) => a.id));
+    assert.deepEqual(out.order.filter((id) => !picks.has(id)), ids(l).filter((id) => !picks.has(id)));
+  });
+
+  it("the share of the page spent on exploration stays inside the budget at every list size", () => {
+    for (const n of [5, 6, 7, 10, 13, 20, 33, 50, 100]) {
+      for (const b of [GOVERNOR_BUDGET_MIN_PCT, 20, GOVERNOR_BUDGET_MAX_PCT]) {
+        const out = allocateExplorationBudget(list(n), inputs({ budgetPct: b }), true);
+        const ceiling = Math.max(1, Math.floor((n * b) / 100));
+        assert.ok(out.slotCount <= ceiling, `n=${n} b=${b}: ${out.slotCount} > ${ceiling}`);
+        assert.ok(out.slotCount >= 1);
+        assert.equal(new Set(out.allocations.map((a) => a.slotIndex)).size, out.allocations.length, "slots are distinct");
+        assert.equal(out.order.length, n);
+        assert.equal(new Set(out.order).size, n);
+      }
+    }
+  });
+
+  it("reason codes name what the system expects to learn from the pick", () => {
+    const aff = { food: 0.9, nightlife: 0.1 };
+    assert.deepEqual(governorReasonsFor({ id: "x", category: "nightlife", socialProof: 5, momentum: 0 }, aff), ["unfamiliar_category"]);
+    assert.deepEqual(governorReasonsFor({ id: "x", category: "food", socialProof: 0, momentum: 0 }, aff), ["low_social_proof"]);
+    assert.deepEqual(governorReasonsFor({ id: "x", category: "food", socialProof: 5, momentum: GOVERNOR_RISING_MOMENTUM }, aff), ["rising_momentum"]);
+    assert.deepEqual(governorReasonsFor({ id: "x", category: "food", socialProof: 5, momentum: 0 }, aff), ["long_tail"]);
+    assert.deepEqual(
+      governorReasonsFor({ id: "x", category: "culture", socialProof: null, momentum: 1 }, aff),
+      ["unfamiliar_category", "low_social_proof", "rising_momentum"],
+    );
+    // With no learned affinities at all the system cannot call a category unfamiliar.
+    assert.deepEqual(governorReasonsFor({ id: "x", category: "culture", socialProof: 5 }, undefined), ["long_tail"]);
+  });
+
+  it("the pick with the most to learn wins a slot, and reasonCounts tallies every reason", () => {
+    const l = list(20, (i) => (i === 19 ? { category: "mystery", socialProof: 0, momentum: 1 } : {}));
+    const aff = Object.fromEntries(CATS.map((c) => [c, 0.9]));
+    const out = allocateExplorationBudget(l, inputs({ budgetPct: 15, categoryAffinities: aff }), true);
+    assert.ok(out.allocations.some((a) => a.id === "p19"), "the unfamiliar + unproven + rising item must be picked");
+    const p19 = out.allocations.find((a) => a.id === "p19")!;
+    assert.deepEqual(p19.reasons, ["unfamiliar_category", "low_social_proof", "rising_momentum"]);
+    const total = Object.values(out.reasonCounts).reduce((a, b) => a + b, 0);
+    assert.ok(total >= out.slotCount);
+    assert.ok(out.reasonCounts.rising_momentum >= 1);
+  });
+
+  it("deterministic per (viewer, hour): a paginating session sees one allocation", () => {
+    const l = list(30);
+    const a = allocateExplorationBudget(l, inputs(), true);
+    const b = allocateExplorationBudget(l, inputs({ nowMs: NOW_MS + 5 * 60_000 }), true);
+    assert.deepEqual(a.order, b.order);
+    assert.deepEqual(a.allocations, b.allocations);
+  });
+
+  it("the exploration share is itself diverse: no category repeats while others remain", () => {
+    const l = list(30);
+    const out = allocateExplorationBudget(l, inputs({ budgetPct: 15 }), true);
+    const cats = out.allocations.map((a) => l.find((c) => c.id === a.id)!.category);
+    assert.equal(new Set(cats).size, cats.length);
   });
 });

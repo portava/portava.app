@@ -19,12 +19,59 @@
  * counts remain authoritative.
  */
 
+import {
+  isVisible,
+  isVisibleV2,
+  type CallerContext,
+  type VisibilityTier,
+  type StampV2VisibilityTier,
+} from "./PassportPrivacyGuard.js";
+
 export const UNIFIED_FLAG = "stamp_unified_view_enabled";
 
+/** Which live table a unified stamp was read from (storage origin, not provenance). */
 export type UnifiedStampSource = "v1_gps" | "v2_achievement";
+
+/**
+ * TABLE 16 — canonical server-side stamp provenance. This is the PROVENANCE
+ * (where a stamp legitimately came from), distinct from the storage origin
+ * (`UnifiedStampSource`). It is derived on read from the live `source_type`
+ * columns and never trusts a self-editable profile field (§12).
+ */
+export type StampSource =
+  | "self_reported"
+  | "system_observed"
+  | "trip_derived"
+  | "event_verified"
+  | "contribution_earned"
+  | "buddy_derived"
+  | "partner_verified"
+  | "admin_issued";
+
+/**
+ * TABLE 16 — the platform's trust assertion on a stamp. §12: a self-reported or
+ * decorative stamp must NEVER visually impersonate a verified one, so this is
+ * derived from canonical provenance (verification_level / award path), not from
+ * an editable field.
+ */
+export type StampVerification = "decorative" | "reported" | "verified";
 
 export interface UnifiedStamp {
   source: UnifiedStampSource;
+  /** TABLE 16 provenance, derived server-side from the live source_type. */
+  stampSource: StampSource;
+  /** TABLE 16 verification assertion, derived from provenance (§12). */
+  verification: StampVerification;
+  /**
+   * The owner's PER-STAMP visibility, read verbatim from the live row so every
+   * consumer can gate on it. The two systems use different tier vocabularies —
+   * v1 `passport_stamps.visibility` is public|circle_only|trip_crew|private and
+   * v2 `user_stamps.visibility` is public|friends_only|private — so the tier is
+   * carried alongside `source` and interpreted with the matching
+   * PassportPrivacyGuard predicate. `null` when the row carries no tier at all;
+   * consumers must treat that (and any unknown label) as NOT public.
+   */
+  visibility: string | null;
   /** v2 user_stamps.id when source is v2; null for v1 GPS rows. */
   userStampId: string | null;
   /** v2 user_stamps.stamp_definition_id; null for v1 GPS rows. */
@@ -38,6 +85,61 @@ export interface UnifiedStamp {
   name: string | null;
   rarity: string | null;
   artworkUrl: string | null;
+}
+
+/**
+ * Map a live `source_type` string onto the TABLE 16 StampSource enum. The raw
+ * values are the award-provenance strings the write paths actually use
+ * (StampAwardEngine: trips/posts/events/admin/moderation/system/recalculate/
+ * safe_return/rent_buddy; PassportStampService GPS: system/passport/checkin/
+ * gps/crew). Unknown/absent → system_observed (a platform-awarded stamp with no
+ * more specific provenance), EXCEPT explicit self markers → self_reported.
+ */
+export function mapStampSource(raw: string | null | undefined): StampSource {
+  switch (norm(raw)) {
+    case "trips":       return "trip_derived";
+    case "events":      return "event_verified";
+    case "posts":       return "contribution_earned";
+    case "rent_buddy":
+    case "buddy":       return "buddy_derived";
+    case "admin":
+    case "moderation":  return "admin_issued";
+    case "partner":
+    case "partner_verified": return "partner_verified";
+    case "self":
+    case "self_reported":
+    case "manual":
+    case "manual_memory":
+    case "user":        return "self_reported";
+    default:            return "system_observed";
+  }
+}
+
+/**
+ * §12 verification assertion for a v1 passport_stamps row. The live table forces
+ * a self-inserted stamp to verification_level='unverified' (migration 2149 RLS),
+ * so an unverified/absent level is a reported claim — never "verified". The
+ * platform-set levels (verified/gps/checkin/crew/safe_return/admin/community) are
+ * canonical travel facts → verified.
+ */
+export function verificationFromLevel(level: string | null | undefined): StampVerification {
+  switch (norm(level)) {
+    case "verified":
+    case "gps":
+    case "checkin":
+    case "crew":
+    case "safe_return":
+    case "admin":
+    case "community":
+      return "verified";
+    case "decorative":
+      return "decorative";
+    default:
+      // 'unverified' (self-inserted default) and any unknown level: a claim, not
+      // a verified fact. Presented as "reported" so it can never impersonate a
+      // verified stamp (§12).
+      return "reported";
+  }
 }
 
 function norm(s: unknown): string {
@@ -76,7 +178,7 @@ async function readV2(sc: any, userId: string): Promise<UnifiedStamp[]> {
     const { data, error } = await sc
       .from("user_stamps")
       .select(
-        "id, stamp_definition_id, city, country, earned_at, is_revoked, catalog_id, " +
+        "id, stamp_definition_id, source_type, city, country, earned_at, is_revoked, visibility, catalog_id, " +
         "stamp_definitions(name, rarity, stamp_type)",
       )
       .eq("user_id", userId)
@@ -90,6 +192,13 @@ async function readV2(sc: any, userId: string): Promise<UnifiedStamp[]> {
 
     return rows.map((r) => ({
       source: "v2_achievement" as const,
+      // v2 achievements are awarded only by StampAwardEngine via the service
+      // role (never self-inserted), so they are canonical facts → verified (§12).
+      stampSource: mapStampSource(r.source_type),
+      verification: "verified" as const,
+      // v2 tier vocabulary (public|friends_only|private). Absent → null, which
+      // every consumer treats as not-public.
+      visibility: typeof r.visibility === "string" ? r.visibility : null,
       userStampId: r.id ?? null,
       definitionId: r.stamp_definition_id ?? null,
       catalogId: r.catalog_id ?? null,
@@ -118,6 +227,15 @@ async function readV1(sc: any, userId: string): Promise<UnifiedStamp[]> {
       .filter((r) => r.locked !== true) // live table has a `locked` flag; skip locked
       .map((r) => ({
         source: "v1_gps" as const,
+        // v1 carries a real, platform-controlled verification_level and
+        // source_type (both un-forgeable by the owner, migration 2149) — read
+        // them verbatim so a self-inserted 'unverified' stamp can never appear
+        // as verified (§12).
+        stampSource: mapStampSource(r.source_type),
+        verification: verificationFromLevel(r.verification_level),
+        // v1 tier vocabulary (public|circle_only|trip_crew|private). Absent →
+        // null, which every consumer treats as not-public.
+        visibility: typeof r.visibility === "string" ? r.visibility : null,
         userStampId: null,
         definitionId: null,
         catalogId: r.catalog_id ?? null,
@@ -188,6 +306,30 @@ export async function buildUnifiedStamps(sc: any, userId: string): Promise<Unifi
     count: stamps.length,
     breakdown: { v2: v2.length, v1: v1.length, deduped: dedupedFromV1 },
   };
+}
+
+/**
+ * Per-stamp visibility gate for a unified stamp (§22).
+ *
+ * The owner's per-row tier is authoritative and is applied with the predicate
+ * that matches the row's own vocabulary — `isVisible` for a v1 `passport_stamps`
+ * row (public|circle_only|trip_crew|private), `isVisibleV2` for a v2
+ * `user_stamps` row (public|friends_only|private). Both predicates already fail
+ * CLOSED on a label they do not recognise; an absent tier is likewise refused
+ * here rather than defaulted to public.
+ */
+export function isUnifiedStampVisible(stamp: UnifiedStamp, callerCtx: CallerContext): boolean {
+  if (callerCtx === "owner") return true;
+  const tier = norm(stamp.visibility);
+  if (!tier) return false; // absent tier → fail closed
+  return stamp.source === "v2_achievement"
+    ? isVisibleV2(tier as StampV2VisibilityTier, callerCtx)
+    : isVisible(tier as VisibilityTier, callerCtx);
+}
+
+/** Filter a unified stamp collection by the owner's per-stamp visibility. */
+export function filterUnifiedStamps(stamps: UnifiedStamp[], callerCtx: CallerContext): UnifiedStamp[] {
+  return stamps.filter((s) => isUnifiedStampVisible(s, callerCtx));
 }
 
 /** Convenience: just the unified count (for passport stat). */

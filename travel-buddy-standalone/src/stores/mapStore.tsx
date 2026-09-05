@@ -72,21 +72,23 @@ export interface MapCapabilityInputs {
    * so a signed-out viewer cannot be a member of the group they would open.
    */
   viewerId: string | null;
+  /**
+   * §15 — whether the temporal producer answered `enabled` for this session.
+   *
+   * Time Machine USED to be held permanently closed: nothing produced per-offset
+   * state, so `toTemporalObjects` could only RELABEL the NOW map and every offset
+   * would have rendered today's map wearing a forecast badge (§37: "Do not make
+   * predictions look like observations"). GET /api/map/projection/temporal is now
+   * that producer, so the gate becomes a presence check like CROWD_FLOW's — with
+   * ONE deliberate difference: reachability turns on the PRODUCER existing, not on
+   * any offset being populated. §15's mode is meaningful even for an empty offset,
+   * because it shows an honest empty state ("no history yet" / no forecast here)
+   * rather than an empty layer. The temporal endpoint rides the gateway flag
+   * (map_projection_enabled), so `false` here means the source is unreachable and
+   * the mode stays shut — never open onto a source that cannot answer.
+   */
+  timeMachineProducerEnabled: boolean;
 }
-
-/**
- * §15 Time Machine, deliberately left CLOSED.
- *
- * There is no per-offset producer anywhere — no route, no service and no
- * projection emits a `prediction` object or any forecast state, on either side
- * of the wire. `toTemporalObjects` can only RELABEL the objects that are on
- * screen now, so every offset (+30m, +60m, +120m) would render today's map
- * wearing a forecast badge. §37: "Do not make predictions look like
- * observations." Opening the scrubber onto that would be worse than leaving it
- * shut, so this stays `false` until something actually produces per-offset
- * state, at which point it becomes a presence check like CROWD_FLOW's.
- */
-export const TIME_MACHINE_HAS_NO_SOURCE = false;
 
 export function deriveMapCapabilities(inputs: MapCapabilityInputs): MapCapabilities {
   return {
@@ -100,7 +102,10 @@ export function deriveMapCapabilities(inputs: MapCapabilityInputs): MapCapabilit
       inputs.locateFriendsFlagEnabled &&
       inputs.locateFriendsScopeId != null &&
       inputs.viewerId != null,
-    TIME_MACHINE: TIME_MACHINE_HAS_NO_SOURCE,
+    // §15 — open when the per-offset producer is reachable. Unlike CROWD_FLOW,
+    // this is NOT gated on data presence: an offset with nothing to show is a
+    // legitimate, honestly-empty temporal state, not a reason to close the mode.
+    TIME_MACHINE: inputs.timeMachineProducerEnabled,
   };
 }
 

@@ -31,6 +31,8 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser, sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isWallRabEnabled } from "../services/wall/wallRabGate.js";
+import { isPostPublished } from "../lib/postVisibility.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { logger as rootLogger } from "../lib/logger.js";
@@ -45,6 +47,9 @@ import {
   loadPostcardCandidates,
   loadVideoMediaCandidates,
   loadSharedMomentCandidates,
+  loadContextualOpportunityCandidates,
+  loadQuickMediaItems,
+  MAX_QUICK_MEDIA_ITEMS,
   mergeLoadedCandidates,
 } from "../services/wall/WallCandidateLoaders.js";
 import {
@@ -69,6 +74,11 @@ import {
 } from "../services/wall/FollowingFeedService.js";
 import {
   buildLiveForYou,
+  buildGemLiveCandidates,
+  buildSocialPresenceLiveCandidates,
+  buildBuddyLiveCandidates,
+  buildEventStateLiveCandidates,
+  buildTripSignalLiveCandidates,
   MAX_LIVE_FOR_YOU,
   type LiveForYouCandidate,
 } from "../services/wall/LiveForYouService.js";
@@ -97,8 +107,13 @@ const MAX_LIMIT = 40;
  *  first server page fast (spec TABLE 4: < 500 ms backend). */
 const CANDIDATE_FETCH = 150;
 
+// `post_status` is the delayed-publish state machine (lib/postVisibility
+// isPostPublished). It was never selected here, so the spine's only gate was
+// `status = 'active'` — and POST /posts inserts a delayed-geotag post as
+// status='active' + post_status='pending_*'. The Wall served those pending
+// posts to every follower while the author was still at the place (§23/§37).
 const POST_COLUMNS =
-  "id, author_id, trip_id, content, visibility, status, created_at, published_at, " +
+  "id, author_id, trip_id, content, visibility, status, post_status, created_at, published_at, " +
   "canonical_place_id, has_video, media_count, category, location_city, location_country, " +
   "like_count, comment_count, save_count";
 
@@ -146,7 +161,7 @@ function recordWallEvent(
 
 // ── Viewer context ────────────────────────────────────────────────────────────
 
-interface WallViewerContext {
+export interface WallViewerContext {
   followedCreatorIds: Set<string>;
   viewerTripIds: Set<string>;
   currentCity: string | null;
@@ -288,6 +303,29 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
   return ctx;
 }
 
+/**
+ * Build the For You rank viewer (spec §13/§14) from the loaded viewer context.
+ *
+ * loadViewerContext already resolves the viewer's interests and preferred/home
+ * cities, but the rank viewer used to be built inline WITHOUT them, so
+ * WallRankingService.toViewerContext fed the ranker empty travelStyles /
+ * preferredCities — InterestFit and DestinationFit then collapsed to their
+ * neutral floor on every request. The viewer's interest tokens ARE the ranker's
+ * travelStyles (interest slugs) and the preferred/home cities ARE its
+ * preferredCities; both are already lowercased in loadViewerContext. Exported as
+ * a pure seam so the mapping is directly testable without an HTTP round-trip.
+ */
+export function buildForYouRankViewer(viewer: WallViewerContext, viewerId: string): WallRankViewer {
+  return {
+    viewerId,
+    currentCity: viewer.currentCity,
+    currentCountry: viewer.currentCountry,
+    followedCreatorIds: viewer.followedCreatorIds,
+    travelStyles: [...viewer.interests],
+    preferredCities: [...viewer.preferredCities],
+  };
+}
+
 // ── Candidate loading ──────────────────────────────────────────────────────────
 
 interface LoadedCandidates {
@@ -335,6 +373,9 @@ async function loadCandidates(
         .from("posts")
         .select(POST_COLUMNS)
         .eq("status", "active")
+        // Delayed-publish gate — the same DB predicate the Following / global
+        // feeds apply (routes/posts.ts). Re-checked in memory below.
+        .eq("post_status", "published")
         .in("author_id", followed.slice(0, 500))
         .order("created_at", { ascending: false })
         .limit(CANDIDATE_FETCH);
@@ -361,6 +402,7 @@ async function loadCandidates(
         .from("posts")
         .select(POST_COLUMNS)
         .eq("status", "active")
+        .eq("post_status", "published")
         .eq("visibility", "public")
         .order("created_at", { ascending: false })
         .limit(CANDIDATE_FETCH);
@@ -378,6 +420,10 @@ async function loadCandidates(
   }
 
   if (rows.length === 0) return { ...empty, followingReachedEnd };
+
+  // In-memory re-check of the delayed-publish gate (same predicate as the query
+  // filter above): a row fed past the DB filter must still never be served.
+  rows = rows.filter((r) => isPostPublished(r));
 
   // Dedupe by post id (a post could appear in both queries).
   const byId = new Map<string, any>();
@@ -556,15 +602,29 @@ function applyIntentSteer(candidates: WallCandidate[], intent: StructuredIntent 
 
 // ── Live strip assembly (shared by GET /wall and GET /wall/live) ─────────────
 
+/**
+ * Build the strip, or nothing at all when `wall_live_for_you_enabled` is off.
+ *
+ * `candidates` is a THUNK, not an array, and that is the whole point. The strip's
+ * candidate set is the most expensive thing on the first page — the event
+ * producer alone runs a block read, a places read and up to two spatial event
+ * probes whose per-row privacy pass costs a friendship read plus
+ * checkEventEligibility per candidate row, and the trip producer adds three more
+ * reads. Passing an already-awaited array meant an OFF flag still paid for every
+ * one of them and then threw the result away, which is exactly the TABLE 4 cost
+ * this is supposed to bound. Deferring the assembly behind the flag check makes
+ * the flag structurally disable the WORK, not just the output, for every caller
+ * — there is no shape of this function in which the reads happen first.
+ */
 async function buildLiveStrip(
   sc: any,
   liveEnabled: boolean,
-  candidates: LiveForYouCandidate[],
+  candidates: () => Promise<LiveForYouCandidate[]>,
   opts: { limit: number; dedupeSubjectIds?: Set<string> },
 ): Promise<LiveForYouItem[]> {
   if (!liveEnabled) return [];
   try {
-    return await buildLiveForYou(sc, candidates, {
+    return await buildLiveForYou(sc, await candidates(), {
       limit: opts.limit,
       dedupeSubjectIds: opts.dedupeSubjectIds,
     });
@@ -572,6 +632,68 @@ async function buildLiveStrip(
     logger.warn({ err }, "wall: live strip build failed — degrading to empty");
     return [];
   }
+}
+
+/**
+ * Assemble the FULL multi-kind Live For You candidate set for a bounded set of
+ * viewer-relevant places (spec §4 / TABLE 0). place_state comes from the intel
+ * projection inside buildLiveForYou (a bare candidate ⇒ the envelope read); ALL
+ * FIVE other TABLE 0 kinds come from their own canonical readers here so
+ * LiveForYouService.actionFor's per-kind mapping binds:
+ *   • trip_signal     — buildTripSignalLiveCandidates (trip-scoped; the viewer's
+ *                       own accepted trips, anchored on a saved stop)
+ *   • event_state     — buildEventStateLiveCandidates (loadNearbyEvents, the
+ *                       privacy-complete events reader the Map gateway uses)
+ *   • hidden_gem      — buildGemLiveCandidates (public/approximate, fresh state)
+ *   • social_presence — buildSocialPresenceLiveCandidates (k-anonymity floor)
+ *   • buddy           — buildBuddyLiveCandidates (behind the RAB flag, city-area)
+ * Each producer is fail-soft; a resolved candidate wins the per-subject slot over
+ * a bare place_state one inside buildLiveForYou.
+ *
+ * ORDER IS PRIORITY. buildLiveForYou assembles in candidate order and stops at
+ * the ≤4 bound, so the most decision-relevant, time-bound kinds come first: the
+ * viewer's OWN trip milestone, then an event that is on at the place, then who
+ * was there, then the gem, then buddy availability, then the speculative
+ * place-state read.
+ */
+async function assembleLiveCandidates(
+  sc: any,
+  viewer: WallViewerContext,
+  viewerId: string,
+  placeRefs: PublicPlaceRef[],
+  rabEnabled: boolean,
+): Promise<LiveForYouCandidate[]> {
+  const placeState: LiveForYouCandidate[] = placeRefs.map((p) => ({
+    subjectId: p.placeId,
+    liveObjectType: "place_state" as const,
+    subject: p,
+  }));
+  const [gems, social, buddies, events, tripSignals] = await Promise.all([
+    buildGemLiveCandidates(sc, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: gem live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildSocialPresenceLiveCandidates(sc, viewerId, viewer.followedCreatorIds, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: social presence live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildBuddyLiveCandidates(sc, placeRefs, { rabEnabled }).catch((err) => {
+      logger.warn({ err }, "wall: buddy live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildEventStateLiveCandidates(sc, viewerId, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: event state live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+    buildTripSignalLiveCandidates(sc, viewerId, viewer.viewerTripIds, placeRefs).catch((err) => {
+      logger.warn({ err }, "wall: trip signal live producer failed");
+      return [] as LiveForYouCandidate[];
+    }),
+  ]);
+  // Resolved kinds first so, on a per-subject collision, the concrete fact wins
+  // the slot over a speculative place_state intel read (buildLiveForYou prefers a
+  // resolved candidate anyway; this ordering makes the intent explicit).
+  return [...tripSignals, ...events, ...social, ...gems, ...buddies, ...placeState];
 }
 
 // ── Schemas ────────────────────────────────────────────────────────────────
@@ -626,7 +748,8 @@ router.get(
         isFlagEnabled(sc, "wall_discovery_insertions_enabled"),
         isFlagEnabled(sc, "wall_live_for_you_enabled"),
         isFlagEnabled(sc, "wall_compass_handoff_enabled"),
-        isFlagEnabled(sc, "wall_rab_integration_enabled"),
+        // BOTH the Wall flag and the RAB master — see isWallRabEnabled.
+        isWallRabEnabled(sc),
       ]);
 
     const viewer = await loadViewerContext(sc, user.id);
@@ -634,8 +757,16 @@ router.get(
     // ── Session intent (spec §17). A per-request `session_intent` query param is
     //    a TEMPORARY steer (parsed fresh, not persisted); otherwise the stored
     //    intent applies. Both are ignored unless the phase flag is on.
+    //
+    //    FOR YOU ONLY (spec §5 / TABLE 1). Following is the strict-chronology
+    //    trust anchor: "No relevance reordering. Apply only safety/visibility
+    //    filters." An intent steer is a relevance filter, so it must never touch
+    //    Following — resolving it here would also echo an active `sessionIntent`
+    //    in the Following response and let a steer that dropped the tail make
+    //    `caughtUp` claim "all caught up" over a filtered subset. So the intent is
+    //    resolved (and later steered + echoed) ONLY in For You.
     let sessionIntent: StructuredIntent | undefined;
-    if (inputIntelEnabled) {
+    if (inputIntelEnabled && mode === "for_you") {
       try {
         if (session_intent && session_intent.trim()) {
           sessionIntent = await parseIntent(sc, user.id, session_intent, {
@@ -670,34 +801,63 @@ router.get(
     //    Post spine, which is left untouched. Every merged candidate still runs
     //    through the SAME eligibility → block → visibility gate below.
     const loaderViewer = { viewerId: user.id, followedCreatorIds: viewer.followedCreatorIds };
-    // Freeze the supplementary loaders to the SAME For You created-at horizon as
-    // the Post spine (loadCandidates, above) so a postcard/video/moment published
-    // mid-session cannot enter the candidate set and drift ranks across pages
-    // (§28). Following mode has no horizon (forYouCursor is null) and is unaffected.
-    const loaderOpts = { snapshotAtIso: forYouCursor?.snapshotAt };
-    const [postcardsLoaded, mediaLoaded, momentsLoaded] = await Promise.all([
+    // Give the supplementary loaders the SAME created-at horizon as the Post spine
+    // (loadCandidates, above) so their pages line up with it (§28). For You freezes
+    // to the rank-session snapshot (nothing published mid-session enters the set);
+    // Following slides the window down to the cursor's publishedAt so postcards /
+    // moments OLDER than the newest LOADER_FETCH stay reachable on later pages and
+    // keep their distinct identity (rather than reappearing as plain posts via the
+    // spine). Exactly one of the two is set, per mode.
+    const loaderOpts =
+      mode === "for_you"
+        ? { snapshotAtIso: forYouCursor?.snapshotAt }
+        : { followingCursorPublishedAt: followingCursor?.publishedAt };
+    // RAB contextual opportunities (§19) are For You only: Following is the
+    // strict-chronology trust anchor of followed PEOPLE's content (TABLE 1) and
+    // an availability signal is not a post. The loader re-reads BOTH flags
+    // itself (fail-closed); the route's `rabEnabled` short-circuits the call.
+    const opportunityViewer = {
+      ...loaderViewer,
+      currentCity: viewer.currentCity,
+      upcomingTripCities: viewer.upcomingTripCities,
+      interests: viewer.interests,
+    };
+    const emptyLoad = () => ({ candidates: [], signals: new Map(), placeByObject: new Map() });
+    const [postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded] = await Promise.all([
       loadPostcardCandidates(sc, mode, loaderViewer, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: postcard loader threw — no postcards");
-        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+        return emptyLoad();
       }),
       loadVideoMediaCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: video/media loader threw — no media objects");
-        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+        return emptyLoad();
       }),
       loadSharedMomentCandidates(sc, user.id, loaderOpts).catch((err) => {
         logger.warn({ err }, "wall: shared moment loader threw — no moments");
-        return { candidates: [], signals: new Map(), placeByObject: new Map() };
+        return emptyLoad();
       }),
+      mode === "for_you" && rabEnabled
+        ? loadContextualOpportunityCandidates(sc, opportunityViewer, loaderOpts).catch((err) => {
+            logger.warn({ err }, "wall: RAB opportunity loader threw — no buddy opportunities");
+            return emptyLoad();
+          })
+        : Promise.resolve(emptyLoad()),
     ]);
-    const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded);
+    const merged = mergeLoadedCandidates(loaded, postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded);
 
-    const steered = applyIntentSteer(merged.candidates, sessionIntent);
+    // Steer For You only (spec §5). `sessionIntent` is already undefined outside
+    // For You (resolved above only in that mode); the explicit mode guard keeps
+    // the invariant local and obvious: Following candidates are never filtered by
+    // a relevance steer.
+    const steered =
+      mode === "for_you" ? applyIntentSteer(merged.candidates, sessionIntent) : merged.candidates;
 
     // ── Gate + project (eligibility/block/visibility BEFORE ordering, §23/§24).
     const projectViewer: ProjectViewerContext = {
       viewerId: user.id,
       viewerTripIds: viewer.viewerTripIds,
       followedCreatorIds: viewer.followedCreatorIds,
+      currentCity: viewer.currentCity,
       compassHandoffEnabled,
     };
     let projections: WallProjection[] = [];
@@ -725,12 +885,7 @@ router.get(
       caughtUp = built.caughtUp;
       nextCursor = built.nextCursor ? encodeFollowingCursor(built.nextCursor) : undefined;
     } else {
-      const rankViewer: WallRankViewer = {
-        viewerId: user.id,
-        currentCity: viewer.currentCity,
-        currentCountry: viewer.currentCountry,
-        followedCreatorIds: viewer.followedCreatorIds,
-      };
+      const rankViewer = buildForYouRankViewer(viewer, user.id);
       const built = await rankForYou(sc, projections, rankViewer, {
         limit,
         cursor: forYouCursor,
@@ -748,22 +903,31 @@ router.get(
       items = diversified.items;
     }
 
-    // ── Live For You strip: bounded, deduped against the feed's places (§4).
-    const feedSubjectIds = new Set<string>();
-    const liveCandidates: LiveForYouCandidate[] = [];
+    // ── Live For You strip: bounded, multi-kind, from the feed's places (§4).
+    //    The §4 "do not repeat a live signal that already appears in the strip"
+    //    rule is enforced on the FEED side — attachContextThreads (below) dedups
+    //    context threads against the strip's subjects (liveStripSubjectIds). The
+    //    strip itself is therefore built from the feed's relevant places WITHOUT
+    //    self-deduping against them (self-dedup would empty it, since every
+    //    candidate subject is by construction a feed place).
+    const feedPlaceRefs: PublicPlaceRef[] = [];
+    const seenFeedPlaces = new Set<string>();
     for (const it of items) {
       const placeRef = it.place ?? merged.placeByObject.get(it.canonicalObjectId);
-      if (placeRef) {
-        feedSubjectIds.add(placeRef.placeId);
-        liveCandidates.push({ subjectId: placeRef.placeId, liveObjectType: "place_state", subject: placeRef });
+      if (placeRef && !seenFeedPlaces.has(placeRef.placeId)) {
+        seenFeedPlaces.add(placeRef.placeId);
+        feedPlaceRefs.push(placeRef);
       }
     }
-    // Dedup the live strip against subjects ALREADY shown as feed objects (§4:
-    // do not repeat a live signal that already appears in the feed).
-    const liveForYou = await buildLiveStrip(sc, liveEnabled, liveCandidates, {
-      limit: MAX_LIVE_FOR_YOU,
-      dedupeSubjectIds: feedSubjectIds,
-    });
+    //    The candidate assembly is deferred behind the strip's own flag (see
+    //    buildLiveStrip): with wall_live_for_you_enabled OFF the first page pays
+    //    for none of the producer reads.
+    const liveForYou = await buildLiveStrip(
+      sc,
+      liveEnabled,
+      () => assembleLiveCandidates(sc, viewer, user.id, feedPlaceRefs, rabEnabled),
+      { limit: MAX_LIVE_FOR_YOU },
+    );
 
     // ── Context Threads (spec §8/§9): attach an OPTIONAL compact bridge beneath
     //    an object ONLY where the §9 gate says it earns its place. Behind
@@ -816,17 +980,33 @@ router.get(
 
     // Live-strip candidates are the places from the viewer's recent followed
     // content — a viewer-relevant, bounded set, NOT a city-wide scan (spec §4).
-    const viewer = await loadViewerContext(sc, user.id);
-    const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
-    const seen = new Set<string>();
-    const candidates: LiveForYouCandidate[] = [];
-    for (const [, placeRef] of loaded.placeByObject) {
-      if (seen.has(placeRef.placeId)) continue;
-      seen.add(placeRef.placeId);
-      candidates.push({ subjectId: placeRef.placeId, liveObjectType: "place_state", subject: placeRef });
-    }
-
-    const liveForYou = await buildLiveStrip(sc, liveEnabled, candidates, { limit });
+    // The strip is multi-kind (§4/TABLE 0): place_state from the intel projection
+    // plus trip_signal / event_state / social_presence / hidden_gem / buddy from
+    // their own canonical readers (assembleLiveCandidates).
+    //
+    // ALL of it sits inside the thunk buildLiveStrip only calls when the flag is
+    // ON. The strip IS this route's entire response, so with the flag off the
+    // route must cost nothing beyond the flag reads themselves — not the viewer
+    // context, not the followed-content window, not the producers.
+    const liveForYou = await buildLiveStrip(
+      sc,
+      liveEnabled,
+      async () => {
+        const viewer = await loadViewerContext(sc, user.id);
+        // BOTH the Wall flag and the RAB master — see isWallRabEnabled.
+        const rabEnabled = await isWallRabEnabled(sc);
+        const loaded = await loadCandidates(sc, "following", viewer, { discoveryEnabled: false });
+        const seen = new Set<string>();
+        const placeRefs: PublicPlaceRef[] = [];
+        for (const [, placeRef] of loaded.placeByObject) {
+          if (seen.has(placeRef.placeId)) continue;
+          seen.add(placeRef.placeId);
+          placeRefs.push(placeRef);
+        }
+        return assembleLiveCandidates(sc, viewer, user.id, placeRefs, rabEnabled);
+      },
+      { limit },
+    );
     res.status(200).json({ liveForYou, generatedAt: new Date().toISOString() });
   }),
 );
@@ -963,6 +1143,44 @@ router.post(
     const eventType = ACTION_EVENT[parsed.data.action] ?? RankingEvent.ITEM_OPENED;
     recordWallEvent(sc, eventType, parsed.data.objectId, parsed.data.objectType, user.id, parsed.data.session ?? null);
     res.status(202).json({ ok: true });
+  }),
+);
+
+// ── GET /wall/quick-media ────────────────────────────────────────────────────
+
+/**
+ * Stories / Quick Media data source (spec §18): the followed people's
+ * short-lived media (media_assets within 24 h), visibility- and block-filtered
+ * by the canonical post policy. Items carry stored storage references; the
+ * client signs private-bucket bytes through its existing hydration path.
+ *
+ * Fails soft to an empty row (§34) — a broken source must never block the feed.
+ */
+router.get(
+  "/wall/quick-media",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client: sc, user } = auth;
+
+    if (!(await isFlagEnabled(sc, "wall_enabled"))) {
+      sendError(res, "feature_disabled", "The Wall is not enabled");
+      return;
+    }
+
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw)
+      ? Math.max(1, Math.min(Math.trunc(limitRaw), MAX_QUICK_MEDIA_ITEMS))
+      : MAX_QUICK_MEDIA_ITEMS;
+
+    let items: Awaited<ReturnType<typeof loadQuickMediaItems>> = [];
+    try {
+      items = await loadQuickMediaItems(sc, user.id, { limit });
+    } catch (err) {
+      logger.warn({ err }, "wall: quick media load threw — degrading to an empty row");
+      items = [];
+    }
+    res.status(200).json({ items, generatedAt: new Date().toISOString() });
   }),
 );
 

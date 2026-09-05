@@ -534,10 +534,37 @@ describe('projectCompassResult', () => {
     assert.ok(isRenderable(obj));
   });
 
-  test('it carries no payload — Compass sends no per-kind detail', () => {
+  test('it carries no payload when the server sent no intent-match datum', () => {
     // A card must therefore render from title/subtitle alone rather than
     // reaching for fields a recommendation was never going to have.
     assert.equal(projectCompassResult(REC)!.payload, undefined);
+  });
+
+  test('§14: carries the intent-match datum when the server decided it', () => {
+    const matched = projectCompassResult({
+      ...REC,
+      data: { ...REC.data, matchesIntent: true, intentLabel: 'Party' },
+    })!;
+    assert.deepEqual(matched.payload, { matchesIntent: true, intentLabel: 'Party' });
+
+    const notMatched = projectCompassResult({
+      ...REC,
+      data: { ...REC.data, matchesIntent: false, intentLabel: 'Party' },
+    })!;
+    // A boolean false is server truth and must be carried, not dropped.
+    assert.deepEqual(notMatched.payload, { matchesIntent: false, intentLabel: 'Party' });
+  });
+
+  test('§14: an ABSENT match is not carried as false (no intent this request)', () => {
+    // matchesIntent absent ⇒ the request had no live intent; the payload must
+    // stay undefined so a why-line renders nothing rather than "does not match".
+    assert.equal(projectCompassResult(REC)!.payload, undefined);
+    // A present match with a blank label normalises the label to null.
+    const obj = projectCompassResult({
+      ...REC,
+      data: { ...REC.data, matchesIntent: true, intentLabel: '  ' },
+    })!;
+    assert.deepEqual(obj.payload, { matchesIntent: true, intentLabel: null });
   });
 
   test('it invents no intelligence (spec §37)', () => {

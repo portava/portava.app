@@ -56,6 +56,44 @@ describe("inferTravelIdentity (pure)", () => {
     assert.ok(langs.value.includes("English"));
   });
 
+  it("infers the Energy and Group-style axes with explainable evidence (TABLE 20)", () => {
+    // All ten TABLE 20 dimensions are produced, including the two that were
+    // previously missing: energy and group_style.
+    const { dimensions } = inferTravelIdentity(USER, PROFILE, SIGNALS);
+    const byKey = new Map(dimensions.map((d) => [d.key, d]));
+    for (const key of [
+      "interests", "travel_pace", "planning", "spend_style", "social",
+      "discovery", "energy", "rhythm", "group_style", "languages",
+    ]) {
+      assert.ok(byKey.has(key), `missing TABLE 20 dimension: ${key}`);
+    }
+
+    // Energy: 4 nightlife visits + nightlife interest ⇒ High, and it explains why.
+    const energy = byKey.get("energy")!;
+    assert.equal(energy.value, "High energy");
+    assert.equal(energy.inferred, false);
+    assert.ok(energy.evidence.some((e) => /nightlife/i.test(e)), "energy must cite its evidence");
+    assert.deepEqual(energy.poles, { low: "Low", high: "High" });
+
+    // Group style: explicit "small groups" tag ⇒ Small groups, explainable.
+    const group = byKey.get("group_style")!;
+    assert.equal(group.value, "Small groups");
+    assert.equal(group.inferred, false);
+    assert.ok(group.evidence.length > 0, "group style must be explainable");
+
+    // A profile with a large-group preference reads the other pole.
+    const large = inferTravelIdentity(USER, { id: USER, travel_group_style: ["large groups"] }, {});
+    assert.equal(large.dimensions.find((d) => d.key === "group_style")!.value, "Large groups");
+
+    // No signals ⇒ neutral, inferred defaults for both new axes (never fabricated).
+    const empty = inferTravelIdentity(USER, { id: USER }, {});
+    const eByKey = new Map(empty.dimensions.map((d) => [d.key, d]));
+    assert.equal(eByKey.get("energy")!.inferred, true);
+    assert.equal(eByKey.get("energy")!.value, "Balanced");
+    assert.equal(eByKey.get("group_style")!.inferred, true);
+    assert.deepEqual(eByKey.get("group_style")!.evidence, []);
+  });
+
   it("emits named Travel DNA traits from concrete signals", () => {
     const { traits } = inferTravelIdentity(USER, PROFILE, SIGNALS);
     const keys = traits.map((t) => t.key);
@@ -77,14 +115,54 @@ describe("inferTravelIdentity (pure)", () => {
 });
 
 describe("buildTravelIdentity + viewer filtering", () => {
-  it("with the flag OFF, reads no prefs and everything shows", async () => {
+  /**
+   * ROLLBACK MUST NOT WIDEN DISCLOSURE.
+   *
+   * `passport_travel_dna_enabled` used to gate the PREFS READ as well as the
+   * write. Because "no prefs" resolves to "everything shown" — buildTravelIdentity
+   * defaults each item to "shown" and filterTravelIdentityForViewer removes only
+   * the non-"shown" ones — flipping the flag back OFF silently republished every
+   * dimension and trait the traveller had marked Hidden or Not Me.
+   *
+   * The flag gates the editing surface (writeTravelDnaPref still refuses while
+   * it is off — see passportTravelDnaWrite.test.ts). A concealment already
+   * chosen outlives the feature flag.
+   */
+  it("flag OFF: a stored Hide is still honoured — a rollback must not un-hide", async () => {
     // feature_flags empty ⇒ passport_travel_dna_enabled is OFF (fail-closed).
-    const db = makePassportDb({ passport_travel_dna_prefs: [{ user_id: USER, dimension_key: "spend_style", state: "hidden" }] });
+    const db = makePassportDb({
+      passport_travel_dna_prefs: [
+        { user_id: USER, dimension_key: "spend_style", state: "hidden" },
+        { user_id: USER, dimension_key: "night_explorer", state: "not_me" },
+      ],
+    });
     const ti = await buildTravelIdentity(db, USER, PROFILE, SIGNALS, { isSelf: true });
-    assert.equal(ti.preferencesApplied, false, "prefs must not apply when flag is off");
-    const spend = ti.dimensions.find((d) => d.key === "spend_style")!;
-    assert.equal(spend.state, "shown", "default state with flag off");
+    assert.equal(ti.preferencesApplied, true, "concealment is read regardless of the flag");
+    // The owner still sees the item (so they can toggle it back) with its state.
+    assert.equal(ti.dimensions.find((d) => d.key === "spend_style")!.state, "hidden");
+    assert.equal(ti.traits.find((t) => t.key === "night_explorer")!.state, "not_me");
     assert.equal(ti.editable, true);
+
+    // THE ASSERTION THAT MATTERS: a VIEWER still cannot see them with the flag off.
+    const viewerView = filterTravelIdentityForViewer(ti, false);
+    assert.ok(
+      !viewerView.dimensions.some((d) => d.key === "spend_style"),
+      "a dimension hidden while the flag was ON must stay hidden after the flag goes OFF",
+    );
+    assert.ok(
+      !viewerView.traits.some((t) => t.key === "night_explorer"),
+      "a trait marked Not Me must stay hidden after the flag goes OFF",
+    );
+    // Non-concealed content is unaffected — this is not a blanket suppression.
+    assert.ok(viewerView.dimensions.some((d) => d.key === "travel_pace"));
+  });
+
+  it("flag OFF and no stored prefs: everything shows (absence of a choice is not a choice)", async () => {
+    const db = makePassportDb({ passport_travel_dna_prefs: [] });
+    const ti = await buildTravelIdentity(db, USER, PROFILE, SIGNALS, { isSelf: true });
+    for (const d of ti.dimensions) assert.equal(d.state, "shown");
+    const viewerView = filterTravelIdentityForViewer(ti, false);
+    assert.equal(viewerView.dimensions.length, ti.dimensions.length);
   });
 
   it("with the flag ON, applies stored Show/Hide/Not-Me and filters for viewers", async () => {

@@ -23,13 +23,26 @@ export interface FakeState {
   profiles?: Array<Record<string, any>>;
   user_friendships?: Array<Record<string, any>>;
   post_hides?: Array<Record<string, any>>;
+  /** Every terminal read records the predicates its query carried, so a test can
+   *  assert that a query CARRIES a filter rather than only that the response
+   *  happened to be right — otherwise the fake's own row filtering hides a
+   *  deleted DB predicate and a revert stays green. */
+  captured?: Array<{ table: string; eqs: Record<string, any>; ors: string[] }>;
+  /** Columns whose predicates the fake records but does NOT apply — both `.eq()`
+   *  on that column and any `.or()` expression mentioning it. Feeds those rows
+   *  PAST the query filter the way a widened query would, leaving the route's
+   *  in-memory re-check as the only thing that can refuse them. */
+  ignorePredicateCols?: string[];
 }
 
 export function makeFakeClient(state: FakeState) {
   const inserted: Array<{ table: string; row: Record<string, any> }> = [];
+  const ignoreCols = new Set(state.ignorePredicateCols ?? []);
 
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
+    const eqs: Record<string, any> = {};
+    const ors: string[] = [];
     let pendingInsert: Record<string, any> | null = null;
     let pendingUpdate: Record<string, any> | null = null;
 
@@ -45,20 +58,26 @@ export function makeFakeClient(state: FakeState) {
         return builder;
       },
       delete() { return builder; },
-      eq(col: string, val: any) { filters.push((r) => r[col] === val); return builder; },
+      eq(col: string, val: any) {
+        eqs[col] = val;
+        if (!ignoreCols.has(col)) filters.push((r) => r[col] === val);
+        return builder;
+      },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
       is(col: string, val: any) { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return builder; },
       lt(col: string, val: any) { filters.push((r) => r[col] < val); return builder; },
       or(expr: string) {
         // Parses simple "col.eq.val,col2.eq.val2" expressions (the only shape
-        // the routes under test actually issue) and ORs them together.
-        const conds = String(expr).split(",").map((part) => {
-          const [col, op, val] = part.split(".");
-          return (r: any) => {
-            if (op !== "eq") return false;
-            const target = val === "true" ? true : val === "false" ? false : val;
-            return r[col] === target;
-          };
+        // the routes under test actually issue) and ORs them together. Repeated
+        // `.or()` calls become separate filters, i.e. they are ANDed — the same
+        // way PostgREST treats repeated `or=` query params.
+        ors.push(String(expr));
+        const parts = String(expr).split(",").map((part) => part.split("."));
+        if (parts.some(([col]) => col && ignoreCols.has(col))) return builder;
+        const conds = parts.map(([col, op, val]) => (r: any) => {
+          if (op !== "eq") return false;
+          const target = val === "true" ? true : val === "false" ? false : val;
+          return r[col as string] === target;
         });
         filters.push((r) => conds.some((c) => c(r)));
         return builder;
@@ -71,6 +90,7 @@ export function makeFakeClient(state: FakeState) {
     };
 
     function rows(): any[] {
+      state.captured?.push({ table, eqs: { ...eqs }, ors: [...ors] });
       let source: any[] = [];
       if (table === "trips") source = [...state.trips].map((id) => ({ id }));
       else if (table === "trip_members") source = state.members;

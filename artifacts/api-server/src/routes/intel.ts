@@ -7,9 +7,13 @@
  * POST /v1/intel/claims/:id/confirm               — independent agree/disagree/unsure
  * POST /v1/intel/claims/:id/correct               — supersede with a new observation
  *
+ * GET  /v1/internal/intel/trail/movement          — admin-only IG-06 cohort read (never a publication)
+ *
  * Every write requires an Idempotency-Key header. actor_id is taken from the
  * session, never the body. Responses carry schema_version, source label, observed
- * time and expiry — never location proof. Gated by intel_capture_quick_signal;
+ * time and expiry — never location proof. Each write names its capture surface
+ * (`captureSurface`, default quick_signal) and is gated by that surface's flag —
+ * intel_capture_quick_signal or, for the IG-06 Trail follow-up, intel_trail_followup;
  * off means every call is a fail-closed no-op (the service returns `disabled`).
  */
 import { Router, type Request, type Response } from "express";
@@ -20,13 +24,16 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   PRESENCE_LEVELS, VISIBILITIES, SOURCE_CLASS_LABELS, isValidIdempotencyKey, PARTY_SIZE_BUCKETS,
+  COMMERCIAL_DISCLOSURES,
 } from "../lib/intelContracts.js";
 import { QUICK_SIGNAL_CONTEXTS, mapQuickSignal, type QuickSignalContext } from "../lib/quickSignal.js";
+import { isWellFormedMissionNonceToken } from "../lib/intelMissionNonce.js";
 import {
-  writeObservation, proposeClaim, approveClaim, confirmClaim, correctClaim,
+  writeObservation, proposeClaim, approveClaim, confirmClaim, correctClaim, CAPTURE_SURFACES,
   type CaptureResult, type CaptureInput,
 } from "../services/intel/IntelCaptureService.js";
 import { getIntelConsentState, setIntelConsent } from "../lib/intelConsent.js";
+import { readTrailMovement } from "../lib/trailServe.js";
 
 const router = Router();
 
@@ -43,6 +50,40 @@ const REASON_CODE: Record<string, ApiErrorCode> = {
   db_error: "db_error",
 };
 
+/**
+ * The presence attestation a client may offer (unit I3, §7 Table 12).
+ *
+ * WHAT IT IS: REFERENCES ONLY — a media asset id (P3 receipt) and/or a mission
+ * id + nonce token (P4). services/intel/PresenceVerifier looks each one up
+ * server-side and checks every property that matters (ownership, readiness,
+ * moderation, capture window, §35 eligibility; mission assignee, subject, claim
+ * family, deadline, HMAC digest, single use). Nothing here is believed.
+ *
+ * WHAT IT IS NOT: a place to assert a presence LEVEL, a geofence verdict, a
+ * coordinate, or any other verdict-shaped field. The level is ALWAYS derived
+ * server-side (resolvePresenceForCapture takes the LOWER of the claim and the
+ * evidence), and `presence_attestation.verifier` — which a later capture's dwell
+ * check reads back — is written by the server, never by a request. `.strict()`
+ * is therefore load-bearing: an unknown key (`level`, `verifier`, `lat`, …) is a
+ * 400, not a silently stripped field, so a client cannot even appear to assert
+ * one. Without this whole field the route forwarded no attestation at all and
+ * rungs P3/P4 were unreachable over HTTP however the flag was set.
+ */
+const presenceAttestationSchema = z
+  .object({
+    receipt: z.object({ mediaAssetId: z.string().uuid() }).strict().optional(),
+    mission: z
+      .object({
+        missionId: z.string().uuid(),
+        // Shape-checked with the nonce module's OWN predicate — one definition of
+        // "well-formed token". The digest comparison still happens server-side.
+        nonce: z.string().refine(isWellFormedMissionNonceToken, "malformed mission nonce"),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 const observationSchema = z.object({
   subjectId: z.string().uuid(),
   subjectKind: z.string().max(40).optional(),
@@ -50,10 +91,26 @@ const observationSchema = z.object({
   observedAt: z.string().datetime(),
   capturedAt: z.string().datetime().nullable().optional(),
   visibility: z.enum(VISIBILITIES).optional(),
+  // The level the client ASKS for. It is a CEILING, never a grant: the service
+  // clamps it to what server-held evidence supports (P1 when nothing does), and
+  // rungs above it are not even attempted.
   presenceLevel: z.enum(PRESENCE_LEVELS).optional(),
-  // Quick Signal form (§6): a context + a chosen option, mapped server-side.
+  // Evidence REFERENCES for rungs P3/P4 (see presenceAttestationSchema).
+  presenceAttestation: presenceAttestationSchema.optional(),
+  // Which §6 collection surface this write comes from. Each surface has its own
+  // flag and its own contracted claim list in IntelCaptureService; omitted ⇒
+  // quick_signal (the pre-existing default, unchanged). The IG-06 Trail sheet
+  // sends 'trail' — before this field existed (2026-09-04) every Trail write was
+  // treated as a Quick Signal and refused, so the surface was unreachable.
+  captureSurface: z.enum(CAPTURE_SURFACES).optional(),
+  // §22 Table 30 commercial disclosure. Optional; the server maps a non-'none'
+  // value onto a NON_INDEPENDENT source class so a disclosed-commercial report
+  // never counts as independent consensus. Omitted ⇒ 'none' (server-side).
+  commercialDisclosure: z.enum(COMMERCIAL_DISCLOSURES).optional(),
+  // Quick Signal / Trail form (§6): a context + a chosen option, mapped server-side.
+  // For context 'movement' the option is the coarse destination area (§13).
   context: z.enum(QUICK_SIGNAL_CONTEXTS).optional(),
-  option: z.string().max(60).optional(),
+  option: z.string().max(120).optional(),
   // Direct form: an already-canonical claim.
   claimType: z.string().max(60).optional(),
   value: z.record(z.string(), z.unknown()).optional(),
@@ -143,7 +200,7 @@ router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
   let value: Record<string, unknown> | undefined;
   if (b.context && b.option) {
     const mapped = mapQuickSignal(b.context as QuickSignalContext, b.option);
-    if (!mapped) return sendError(res, "invalid_payload", `no Phase-1 claim maps from ${b.context}/${b.option}`);
+    if (!mapped) return sendError(res, "invalid_payload", `no claim maps from ${b.context}/${b.option}`);
     claimType = mapped.claimType;
     value = mapped.value;
   } else if (b.claimType && b.value) {
@@ -164,6 +221,17 @@ router.post("/v1/intel/observations", asyncHandler(async (req, res) => {
     visibility: b.visibility,
     idempotencyKey: key,
     presenceLevel: b.presenceLevel,
+    // Forwarded so services/intel/PresenceVerifier can actually reach rungs P3
+    // (receipt) and P4 (mission nonce). Verification runs only behind
+    // intel_presence_verification_enabled (OFF by default); with it off the
+    // service's path is unchanged and the payload is merely RECORDED, never
+    // trusted, in presence_attestation.client.
+    presenceAttestation: b.presenceAttestation ?? null,
+    // Threaded, not inferred: the service applies the surface's flag and claim
+    // list (quick_signal by default), so an unknown or omitted surface can only
+    // narrow what is accepted, never widen it.
+    captureSurface: b.captureSurface,
+    commercialDisclosure: b.commercialDisclosure,
     partySize: b.partySize,
     partyId: b.partyId ?? null,
   };
@@ -187,7 +255,8 @@ const handleProposeClaim = asyncHandler(async (req: Request, res: Response) => {
       return sendError(res, "invalid_payload", "movement claims are aggregate-only; a single-user next_move is never published");
     return sendError(res, "db_error", out.reason ?? "propose failed");
   }
-  res.status(201).json({ claim: out.claim });
+  // Idempotent (2274): a replay returns the stored candidate, 200 not 201.
+  res.status(out.deduped ? 200 : 201).json({ claim: out.claim, deduped: out.deduped });
 });
 
 // APPROVAL IS THE TRUST GATE OF THE LIFECYCLE (candidate → active → publishable).
@@ -260,9 +329,34 @@ router.post("/v1/intel/claims/:id/correct", asyncHandler(async (req, res) => {
     subjectId: b.subjectId, subjectKind: b.subjectKind, zoneId: b.zoneId ?? null,
     claimType: b.claimType, value: b.value, observedAt: b.observedAt, capturedAt: b.capturedAt ?? null,
     visibility: b.visibility, idempotencyKey: key, presenceLevel: b.presenceLevel,
+    // Same plumbing as capture: a correction is an observation too, so its
+    // presence is verified (or clamped) by exactly the same path.
+    presenceAttestation: b.presenceAttestation ?? null,
+    captureSurface: b.captureSurface,
+    commercialDisclosure: b.commercialDisclosure,
   };
   const result = await correctClaim(getServiceClient()!, auth.user.id, req.params.id, input);
   sendCaptureResult(res, result);
+}));
+
+// ── IG-06 Trail follow-up — internal cohort read ──────────────────────────────
+// The serve side of the trail surface: origin → destination-area cohorts derived
+// from captured experience.next_move observations (lib/trailServe, which is the
+// production caller of lib/trailFollowup's aggregate + AT-10 block filter).
+//
+// INTERNAL ONLY (§29 Included: "Internal coverage dashboard for pilot zones").
+// This is NOT movement publication — §29 EXCLUDES "Public Crowd Movement
+// output"; that stays behind intel_movement_prediction (seeded OFF) and the §13
+// mayPublishMovement gate, which no route calls. requireAdmin, never a client.
+router.get("/v1/internal/intel/trail/movement", asyncHandler(async (req: Request, res: Response) => {
+  const ctx = await requireAdmin(req, res);
+  if (!ctx) return;
+  const q = z.object({ subjectId: z.string().uuid().optional() }).safeParse(req.query ?? {});
+  if (!q.success) return sendError(res, "invalid_payload", "subjectId must be a uuid when supplied");
+  const read = await readTrailMovement(getServiceClient()!, ctx.userId, { originId: q.data.subjectId ?? null });
+  if (read.refusal === "flag_off") return sendError(res, "feature_disabled", "intel_trail_followup is off");
+  if (read.refusal !== null) return sendError(res, "db_error", read.refusal);
+  res.json(read);
 }));
 
 export default router;

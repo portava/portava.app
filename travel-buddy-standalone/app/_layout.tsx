@@ -8,7 +8,7 @@ import '../src/tasks/geofenceExitTask';
 import '../src/tasks/checkpointArrivalTask';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { Platform, Linking } from 'react-native';
+import { Platform, Linking, AppState } from 'react-native';
 
 // Initialize Sentry as early as possible — before any component tree mounts —
 // so that native crashes and JS errors during startup are captured.
@@ -59,6 +59,14 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { reportCrash } from '@/src/lib/crashReporter';
 import { useCryptoInit } from '../src/hooks/useCryptoInit';
 import { supabase } from '../src/lib/supabase';
+import { freshToken } from '../src/services/apiToken';
+import { getIntelConsent, hasValidConsent } from '../src/services/intelConsent';
+import {
+  setWallAnalyticsSink,
+  setRealWorldOutcomeConsent,
+} from '../src/features/wall/services/wallAnalytics';
+import { createWallAnalyticsTransport } from '../src/features/wall/services/wallAnalyticsTransport';
+import { installPassportTelemetry } from '../src/features/passport/installPassportTelemetry';
 
 /**
  * Session-aware root crash boundary. Sits inside SessionProvider so it can
@@ -86,6 +94,43 @@ function CompassFrontloadSetup() {
 
 function CryptoSetup() {
   useCryptoInit();
+  return null;
+}
+
+/**
+ * Installs the Wall's real §32 analytics transport once at boot, so the Wall's
+ * client-only events reach the pipeline instead of the dev-only console sink.
+ * Also loads the server-authoritative Intelligence-Contribution consent snapshot
+ * that gates real-world-outcome signals (fail-closed until it resolves).
+ */
+function WallAnalyticsSetup() {
+  useEffect(() => {
+    setWallAnalyticsSink(
+      createWallAnalyticsTransport({
+        baseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? '',
+        getToken: freshToken,
+      }),
+    );
+    void getIntelConsent().then((state) => setRealWorldOutcomeConsent(hasValidConsent(state)));
+  }, []);
+  return null;
+}
+
+/**
+ * §32 Passport telemetry — bind the passportTelemetry seam to the real
+ * batched/authenticated transport once at boot. Until this mounts the seam
+ * only dev-logs, so nothing is lost or sent early; dispose flushes and
+ * restores the default sink if the root ever unmounts.
+ */
+function PassportTelemetrySetup() {
+  useEffect(() => {
+    const handle = installPassportTelemetry({
+      baseUrl: process.env.EXPO_PUBLIC_API_BASE_URL ?? '',
+      getToken: freshToken,
+      appState: AppState,
+    });
+    return () => handle.dispose();
+  }, []);
   return null;
 }
 
@@ -213,7 +258,9 @@ export default function RootLayout() {
                       <CallRealtimeBinding />
                       <PushSetup />
                       <CryptoSetup />
+                      <PassportTelemetrySetup />
                       <CompassFrontloadSetup />
+                      <WallAnalyticsSetup />
                       <StatusBar style="dark" />
                       <Stack
                         screenOptions={{

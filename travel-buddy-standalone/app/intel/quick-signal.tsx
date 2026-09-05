@@ -21,6 +21,7 @@ import { color, space, radius, typography } from '../../src/theme/tokens';
 import { IntelModalScaffold } from '../../src/components/intel/IntelModalScaffold';
 import { PromptBlock } from '../../src/components/intel/PromptBlock';
 import { OptionPills } from '../../src/components/intel/OptionPills';
+import { DisclosureControl } from '../../src/components/intel/DisclosureControl';
 import { SuppressedNotice, PrivateLocationBadge, SentToast } from '../../src/components/intel/IntelBits';
 import { IntelConsentGate } from '../../src/components/intel/IntelConsentGate';
 import { TravelButton } from '../../src/components/primitives';
@@ -42,6 +43,7 @@ import {
   type VenueCategory,
   type PromptQuestion,
   type PartySizeBucket,
+  type CommercialDisclosure,
 } from '../../src/lib/intel/contracts';
 
 function asContext(v: string | undefined): QuickSignalContext {
@@ -72,6 +74,8 @@ export default function QuickSignalScreen() {
     venue?: string;
     context?: string;
     zoneId?: string;
+    /** 'conflict' when opened as a §10 contradiction-resolution re-ask. */
+    reason?: string;
   }>();
 
   const subjectId = typeof params.subjectId === 'string' ? params.subjectId : undefined;
@@ -79,6 +83,7 @@ export default function QuickSignalScreen() {
   const zoneId = typeof params.zoneId === 'string' ? params.zoneId : null;
   const venue = asVenue(params.venue);
   const context = asContext(params.context);
+  const conflictReask = params.reason === 'conflict';
 
   const { captureEnabled, safeReturnActive, trailEnabled } = useIntelPrompts();
 
@@ -88,6 +93,9 @@ export default function QuickSignalScreen() {
   // and attached to every label-eligible write on this screen. Null = skipped
   // (the server fail-closes: no group_key, no credit toward the group floor).
   const [partySize, setPartySize] = useState<PartySizeBucket | null>(null);
+  // §22 commercial disclosure — declared once, attached to every write here. Null
+  // (nothing declared) sends nothing; the server defaults to 'none'.
+  const [disclosure, setDisclosure] = useState<CommercialDisclosure | null>(null);
   // D4 Intelligence Contributions consent. `undefined` = still loading; the server
   // is authoritative and enforces regardless, so this only gates the UI so we show
   // the disclosure/consent surface before the first capture.
@@ -156,7 +164,11 @@ export default function QuickSignalScreen() {
   }
 
   const title = venue ? `${VENUE_LABELS[venue]} · Quick Signal` : 'Quick Signal';
-  const subtitle = subjectName ?? 'Share what it’s like right now';
+  // §10 re-ask: say WHY we are asking again — recent reports disagree — so the
+  // prompt reads as a request to settle a difference, not a random nudge.
+  const subtitle = conflictReask
+    ? `${subjectName ? `${subjectName} · ` : ''}Reports differ right now — what do you see?`
+    : (subjectName ?? 'Share what it’s like right now');
 
   // ── Suppression / guards ────────────────────────────────────────────────
   let body: React.ReactNode;
@@ -235,6 +247,8 @@ export default function QuickSignalScreen() {
           </View>
         ) : null}
 
+        <DisclosureControl value={disclosure} onChange={setDisclosure} />
+
         <View style={{ gap: space.xl }}>
           {venueQuestions.map((q) => (
             <PromptBlock
@@ -244,6 +258,7 @@ export default function QuickSignalScreen() {
               visibility={DEFAULT_VISIBILITY}
               zoneId={zoneId}
               partySize={partySize ?? undefined}
+              commercialDisclosure={disclosure ?? undefined}
               onSent={handleSent}
             />
           ))}

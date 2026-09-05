@@ -20,6 +20,7 @@ import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
+import type { RankSurface } from '../../hooks/useRankOutcome.ts';
 import { DiscoveryMapView } from './DiscoveryMapView';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { useSession } from '../../context/SessionContext.tsx';
@@ -34,6 +35,7 @@ import { postCompassFrontloadEvent, postCompassContext } from '../../services/co
 import { CompassPicksSection } from '../compass/CompassPicksSection.tsx';
 import { CompassTravelerRow } from '../compass/CompassTravelerRow.tsx';
 import { CompassOnboardingCard } from '../compass/CompassOnboardingCard.tsx';
+import { DiscoveryEventPostsRail } from './DiscoveryEventPostsRail.tsx';
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -96,6 +98,18 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   const [source, setSource]     = useState<'compass' | 'osm' | 'none'>('none');
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
   const [shareItem, setShareItem] = useState<ForYouItem | null>(null);
+
+  // Outcome attribution surface. OSM (GET /discovery) and community items have
+  // impression rows under surface 'discovery'. Compass picks are served by
+  // /api/compass/feed and logged under 'compass' — a surface the outcome route
+  // does not accept, and Compass has its own feedback channel — so they must
+  // stay silent rather than post an outcome nothing can be matched to.
+  const rankSurfaceFor = (item: ForYouItem): RankSurface | null =>
+    item.kind === 'compass' ? null : 'discovery';
+  const detailRankSurface: RankSurface | null =
+    detail !== null && items.some((i) => i.kind === 'compass' && i.place.id === detail.id)
+      ? null
+      : 'discovery';
 
   // Compass city switcher — Compass-local context (does not update profile city)
   const [compassCity, setCompassCity]               = useState<string | null>(null);
@@ -295,6 +309,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             setDetail(null);
             onAddToPlan({ id: p.id, name: p.name, category: p.category, address: p.address });
           }}
+          rankSurface={detailRankSurface}
         />
       </>
     );
@@ -351,6 +366,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
 
               <PlaceCard
                 place={item.place}
+                rankSurface={rankSurfaceFor(item)}
                 onPress={() => setDetail(item.place)}
                 onAddToPlan={() => onAddToPlan({
                   id:       item.place.id,
@@ -409,6 +425,9 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             and hides itself when already done. Gate is auth-only. */}
         {isAuthed && <CompassOnboardingCard />}
 
+        {/* ── Live from events — serve point 7 (GET /discovery/feed) ── */}
+        <DiscoveryEventPostsRail destination={destination} lat={lat} lng={lng} />
+
         {/* ── Compass Picks section — horizontal card strip ── */}
         <CompassPicksSection
           city={destination}
@@ -448,6 +467,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           setDetail(null);
           onAddToPlan({ id: p.id, name: p.name, category: p.category, address: p.address });
         }}
+        rankSurface={detailRankSurface}
       />
 
       {/* Discovery share sheet */}

@@ -98,8 +98,33 @@ export const DISCOVERY_ENDPOINT_POINTS: ReadonlySet<number> = new Set([
   DiscoveryServePoint.COLD_FETCH_LEGACY_RANK,
 ]);
 
-/** Serve points on which a ranker ran during the request itself. */
-export const RANKED_POINTS: ReadonlySet<number> = new Set([
+/**
+ * Serve points on which a ranker runs UNDER LEGACY MODE, by construction.
+ *
+ * THIS SET IS A FALLBACK, NOT THE ARITHMETIC. Read the trap before using it.
+ *
+ * It used to be called RANKED_POINTS and it used to BE the arithmetic: the D5
+ * ranked share was `countOn(tally, {5, 6}) / countOn(tally, 1-6)`. That was
+ * correct for exactly as long as "which serve point" and "did a ranker run"
+ * were the same question — and D5=B ended that. Under mode `pde` the cache-A
+ * serve points 1/2/3 rank the cached candidates per request
+ * (routes/discovery.ts, `serveCachedPlaces`, the `pdeScoredById` branch), and
+ * they log those impressions with `rankedInRequest: true` on the SAME serve
+ * point number they always had. A static set keyed on the point would have
+ * reported the first pde-ranked cache hit as unranked, pushing the measured
+ * ranked share DOWN by precisely the serves the new engine added — the report
+ * would have looked most like "ranking is starved" at the moment ranking
+ * started reaching traffic. docs/discovery/serve-point-report-20260828.md
+ * named that trap in advance; `rankedInRequest()` below is what closes it.
+ *
+ * So ranked-ness is read from the ROW — `features.rankedInRequest`, which both
+ * writers set (`discoveryServeLog.ts`, and the `logImpression` extra features
+ * on serve point 6 and the pde cache-A branch). This set is consulted only for
+ * a row that carries no such key at all, which means it was written by a
+ * writer older than Stage 0's marker, and those rows are counted apart
+ * (`rankedUnrecorded`) so the fallback can never silently become the measure.
+ */
+export const LEGACY_RANKED_POINTS: ReadonlySet<number> = new Set([
   DiscoveryServePoint.COMPASS_FRESH_RANK,
   DiscoveryServePoint.COLD_FETCH_LEGACY_RANK,
 ]);
@@ -113,9 +138,56 @@ export const CACHE_A_POINTS: ReadonlySet<number> = new Set([
 
 /** Minimal shape this module needs from a `rank_events` row. */
 export interface ServeRow {
-  features?: { servePoint?: unknown; engineMode?: unknown; modeReason?: unknown } | null;
+  features?: {
+    servePoint?: unknown;
+    engineMode?: unknown;
+    modeReason?: unknown;
+    /** Written by every serve-point writer since Stage 0. See `rankedInRequest()`. */
+    rankedInRequest?: unknown;
+  } | null;
   session_id?: string | null;
   served_at?: string | null;
+}
+
+/**
+ * What a single row says about whether a ranker ran during its request.
+ *
+ *   ranked      the writer said so (`features.rankedInRequest === true`)
+ *   unranked    the writer said not (`=== false`) — including serve point 4,
+ *               which REPLAYS a stored Compass order and is deliberately false
+ *   unrecorded  the row carries no such key; the writer predates the marker
+ */
+export type RankedVerdict = "ranked" | "unranked" | "unrecorded";
+
+/**
+ * Ranked-ness of one row, read from the row itself.
+ *
+ * The serve point is NOT consulted here. Under mode `pde`, serve points 1/2/3
+ * rank per request and say so on the row; under `legacy` the same points say
+ * false. Only the row knows which happened, and the row wins over any static
+ * belief about its serve point — a writer that reports point 6 as unranked is
+ * reporting a fact this reader has no standing to overrule.
+ */
+export function rankedInRequest(row: ServeRow): RankedVerdict {
+  const raw = row?.features?.rankedInRequest;
+  if (raw === true) return "ranked";
+  if (raw === false) return "unranked";
+  return "unrecorded";
+}
+
+/**
+ * Whether a row counts as ranked for the D5 arithmetic.
+ *
+ * Row marker first; the legacy serve-point set ONLY for a row that carries no
+ * marker at all. The second case is reported separately by the tally so a
+ * window classified mostly by fallback is visibly a window the marker did not
+ * cover, not a measurement of the engine.
+ */
+export function isRankedRow(row: ServeRow, servePoint: number): boolean {
+  const verdict = rankedInRequest(row);
+  if (verdict === "ranked") return true;
+  if (verdict === "unranked") return false;
+  return LEGACY_RANKED_POINTS.has(servePoint);
 }
 
 export interface ServePointTally {
@@ -127,6 +199,20 @@ export interface ServePointTally {
   byPoint: Map<number, number>;
   /** servePoint → distinct session ids. */
   sessionsByPoint: Map<number, Set<string>>;
+  /**
+   * servePoint → rows on which a ranker ran during the request, judged per row
+   * (`isRankedRow`). This is what the D5 ranked share is computed from. A
+   * cache-A point with a non-zero entry here is a pde-ranked cache hit — the
+   * exact row the old static set would have misreported as unranked.
+   */
+  rankedByPoint: Map<number, number>;
+  /**
+   * Marked rows that carried NO `rankedInRequest` key and were classified by
+   * `LEGACY_RANKED_POINTS` instead. Reported apart so that a window classified
+   * by fallback reads as "the marker did not cover this window", never as a
+   * measurement of which engine ran.
+   */
+  rankedUnrecorded: number;
   /**
    * Rows with NO `servePoint` key at all. These genuinely predate Stage 0 —
    * nothing wrote the key then.
@@ -158,7 +244,7 @@ export function assertLabelsCoverEnum(): void {
     throw new Error(
       `discoveryServePointReport: DiscoveryServePoint has member(s) ${missing.join(", ")} ` +
         `with no label. Add them to SERVE_POINT_LABEL, and decide whether each belongs ` +
-        `in DISCOVERY_ENDPOINT_POINTS / RANKED_POINTS before quoting any number.`,
+        `in DISCOVERY_ENDPOINT_POINTS / LEGACY_RANKED_POINTS before quoting any number.`,
     );
   }
 }
@@ -167,9 +253,11 @@ export function assertLabelsCoverEnum(): void {
 export function tallyServePoints(rows: readonly ServeRow[]): ServePointTally {
   const byPoint = new Map<number, number>();
   const sessionsByPoint = new Map<number, Set<string>>();
+  const rankedByPoint = new Map<number, number>();
   const unknownValues = new Set<string>();
   let noMarker = 0;
   let unknownMarker = 0;
+  let rankedUnrecorded = 0;
 
   const known = new Set(ALL_SERVE_POINTS);
 
@@ -194,6 +282,11 @@ export function tallyServePoints(rows: readonly ServeRow[]): ServePointTally {
       if (!sessionsByPoint.has(sp)) sessionsByPoint.set(sp, new Set());
       sessionsByPoint.get(sp)!.add(r.session_id);
     }
+
+    // Ranked-ness is a property of the ROW, not of the serve point. See
+    // LEGACY_RANKED_POINTS for why the static set is only a fallback.
+    if (rankedInRequest(r) === "unrecorded") rankedUnrecorded += 1;
+    if (isRankedRow(r, sp)) rankedByPoint.set(sp, (rankedByPoint.get(sp) ?? 0) + 1);
   }
 
   const marked = [...byPoint.values()].reduce((a, b) => a + b, 0);
@@ -202,6 +295,8 @@ export function tallyServePoints(rows: readonly ServeRow[]): ServePointTally {
     marked,
     byPoint,
     sessionsByPoint,
+    rankedByPoint,
+    rankedUnrecorded,
     noMarker,
     unknownMarker,
     unknownValues,
@@ -213,6 +308,30 @@ export function countOn(tally: ServePointTally, points: ReadonlySet<number>): nu
   let n = 0;
   for (const sp of points) n += tally.byPoint.get(sp) ?? 0;
   return n;
+}
+
+/**
+ * Sum the rows on a given set of serve points on which a ranker ran during the
+ * request — judged per row. THIS, not `countOn(tally, LEGACY_RANKED_POINTS)`,
+ * is the D5 numerator.
+ */
+export function countRankedOn(tally: ServePointTally, points: ReadonlySet<number>): number {
+  let n = 0;
+  for (const sp of points) n += tally.rankedByPoint.get(sp) ?? 0;
+  return n;
+}
+
+/**
+ * Serve points OUTSIDE the legacy ranked set that nevertheless produced ranked
+ * rows in this window — i.e. pde-ranked cache hits. Ascending. Reported so a
+ * reader can see the engine reaching traffic rather than inferring it from a
+ * share moving.
+ */
+export function rankedOutsideLegacyPoints(tally: ServePointTally): number[] {
+  return [...tally.rankedByPoint.entries()]
+    .filter(([sp, n]) => n > 0 && !LEGACY_RANKED_POINTS.has(sp))
+    .map(([sp]) => sp)
+    .sort((a, b) => a - b);
 }
 
 /** Distinct serve points that actually produced rows, ascending. */
@@ -357,4 +476,146 @@ export function resolveReportWindow(argv: readonly string[], nowMs: number): Rep
     until: null,
     description: `last ${days} day(s), served_at >= ${since}`,
   };
+}
+
+// ── Fetching the serve corpus ─────────────────────────────────────────────────
+//
+// WHAT COUNTS AS A SERVE, AND WHY IT IS NOT `outcome = 'impression'`.
+//
+// This lived in the script as `.eq("surface","discovery").eq("outcome",
+// "impression")`, and the second clause was wrong for the same reason the
+// exposure denominator was wrong before it (00_STATUS defect 4): it confused a
+// serve with an unconverted serve.
+//
+// A serve is written as an `impression` row — but `rank_events` is a
+// mutable-state table. When the funnel records a tap/save/join/rsvp/attended,
+// routes/rankEvents.ts UPDATES that same row's `outcome` column IN PLACE
+// (impression → tap → …), leaving `features` — and therefore the `servePoint`
+// marker — untouched. So a served item the user then acted on is STILL a serve,
+// but its outcome is no longer 'impression'. Filtering on outcome='impression'
+// silently dropped every converted serve, and it did so differentially: the
+// ranked serve points (5/6, and pde-ranked cache hits) are the ones that convert
+// best, so the D5 ranked share was biased DOWN by exactly the serves that reached
+// a ranker — the report read most like "ranking is starved" precisely where
+// ranking was working.
+//
+// The corpus predicate is `event_type IS NULL`. That is the documented ranked/
+// impression corpus (lib/rankLog.ts, migration 0197): the analytics-sentinel
+// rows the outcome route also inserts carry a non-null `event_type` and
+// outcome='analytics', have no `servePoint` marker, and must NOT be counted as
+// serves. `event_type IS NULL` keeps every serve regardless of how far down the
+// funnel it later travelled, and keeps only serves.
+
+/**
+ * The minimal query surface {@link fetchDiscoveryServeRows} needs.
+ *
+ * Structural on purpose: the real `SupabaseClient` satisfies it, and a test can
+ * pass a fake builder that records the filters it was asked for.
+ */
+export interface DiscoveryServeQueryClient {
+  from(table: string): {
+    select(columns: string): any;
+  };
+}
+
+/**
+ * Page size for the serve-corpus read. PostgREST's `db-max-rows` caps a
+ * range-less SELECT at 1000 rows and reports NOTHING — no error, no flag, no
+ * `Content-Range` the client inspects — so a read without `.range()` returns a
+ * silently truncated corpus that looks complete. Ask for pages of exactly this
+ * size and stop on the first short page.
+ */
+export const SERVE_ROWS_PAGE_SIZE = 1_000;
+
+/**
+ * Hard ceiling on rows accumulated across pages. Not a silent cap: hitting it
+ * sets `truncated` on the result and the report says so in the output, next to
+ * the number it affects. A metric that quietly drops rows is worse than one
+ * that says it is bounded.
+ */
+export const SERVE_ROWS_MAX = 500_000;
+
+/** The outcome of a paginated serve-corpus read. */
+export interface DiscoveryServeRowsResult {
+  rows: ServeRow[];
+  error: { message: string } | null;
+  /**
+   * True when SERVE_ROWS_MAX stopped the read before the corpus ran out — the
+   * rows here are a PREFIX of the window, not the window. Every share computed
+   * from them is a share of that prefix. Callers MUST surface this rather than
+   * printing the derived percentage as if it described the window.
+   */
+  truncated: boolean;
+  /** Pages actually read. Diagnostic; also lets a test pin the pagination. */
+  pages: number;
+}
+
+/**
+ * Fetch the discovery SERVE rows for a window — every `surface='discovery'`
+ * `rank_events` row with `event_type IS NULL`, regardless of its current outcome
+ * rung. See the section header above for why this is not `outcome='impression'`.
+ *
+ * FULLY PAGINATED. This read used to be range-less, which meant PostgREST cut it
+ * at `db-max-rows` (1000) without saying so, and the D5 ranked-share verdict —
+ * the number the whole report exists to produce — was computed over whatever
+ * arbitrary ~1000 rows came back rather than over the corpus. On any window with
+ * real traffic that is not a rounding error; it is a different question being
+ * answered under the same name.
+ *
+ * A page that errors aborts the read and returns the error with the rows read so
+ * far. The caller (scripts/reportDiscoveryServePoints.ts) exits non-zero on a
+ * non-null error rather than reporting a partial corpus as a verdict.
+ *
+ * Returns `{ rows, error, truncated, pages }`; `error` is the PostgREST error
+ * (never thrown) so the caller can decide how to surface it.
+ */
+export async function fetchDiscoveryServeRows(
+  sc: DiscoveryServeQueryClient,
+  window: { since: string; until: string | null },
+): Promise<DiscoveryServeRowsResult> {
+  const rows: ServeRow[] = [];
+  let pages = 0;
+
+  for (let offset = 0; ; offset += SERVE_ROWS_PAGE_SIZE) {
+    let query = sc
+      .from("rank_events")
+      .select("features, session_id, served_at")
+      .eq("surface", "discovery")
+      // NOT .eq("outcome","impression") — that drops every converted serve. See
+      // the section header: a serve keeps its servePoint marker after the funnel
+      // upgrades its outcome in place, and event_type IS NULL is the serve corpus.
+      .is("event_type", null)
+      .gte("served_at", window.since);
+
+    // Only bound the top when one was asked for. An unconditional `.lte(now)`
+    // would look harmless and would quietly exclude rows written between the
+    // query being built and the query being served.
+    if (window.until !== null) query = query.lte("served_at", window.until);
+
+    // A stable total order is required for paging to mean anything: without it
+    // Postgres may return the same physical row on two pages and skip another,
+    // so the "complete" corpus would be neither complete nor deduplicated.
+    // served_at alone is not unique, so `id` breaks the ties.
+    query = query
+      .order("served_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(offset, offset + SERVE_ROWS_PAGE_SIZE - 1);
+
+    const { data, error } = await query;
+    pages += 1;
+    if (error) return { rows, error, truncated: false, pages };
+
+    const page = (data as ServeRow[] | null) ?? [];
+    rows.push(...page);
+
+    // A short page is the end of the corpus. A full page is not proof of more
+    // rows, but costs one extra empty read to confirm — cheap, and it is the
+    // only way to know rather than guess.
+    if (page.length < SERVE_ROWS_PAGE_SIZE) {
+      return { rows, error: null, truncated: false, pages };
+    }
+    if (rows.length >= SERVE_ROWS_MAX) {
+      return { rows, error: null, truncated: true, pages };
+    }
+  }
 }

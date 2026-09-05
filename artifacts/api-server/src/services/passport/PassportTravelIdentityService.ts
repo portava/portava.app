@@ -13,11 +13,18 @@
  *
  * USER CONTROL (§19): every dimension and trait can be Shown, Hidden or marked
  * "Not Me". That state is stored per-user in `passport_travel_dna_prefs`
- * (migration 2261) and is read here best-effort — a missing table or an OFF
- * feature flag simply yields the default ("shown", no overrides), and the
- * inference still runs. Hidden / Not-Me items are still RETURNED to the owner
- * (so they can toggle them back) but are filtered out of any non-owner view by
+ * (migration 2261) and is read here best-effort — a missing table yields the
+ * default ("shown", no overrides), and the inference still runs. Hidden /
+ * Not-Me items are still RETURNED to the owner (so they can toggle them back)
+ * but are filtered out of any non-owner view by
  * `filterTravelIdentityForViewer`.
+ *
+ * THE FLAG GATES EDITING, NOT CONCEALMENT. `passport_travel_dna_enabled` gates
+ * the WRITE path (`writeTravelDnaPref`), so no new Show/Hide/Not-Me choice can
+ * be stored while the feature is dark. It deliberately does NOT gate the READ:
+ * "no prefs" resolves downstream to "show everything", so gating the read would
+ * make turning the flag OFF un-hide what a traveller had chosen to hide. A
+ * rollback must never widen disclosure.
  *
  * NON-GOALS: this never invents a "compatibility" or "match" number, and it
  * never reads or writes trip/stamp storage of its own — it is a pure projection
@@ -63,7 +70,12 @@ export interface TravelIdentityProjection {
   userId: string;
   dimensions: TravelDimension[];
   traits: TravelTrait[];
-  /** True when stored Show/Hide/Not-Me prefs were applied (flag ON + table present). */
+  /**
+   * True when the stored Show/Hide/Not-Me prefs were read and applied — i.e.
+   * the table was present and readable. NOT conditioned on
+   * `passport_travel_dna_enabled`: an existing concealment is honoured whether
+   * or not the editing feature is currently switched on.
+   */
   preferencesApplied: boolean;
   /** Owner-only: whether the owner may edit these (self view). */
   editable: boolean;
@@ -230,6 +242,76 @@ export function inferTravelIdentity(
     });
   }
 
+  // ── Energy: Low ↔ High ──────────────────────────────────────────────────────
+  // A distinct axis from travel pace (Relaxed↔Packed): pace is about itinerary
+  // density, energy is about the intensity of the activities themselves. Read
+  // from nightlife behaviour + high/low-energy interests, with pace as a weak
+  // tie-breaker. Every reading carries the concrete evidence it came from.
+  {
+    const night = Number(signals.nightlifeCount ?? 0);
+    const interests: string[] = Array.isArray(p.interests) ? p.interests.map(norm) : [];
+    const highEnergyInterest = interests.some((i) =>
+      /night|party|adventure|hik|trek|climb|surf|sport|dance|festival|dive|kayak/.test(i),
+    );
+    const lowEnergyInterest = interests.some((i) =>
+      /relax|spa|wellness|beach|caf|slow|read|retreat|meditat|lounge/.test(i),
+    );
+    const pacePos = spectrumOf(p.travel_pace, ["relax", "slow", "easy", "chill"], ["pack", "fast", "busy", "intense"]);
+    let pos: number | null = null;
+    const evidence: string[] = [];
+    if (night >= 2 || highEnergyInterest) {
+      pos = 0.8;
+      if (night >= 2) evidence.push(`${night} nightlife visits`);
+      if (highEnergyInterest) evidence.push("High-energy interests");
+    } else if (lowEnergyInterest || (pacePos != null && pacePos <= 0.2)) {
+      pos = 0.2;
+      if (lowEnergyInterest) evidence.push("Low-key interests");
+      if (pacePos != null && pacePos <= 0.2) evidence.push("Relaxed travel pace");
+    } else if (pacePos != null && pacePos >= 0.8) {
+      pos = 0.75;
+      evidence.push("Packed travel pace");
+    }
+    dimensions.push({
+      key: "energy",
+      label: "Energy",
+      poles: { low: "Low", high: "High" },
+      position: pos,
+      value: pos == null ? "Balanced" : pos > 0.6 ? "High energy" : pos < 0.4 ? "Low key" : "Balanced",
+      evidence,
+      state: "shown",
+      inferred: pos == null,
+    });
+  }
+
+  // ── Group style: 1:1 / small / large groups ─────────────────────────────────
+  // TABLE 20's group-size axis, distinct from the Solo↔Social dimension above:
+  // Social answers "alone or with others", Group style answers "how many". Read
+  // from the explicit travel_group_style tags the profile carries.
+  {
+    const groups: string[] = Array.isArray(p.travel_group_style) ? p.travel_group_style : [];
+    const gv = groups.map(norm);
+    const wantsLarge = gv.some((g) => g.includes("large") || (g.includes("group") && !g.includes("small")));
+    const wantsSmall = gv.some((g) => g.includes("small"));
+    const wantsIntimate = gv.some(
+      (g) => g.includes("1:1") || g.includes("1-on-1") || g.includes("one_on_one") || g.includes("one on one") || g.includes("solo") || g.includes("intimate"),
+    );
+    let pos: number | null = null;
+    let value = "Balanced";
+    if (wantsLarge) { pos = 0.85; value = "Large groups"; }
+    else if (wantsSmall) { pos = 0.4; value = "Small groups"; }
+    else if (wantsIntimate) { pos = 0.15; value = "1:1"; }
+    dimensions.push({
+      key: "group_style",
+      label: "Group style",
+      poles: { low: "1:1 / small", high: "Large groups" },
+      position: pos,
+      value,
+      evidence: groups.length ? [`Group style: ${groups.join(", ")}`] : [],
+      state: "shown",
+      inferred: pos == null,
+    });
+  }
+
   // ── Interests (value list) ──────────────────────────────────────────────────
   {
     const interests: string[] = Array.isArray(p.interests) ? p.interests.filter(Boolean) : [];
@@ -314,12 +396,43 @@ export function inferTravelIdentity(
 /** Stored per-dimension/-trait override, keyed by dimension/trait key. */
 type PrefMap = Map<string, TravelDnaState>;
 
-/** Read stored Show/Hide/Not-Me prefs. Best-effort: OFF flag or missing table → empty. */
-async function loadPrefs(sc: SupabaseClient, userId: string): Promise<{ prefs: PrefMap; applied: boolean }> {
+/**
+ * The owner's stored Show/Hide/Not-Me state plus whether it was actually
+ * applied (i.e. the table was readable). Exposed so a caller that builds MANY
+ * identity readings for one owner (the Yearbook builds one per year) can read
+ * the prefs ONCE and pass them in — the same gate, not a second copy of it.
+ */
+export interface TravelDnaPrefs {
+  prefs: PrefMap;
+  applied: boolean;
+}
+
+/**
+ * Read stored Show/Hide/Not-Me prefs. Best-effort: a missing table → empty.
+ *
+ * DELIBERATELY NOT BEHIND `passport_travel_dna_enabled`.
+ * ======================================================
+ * This read used to be flag-gated, and that made the flag UNSAFE TO TURN OFF.
+ * `buildTravelIdentity` defaults every dimension and trait to "shown" and then
+ * applies whatever this returns, and `filterTravelIdentityForViewer` removes
+ * exactly the non-"shown" ones from a non-owner's view. So "no prefs" does not
+ * mean "no opinion" downstream — it means SHOW EVERYTHING. With the read gated,
+ * flipping the flag back OFF silently republished every dimension and trait a
+ * traveller had deliberately marked Hidden or Not Me. A rollback that widens
+ * disclosure is not a rollback.
+ *
+ * The flag gates the EDITING surface — `writeTravelDnaPref` still refuses with
+ * `feature_disabled` when it is off, so no NEW pref can be stored while the
+ * feature is dark. Honouring a concealment the user already chose is not part
+ * of the feature being rolled out; it is a privacy choice that outlives it.
+ *
+ * The residual widening — the table itself being unreadable — is unavoidable
+ * and is not the rollback case: it cannot be distinguished from "the table does
+ * not exist yet", which is the true state before migration 2261 is applied.
+ */
+export async function loadTravelDnaPrefs(sc: SupabaseClient, userId: string): Promise<TravelDnaPrefs> {
   const empty = { prefs: new Map<string, TravelDnaState>(), applied: false };
   try {
-    const on = await isFlagEnabled(sc, TRAVEL_DNA_FLAG);
-    if (!on) return empty;
     const { data, error } = await sc
       .from("passport_travel_dna_prefs")
       .select("dimension_key, state")
@@ -339,16 +452,20 @@ async function loadPrefs(sc: SupabaseClient, userId: string): Promise<{ prefs: P
 /**
  * Build the full Travel Identity projection for an owner, applying stored
  * Show/Hide/Not-Me state. `editable` is true only on the owner's own view.
+ *
+ * `opts.prefs` lets a caller supply prefs it already read (see
+ * `loadTravelDnaPrefs`); omitted, they are read here. Either way the SAME
+ * override rule is applied — there is only one.
  */
 export async function buildTravelIdentity(
   sc: SupabaseClient,
   userId: string,
   profile: Record<string, any> | null,
   signals: TravelIdentitySignals,
-  opts: { isSelf: boolean },
+  opts: { isSelf: boolean; prefs?: TravelDnaPrefs },
 ): Promise<TravelIdentityProjection> {
   const { dimensions, traits } = inferTravelIdentity(userId, profile, signals);
-  const { prefs, applied } = await loadPrefs(sc, userId);
+  const { prefs, applied } = opts.prefs ?? (await loadTravelDnaPrefs(sc, userId));
 
   for (const d of dimensions) d.state = prefs.get(d.key) ?? "shown";
   for (const t of traits) t.state = prefs.get(t.key) ?? "shown";
@@ -392,7 +509,7 @@ export type TravelDnaWriteResult =
  * ignore anyway.
  *
  * The stored key is the RAW dimension/trait key (not namespaced): the read side
- * (`loadPrefs`) looks up prefs by the same raw key, and dimension and trait keys
+ * (`loadTravelDnaPrefs`) looks up prefs by the same raw key, and dimension and trait keys
  * do not collide. `kind` is validated and echoed back for the client but is not
  * itself a stored column — the key alone identifies the row.
  */

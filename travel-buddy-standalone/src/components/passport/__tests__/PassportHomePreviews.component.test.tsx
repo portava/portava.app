@@ -65,6 +65,10 @@ function makeProjection(overrides: Partial<PassportProjectionView> = {}): Passpo
       homeCountry: 'Vietnam',
     },
     viewerContext: 'following',
+    travelerState: { state: 'traveling', label: 'Traveling · Da Nang', city: 'Da Nang', validFrom: null, expiresAt: null },
+    availability: { openToPlans: true, socialAvailability: 'open', currentWindow: null, expiresAt: null },
+    trust: { label: 'Strong', publicLevel: 'strong', score: null, confidence: 'high' },
+    hasTravelIdentity: true,
     stats: { countries: 3, cities: 5, stamps: 12, trips: 2 },
     recentStamps: [
       {

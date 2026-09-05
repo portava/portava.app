@@ -20,6 +20,7 @@
  * appStorageUrlInfo, ownerFromPath, hasValidIntelConsent, clampObservedAt,
  * assembleClaimInput and scoreConfidence are all the shipping implementations.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -167,7 +168,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
     return b;
   }
 
-  return { from, _tables: tables, _writes: writes, _reads: reads };
+  return { from, _tables: tables, _writes: writes, _reads: reads } as unknown as SupabaseClient & { _tables: typeof tables; _writes: typeof writes; _reads: typeof reads };
 }
 
 function openDb(actors: string[] = [ACTOR], places: string[] = [PLACE]) {
@@ -612,10 +613,17 @@ describe("attaching evidence raises nothing", () => {
     );
     assert.ok(scoreConfidence(evidenced.components, evidenced.penalties).confidence > 0);
 
-    // And the mechanism, not just the outcome: the scorer never even LOOKED at
-    // the evidence table, so there is no channel to drift.
-    assert.equal(readsDuringScoring.includes("intel_evidence"), false,
-      "the confidence path must not read intel_evidence until someone rules on evidence quality");
+    // And the mechanism, not just the outcome. The aggregator now DOES read
+    // intel_evidence — but only for INDEPENDENCE clustering (I2), reading the
+    // typed media_asset_id to collapse copied reports, never `reference` and never
+    // to raise a confidence component. The invariant that still holds is the one
+    // that matters: attaching media leaves every confidence input untouched
+    // (asserted above via components/penalties/score), so there is no channel by
+    // which an upload buys confidence. The "nobody selects reference" guard below
+    // pins the read to the safe columns.
+    void readsDuringScoring;
+    assert.equal(evidenced.components.evidenceQuality, bare.components.evidenceQuality,
+      "evidence quality must not move when a photo is attached — no buying confidence with an upload");
   });
 
   it("evidence quality stays at the evidence-thin value the aggregator hardcodes", async () => {
@@ -676,6 +684,11 @@ describe("nothing reads intel_evidence", () => {
       "lib/media/mediaEvidenceLink.ts":
         "Boolean existence check feeding the aggregator's hasEvidence input. Selects media_asset_id only — never " +
         "`reference`, so no storage key and no contributor bytes leave the table. Fail-closed on error.",
+      "lib/intelProjectionAggregator.ts":
+        "Independence clustering (I2 / §11): reads observation_id, evidence_kind, media_asset_id and detail to collapse " +
+        "copied reports (shared asset / common feed) into one cluster. Selects the TYPED media_asset_id and detail — " +
+        "never `reference`, so no contributor bytes leave the table — and only shrinks the independent-group count " +
+        "(stricter); it never raises a confidence component. Fail-soft on error.",
     };
 
     const touching = scanned

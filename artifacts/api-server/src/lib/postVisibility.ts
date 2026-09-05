@@ -24,14 +24,24 @@
  * ## Why absence fails closed
  *
  * An unrecognised visibility value is treated as NOT readable by non-authors.
- * A new visibility tier added later (`followers_only`, say) is then invisible
- * to strangers until someone teaches this function about it, rather than
- * public by default. The author is always admitted, so a new tier cannot lock
- * a user out of their own post.
+ * A new visibility tier added later is then invisible to strangers until someone
+ * teaches this function about it, rather than public by default. The author is
+ * always admitted, so a new tier cannot lock a user out of their own post.
+ *
+ * ## followers_only
+ *
+ * `followers_only` (equivalently the raw value `followers`) is readable by the
+ * author's FOLLOWERS — not the public, and not strangers. Like the trip_only
+ * membership flag, the caller supplies `viewerIsFollower` (the result of a
+ * "does the viewer follow the author" check) rather than this function fetching
+ * it, so the common cases still cost no query and the function stays pure. It
+ * used to fall through to `unknown_visibility` and fail closed to everyone but
+ * the author, so a followers_only post reached NOBODY but its author even though
+ * the tier exists — this admits the followers it is meant for.
  */
 
 /** Visibility values this predicate understands. Anything else fails closed. */
-export const READABLE_VISIBILITIES = ["public", "private", "trip_only"] as const;
+export const READABLE_VISIBILITIES = ["public", "private", "trip_only", "followers_only"] as const;
 
 export interface ReadablePost {
   author_id: string;
@@ -51,8 +61,10 @@ export interface ReadDecision {
     | "author"
     | "public"
     | "trip_member"
+    | "follower"
     | "private_not_author"
     | "trip_only_not_member"
+    | "followers_only_not_follower"
     | "unknown_visibility";
 }
 
@@ -60,14 +72,19 @@ export interface ReadDecision {
  * Decide whether `viewerId` may read `post`.
  *
  * `viewerIsTripMember` must be the result of an ACCEPTED-membership check for
- * `post.trip_id`. The caller supplies it rather than this function fetching it,
- * so the common cases (author, public) cost no query at all — and so this
- * function stays pure and directly testable.
+ * `post.trip_id`. `viewerIsFollower` must be the result of a "does the viewer
+ * follow the author" check (a `user_follows` row with follower_id = viewer,
+ * following_id = author). The caller supplies both rather than this function
+ * fetching them, so the common cases (author, public) cost no query at all — and
+ * so this function stays pure and directly testable. Both default to false, so a
+ * caller that resolves neither fails a trip_only / followers_only post closed to
+ * everyone but the author.
  */
 export function decidePostReadable(
   post: ReadablePost,
   viewerId: string,
   viewerIsTripMember: boolean,
+  viewerIsFollower: boolean = false,
 ): ReadDecision {
   // The author always reads their own post, at any visibility, published or not.
   if (post.author_id === viewerId) return { readable: true, reason: "author" };
@@ -89,7 +106,49 @@ export function decidePostReadable(
       : { readable: false, reason: "trip_only_not_member" };
   }
 
+  // followers_only (raw value `followers` is the same tier) — readable by the
+  // author's FOLLOWERS, not the public and not strangers. The caller resolves
+  // the follow relationship (viewerIsFollower); absent ⇒ not a follower ⇒ refused.
+  if (visibility === "followers_only" || visibility === "followers") {
+    return viewerIsFollower
+      ? { readable: true, reason: "follower" }
+      : { readable: false, reason: "followers_only_not_follower" };
+  }
+
   return { readable: false, reason: "unknown_visibility" };
+}
+
+/**
+ * Delayed-publish gate — is this post PUBLISHED, i.e. servable to anyone but
+ * its author?
+ *
+ * `posts.post_status` is the publication state machine (enum
+ * delayed_post_status: draft / private / pending_location_exit / pending_delay /
+ * pending_safety_review / published / canceled / expired). POST /posts inserts a
+ * delayed-geotag post with `status = 'active'` and a PENDING post_status, and
+ * a sweeper flips it to 'published' later. `status = 'active'` is therefore NOT
+ * enough to serve a post: every feed reader must also gate on post_status, or
+ * it serves a post whose author asked for it to stay hidden until they had
+ * left the place (§23 / §37).
+ *
+ * This is the SAME predicate the canonical readers already apply —
+ * lib/mediaEligibility (`if (postStatus && postStatus !== "published")`),
+ * GET /posts/:postId (`!post.post_status || post.post_status === "published"`)
+ * and POST /media/feed/view — lifted here so the Wall readers use the one
+ * definition instead of each restating it. Absent is treated as published: the
+ * column is NOT NULL DEFAULT 'published' in the schema, so absence only ever
+ * means a legacy row or a caller that did not select the column, never a
+ * pending post. The DB-side form is `.eq("post_status", "published")` (the
+ * Following / global feeds in routes/posts.ts); callers apply that on the
+ * query AND this in memory, so a row fed past the query filter cannot leak.
+ *
+ * Deliberately separate from decidePostReadable: that decides WHO may read a
+ * post given its visibility (and admits the author to their own pending post);
+ * this decides whether the post is published at all. The Wall never shows a
+ * viewer their own posts, so it applies both.
+ */
+export function isPostPublished(post: { post_status?: string | null }): boolean {
+  return !post.post_status || post.post_status === "published";
 }
 
 /** Convenience boolean for call sites that do not need the reason. */
@@ -97,8 +156,9 @@ export function canReadPost(
   post: ReadablePost,
   viewerId: string,
   viewerIsTripMember: boolean,
+  viewerIsFollower: boolean = false,
 ): boolean {
-  return decidePostReadable(post, viewerId, viewerIsTripMember).readable;
+  return decidePostReadable(post, viewerId, viewerIsTripMember, viewerIsFollower).readable;
 }
 
 /**
@@ -111,4 +171,18 @@ export function canReadPost(
 export function needsTripMembershipCheck(post: ReadablePost, viewerId: string): boolean {
   if (post.author_id === viewerId) return false;
   return (post.visibility ?? "public") === "trip_only" && !!post.trip_id;
+}
+
+/**
+ * Does this post need a follow lookup before the decision can be made?
+ *
+ * Only a followers_only (or raw `followers`) post viewed by a non-author needs
+ * it — the author, public and private posts are all decided without a query.
+ * Mirrors needsTripMembershipCheck so a route pays the follow query only when it
+ * actually changes the outcome.
+ */
+export function needsFollowerCheck(post: ReadablePost, viewerId: string): boolean {
+  if (post.author_id === viewerId) return false;
+  const v = post.visibility ?? "public";
+  return v === "followers_only" || v === "followers";
 }

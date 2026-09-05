@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { getServiceClient } from "./supabase";
 import { logger } from "./logger.js";
 import { LIVE_PULSE_SERVE_EVENT } from "../services/ranking/rankingAnalytics.js";
+import { recordImpressionDistributionStats } from "../services/ranking/DiscoveryRankingService.js";
 import type { ScoredCandidate, RankCandidate } from "./portavaRank";
 
 // ── Fatigue tracking ──────────────────────────────────────────────────────────
@@ -144,6 +145,13 @@ export async function logImpression(
         { err: insertError, surface, count: rows.length },
         "rankLog: impression insert rejected",
       );
+    } else {
+      // Exposure denominator — content_distribution_stats.eligible_impressions
+      // mirrors the impression rows that landed, so it is incremented HERE, on
+      // the impression path, and only when the insert was accepted. It used to
+      // be incremented by the outcome route instead, which made it a count of
+      // conversions (00_STATUS defect 4).
+      await recordImpressionDistributionStats(sc, rows.map((r) => r.item_id), userId);
     }
 
     // Fatigue tracking — fire-and-forget, gated by feature flag
@@ -233,6 +241,11 @@ export async function logCompassImpression(
         { err: insertError, surface: "compass", count: rows.length },
         "rankLog: compass impression insert rejected",
       );
+    } else {
+      // Exposure denominator — same rule as logImpression: one increment per
+      // distinct item whose impression row landed. Static items were already
+      // filtered out above, so they never reach the counter either.
+      await recordImpressionDistributionStats(sc, rows.map((r) => r.item_id), userId);
     }
   } catch (err) {
     // Never throws into the feed. Note this catches only THROWN errors; a

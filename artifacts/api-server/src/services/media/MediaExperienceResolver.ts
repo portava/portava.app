@@ -16,12 +16,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { checkEventEligibility } from "../../routes/events.js";
 import {
-  projectMediaCandidates,
   type MediaCandidateRow,
   type MediaProjection,
 } from "../../lib/media/mediaProjection.js";
 import {
   loadEligibleCandidates,
+  projectCandidatesProtected,
   readCurrentState,
   type CurrentState,
   type ViewerResolved,
@@ -138,7 +138,7 @@ async function resolveEvent(
       postIds: linkedPostIds,
       limit: 200,
     });
-    media = projectMediaCandidates(candidates as MediaCandidateRow[], nowMs);
+    media = await projectCandidatesProtected(sc, viewer, candidates as MediaCandidateRow[], nowMs);
   }
 
   const placeIds = typeof ev.place_id === "string" && ev.place_id ? [ev.place_id] : [];
@@ -206,7 +206,7 @@ async function resolveTrip(
     tripId,
     limit: 200,
   });
-  const media = projectMediaCandidates(candidates as MediaCandidateRow[], nowMs);
+  const media = await projectCandidatesProtected(sc, viewer, candidates as MediaCandidateRow[], nowMs);
 
   const placeIds = Array.from(new Set(media.map((m) => m.placeId).filter((x): x is string => Boolean(x))));
   const contributors = new Set(media.map((m) => m.contributor?.id).filter(Boolean));

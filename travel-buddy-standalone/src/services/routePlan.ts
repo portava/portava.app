@@ -135,6 +135,24 @@ export async function fetchRoutePlan(id: string): Promise<FullRoutePlan> {
   return res.json();
 }
 
+/**
+ * The viewer's own route plan for a trip (active first, else most recent), or
+ * null when there is none. This is how the Trip Map (§11) feeds its route line
+ * without a plan id — see GET /route-plans/for-trip/:tripId. Returns null rather
+ * than throwing on a not-found or an unreadable response so a missing route
+ * never blanks the map.
+ */
+export async function fetchTripRoutePlan(tripId: string): Promise<FullRoutePlan | null> {
+  try {
+    const res = await authedFetch(`${apiBase()}/api/route-plans/for-trip/${tripId}`);
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => null)) as FullRoutePlan | null;
+    return body && body.plan ? body : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface PatchStopPayload {
   checkpointStatus?: CheckpointStatus;
   orderIndex?: number;

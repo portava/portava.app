@@ -63,6 +63,14 @@ export const PENALTY_WEIGHTS: Readonly<Record<keyof ConfidencePenalties, number>
   materialConflict: 0.20,
 };
 
+/**
+ * The version of the formula above. Stamped into every ConfidenceResult and,
+ * through lib/intelProjection's PROJECTION_ALGORITHM_VERSION, into every
+ * persisted snapshot version, so a replay can tell "same inputs, different
+ * formula" from "same formula, different inputs". Bump it when a weight moves.
+ */
+export const CONFIDENCE_FORMULA_VERSION = 1 as const;
+
 /** The replayable record. Persist this, not just `confidence`. */
 export interface ConfidenceResult {
   confidence: number;
@@ -73,7 +81,7 @@ export interface ConfidenceResult {
   penalties: ConfidencePenalties;
   /** Set when an input was unusable and the result was forced to zero. */
   invalid: boolean;
-  formulaVersion: 1;
+  formulaVersion: typeof CONFIDENCE_FORMULA_VERSION;
 }
 
 const ZERO_COMPONENTS: ConfidenceComponents = {
@@ -144,7 +152,7 @@ export function scoreConfidence(
     components: c.values,
     penalties: p.values,
     invalid,
-    formulaVersion: 1,
+    formulaVersion: CONFIDENCE_FORMULA_VERSION,
   };
 }
 

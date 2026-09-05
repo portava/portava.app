@@ -91,17 +91,26 @@ const FOLLOWED: LoaderViewer = { viewerId: VIEWER, followedCreatorIds: new Set([
 // ── 1. Postcards ─────────────────────────────────────────────────────────────
 
 describe("loadPostcardCandidates (spec §10)", () => {
-  const POSTCARDS = [
+  // THE DISCRIMINATOR is a LIVE `passport_postcards` row (status='active', not
+  // tombstoned) pointing at the post — the fact the /postcards system records
+  // when a post actually becomes a Postcard. `posts.add_to_passport` is only
+  // the author's intent flag and defaults TRUE at the DB, in POST /posts and in
+  // POST /postcards, so every fixture below carries add_to_passport=true and
+  // it must decide nothing.
+  const POSTS = [
     { id: "pc-1", author_id: "author-1", trip_id: null, content: "Hoi An lanterns", visibility: "public",
-      status: "active", created_at: "2026-09-01T10:00:00Z", published_at: "2026-09-01T10:00:00Z",
+      status: "active", post_status: "published", created_at: "2026-09-01T10:00:00Z", published_at: "2026-09-01T10:00:00Z",
       canonical_place_id: "place-1", add_to_passport: true, has_video: false, media_count: 1,
       category: "culture", location_city: "Hoi An", location_country: "VN", save_count: 4 },
-    // Not a postcard — the client-side add_to_passport guard must drop it even if
-    // a query returns it.
-    { id: "post-x", author_id: "author-1", trip_id: null, content: "plain", visibility: "public",
-      status: "active", created_at: "2026-09-01T09:00:00Z", published_at: "2026-09-01T09:00:00Z",
-      canonical_place_id: null, add_to_passport: false, has_video: false, media_count: 0,
-      category: null, location_city: null, location_country: null, save_count: 0 },
+    // A Hidden-Gem / plain post: add_to_passport DEFAULTED true, but no
+    // passport_postcards row was ever created for it — it is NOT a postcard.
+    { id: "gem-x", author_id: "author-1", trip_id: null, content: "a hidden gem", visibility: "public",
+      status: "active", post_status: "published", created_at: "2026-09-01T09:00:00Z", published_at: "2026-09-01T09:00:00Z",
+      canonical_place_id: null, add_to_passport: true, has_video: false, media_count: 1,
+      category: "gem", location_city: null, location_country: null, save_count: 0 },
+  ];
+  const PASSPORT_POSTCARDS = [
+    { post_id: "pc-1", user_id: "author-1", status: "active", deleted_at: null, created_at: "2026-09-01T10:00:00Z" },
   ];
   const POST_MEDIA = [
     { id: "pm-1", post_id: "pc-1", media_type: "image", public_url: "https://cdn/x.jpg", thumbnail_url: "https://cdn/t.jpg",
@@ -110,14 +119,18 @@ describe("loadPostcardCandidates (spec §10)", () => {
   const PROFILES = [{ id: "author-1", display_name: "Aya", username: "aya", avatar_url: null, account_status: "active" }];
   const PLACES = [{ id: "place-1", name: "Ancient Town", city: "Hoi An", country_code: "VN" }];
 
-  const client = () => tableClient({ posts: POSTCARDS, post_media: POST_MEDIA, profiles: PROFILES, places: PLACES });
+  const client = (over: Record<string, any> = {}) =>
+    tableClient({ posts: POSTS, passport_postcards: PASSPORT_POSTCARDS, post_media: POST_MEDIA, profiles: PROFILES, places: PLACES, ...over });
 
-  it("projects an add_to_passport post as a postcard with media + place", async () => {
+  it("emits a post as a Postcard ONLY when a live passport_postcards row points at it (D2 ruling)", async () => {
     const loaded = await loadPostcardCandidates(client(), "for_you", FOLLOWED);
-    assert.equal(loaded.candidates.length, 1, "the non-postcard row is dropped");
+    assert.deepEqual(
+      loaded.candidates.map((c) => c.canonicalObjectId),
+      ["pc-1"],
+      "gem-x has add_to_passport=true (the default) and no postcard row — it is not a Postcard",
+    );
     const c = loaded.candidates[0];
     assert.equal(c.objectType, "postcard");
-    assert.equal(c.canonicalObjectId, "pc-1");
     assert.equal(c.authorId, "author-1");
     assert.equal(c.media?.length, 1);
     assert.equal(c.media?.[0].kind, "image");
@@ -126,6 +139,60 @@ describe("loadPostcardCandidates (spec §10)", () => {
     // Ranking signal + live-strip place derivation are populated.
     assert.equal(loaded.signals.get("pc-1")?.saveCount, 4);
     assert.equal(loaded.placeByObject.get("pc-1")?.city, "Hoi An");
+  });
+
+  it("a hidden or tombstoned passport_postcards row does not resurrect the post as a Postcard", async () => {
+    const loaded = await loadPostcardCandidates(
+      client({
+        passport_postcards: [
+          { post_id: "pc-1", user_id: "author-1", status: "hidden", deleted_at: null, created_at: "2026-09-01T10:00:00Z" },
+          { post_id: "gem-x", user_id: "author-1", status: "active", deleted_at: "2026-09-02T00:00:00Z", created_at: "2026-09-01T09:00:00Z" },
+        ],
+      }),
+      "for_you",
+      FOLLOWED,
+    );
+    assert.equal(loaded.candidates.length, 0, "moderation-hidden and tombstoned postcards are not live");
+  });
+
+  it("a Postcard whose post is not yet published is not served (D1 — delayed-publish gate)", async () => {
+    // Both have live postcard rows; only the published post may reach the Wall.
+    const pending = { ...POSTS[0], id: "pc-pending", post_status: "pending_location_exit" };
+    const loaded = await loadPostcardCandidates(
+      client({
+        posts: [pending, POSTS[0]],
+        passport_postcards: [
+          { post_id: "pc-pending", user_id: "author-1", status: "active", deleted_at: null, created_at: "2026-09-01T10:00:00Z" },
+          ...PASSPORT_POSTCARDS,
+        ],
+      }),
+      "following",
+      FOLLOWED,
+    );
+    assert.deepEqual(loaded.candidates.map((c) => c.canonicalObjectId), ["pc-1"], "the pending postcard stays hidden");
+  });
+
+  it("the reads carry the canonical predicates (live postcard rows for followed authors; active + published posts)", async () => {
+    type Captured = { eqs: Record<string, any>; ins: Record<string, any> };
+    // A holder object (not `let x = null` reassigned inside a callback): TypeScript
+    // narrows the latter to `null`/`never` at the assertions below.
+    const captured: { postcard?: Captured; posts?: Captured } = {};
+    const loaded = await loadPostcardCandidates(
+      client({
+        passport_postcards: (ctx: Captured) => { captured.postcard = { eqs: { ...ctx.eqs }, ins: { ...ctx.ins } }; return PASSPORT_POSTCARDS; },
+        posts: (ctx: Captured) => { captured.posts = { eqs: { ...ctx.eqs }, ins: { ...ctx.ins } }; return POSTS; },
+      }),
+      "for_you",
+      FOLLOWED,
+    );
+    assert.equal(loaded.candidates.length, 1);
+    assert.ok(captured.postcard, "passport_postcards was read");
+    assert.equal(captured.postcard?.eqs.status, "active", "discriminator: live postcard rows only");
+    assert.deepEqual(captured.postcard?.ins.user_id, ["author-1"], "discriminator: scoped to followed authors");
+    assert.ok(captured.posts, "posts was read");
+    assert.deepEqual(captured.posts?.ins.id, ["pc-1"], "posts are fetched BY the postcard rows' post_id");
+    assert.equal(captured.posts?.eqs.status, "active");
+    assert.equal(captured.posts?.eqs.post_status, "published", "the same DB predicate the Following / global feeds apply");
   });
 
   it("returns empty when the viewer follows no one (no in-graph postcards)", async () => {
@@ -144,6 +211,7 @@ describe("loadPostcardCandidates (spec §10)", () => {
     function snapshotPostsClient(posts: any[]) {
       const tables: Record<string, any[]> = {
         posts,
+        passport_postcards: posts.map((p) => ({ post_id: p.id, user_id: p.author_id, status: "active", deleted_at: null, created_at: p.created_at })),
         post_media: [],
         profiles: [{ id: "author-1", display_name: "Aya", username: "aya", account_status: "active" }],
         places: [],
@@ -176,7 +244,7 @@ describe("loadPostcardCandidates (spec §10)", () => {
     }
 
     const base = {
-      author_id: "author-1", trip_id: null, content: "lanterns", visibility: "public", status: "active",
+      author_id: "author-1", trip_id: null, content: "lanterns", visibility: "public", status: "active", post_status: "published",
       canonical_place_id: null, add_to_passport: true, has_video: false, media_count: 0,
       category: "culture", location_city: "Hoi An", location_country: "VN", save_count: 0,
     };
@@ -192,10 +260,58 @@ describe("loadPostcardCandidates (spec §10)", () => {
     assert.deepEqual(live.candidates.map((c) => c.canonicalObjectId).sort(), ["pc-new", "pc-old"], "no horizon ⇒ both surface");
   });
 
+  it("Following slides the postcard window DOWN to the cursor: older postcards past the newest page stay reachable (§28)", async () => {
+    // A fake that HONORS `.lte('created_at', X)` on the posts query so the
+    // Following-cursor slide is actually exercised.
+    function slidePostsClient(posts: any[]) {
+      const tables: Record<string, any[]> = {
+        posts,
+        passport_postcards: posts.map((p) => ({ post_id: p.id, user_id: p.author_id, status: "active", deleted_at: null, created_at: p.created_at })),
+        post_media: [],
+        profiles: [{ id: "author-1", display_name: "Aya", username: "aya", account_status: "active" }],
+        places: [],
+      };
+      function builder(table: string) {
+        let lteCreatedAt: string | null = null;
+        const b: any = {
+          select: () => b, eq: () => b, in: () => b, or: () => b, order: () => b, limit: () => b, gte: () => b, gt: () => b,
+          lte: (c: string, v: string) => { if (c === "created_at") lteCreatedAt = v; return b; },
+          maybeSingle: () => Promise.resolve({ data: (tables[table] ?? [])[0] ?? null, error: null }),
+          then: (onF: any, onR: any) => {
+            let rows = tables[table] ?? [];
+            if ((table === "posts" || table === "passport_postcards") && lteCreatedAt) rows = rows.filter((r) => String(r.created_at) <= lteCreatedAt!);
+            return Promise.resolve({ data: rows, error: null }).then(onF, onR);
+          },
+        };
+        return b;
+      }
+      return { from: builder };
+    }
+    const base = {
+      author_id: "author-1", trip_id: null, content: "lanterns", visibility: "public", status: "active", post_status: "published",
+      canonical_place_id: null, add_to_passport: true, has_video: false, media_count: 0,
+      category: "culture", location_city: "Hoi An", location_country: "VN", save_count: 0,
+    };
+    const posts = [
+      { ...base, id: "pc-old", created_at: "2026-09-01T00:00:00Z", published_at: "2026-09-01T00:00:00Z" },
+      { ...base, id: "pc-new", created_at: "2026-09-10T00:00:00Z", published_at: "2026-09-10T00:00:00Z" },
+    ];
+    // Following page whose cursor is at 2026-09-05: the newer postcard already
+    // appeared on an earlier page; the older one (≤ cursor) must remain reachable.
+    const slid = await loadPostcardCandidates(slidePostsClient(posts), "following", FOLLOWED, { followingCursorPublishedAt: "2026-09-05T00:00:00Z" });
+    assert.deepEqual(slid.candidates.map((c) => c.canonicalObjectId), ["pc-old"], "the older postcard past the newest window is still fetched");
+  });
+
   it("postcards run the same visibility gate: a private one from another author is dropped", async () => {
-    const priv = [{ ...POSTCARDS[0], id: "pc-priv", author_id: "author-2", visibility: "private", canonical_place_id: null }];
+    const priv = [{ ...POSTS[0], id: "pc-priv", author_id: "author-2", visibility: "private", canonical_place_id: null }];
     const loaded = await loadPostcardCandidates(
-      tableClient({ posts: priv, post_media: [], profiles: [{ id: "author-2", display_name: "Ben", username: "ben", account_status: "active" }], places: [] }),
+      tableClient({
+        posts: priv,
+        passport_postcards: [{ post_id: "pc-priv", user_id: "author-2", status: "active", deleted_at: null, created_at: priv[0].created_at }],
+        post_media: [],
+        profiles: [{ id: "author-2", display_name: "Ben", username: "ben", account_status: "active" }],
+        places: [],
+      }),
       "for_you",
       { viewerId: VIEWER, followedCreatorIds: new Set(["author-2"]) },
     );
@@ -361,6 +477,25 @@ describe("loadSharedMomentCandidates (spec §12)", () => {
     assert.equal(live.candidates.length, 1, "without a horizon the moment surfaces");
   });
 
+  it("Following slides the Moment window DOWN to the cursor (§28)", async () => {
+    const lateMoment = { ...MOMENT, id: "m-late", created_at: "2026-09-10T00:00:00Z" };
+    const mkClient = () =>
+      tableClient({
+        feature_flags: (ctx) => [{ enabled: !!ON_FLAGS[String(ctx.eqs["flag"])] }],
+        shared_moment_memberships: (ctx) =>
+          ctx.ins["moment_id"]
+            ? [{ moment_id: "m-late", user_id: VIEWER, status: "accepted" }]
+            : [{ role: "member", status: "accepted", shared_moments: lateMoment }],
+        blocks: [],
+        profiles: PROFILES,
+        places: PLACES,
+      });
+    // A cursor BEFORE the moment's created_at ⇒ the newer moment (already shown on
+    // an earlier page) must not re-enter the slid window.
+    const slid = await loadSharedMomentCandidates(mkClient(), VIEWER, { followingCursorPublishedAt: "2026-09-05T00:00:00Z" });
+    assert.equal(slid.candidates.length, 0, "a moment newer than the Following cursor is excluded from the slid window");
+  });
+
   it("a moment owned by a blocked user is dropped by the gate", async () => {
     const loaded = await loadSharedMomentCandidates(momentClient(ON_FLAGS), VIEWER);
     // Viewer has blocked the owner ⇒ projectObjects drops it (block gate).
@@ -453,5 +588,85 @@ describe("mergeLoadedCandidates", () => {
     assert.equal(byId.get("p1")?.objectType, "postcard", "p1 kept its richest (postcard) projection");
     assert.equal(byId.get("m1")?.objectType, "shared_moment", "the consented moment is admitted");
     assert.ok(!byId.has("p2"), "the private post from another author is gated out");
+  });
+});
+
+// ── experienceAt from media_assets.captured_at (spec §16) ────────────────────
+
+describe("experienceAt — the second clock, from media_assets.captured_at (spec §16)", () => {
+  const FOLLOWED_E: LoaderViewer = { viewerId: VIEWER, followedCreatorIds: new Set(["author-1"]) };
+  const PUBLISHED = "2026-09-05T12:00:00Z";
+  const CAPTURED = "2026-09-04T22:15:00Z"; // "Happened last night · 10:15 PM"
+
+  const POST = {
+    id: "pc-e", author_id: "author-1", trip_id: null, content: "lanterns", visibility: "public",
+    status: "active", post_status: "published", created_at: PUBLISHED, published_at: PUBLISHED,
+    canonical_place_id: null, has_video: false, media_count: 1, category: "culture",
+    location_city: "Hoi An", location_country: "VN", save_count: 0,
+  };
+  const PPC = { id: "ppc-e", post_id: "pc-e", user_id: "author-1", status: "active", deleted_at: null, created_at: PUBLISHED };
+  const PROFILES_E = [{ id: "author-1", display_name: "Aya", username: "aya", avatar_url: null, account_status: "active" }];
+
+  /** A fake whose media_attachments read honours entity_type + entity_id and
+   *  embeds the joined media_assets(captured_at), like PostgREST. */
+  function client(attachments: any[]) {
+    return tableClient({
+      posts: POST ? [POST] : [],
+      passport_postcards: [PPC],
+      post_media: [],
+      profiles: PROFILES_E,
+      places: [],
+      media_attachments: (ctx) => {
+        if (ctx.eqs["entity_type"] !== "postcard") return [];
+        const ids: string[] = ctx.ins["entity_id"] ?? [];
+        return attachments.filter((a) => ids.includes(a.entity_id));
+      },
+    });
+  }
+
+  it("sets experienceAt to the cover asset's captured_at when it differs from publishedAt", async () => {
+    const loaded = await loadPostcardCandidates(
+      client([{ entity_id: "ppc-e", is_cover: true, position: 0, media_assets: { captured_at: CAPTURED } }]),
+      "for_you",
+      FOLLOWED_E,
+    );
+    assert.equal(loaded.candidates.length, 1);
+    assert.equal(loaded.candidates[0].publishedAt, PUBLISHED);
+    assert.equal(loaded.candidates[0].experienceAt, CAPTURED, "the capture instant becomes the experience clock");
+  });
+
+  it("prefers the COVER attachment's captured_at over a non-cover one", async () => {
+    const loaded = await loadPostcardCandidates(
+      client([
+        { entity_id: "ppc-e", is_cover: false, position: 0, media_assets: { captured_at: "2026-01-01T00:00:00Z" } },
+        { entity_id: "ppc-e", is_cover: true, position: 5, media_assets: { captured_at: CAPTURED } },
+      ]),
+      "for_you",
+      FOLLOWED_E,
+    );
+    assert.equal(loaded.candidates[0].experienceAt, CAPTURED, "cover wins even at a later position");
+  });
+
+  it("leaves experienceAt undefined when captured_at equals publishedAt (one clock, not two)", async () => {
+    const loaded = await loadPostcardCandidates(
+      client([{ entity_id: "ppc-e", is_cover: true, position: 0, media_assets: { captured_at: PUBLISHED } }]),
+      "for_you",
+      FOLLOWED_E,
+    );
+    assert.equal(loaded.candidates[0].experienceAt, undefined);
+  });
+
+  it("leaves experienceAt undefined when the asset carries no captured_at (honest absence)", async () => {
+    const loaded = await loadPostcardCandidates(
+      client([{ entity_id: "ppc-e", is_cover: true, position: 0, media_assets: { captured_at: null } }]),
+      "for_you",
+      FOLLOWED_E,
+    );
+    assert.equal(loaded.candidates[0].experienceAt, undefined);
+  });
+
+  it("leaves experienceAt undefined when there is no attachment at all", async () => {
+    const loaded = await loadPostcardCandidates(client([]), "for_you", FOLLOWED_E);
+    assert.equal(loaded.candidates[0].experienceAt, undefined);
   });
 });

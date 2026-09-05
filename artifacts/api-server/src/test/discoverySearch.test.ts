@@ -74,8 +74,15 @@ interface FakeState {
   [key: string]: any[] | undefined;
 }
 
-/** Build a fake client. tableErrors: set of table names that return a DB error. */
-function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) {
+/** Build a fake client. tableErrors: set of table names that return a DB error.
+ *  ignoreEqCols: columns whose `.eq()` the fake records but does NOT apply — it
+ *  feeds those rows PAST the query filter the way a widened query would, so a
+ *  route's in-memory re-check is the only thing left to refuse them. */
+function makeFakeClient(
+  state: FakeState,
+  tableErrors: Set<string> = new Set(),
+  ignoreEqCols: Set<string> = new Set(),
+) {
   const errorBuilder: any = {};
   const errorFns = ["select","eq","neq","in","not","is","ilike","or","gte","lt","order","limit","range","maybeSingle"];
   for (const fn of errorFns) {
@@ -119,7 +126,11 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
           }
           return builder;
         },
-        eq(col: string, val: any)     { filters.push((r) => r[col] === val); return builder; },
+        eq(col: string, val: any)     {
+          CAPTURED_EQS.push({ table, col, val });
+          if (!ignoreEqCols.has(col)) filters.push((r) => r[col] === val);
+          return builder;
+        },
         neq(col: string, val: any)    { filters.push((r) => r[col] !== val); return builder; },
         in(col: string, vals: any[])  { filters.push((r) => vals.includes(r[col])); return builder; },
         not(col: string, op: string, val: any) {
@@ -209,10 +220,15 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string> = new Set()) 
 
 // ── Server + helpers ───────────────────────────────────────────────────────────
 
+/** Every `.eq(col, val)` any query carried, so a test can assert that a query
+ *  CARRIES a predicate rather than only that its response happened to be right.
+ *  Without it, the fake's own row filtering hides a deleted DB predicate. */
+const CAPTURED_EQS: Array<{ table: string; col: string; val: any }> = [];
+
 let base: string;
 let server: Server;
 
-function setup(state: Partial<FakeState>, tableErrors: string[] = []) {
+function setup(state: Partial<FakeState>, tableErrors: string[] = [], ignoreEqCols: string[] = []) {
   const full: FakeState = {
     profiles: [],
     blocks: [],
@@ -230,7 +246,8 @@ function setup(state: Partial<FakeState>, tableErrors: string[] = []) {
     trip_plan_items: [],
     ...state,
   };
-  _setTestClient(makeFakeClient(full, new Set(tableErrors)) as any, true);
+  CAPTURED_EQS.length = 0;
+  _setTestClient(makeFakeClient(full, new Set(tableErrors), new Set(ignoreEqCols)) as any, true);
 }
 
 before(async () => {
@@ -1379,5 +1396,72 @@ describe("GET /api/discovery/search — cities: discovery opt-out exclusion", ()
     assert.equal(r.status, 200);
     const { results } = await r.json() as any;
     assert.equal(results.length, 0, "Fail-closed: must return empty cities when opt-out state is unknown");
+  });
+});
+
+// ── Posts: delayed-publish gate (§23/§37) ─────────────────────────────────────
+//
+// searchPosts had no publication filter at all — only `visibility = 'public'`
+// and "not deleted, not banned". `status = 'active'` is exactly what POST /posts
+// writes for a delayed-geotag post, and its body was full-text searchable the
+// instant it was created: anyone typing a phrase from it found the post (and its
+// author) while that author was still standing at the place they had asked not
+// to reveal. The canonical predicate is lib/postVisibility.isPostPublished, and
+// it is applied at the query AND in memory — these tests pin both.
+
+describe("GET /api/discovery/search — posts are gated on post_status", () => {
+  const AUTHOR_ROW = {
+    id: ALICE, handle: "alice", name: "Alice", avatar_url: null,
+    is_private: false, account_status: "active",
+  };
+  const postRow = (id: string, over: Record<string, any> = {}) => ({
+    id, author_id: ALICE, content: `bougainvillea rooftop ${id}`, media_urls: [],
+    created_at: "2026-09-01T10:00:00Z", like_count: 0, visibility: "public",
+    // NOT NULL DEFAULT 'published' in the schema — a real row always has one.
+    status: "active", post_status: "published",
+    ...over,
+  });
+  const PUBLISHED = postRow("published-1");
+  const PENDING = [
+    postRow("pending-exit-1", { post_status: "pending_location_exit" }),
+    postRow("pending-delay-1", { post_status: "pending_delay" }),
+    postRow("review-1", { post_status: "pending_safety_review" }),
+  ];
+
+  async function idsFor(ignoreEqCols: string[] = []) {
+    setup({ profiles: [AUTHOR_ROW], posts: [PUBLISHED, ...PENDING] }, [], ignoreEqCols);
+    const r = await get("/discovery/search?q=bougainvillea&type=posts");
+    assert.equal(r.status, 200);
+    const { results } = (await r.json()) as any;
+    return (results as any[]).map((x: any) => x.id as string);
+  }
+
+  it("the posts query CARRIES post_status='published' (the DB-layer predicate)", async () => {
+    const ids = await idsFor();
+    assert.deepEqual(ids, ["published-1"], "only the published post is searchable");
+    const postEqs = CAPTURED_EQS.filter((e) => e.table === "posts");
+    assert.ok(
+      postEqs.some((e) => e.col === "post_status" && e.val === "published"),
+      "searchPosts must carry the canonical predicate on the query",
+    );
+  });
+
+  it("pending rows fed PAST the query filter are still refused in memory", async () => {
+    const ids = await idsFor(["post_status"]);
+    for (const p of PENDING) {
+      assert.ok(!ids.includes(p.id), `${p.id} (status='active', pending post_status) must never be searchable`);
+    }
+    assert.deepEqual(ids, ["published-1"]);
+  });
+
+  it("a legacy row with NO post_status reads as published (absent ⇒ published)", async () => {
+    const legacy: any = postRow("legacy-1");
+    delete legacy.post_status;
+    setup({ profiles: [AUTHOR_ROW], posts: [legacy] }, [], ["post_status"]);
+    const r = await get("/discovery/search?q=bougainvillea&type=posts");
+    assert.equal(r.status, 200);
+    const { results } = (await r.json()) as any;
+    assert.deepEqual((results as any[]).map((x: any) => x.id), ["legacy-1"],
+      "the column is NOT NULL DEFAULT 'published'; absent must not fail closed");
   });
 });

@@ -37,10 +37,19 @@ import {
   SOURCE_CLASSES,
   MIN_BAND_FOR_LIVE_STATE,
   CONFIDENCE_BAND_FLOOR,
+  PRIVACY_THRESHOLD_V1,
   type ConfidenceBand,
   type SourceClass,
 } from "./intelContracts.js";
+import { meetsKAnonymity } from "./kAnonymity.js";
 import { logger } from "./logger.js";
+import {
+  normalizeConflictState,
+  capForConflict,
+  conflictBlock,
+  type ConflictState,
+  type ConflictBlock,
+} from "./intelConflict.js";
 
 export interface LiveClaim {
   /** Snapshot id — the provenance reference the "why" surface points at. */
@@ -60,6 +69,17 @@ export interface LiveClaim {
   sourceCount: number;
   observedAt: string;
   expiresAt: string;
+  /**
+   * §10 conflict state of the cohort behind this snapshot (2275). When
+   * 'material' the `confidence`/`band` above are ALREADY capped below the live
+   * band by readLiveClaims — a strong Live label is never derivable from this
+   * object. Pre-2275 rows read as 'none'. Optional so a LiveClaim built by
+   * hand still compiles; toLiveClaimEnvelope normalises an absent value to
+   * 'none'.
+   */
+  conflictState?: ConflictState;
+  /** ISO — when the snapshot (and so its conflict state) was last recomputed. */
+  conflictUpdatedAt?: string;
 }
 
 /**
@@ -108,24 +128,34 @@ export interface LiveClaimEnvelope {
   /** expires_at — the freshness horizon the client uses to degrade to unknown. */
   validUntil: string;
   state: LiveState;
+  /**
+   * §10 conflict state. 'material' ⇒ `state` is never 'live' and `band` is at
+   * most likely_current (capped in readLiveClaims): the client renders
+   * "Reports differ" wherever it would have rendered a Live label.
+   */
+  conflictState: ConflictState;
+  /** Counts-only conflict block ({state, sidesCount, lastUpdated}); null when 'none'. */
+  conflict: ConflictBlock | null;
 }
 
 /**
- * The source class of a Phase-1 live snapshot.
+ * The source class of a live snapshot.
  *
- * Enrichment seam. The projection output (intel_state_snapshots, migration 2130)
- * carries NO source_class column today, and readLiveClaims does not SELECT one, so
- * `row.source_class` is undefined here and this returns the honest Phase-1 default
- * (IntelCaptureService only ever emits firsthand_unverified). When the projection
- * begins recording a source class — verified presence, official, imported — this
- * reads it, but only a KNOWN canonical value; an unrecognised label falls back to
- * the default rather than being trusted or mislabelled.
+ * intel_state_snapshots.source_class exists (migration 2279) and
+ * lib/intelProjection now WRITES it from the cohort's real observations, so this
+ * guard is load-bearing: a historical_pattern / portava_prediction is dropped
+ * before it can reach a Live label (mayRenderAsLive), and a wholly
+ * official/sponsored/imported cohort — one party talking about itself — gets no
+ * community-consensus badge (mayCountAsConsensus).
  *
- * Wiring the read now (rather than hard-coding the constant) is what lets
- * mayRenderAsLive / mayCountAsConsensus in the callers actually bite the instant a
- * real class flows: a historical_pattern or portava_prediction is dropped before
- * it can reach a Live label, and a single official/sponsored party gets no
- * community-consensus badge.
+ * It was INERT until the select list below started projecting the column: the
+ * query omitted `source_class`, so `row.source_class` was always undefined and
+ * this always returned the default, whatever the projection had recorded.
+ *
+ * Only a KNOWN canonical value is trusted; an unrecognised label — and a row
+ * from a schema where the column is not yet applied — falls back to the honest
+ * Phase-1 default (IntelCaptureService's own class for an undisclosed report)
+ * rather than being trusted or mislabelled.
  */
 function deriveSourceClass(row: Record<string, unknown>): SourceClass {
   const raw = row?.source_class;
@@ -149,6 +179,9 @@ function compareLiveClaims(a: LiveClaim, b: LiveClaim): number {
 
 /** Shape a live claim into the client-facing envelope (derived fields only). */
 export function toLiveClaimEnvelope(c: LiveClaim): LiveClaimEnvelope {
+  // Re-normalised here so a LiveClaim built by hand (tests, future callers)
+  // without the field reads as 'none' rather than as an undefined state.
+  const conflictState = normalizeConflictState(c.conflictState);
   return {
     id: c.id,
     claimType: c.claimType,
@@ -166,7 +199,12 @@ export function toLiveClaimEnvelope(c: LiveClaim): LiveClaimEnvelope {
     // 'live' ONLY when the evidence qualifies (band live/strong); a claim that
     // cleared the serve floor but not the live band is 'emerging'. readLiveClaims
     // already dropped anything below the serve floor and anything expired.
-    state: c.band === "live" || c.band === "strong" ? "live" : "emerging",
+    // A MATERIAL conflict is never 'live' (§10 "suppress strong Live label") —
+    // readLiveClaims already capped the band, and this guard makes the rule
+    // hold for any LiveClaim built by hand too.
+    state: conflictState !== "material" && (c.band === "live" || c.band === "strong") ? "live" : "emerging",
+    conflictState,
+    conflict: conflictBlock(conflictState, typeof c.conflictUpdatedAt === "string" ? c.conflictUpdatedAt : c.observedAt),
   };
 }
 
@@ -238,6 +276,24 @@ export async function liveLabelsServable(sc: any): Promise<boolean> {
   return true;
 }
 
+/** The snapshot projection. `source_class` (2279) is REQUIRED, not optional —
+ *  deriveSourceClass cannot enforce anything on a column that is never selected. */
+export const SNAPSHOT_COLUMNS =
+  "id, zone_id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible, conflict_state, source_class, computed_at";
+/** The same projection minus source_class, for a schema predating migration 2279. */
+export const SNAPSHOT_COLUMNS_PRE_2279 =
+  "id, zone_id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible, conflict_state, computed_at";
+
+/** True for the "this column does not exist" family (Postgres 42703 / PostgREST PGRST204). */
+function isUndefinedColumnError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: unknown; message?: unknown };
+  const code = typeof e.code === "string" ? e.code : "";
+  if (code === "42703" || code === "PGRST204") return true;
+  const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
+  return msg.includes("source_class") && (msg.includes("does not exist") || msg.includes("could not find"));
+}
+
 export async function readLiveClaims(
   sc: any,
   subjectId: string | null | undefined,
@@ -261,16 +317,31 @@ export async function readLiveClaims(
   if (promotedScopes.size === 0) return [];
 
   try {
-    let q = sc
-      .from("intel_state_snapshots")
-      .select("id, zone_id, claim_type, value, confidence, source_count, observed_at, expires_at, privacy_eligible")
-      .eq("subject_id", subjectId)
-      .eq("privacy_eligible", true)
-      .gt("expires_at", now.toISOString());
-    if (opts.claimTypes && opts.claimTypes.length > 0) {
-      q = q.in("claim_type", opts.claimTypes);
+    const runSnapshotQuery = async (columns: string) => {
+      let q = sc
+        .from("intel_state_snapshots")
+        .select(columns)
+        .eq("subject_id", subjectId)
+        .eq("privacy_eligible", true)
+        .gt("expires_at", now.toISOString());
+      if (opts.claimTypes && opts.claimTypes.length > 0) {
+        q = q.in("claim_type", opts.claimTypes);
+      }
+      return await q;
+    };
+
+    // source_class (2279) MUST be in the select list — deriveSourceClass's truth
+    // boundary and the consensus-badge rule read it, and a column that is never
+    // projected reads as undefined, which silently turned both guards off.
+    let { data, error } = await runSnapshotQuery(SNAPSHOT_COLUMNS);
+    if (error && isUndefinedColumnError(error)) {
+      // Tolerate a schema where 2279 has not been applied yet: retry WITHOUT the
+      // column instead of failing the whole read. No row can carry a class in
+      // that schema, so deriveSourceClass's Phase-1 default is the honest answer
+      // — and it is exactly the behaviour before 2279 existed.
+      logger.warn({ err: error }, "liveClaimRead: source_class not present; reading without it");
+      ({ data, error } = await runSnapshotQuery(SNAPSHOT_COLUMNS_PRE_2279));
     }
-    const { data, error } = await q;
     if (error || !data) {
       // Fail-closed: an unreadable projection means "unknown", not "assume last known".
       logger.warn({ err: error }, "liveClaimRead: snapshot read failed");
@@ -282,8 +353,17 @@ export async function readLiveClaims(
       // Per-scope gate: only serve snapshots whose (zone, claim) scope is promoted.
       const scopeKey = `${(row.zone_id ?? "")}|${row.claim_type}`;
       if (!promotedScopes.has(scopeKey)) continue;
-      const confidence = typeof row.confidence === "number" ? row.confidence : null;
-      const band = confidenceBand(confidence);
+      // §10 material conflict (2275): cap the served (confidence, band) BELOW the
+      // live band before anything else looks at it, so no consumer of this read
+      // — envelope, wall strip, map projection, Compass context — can derive a
+      // strong Live label from a materially-conflicted cohort. Only ever lowers;
+      // a pre-2275 row (no column) reads as 'none' and is untouched. The capped
+      // band still clears the serve floor, so the value continues to serve, as
+      // 'emerging' with a "Reports differ" block — visible, not silently averaged.
+      const conflictState = normalizeConflictState(row.conflict_state);
+      const capped = capForConflict(conflictState, typeof row.confidence === "number" ? row.confidence : null, confidenceBand(typeof row.confidence === "number" ? row.confidence : null));
+      const confidence = capped.confidence;
+      const band = capped.band;
       // Below the live floor a claim is not shown as live at all.
       if (CONFIDENCE_BAND_FLOOR[band] < CONFIDENCE_BAND_FLOOR[MIN_BAND_FOR_LIVE_STATE]) continue;
       // Truth boundary (intelContracts.mayRenderAsLive): a class that is a
@@ -304,6 +384,10 @@ export async function readLiveClaims(
         sourceCount: typeof row.source_count === "number" ? row.source_count : 0,
         observedAt: String(row.observed_at),
         expiresAt: String(row.expires_at),
+        conflictState,
+        // computed_at is when the projection last (re)assessed the cohort; fall
+        // back to observed_at for a row that somehow lacks it.
+        conflictUpdatedAt: typeof row.computed_at === "string" ? row.computed_at : String(row.observed_at),
       });
     }
     // Deterministic, best/current first.
@@ -328,6 +412,11 @@ export async function readLiveCrowdLevel(
   const claims = await readLiveClaims(sc, subjectId, { claimTypes: ["crowd.level"], now: opts.now });
   const crowd = claims.find((c) => c.claimType === "crowd.level");
   if (!crowd) return null;
+  // A bare string cannot carry a "Reports differ" marker, so serving the
+  // plurality value here under a MATERIAL conflict would be exactly the silent
+  // averaging §1 forbids. The rich envelope (readLiveClaimEnvelopes) still
+  // serves the value WITH its conflict block; this legacy string is null.
+  if (crowd.conflictState === "material") return null;
   const v = crowd.value as any;
   const level = typeof v === "string" ? v : v?.level;
   return typeof level === "string" && level.length > 0 ? level : null;
@@ -349,4 +438,146 @@ export async function readLiveClaimEnvelopes(
 ): Promise<LiveClaimEnvelope[]> {
   const claims = await readLiveClaims(sc, subjectId, opts);
   return claims.map(toLiveClaimEnvelope);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// IG-05 'typical' FALLBACK (spec §5 degradation order Live → … → Historical → …)
+// ══════════════════════════════════════════════════════════════════════════════
+/**
+ * The degradation order the place card owes is Live → Likely current → Historical
+ * → Official → Unknown. `readLiveClaims`/`readLiveClaimEnvelopes` cover the top
+ * (live/emerging) and return [] otherwise. THIS is the next rung down: when no live
+ * observation exists, a `historical_pattern` from intel_historical_patterns (§12)
+ * answers "what is it TYPICALLY like right now?" — a 'typical' claim, NEVER a Live
+ * one. Below it there is only 'unknown' (silence), which is the empty array.
+ *
+ * TRUTH BOUNDARY. A typical claim carries sourceClass 'historical_pattern', and
+ * mayRenderAsLive('historical_pattern') is false — so even if one ever reached the
+ * live path it would be dropped before a Live label. The client's liveState() maps
+ * this class to 'Typical' and its own distinct colour, never 'Live'. This function
+ * is the ONE producer of a 'typical' envelope; it does not touch the live gates
+ * (a typical answer is available even when the Live pilot is off), and it fails
+ * closed to [] on any error, so the honest fallback of last resort is 'unknown'.
+ */
+function padHour(h: number): string {
+  return `hour_${String(h).padStart(2, "0")}`;
+}
+
+export async function readTypicalPatterns(
+  sc: any,
+  subjectId: string | null | undefined,
+  opts: { claimTypes?: readonly string[]; now?: Date } = {},
+): Promise<LiveClaimEnvelope[]> {
+  if (!sc || !subjectId) return [];
+  const now = opts.now ?? new Date();
+  const dow = now.getUTCDay();
+  const timeBand = padHour(now.getUTCHours());
+  try {
+    let q = sc
+      .from("intel_historical_patterns")
+      .select("id, zone_id, claim_family, pattern_kind, time_band, dow, value_json, confidence, cohort_size, distinct_contributors, window_days, is_invalidation, computed_at")
+      .eq("subject_id", subjectId)
+      .eq("time_band", timeBand)
+      .eq("dow", dow)
+      .order("computed_at", { ascending: false });
+    if (opts.claimTypes && opts.claimTypes.length > 0) {
+      q = q.in("claim_family", opts.claimTypes);
+    }
+    const { data, error } = await q;
+    if (error || !data) {
+      logger.warn({ err: error }, "liveClaimRead: pattern read failed");
+      return [];
+    }
+    // Latest row per (zone, claim_family, pattern_kind) — the append-only store
+    // supersedes by newer row. A tombstone (is_invalidation) that is the latest
+    // row means "no typical pattern" for that scope, so it is skipped, not served.
+    const seen = new Set<string>();
+    const out: LiveClaimEnvelope[] = [];
+    for (const row of data as any[]) {
+      const scope = `${row.zone_id ?? ""}|${row.claim_family}|${row.pattern_kind}`;
+      if (seen.has(scope)) continue; // an older row for a scope we already resolved
+      seen.add(scope);
+      if (row.is_invalidation === true) continue; // latest is a tombstone ⇒ no pattern
+
+      // ── k-ANONYMITY FLOOR (the SAME one the live path enforces) ─────────────
+      // The live rung publishes only snapshots the shared privacy gate marked
+      // privacy_eligible, which is meetsKAnonymity(distinctActors,
+      // PRIVACY_THRESHOLD_V1.minUniqueActors) plus the group clauses. This rung
+      // had NO actor floor at all: the DB's Table-19 minimums count independent
+      // VISITS and DATES, and 'typical_crowd_by_weekday_hour' sets
+      // minContributors to 0 (lib/intelPatternLearning.PATTERN_MINIMUMS), so
+      // eight visits by ONE person across four dates satisfied the CHECK and
+      // served — a one-person routine, published with a cohort badge.
+      //
+      // Same constant, same helper, no second policy: below the floor the
+      // pattern does not serve at all (and so can never carry a badge). The
+      // scope is already in `seen`, so an older row for it is not served either
+      // — the LATEST row governs, fail-closed. A row with no contributor count
+      // reads as 0 and is withheld.
+      const distinctContributors = typeof row.distinct_contributors === "number" ? row.distinct_contributors : 0;
+      if (!meetsKAnonymity(distinctContributors, PRIVACY_THRESHOLD_V1.minUniqueActors)) continue;
+
+      const confidence = typeof row.confidence === "number" ? row.confidence : null;
+      const computedAt = String(row.computed_at);
+      const windowDays = typeof row.window_days === "number" ? row.window_days : 0;
+      const validUntil = new Date(Date.parse(computedAt) + windowDays * 24 * 60 * 60 * 1000).toISOString();
+      out.push({
+        id: String(row.id),
+        claimType: String(row.claim_family),
+        value: row.value_json,
+        confidence,
+        band: confidenceBand(confidence),
+        // A pattern is always historical_pattern — the client renders it 'Typical'.
+        sourceClass: "historical_pattern",
+        // A pattern is a cohort aggregate over many independent contributors, so a
+        // cohort badge is honest (mayCountAsConsensus true) — but only above the
+        // k-floor checked above, which is what makes "many" true at all. The exact
+        // count stays withheld; only the coarse bucket leaves.
+        sourceCountBucket: mayCountAsConsensus("historical_pattern")
+          ? sourceCountBucket(typeof row.cohort_size === "number" ? row.cohort_size : 0)
+          : null,
+        observedAt: computedAt,
+        validUntil,
+        state: "typical",
+        // A historical pattern has no live cohort, so no §10 conflict to surface.
+        conflictState: "none",
+        conflict: null,
+      });
+    }
+    return out;
+  } catch (err) {
+    logger.warn({ err }, "liveClaimRead: pattern read threw");
+    return [];
+  }
+}
+
+/** The resolved intel state for a place, in the spec's degradation order. */
+export interface PlaceIntelState {
+  /** 'live'/'emerging' if a live claim exists, else 'typical' if a pattern does, else 'unknown'. */
+  state: LiveState;
+  /** The claims backing `state` (live/emerging envelopes, or typical envelopes, or []). */
+  claims: LiveClaimEnvelope[];
+}
+
+/**
+ * Resolve a place's intel state along the degradation order: LIVE/EMERGING first
+ * (the gated projection), then TYPICAL (a §12 pattern for the current weekday/hour),
+ * then UNKNOWN (empty). One place composes the two reads so a caller cannot get the
+ * order wrong — a typical answer is NEVER returned when a live one exists, and a
+ * live answer is never downgraded to typical.
+ */
+export async function resolvePlaceIntelState(
+  sc: any,
+  subjectId: string | null | undefined,
+  opts: { claimTypes?: readonly string[]; now?: Date } = {},
+): Promise<PlaceIntelState> {
+  const live = await readLiveClaimEnvelopes(sc, subjectId, opts);
+  if (live.length > 0) {
+    // 'live' if any claim is live-qualified, else 'emerging'.
+    const anyLive = live.some((c) => c.state === "live");
+    return { state: anyLive ? "live" : "emerging", claims: live };
+  }
+  const typical = await readTypicalPatterns(sc, subjectId, opts);
+  if (typical.length > 0) return { state: "typical", claims: typical };
+  return { state: "unknown", claims: [] };
 }

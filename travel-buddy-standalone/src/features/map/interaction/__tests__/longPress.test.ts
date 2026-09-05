@@ -35,6 +35,7 @@ import {
   BOUNDED_SHARE_CHANNEL_EXISTS,
   COORDINATE_LABEL_DECIMALS,
   NO_SHARE_CHANNEL_REASON,
+  NO_SHARE_CHANNEL_TARGET_REASON,
   DEFAULT_SHARE_PURPOSE,
   LONG_PRESS_ACTION_ORDER,
   MIN_PRECISION_FOR_PINNING,
@@ -98,6 +99,15 @@ function WITH_PAGE(over: Partial<MapObject> = {}): MapObject {
 const COORD = coordinateTarget(DA_NANG_LAT, DA_NANG_LNG);
 /** A checkpoint needs a group to drop into; most cases below supply one. */
 const IN_GROUP: LongPressContext = { checkpointScopeId: 'event-42' };
+/**
+ * A context WITH the §12 session that is the share channel. `share` is offered
+ * only when one exists — like a checkpoint, a share with no group has nobody to
+ * reach. IN_GROUP deliberately omits it, so most cases still see `share` closed.
+ */
+const WITH_CHANNEL: LongPressContext = {
+  checkpointScopeId: 'event-42',
+  shareChannelSessionId: 'session-1',
+};
 
 function enabledSet(items: readonly LongPressItem[]): Set<MapAction> {
   return new Set(items.filter((i) => i.enabled).map((i) => i.action));
@@ -251,9 +261,10 @@ describe('§25 · bare coordinate (the empty-map case)', () => {
 
 describe('§25 · object target', () => {
   test('a place-level place with its own page affords all six that can be opened', () => {
-    // Six, not seven: `share` is the one §25 action with nothing behind it
-    // (see the §37 channel suite below), and it is refused for that rather
-    // than for anything about this target.
+    // Six, not seven: with IN_GROUP there is a checkpoint scope but no share
+    // CHANNEL session, so `share` is refused for having nowhere to open onto
+    // (see the §37 channel suite below) rather than for anything about this
+    // target. WITH_CHANNEL is where the seventh row turns on.
     const target = objectTarget(WITH_PAGE({ kind: 'place', privacyClass: 'place_level' }));
     assert.deepEqual(
       [...enabledSet(resolveLongPressActions(target, IN_GROUP))].sort(),
@@ -542,47 +553,80 @@ describe('§25 · the Add to Trip handoff', () => {
   });
 });
 
-// ── §37 · The share is permitted and still cannot be opened ───────────────────
+// ── §37 · The bounded, expiring share channel ─────────────────────────────────
 
 describe('§37 · share channel', () => {
-  const targets: LongPressTarget[] = [
+  const eligibleTargets: LongPressTarget[] = [
     COORD,
-    ...MAP_OBJECT_KINDS.flatMap((kind) =>
-      PRIVACY_CLASSES.map((privacyClass) => objectTarget(WITH_PAGE({ kind, privacyClass }))),
+    ...MAP_OBJECT_KINDS.filter((k) => !PERSON_BEARING_KINDS.includes(k)).flatMap((kind) =>
+      // At or above the identity line, so a share bound exists at all.
+      (['approximate', 'place_level', 'precise_temporary'] as const).map((privacyClass) =>
+        objectTarget(WITH_PAGE({ kind, privacyClass })),
+      ),
     ),
   ];
 
-  test('no target enables it while nothing can open a share that expires', () => {
-    assert.equal(BOUNDED_SHARE_CHANNEL_EXISTS, false);
-    for (const target of targets) {
-      const item = longPressItemFor(resolveLongPressActions(target, IN_GROUP), 'share');
+  test('the channel now exists', () => {
+    // A bounded-TTL §12 session IS the channel; the capability is on.
+    assert.equal(BOUNDED_SHARE_CHANNEL_EXISTS, true);
+  });
+
+  test('with an active session, an eligible press opens a bounded share', () => {
+    for (const target of eligibleTargets) {
+      const item = longPressItemFor(resolveLongPressActions(target, WITH_CHANNEL), 'share');
       assert.ok(item);
-      assert.equal(item.enabled, false);
-      assert.equal(item.shareBound, undefined);
+      assert.equal(item.enabled, true);
+      assert.ok(item.shareBound, 'an enabled share carries its §37 bound');
+      // Never above the map long-press ceiling, whatever the target.
+      assert.ok(
+        precisionRank(item.shareBound!.privacyClass) <= precisionRank(SHARE_PRECISION_CEILING),
+      );
+      assert.ok(item.shareBound!.ttlMs > 0 && item.shareBound!.ttlMs <= SHARE_MAX_TTL_MS);
     }
   });
 
-  test('the reason names the missing channel, not a refusal the user could fix', () => {
-    const item = itemFor(COORD, 'share');
-    assert.equal(item.reason, NO_SHARE_CHANNEL_REASON);
+  test('without a session channel, the row is disabled and names something the user can do', () => {
+    for (const target of eligibleTargets) {
+      // IN_GROUP has a checkpoint scope but NO share channel session.
+      const item = longPressItemFor(resolveLongPressActions(target, IN_GROUP), 'share');
+      assert.ok(item);
+      assert.equal(item.enabled, false, 'no channel ⇒ no share');
+      assert.equal(item.shareBound, undefined);
+      assert.equal(item.reason, NO_SHARE_CHANNEL_TARGET_REASON);
+    }
   });
 
-  test('the §37 bound is still computed — it is the offer that is withheld, not the rule', () => {
-    // The day a channel exists this is what it must open the share with, so the
-    // computation stays live and tested rather than rotting behind the gate.
-    const bound = resolveShareBound(COORD, IN_GROUP);
+  test('a blank session id is no channel', () => {
+    for (const bad of ['', '   ']) {
+      const item = itemFor(COORD, 'share', { shareChannelSessionId: bad });
+      assert.equal(item.enabled, false);
+      assert.equal(item.reason, NO_SHARE_CHANNEL_TARGET_REASON);
+    }
+  });
+
+  test('the §37 bound is computed the same whether or not a channel is present', () => {
+    // The bound is the RULE; the channel is the OFFER. The rule does not move.
+    const bound = resolveShareBound(COORD, WITH_CHANNEL);
     assert.ok(bound);
     assert.equal(bound.privacyClass, SHARE_PRECISION_CEILING);
     assert.equal(bound.ttlMs, SHARE_MAX_TTL_MS);
+    assert.deepEqual(resolveShareBound(COORD, IN_GROUP), bound);
   });
 
-  test('a privacy refusal still reads as a privacy refusal, not as a missing channel', () => {
-    // §23 is permanent and §37's channel is temporary; the user is told the one
-    // that will still be true tomorrow.
+  test('a privacy refusal beats the channel — a person is never shareable, session or not', () => {
+    // §23 is permanent and the channel is incidental; a person-bearing object is
+    // refused for the reason that will still be true tomorrow, even with a live
+    // session that could otherwise open a share.
     const person = objectTarget(obj({ kind: 'crew_member', privacyClass: 'place_level' }));
-    assert.match(itemFor(person, 'share').reason ?? '', /your own location/i);
+    assert.match(itemFor(person, 'share', WITH_CHANNEL).reason ?? '', /your own location/i);
     const aggregate = objectTarget(obj({ kind: 'place', privacyClass: 'aggregate_only' }));
-    assert.match(itemFor(aggregate, 'share').reason ?? '', /aggregated/i);
+    assert.match(itemFor(aggregate, 'share', WITH_CHANNEL).reason ?? '', /aggregated/i);
+  });
+
+  test('NO_SHARE_CHANNEL_REASON survives as the kill-switch message', () => {
+    // Kept exported and non-empty so flipping BOUNDED_SHARE_CHANNEL_EXISTS off
+    // has a reason to show. It is not the reason shown while the channel is on.
+    assert.ok(typeof NO_SHARE_CHANNEL_REASON === 'string' && NO_SHARE_CHANNEL_REASON.length > 0);
   });
 });
 

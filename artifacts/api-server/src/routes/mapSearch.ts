@@ -33,13 +33,51 @@ import { forwardGeocode } from "../lib/geocodeForward.js";
 const router = Router();
 
 // ── events aggregation — reuses the SAME gates as GET /api/events/nearby ──────
+
+/**
+ * Optional NARROWING for `loadNearbyEvents`. Nothing about the privacy gates
+ * changes; this only shrinks the candidate row set BEFORE the per-row pass.
+ *
+ * WHY IT EXISTS. The per-row pass is not free: for every candidate row it may
+ * run a friendship read plus `checkEventEligibility` (staff role, block, ban,
+ * trust-gate flag). A caller that only cares about events which are ON NOW —
+ * the Wall's Live For You strip has a sub-500 ms first-page budget (Wall spec
+ * TABLE 4) — would otherwise pay that pass for 60 rows to keep one. A caller
+ * that wants the whole neighbourhood (the Map gateway) simply omits this and
+ * the query is byte-for-byte what it was.
+ *
+ * The predicate is "could this be on, or about to start": start no later than
+ * `startsBeforeIso`, and either an end at or after `nowIso`, or a start no
+ * earlier than `openEndedStartsAfterIso` (the caller's assumed duration for an
+ * event with no usable end). A multi-day event that started last week is
+ * therefore kept, which a naive range on `starts_at` alone would have dropped.
+ *
+ * IT IS A SUPERSET, NOT A MIRROR. The second branch is deliberately NOT
+ * `and(ends_at.is.null, …)`. `eventContextProducer.eventPhaseAt` — the canonical
+ * derivation the Wall's strip runs over these rows — ignores an `ends_at` that is
+ * not strictly after `starts_at` and substitutes the assumed duration, so a row
+ * with a malformed end (at or before its start) can still be `ongoing`. Keying
+ * the fallback on `ends_at IS NULL` dropped exactly those rows before the per-row
+ * pass ever saw them. PostgREST cannot compare two columns, so the honest shape
+ * is the wider one: keep anything that starts inside the assumed-duration window
+ * regardless of its end. That admits a handful of rows the per-row pass will
+ * reject (a valid end that already passed), and admits EVERY row that pass would
+ * accept — narrowing must never cost a candidate.
+ */
+export interface NearbyEventsWindow {
+  nowIso: string;
+  startsBeforeIso: string;
+  openEndedStartsAfterIso: string;
+}
+
 /** Exported for testing: coordinate redaction must survive a refactor. */
 export async function loadNearbyEvents(
   sc: any, viewerId: string, lat: number, lng: number, radiusKm: number, blockedSet: Set<string>,
-): Promise<any[]> {
+  opts: { window?: NearbyEventsWindow; limit?: number } = {},
+): Promise<any[] | null> {
   const latDelta = radiusKm / 111;
   const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
-  const { data, error } = await sc
+  let q = sc
     .from("events")
     // `ends_at` is what projectEvent turns into the object's `expiresAt`, and
     // `expiresAt` is what stops a started event rendering as LIVE forever
@@ -49,9 +87,18 @@ export async function loadNearbyEvents(
     .not("state", "in", '("draft","cancelled","archived")')
     .in("visibility", ["public", "friends_only"])
     .gte("location_lat", lat - latDelta).lte("location_lat", lat + latDelta)
-    .gte("location_lng", lng - lngDelta).lte("location_lng", lng + lngDelta)
-    .limit(60);
-  if (error || !Array.isArray(data)) return [];
+    .gte("location_lng", lng - lngDelta).lte("location_lng", lng + lngDelta);
+  const w = opts.window;
+  if (w) {
+    q = q
+      .lte("starts_at", w.startsBeforeIso)
+      .or(`ends_at.gte.${w.nowIso},starts_at.gte.${w.openEndedStartsAfterIso}`);
+  }
+  const { data, error } = await q.limit(Math.max(1, Math.min(opts.limit ?? 60, 60)));
+  // A read FAILURE is not an empty neighbourhood: return null so a caller that
+  // needs the distinction (the §10 inferred-cause path reports eventsReadFailed)
+  // can tell them apart. Callers that don't care coalesce null to [].
+  if (error || !Array.isArray(data)) return null;
   const out: any[] = [];
   for (const ev of data as any[]) {
     if (blockedSet.has(ev.host_id)) continue;
@@ -132,7 +179,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
   })());
 
   if (want("event")) tasks.push((async () => {
-    const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => []);
+    const events = (await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null)) ?? [];
     for (const ev of events) results.push(normalizeEvent(ev));
   })());
 

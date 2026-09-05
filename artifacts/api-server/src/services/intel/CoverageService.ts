@@ -21,6 +21,8 @@ import {
   buildMissionCandidate, shouldGenerateMission,
   type MissionTriggerContext, type BuildMissionInput,
 } from "../../lib/missionGeneration.js";
+import { mintMissionNonce } from "../../lib/intelMissionNonce.js";
+import { logger } from "../../lib/logger.js";
 
 const MISSIONS_FLAG = "intel_missions";
 
@@ -104,15 +106,88 @@ export async function commitAndDispatch(sc: any, missionId: string): Promise<{ o
  * flag being switched off. Guarded on status='dispatched' so nothing that was
  * never dispatched can be accepted.
  */
-export async function acceptMission(sc: any, missionId: string, actorId: string): Promise<{ ok: boolean; reason?: string }> {
+export async function acceptMission(
+  sc: any, missionId: string, actorId: string,
+): Promise<{ ok: boolean; reason?: string; nonce?: string }> {
+  // Unit I3 / P4: mint the single-use mission nonce at accept. Only the HMAC
+  // DIGEST is stored (intel_mission_candidates.nonce, migration 2276); the
+  // plaintext is returned ONCE to the caller for the contributor. If no secret
+  // is configured the commitment is still honoured — the mission simply can
+  // never back a P4 capture (fail-closed on the rung, not on the acceptance).
+  let minted: { token: string; digest: string } | null = null;
+  try {
+    minted = mintMissionNonce(missionId, actorId);
+  } catch (err) {
+    logger.warn({ err, missionId }, "mission nonce not minted — mission cannot reach P4");
+  }
+  const patch: Record<string, unknown> = { status: "accepted", accepted_by: actorId, updated_at: new Date().toISOString() };
+  if (minted) patch.nonce = minted.digest;
   const { data, error } = await sc
     .from("intel_mission_candidates")
-    .update({ status: "accepted", accepted_by: actorId, updated_at: new Date().toISOString() })
+    .update(patch)
     .eq("id", missionId)
     .eq("status", "dispatched")
     .select()
     .maybeSingle();
   if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
   if (!data) return { ok: false, reason: "not_acceptable" };
+  return minted ? { ok: true, nonce: minted.token } : { ok: true };
+}
+
+/** A mission outcome (§16). 'negative' is a fully VALID completion, never a failure. */
+export type MissionResult = "positive" | "negative" | "inconclusive";
+export const MISSION_RESULTS: readonly MissionResult[] = ["positive", "negative", "inconclusive"];
+
+/**
+ * Complete an accepted mission (§16, AT-13). UNGATED — like accept, honoring a
+ * commitment must survive the flag being off. Guarded on status='accepted'. A
+ * `negative` result is accepted exactly like any other: the DB CHECK requires a
+ * result on completion but never forbids negative. The evidence_contract's
+ * required shape is enforced at the DB (a mission cannot reach 'completed' without
+ * `required_evidence`), so a contributor who satisfied a negative-result contract
+ * is completed and (once funded) paid.
+ *
+ * Reads the mission NONCE if the column exists (unit I3 owns it), but never writes
+ * it — this only advances the lifecycle state.
+ */
+export async function completeMission(
+  sc: any, missionId: string, result: MissionResult,
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!MISSION_RESULTS.includes(result)) return { ok: false, reason: "invalid_result" };
+  const { data, error } = await sc
+    .from("intel_mission_candidates")
+    .update({ status: "completed", result, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("id", missionId)
+    .eq("status", "accepted")
+    .select()
+    .maybeSingle();
+  if (error) {
+    // A DB CHECK rejection (e.g. evidence_contract missing required_evidence) is a
+    // contract failure, surfaced distinctly from an infra error so the caller can
+    // tell "your mission is not completable yet" from "the write broke".
+    return { ok: false, reason: String((error as any).message ?? "db_error") };
+  }
+  if (!data) return { ok: false, reason: "not_completable" };
+  return { ok: true };
+}
+
+/**
+ * Decline (or abort) a mission WITHOUT PENALTY (§22 "Contributors may decline or
+ * abort unsafe work without conduct penalty"). Allowed from 'dispatched' or
+ * 'accepted'. There is no conduct/penalty side effect anywhere — the absence of
+ * one is the guarantee; this only records the terminal state + optional reason.
+ */
+export async function declineMission(
+  sc: any, missionId: string, reason?: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  const { data, error } = await sc
+    .from("intel_mission_candidates")
+    .update({ status: "declined", declined_at: new Date().toISOString(), decline_reason: reason ?? null, updated_at: new Date().toISOString() })
+    .eq("id", missionId)
+    .in("status", ["dispatched", "accepted"])
+    .select()
+    .maybeSingle();
+  if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
+  if (!data) return { ok: false, reason: "not_declinable" };
   return { ok: true };
 }

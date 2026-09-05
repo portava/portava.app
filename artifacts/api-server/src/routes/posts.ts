@@ -7,7 +7,7 @@ import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 const postsLogger = rootLogger.child({ route: "posts" });
 import { nameVisibilitySet, sanitizeIdentity, presentedName } from "../lib/publicIdentity";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
-import { decidePostReadable, needsTripMembershipCheck } from "../lib/postVisibility.js";
+import { decidePostReadable, isPostPublished, needsTripMembershipCheck, needsFollowerCheck } from "../lib/postVisibility.js";
 import {
   requireUser,
   sendError,
@@ -50,6 +50,7 @@ import { NotificationService } from "../services/notifications/NotificationServi
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
+import { stripVideoLocationMetadata } from "../lib/videoMetadata.js";
 import {
   guardUploadRequest,
   verifyUploadedBytes,
@@ -163,17 +164,41 @@ router.post(
         // blocks the upload — the dedup worker skips rows where phash IS NULL.
         phash = await computePHash(img.buffer);
       } catch (err) {
-        if (sniffed.mime === "image/heic") {
-          // HEIC decode depends on the libvips build — store as-is rather than
-          // break older clients. (Mobile sends jpeg/png/webp; documented gap.)
-          req.log.warn({ err }, "HEIC processing unavailable — storing original");
-        } else {
-          // A jpeg/png/webp sharp cannot decode is corrupt → reject (spec:
-          // 'Reject corrupt files'; storing it would also skip the GPS strip).
-          sendError(res, "invalid_payload", "Corrupt or undecodable image file");
-          return;
-        }
+        // FAIL-CLOSED FOR EVERY IMAGE, HEIC INCLUDED.
+        //
+        // This used to special-case HEIC and store the raw bytes when sharp
+        // could not decode them — "documented gap", fail-open by design. It was
+        // not merely a gap, it was live: the bundled libvips (8.18.3) links
+        // libheif with only the AOM/AV1 codec, no HEVC decoder plugin, so a
+        // real iPhone HEIC fails with "Support for this compression format has
+        // not been built in" and took this branch EVERY time. `image/heic` is
+        // in ALLOWED_MEDIA_MIME and sniffMedia recognises the `heic`/`mif1`
+        // brands, so those uploads were stored byte-for-byte — EXIF and GPS
+        // intact — by the very code path whose purpose is to remove them.
+        //
+        // The sibling transport (postcards /complete) already rejects any image
+        // it cannot process, with no HEIC exception. Rejecting here makes the
+        // two agree: an image whose metadata we cannot strip is not stored.
+        req.log.warn({ err, mime: sniffed.mime }, "image processing failed — upload rejected");
+        sendError(res, "invalid_payload", "Corrupt or undecodable image file");
+        return;
       }
+    } else {
+      // VIDEO — no transcode tier, but the container still has to give up its
+      // capture coordinates. Length-preserving in-place scrub; see
+      // lib/videoMetadata.ts for why the bytes are overwritten rather than
+      // removed. Fail-closed: a video whose location metadata cannot be proven
+      // gone is refused, never stored.
+      const scrub = stripVideoLocationMetadata(rawBody, sniffed);
+      if (!scrub.ok) {
+        req.log.warn({ mime: sniffed.mime }, "video location metadata could not be stripped — upload rejected");
+        sendError(res, scrub.failure.code, scrub.failure.message);
+        return;
+      }
+      if (scrub.stripped.length > 0) {
+        req.log.info({ stripped: scrub.stripped }, "video location metadata stripped");
+      }
+      uploadBuf = scrub.buffer;
     }
 
     const basePath = `${user.id}/${Date.now()}`;
@@ -240,8 +265,9 @@ router.post(
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
     //
-    // `feedUrl` is NULL whenever no variant exists — video, HEIC that skipped
-    // processing, a failed derive, or any upload predating this feature. The
+    // `feedUrl` is NULL whenever no variant exists — video, or any upload
+    // predating this feature. (An image that fails processing no longer lands
+    // here at all: it is rejected above rather than stored unprocessed.) The
     // client must treat null as "use `url`". It must never construct a variant
     // path itself: for every pre-existing post that URL would 404.
     res.status(201).json({
@@ -1526,11 +1552,26 @@ router.get("/trips/:tripId/posts", async (req, res) => {
 
   // Non-members may only ever see public trip-attached posts; accepted members
   // additionally see trip_only. Nobody sees another user's private post.
+  //
+  // DELAYED-PUBLISH GATE. `status = 'active'` is what POST /posts writes for a
+  // delayed-geotag post; the publication state lives in `post_status`, and this
+  // feed read neither of them together. POST_COLUMNS has always SELECTED
+  // post_status (the same "selected but never read" shape as the visibility
+  // leak below it), so a pending post — content, city, venue label — reached
+  // every trip member while its author was still standing at the place (§23/§37).
+  //
+  // Author-or-published, matching GET /posts/:postId, not the strict
+  // `post_status = 'published'` of the Wall / global / following feeds: this
+  // route deliberately shows a viewer their OWN posts (see the private branch
+  // below), so a strict gate would hide the author's own pending post from
+  // their own trip. PostgREST ANDs repeated `or=` params, so this composes with
+  // the visibility `or` rather than replacing it.
   let q = client
     .from("posts")
     .select(POST_COLUMNS)
     .eq("trip_id", tripId)
     .eq("status", "active")
+    .or(`post_status.eq.published,author_id.eq.${user.id}`)
     .order("created_at", { ascending: false })
     .limit(100);
 
@@ -1550,7 +1591,11 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-  const tripPosts: any[] = data ?? [];
+  // In-memory re-check of the same predicate: a row fed past the query filter
+  // (a widened `or`, a client that drops the param) must still never be served.
+  const tripPosts: any[] = (data ?? []).filter(
+    (p: any) => isPostPublished(p) || p.author_id === user.id,
+  );
   const tripPostIds = tripPosts.map((p) => p.id);
   const tripAuthorIds = [...new Set(tripPosts.map((p) => p.author_id))];
 
@@ -1799,7 +1844,24 @@ router.get("/posts/:postId", async (req, res) => {
     ? await isAcceptedTripMember(client, post.trip_id, user.id)
     : false;
 
-  const decision = decidePostReadable(post, user.id, viewerIsTripMember);
+  // followers_only posts are readable by the author's followers. Resolve the
+  // follow relationship only when the tier actually needs it (needsFollowerCheck)
+  // — author/public/private/trip_only reads cost no extra round trip. The USER
+  // client is used (matching the membership check) so the follow row is read
+  // under the viewer's own RLS rather than bypassed.
+  const viewerIsFollower = needsFollowerCheck(post, user.id)
+    ? await (async () => {
+        const { data: followRow } = await client
+          .from("user_follows")
+          .select("follower_id")
+          .eq("follower_id", user.id)
+          .eq("following_id", post.author_id)
+          .maybeSingle();
+        return !!followRow;
+      })()
+    : false;
+
+  const decision = decidePostReadable(post, user.id, viewerIsTripMember, viewerIsFollower);
   if (!decision.readable) {
     req.log.info(
       { postId, viewerId: user.id, reason: decision.reason },

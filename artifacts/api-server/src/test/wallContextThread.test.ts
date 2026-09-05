@@ -394,6 +394,35 @@ describe("readSocialPresenceCandidate — k-anonymity floor, public-content only
     const cand = await _internal.readSocialPresenceCandidate(sc, projectionWithPlace(), VIEWER);
     assert.equal(cand, null);
   });
+
+  it("counts only PUBLISHED public posts — a pending delayed-geotag post must not reveal presence (D1)", async () => {
+    // A delayed_until_exit post is status='active' with post_status pending so
+    // the author's presence at the place stays hidden until they have left.
+    // The presence count must carry the delayed-publish predicate on the query.
+    const eqs: Record<string, any> = {};
+    const sc: any = {
+      from() {
+        const b: any = {
+          select: () => b,
+          eq: (c: string, v: any) => { eqs[c] = v; return b; },
+          in: () => b, gte: () => b, lte: () => b, gt: () => b, order: () => b, limit: () => b,
+          then: (onF: any, onR: any) =>
+            Promise.resolve({
+              data: [
+                { author_id: "f1", created_at: "2026-08-30T00:00:00.000Z" },
+                { author_id: "f2", created_at: "2026-08-31T00:00:00.000Z" },
+              ],
+              error: null,
+            }).then(onF, onR),
+        };
+        return b;
+      },
+    };
+    await _internal.readSocialPresenceCandidate(sc, projectionWithPlace(), viewerWithFollows);
+    assert.equal(eqs.visibility, "public");
+    assert.equal(eqs.status, "active");
+    assert.equal(eqs.post_status, "published", "presence is built from published posts only");
+  });
 });
 
 // ── Orchestrator flag gate ────────────────────────────────────────────────────
@@ -414,5 +443,153 @@ describe("buildContextThread — behind wall_context_threads_enabled", () => {
     const noPlace: WallProjection = { ...projectionWithPlace(), place: undefined };
     const out = await buildContextThread(sc, noPlace, VIEWER);
     assert.equal(out, undefined);
+  });
+});
+
+// ── map / memory / compass bridge producers (spec §8/§21/§22/§24) ────────────
+
+describe("map Context Thread (spec §22)", () => {
+  it("offers a map bridge only when the place is in the viewer's current city", async () => {
+    const inCity: ContextThreadViewerContext = { viewerId: "viewer-1", currentCity: "Bangkok", now: VIEWER.now };
+    const cand = await _internal.readMapCandidate(tableClient({}), projectionWithPlace("place-1", "Bangkok"), inCity);
+    assert.ok(cand, "a place in the viewer's city earns a map bridge");
+    assert.equal(cand!.thread.kind, "map");
+    assert.equal(cand!.thread.action?.type, "open_map");
+  });
+
+  it("no map bridge when the place is in a different city (spatial frame not relevant)", async () => {
+    const elsewhere: ContextThreadViewerContext = { viewerId: "viewer-1", currentCity: "Tokyo", now: VIEWER.now };
+    assert.equal(await _internal.readMapCandidate(tableClient({}), projectionWithPlace("place-1", "Bangkok"), elsewhere), null);
+  });
+
+  it("no map bridge when the viewer has no current city", async () => {
+    assert.equal(await _internal.readMapCandidate(tableClient({}), projectionWithPlace("place-1", "Bangkok"), VIEWER), null);
+  });
+});
+
+describe("memory Context Thread (spec §8/§24 — Memory as a canonical input)", () => {
+  it("surfaces 'you've been here' from the viewer's OWN passport_memories for the place", async () => {
+    const sc = tableClient({ passport_memories: [{ id: "mem-1", title: "Sunset here", earned_at: "2026-06-01T00:00:00Z", created_at: "2026-06-01T00:00:00Z" }] });
+    const cand = await _internal.readMemoryCandidate(sc, projectionWithPlace("place-1"), VIEWER);
+    assert.ok(cand, "an existing memory for this place earns a memory thread");
+    assert.equal(cand!.thread.kind, "memory");
+    assert.equal(cand!.thread.action?.type, "open_object");
+    assert.equal(cand!.thread.action?.targetType, "memory");
+    assert.equal(cand!.thread.action?.targetId, "mem-1");
+  });
+
+  it("no memory thread when the viewer has no memory at the place", async () => {
+    assert.equal(await _internal.readMemoryCandidate(tableClient({ passport_memories: [] }), projectionWithPlace("place-1"), VIEWER), null);
+  });
+
+  it("fail-soft: a memory read error yields no candidate, never throws", async () => {
+    const sc = tableClient({ passport_memories: [{ id: "mem-1" }] }, { errorTables: ["passport_memories"] });
+    assert.equal(await _internal.readMemoryCandidate(sc, projectionWithPlace("place-1"), VIEWER), null);
+  });
+});
+
+describe("compass Context Thread (spec §21 — opt-in per object)", () => {
+  it("offers Ask Compass only when the handoff flag is on", async () => {
+    const on: ContextThreadViewerContext = { viewerId: "viewer-1", compassHandoffEnabled: true, now: VIEWER.now };
+    const cand = await _internal.readCompassCandidate(tableClient({}), projectionWithPlace("place-1"), on);
+    assert.ok(cand, "the flag on + a real place earns a compass bridge");
+    assert.equal(cand!.thread.kind, "compass");
+    assert.equal(cand!.thread.action?.type, "ask_compass");
+  });
+
+  it("no compass thread when the handoff flag is off (Compass is never a permanent panel)", async () => {
+    assert.equal(await _internal.readCompassCandidate(tableClient({}), projectionWithPlace("place-1"), VIEWER), null);
+  });
+});
+
+describe("selection priority — the new bridges never outrank a live/social fact", () => {
+  it("a live_place fact beats a memory bridge for the single slot", () => {
+    const memory: ContextThreadCandidate = {
+      thread: { kind: "memory", label: "You've been here before" },
+      gate: { ...PASS, expectedUtility: 0.65 },
+    };
+    const live: ContextThreadCandidate = {
+      thread: { kind: "live_place", label: "Busy right now" },
+      gate: { ...PASS, expectedUtility: 0.85 },
+    };
+    const chosen = selectContextThread([memory, live]);
+    assert.equal(chosen?.kind, "live_place", "the higher-utility live fact wins the compact slot");
+  });
+
+  it("a compass bridge is the lowest-priority survivor (loses a tie on kind priority)", () => {
+    const compass: ContextThreadCandidate = {
+      thread: { kind: "compass", label: "Ask Compass" },
+      gate: { ...PASS, expectedUtility: 0.6 },
+    };
+    const map: ContextThreadCandidate = {
+      thread: { kind: "map", label: "See it on the map" },
+      gate: { ...PASS, expectedUtility: 0.6 },
+    };
+    assert.equal(selectContextThread([compass, map])?.kind, "map", "map outranks compass on a utility tie");
+  });
+});
+
+// ── buddy reader — BOTH RAB flags, fail-closed ────────────────────────────────
+
+/**
+ * REGRESSION — a producer must not advertise a globally disabled product.
+ *
+ * `viewer.rabEnabled` carries the Wall's own `wall_rab_integration_enabled`,
+ * handed down by routes/wall.ts. This reader used to treat that as sufficient,
+ * so pressing the Wall flag would have attached "Buddy available in this area"
+ * threads while the RAB master `rent_buddy_enabled` was false — as it is in
+ * production — offering a booking nobody could complete. The master is now
+ * re-read HERE rather than trusted from the caller's boolean, so no caller can
+ * reintroduce the misfire.
+ */
+describe("buddy context thread — requires BOTH the Wall flag and the RAB master", () => {
+  const BUDDY_ROWS = [{ id: "b1", categories: ["nightlife"] }];
+
+  /** Flag-aware fake: each `feature_flags` read resolves by the flag NAME. */
+  function buddyClient(flags: Record<string, boolean>, rows: any[] = BUDDY_ROWS) {
+    return {
+      from(table: string) {
+        const eqs: Record<string, unknown> = {};
+        const b: any = {
+          select: () => b, in: () => b, limit: () => b, order: () => b, gt: () => b, gte: () => b, lte: () => b,
+          eq: (col: string, val: unknown) => { eqs[col] = val; return b; },
+          maybeSingle: () => Promise.resolve(
+            table === "feature_flags"
+              ? { data: { enabled: flags[String(eqs["flag"])] === true }, error: null }
+              : { data: null, error: null },
+          ),
+          then: (onF: any, onR: any) =>
+            Promise.resolve({ data: table === "rent_buddy_profiles" ? rows : [], error: null }).then(onF, onR),
+        };
+        return b;
+      },
+    };
+  }
+
+  const rabViewer: ContextThreadViewerContext = { ...VIEWER, rabEnabled: true };
+
+  it("no candidate when the Wall RAB flag is off", async () => {
+    const sc = buddyClient({ wall_rab_integration_enabled: false, rent_buddy_enabled: true });
+    const out = await _internal.readBuddyCandidate(sc, projectionWithPlace(), { ...VIEWER, rabEnabled: false });
+    assert.equal(out, null);
+  });
+
+  it("no candidate when the RAB MASTER is off, even with the Wall flag on", async () => {
+    const sc = buddyClient({ wall_rab_integration_enabled: true, rent_buddy_enabled: false });
+    const out = await _internal.readBuddyCandidate(sc, projectionWithPlace(), rabViewer);
+    assert.equal(out, null, "an available buddy row must not surface while RAB is globally disabled");
+  });
+
+  it("no candidate when the flag table is unreadable (fail-closed)", async () => {
+    const sc = { from() { throw new Error("flag table down"); } };
+    const out = await _internal.readBuddyCandidate(sc, projectionWithPlace(), rabViewer);
+    assert.equal(out, null);
+  });
+
+  it("a candidate WHEN BOTH flags are on — the control for the assertions above", async () => {
+    const sc = buddyClient({ wall_rab_integration_enabled: true, rent_buddy_enabled: true });
+    const out = await _internal.readBuddyCandidate(sc, projectionWithPlace(), rabViewer);
+    assert.ok(out, "both flags on and an available buddy in the city ⇒ a buddy thread");
+    assert.equal(out!.thread.kind, "buddy");
   });
 });

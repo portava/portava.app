@@ -25,10 +25,16 @@ import {
   resolveInteractionPermissions,
   type InteractionPermissions,
 } from "../interactionPermissions.js";
-import type { CallerContext } from "./PassportPrivacyGuard.js";
+import {
+  loadOwnerFieldVisibility,
+  type CallerContext,
+  type OwnerFieldVisibility,
+} from "./PassportPrivacyGuard.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyGuard.js";
+import { getDisplayTrustScore, getTrustProfile } from "../trust/TrustScoreService.js";
+import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
-import { buildUnifiedStamps, type UnifiedStamp } from "./UnifiedStampService.js";
+import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
 import { loadMemories } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
 import { countUserTrips } from "../../lib/tripCounts.js";
@@ -45,6 +51,28 @@ import {
   type TravelIdentityProjection,
   type TravelIdentitySignals,
 } from "./PassportTravelIdentityService.js";
+import { buildReputationSummary, type ReputationSummary } from "./PassportReputationService.js";
+import {
+  listWindows,
+  projectPublicWindows,
+  isActive as isWindowActive,
+  effectiveExpiry as windowEffectiveExpiry,
+  type AvailabilityWindow,
+  type ViewerRelationship as WindowViewerRelationship,
+} from "./OpenToPlansService.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+
+// The TABLE 24 owner field opt-outs now live in PassportPrivacyGuard so the
+// projection and Shared Context share ONE reader. Re-exported for callers that
+// imported the type from here.
+export type { OwnerFieldVisibility } from "./PassportPrivacyGuard.js";
+
+/**
+ * §8 availability-windows capability flag (seeded OFF, migration 2260). A local
+ * literal, matching routes/availability.ts, so check:flag-polarity can resolve
+ * the argument to isFlagEnabled below (it does not follow imported constants).
+ */
+const OPEN_TO_PLANS_WINDOWS_FLAG = "open_to_plans_windows_enabled";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TABLE 5 — viewer context
@@ -152,11 +180,36 @@ export interface TravelerState {
   expiresAt: string | null;
 }
 
+/**
+ * The §8 explicit availability window (TABLE 8) currently active for the owner
+ * and visible to this viewer. Projected from `availability_windows` via
+ * OpenToPlansService, so it is EXPLICIT-only and expiry-checked on read (§7/§31).
+ */
+export interface ActiveAvailabilityWindow {
+  type: string;
+  startAt: string;
+  endAt: string;
+  intents: string[];
+  groupPreference: string | null;
+  maxTravelMinutes: number | null;
+  /** TABLE 10 SocialAvailability the owner set on this window, if any. */
+  socialAvailability: "open" | "maybe" | "crew_only" | "following_only" | "not_open" | null;
+  /** COALESCE(expiresAt, endAt): the instant this window stops being current. */
+  expiresAt: string;
+}
+
 export interface AvailabilityProjection {
   openToPlans: boolean;
   socialAvailability: "open" | "maybe" | "crew_only" | "following_only" | "not_open";
-  /** Current explicit window, filtered to non-expired (§31 "never render stale"). */
+  /** Current quick-status window, filtered to non-expired (§31 "never render stale"). */
   currentWindow: { status: string; expiresAt: string | null } | null;
+  /**
+   * The §8 explicit availability window active now (TABLE 8), if the windows
+   * feature is on and one is visible to this viewer under §7 rules. Distinct
+   * from the legacy quick status + weekly grid — it carries intents, group
+   * preference and travel radius, and expires on read.
+   */
+  explicitWindow: ActiveAvailabilityWindow | null;
   weekly: Record<string, string[]>;
   expiresAt: string | null;
 }
@@ -167,6 +220,23 @@ export interface IntentProjection {
   source: "explicit" | "inferred";
 }
 
+/**
+ * TABLE 12 — one domain's trust presentation. Carries only a qualitative,
+ * non-stigmatizing PRESENTATION word (§9/§10: "Do not make it a single universal
+ * authorization number"; §34 "Not a Trust leaderboard"). The raw 0–100 domain
+ * score NEVER leaves the server on this object.
+ */
+export interface DomainTrust {
+  /** Stable key, e.g. "overall" | "traveler" | "trip_guest" | "trip_host" | "contributor" | "buddy". */
+  key: string;
+  /** Display label, e.g. "Trip Host". */
+  domain: string;
+  /** Presentation word, e.g. "Excellent" | "Strong" | "Established" | "Building" | "New" | "Not applicable". */
+  presentation: string;
+  /** False when the domain does not apply to this user (e.g. Buddy for a non-buddy). */
+  applicable: boolean;
+}
+
 export interface TrustProjection {
   label: string;
   publicLevel: string;
@@ -174,6 +244,8 @@ export interface TrustProjection {
   score: number | null;
   confidence: "low" | "medium" | "high";
   strengths: string[];
+  /** TABLE 12 per-domain trust presentations (never raw scores). */
+  domains: DomainTrust[];
 }
 
 export interface CredentialProjection {
@@ -191,7 +263,10 @@ export interface TravelStats {
 }
 
 export interface StampProjection {
+  /** Storage origin (v1_gps | v2_achievement). */
   source: string;
+  /** TABLE 16 canonical provenance, derived server-side. */
+  stampSource: StampSource;
   name: string | null;
   city: string | null;
   country: string | null;
@@ -459,6 +534,21 @@ export interface OwnerTrustFacts {
   };
 }
 
+/**
+ * Map the owner's live restriction state (the same authoritative read every
+ * action gate uses) onto the capability facts. A degraded read keeps
+ * getRestrictionState's fail-closed posture on hosting/messaging, so a
+ * transient error can never re-light a chip the gate itself would refuse.
+ */
+export function ownerRestrictionsFromState(state: RestrictionState): OwnerTrustFacts["restrictions"] {
+  return {
+    hosting: !state.canHost,
+    privatePlan: !state.canJoinPrivatePlans,
+    messaging: !state.canMessage,
+    locationPlan: !state.canJoinLocationPlans,
+  };
+}
+
 const LEVEL_RANK: Record<string, number> = {
   new_traveler: 0,
   building_trust: 1,
@@ -526,12 +616,26 @@ function norm(s: unknown): string {
   return typeof s === "string" ? s.trim().toLowerCase() : "";
 }
 
-/** PassportViewerContext → PassportPrivacyGuard.CallerContext for stamp/memory gating. */
+/**
+ * PassportViewerContext → PassportPrivacyGuard.CallerContext for stamp/memory gating.
+ *
+ * The "circle" tier must rest on a REAL, verified relationship. It deliberately
+ * does NOT consult `canViewFullProfile`: the canonical interaction-permission
+ * engine returns that as a literal `true` for every non-blocked viewer (it means
+ * "the profile page is not gated", not "this viewer is in the owner's circle"),
+ * so gating on it made `circle_only` equivalent to `public` for any stranger.
+ *
+ * `canSeeFriendOnlyPosts` is the canonical circle predicate: it is set from the
+ * single `user_friendships` normalized-pair read in `resolveInteractionPermissions`
+ * — the SAME verified membership reader that routes/passportStamps.ts and
+ * routes/stamps.ts use to promote a caller to "circle". No second rule is
+ * invented here. Absent a verified relationship the caller stays "public"
+ * (fail closed).
+ */
 export function toCallerContext(context: PassportViewerContext, permissions: ViewerPermissions): CallerContext {
   if (context === "self") return "owner";
   if (context === "trip_crew" || context === "trip_host") return "trip_crew";
-  // Friend/full-profile relationships act as the "circle" proxy for tiered items.
-  if (permissions.canViewFullProfile || permissions.canSeeFriendOnlyPosts) return "circle";
+  if (permissions.canSeeFriendOnlyPosts) return "circle";
   return "public";
 }
 
@@ -562,14 +666,19 @@ export function toCallerContext(context: PassportViewerContext, permissions: Vie
 function buildIdentity(
   profile: Record<string, any>,
   permissions: ViewerPermissions,
+  visibility: OwnerFieldVisibility,
   nameAllowed: Set<string>,
   viewerId: string | null,
 ): PassportIdentity {
   const isSelf = permissions.relationshipLabel === "self";
   const showAvatar = isSelf || profile.show_profile_picture_publicly !== false;
-  // Home country / base are user-controlled (TABLE 24): shown to self and to
-  // full-profile viewers; coarse country may show publicly, home base does not.
-  const showHomeBase = isSelf || permissions.canViewFullProfile;
+  // Home country / base are user-controlled (TABLE 24, §22). The owner always
+  // sees their own. A non-owner sees the coarse country only while
+  // show_home_country is on, and the home base only with a full-profile
+  // relationship AND that same opt-in — a home base is a strict refinement of
+  // the country ("Hanoi" discloses the country the owner just hid).
+  const showHomeCountry = isSelf || visibility.showHomeCountry;
+  const showHomeBase = isSelf || (permissions.canViewFullProfile && visibility.showHomeCountry);
   const named = sanitizeIdentity(profile, nameAllowed, viewerId);
   return {
     userId: profile.id,
@@ -579,7 +688,7 @@ function buildIdentity(
     coverUrl: profile.cover_photo_url ?? null,
     verified: profile.verified === true || Boolean(profile.verified_at),
     verificationLevel: profile.verification_level ?? null,
-    homeCountry: profile.home_country ?? null,
+    homeCountry: showHomeCountry ? (profile.home_country ?? null) : null,
     homeBase: showHomeBase ? (profile.home_city ?? null) : null,
     isOfficial: profile.is_official === true,
   };
@@ -609,18 +718,48 @@ function buildTravelerState(
   profile: Record<string, any>,
   quick: { status: string; expiresAt: string | null } | null,
   activeTripCity: string | null,
+  activity: TravelerActivity,
   permissions: ViewerPermissions,
+  visibility: OwnerFieldVisibility,
 ): TravelerState {
   const isSelf = permissions.relationshipLabel === "self";
-  const showCity = isSelf || permissions.canSeeLocationContext;
+  // A non-owner needs BOTH a relationship that may see location context AND
+  // the owner's show_current_city opt-in (TABLE 24, §22) — whichever source
+  // the city came from (profile.current_city or the active trip), it is the
+  // owner's current city.
+  const showCity = isSelf || (permissions.canSeeLocationContext && visibility.showCurrentCity);
   const currentCity = norm(profile.current_city);
   const homeCity = norm(profile.home_city);
 
   let state: TravelerStateKind = "home";
   let city: string | null = null;
+  // §5: every temporary state carries validFrom + expiration. Defaults null;
+  // each derived state below sets its own bounds from the underlying record.
+  let validFrom: string | null = null;
+  let expiresAt: string | null = quick?.expiresAt ?? null;
 
+  // Precedence (most specific/actionable first). An explicit "busy" always wins
+  // — the traveler has said not to bother them, so no activity overrides it.
+  // Otherwise the concrete real-time activities (§5) rank above the coarse
+  // traveling / open-to-plans reads, which rank above the default home.
   if (quick?.status === "busy") {
     state = "unavailable";
+  } else if (activity.atEvent) {
+    state = "at_event";
+    // Broad event city is ordinary Passport context, still gated below.
+    city = activity.atEvent.city;
+    validFrom = activity.atEvent.startsAt;
+    expiresAt = activity.atEvent.endsAt;
+  } else if (activity.withCrew) {
+    state = "with_crew";
+    // Crew session location is purpose-bound Presence (§23/§25) — never a city here.
+    validFrom = activity.withCrew.startedAt;
+    expiresAt = activity.withCrew.expiresAt;
+  } else if (activity.exploring) {
+    state = "exploring";
+    // Trip-stop coordinates are purpose-bound Presence (§23/§25) — never a city here.
+    validFrom = activity.exploring.arrivedAt;
+    expiresAt = activity.exploring.departsAt;
   } else if (activeTripCity) {
     state = "traveling";
     city = activeTripCity;
@@ -643,7 +782,7 @@ function buildTravelerState(
     traveling: displayCity ? `Traveling · ${displayCity}` : "Traveling",
     exploring: "Exploring",
     open_to_plans: "Open to Plans",
-    at_event: "At Event",
+    at_event: displayCity ? `At Event · ${displayCity}` : "At Event",
     with_crew: "With Crew",
     unavailable: "Unavailable",
   };
@@ -652,15 +791,79 @@ function buildTravelerState(
     state,
     label: labels[state],
     city: displayCity,
-    validFrom: null,
-    expiresAt: quick?.expiresAt ?? null,
+    validFrom,
+    expiresAt,
   };
+}
+
+/** TABLE 5 viewer context → the §7 window visibility relationship. */
+export function toWindowViewerRelationship(context: PassportViewerContext): WindowViewerRelationship {
+  switch (context) {
+    case "self": return "self";
+    case "follower": return "follower";
+    case "following": return "following";
+    // Trip crew/host are the "crew" relationship for window visibility.
+    case "trip_crew":
+    case "trip_host": return "crew";
+    // Buddy/event/public relationships get only public windows.
+    default: return "public";
+  }
+}
+
+/**
+ * The §8 explicit availability window active NOW for the owner and visible to
+ * this viewer, or null. Gated by the windows feature flag (fail-closed): when
+ * off, the aggregate carries no window and the legacy quick-status/grid still
+ * apply. §7 (explicit-only, visibility) and §31 (expiry-on-read) are enforced by
+ * OpenToPlansService — for a non-self viewer via projectPublicWindows (explicit
+ * + visible + non-expired), for the owner via their own active windows.
+ */
+async function loadActiveExplicitWindow(
+  sc: SupabaseClient,
+  userId: string,
+  context: PassportViewerContext,
+): Promise<ActiveAvailabilityWindow | null> {
+  try {
+    if (!(await isFlagEnabled(sc, OPEN_TO_PLANS_WINDOWS_FLAG))) return null;
+    const nowMs = Date.now();
+    const relationship = toWindowViewerRelationship(context);
+    let candidates: AvailabilityWindow[];
+    if (relationship === "self") {
+      // The owner sees their own active windows regardless of visibility, but
+      // the aggregate is EXPLICIT-only (§7): an inferred (plan_derived) window is
+      // a private "Free tonight?" prompt, never the owner's shared availability.
+      const own = await listWindows(sc, userId, { includeExpired: false, nowMs });
+      candidates = own.filter((w) => w.source === "explicit" && isWindowActive(w, nowMs));
+    } else {
+      // projectPublicWindows already applies §7 (explicit-only + visibility) and
+      // §31 (non-expired); narrow to those actually active (already started).
+      const visible = await projectPublicWindows(sc, userId, relationship, nowMs);
+      candidates = visible.filter((w) => isWindowActive(w, nowMs));
+    }
+    if (candidates.length === 0) return null;
+    // Soonest-ending active window is the current one.
+    candidates.sort((a, b) => windowEffectiveExpiry(a) - windowEffectiveExpiry(b));
+    const w = candidates[0];
+    return {
+      type: w.type,
+      startAt: w.startAt,
+      endAt: w.endAt,
+      intents: Array.isArray(w.intents) ? w.intents.slice(0, 8) : [],
+      groupPreference: w.groupPreference,
+      maxTravelMinutes: w.maxTravelMinutes,
+      socialAvailability: w.socialAvailability,
+      expiresAt: new Date(windowEffectiveExpiry(w)).toISOString(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function buildAvailability(
   sc: SupabaseClient,
   userId: string,
   quick: { status: string; expiresAt: string | null } | null,
+  explicitWindow: ActiveAvailabilityWindow | null,
 ): Promise<AvailabilityProjection> {
   let weekly: Record<string, string[]> = {};
   let openToMeet = false;
@@ -673,18 +876,43 @@ async function buildAvailability(
   } catch {
     /* tolerate */
   }
-  const openToPlans = openToMeet || (quick != null && quick.status !== "busy");
-  const social: AvailabilityProjection["socialAvailability"] = openToPlans ? "open" : "not_open";
+  // An active explicit window is the strongest signal (§8): its openToPlans and
+  // socialAvailability override the coarse legacy reads when present.
+  const openToPlans = explicitWindow != null || openToMeet || (quick != null && quick.status !== "busy");
+  const social: AvailabilityProjection["socialAvailability"] =
+    explicitWindow?.socialAvailability ?? (openToPlans ? "open" : "not_open");
+  // The aggregate expiry is the SOONEST of the quick-status and window expiries —
+  // never render either as current past its horizon (§31).
+  const expiryCandidates = [quick?.expiresAt ?? null, explicitWindow?.expiresAt ?? null].filter(
+    (x): x is string => typeof x === "string",
+  );
+  const expiresAt = expiryCandidates.length
+    ? expiryCandidates.reduce((a, b) => (a <= b ? a : b))
+    : null;
   return {
     openToPlans,
     socialAvailability: social,
     currentWindow: quick,
+    explicitWindow,
     weekly,
-    expiresAt: quick?.expiresAt ?? null,
+    expiresAt,
   };
 }
 
-function buildIntent(profile: Record<string, any>, quick: { status: string; expiresAt: string | null } | null): IntentProjection | undefined {
+function buildIntent(
+  profile: Record<string, any>,
+  quick: { status: string; expiresAt: string | null } | null,
+  explicitWindow: ActiveAvailabilityWindow | null,
+): IntentProjection | undefined {
+  // §8: an explicit window's intents are the current temporary intent and carry
+  // the window's TTL. They take precedence over the profile's availability_tags.
+  if (explicitWindow && explicitWindow.intents.length > 0) {
+    return {
+      current: explicitWindow.intents.slice(0, 8),
+      ttlExpiresAt: explicitWindow.expiresAt,
+      source: "explicit",
+    };
+  }
   const tags: string[] = Array.isArray(profile.availability_tags) ? profile.availability_tags.filter(Boolean) : [];
   if (tags.length === 0) return undefined;
   return {
@@ -694,23 +922,81 @@ function buildIntent(profile: Record<string, any>, quick: { status: string; expi
   };
 }
 
+/**
+ * Non-stigmatizing presentation word for a 0–100 domain score (§10, TABLE 12).
+ * Deliberately avoids "low/poor/weak" — a neutral 50 reads "Established", not a
+ * penalty, so new travelers are not stigmatized.
+ */
+function presentationWord(score: number): string {
+  if (score >= 80) return "Excellent";
+  if (score >= 65) return "Strong";
+  if (score >= 50) return "Established";
+  if (score >= 35) return "Building";
+  return "New";
+}
+
+function mean(...xs: number[]): number {
+  const vals = xs.filter((x) => Number.isFinite(x));
+  if (vals.length === 0) return 50;
+  return vals.reduce((a, b) => a + b, 0) / vals.length;
+}
+
+/**
+ * TABLE 12 — project the nine canonical category scores into per-domain trust
+ * PRESENTATIONS (no raw numbers reach the viewer). Categories default to the
+ * neutral 50 when there is no trust profile, matching the trust engine's own
+ * neutral default, so a brand-new account reads "Established" everywhere rather
+ * than an alarming zero.
+ */
+function buildDomainTrust(
+  overallScore: number,
+  categories: Record<string, number> | null | undefined,
+  isBuddy: boolean,
+): DomainTrust[] {
+  const c = (k: string): number => {
+    const v = Number((categories as Record<string, number> | undefined)?.[k]);
+    return Number.isFinite(v) ? v : 50;
+  };
+  const domains: DomainTrust[] = [
+    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true },
+    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true },
+    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true },
+    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true },
+    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true },
+    // Buddy is a contextual projection (§20): "Not applicable" unless the user
+    // actually offers a buddy service.
+    isBuddy
+      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true }
+      : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false },
+  ];
+  return domains;
+}
+
 async function buildTrust(
   sc: SupabaseClient,
   userId: string,
   context: PassportViewerContext,
   stats: TravelStats,
   verified: boolean,
+  isBuddy: boolean,
 ): Promise<TrustProjection> {
   // Confidence is evidence-aware (§9/§10): a score built on many stamps/trips is
   // more trustworthy than the same number on a brand-new account.
   const evidence = stats.stamps + stats.trips * 2 + (verified ? 3 : 0);
   const confidence: TrustProjection["confidence"] = evidence >= 12 ? "high" : evidence >= 4 ? "medium" : "low";
 
+  // The canonical category scores + overall drive the TABLE 12 per-domain
+  // presentation for EVERY context (public included) — domains carry only words,
+  // never numbers, so they are safe to project to any viewer (§9/§10).
+  const profile = await getTrustProfile(sc, userId).catch(() => null);
+  const overallForDomains = profile && Number.isFinite(Number(profile.overall_score)) ? Number(profile.overall_score) : 50;
+  const domains = buildDomainTrust(overallForDomains, profile?.categories as Record<string, number> | undefined, isBuddy);
+
   if (context === "public") {
     const badge = await getPublicTrustBadge(sc, userId);
     // Non-stigmatizing copy for low-evidence accounts (§10).
     const label = confidence === "low" ? (verified ? "New Traveler · Verified" : "New Traveler") : badge.label;
-    return { label, publicLevel: badge.level, score: null, confidence, strengths: badge.strengths };
+    return { label, publicLevel: badge.level, score: null, confidence, strengths: badge.strengths, domains };
   }
 
   const summary = await getSafeTrustSummary(sc, userId);
@@ -718,24 +1004,29 @@ async function buildTrust(
     ? (verified ? "New Traveler · Verified" : "New Traveler")
     : (summary.publicLevel.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()));
 
-  // Numeric score is exposed only on the owner's own view (§9).
+  // Numeric score is exposed only on the owner's own view (§9). It reads THE
+  // canonical display helper (getDisplayTrustScore = rounded
+  // trust_profiles.overall_score) — the exact same source and rounding the
+  // identity card and Rent-a-Buddy card read through lib/trustScore, so the
+  // three surfaces can never show different numbers.
   let score: number | null = null;
   if (context === "self") {
     try {
-      const { data } = await sc.from("trust_profiles").select("overall_score").eq("user_id", userId).maybeSingle();
-      score = data ? Number((data as any).overall_score ?? 0) : null;
+      score = await getDisplayTrustScore(sc, userId);
     } catch {
       score = null;
     }
   }
 
-  return { label, publicLevel: summary.publicLevel, score, confidence, strengths: summary.strengths };
+  return { label, publicLevel: summary.publicLevel, score, confidence, strengths: summary.strengths, domains };
 }
 
 function buildCredentials(
   profile: Record<string, any>,
   trust: TrustProjection,
   stats: TravelStats,
+  reputation: ReputationSummary | null,
+  buddyRep: BuddyReputation | null,
 ): CredentialProjection[] {
   const creds: CredentialProjection[] = [];
   if (profile.verified === true || profile.verified_at) {
@@ -759,22 +1050,87 @@ function buildCredentials(
       tier: "positive",
     });
   }
+  // §20 / TABLE 13 — Contributor credential (qualified, non-paid contributions).
+  if (reputation && reputation.totalContributions > 0 && reputation.level >= 2) {
+    creds.push({
+      key: "contributor",
+      label: reputation.levelLabel,
+      detail: `${reputation.acceptedReports} accepted report${reputation.acceptedReports === 1 ? "" : "s"}`,
+      tier: "positive",
+    });
+  }
+  // §20 / TABLE 13 — "Host Reputation · 4.8", only with real review evidence.
+  if (buddyRep && buddyRep.rating != null) {
+    creds.push({
+      key: "host_reputation",
+      label: "Host Reputation",
+      detail: buddyRep.rating.toFixed(1),
+      tier: "positive",
+    });
+  }
+  // §20 — "Knows <city> well" city expertise from legitimate contribution history.
+  for (const city of reputation?.cityExpertise ?? []) {
+    creds.push({
+      key: `city_expertise_${norm(city)}`,
+      label: `Knows ${city} well`,
+      detail: null,
+      tier: "positive",
+    });
+  }
   return creds;
 }
 
 function mapStamp(s: UnifiedStamp): StampProjection {
   return {
     source: s.source,
+    // TABLE 16 provenance + verification, derived from the live source_type /
+    // verification_level by UnifiedStampService — NOT hard-coded. A self-inserted
+    // v1 stamp (verification_level='unverified') surfaces as "reported" and can
+    // never impersonate a verified travel fact (§12).
+    stampSource: s.stampSource,
     name: s.name,
     city: s.city,
     country: s.country,
     earnedAt: s.earnedAt,
     rarity: s.rarity,
     artworkUrl: s.artworkUrl,
-    // Unified stamps are all system/earned — never a self-reported decorative
-    // badge, so they are safe to present as verified travel facts (§12).
-    verification: "verified",
+    verification: s.verification,
   };
+}
+
+/**
+ * Host/Buddy reputation from the canonical rent_buddy_profiles row (§20). Returns
+ * null when the user offers no buddy service — which both marks the TABLE 12
+ * Buddy domain "Not applicable" and withholds the "Host Reputation" credential.
+ * A rating is surfaced only with real review evidence (review_count > 0): §20
+ * "reputation should reflect usefulness and qualified real-world evidence, not
+ * follower count alone".
+ */
+export interface BuddyReputation {
+  rating: number | null;
+  reviews: number;
+  completedBookings: number;
+}
+async function loadBuddyReputation(sc: SupabaseClient, userId: string): Promise<BuddyReputation | null> {
+  try {
+    const { data } = await sc
+      .from("rent_buddy_profiles")
+      .select("average_rating, review_count, completed_bookings")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (!data) return null;
+    const row = data as any;
+    const reviews = Number(row.review_count ?? 0);
+    const ratingNum = row.average_rating != null ? Number(row.average_rating) : NaN;
+    return {
+      // Only expose a rating backed by at least one real review.
+      rating: reviews > 0 && Number.isFinite(ratingNum) ? ratingNum : null,
+      reviews: Number.isFinite(reviews) ? reviews : 0,
+      completedBookings: Number(row.completed_bookings ?? 0) || 0,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Load passport visibility preferences (best-effort). */
@@ -789,6 +1145,37 @@ async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<
   } catch {
     return null;
   }
+}
+
+/**
+ * Which passport COLLECTIONS this caller may aggregate over (§22 / TABLE 24).
+ *
+ * This is the very gate step 7 (stamps) and step 9 (memories) of
+ * `buildPassportProjection` apply, exposed so a second read surface — the §9
+ * Yearbook — enforces the identical boundary instead of inventing one. There is
+ * one rule (`tierPermits`) and one preference read (`loadVisibilityPrefs`); this
+ * only composes them, so a viewer can never be shown more by the aggregate than
+ * by the yearbook or the reverse.
+ *
+ * Fail-closed inputs: an unreadable preference row resolves to `null`, which
+ * `tierPermits` treats as the default "public" tier — exactly as the aggregate
+ * already does, so the two surfaces stay identical even in the degraded case.
+ */
+export interface PassportCollectionVisibility {
+  stamps: boolean;
+  memories: boolean;
+}
+
+export async function loadCollectionVisibility(
+  sc: SupabaseClient,
+  userId: string,
+  caller: CallerContext,
+): Promise<PassportCollectionVisibility> {
+  const prefs = await loadVisibilityPrefs(sc, userId);
+  return {
+    stamps: tierPermits(prefs?.stamps_visible, caller),
+    memories: tierPermits(prefs?.memories_visible, caller),
+  };
 }
 
 /** Does a collection-level "public|friends_only|private" tier permit this caller? */
@@ -876,8 +1263,156 @@ async function loadActiveTripCity(sc: SupabaseClient, userId: string): Promise<s
   return null;
 }
 
-/** Derive light Travel-DNA signals from unified stamps + stats. */
-function deriveTravelSignals(profile: Record<string, any>, stamps: UnifiedStamp[], stats: TravelStats, hiddenGems: number): TravelIdentitySignals {
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-time traveler-state signals (§5): exploring / at_event / with_crew.
+//
+// §5 requires that Passport separate PERMANENT identity from TEMPORARY traveler
+// state, and that every temporary state carry `validFrom` + expiration semantics.
+// buildTravelerState (below) previously only ever produced home / traveling /
+// open_to_plans / unavailable and always left `validFrom` null. These loaders
+// derive the three activity states from CANONICAL records — never invented, and
+// always time-bounded so a stale activity can never read as "now" (§31):
+//
+//   • exploring  — an active trip stop in progress: a route_stops row the owner
+//                  has ARRIVED at, still within its planned departure window.
+//   • at_event   — an event the owner RSVP'd "going" to that is happening now
+//                  (started, not yet ended, in a live state).
+//   • with_crew  — an active, un-expired Locate/crew session the owner has
+//                  opted into and not left.
+//
+// Location boundary (§23/§25): `at_event` may surface the event's BROAD city as
+// ordinary Passport context (subject to the same show_current_city gate as every
+// other city here). `with_crew` and `exploring` are purpose-bound Presence — the
+// crew session and the trip-stop coordinates belong to Locate/Crew, never to an
+// ordinary Passport read — so those states expose NO city at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The highest-priority real-time activity a traveler is currently engaged in. */
+interface TravelerActivity {
+  atEvent: { city: string | null; startsAt: string | null; endsAt: string } | null;
+  withCrew: { startedAt: string | null; expiresAt: string } | null;
+  exploring: { arrivedAt: string | null; departsAt: string } | null;
+}
+
+const NO_ACTIVITY: TravelerActivity = { atEvent: null, withCrew: null, exploring: null };
+
+/** Event states in which an RSVP'd event is genuinely happening (not draft/cancelled/archived). */
+const LIVE_EVENT_STATES = new Set(["open", "full", "waitlist", "started"]);
+
+/** An event the user RSVP'd "going" to that is happening right now (bounded by ends_at). */
+async function loadActiveRsvpEvent(
+  sc: SupabaseClient,
+  userId: string,
+  nowIso: string,
+): Promise<TravelerActivity["atEvent"]> {
+  const { data: rsvps } = await sc
+    .from("event_rsvps")
+    .select("event_id, status")
+    .eq("user_id", userId)
+    .eq("status", "going");
+  const ids = ((rsvps as any[]) ?? []).map((r) => r.event_id).filter(Boolean);
+  if (ids.length === 0) return null;
+  const { data: events } = await sc
+    .from("events")
+    .select("id, city, starts_at, ends_at, state")
+    .in("id", ids);
+  // Happening now: live state, started, and an explicit end still in the future.
+  // An event with no ends_at cannot be time-bounded, so it never becomes an
+  // unbounded "At Event" — §5 requires expiration semantics.
+  const live = ((events as any[]) ?? []).filter(
+    (e) =>
+      LIVE_EVENT_STATES.has(String(e.state)) &&
+      typeof e.starts_at === "string" && e.starts_at <= nowIso &&
+      typeof e.ends_at === "string" && e.ends_at >= nowIso,
+  );
+  if (live.length === 0) return null;
+  // Prefer the event ending soonest — the most concretely "now".
+  live.sort((a, b) => String(a.ends_at).localeCompare(String(b.ends_at)));
+  const e = live[0];
+  return { city: e.city ?? null, startsAt: e.starts_at ?? null, endsAt: String(e.ends_at) };
+}
+
+/** An active, un-expired Locate/crew session the user has opted into and not left. */
+async function loadActiveCrewSession(
+  sc: SupabaseClient,
+  userId: string,
+  nowIso: string,
+): Promise<TravelerActivity["withCrew"]> {
+  const { data: members } = await sc
+    .from("locate_friends_members")
+    .select("session_id, left_at")
+    .eq("user_id", userId)
+    .is("left_at", null);
+  const ids = ((members as any[]) ?? []).map((m) => m.session_id).filter(Boolean);
+  if (ids.length === 0) return null;
+  const { data: sessions } = await sc
+    .from("locate_friends_sessions")
+    .select("id, started_at, expires_at, ended_at")
+    .in("id", ids)
+    .is("ended_at", null)
+    .gt("expires_at", nowIso);
+  const active = ((sessions as any[]) ?? []).filter((s) => typeof s.expires_at === "string");
+  if (active.length === 0) return null;
+  // Soonest-expiring active session bounds the state.
+  active.sort((a, b) => String(a.expires_at).localeCompare(String(b.expires_at)));
+  const s = active[0];
+  return { startedAt: s.started_at ?? null, expiresAt: String(s.expires_at) };
+}
+
+/** A trip stop the owner has arrived at and is still within the planned departure window. */
+async function loadActiveTripStop(
+  sc: SupabaseClient,
+  userId: string,
+  nowIso: string,
+): Promise<TravelerActivity["exploring"]> {
+  const { data: plans } = await sc
+    .from("route_plans")
+    .select("id, status")
+    .eq("owner_user_id", userId)
+    .eq("status", "active");
+  const planIds = ((plans as any[]) ?? []).map((p) => p.id).filter(Boolean);
+  if (planIds.length === 0) return null;
+  const { data: stops } = await sc
+    .from("route_stops")
+    .select("route_plan_id, checkpoint_status, arrived_at, planned_arrival_time, planned_departure_time")
+    .in("route_plan_id", planIds)
+    .eq("checkpoint_status", "arrived");
+  // In progress now: arrived, still before the planned departure, and (if a
+  // planned arrival exists) already past it. A stop with no planned departure
+  // cannot be bounded, so it never becomes an unbounded "Exploring".
+  const inProgress = ((stops as any[]) ?? []).filter(
+    (s) =>
+      typeof s.planned_departure_time === "string" && s.planned_departure_time >= nowIso &&
+      (s.planned_arrival_time == null || s.planned_arrival_time <= nowIso),
+  );
+  if (inProgress.length === 0) return null;
+  inProgress.sort((a, b) => String(a.planned_departure_time).localeCompare(String(b.planned_departure_time)));
+  const s = inProgress[0];
+  return {
+    arrivedAt: s.arrived_at ?? s.planned_arrival_time ?? null,
+    departsAt: String(s.planned_departure_time),
+  };
+}
+
+/** Load all three activity signals in parallel; any failure degrades to "no signal". */
+async function loadTravelerActivity(sc: SupabaseClient, userId: string): Promise<TravelerActivity> {
+  const nowIso = new Date().toISOString();
+  const [atEvent, withCrew, exploring] = await Promise.all([
+    loadActiveRsvpEvent(sc, userId, nowIso).catch(() => null),
+    loadActiveCrewSession(sc, userId, nowIso).catch(() => null),
+    loadActiveTripStop(sc, userId, nowIso).catch(() => null),
+  ]);
+  return { atEvent, withCrew, exploring };
+}
+
+/**
+ * Derive light Travel-DNA signals from a set of unified stamps.
+ *
+ * Exported because the §9 Yearbook derives the SAME signals from a single
+ * year's slice of the same stamps — one derivation rule, so a per-year reading
+ * and the current reading can never disagree about what a stamp means.
+ */
+export function deriveTravelSignals(stamps: UnifiedStamp[], countriesCount: number, hiddenGems: number): TravelIdentitySignals {
   let nightlife = 0;
   let food = 0;
   const tags = new Set<string>();
@@ -892,7 +1427,7 @@ function deriveTravelSignals(profile: Record<string, any>, stamps: UnifiedStamp[
     hiddenGemCount: hiddenGems,
     nightlifeCount: nightlife,
     foodCount: food,
-    countriesCount: stats.countries,
+    countriesCount,
   };
 }
 
@@ -939,9 +1474,13 @@ export async function buildPassportProjection(
   }
   if (!profile) return null;
 
-  // 2. Viewer context + permissions (server-side authority).
+  // 2. Viewer context + permissions (server-side authority), alongside the
+  //    owner's TABLE 24 location opt-outs (the self view ignores them).
   const resolver = opts.resolveViewerContext ?? resolvePassportViewerContext;
-  const resolution = await resolver(sc, userId, viewerId);
+  const [resolution, ownerVisibility] = await Promise.all([
+    resolver(sc, userId, viewerId),
+    loadOwnerFieldVisibility(sc, userId),
+  ]);
   const { context, permissions } = resolution;
   const isSelf = context === "self";
   const callerCtx = toCallerContext(context, permissions);
@@ -950,7 +1489,7 @@ export async function buildPassportProjection(
   // consumer of this aggregate, before the identity block is assembled — the
   // restricted/blocked card below is built from the same `identity`.
   const nameAllowed = await nameVisibilitySet(sc, [userId]);
-  const identity = buildIdentity(profile, permissions, nameAllowed, viewerId);
+  const identity = buildIdentity(profile, permissions, ownerVisibility, nameAllowed, viewerId);
 
   // 3. Blocked / unavailable → minimal restricted card (§4/§22/§30).
   if (permissions.isBlocked || permissions.isUnavailable) {
@@ -975,12 +1514,20 @@ export async function buildPassportProjection(
   }
 
   // 4. Shared canonical reads (in parallel).
-  const [statsRaw, tripCount, unified, quick, prefs] = await Promise.all([
+  const [statsRaw, tripCount, unified, quick, prefs, restrictionState, reputation, buddyRep] = await Promise.all([
     buildStats(sc, userId).catch(() => ({ countries: 0, cities: 0, hiddenGemStamps: 0, totalStamps: 0 } as any)),
     countUserTrips(sc, userId).catch(() => ({ count: 0 })),
     buildUnifiedStamps(sc, userId).catch(() => ({ stamps: [] as UnifiedStamp[], count: 0 } as any)),
     loadQuickStatus(sc, userId),
     loadVisibilityPrefs(sc, userId),
+    // The owner's ACTIVE trust restrictions — never throws (degraded reads
+    // resolve fail-closed on hosting/messaging inside the service).
+    getRestrictionState(sc, userId),
+    // §20 reputation (city expertise + contribution summary) for credentials.
+    buildReputationSummary(sc, userId).catch(() => null),
+    // Buddy/host reputation presence — drives the TABLE 12 Buddy domain
+    // applicability and the §20 "Host Reputation" credential.
+    loadBuddyReputation(sc, userId),
   ]);
 
   const stats: TravelStats = {
@@ -991,24 +1538,37 @@ export async function buildPassportProjection(
   };
 
   // 5. Traveler state + availability + intent (availability/intent gated).
-  const activeTripCity = await loadActiveTripCity(sc, userId);
-  const travelerState = buildTravelerState(profile, quick, activeTripCity, permissions);
+  const [activeTripCity, activity] = await Promise.all([
+    loadActiveTripCity(sc, userId),
+    loadTravelerActivity(sc, userId),
+  ]);
+  const travelerState = buildTravelerState(profile, quick, activeTripCity, activity, permissions, ownerVisibility);
 
   let availability: AvailabilityProjection | undefined;
   let intent: IntentProjection | undefined;
   if (isSelf || permissions.canSeeAvailability) {
-    availability = await buildAvailability(sc, userId, quick);
-    intent = buildIntent(profile, quick);
+    // §8: an explicit availability window (visible to this viewer under §7) is
+    // projected into the aggregate alongside the legacy quick-status/grid.
+    const explicitWindow = await loadActiveExplicitWindow(sc, userId, context);
+    availability = await buildAvailability(sc, userId, quick, explicitWindow);
+    intent = buildIntent(profile, quick, explicitWindow);
   }
 
   // 6. Trust + credentials.
-  const trust = await buildTrust(sc, userId, context, stats, identity.verified);
-  const credentials = buildCredentials(profile, trust, stats);
+  const trust = await buildTrust(sc, userId, context, stats, identity.verified, buddyRep !== null);
+  const credentials = buildCredentials(profile, trust, stats, reputation, buddyRep);
 
-  // 7. Stamps (collection-level visibility + per-item privacy already earned).
+  // 7. Stamps — BOTH gates, in order (§22):
+  //      a) the collection-level tier the owner set on the whole stamp shelf, and
+  //      b) the PER-STAMP visibility the owner set on each individual stamp.
+  //    (b) was previously dropped on this path, so a stamp the owner marked
+  //    private / circle_only was projected to any viewer that cleared (a).
+  //    filterUnifiedStamps fails closed on an absent/unknown tier.
   let stamps: StampProjection[] = [];
   if (tierPermits(prefs?.stamps_visible, callerCtx)) {
-    stamps = (unified.stamps as UnifiedStamp[]).slice(0, 24).map(mapStamp);
+    stamps = filterUnifiedStamps(unified.stamps as UnifiedStamp[], callerCtx)
+      .slice(0, 24)
+      .map(mapStamp);
   }
 
   // 8. Featured journey + upcoming plans.
@@ -1019,6 +1579,8 @@ export async function buildPassportProjection(
     // Per-memory gate for the featured journey's memories (same context the
     // standalone `memories` array uses in step 9).
     callerCtx,
+    // §14/§24 — the Featured Journey's people context is block-filtered vs viewer.
+    viewerId,
   };
   const [featuredJourney, upcomingPlans] = await Promise.all([
     buildFeaturedJourney(sc, userId, journeyPerms).catch(() => null),
@@ -1047,7 +1609,7 @@ export async function buildPassportProjection(
   }
 
   // 10. Travel identity (Travel DNA).
-  const signals = deriveTravelSignals(profile, unified.stamps as UnifiedStamp[], stats, statsRaw.hiddenGemStamps ?? 0);
+  const signals = deriveTravelSignals(unified.stamps as UnifiedStamp[], stats.countries, statsRaw.hiddenGemStamps ?? 0);
   let travelIdentity: TravelIdentityProjection | undefined;
   try {
     const ti = await buildTravelIdentity(sc, userId, profile, signals, { isSelf });
@@ -1073,9 +1635,11 @@ export async function buildPassportProjection(
     publicLevel: trust.publicLevel,
     verified: identity.verified,
     buddyVerified: Boolean(profile.buddy_verified_at),
-    // Restrictions are already reflected in the safe summary; we conservatively
-    // treat "no exposed restriction" as unrestricted for capability display.
-    restrictions: { hosting: false, privatePlan: false, messaging: false, locationPlan: false },
+    // The owner's live restriction state (TABLE 14): a restricted owner must
+    // not display a chip ("Host trips", "Share crew location", ...) for an
+    // action the gates would refuse. The safe trust summary flattens these to
+    // messages, so the structured read is threaded here explicitly.
+    restrictions: ownerRestrictionsFromState(restrictionState),
   });
   const capabilities: PassportActionCapabilities = {
     owner: ownerCaps,
@@ -1101,4 +1665,72 @@ export async function buildPassportProjection(
     viewerContext: context,
   };
   return projection;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §31 cache tiering
+//
+// §31 splits the aggregate into two cache classes:
+//   • STATIC — identity, stamp metadata, travel stats, travel identity, credentials
+//     and permitted public journeys/memories/plans change rarely.
+//   • DYNAMIC — Availability, current state, Open to Plans, Shared Context, Trust
+//     projection and capabilities MUST use short TTLs and "never render stale".
+//
+// The route sets one Cache-Control max-age (the SHORTEST TTL among the sections
+// actually present, so the response as a whole is only cacheable as long as its
+// most volatile part) plus an ETag. The per-section `sections` map is returned
+// in the body so the CLIENT can tier its own cache — holding identity/stamps for
+// an hour while re-fetching availability/state every 30s.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Static-tier TTL, seconds — identity, stamps, stats, credentials, DNA, journeys. */
+export const PASSPORT_STATIC_MAX_AGE = 3600;
+/** Dynamic-tier TTL, seconds — availability, state, intent, trust, shared context, capabilities. */
+export const PASSPORT_DYNAMIC_MAX_AGE = 30;
+
+/** Which cache tier each §29 aggregate section belongs to (§31). */
+const SECTION_TIER: Record<string, number> = {
+  // Static
+  identity: PASSPORT_STATIC_MAX_AGE,
+  stamps: PASSPORT_STATIC_MAX_AGE,
+  stats: PASSPORT_STATIC_MAX_AGE,
+  credentials: PASSPORT_STATIC_MAX_AGE,
+  travelIdentity: PASSPORT_STATIC_MAX_AGE,
+  featuredJourney: PASSPORT_STATIC_MAX_AGE,
+  memories: PASSPORT_STATIC_MAX_AGE,
+  upcomingPlans: PASSPORT_STATIC_MAX_AGE,
+  // Dynamic
+  travelerState: PASSPORT_DYNAMIC_MAX_AGE,
+  availability: PASSPORT_DYNAMIC_MAX_AGE,
+  intent: PASSPORT_DYNAMIC_MAX_AGE,
+  trust: PASSPORT_DYNAMIC_MAX_AGE,
+  sharedContext: PASSPORT_DYNAMIC_MAX_AGE,
+  capabilities: PASSPORT_DYNAMIC_MAX_AGE,
+};
+
+export interface ProjectionCachePolicy {
+  /** Cache-Control max-age for the whole response: the shortest present-section TTL. */
+  maxAge: number;
+  /** Per-section max-age so the client cache can tier the aggregate (§31). */
+  sections: Record<string, number>;
+}
+
+/**
+ * Derive the §31 cache policy for a built projection. Pure and deterministic:
+ * only sections actually PRESENT in the projection contribute, and the overall
+ * `maxAge` is the minimum of those — so a public view lacking availability is
+ * still bounded by its dynamic traveler-state/trust/capabilities sections, while
+ * a restricted card (a relationship state) is treated as fully dynamic.
+ */
+export function buildProjectionCachePolicy(projection: PassportProjection): ProjectionCachePolicy {
+  const sections: Record<string, number> = {};
+  for (const [key, ttl] of Object.entries(SECTION_TIER)) {
+    if ((projection as any)[key] !== undefined) sections[key] = ttl;
+  }
+  // A restricted (blocked/unavailable) card carries a relationship-dependent
+  // `restricted` marker — never cache it beyond the dynamic horizon.
+  if (projection.restricted) sections.restricted = PASSPORT_DYNAMIC_MAX_AGE;
+  const ttls = Object.values(sections);
+  const maxAge = ttls.length ? Math.min(...ttls) : PASSPORT_DYNAMIC_MAX_AGE;
+  return { maxAge, sections };
 }

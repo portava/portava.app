@@ -58,7 +58,12 @@ export interface DisplayMedia {
   width?: number | null;
   height?: number | null;
   durationMs?: number | null;
-  /** Video only: whether the client may autoplay under product/user/device policy. */
+  /**
+   * Video only. Advisory server note, never a command (§11/§36): `true` = the
+   * media is a ready, playable video; `false`/absent = NO server opinion, which
+   * is NOT a veto. Autoplay is decided entirely by client policy
+   * (services/videoAutoplayPolicy — viewport, reduced motion, user setting).
+   */
   autoplayEligible?: boolean;
   processing?: boolean;
 }
@@ -214,5 +219,30 @@ export interface WallResponse {
   nextCursor?: string;
   /** Following only: true when the viewer has reached the end of eligible content. */
   caughtUp?: boolean;
+  generatedAt: string;
+}
+
+// ── Stories / Quick Media (spec §18) ─────────────────────────────────────────
+
+/**
+ * One short-lived media item from a followed person (GET /wall/quick-media).
+ * `media.url` is the STORED storage reference — private-bucket bytes are
+ * signed by the existing hydration path (CachedImage → useHydratedMedia), so
+ * the row never binds it to a bare image. `postId` is the canonical post the
+ * item opens into (the projection is never the object, spec §24).
+ */
+export interface QuickMediaItem {
+  id: string;
+  ownerUserId: string;
+  actor: PublicActorRef;
+  media: DisplayMedia;
+  postId: string;
+  createdAt: string;
+  /** Past this instant the item is gone (24 h from createdAt, §18). */
+  expiresAt: string;
+}
+
+export interface QuickMediaResponse {
+  items: QuickMediaItem[];
   generatedAt: string;
 }

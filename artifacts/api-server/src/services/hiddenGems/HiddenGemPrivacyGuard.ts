@@ -176,3 +176,47 @@ export async function applyGemPrivacyBatch(
 export function isGemLlmSafe(sensitivityLevel: SensitivityLevel): boolean {
   return sensitivityLevel !== "protected";
 }
+
+// ── Gem IDENTITY disclosure (name + id), as distinct from coordinates ─────────
+
+/** The minimum row shape needed to decide whether a gem may be NAMED to a viewer. */
+export interface GemIdentityContext {
+  id?: string | null;
+  status?: string | null;
+  sensitivity_level?: SensitivityLevel | string | null;
+  submitted_by?: string | null;
+}
+
+/**
+ * May this viewer be told that this gem EXISTS — its id and its name?
+ *
+ * This is the identity counterpart to `resolveGemCoords`, which only ever
+ * decided COORDINATES. Naming a gem is its own disclosure: a surface that binds
+ * a gem's name/id to an ordinary media item's canonical place de-anonymizes the
+ * gem's location just as surely as handing out its latitude, because the place
+ * is separately resolvable.
+ *
+ * The rule is not a new policy — it is the database's own, the `hidden_gems`
+ * SELECT policy laid down in migration 0043:
+ *
+ *     hidden_gems_public_read: status = 'active' AND sensitivity_level = 'public'
+ *
+ * plus the owner bypass every gem surface already grants the submitter. Media
+ * surfaces read through the SERVICE client, which bypasses RLS — so this
+ * predicate is what puts the policy back. It matches CompassHiddenGemService's
+ * `.eq("sensitivity_level", "public")` inclusion rule, so Compass and the media
+ * surfaces agree on exactly one answer.
+ *
+ * FAIL CLOSED: an absent / unrecognised sensitivity or status discloses nothing.
+ */
+export function mayDiscloseGemIdentity(
+  gem: GemIdentityContext | null | undefined,
+  viewerId: string | null,
+): boolean {
+  if (!gem) return false;
+  // Owner bypass — the submitter already knows their own gem.
+  if (viewerId && gem.submitted_by && gem.submitted_by === viewerId) return true;
+  // Anything but an ACTIVE, PUBLIC gem is undisclosable to everyone else. An
+  // undetermined (null/undefined/garbage) value on either column lands here.
+  return gem.status === "active" && gem.sensitivity_level === "public";
+}

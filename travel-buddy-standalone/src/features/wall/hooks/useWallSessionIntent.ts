@@ -18,7 +18,7 @@
 
 import { useCallback, useState } from 'react';
 import { clearSessionIntent, setSessionIntent } from '../services/wallApi.ts';
-import type { StructuredIntent } from '../types/wallProjection.ts';
+import type { StructuredIntent, StructuredIntentFilter } from '../types/wallProjection.ts';
 
 export interface UseWallSessionIntentOptions {
   /** Seed a structured intent already known from a prior WallResponse. */
@@ -36,7 +36,13 @@ export interface UseWallSessionIntentResult {
   active: boolean;
   pending: boolean;
   error: string | null;
-  setIntent: (text: string) => Promise<void>;
+  /**
+   * Steer the feed with `text`. When a canonical entity was chosen from
+   * typeahead, pass its `filterSeed` so the structured chip renders immediately
+   * (spec §17: structured filters, not raw strings) even before / without the
+   * server's authoritative interpretation.
+   */
+  setIntent: (text: string, filterSeed?: StructuredIntentFilter) => Promise<void>;
   clearIntent: () => void;
 }
 
@@ -59,23 +65,37 @@ export function useWallSessionIntent(
   }, []);
 
   const setIntent = useCallback(
-    async (text: string) => {
+    async (text: string, filterSeed?: StructuredIntentFilter) => {
       const trimmed = text.trim();
       if (!trimmed) {
         clearIntent();
         return;
       }
-      // Steer immediately with the raw text (temporary per-request steer §17).
+      // Steer immediately with the resolved text (temporary per-request steer §17).
       setIntentText(trimmed);
+      // A canonical entity picked from typeahead is a STRUCTURED filter, not a raw
+      // string (§17) — seed the structured interpretation client-side at once so
+      // the chip is structured even before (or without) the server round-trip.
+      const seeded: StructuredIntent | null = filterSeed
+        ? {
+            filters: [filterSeed],
+            keywords: [],
+            sessionScoped: true,
+            createdAt: new Date().toISOString(),
+          }
+        : null;
+      setStructuredIntent(seeded);
       setPending(true);
       setError(null);
       try {
         const res = await setSessionIntent(trimmed);
         if (res.ok) {
+          // The server's interpretation is authoritative — it supersedes the seed.
           setStructuredIntent(res.sessionIntent);
         } else {
-          // Steering by raw text still applies; we just lack structured chips.
-          setStructuredIntent(null);
+          // Steering by text still applies; keep the client seed (if any) so an
+          // entity chip survives an unavailable/disabled server.
+          setStructuredIntent(seeded);
           setError(res.error);
         }
       } finally {

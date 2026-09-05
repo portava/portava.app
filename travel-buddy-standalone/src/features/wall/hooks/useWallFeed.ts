@@ -18,6 +18,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchWall } from '../services/wallApi.ts';
+import {
+  prefetchWallMedia,
+  readFirstPageCache,
+  writeFirstPageCache,
+} from '../services/wallPrefetch.ts';
 import type { WallMode, WallProjection } from '../types/wallProjection.ts';
 
 const PAGE_LIMIT = 12;
@@ -38,6 +43,14 @@ export interface UseWallFeedResult {
   degraded: boolean;
   /** Following only: viewer reached the end of eligible content (spec §27). */
   caughtUp: boolean;
+  /**
+   * True when the items on screen are the OFFLINE cached first page, not a live
+   * fetch — the feed must label them as saved/stale (spec §31/§37). Cleared the
+   * moment a live page arrives.
+   */
+  stale: boolean;
+  /** When `stale`, the epoch-ms the cached page was saved (for the label). */
+  cachedAt: number | null;
   hasMore: boolean;
   loadMore: () => void;
   refresh: () => void;
@@ -77,6 +90,8 @@ export function useWallFeed(
   const [error, setError] = useState<string | null>(null);
   const [degraded, setDegraded] = useState(false);
   const [caughtUp, setCaughtUp] = useState(false);
+  const [stale, setStale] = useState(false);
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
   const [hasMore, setHasMore] = useState(false);
 
   // Non-reactive session state.
@@ -87,6 +102,13 @@ export function useWallFeed(
   const inFlightRef = useRef(false);
 
   const normalizedIntent = sessionIntent ?? null;
+  // spec §5/§17 / TABLE 1: a session-intent steer is a RELEVANCE filter and must
+  // never touch Following, the strict-chronology trust anchor. The server ignores
+  // it in Following; the client refrains from sending it too — and, because the
+  // effective value is what the fetch depends on, changing the steer while in
+  // Following does not restart the Following session (only For You re-sessions on
+  // an intent change).
+  const effectiveIntent = mode === 'for_you' ? normalizedIntent : null;
 
   const doFetch = useCallback(
     async (reason: FetchReason) => {
@@ -110,7 +132,7 @@ export function useWallFeed(
         const res = await fetchWall({
           mode,
           cursor,
-          sessionIntent: normalizedIntent,
+          sessionIntent: effectiveIntent,
           limit: PAGE_LIMIT,
         });
         // A newer session started while this was in flight — drop the result.
@@ -124,7 +146,18 @@ export function useWallFeed(
           setCaughtUp(!!res.data.caughtUp);
           if (reset) {
             seenRef.current = new Set();
-            setItems(dedupe(res.data.items, seenRef.current, hiddenRef.current));
+            const first = dedupe(res.data.items, seenRef.current, hiddenRef.current);
+            setItems(first);
+            // A live page has arrived — it is authoritative, so the cached
+            // offline page (if any was showing) is no longer stale (§31).
+            setStale(false);
+            setCachedAt(null);
+            // Persist the canonical feed's first page for fast reopen. A typed
+            // intent is a temporary session (§17) and must not be restored, so
+            // it is never cached.
+            if (normalizedIntent === null) {
+              void writeFirstPageCache(mode, first);
+            }
           } else {
             const fresh = dedupe(res.data.items, seenRef.current, hiddenRef.current);
             if (fresh.length > 0) setItems((prev) => [...prev, ...fresh]);
@@ -132,6 +165,22 @@ export function useWallFeed(
         } else if (res.error !== 'aborted') {
           // Keep existing items — a safe social feed remains (spec §40).
           setError(res.error);
+          // Offline first open of the canonical feed: fall back to the cached
+          // first page and label it stale instead of showing the empty state
+          // (§31 offline + §37 no fabricated live). Only on the initial load,
+          // where there is nothing live on screen to overwrite.
+          if (reason === 'initial' && normalizedIntent === null) {
+            const cached = await readFirstPageCache(mode);
+            if (gen !== genRef.current) return;
+            if (cached) {
+              seenRef.current = new Set();
+              setItems(dedupe(cached.items, seenRef.current, hiddenRef.current));
+              setStale(true);
+              setCachedAt(cached.cachedAt);
+              setHasMore(false);
+              setCaughtUp(false);
+            }
+          }
         }
       } finally {
         // Guard BOTH the loading resets AND the in-flight release by generation:
@@ -149,7 +198,7 @@ export function useWallFeed(
         }
       }
     },
-    [mode, normalizedIntent],
+    [mode, effectiveIntent],
   );
 
   // Start a fresh session whenever mode / sessionIntent changes.
@@ -161,6 +210,14 @@ export function useWallFeed(
       inFlightRef.current = false;
     };
   }, [doFetch]);
+
+  // Warm the media of the next few objects into the shared image cache
+  // (spec §31 "prefetch media for the next small number of visible objects").
+  // Fail-soft inside prefetchWallMedia; a pure optimisation.
+  useEffect(() => {
+    if (items.length === 0) return;
+    void prefetchWallMedia(items);
+  }, [items]);
 
   const loadMore = useCallback(() => {
     void doFetch('more');
@@ -183,6 +240,8 @@ export function useWallFeed(
     error,
     degraded,
     caughtUp,
+    stale,
+    cachedAt,
     hasMore,
     loadMore,
     refresh,

@@ -15,6 +15,7 @@ import { usePlaceImage } from '../../hooks/usePlaceImage.ts';
 import { checkSaved, saveItem, unsaveItem } from '../../services/collections.ts';
 import { getSavedListIds } from '../../services/discoveryBookmarks.ts';
 import { usePlanPicker } from '../PlanPickerController.tsx';
+import { useRankOutcome, type RankSurface } from '../../hooks/useRankOutcome.ts';
 import type { RouteStopDraft } from '../RouteBuilderSheet.tsx';
 import { color, space, radius, type as t, shadow, layout, avatar } from '../../theme/tokens.ts';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
@@ -39,13 +40,29 @@ interface PlaceCardProps {
   showDistance?: boolean;
   /** City context used to disambiguate the live open-now lookup. When absent, no live pill is fetched. */
   city?: string | null;
+  /**
+   * The rank_events surface this card's impression was written under, supplied
+   * by the tab that served it ('discovery' for GET /discovery + the community
+   * list). Absent ⇒ the card reports nothing: an outcome without a served
+   * impression has nothing to close the predicted→realized loop against.
+   */
+  rankSurface?: RankSurface | null;
 }
 
-export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true, city }: PlaceCardProps) {
+export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDistance = true, city, rankSurface }: PlaceCardProps) {
   const [saved, setSaved]               = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [savedCount, setSavedCount]     = useState(0);
   const accent = categoryColor(place.category);
+
+  // Outcome reporting for the ranking loop (impression → tap → save). Ids only;
+  // the server matches the most recent impression for (user, item, surface).
+  //   tap  — the card opens its detail, or Directions launches (engagement with
+  //          THIS item; under-claims rather than over-claims the funnel rung).
+  //   save — a bookmark / stamp that the API confirmed, or a trip-wishlist add.
+  //   Plan / Route open pickers in the parent and are intent, not outcomes —
+  //   deliberately not emitted (see useEventRsvp.ts for the same rule).
+  const { reportTap, reportSave } = useRankOutcome({ surface: rankSurface ?? null });
 
   const { isAdded } = usePlanPicker();
   const alreadyAdded = isAdded(place.id);
@@ -138,6 +155,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   // the matching fix.
   const openDirections = () => {
     if (place.lat == null || place.lng == null) return;
+    reportTap(place.id);
     // Pin the exact coordinate as the destination — never a name/query search.
     // A name search (e.g. "maps/search/?query=Cebu+Zoo") can return a list of
     // similarly-named results instead of navigating to this specific place.
@@ -160,7 +178,8 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
-      onPress={onPress}
+      onPress={() => { reportTap(place.id); onPress(); }}
+      testID={`place-card-${place.id}`}
     >
       {/* Header image — category fallback when no real image available */}
       <View style={styles.imageHeader} testID={`place-card-image-${place.id}`}>
@@ -229,7 +248,11 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
             const next = !saved;
             setSaved(next);
             (next ? saveItem('place', place.id) : unsaveItem('place', place.id))
-              .then((ok) => { if (!ok) setSaved(!next); })
+              .then((ok) => {
+                if (!ok) { setSaved(!next); return; }
+                // Outcomes follow the API, not the tap: only a CONFIRMED save.
+                if (next) reportSave(place.id);
+              })
               .catch(() => setSaved(!next));
           }}
           accessibilityRole="button"
@@ -395,6 +418,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                 style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}
                 onPress={openDirections}
                 hitSlop={6}
+                testID={`place-card-directions-${place.id}`}
               >
                 <Navigation size={14} color={color.deep} />
                 <Text style={[styles.actionText, { color: color.deep }]}>Directions</Text>
@@ -407,10 +431,15 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                 const next = !saved;
                 setSaved(next);
                 (next ? saveItem('place', place.id) : unsaveItem('place', place.id))
-                  .then((ok) => { if (!ok) setSaved(!next); })
+                  .then((ok) => {
+                    if (!ok) { setSaved(!next); return; }
+                    // Outcomes follow the API, not the tap: only a CONFIRMED save.
+                    if (next) reportSave(place.id);
+                  })
                   .catch(() => setSaved(!next));
               }}
               hitSlop={6}
+              testID={`place-card-save-${place.id}`}
             >
               <Bookmark size={14} color={saved ? color.signal : color.faint} fill={saved ? color.signal : 'none'} />
             </Pressable>
@@ -436,6 +465,8 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
         onSaved={() => {
           setSavedCount((c) => c + 1);
           setPickerVisible(false);
+          // The picker only calls onSaved after the API accepted the add.
+          reportSave(place.id);
         }}
       />
     </Pressable>

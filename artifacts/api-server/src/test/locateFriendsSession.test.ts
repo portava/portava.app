@@ -55,6 +55,7 @@ import {
   type SessionRow,
 } from "../lib/locateFriendsSession.js";
 import {
+  SCOPE_MEMBERSHIP_VERIFIERS,
   publishPosition,
   startOrJoinSession,
   verifyScopeMembership,
@@ -91,6 +92,10 @@ interface FakeOpts {
   protectedZones?: Array<Record<string, unknown>>;
   trips?: Array<{ id: string; owner_id: string }>;
   tripMembers?: Array<{ trip_id: string; user_id: string; role: string }>;
+  circles?: Array<{ id: string; owner_id: string }>;
+  circleMemberships?: Array<{ user_id: string; other_id: string; status?: string }>;
+  routePlans?: Array<{ id: string; owner_user_id: string }>;
+  routePlanMembers?: Array<{ route_plan_id: string; user_id: string }>;
   flags?: Record<string, boolean>;
   /** Tables whose reads must fail, to prove the fail-closed branches. */
   failReads?: string[];
@@ -109,6 +114,10 @@ function makeDb(opts: FakeOpts = {}) {
     protected_zones: (opts.protectedZones ?? []).map((z) => ({ ...z })),
     trips: (opts.trips ?? []).map((t) => ({ ...t })),
     trip_members: (opts.tripMembers ?? []).map((t) => ({ ...t })),
+    circles: (opts.circles ?? []).map((c) => ({ ...c })),
+    circle_memberships: (opts.circleMemberships ?? []).map((c) => ({ ...c })),
+    route_plans: (opts.routePlans ?? []).map((p) => ({ ...p })),
+    route_plan_members: (opts.routePlanMembers ?? []).map((p) => ({ ...p })),
     event_rsvps: [],
     locate_friends_audit: [],
   };
@@ -920,11 +929,125 @@ describe("(e) a non-member gets nothing, checked server-side per request", () =>
 
 // ══ G. Group scope is the join gate ══════════════════════════════════════════
 
+const CIRCLE = "44444444-4444-4444-8444-444444444444";
+const PLAN = "55555555-5555-4555-8555-555555555555";
+
 describe("group scope — you can only join a group you are provably in", () => {
-  it("an unverifiable scope kind is REFUSED, not waved through", async () => {
+  it("a scope whose owning row does not exist is REFUSED, not waved through", async () => {
+    // Every scope kind now has a verifier, so the refusal comes from the ROW
+    // not existing rather than from a missing verifier: an id that names no
+    // circle/plan/trip is a fail-closed refusal, never an ownerless group.
     const db = makeDb();
-    assert.equal(await verifyScopeMembership(db as any, "circle", TRIP, ALICE), false);
-    assert.equal(await verifyScopeMembership(db as any, "plan", TRIP, ALICE), false);
+    assert.equal(await verifyScopeMembership(db as any, "circle", CIRCLE, ALICE), false);
+    assert.equal(await verifyScopeMembership(db as any, "plan", PLAN, ALICE), false);
+    assert.equal(await verifyScopeMembership(db as any, "trip", TRIP, ALICE), false);
+  });
+
+  it("every scope kind in the vocabulary has a verifier — none defaults permissive", () => {
+    for (const kind of GROUP_SCOPE_KINDS) {
+      assert.ok(
+        SCOPE_MEMBERSHIP_VERIFIERS[kind],
+        `${kind} has no verifier and would fall through to a refusal it cannot distinguish from a real one`,
+      );
+    }
+  });
+
+  it("CIRCLE: the owner and an accepted member are in; a stranger is not", async () => {
+    const db = makeDb({
+      circles: [{ id: CIRCLE, owner_id: ALICE }],
+      // A membership row exists ONLY on invite-accept and carries the table's
+      // default status, NOT 'accepted' — the row's existence is the signal.
+      circleMemberships: [{ user_id: ALICE, other_id: BOB, status: "pending" }],
+    });
+    assert.equal(await verifyScopeMembership(db as any, "circle", CIRCLE, ALICE), true);
+    assert.equal(await verifyScopeMembership(db as any, "circle", CIRCLE, BOB), true);
+    assert.equal(await verifyScopeMembership(db as any, "circle", CIRCLE, STRANGER), false);
+  });
+
+  it("CIRCLE: a membership belonging to a DIFFERENT owner does not admit you", async () => {
+    // circle_memberships is keyed by owner, so a row (user_id=CAROL, other_id=BOB)
+    // must not let BOB into ALICE's circle.
+    const db = makeDb({
+      circles: [{ id: CIRCLE, owner_id: ALICE }],
+      circleMemberships: [{ user_id: CAROL, other_id: BOB }],
+    });
+    assert.equal(await verifyScopeMembership(db as any, "circle", CIRCLE, BOB), false);
+  });
+
+  it("CIRCLE: an unreadable circles or memberships table fails closed", async () => {
+    const denyCircles = makeDb({
+      circles: [{ id: CIRCLE, owner_id: ALICE }],
+      circleMemberships: [{ user_id: ALICE, other_id: BOB }],
+      failReads: ["circles"],
+    });
+    assert.equal(await verifyScopeMembership(denyCircles as any, "circle", CIRCLE, BOB), false);
+    const denyMembers = makeDb({
+      circles: [{ id: CIRCLE, owner_id: ALICE }],
+      circleMemberships: [{ user_id: ALICE, other_id: BOB }],
+      failReads: ["circle_memberships"],
+    });
+    assert.equal(await verifyScopeMembership(denyMembers as any, "circle", CIRCLE, BOB), false);
+  });
+
+  it("PLAN: the owner and a joined participant are in; a stranger is not", async () => {
+    const db = makeDb({
+      routePlans: [{ id: PLAN, owner_user_id: ALICE }],
+      routePlanMembers: [{ route_plan_id: PLAN, user_id: BOB }],
+    });
+    assert.equal(await verifyScopeMembership(db as any, "plan", PLAN, ALICE), true);
+    assert.equal(await verifyScopeMembership(db as any, "plan", PLAN, BOB), true);
+    assert.equal(await verifyScopeMembership(db as any, "plan", PLAN, STRANGER), false);
+  });
+
+  it("PLAN: a membership row for a DIFFERENT plan does not admit you", async () => {
+    const db = makeDb({
+      routePlans: [{ id: PLAN, owner_user_id: ALICE }],
+      routePlanMembers: [{ route_plan_id: SESSION, user_id: BOB }],
+    });
+    assert.equal(await verifyScopeMembership(db as any, "plan", PLAN, BOB), false);
+  });
+
+  it("PLAN: an unreadable route_plans or members table fails closed", async () => {
+    const denyPlans = makeDb({
+      routePlans: [{ id: PLAN, owner_user_id: ALICE }],
+      routePlanMembers: [{ route_plan_id: PLAN, user_id: BOB }],
+      failReads: ["route_plans"],
+    });
+    assert.equal(await verifyScopeMembership(denyPlans as any, "plan", PLAN, BOB), false);
+    const denyMembers = makeDb({
+      routePlans: [{ id: PLAN, owner_user_id: ALICE }],
+      routePlanMembers: [{ route_plan_id: PLAN, user_id: BOB }],
+      failReads: ["route_plan_members"],
+    });
+    assert.equal(await verifyScopeMembership(denyMembers as any, "plan", PLAN, BOB), false);
+  });
+
+  it("a real circle member starts a session end-to-end on the circle scope", async () => {
+    const db = makeDb({
+      circles: [{ id: CIRCLE, owner_id: ALICE }],
+      circleMemberships: [{ user_id: ALICE, other_id: BOB }],
+    });
+    const outcome = await startOrJoinSession(
+      db as any,
+      BOB,
+      { groupScopeKind: "circle", groupScopeId: CIRCLE, ttlMinutes: 60 },
+      NOW,
+    );
+    assert.equal(outcome.ok, true);
+    assert.equal(db._tables[SESSIONS_TABLE].length, 1);
+  });
+
+  it("a stranger cannot open a session on a plan they never joined", async () => {
+    const db = makeDb({ routePlans: [{ id: PLAN, owner_user_id: ALICE }] });
+    const outcome = await startOrJoinSession(
+      db as any,
+      STRANGER,
+      { groupScopeKind: "plan", groupScopeId: PLAN, ttlMinutes: 60 },
+      NOW,
+    );
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.ok === false && outcome.code, "forbidden");
+    assert.equal(db._tables[SESSIONS_TABLE].length, 0);
   });
 
   it("a stranger cannot open a session on someone else's trip", async () => {
@@ -1094,6 +1217,84 @@ describe("attribution — every membership and position write is recorded", () =
       NOW,
     );
     assert.equal(outcome.ok, false);
+    assert.equal(db._tables[POSITIONS_TABLE].length, 0);
+  });
+});
+
+// ══ G. §25/§37 "Share permitted location" — the channel is the session ════════
+//
+// The §25 long-press share opens onto a §12 session: publishing the shared point
+// is `publishPosition`, and the session's own expiry + a leave are what bound it.
+// So the two properties the share channel must have are properties of the session
+// under test here, not a second mechanism — expiry stops it, and a leave revokes
+// it, both enforced server-side on the request rather than by a sweep.
+
+describe("(g) the permitted-location share channel expires and is revocable", () => {
+  it("stops ACCEPTING a share the instant the session has expired", async () => {
+    // An expired session is the channel closing: a new share cannot be opened on
+    // it, checked at nowMs with no reference to any status column.
+    const expired = session({ expires_at: iso(NOW - 1) });
+    const db = makeDb({ sessions: [expired], members: [member(ALICE)] });
+    const outcome = await publishPosition(
+      db as any,
+      ALICE,
+      SESSION,
+      { rung: "network_location", precision: "precise", lat: 16.05, lng: 108.2, observedAt: NOW - 30_000 },
+      NOW,
+    );
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.ok === false && outcome.code, "gone");
+    assert.equal(db._tables[POSITIONS_TABLE].length, 0, "nothing is stored on a closed channel");
+  });
+
+  it("stops SERVING an already-shared point once the session expires", async () => {
+    // A point shared while the channel was open must vanish the moment it
+    // closes, even though the row is still on disk (no sweep has run).
+    const db = makeDb({
+      sessions: [session({ expires_at: iso(NOW + 60_000) })],
+      members: [member(ALICE), member(BOB)],
+      positions: [position(BOB)],
+      profiles: [{ id: BOB, display_name: "Bob" }],
+    });
+    // Open: Alice sees Bob's shared point.
+    const open = await readSessionForViewer(db as any, SESSION, ALICE, NOW);
+    assert.equal(open.status, "ok");
+    assert.equal(open.members.length, 1);
+
+    // Past expiry: the same read is the one opaque "expired", members empty —
+    // the shared point is gone from the group view though its row still exists.
+    const closed = await readSessionForViewer(db as any, SESSION, ALICE, NOW + 60_001);
+    assert.equal(closed.status, "expired");
+    assert.deepEqual(closed.members, []);
+    assert.ok(db._tables[POSITIONS_TABLE].length > 0, "the row is still on disk — read-time expiry, not a sweep");
+  });
+
+  it("is revoked by a leave: the shared point is DELETED, not left for a sweep", async () => {
+    const db = makeDb({
+      sessions: [session()],
+      members: [member(ALICE), member(BOB)],
+      positions: [position(BOB)],
+      profiles: [{ id: BOB, display_name: "Bob" }],
+    });
+    const leave = await leaveSession(db as any, SESSION, BOB, NOW + 1_000);
+    assert.equal(leave.outcome, "left");
+    // The share is gone because the row is gone.
+    assert.equal(db._tables[POSITIONS_TABLE].length, 0);
+    const after = await readSessionForViewer(db as any, SESSION, ALICE, NOW + 1_001);
+    assert.deepEqual(after.members, [], "the revoked share is gone from the very next read");
+  });
+
+  it("revocation is not gated by the flag — a leave works whatever the capability says", async () => {
+    // The share channel is the session, and the session's leave is the one route
+    // that ignores locate_friends_enabled — so a share can always be pulled back.
+    const db = makeDb({
+      sessions: [session()],
+      members: [member(BOB)],
+      positions: [position(BOB)],
+      flags: { locate_friends_enabled: false },
+    });
+    const leave = await leaveSession(db as any, SESSION, BOB, NOW + 1_000);
+    assert.equal(leave.outcome, "left");
     assert.equal(db._tables[POSITIONS_TABLE].length, 0);
   });
 });

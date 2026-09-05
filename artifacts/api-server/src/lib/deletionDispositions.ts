@@ -59,6 +59,23 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "intel_evidence",
   "intel_confirmations",
   "intel_state_snapshots",
+  // Unit I3 presence-verification audit rows (migration 2276). observation_id
+  // and actor_id both cascade: erase_intel_for_actor deletes the actor's
+  // observations inside its erasure declaration, so the cascade is permitted by
+  // the ROW-LEVEL append-only trigger and the rows go with the observation.
+  // Coarse buckets only — never a coordinate — so nothing precise outlives the
+  // actor.
+  //
+  // That was only true on paper until 2292. 2276 also attached the
+  // STATEMENT-level guard that 2137 had removed, and a statement-level BEFORE
+  // trigger fires before any row is examined — so it refused the profiles
+  // cascade even when the user had produced no verification row at all, making
+  // the account undeletable either way. Observed live: every test in
+  // rlsHardening.test.ts failed on PR #402 with "purgeFixtures: delete
+  // profiles: intel_presence_verifications is append-only: DELETE is not
+  // permitted at statement level". 2292 drops it; the row-level guard, which is
+  // what makes this disposition true, is untouched.
+  "intel_presence_verifications",
   // IG-02 contribution consent (migration 2172, user_id-keyed). Its ON DELETE
   // CASCADE to profiles never fires because the deletion keeps an anonymised
   // tombstone profile — the same mistake 2187 made for derived memory. Erased
@@ -74,6 +91,30 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // delete; the ledger has no DELETE-blocking trigger), with service_role DELETE
   // granted by migration 2204. Non-cash, so no financial-retention reason to keep it.
   "intel_reward_ledger",
+  // I4a attribution ledger (migration 2277, actor_id = the CONTRIBUTOR). Erased
+  // with the contributor's observations: observation_id REFERENCES
+  // intel_observations ON DELETE CASCADE, and that cascade fires INSIDE
+  // erase_intel_for_actor's declared-erasure transaction (the reused 2130
+  // append-only trigger permits DELETE there). The profiles cascade never fires
+  // under the tombstone, but it does not need to — every row hangs off an
+  // observation the erasure function already removes. The outcome REPORTER is
+  // not named on this table (their id stays on the canonical_events spine row,
+  // whose retention 2120 governs). erase_intel_for_actor (widened by 2278) also
+  // deletes it by actor_id explicitly, so nothing waits on the cascade.
+  //
+  // 2277 also re-attached 2137's removed STATEMENT-level guard here, which
+  // refused any profiles/intel_observations delete that merely TOUCHED the
+  // table, zero rows included. Removed by 2292 — see the note on
+  // intel_presence_verifications above. The row-level guard, the one this
+  // disposition depends on, is untouched.
+  "intel_attributions",
+  // I4a scoped-trust fold (migration 2278, actor_id = the CONTRIBUTOR). Mutable
+  // derived state whose profiles cascade never fires under the tombstone, so it
+  // is deleted EXPLICITLY inside erase_intel_for_actor (re-created by 2278 as a
+  // superset of 2130's body) — the same declared-erasure RPC the worker already
+  // calls. Attribution rows for the actor are deleted there too, so nothing
+  // waits on a cascade.
+  "intel_scoped_trust",
   "comment_likes",
   "devices",
   "event_saves",
@@ -170,7 +211,25 @@ export const DELETION_FLOW_TABLES: readonly string[] = [
  * DECIDED retentions. Each entry needs a reason a user could be shown.
  * Empty until D6 is answered — deliberately, so the backlog count stays honest.
  */
-export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string }> = [];
+export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string }> = [
+  // I1 (migration 2273). NOT user-keyed: it carries no actor column and no
+  // personal data — subject_id is a place, distinct_actors is a count, and the
+  // replay record is a set of weighted model inputs. It is an append-only log of
+  // what the projection computed, keyed by (place, zone, claim_type); nothing in
+  // it can be attributed to a person, so account deletion leaves it alone. The
+  // per-person inputs behind a version are erased through erase_intel_for_actor
+  // (observations, evidence, confirmations); a version row remains as the record
+  // that an aggregate was once computed — the same posture as intel_claims and
+  // intel_state_snapshots, which erase_intel_for_actor deliberately does not
+  // touch ("aggregate beliefs about a place, not personal data"). Listed here so
+  // the fate is written down, not inherited silence.
+  {
+    table: "intel_state_snapshot_versions",
+    reason:
+      "Append-only projection history with no actor column and no personal data (place key, counts, model inputs). " +
+      "The per-person contributions behind it are erased by erase_intel_for_actor; the aggregate record is kept, as intel_claims/intel_state_snapshots are.",
+  },
+];
 
 /**
  * NOT DECISIONS. Pre-existing user-keyed tables that survive account deletion and
@@ -430,12 +489,24 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "intel_evidence",
   "intel_confirmations",
   "intel_state_snapshots",
+  // I1 append-only projection history, added by migration 2273 (post-baseline).
+  // Classified in RETAINED_WITH_REASON above (no actor column).
+  "intel_state_snapshot_versions",
   "intel_contribution_consent",
   // IG-10 non-cash reward ledger, added by migration 2170 (post-baseline).
   "intel_reward_ledger",
+  // I4a attribution ledger, added by migration 2277 (post-baseline). Classified
+  // in ERASED_BY_CASCADE above.
+  "intel_attributions",
+  // I4a scoped-trust fold, added by migration 2278 (post-baseline). Classified
+  // in ERASED_BY_CASCADE above.
+  "intel_scoped_trust",
   // IG mission candidates, added by migration 2167 (post-baseline). Classified
   // in ANONYMISED_FK_NULLED (accepted_by is NULLed, the row is kept).
   "intel_mission_candidates",
+  // Unit I3 presence-verification audit, added by migration 2276 (post-baseline).
+  // Classified in ERASED_BY_CASCADE above.
+  "intel_presence_verifications",
   // Passport / Wall owner-scoped tables (migrations 2260 / 2261 / 2271,
   // post-baseline). Classified in ERASED_BY_CASCADE above.
   "availability_windows",
