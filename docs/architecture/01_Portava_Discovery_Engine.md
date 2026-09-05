@@ -39,7 +39,7 @@ Every place the surface hands items to a caller is a numbered serve point
 | 4 | `CACHE_B_HIT` | no — replays a stored Compass order |
 | 5 | `COMPASS_FRESH_RANK` | **yes** |
 | 6 | `COLD_FETCH_LEGACY_RANK` | **yes** |
-| 7 | `FEED` (`GET /discovery/feed`) | no ranker — **and no caller in the repo** |
+| 7 | `FEED` (`GET /discovery/feed`) | no ranker. *Had no caller in the repo until #382 (2026-09-04); it now has two — `DiscoveryEventPostsRail.tsx` and `ForYouTab.tsx:428`* |
 | 8 | `SEARCH` | no ranker (query relevance) |
 | 9 | `SUGGEST` | no ranker |
 | 10 | `COMMUNITY` (`GET /discovery/community`) | no ranker |
@@ -58,8 +58,12 @@ rather than stored, so a typo cannot silently serve `legacy`.
 - **legacy** — the shipping default. Cache-A hits return the cached candidate order unranked.
 - **pde** — cache-A serve points 1–3 rank the cached candidates per request
   (`serveCachedPlaces`, the `pdeScoredById` branch) and log those impressions with
-  `rankedInRequest: true`. This is the D5=B serve path. It is **wired but held OFF**: the roadmap
-  keeps it gated until real traffic exists to validate it (`serve-point-report-20260828.md`).
+  `rankedInRequest: true`. This is the D5=B serve path, landed inert by **#250**. It is **wired
+  but held OFF**, and the hold is a named, unruled owner gate — ROADMAP **Phase F, gate 2** —
+  not merely a preference: the flag ships `enabled=false`/`mode='legacy'` (`2091:70-73`) and no
+  later migration moves it. The empirical check owed before the flip (ROADMAP Phase E step 3) is
+  still undischarged, and the instrument it reads was corrected in #366 and #387, so it is owed
+  a **fresh** reading rather than the retrieval of `serve-point-report-20260828.md`'s numbers.
 - **shadow** — `lib/discoveryShadow.ts` computes the page a pde serve *would* have produced,
   after the response and with writes suppressed, and records the divergence. Append-only per
   D7=A (migrations `2092`–`2094`).
