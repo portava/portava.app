@@ -51,6 +51,7 @@ import { BuddyCard, BuddyCardSkeleton } from '../../src/components/BuddyCard';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useEventRsvp } from '../../src/hooks/useEventRsvp';
+import { EventPassportShareCard } from '../../src/features/passport/EventPassportShareCard';
 import { HostDashboardPanel } from '../../src/components/HostDashboardPanel';
 import { EventVoiceRoomCard } from '../../src/components/events/EventVoiceRoomCard.tsx';
 import { StampButton } from '../../src/components/stamps/StampButton';
@@ -1179,6 +1180,15 @@ export default function EventDetailScreen() {
                 <MessageSquare size={15} color={color.faint} />
                 <Text style={[styles.commentsText, styles.commentsTextDisabled]}>Event updates & comments — coming soon</Text>
               </View>
+            )}
+
+            {/* Temporary event Passport (spec §25/§31, Phase 8). Offered only to
+                someone who is actually attending; the card itself renders
+                nothing when the capability is off, when the server refuses, or
+                once the event is over, so this condition is the affordance's
+                floor, never its authority. */}
+            {(event.myRsvp === 'going' || event.myRsvp === 'interested' || isHost) && (
+              <EventPassportShareCard eventId={event.id} />
             )}
 
             {/* Report link */}
