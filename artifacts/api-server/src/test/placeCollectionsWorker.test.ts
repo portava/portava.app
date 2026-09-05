@@ -102,6 +102,7 @@ function makeFakeSc(opts: {
       let _filters: Array<(r: any) => boolean> = [];
       let _statusEq: string | undefined;
       let _wantsSelect = false;
+      let _isDelete = false;
 
       const builder: any = {
         select(_cols?: string) {
@@ -118,6 +119,11 @@ function makeFakeSc(opts: {
           return Promise.resolve({ data: null, error: null });
         },
         update(patch: any) { _patch = patch; return builder; },
+        // computeContributors prunes place_top_contributors rows the gated
+        // recompute no longer credits: .delete().eq(place_id).not(user_id,in,…).
+        // Recorded, not applied — this file asserts on the upserts.
+        delete() { _isDelete = true; return builder; },
+        not(_col: string, _op: string, _val: any) { return builder; },
         eq(col: string, val: any) {
           if (col === "status") _statusEq = val;
           _filters.push((r: any) => r[col] === val);
@@ -165,6 +171,7 @@ function makeFakeSc(opts: {
         },
         // Resolves UPDATE chains (with or without .select() RETURNING).
         then(resolve: (v: any) => any) {
+          if (_isDelete) return resolve({ data: null, error: null });
           if (table === "place_cache_invalidation_queue" && _patch) {
             // Identify rows matching all filters before mutation.
             const matched = currentQueueRows.filter((r) => _filters.every((f) => f(r)));
