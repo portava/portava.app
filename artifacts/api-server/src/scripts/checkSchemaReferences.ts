@@ -123,45 +123,34 @@ const UNDECLARED_LIVE_COLUMNS = new Set<string>([
  * fails. This list must reach zero.
  */
 const KNOWN_DEAD_REFERENCES: Record<string, { count: number; note: string }> = {
-  // src/lib/inputAssistance/duplicateDetection.ts (places.country, the founding
-  // defect's THIRD recurrence) was struck off: 9e82e8450 moved the read to
-  // `country_code` the same day this ratchet landed, and the two met on main
-  // with the entry still counting 1 — which is exactly the "fixed; delete the
-  // entry" direction of this check firing, on main itself.
-  // src/lib/mediaAccess.ts (close_friends.friend_id, user_follows.id) was
-  // struck off by the dead-literals batch: isCloseFriend now reads
-  // (owner_id, friend_user_id) as routes/stories.ts always has, and the avatar
-  // follow check selects `follower_id` as lib/profileVisibility does. Both were
-  // media AUTHORIZATION reads that failed 42703 into a `false` verdict, so a
-  // close-friends story denied its own close friends.
-  "src/lib/places/placeCollectionsWorker.ts": {
-    count: 2,
-    note: "posts.view_count / posts.qualified_view_count — no such columns; the " +
-      "collections worker's ranking read has never returned a row.",
-  },
-  "src/compass/CompassAbuseDefenseEngine.ts": {
-    count: 1,
-    note: "compass_visibility_cooldowns.updated_at on an UPSERT — a write rejected " +
-      "even when the value is null, so the cooldown is never recorded.",
-  },
-  "src/compass/CompassSearchDecayService.ts": {
-    count: 1,
-    note: "feature_flags.numeric_value — the decay service cannot read its own flag.",
-  },
-  "src/compass/CompassStructuredContext.ts": {
-    count: 2,
-    note: "rent_buddy_bookings.date_from / date_to — booking context is always empty.",
-  },
-  "src/compass/PassportRemembersService.ts": {
-    count: 1,
-    note: "shared_moments.visibility — the shared-moments source of Passport " +
-      "Remembers is dead.",
-  },
-  "src/scripts/seed-demo-social.ts": {
-    count: 1,
-    note: "passport_postcards.media_type on an INSERT — the demo seeder's postcard " +
-      "insert is rejected outright.",
-  },
+  // EMPTY — the ratchet reached zero on 2026-09-05, and the goal now is to keep
+  // it there. An entry added here is a defect the build has agreed to certify as
+  // known-and-fine; two of the original eleven turned out to sit inside media
+  // AUTHORIZATION, where close-friends stories denied their own close friends.
+  // Nothing about "it is on the ratchet" makes a dead reference harmless.
+  //
+  // HOW THE ELEVEN WENT, so the next one is not re-argued from scratch:
+  //   src/lib/inputAssistance/duplicateDetection.ts  places.country (the founding
+  //     defect's THIRD recurrence) — 9e82e8450 moved the read to `country_code`.
+  //   src/lib/mediaAccess.ts  close_friends.friend_id, user_follows.id — struck
+  //     off by the dead-literals batch; isCloseFriend now reads (owner_id,
+  //     friend_user_id) and the avatar follow check selects `follower_id`.
+  //   src/lib/places/placeCollectionsWorker.ts  posts.view_count /
+  //     qualified_view_count — no such columns and no producer (post_impressions
+  //     is never aggregated onto posts); dropped from the select, the two
+  //     ranking terms stay optional and score 0. Best-of ranking now runs.
+  //   src/compass/CompassAbuseDefenseEngine.ts  compass_visibility_cooldowns
+  //     .updated_at on an UPSERT — the table has `started_at`; the reach
+  //     reduction is now actually recorded.
+  //   src/compass/CompassSearchDecayService.ts  feature_flags.numeric_value —
+  //     no numeric column exists; moved onto jsonb `metadata`, where every other
+  //     structured flag setting already lives.
+  //   src/compass/CompassStructuredContext.ts  rent_buddy_bookings.date_from /
+  //     date_to — a booking is single-day (booking_date, start_time, duration_h).
+  //   src/compass/PassportRemembersService.ts  shared_moments.visibility — the
+  //     table has none; the read no longer names it and the group is populated.
+  //   src/scripts/seed-demo-social.ts  passport_postcards.media_type on an
+  //     INSERT — the real trio is (media_count, has_video, primary_media_type).
 };
 
 /** Non-`public` or non-table sources the column model does not cover. */
@@ -256,16 +245,26 @@ if (regressions.length > 0) {
       "rejected even when the value is null. This is the `places.country` " +
       "class.\nFix the reference, or add the migration that creates the column.",
   );
-  process.exit(1);
+  // `process.exitCode`, NOT `process.exit(1)`. An explicit exit tears the
+  // process down before an async stderr pipe has drained, which truncated a
+  // sibling guard's failure report on roughly one run in eight — the report is
+  // the only thing that tells you WHICH reference broke, so losing it turns a
+  // precise failure into a mystery. Setting the code lets node exit naturally,
+  // after the writes above have flushed. There is no work after this block.
+  process.exitCode = 1;
+} else {
+  const knownTotal = Object.values(KNOWN_DEAD_REFERENCES).reduce((n, k) => n + k.count, 0);
+  console.log(
+    knownTotal === 0
+      ? "\n✓ No undeclared column references, and the ratchet is EMPTY — " +
+          "KNOWN_DEAD_REFERENCES has reached zero. Keep it there: a new entry is " +
+          "a defect the build agrees to certify as known-and-fine."
+      : `\n✓ No NEW undeclared column references. ` +
+          `${findings.length} known dead reference(s) across ` +
+          `${Object.keys(KNOWN_DEAD_REFERENCES).length} file(s) remain on the ratchet ` +
+          `(expected ${knownTotal}); that list must shrink.`,
+  );
 }
-
-const knownTotal = Object.values(KNOWN_DEAD_REFERENCES).reduce((n, k) => n + k.count, 0);
-console.log(
-  `\n✓ No NEW undeclared column references. ` +
-    `${findings.length} known dead reference(s) across ` +
-    `${Object.keys(KNOWN_DEAD_REFERENCES).length} file(s) remain on the ratchet ` +
-    `(expected ${knownTotal}); that list must shrink.`,
-);
 if (UNDECLARED_LIVE_COLUMNS.size > 0) {
   console.log(
     `  (${UNDECLARED_LIVE_COLUMNS.size} live columns are allowlisted as undeclared ` +

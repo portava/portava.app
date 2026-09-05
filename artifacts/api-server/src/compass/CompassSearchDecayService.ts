@@ -147,20 +147,31 @@ export async function getDecayConfig(
   db: SupabaseClient,
 ): Promise<{ enabled: boolean; halfLifeDays: number }> {
   try {
+    // `metadata`, not `numeric_value`. feature_flags is (flag, enabled,
+    // description, updated_at, metadata jsonb) — there is no numeric column and
+    // never was, so naming one failed this read PGRST100 and `data` came back
+    // null on EVERY call: the service could not read its own flag, and both the
+    // enabled bit and the half-life silently fell through to the defaults.
+    //
+    // jsonb `metadata` is where every other numeric/structured flag setting in
+    // this repo already lives (lib/featureFlags.getFlagRow, discoveryCohort,
+    // discoveryEngineMode) — one row per flag, one source of truth, no new
+    // column. The key keeps the name the dead column had, so an operator
+    // configuring this flag writes { "numeric_value": 30 }.
     const { data, error } = await db
       .from("feature_flags")
-      .select("enabled, numeric_value")
+      .select("enabled, metadata")
       .eq("flag", "SEARCH_SIGNAL_DECAY_DAYS")
       .maybeSingle();
 
     if (error) {
-      // e.g. numeric_value column absent (42703) in an under-migrated env.
       logger.warn({ err: error }, "getDecayConfig: feature_flags read failed — using default decay config");
     }
     if (!data) return { enabled: true, halfLifeDays: DEFAULT_DECAY_DAYS };
 
     const enabled      = Boolean((data as any).enabled);
-    const rawValue     = (data as any).numeric_value;
+    const metadata     = (data as any).metadata as Record<string, unknown> | null | undefined;
+    const rawValue     = metadata?.["numeric_value"];
     const halfLifeDays =
       typeof rawValue === "number" && rawValue > 0 ? rawValue : DEFAULT_DECAY_DAYS;
 

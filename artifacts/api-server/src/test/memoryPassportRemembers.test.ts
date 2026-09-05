@@ -283,10 +283,15 @@ describe("deny-list is omitted (defence-in-depth gate)", () => {
         { moment_id: "m-invited", status: "invited" },   // not consented
         { moment_id: "m-archived", status: "accepted" },
       ],
+      // `join_policy`, not `visibility`: shared_moments has no visibility column
+      // and never had one, and "circle" is not a value of anything on this table.
+      // The fixture pinned that fiction — the fake client ignores the select
+      // list, so this stayed green while the production read failed PGRST100 and
+      // the Shared Moments group was always empty.
       moments: [
-        { id: "m-yes", title: "Dinner in Da Nang", status: "active", visibility: "circle", archived_at: null },
-        { id: "m-invited", title: "Should not appear", status: "active", visibility: "circle", archived_at: null },
-        { id: "m-archived", title: "Old moment", status: "archived", visibility: "circle", archived_at: new Date().toISOString() },
+        { id: "m-yes", title: "Dinner in Da Nang", status: "active", join_policy: "invite_only", archived_at: null },
+        { id: "m-invited", title: "Should not appear", status: "active", join_policy: "invite_only", archived_at: null },
+        { id: "m-archived", title: "Old moment", status: "archived", join_policy: "invite_only", archived_at: new Date().toISOString() },
       ],
     }), true as any);
     const res = await api("GET", "/compass/me/passport/remembers");

@@ -34,10 +34,21 @@ export interface StructuredCircle {
   isOwner: boolean;
 }
 
+/**
+ * A Rent-a-Buddy booking is a SINGLE-DAY appointment, not a stay: the table is
+ * (booking_date DATE, start_time, duration_h NUMERIC) — see migration 0134.
+ * This interface used to carry `dateFrom`/`dateTo`, which are columns
+ * rent_buddy_bookings has never had; naming them failed the whole read, so
+ * Compass chat had NO booking context at all.
+ */
 export interface StructuredBooking {
   city: string;
-  dateFrom: string;
-  dateTo: string;
+  /** `booking_date` — the day of the appointment (YYYY-MM-DD). */
+  date: string;
+  /** `start_time`, or "" when unset. */
+  startTime: string;
+  /** `duration_h`, or null when unset. */
+  durationHours: number | null;
   status: string;
   /** @handle of the buddy, or null if unavailable/filtered. */
   buddyHandle: string | null;
@@ -189,7 +200,7 @@ export async function buildStructuredCompassContext(
   try {
     const { data: bookings } = await sc
       .from("rent_buddy_bookings")
-      .select("buddy_id, city, date_from, date_to, status")
+      .select("buddy_id, city, booking_date, start_time, duration_h, status")
       .eq("traveler_id", userId)
       .in("status", ["confirmed", "in_progress"])
       .limit(5);
@@ -212,10 +223,11 @@ export async function buildStructuredCompassContext(
     }
 
     result.activeBookings = rows.slice(0, 3).map((r: any) => ({
-      city:        String(r.city ?? ""),
-      dateFrom:    String(r.date_from ?? ""),
-      dateTo:      String(r.date_to ?? ""),
-      status:      String(r.status ?? ""),
+      city:          String(r.city ?? ""),
+      date:          String(r.booking_date ?? ""),
+      startTime:     String(r.start_time ?? ""),
+      durationHours: r.duration_h == null ? null : Number(r.duration_h),
+      status:        String(r.status ?? ""),
       buddyHandle: buddyHandleById.get(r.buddy_id as string) ?? null,
       // note: rent_buddy_bookings.note is intentionally NEVER selected/included
     }));
@@ -273,7 +285,9 @@ export function formatStructuredContextLines(ctx: StructuredCompassContext): str
     lines.push("Active buddy bookings (city-level only):");
     for (const bkg of ctx.activeBookings) {
       const buddy = bkg.buddyHandle ? ` with ${bkg.buddyHandle}` : "";
-      lines.push(`• ${bkg.city}${buddy} — ${bkg.dateFrom} → ${bkg.dateTo} (${bkg.status})`);
+      const at = bkg.startTime ? ` ${bkg.startTime}` : "";
+      const dur = bkg.durationHours == null ? "" : ` (${bkg.durationHours}h)`;
+      lines.push(`• ${bkg.city}${buddy} — ${bkg.date}${at}${dur} (${bkg.status})`);
     }
   }
 

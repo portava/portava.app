@@ -104,7 +104,12 @@ function baseTables(): Tables {
     rent_buddy_bookings: [
       {
         traveler_id: ME, buddy_id: BUDDY, city: "Cebu City",
-        date_from: "2026-07-22", date_to: "2026-07-24",
+        // The real shape: a booking is a single-day appointment
+        // (booking_date DATE, start_time, duration_h) — migration 0134. This
+        // fixture carried `date_from`/`date_to`, columns rent_buddy_bookings has
+        // never had, and pinned the fiction: the fake client ignores the select
+        // list, so the suite stayed green while the production read failed whole.
+        booking_date: "2026-07-22", start_time: "14:00", duration_h: 3,
         status: "confirmed", note: "SECRET hotel room 402",
         lat: 10.3157, lng: 123.8854,
       },
@@ -152,7 +157,9 @@ describe("buildStructuredCompassContext — accurate references", () => {
     assert.equal(ctx.activeBookings.length, 1);
     const b = ctx.activeBookings[0];
     assert.equal(b.city, "Cebu City");
-    assert.equal(b.dateFrom, "2026-07-22");
+    assert.equal(b.date, "2026-07-22");
+    assert.equal(b.startTime, "14:00");
+    assert.equal(b.durationHours, 3);
     assert.equal(b.status, "confirmed");
     assert.equal(b.buddyHandle, "@localbuddy");
   });

@@ -385,8 +385,14 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
   const { data: postRows, error: postErr } = await sc
     .from("posts")
     .select(
+      // `view_count` / `qualified_view_count` are NOT selected: `posts` has
+      // neither column, in the baseline or in any migration, so naming them
+      // failed this read PGRST100 — every place, every run, since the line was
+      // written. `placePostScore` takes both as optional and scores them 0 when
+      // absent, which is what they contributed anyway. See the INERT note there
+      // before adding either name back.
       "id, author_id, trip_id, visibility, post_status, content, media_type, media_urls, media_thumbnail_url, " +
-      "post_buckets, like_count, save_count, share_count, view_count, qualified_view_count",
+      "post_buckets, like_count, save_count, share_count",
     )
     .eq("canonical_place_id", placeId)
     .eq("status", "active")

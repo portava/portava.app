@@ -542,7 +542,13 @@ export async function buildSharedMoments(
     if (consented.size === 0) return;
     const { data: moments } = await client
       .from("shared_moments")
-      .select("id, title, status, visibility, archived_at, created_at")
+      // NOT `visibility`: shared_moments has no such column. Its access model is
+      // membership plus `join_policy` (invite_only | approval_required) — see
+      // migration 2064 and the baseline. Naming `visibility` failed this read
+      // PGRST100, so `moments` came back null and the Shared Moments group of
+      // "What Portava Remembers" was ALWAYS EMPTY: §12 promised the owner every
+      // remembered thing and silently omitted a whole category.
+      .select("id, title, status, archived_at, created_at")
       .in("id", Array.from(consented))
       .limit(SOURCE_LIMIT);
     for (const r of asRows(moments)) {
@@ -554,9 +560,12 @@ export async function buildSharedMoments(
         title: String(r.title ?? "Shared Moment"),
         subjectType: "passport:shared_moment", subjectId: String(r.id),
         originTable: "shared_moments", originId: String(r.id),
-        // The moment involves other people; visibility of the moment as set by
-        // its owner. Shown to this owner only because they consented (accepted).
-        visibility: String(r.visibility ?? "private"),
+        // The moment involves other people, and it is shown to this owner only
+        // because they consented (accepted). shared_moments carries no
+        // visibility column, so — as with every other origin row that has none
+        // (saved_places, profile facts, preferences) — the label is "private";
+        // this surface is owner-only regardless.
+        visibility: "private",
         correctSupported: false,
         correctNote: "Manage this in Shared Moments.",
         occurredAt: isoOrUndefined(r.created_at),

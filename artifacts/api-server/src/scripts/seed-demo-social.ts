@@ -326,7 +326,14 @@ async function seedVideoPostcard(targetUserId: string) {
     user_id: targetUserId,
     caption: existingPost?.content ?? content,
     media_url: VIDEO_POSTCARD_URL,
-    media_type: "video",
+    // passport_postcards has NO `media_type`; the derived media columns are
+    // (media_count, has_video, primary_media_type) — the exact trio
+    // routes/postcards.ts::recomputePostcardMediaCounts writes. Naming
+    // `media_type` had PostgREST reject the whole INSERT, so this seeder's
+    // video postcard has never been created.
+    media_count: 1,
+    has_video: true,
+    primary_media_type: "video",
     location_name: existingPost?.location_name ?? locationName,
     location_city: dest.city,
     location_country: dest.country,

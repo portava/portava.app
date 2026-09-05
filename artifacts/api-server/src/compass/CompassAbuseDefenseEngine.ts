@@ -86,13 +86,24 @@ async function applyReachReduction(
   const nowMs = Date.now();
   const endsAt = new Date(nowMs + hours * 60 * 60 * 1_000).toISOString();
   // non-fatal
+  // `started_at`, not `updated_at`: compass_visibility_cooldowns has no
+  // `updated_at` column (id, author_id, cooldown_type, started_at, ends_at,
+  // reason — migration 0053 + baseline), and PostgREST rejects a write naming a
+  // column that does not exist even when the value is null. So this upsert
+  // failed EVERY time and the reach reduction was never recorded — the cooldown
+  // this whole detector exists to apply simply did not happen.
+  //
+  // `started_at` also carries the intent the stray `updated_at` was reaching
+  // for: on the ON CONFLICT path it restarts the window alongside the new
+  // `ends_at`, instead of leaving a row that claims to have begun long before
+  // the escalation that reset it.
   const { error } = await db.from("compass_visibility_cooldowns").upsert(
     {
       author_id:    userId,
       cooldown_type: "reach_reduction",
       reason:       `abuse_defense:${severity}`,
       ends_at:      endsAt,
-      updated_at:   new Date(nowMs).toISOString(),
+      started_at:   new Date(nowMs).toISOString(),
     },
     { onConflict: "author_id,cooldown_type" },
   );

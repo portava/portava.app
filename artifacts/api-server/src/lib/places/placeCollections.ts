@@ -64,8 +64,24 @@ export function isPublicPlaceRailPost(row: ReadablePost & { post_status?: string
  *   like_count           × 0.35
  *   save_count           × 0.30
  *   share_count          × 0.20
- *   view_count           × 0.10
- *   qualified_view_count × 0.05
+ *   view_count           × 0.10   ← INERT: see below
+ *   qualified_view_count × 0.05   ← INERT: see below
+ *
+ * THE TWO VIEW TERMS ARE INERT, DELIBERATELY LEFT IN
+ * --------------------------------------------------
+ * `posts` has no `view_count` and no `qualified_view_count`, in the baseline or
+ * in any migration; the only view record in the schema is `post_impressions`
+ * (post_id, user_id, created_at) and nothing aggregates it onto `posts`. The
+ * worker used to NAME both columns in its select list, which failed the whole
+ * read PGRST100 — so best-of ranking never ran at all. That is fixed at the
+ * read; these two parameters stay optional and simply arrive undefined, which
+ * makes both terms 0 — exactly what they would contribute if the columns
+ * existed and nothing wrote them.
+ *
+ * They are kept rather than deleted so that wiring a view producer is a
+ * one-line change here, and so the formula still documents the intended shape.
+ * DO NOT put either name back into a select list until a migration creates the
+ * column: `check:schema-references` will fail, and so it should.
  *
  * Used by the precompute worker (placeCollectionsWorker) for best-of ranking.
  * Pure — exported for tests.

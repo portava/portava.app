@@ -195,24 +195,38 @@ describe("static schema-reference check — catches the recurrence", () => {
     ]);
     assert.ok(sites.length > 500, `only ${sites.length} references outside routes+services`);
     const found = findUndeclaredReferences(schema(), sites).map((f) => `${f.table}.${f.column}`);
-    // The probe moves as the ratchet shrinks, exactly as this test's own
-    // instruction says. places.country was fixed in 9e82e8450;
-    // close_friends.friend_id (src/lib/mediaAccess.ts) was fixed by the
-    // dead-literals batch, which struck the whole mediaAccess entry off the
-    // ratchet — those two reads were media AUTHORIZATION decisions failing
-    // 42703 into a `false` verdict. posts.view_count in
-    // src/lib/places/placeCollectionsWorker.ts is the next src/lib entry;
-    // when it is fixed too, move this probe to whichever one remains.
-    assert.ok(
-      found.includes("posts.view_count"),
-      "the src/lib dead reference posts.view_count is no longer detected — " +
-        `either it was fixed (update this test) or coverage regressed. Found: ${found.join(", ")}`,
+    // This probe used to name whichever dead reference was still outstanding
+    // here — places.country (fixed in 9e82e8450), then close_friends.friend_id
+    // in src/lib/mediaAccess.ts (fixed by the dead-literals batch; that one and
+    // user_follows.id were media AUTHORIZATION decisions failing 42703 into a
+    // `false` verdict), then posts.view_count in placeCollectionsWorker.ts. Its
+    // own instruction was "when it is fixed too, move this probe to whichever
+    // one remains". None remains: KNOWN_DEAD_REFERENCES reached zero on
+    // 2026-09-05, so the probe becomes the zero-state contract itself.
+    //
+    // This is the STRICTER assertion, not a weaker one: it fails on any dead
+    // reference in src/lib, src/compass or src/scripts, including the founding
+    // defect coming back a fourth time.
+    assert.deepEqual(
+      found, [],
+      "dead schema reference(s) outside routes+services — each fails its whole " +
+        "query at runtime. Fix the reference, or add the migration that creates " +
+        `the column. Found: ${found.join(", ")}`,
     );
-    // And the founding defect must not come back a FOURTH time.
-    assert.ok(
-      !found.includes("places.country"),
-      "places.country is back — the table has country_code and has never had country",
-    );
+  });
+
+  it("coverage did not regress — the extractor still SEES a dead reference here", () => {
+    // The assertion above is now `deepEqual(found, [])`, which an extractor that
+    // silently stopped scanning src/lib would also satisfy. So prove the scan is
+    // still live by handing the same judge a site from that tree naming the
+    // founding defect's column, and requiring it to be caught.
+    const found = findUndeclaredReferences(schema(), [{
+      file: "src/lib/places/placeCollectionsWorker.ts",
+      line: 389, table: "posts", method: "select",
+      columns: ["id", "like_count", "view_count"],
+    }], new Set());
+    assert.deepEqual(found.map((f) => `${f.table}.${f.column}`), ["posts.view_count"],
+      "posts.view_count is no longer judged dead — the model has become too permissive");
   });
 
 });

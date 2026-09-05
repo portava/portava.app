@@ -1375,7 +1375,7 @@ describe("getDecayedWeights", () => {
   it("returns original weights when decay flag is disabled", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       feature_flags: [
-        { flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: false, numeric_value: 7 },
+        { flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: false, metadata: { numeric_value: 7 } },
       ],
       compass_search_signal_log: [],
     };
@@ -1388,7 +1388,7 @@ describe("getDecayedWeights", () => {
   it("returns original weights when there are no log rows", async () => {
     const tableData: Record<string, Record<string, unknown>[]> = {
       feature_flags: [
-        { flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, numeric_value: 7 },
+        { flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, metadata: { numeric_value: 7 } },
       ],
       compass_search_signal_log: [],
     };
@@ -1402,7 +1402,7 @@ describe("getDecayedWeights", () => {
     const staleDate = new Date(Date.now() - 14 * 86_400_000).toISOString(); // 14 days = 2 half-lives
     const tableData: Record<string, Record<string, unknown>[]> = {
       feature_flags: [
-        { flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, numeric_value: 7 },
+        { flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, metadata: { numeric_value: 7 } },
       ],
       compass_search_signal_log: [
         { user_id: "user-1", category: "nightlife", last_nudge_at: staleDate, search_weight: 4 },
