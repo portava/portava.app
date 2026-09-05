@@ -529,8 +529,15 @@ describe("CreatorSignalAggregator — end-to-end signal wiring", () => {
         // Received positive response
         { actor_id: FRIEND_ID,  user_id: CREATOR_ID, event_type: "content_saved",  created_at: ago1d },
       ],
-      // One published post in the 90d window
-      posts:  [{ author_id: CREATOR_ID, status: "published", created_at: ago1d }],
+      // One published post in the 90d window.
+      // Real column shape: posts.status is public.post_status
+      // ('active','hidden','reported','deleted') and posts.post_status is
+      // public.delayed_post_status (…,'published',…). This fixture previously
+      // carried status:"published" — a value the real enum cannot hold — which
+      // matched the service's then-broken .eq("status","published") predicate
+      // and so kept this test green over a query that returned nothing in
+      // production. See creatorActivityEnumLiterals.test.ts.
+      posts:  [{ author_id: CREATOR_ID, status: "active", post_status: "published", created_at: ago1d }],
       events: [], trips: [], reviews: [], discovery_places: [],
       trust_profiles: [{ user_id: CREATOR_ID, overall_score: 75, public_level: "trusted_traveler" }],
     });
