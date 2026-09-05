@@ -163,7 +163,53 @@ async function checkRentBuddyEnabled(sc: any): Promise<boolean> {
   return !!data && !!(data as any).enabled;
 }
 
-async function requireRentBuddyEnabled(sc: any, res: any): Promise<boolean> {
+/**
+ * THE Rent-a-Buddy master-switch guard. Every non-admin handler that MUTATES
+ * Rent-a-Buddy state must clear this before it writes.
+ *
+ * ── WHY IT IS EXPORTED ──────────────────────────────────────────────────────
+ * It used to be module-private, and the file header's claim — "All non-admin
+ * routes are gated by requireRentBuddyEnabled" — was true of THIS file and of
+ * nothing else. The lane's four routers are:
+ *
+ *   rentABuddy.ts             70 call sites   (the honest one)
+ *   rentABuddyMarketplace.ts   0 call sites
+ *   rentABuddySpec.ts          0 call sites
+ *   rentABuddyRollout.ts       0 call sites   (admin + checkRentBuddyAccess)
+ *
+ * so 41 non-admin write handlers in the other three routers wrote
+ * rent_buddy_* rows without ever reading `rent_buddy_enabled`. "The master
+ * flag is off in production" therefore did NOT mean the lane was inert: a
+ * signed-in user could still create requests and offers, publish packages and
+ * add-ons, flip `available_now`, tip, save, join the waitlist, submit and
+ * resume a buddy profile, and open/close availability — all on a product the
+ * flag says does not exist yet.
+ *
+ * The gate is not new and is not re-implemented per file: this ONE function is
+ * imported by the other routers. It is also step 1 of checkRentBuddyAccess
+ * (rentABuddyRollout.ts), so a handler that calls checkRentBuddyAccess already
+ * satisfies it and does not need both.
+ *
+ * FAIL-CLOSED: checkRentBuddyEnabled returns `!!data && !!data.enabled`, so a
+ * missing flag row, a null client and a failed read all deny.
+ *
+ * ── ADMIN AND MODERATION ARE DELIBERATELY EXEMPT ────────────────────────────
+ * Admin/moderation handlers do NOT take this gate, and that is the rule, not
+ * an oversight:
+ *
+ *   • an admin queue that hides its rows cannot moderate them — applications,
+ *     policy flags, disputes, support reports and payouts all outlive a flag
+ *     flip and must stay triageable while the lane is dark;
+ *   • the flag is administered THROUGH admin endpoints, so gating them on the
+ *     switch they exist to operate is a lockout;
+ *   • those handlers are not ungoverned — they carry a `profiles.role`
+ *     check, and src/test/rentBuddyHandlerGating.test.ts fails if any admin
+ *     RAB write handler loses it.
+ *
+ * The exemption is scoped to ADMIN, never to "an ordinary user acting on their
+ * own row".
+ */
+export async function requireRentBuddyEnabled(sc: any, res: any): Promise<boolean> {
   const enabled = await checkRentBuddyEnabled(sc);
   if (!enabled) {
     res.status(403).json({ error: "feature_disabled", message: "Rent a Buddy is not available yet." });
@@ -1474,6 +1520,27 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   })) return;
 
   // New Buddy restrictions
+  //
+  // SILENT GATE — FAIL DIRECTION: RESTRICTIVE BRANCH ALWAYS TAKEN.
+  // `new_buddy_public_only` is `boolean DEFAULT true NOT NULL` and
+  // `new_buddy_max_hours` is `integer DEFAULT 2 NOT NULL`; NEITHER has a writer
+  // in src/, in a migration, or in a trigger (only the dev seed script sets
+  // them). `buddy_level` DOES have two writers — PATCH /admin/buddies/:id/level
+  // and POST /admin/profiles/:id/city-ambassador — and neither touches these
+  // columns, so promoting a buddy to elite or city_ambassador does not lift
+  // anything: EVERY buddy on the platform is permanently inside this branch and
+  // permanently capped at 2 hours per booking.
+  //
+  // Left in place, not relaxed. Denial is the safe direction, and the promotion
+  // rule ("which level clears which restriction") is a product decision this
+  // change is not entitled to invent. Two consequences worth knowing:
+  //   • rentABuddy.ts's `publicMeetupOnly` search filter
+  //     (`.eq("new_buddy_public_only", true)`) matches everyone and so filters
+  //     nothing; and
+  //   • CompatibilityScoreService's `publicOnly` exclusion is a no-op for the
+  //     same reason — but the traveller is NOT exposed, because this branch
+  //     rejects private meetup locations for every buddy anyway.
+  // src/test/rentBuddyWriterlessGateDirection.test.ts pins both directions.
   if (buddyProfile.new_buddy_public_only) {
     if (isPrivateLocation(city)) {
       return res.status(400).json({
@@ -5492,6 +5559,7 @@ router.post("/rent-a-buddy/tag-consents/:consentId/approve", async (req, res) =>
   if (!auth) return;
   const { user, client } = auth;
   const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { consentId } = req.params;
   const { data: consent } = await serviceClient
@@ -5512,6 +5580,7 @@ router.post("/rent-a-buddy/tag-consents/:consentId/decline", async (req, res) =>
   if (!auth) return;
   const { user, client } = auth;
   const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { consentId } = req.params;
   const { data: consent } = await serviceClient
@@ -5534,6 +5603,7 @@ router.delete("/rent-a-buddy/tag-consents/:consentId", async (req, res) => {
   if (!auth) return;
   const { user, client } = auth;
   const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { consentId } = req.params;
   const { data: consent } = await serviceClient
@@ -5904,6 +5974,7 @@ router.post("/rent-a-buddy/me/training-checklist/:itemKey", async (req, res) => 
   if (!auth) return;
   const { user, client } = auth;
   const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { itemKey } = req.params;
   const validKeys = TRAINING_CHECKLIST_ITEMS.map((i) => i.key);
