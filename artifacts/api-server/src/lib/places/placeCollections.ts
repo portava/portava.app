@@ -18,23 +18,25 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient } from "../supabase.js";
 import { isPostPublished, canReadPost, type ReadablePost } from "../postVisibility.js";
 
-// ── Who may appear on a place's Best-Of rails ────────────────────────────────
+// ── Who may appear on a place's PUBLIC rails ─────────────────────────────────
 
 /**
- * Best-Of is a PUBLIC rail on the Living Destination Page: it is assembled for a
- * place, cached in `place_best_of`, and served to every viewer of that place
- * (routes/placeLiving passes no viewer at all). There is therefore no viewer
- * whose trip membership or follow graph could unlock a restricted post here —
- * the only posts that belong on it are the ones a STRANGER may read.
+ * A place's public rails — Best-Of and the Top-Contributor credit — are
+ * assembled for a PLACE, cached (`place_best_of`, `place_top_contributors`,
+ * and the `place_living_cache` payload built from them) and served to every
+ * viewer of that place. routes/placeLiving passes no viewer at all, so there is
+ * no viewer whose trip membership or follow graph could unlock a restricted
+ * post here: the only posts that belong on a public rail are the ones a
+ * STRANGER may read.
  *
  * This sentinel is that stranger. It is deliberately not a uuid, so it can never
  * collide with a real `author_id` and accidentally admit a post through
  * decidePostReadable's author branch.
  */
-const PLACE_RAIL_STRANGER = "place-best-of:no-viewer";
+const PLACE_RAIL_STRANGER = "place-rail:no-viewer";
 
 /**
- * May this post appear on a place's Best-Of rails?
+ * May this post feed a place's PUBLIC rails?
  *
  * ONE rule, the canonical one, not a second implementation:
  *   • lib/postVisibility.isPostPublished — the delayed-publish gate (§23/§37).
@@ -45,11 +47,14 @@ const PLACE_RAIL_STRANGER = "place-best-of:no-viewer";
  *     apply. It admits `public` (and legacy rows with no visibility column) and
  *     refuses `private`, `trip_only`, `followers_only` and any tier it does not
  *     recognise. FAIL CLOSED is its documented default, which is exactly what a
- *     rail with no viewer needs.
+ *     rail with no viewer needs — a visibility tier added tomorrow is invisible
+ *     to strangers until someone teaches decidePostReadable about it.
  *
- * Best-Of had NO visibility filter at all, so a `private` or `trip_only` post
- * attached to a place reached that place's public rails — the post's author
- * placed at the venue, for anyone who opened the page.
+ * NEITHER rail had a visibility filter at all, so a `private` or `trip_only`
+ * post attached to a place reached that place's public rails — the post's
+ * author placed at the venue, for anyone who opened the page. Best-Of leaked
+ * the post itself; place_top_contributors leaked the author's identity and a
+ * contribution count computed over their hidden posts.
  */
 export function isPublicPlaceRailPost(row: ReadablePost & { post_status?: string | null }): boolean {
   return isPostPublished(row) && canReadPost(row, PLACE_RAIL_STRANGER, false, false);
