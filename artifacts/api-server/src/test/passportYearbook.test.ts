@@ -54,6 +54,15 @@ function seed(overrides: Record<string, any[]> = {}) {
       { id: FRIEND, handle: "ana", display_name: "Ana", avatar_url: "https://x/ana.png", show_profile_picture_publicly: true },
       { id: BLOCKED, handle: "mallory", display_name: "Mallory", avatar_url: "https://x/m.png", show_profile_picture_publicly: true },
     ],
+    // Name visibility is not what these cases are about — every seeded person
+    // has opted in to `show_real_name`, so "Ana is still credited" stays a real
+    // assertion about block-filtering rather than about the display-name rule
+    // (which passportProjectionNameVisibility.test.ts owns).
+    profile_privacy_settings: [
+      { user_id: OWNER, show_real_name: true },
+      { user_id: FRIEND, show_real_name: true },
+      { user_id: BLOCKED, show_real_name: true },
+    ],
     blocks: [{ blocker_id: OWNER, blocked_id: BLOCKED }],
     trip_members: [
       { trip_id: T_VN, user_id: OWNER, role: "owner", status: "accepted" },
