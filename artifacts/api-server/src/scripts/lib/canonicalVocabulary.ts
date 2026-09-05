@@ -260,9 +260,49 @@ function absorbCreateTables(sql: string, model: Model): void {
   }
 }
 
+/**
+ * Statements to apply, with `DO $$ … $$` blocks flattened into the statements
+ * they contain.
+ *
+ * THIS IS NOT A NICETY. The repo's idiom for an idempotent constraint change is
+ *
+ *     DO $$ BEGIN
+ *       ALTER TABLE t DROP CONSTRAINT IF EXISTS c;
+ *       ALTER TABLE t ADD CONSTRAINT c CHECK (col IN (…));
+ *     END $$;
+ *
+ * and `splitStatements` deliberately keeps a `$$` body intact so its inner
+ * semicolons do not split the outer statement. The result is one statement
+ * beginning `DO`, which `ALTER_TARGET_RE` (anchored at `^\s*ALTER TABLE`) never
+ * matches — so every widening written in that idiom was invisible and the model
+ * kept reporting the PRE-migration vocabulary.
+ *
+ * That is not an over-permissive miss like the ones listed at the top of this
+ * file; it is the one direction this check must never fail in. Migration 2302
+ * widens `plan_attendance_events_event_type_check` to admit
+ * 'suspicious_check_in' exactly this way, and without this flattening the check
+ * called a live, correct, schema-legal literal DEAD and demanded it be
+ * "repaired" into one nothing writes.
+ *
+ * Nesting is not attempted: `$$` bodies do not nest in this repo, and a `$$`
+ * that never closes is left alone rather than guessed at.
+ */
+function* flattenStatements(sql: string): Generator<string> {
+  for (const stmt of splitStatements(sql)) {
+    yield stmt;
+    let at = stmt.indexOf("$$");
+    while (at !== -1) {
+      const end = stmt.indexOf("$$", at + 2);
+      if (end === -1) break;
+      for (const inner of splitStatements(stmt.slice(at + 2, end))) yield inner;
+      at = stmt.indexOf("$$", end + 2);
+    }
+  }
+}
+
 /** Apply `ALTER TABLE` statements: ADD COLUMN, ALTER COLUMN TYPE, ADD/DROP CONSTRAINT. */
 function absorbAlters(sql: string, model: Model): void {
-  for (const stmt of splitStatements(sql)) {
+  for (const stmt of flattenStatements(sql)) {
     const target = ALTER_TARGET_RE.exec(stmt);
     if (!target) continue;
     const table = target[1]!;

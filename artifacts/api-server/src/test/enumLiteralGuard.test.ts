@@ -121,6 +121,66 @@ describe("canonical vocabulary — the model the check judges against", () => {
     }
   });
 
+  it("absorbs a widening written inside a `DO $$ … $$` block", () => {
+    // THE BLIND SPOT THIS CLOSES. `splitStatements` keeps a `$$` body intact so
+    // its inner semicolons do not split the outer statement — which left every
+    // ALTER inside the repo's own idempotency idiom invisible, because the
+    // statement begins `DO`, not `ALTER TABLE`. The model then kept reporting
+    // the PRE-migration vocabulary and called a live, schema-legal literal dead.
+    // That is a FALSE FAILURE, the one direction this check must never fail in:
+    // it demands a correct literal be "repaired" into one nothing writes.
+    //
+    // Migration 2302 widens plan_attendance_events_event_type_check that way.
+    const pae = vocab().values.get("plan_attendance_events.event_type");
+    assert.ok(pae, "plan_attendance_events.event_type must carry a CHECK vocabulary");
+    for (const label of [
+      "suspicious_check_in",
+      "checked_in_successfully",
+      "late_check_in",
+      "host_manual_override",
+    ]) {
+      assert.ok(
+        pae.has(label),
+        `2302 admits "${label}" inside a DO block — got ${[...pae].sort().join(" | ")}`,
+      );
+    }
+    // The four legacy labels are RETAINED by 2302, not replaced.
+    assert.ok(pae.has("suspicious") && pae.has("excused"));
+  });
+
+  it("absorbs a DO-wrapped DROP+ADD on a fixture, and still honours the DROP", () => {
+    // A synthetic control, so this survives 2302 being superseded one day.
+    const dir = mkdtempSync(join(tmpdir(), "vocab-do-"));
+    try {
+      const baseline = join(dir, "baseline.sql");
+      writeFileSync(
+        baseline,
+        "CREATE TABLE public.widgets (\n" +
+          "    state text NOT NULL,\n" +
+          "    CONSTRAINT widgets_state_check CHECK ((state = ANY (ARRAY['old'::text])))\n" +
+          ");\n",
+      );
+      const migrations = join(dir, "migrations");
+      mkdirSync(migrations);
+      writeFileSync(
+        join(migrations, "9001_widen.sql"),
+        "DO $$\nBEGIN\n" +
+          "  ALTER TABLE public.widgets DROP CONSTRAINT IF EXISTS widgets_state_check;\n" +
+          "  ALTER TABLE public.widgets ADD CONSTRAINT widgets_state_check\n" +
+          "    CHECK (state IN ('old', 'new'));\n" +
+          "END $$;\n",
+      );
+      const built = buildCanonicalVocabulary(baseline, [migrations]);
+      assert.deepEqual(
+        [...(built.values.get("widgets.state") ?? [])].sort(),
+        ["new", "old"],
+        "a DO-wrapped DROP+ADD must replace the old vocabulary, not be ignored",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not invent a vocabulary for a plain unconstrained TEXT column", () => {
     // Declining to judge is the whole reason a false failure is unlikely here.
     assert.equal(vocab().values.get("user_account_states.state"), undefined);

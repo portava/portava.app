@@ -125,9 +125,8 @@ export const KNOWN_DEAD_LITERALS: Record<string, { count: number; note: string }
   //   2. `CreatorActivityScoreService.ts:posts.status:published` — struck for
   //      PR #413, exactly as this entry's own note instructed.
   //
-  // CONSEQUENCE: this branch now depends on #413 and #416. Until both are on
-  // main, `check:enum-literals` reports those two sites as fresh findings here,
-  // because the fixes live in those PRs. #418 must merge last.
+  // Both of those PRs are on main as of this branch's merge, so both sites are
+  // repaired here and the ratchet is 4 -> 2.
   "src/services/location/GeoZoneService.ts:location_sessions.session_type:private_stay": {
     count: 1,
     note:
