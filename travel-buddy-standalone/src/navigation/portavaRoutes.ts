@@ -623,6 +623,10 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     parent: 'passport-viewer',
     icon: null,
     requiresAuth: true,
+    // The §25/§31 capability flag, same one the server reads fail-closed. The
+    // server already refuses when it is off; declaring it here keeps the
+    // registry's own picture of the surface honest, as `passport-viewer` does.
+    featureFlag: 'passport_event_share_enabled',
     deepLink: '/passport/event/[token]',
   },
   {

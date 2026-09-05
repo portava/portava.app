@@ -118,8 +118,11 @@ function seed(opts: SeedOpts = {}) {
       spoken_languages: ["English"], travel_pace: "packed", planning_style: "planner",
       open_to_meet: true, created_at: "2023-01-01",
     }],
+    // `visibility` is NOT optional here: §22's per-stamp gate fails closed, so a
+    // stamp row without it projects as zero stamps and every "no stamps on the
+    // event variant" assertion below would be passing on an empty shelf.
     user_stamps: [
-      { user_id: OWNER, city: "Da Nang", country: "Vietnam", is_revoked: false, earned_at: "2025-03-30", stamp_definitions: { category: "trip", name: "Vietnam" } },
+      { user_id: OWNER, city: "Da Nang", country: "Vietnam", visibility: "public", is_revoked: false, earned_at: "2025-03-30", stamp_definitions: { category: "trip", name: "Vietnam" } },
     ],
     passport_memories: [
       { id: "m1", user_id: OWNER, status: "active", title: "Journal", city: "Da Nang", country: "Vietnam", trip_id: null, visibility: "public", earned_at: "2025-03-06", photo_url: null, category: "note" },
@@ -181,6 +184,39 @@ describe("event Passport — bounded TTL (§31)", () => {
   it("refuses to mint for someone who is not attending", async () => {
     const r = await createEventPassportShare(seed({ ownerRsvp: null }), OWNER, EVENT, NOW);
     assert.deepEqual(r, { ok: false, reason: "owner_not_attending" });
+  });
+
+  it("a failed insert never leaves the owner revoked with nothing minted", async () => {
+    // create = revoke-then-insert, and those are two statements, not one
+    // transaction. If the insert fails the owner must end up exactly where they
+    // started — still sharing the old token — not silently un-shared.
+    const previous = liveShare();
+    const db = seed({ shares: [previous] });
+    const inner = db.from.bind(db);
+    let insertsBlocked = true;
+    db.from = (table: string) => {
+      const b = inner(table);
+      if (table !== "event_passport_shares" || !insertsBlocked) return b;
+      return new Proxy(b, {
+        get(t: any, k: string) {
+          if (k !== "insert") return t[k];
+          // A rejected INSERT (e.g. the token/TTL CHECK, or a lost race on the
+          // partial unique index) — the row is never written.
+          return () => ({
+            select: () => ({ maybeSingle: async () => ({ data: null, error: { message: "insert refused" } }) }),
+          });
+        },
+      });
+    };
+
+    const r = await createEventPassportShare(db, OWNER, EVENT, NOW);
+    assert.deepEqual(r, { ok: false, reason: "not_found" }, "the caller is told it failed");
+    assert.equal(previous.revoked_at, null, "the previous share is still LIVE, not collaterally revoked");
+
+    // And it still resolves — the owner really did keep what they had.
+    insertsBlocked = false;
+    const still = await resolveEventPassport(db, "a".repeat(48), VIEWER, NOW, inject(resolution("event_group", permsFollowing())));
+    assert.equal(still.ok, true, "the share the owner already had keeps working");
   });
 
   it("is inert while the capability flag is OFF", async () => {
@@ -264,6 +300,31 @@ describe("event Passport — expires and revokes on READ (§31)", () => {
       seed({ shares: [liveShare({ expires_at: new Date(NOW - 1).toISOString() })] }), OWNER, EVENT, NOW);
     assert.equal(lapsed, null, "a lapsed share is never shown as current");
   });
+
+  it("the owner's own read refuses on ALL THREE horizons, exactly as resolve does", async () => {
+    // §31 "never render stale as current". Each case below is one the resolve
+    // path already refuses; the owner's own card must agree with it, or the
+    // owner reads "sharing until…" for a token nobody can open.
+    const cases: Array<[string, () => any]> = [
+      // 1. The share's own TTL (already covered above, kept here as the trio).
+      ["own TTL lapsed", () => seed({ shares: [liveShare({ expires_at: new Date(NOW - 1).toISOString() })] })],
+      // 2. The EVENT ended, while the share's own horizon is still in the future.
+      ["event ended", () => seed({
+        shares: [liveShare({ expires_at: new Date(NOW + 4 * 3_600_000).toISOString() })],
+        eventEndsAt: new Date(NOW - 60_000).toISOString(),
+      })],
+      // 3. The event left a live state (cancelled after the share was minted).
+      ["event cancelled", () => seed({ shares: [liveShare()], eventState: "cancelled" })],
+    ];
+    for (const [label, mk] of cases) {
+      assert.equal(await getOwnEventPassportShare(mk(), OWNER, EVENT, NOW), null,
+        `owner read must refuse: ${label}`);
+      // The resolve path refuses the same case — that agreement is the point.
+      const resolved = await resolveEventPassport(
+        mk(), "a".repeat(48), VIEWER, NOW, inject(resolution("event_group", permsFollowing())));
+      assert.deepEqual(resolved, { ok: false, reason: "expired" }, `resolve must refuse too: ${label}`);
+    }
+  });
 });
 
 // ── Event scoping, fail-closed ────────────────────────────────────────────────
@@ -330,6 +391,18 @@ describe("event variant — exposes only what the event context warrants", () =>
     const res = resolution("event_group", permsFollowing());
     const full = (await buildPassportProjection(seed(), OWNER, VIEWER, inject(res)))!;
     const p = (await buildConsumerProjection(seed(), "event", OWNER, VIEWER, inject(res)))!;
+
+    // The aggregate this viewer really holds is NOT empty: it carries stamps and
+    // memories. That is what makes the allow-list test's "no stamps / memories on
+    // the event variant" assertions a leak test rather than a shape formality.
+    assert.ok(full.stamps.length > 0, "fixture must give the viewer a non-empty stamp shelf");
+    assert.ok(full.memories.length > 0, "fixture must give the viewer non-empty memories");
+    assert.ok(!("stamps" in (p as any)), "…and the event variant still carries none of it");
+    assert.ok(!("memories" in (p as any)));
+    // Stamp/memory CONTENT must not ride along under any other key either. ("Da
+    // Nang" is the shared city of both, and is legitimately absent from this
+    // variant's own fields — `atEventCity` is asserted separately below.)
+    assert.ok(!JSON.stringify(p).includes("Journal"), "no memory title on an event Passport");
 
     assert.equal(p.userId, full.userId);
     assert.equal(p.viewerContext, full.viewerContext);

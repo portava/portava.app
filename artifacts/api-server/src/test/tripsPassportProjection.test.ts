@@ -28,11 +28,14 @@ const BOB = "bbbbbbbb-0000-0000-0000-000000000002";   // target (trip owner/host
 const CAROL = "cccccccc-0000-0000-0000-000000000003"; // not on the trip
 const TRIP = "33333333-0000-0000-0000-000000000001";
 
-function serviceStore(opts: { blocked?: boolean } = {}) {
+function serviceStore(opts: { blocked?: boolean; carolOnTrip?: boolean } = {}) {
   return makePassportDb({
     trip_members: [
       { trip_id: TRIP, user_id: ALICE, role: "member", status: "accepted" },
       { trip_id: TRIP, user_id: BOB, role: "owner", status: "accepted" },
+      ...(opts.carolOnTrip
+        ? [{ trip_id: TRIP, user_id: CAROL, role: "member", status: "accepted" }]
+        : []),
     ],
     trips: [{ id: TRIP, owner_id: BOB }],
     profiles: [
@@ -48,6 +51,19 @@ function serviceStore(opts: { blocked?: boolean } = {}) {
         travel_group_style: ["social"], open_to_meet: true, created_at: "2023-01-01",
       },
       { id: ALICE, handle: "alice", name: "Alice", created_at: "2023-01-01" },
+      // Carol is NOT on the trip, but she IS a real, projectable traveler. Without
+      // this row the projection would return null and the handler would 404 from
+      // its "User not found" branch — which would make the target-membership test
+      // below pass for the wrong reason (it stayed green with the gate deleted).
+      {
+        id: CAROL, handle: "carol", name: "Carol Outsider", display_name: "Carol Outsider",
+        avatar_url: "https://x/carol.png", verified: false,
+        is_official: false, is_private: false, passport_visibility: "public",
+        show_profile_picture_publicly: true,
+        interests: ["Hiking"], spoken_languages: ["English"],
+        travel_pace: "slow", planning_style: "spontaneous",
+        open_to_meet: true, created_at: "2023-01-01",
+      },
     ],
     trust_profiles: [{
       user_id: BOB, overall_score: 78, public_level: "trusted_traveler",
@@ -126,8 +142,12 @@ describe("GET /api/trips/:tripId/members/:userId/passport", () => {
     // reports that as the host/guest context rather than re-querying membership.
     assert.equal(p.viewerContext, "trip_host");
     assert.equal(p.hostGuestContext, "host");
-    assert.ok(Array.isArray(p.languages));
-    assert.ok(Array.isArray(p.travelStyle));
+    // These must be genuinely POPULATED here, otherwise the blocked test's
+    // `deepEqual(…, [])` assertions below would be passing on an empty fixture
+    // rather than on the §24 collapse.
+    assert.deepEqual(p.languages, ["English", "Vietnamese"]);
+    assert.ok(p.travelStyle.length > 0, "the unblocked fixture carries travel style");
+    assert.ok(p.trustDomains.length > 0, "the unblocked fixture carries trust domains");
     // The aggregate's heavy sections must never reach a crew list.
     for (const k of ["stamps", "memories", "upcomingPlans", "featuredJourney",
                      "availability", "intent", "sharedContext", "credentials", "stats", "trust"]) {
@@ -164,6 +184,15 @@ describe("GET /api/trips/:tripId/members/:userId/passport", () => {
     const r = await get(port, `/api/trips/${TRIP}/members/${CAROL}/passport`, "alice-tok");
     await close();
     assert.equal(r.status, 404);
+
+    // CONTROL: the 404 above must come from the TARGET-membership gate, not from
+    // Carol being unprojectable. Put the SAME Carol on the trip and the SAME
+    // request succeeds — so deleting the gate really does turn this test red.
+    const s2 = await startServer(serviceStore({ carolOnTrip: true }));
+    const ok = await get(s2.port, `/api/trips/${TRIP}/members/${CAROL}/passport`, "alice-tok");
+    await s2.close();
+    assert.equal(ok.status, 200, "Carol is projectable — the 404 above is the membership gate");
+    assert.equal(ok.body.passport.identity.handle, "carol");
   });
 
   it("400s on a malformed trip or user id", async () => {

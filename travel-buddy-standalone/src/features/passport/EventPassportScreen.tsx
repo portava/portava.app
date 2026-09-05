@@ -45,11 +45,22 @@ export type ScreenState =
   | { kind: 'disabled' };
 
 /**
- * Every refusal renders as the SAME neutral message. An expired share, a
- * revoked one, an unknown token and "you are not at this event" are
- * deliberately indistinguishable to the viewer — telling them apart would turn
- * the screen into an oracle for whether a given person minted a share for a
- * given event.
+ * Every refusal renders as the SAME neutral message: an expired share, a revoked
+ * one, an unknown token and "you are not at this event" all land here.
+ *
+ * SCOPE OF THIS INVARIANT — it is enforced HERE, on the screen, not by the API.
+ * `sendEventShareRefusal` (artifacts/api-server/src/routes/passport.ts) does
+ * distinguish them on the wire: 404 for an unknown token, and three separate
+ * 403 messages for revoked / expired / not-at-the-event. This screen
+ * deliberately collapses all of that into one line so the rendered surface is
+ * not an oracle for whether a given person minted a share for a given event.
+ *
+ * That layering is intentional rather than an oversight: reaching any of those
+ * responses at all requires BOTH an authenticated caller and possession of a
+ * 48-hex token, so the API's extra detail is only ever told to someone who
+ * already holds the handle — while an operator debugging a refusal still gets a
+ * usable reason. If the API is ever made uniform, this comment (and the
+ * server's refusal table) must move together.
  */
 const REFUSAL_COPY = 'This event Passport is not available.';
 

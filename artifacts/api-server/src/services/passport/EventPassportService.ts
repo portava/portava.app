@@ -226,15 +226,23 @@ export async function createEventPassportShare(
   if (!(await isAttending(sc, event, ownerId))) return refuse("owner_not_attending");
 
   const nowIso = new Date(nowMs).toISOString();
-  // Revoke any live share for this (owner, event) BEFORE inserting, so the
-  // partial unique index never sees two live rows.
+  // Revoke any live share for this (owner, event) BEFORE inserting: 2294's
+  // partial unique index (event_passport_shares_live_uniq … WHERE revoked_at IS
+  // NULL) makes two live rows unrepresentable, so the old row has to stop being
+  // live before the new one can exist. The ordering is therefore forced — but
+  // the two statements are NOT one transaction, so the revoke is only safe
+  // because the insert's failure path below undoes it.
   const revokeRes: any = await sc
     .from("event_passport_shares")
     .update({ revoked_at: nowIso })
     .eq("user_id", ownerId)
     .eq("event_id", eventId)
-    .is("revoked_at", null);
+    .is("revoked_at", null)
+    .select("id");
   if (revokeRes?.error) return refuse("not_found");
+  const revokedIds: string[] = Array.isArray(revokeRes?.data)
+    ? revokeRes.data.map((r: any) => r?.id).filter((id: any) => typeof id === "string")
+    : [];
 
   const expiresAt = new Date(shareExpiryFor(String(event.endsAt), nowMs)).toISOString();
   const { data, error } = await sc
@@ -247,7 +255,36 @@ export async function createEventPassportShare(
     })
     .select(SHARE_COLUMNS)
     .maybeSingle();
-  if (error || !data) return refuse("not_found");
+  if (error || !data) {
+    // Compensate: without this, a failed insert leaves the owner REVOKED with
+    // nothing minted — a strictly worse state than the one they asked to
+    // replace, and one they cannot see (their card just goes blank). Put the
+    // previous share back.
+    //
+    // The unique index permits it: the (user_id, event_id) live slot is empty
+    // again precisely because the insert failed. If a concurrent create DID
+    // take that slot, this update loses to the index and the owner keeps the
+    // newer live share — still never "revoked with nothing minted". The
+    // `revoked_at = nowIso` predicate keeps us from resurrecting a share that
+    // someone (or something) else revoked in between.
+    if (revokedIds.length > 0) {
+      try {
+        await sc
+          .from("event_passport_shares")
+          .update({ revoked_at: null })
+          .in("id", revokedIds)
+          .eq("revoked_at", nowIso);
+      } catch {
+        // resolves-not-throws-ok: this IS the failure path — the caller is
+        // already being refused below, and there is nothing further to escalate
+        // to from here. A restore that itself fails leaves the owner with no
+        // live share, which is the same place a bare revoke-then-failed-insert
+        // would have left them; it never invents a live share or resurrects a
+        // deliberately revoked one (the revoked_at = nowIso predicate).
+      }
+    }
+    return refuse("not_found");
+  }
   return { ok: true, value: rowToShare(data) };
 }
 
@@ -283,9 +320,14 @@ export async function revokeEventPassportShare(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The owner's LIVE share for an event, or null. Applies the same read-time
- * expiry as `resolveEventPassport`, so the owner is never shown "sharing" for a
- * share that has already lapsed.
+ * The owner's LIVE share for an event, or null.
+ *
+ * §31 "never render stale as current": this applies the SAME three read-time
+ * horizons `resolveEventPassport` does — the share's own `expires_at`, the
+ * event's `ends_at`, and the event still being in a live state. Checking only
+ * the first would leave the owner's card reading "sharing until…" after an
+ * event was cancelled, while every scan of that same token refuses. The owner's
+ * view of their own share must agree with what viewers actually get.
  */
 export async function getOwnEventPassportShare(
   sc: SupabaseClient,
@@ -304,6 +346,9 @@ export async function getOwnEventPassportShare(
     if (!data) return null;
     const share = rowToShare(data);
     if (Date.parse(share.expiresAt) <= nowMs) return null;
+    // The event's own end / state, exactly as the resolve path re-checks them.
+    const event = await loadEvent(sc, share.eventId);
+    if (!event || !eventIsShareable(event, nowMs)) return null;
     return share;
   } catch {
     return null;
