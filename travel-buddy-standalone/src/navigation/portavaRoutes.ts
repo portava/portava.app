@@ -676,6 +676,17 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     deepLink: '/passport/journeys',
   },
   {
+    key: 'passport-yearbook',
+    path: 'passport/yearbook',
+    title: 'Yearbook',
+    parent: 'tab-passport',
+    icon: 'BookOpen',
+    requiresAuth: true,
+    // The yearbook endpoint serves only the signed-in traveller's own yearbook.
+    ownerOnly: true,
+    deepLink: '/passport/yearbook',
+  },
+  {
     key: 'passport-travel-identity',
     path: 'passport/travel-identity',
     title: 'Travel Identity',

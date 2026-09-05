@@ -80,6 +80,7 @@ import {
 import {
   classifyAgainstProtected,
   zoneCovers,
+  COARSEN_UNSAFE_KINDS,
   type ProtectedZone,
 } from "./protectedLocations.js";
 import { haversineKm } from "./mapSearch.js";
@@ -1508,34 +1509,37 @@ export function buildFlowZoneModel(
 }
 
 /**
- * §24 for crowd flow: inside a protected zone a flow is WITHHELD, never
- * coarsened.
+ * §24 for the kinds coarsening cannot help: inside a protected zone a
+ * `crowd_flow` or a `prediction` is WITHHELD, never coarsened.
  *
  * `applyProtection` still runs over these objects afterwards and is still the
- * gate; this only removes the one outcome that would be wrong for this kind.
- * `coarsenForZone` strips an object's `count`, `observedAt` and `freshness`
- * because "how busy is the clinic right now" is the disclosure — but a
- * `crowd_flow` restates exactly those three inside `payload.observed`
- * (cohortSize, observedAt), which coarsening does not touch, and its geometry
- * is a LineString, which coarsening deliberately leaves alone. A coarsened flow
- * would therefore keep everything coarsening exists to remove. There is also no
- * honest coarser version of it to fall back to: the geometry is already zone
- * centroids. So the answer for this kind is to withhold, which is a tightening
- * of the existing decision and changes no policy, category or constant.
+ * gate; this only removes ahead of it the one outcome that would be wrong for
+ * these kinds, so a producer can report its own withheld count. The policy
+ * itself lives in ONE place — `protectedLocations.COARSEN_UNSAFE_KINDS`, which
+ * `classifyAgainstProtected` escalates on — so this pre-filter and the gate
+ * cannot disagree, and a route that forgets to call this still gets the right
+ * answer. (Formerly `withholdCoarsenableFlows`, crowd-flow only. It was renamed
+ * when `prediction` joined the table: a coarsened prediction reached the wire
+ * with its top-level `count` deleted and `payload.cohort` intact, which is the
+ * same disclosure restated one level down.)
  *
  * Returns the surviving objects and a COUNT — never which zone, never which
- * flow, for the reason `ProtectionReport` gives.
+ * object, for the reason `ProtectionReport` gives.
  */
-export function withholdCoarsenableFlows(
+export function withholdCoarsenableAggregates(
   objects: readonly MapObject[],
   zones: readonly ProtectedZone[] | null | undefined,
-): { objects: MapObject[]; withheld: number } {
-  if (!Array.isArray(objects) || objects.length === 0) return { objects: [], withheld: 0 };
-  if (!Array.isArray(zones) || zones.length === 0) return { objects: [...objects], withheld: 0 };
+): { objects: MapObject[]; withheld: number; withheldByKind: Record<string, number> } {
+  const empty = (kept: MapObject[]) => ({ objects: kept, withheld: 0, withheldByKind: {} });
+  if (!Array.isArray(objects) || objects.length === 0) return empty([]);
+  if (!Array.isArray(zones) || zones.length === 0) return empty([...objects]);
   const kept: MapObject[] = [];
+  // Per-kind, because a producer's own "withheld for protection" counter must
+  // not absorb another kind's removals once more than one kind is on the table.
+  const withheldByKind: Record<string, number> = {};
   let withheld = 0;
   for (const obj of objects) {
-    if (obj.kind !== "crowd_flow") {
+    if (!COARSEN_UNSAFE_KINDS.includes(obj.kind)) {
       kept.push(obj);
       continue;
     }
@@ -1544,8 +1548,9 @@ export function withholdCoarsenableFlows(
       continue;
     }
     withheld += 1;
+    withheldByKind[obj.kind] = (withheldByKind[obj.kind] ?? 0) + 1;
   }
-  return { objects: kept, withheld };
+  return { objects: kept, withheld, withheldByKind };
 }
 
 // ── shared ────────────────────────────────────────────────────────────────────

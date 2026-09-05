@@ -59,7 +59,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
 
 // ── Env-var checks ────────────────────────────────────────────────────────────
 
@@ -138,13 +138,13 @@ before(async () => {
   // liveFixtureUsers.ts — one crashed run otherwise wedges this job red
   // permanently, which is exactly what had happened.
   await purgeFixtureUsers(admin, [
-    `${PREFIX}attacker@example.com`,
-    `${PREFIX}victim@example.com`,
-    `${PREFIX}fresh@example.com`,
+    fixtureEmail(`${PREFIX}attacker@example.com`),
+    fixtureEmail(`${PREFIX}victim@example.com`),
+    fixtureEmail(`${PREFIX}fresh@example.com`),
   ]);
 
   const { data: attacker, error: aErr } = await admin.auth.admin.createUser({
-    email: `${PREFIX}attacker@example.com`,
+    email: fixtureEmail(`${PREFIX}attacker@example.com`),
     password: PASSWORD,
     email_confirm: true,
   });
@@ -152,7 +152,7 @@ before(async () => {
   attackerId = attacker.user.id;
 
   const { data: victim, error: vErr } = await admin.auth.admin.createUser({
-    email: `${PREFIX}victim@example.com`,
+    email: fixtureEmail(`${PREFIX}victim@example.com`),
     password: PASSWORD,
     email_confirm: true,
   });
@@ -170,7 +170,7 @@ before(async () => {
   if (pErr) throw new Error(`Setup: upsert profiles: ${pErr.message}`);
 
   const { data: signIn, error: sErr } = await anonClient().auth.signInWithPassword({
-    email: `${PREFIX}attacker@example.com`,
+    email: fixtureEmail(`${PREFIX}attacker@example.com`),
     password: PASSWORD,
   });
   if (sErr) throw new Error(`Setup: sign in attacker: ${sErr.message}`);
@@ -327,7 +327,7 @@ describe("5. alternate write paths cannot bypass the boundary", { skip: !CREDS_A
     // of the trigger the very first write would be a free role assignment.
     const admin = adminClient();
     const { data: fresh, error: cErr } = await admin.auth.admin.createUser({
-      email: `${PREFIX}fresh@example.com`,
+      email: fixtureEmail(`${PREFIX}fresh@example.com`),
       password: PASSWORD,
       email_confirm: true,
     });
@@ -339,7 +339,7 @@ describe("5. alternate write paths cannot bypass the boundary", { skip: !CREDS_A
       await admin.from("profiles").delete().eq("id", freshId);
 
       const { data: signIn, error: sErr } = await anonClient().auth.signInWithPassword({
-        email: `${PREFIX}fresh@example.com`,
+        email: fixtureEmail(`${PREFIX}fresh@example.com`),
         password: PASSWORD,
       });
       if (sErr) throw new Error(`5d: sign in fresh user: ${sErr.message}`);

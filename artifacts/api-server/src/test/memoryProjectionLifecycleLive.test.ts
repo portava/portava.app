@@ -29,6 +29,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { findUserByEmail, deleteFixtureUser } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -48,8 +49,10 @@ async function ensureUser(email: string, handle: string): Promise<string> {
   });
   let id = created?.user?.id ?? "";
   if (error || !id) {
-    const { data: list } = await sc.auth.admin.listUsers();
-    id = (list?.users ?? []).find((u: any) => u.email === email)?.id ?? "";
+    // Already exists from a previous run — find it. Paginated: a bare
+    // listUsers() returns only the first 50 accounts, and this lookup silently
+    // stopped finding its own user once the CI project grew past that.
+    id = await findUserByEmail(sc, email);
   }
   if (!id) throw new Error(`could not create or find test user ${email}`);
   await sc.from("profiles").upsert({ id, handle, name: handle }, { onConflict: "id" });
@@ -109,7 +112,7 @@ before(async () => {
 after(async () => {
   if (!CREDS || !sc) return;
   await purge(userA); await purge(userB);
-  for (const id of [userA, userB]) if (id) await sc.auth.admin.deleteUser(id).catch(() => {});
+  for (const id of [userA, userB]) if (id) await deleteFixtureUser(sc, id);
 });
 
 describe("repeated scheduler passes are idempotent", () => {

@@ -102,7 +102,8 @@ describe("derivePatterns — Table-19 minimum is a hard floor", () => {
 describe("deriveInvalidations — tombstones on invalidated provenance", () => {
   const current: ExistingPattern[] = [{
     id: "pat-1", subjectId: "p1", zoneId: "z1", claimFamily: "crowd.level",
-    patternKind: "typical_crowd_by_weekday_hour", timeBand: "hour_20", computedAt: "2026-08-01T00:00:00.000Z",
+    patternKind: "typical_crowd_by_weekday_hour", timeBand: "hour_20", dow: 5,
+    computedAt: "2026-08-01T00:00:00.000Z",
   }];
 
   it("tombstones a current pattern whose source family was retracted", () => {
@@ -113,6 +114,9 @@ describe("deriveInvalidations — tombstones on invalidated provenance", () => {
     assert.equal(t.length, 1);
     assert.equal(t[0].supersedesId, "pat-1");
     assert.equal(t[0].reason, "source_provenance_invalidated");
+    // The tombstone carries the FULL read key — the reader matches on dow too.
+    assert.equal(t[0].timeBand, "hour_20");
+    assert.equal(t[0].dow, 5);
   });
 
   it("does NOT tombstone when the scope has a fresh pattern this pass (self-healing)", () => {
