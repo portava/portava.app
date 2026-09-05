@@ -16,6 +16,7 @@ import eventsRouter from "../routes/events.js";
 import postcardsRouter from "../routes/postcards.js";
 import { sweepExpiredStories } from "../routes/stories.js";
 import { FEED_DIM } from "../lib/mediaProcessing.js";
+import { FIXTURE_ISO6709, mp4WithLocation } from "./videoFixtures.js";
 
 let server: http.Server;
 let base: string;
@@ -254,26 +255,31 @@ describe("POST /api/media/upload — hardening", () => {
     assert.equal(client._uploads.length, 1, "only the raw video should be stored");
   });
 
-  // HEIC fail-soft path (posts.ts lines 179–190).
+  // HEIC is FAIL-CLOSED — it used not to be, and that was a live GPS leak.
   //
-  // When the server's HEIC decoder is unavailable (libvips build without HEIF
-  // support), processImage() throws on HEIC input.  The catch block recognises
-  // sniffed.mime === "image/heic" and stores the original bytes rather than
-  // returning a 4xx — older mobile clients that already sent HEIC would
-  // otherwise lose their upload.
+  // This branch previously special-cased image/heic: when processImage() threw,
+  // the raw bytes were stored as-is ("fail-soft", so older mobile clients would
+  // not lose an upload). The trade was described as a documented gap on a path
+  // nothing took. It was neither.
   //
-  // The critical safety property: this path MUST return processed=false and
-  // null dimensions.  A row that later claims processing_status='ready' with
-  // null width/height is blocked by the DB CHECK constraint added by migration
-  // 2088 (post_media_ready_has_dimensions).  The null dims in this response
-  // are the signal the client needs to know "do not write ready + null".
-  it("HEIC fail-soft: stores original bytes and returns processed=false, null width/height — DB constraint is the backstop", async () => {
+  //   • sniffMedia() classifies the `heic`/`mif1` brands as image/heic and
+  //     ALLOWED_MEDIA_MIME accepts image/heic, so these uploads are reachable.
+  //   • The bundled libvips (8.18.3) links libheif with the AOM/AV1 codec only
+  //     — there is no HEVC decoder plugin in the build. A real iPhone HEIC
+  //     therefore fails with "Support for this compression format has not been
+  //     built in" EVERY time, taking this branch on every such upload.
+  //
+  // So the one image format the pipeline could not strip metadata from was the
+  // one format it stored untouched: EXIF and GPS intact, written by the code
+  // whose entire purpose is to remove them. The sibling transport (postcards
+  // /complete) already rejects any image it cannot process, with no HEIC
+  // exception; rejecting here makes the two agree.
+  it("an undecodable image is REJECTED, never stored raw — HEIC gets no fail-open exemption", async () => {
     const client = makeClient();
     setClients(client);
-    // Minimal ftyp box that sniffMedia() classifies as image/heic.
-    // brand bytes "heic" → starts with "hei" → image/heic.
-    // These are NOT real HEIC payload bytes, so processImage() will throw,
-    // exercising the exact HEIC fail-soft catch branch.
+    // Minimal ftyp box that sniffMedia() classifies as image/heic (brand bytes
+    // "heic" → starts with "hei"). Not real HEIC payload, so processImage()
+    // throws — the exact branch a genuine iPhone HEIC takes in this build.
     const heicStub = Buffer.concat([
       Buffer.from([0, 0, 0, 16]), // box size = 16 bytes
       Buffer.from("ftyp"),        // box type
@@ -281,13 +287,37 @@ describe("POST /api/media/upload — hardening", () => {
       Buffer.from([0, 0, 0, 0]),  // minor version
     ]);
     const r = await rawReq("POST", "/api/media/upload", heicStub, "image/heic");
-    assert.equal(r.status, 201, `expected 201 (HEIC fail-soft stores as-is), got ${r.status}: ${JSON.stringify(r.body)}`);
-    assert.equal(r.body.processed, false, "processed must be false — HEIC decode was unavailable");
-    assert.equal(r.body.width,  null, "width must be null — server cannot measure undecoded HEIC");
-    assert.equal(r.body.height, null, "height must be null — server cannot measure undecoded HEIC");
-    // One storage write (the raw HEIC bytes); no thumbnail or feed variant
-    // because those require a successfully-decoded image.
-    assert.equal(client._uploads.length, 1, "only the raw HEIC bytes should be stored — no thumbnail/feed variant");
+    assert.equal(r.status, 400, `expected 400, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "invalid_payload");
+    assert.equal(
+      client._uploads.length, 0,
+      "an image whose metadata cannot be stripped must not reach storage at all",
+    );
+  });
+
+  // The video counterpart of the EXIF strip above: a phone video carries its
+  // capture coordinates in the CONTAINER (moov/udta/©xyz), and this transport
+  // stored video byte-for-byte. Detailed coverage — length preservation, the
+  // Apple location key, the webm refusal — lives in
+  // src/test/videoLocationMetadata.test.ts; this asserts the property here, on
+  // the certified upload path, so it cannot regress unnoticed.
+  it("video upload: container location metadata is stripped before storage", async () => {
+    const client = makeClient();
+    setClients(client);
+    const geotagged = mp4WithLocation();
+    assert.ok(
+      geotagged.includes(Buffer.from(FIXTURE_ISO6709, "latin1")),
+      "fixture must actually be geotagged",
+    );
+    const r = await rawReq("POST", "/api/media/upload", geotagged, "video/mp4");
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(client._uploads.length, 1, "only the raw video should be stored");
+    const stored = client._uploads[0].buf as Buffer;
+    assert.equal(
+      stored.includes(Buffer.from(FIXTURE_ISO6709, "latin1")), false,
+      "stored video must NOT carry the capture coordinates",
+    );
+    assert.equal(stored.length, geotagged.length, "the scrub must not resize the file");
   });
 });
 
@@ -328,12 +358,14 @@ describe("POST /api/events/:id/media — storage-origin validation", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Dimension guard — HEIC null-dim response is the upstream signal; the
+// Dimension guard — the null-dim response is the upstream signal; the
 // postcards /complete endpoint is the downstream enforcement point.
 //
 // Full chain:
 //   1. /media/upload returns { processed: false, width: null, height: null }
-//      when HEIC decode fails (test above).
+//      for VIDEO, which has no server-side measurement (test above). Images no
+//      longer reach this state at all — one that cannot be processed is now
+//      rejected outright rather than stored unmeasured.
 //   2. The client must NOT write processing_status='ready' with those null dims.
 //   3. If it tries, the app-level guard in POST /postcards/:id/media/:id/complete
 //      rejects before hitting the DB.  The DB CHECK constraint (migration 2088,
@@ -378,7 +410,7 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
                   user_id:           USER_ID,
                   media_type:        "video",
                   processing_status: "pending",
-                  storage_path:      `${USER_ID}/heic-test.heic`,
+                  storage_path:      `${USER_ID}/video-test.mp4`,
                   storage_bucket:    "post-media",
                 },
                 error: null,
@@ -425,7 +457,7 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
   }
 
   it("completing a video upload without width+height is rejected with invalid_payload — DB constraint never reached", async () => {
-    // Simulate the exact scenario that follows a HEIC/video upload whose
+    // Simulate the exact scenario that follows a video upload whose
     // /media/upload response carried processed=false + null dims:
     // the client calls /complete but omits the dimensions it did not receive.
     const client = makePostcardsClient();
@@ -436,8 +468,8 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
       `/api/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
       {
         // Exactly what the client passes after receiving { width: null,
-        // height: null } from /media/upload (HEIC fail-soft or unprocessed
-        // video).  Sending null explicitly — not just omitting the fields —
+        // height: null } from /media/upload (an unprocessed video).
+        // Sending null explicitly — not just omitting the fields —
         // ensures we exercise the app-level dimension guard rather than Zod's
         // "Expected number, received null" fallback.
         mimeType:      "video/mp4",
