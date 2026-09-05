@@ -4,7 +4,7 @@
  * Covers:
  *  A. Blocked user exclusion — posts by blocked users are not returned
  *  B. Blocked-by exclusion — posts by users who blocked the viewer are filtered
- *  C. Delayed-location guard — posts with locationSource=delayed_pending have location fields nulled
+ *  C. Delayed-publish gate — a post whose post_status is still pending is not served at all
  *  D. Followed-user boost — posts from followed users score higher than strangers
  *  E. Hashtag interest boost — posts matching a user's interests rank higher
  *  F. City boost — posts in the viewer's Compass city rank higher than other cities
@@ -52,6 +52,10 @@ function makePost(overrides: Record<string, any> = {}): Record<string, any> {
     created_at:       overrides.created_at ?? NOW,
     visibility:       "public",
     status:           "active",
+    // posts.post_status is NOT NULL DEFAULT 'published' (migration 0049), so a
+    // real row ALWAYS carries one. Fixtures that omitted it could not tell a
+    // published post from a pending delayed-geotag one.
+    post_status:      overrides.post_status ?? "published",
     location_city:    overrides.location_city ?? null,
     location_country: overrides.location_country ?? null,
     location_name:    overrides.location_name ?? null,
@@ -85,6 +89,15 @@ interface FakeState {
   compassUserPreferences?:  Array<Record<string, any>>;
   hashtagUsages?:           Array<{ source_id: string; source_type: string; hashtag_id: string }>;
   hashtags?:                Array<{ id: string; slug: string; is_blocked: boolean }>;
+  /** Every terminal read is recorded here (table + the .eq() predicates it carried),
+   *  so a test can assert that a query CARRIES a filter and not merely that the
+   *  response happens to be right. Without this the fake's own row filtering
+   *  hides a deleted DB predicate. */
+  captured?:                Array<{ table: string; eqs: Record<string, any> }>;
+  /** Columns whose .eq() the fake does NOT apply — it feeds those rows PAST the
+   *  filter the way a widened query or a stale client would, so the route's
+   *  in-memory re-check is what has to refuse them. */
+  ignoreEqCols?:            string[];
 }
 
 function makeClient(state: FakeState = {}, callerUserId: string = ALICE_ID) {
@@ -120,13 +133,18 @@ function makeClient(state: FakeState = {}, callerUserId: string = ALICE_ID) {
     user_mutes:              [],
   };
 
+  const ignoreEq = new Set(state.ignoreEqCols ?? []);
+
   function builder(table: string, rows: any[]) {
     let filtered = [...rows];
     const ops: Array<() => void> = [];
+    const eqs: Record<string, any> = {};
 
     const b: any = {
       select: (_cols?: string) => builder(table, rows),
       eq: (col: string, val: any) => {
+        eqs[col] = val;
+        if (ignoreEq.has(col)) return b;
         filtered = filtered.filter((r) => r[col] === val);
         return b;
       },
@@ -179,7 +197,10 @@ function makeClient(state: FakeState = {}, callerUserId: string = ALICE_ID) {
         Promise.resolve({ data: filtered[0] ?? null, error: null }),
       single: () =>
         Promise.resolve({ data: filtered[0] ?? null, error: null }),
-      then: (resolve: any) => resolve({ data: [...filtered], error: null }),
+      then: (resolve: any) => {
+        state.captured?.push({ table, eqs: { ...eqs } });
+        return resolve({ data: [...filtered], error: null });
+      },
     };
     return b;
   }
@@ -311,11 +332,41 @@ describe("GET /api/pulse — blocked-by exclusion", async () => {
   });
 });
 
-// ── C: Delayed-location guard ──────────────────────────────────────────────────
+// ── C: Delayed-publish gate ────────────────────────────────────────────────────
+//
+// This block used to assert that a post with location_source='delayed_pending'
+// had its location fields nulled. It proved nothing twice over:
+//
+//   • 'delayed_pending' is not a label of the Postgres enum `location_source`
+//     (its only labels are 'gps' | 'manual' | 'none' — see the baseline and
+//     database.types.ts), so no row could ever hold it. The route's guard
+//     compared against the same impossible string and never fired; the test
+//     passed because the fixture's location fields were nulled by the SHAPER,
+//     not by the guard (POST_SAFE_COLUMNS does not even select venue_name).
+//   • Nulling location was the wrong remedy anyway: it still served the BODY of
+//     a post whose author had asked for it to stay hidden until they had left
+//     the place — the entire point of delayed geotagging (§23/§37).
+//
+// The publication state lives in `post_status` (enum delayed_post_status, NOT
+// NULL DEFAULT 'published'). These tests pin BOTH layers of the real gate.
 
-describe("GET /api/pulse — delayed-location guard", async () => {
+describe("GET /api/pulse — delayed-publish gate (§23/§37)", async () => {
   let url: string;
   let close: () => Promise<void>;
+
+  const pendingPost = () => makePost({
+    author_id:     BOB_ID,
+    body:          "I am standing here right now",
+    location_city: "Manila",
+    location_name: "Some precise location",
+    post_status:   "pending_location_exit",
+  });
+  const publishedPost = () => makePost({
+    author_id:     BOB_ID,
+    body:          "A post that is actually published",
+    location_city: "Manila",
+    post_status:   "published",
+  });
 
   before(async () => {
     invalidateFlagsCache();
@@ -323,17 +374,6 @@ describe("GET /api/pulse — delayed-location guard", async () => {
     const { default: pulseRouter } = await import("../routes/pulse.js");
     app.use("/api", pulseRouter);
     ({ url, close } = await startServer(app));
-
-    const delayedPost = makePost({
-      author_id:       BOB_ID,
-      body:            "Delayed location post",
-      location_city:   "Manila",
-      location_name:   "Some precise location",
-      venue_name:      "Secret venue",
-      location_source: "delayed_pending",
-    });
-
-    _setTestClient(makeClient({ posts: [delayedPost] }), true);
   });
 
   after(async () => {
@@ -341,17 +381,48 @@ describe("GET /api/pulse — delayed-location guard", async () => {
     _setTestClient(null as any, false);
   });
 
-  it("nulls out location fields for posts with locationSource=delayed_pending", async () => {
-    const r = await fetch(`${url}/api/pulse`, {
-      headers: { Authorization: "Bearer alice-token" },
-    });
+  async function get() {
+    const r = await fetch(`${url}/api/pulse`, { headers: { Authorization: "Bearer alice-token" } });
     assert.equal(r.status, 200);
-    const body     = await r.json() as any;
-    const post     = (body.posts as any[])[0];
-    assert.ok(post, "at least one post should be returned");
-    assert.equal(post.locationCity,     null, "locationCity should be nulled");
-    assert.equal(post.locationName,     null, "locationName should be nulled");
-    assert.equal(post.venueName,        null, "venueName should be nulled");
+    return (await r.json()) as any;
+  }
+
+  it("the feed query CARRIES post_status='published' (the DB-layer predicate)", async () => {
+    const captured: Array<{ table: string; eqs: Record<string, any> }> = [];
+    _setTestClient(makeClient({ posts: [publishedPost(), pendingPost()], captured }), true);
+    const body = await get();
+    assert.equal((body.posts as any[]).length, 1, "only the published post is served");
+
+    const feedReads = captured.filter((c) => c.table === "posts" && c.eqs.status === "active");
+    assert.ok(feedReads.length >= 1, "the pulse feed read posts");
+    for (const q of feedReads) {
+      assert.equal(q.eqs.visibility, "public");
+      assert.equal(q.eqs.post_status, "published", "the pulse query carries the canonical predicate");
+    }
+  });
+
+  it("a pending row fed PAST the query filter is still refused in memory", async () => {
+    // ignoreEqCols makes the fake NOT apply .eq('post_status', …) — the shape of
+    // a widened query. The route's own re-check has to catch it.
+    _setTestClient(makeClient({
+      posts: [publishedPost(), pendingPost()],
+      ignoreEqCols: ["post_status"],
+    }), true);
+    const body = await get();
+    const bodies = (body.posts as any[]).map((p: any) => p.content ?? p.body);
+    assert.ok(
+      !bodies.some((c: string) => String(c).includes("standing here right now")),
+      "a pending post must not be served — not its location, and not its body",
+    );
+    assert.equal(bodies.length, 1, "the published post is still served");
+  });
+
+  it("a legacy row with NO post_status reads as published (absent ⇒ published)", async () => {
+    const legacy = makePost({ author_id: BOB_ID, body: "legacy row", location_city: "Manila" });
+    delete (legacy as any).post_status;
+    _setTestClient(makeClient({ posts: [legacy], ignoreEqCols: ["post_status"] }), true);
+    const body = await get();
+    assert.equal((body.posts as any[]).length, 1, "absent post_status must not fail closed");
   });
 });
 
