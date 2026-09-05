@@ -34,9 +34,13 @@ describe("buildCityStampLabels", () => {
     assert.equal(sublabel, String(YEAR));
   });
 
+  // FIXTURE REPAIR (STAMP·H3): this used to assert `GE · YEAR`, which is not a
+  // country code at all — it was the first two letters of "germany". Germany's
+  // real ISO-3166-1 alpha-2 code is DE. The old assertion encoded the
+  // truncation bug, so it is corrected to reality here rather than relaxed.
   it("handles mixed-case country", () => {
     const { sublabel } = buildCityStampLabels("berlin", "germany");
-    assert.equal(sublabel, `GE · ${YEAR}`);
+    assert.equal(sublabel, `DE · ${YEAR}`);
   });
 
   it("preserves city with special chars", () => {
@@ -161,23 +165,32 @@ describe("buildCityStampLabels", () => {
     assert.equal(sublabel, String(YEAR));
   });
 
-  // A string starting with letters but containing digits/punctuation after the
-  // first two characters is still valid (the guard only checks the prefix).
-  it("uses country code when string starts with two or more letters", () => {
+  // A full country name resolves through the ISO name table.
+  it("uses the real ISO code for a full country name", () => {
     const { sublabel } = buildCityStampLabels("somewhere", "Philippines");
     assert.equal(sublabel, `PH · ${YEAR}`);
   });
 
-  // A country string that starts with letters but contains digits after the
-  // prefix must still produce the two-letter code — the guard is prefix-only.
-  it('extracts "US" from "US1" (letters-then-digit)', () => {
+  // FIXTURE REPAIR (STAMP·H3): these two cases were named "extracts US from
+  // US1" / "extracts TH from TH-ext" and documented as prefix truncation. The
+  // expected values happen to be right, but the stated mechanism was the bug.
+  // The malformed country string now resolves to nothing at all; the code comes
+  // from the well-known-city lookup instead. Names and comments corrected.
+  it('falls back to the city lookup when the country is malformed ("US1")', () => {
     const { sublabel } = buildCityStampLabels("new york", "US1");
     assert.equal(sublabel, `US · ${YEAR}`);
   });
 
-  it('extracts "TH" from "TH-ext" (letters then hyphen+letters)', () => {
+  it('falls back to the city lookup when the country is malformed ("TH-ext")', () => {
     const { sublabel } = buildCityStampLabels("bangkok", "TH-ext");
     assert.equal(sublabel, `TH · ${YEAR}`);
+  });
+
+  // …and when neither the country string nor the city is resolvable, no code
+  // is emitted at all rather than a truncated one.
+  it("emits no code when a malformed country has no resolvable city", () => {
+    const { sublabel } = buildCityStampLabels("nowheresville", "US1");
+    assert.equal(sublabel, String(YEAR));
   });
 });
 

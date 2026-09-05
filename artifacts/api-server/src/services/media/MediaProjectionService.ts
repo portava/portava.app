@@ -54,6 +54,7 @@ import {
   type MediaTimeBands,
 } from "../../lib/media/mediaTimeBands.js";
 import { logger } from "../../lib/logger.js";
+import { excludePrivateAuthorPosts } from "../../lib/privacyFilter.js";
 import {
   buildCategoryBuckets,
   buildPerspectiveSummary,
@@ -218,7 +219,35 @@ export async function loadEligibleCandidates(
   // Fail-closed: a block-fetch failure means we cannot prove nothing is from a
   // blocked user, so we surface nothing rather than risk it.
   if (blockFetchFailed) return [];
-  return eligible as unknown as MediaCandidateRow[];
+
+  // ── Private-account guard ───────────────────────────────────────────────────
+  // filterEligibleMediaCandidates gates blocks, mutes, suspension, status,
+  // post_status, publish_at, visibility and moderation — and nothing else. It
+  // has never known about `profiles.is_private`; that rule lives in
+  // lib/privacyFilter and the two LEGACY media feeds both call it
+  // (routes/mediaFeed.ts mode=grid and GET /media/feed).
+  //
+  // This loader is the shared candidate source for everything net-new: all six
+  // World-shell builders (world / places / people / my-world / timeline / map),
+  // the experience resolver, the action rail, and the Wall's Quick Media
+  // loader. None of them applied the guard, so a private account's
+  // visibility='public' post — its media, its place label and its contributor
+  // credit (username, display name, avatar) — was projected to every viewer,
+  // while the same row was correctly hidden two files away. Exactly the "the
+  // gate landed on one path and not its twin" shape.
+  //
+  // Applied HERE, at the one choke point, rather than on each of the eight
+  // callers — a per-caller fix is how this class recurs. The viewer's own rows
+  // always pass (My World is unaffected), and an approved follower still sees
+  // the item. `is_private` rides along on the profiles join
+  // (MEDIA_PROJECTION_PROFILE_COLUMNS), so this costs no extra round trip.
+  const visible = await excludePrivateAuthorPosts(
+    eligible as unknown as Array<Record<string, any>>,
+    viewer.viewerId,
+    sc,
+    { profilesKey: "profiles" },
+  );
+  return visible as unknown as MediaCandidateRow[];
 }
 
 // ── Location disclosure: the choke point, applied to every projection ────────

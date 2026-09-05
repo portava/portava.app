@@ -42,7 +42,10 @@ import {
   isEventLlmSafe,
 } from "../services/trust/TrustPrivacyGuard.js";
 import { getRecoveryStatus } from "../services/trust/TrustRecoveryService.js";
-import { runGamingDetectionScan } from "../services/trust/TrustGamingDetectionService.js";
+import {
+  runGamingDetectionScan,
+  CHECKIN_CLUSTER_EVENT_TYPES,
+} from "../services/trust/TrustGamingDetectionService.js";
 
 // ── Fake client factory ───────────────────────────────────────────────────────
 
@@ -768,11 +771,18 @@ describe("TrustRecoveryService", () => {
 describe("TrustGamingDetectionService", () => {
   it("detects check-in cluster farming and creates gaming review", async () => {
     const tables = makeTables();
-    // 6 check-ins at same geofence (limit = 5)
-    for (let i = 0; i < 6; i++) {
+    // This fixture used to seed event_type: "checked_in" — a value the table's
+    // CHECK constraint has never admitted and no writer has ever produced. The
+    // fake client models no constraints, so the fixture made the test green
+    // while the production scan matched zero rows in every real environment.
+    // The label now comes from the service's own constant, which
+    // trustAttendanceVocabulary.test.ts pins to the parsed CHECK set and to the
+    // strings routes/geofence.ts actually writes.
+    const limit = tables.trust_settings[0].gaming_checkin_cluster_limit;
+    for (let i = 0; i < limit + 1; i++) {
       tables.plan_attendance_events.push({
         id: `att-${i}`, user_id: USER_A, geofence_id: "gf-1",
-        event_type: "checked_in", created_at: new Date().toISOString(),
+        event_type: CHECKIN_CLUSTER_EVENT_TYPES[0], created_at: new Date().toISOString(),
       });
     }
     const db = makeTrustClient(tables);
