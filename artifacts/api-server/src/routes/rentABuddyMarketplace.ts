@@ -82,7 +82,11 @@ import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEng
 import { invalidateSuggestedCityCache, checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
-import { getUserLimits, enforceBookingCreationGates, deriveServiceCountry } from "./rentABuddy.js";
+// requireRentBuddyEnabled is the lane's ONE master-switch guard, defined in
+// rentABuddy.ts (which already gates its own 70 handlers with it). Imported
+// rather than re-implemented so this router cannot drift from the meaning of
+// `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
+import { getUserLimits, enforceBookingCreationGates, deriveServiceCountry, requireRentBuddyEnabled } from "./rentABuddy.js";
 import {
   calculateCompatibilityScore,
   rankBuddies,
@@ -306,7 +310,15 @@ function toBuddyScoringData(row: any, trustScore: number): BuddyScoringData {
     femaleOnlyService: row.female_only_service ?? false,
     publicMeetupOnly: row.public_meetup_only ?? false,
     groupApproved: row.group_approved ?? false,
-    nightlifeApproved: row.nightlife_approved ?? false,
+    // `nightlife_admin_approved`, NOT `nightlife_approved`. Both columns exist
+    // on rent_buddy_profiles, both are `boolean DEFAULT false NOT NULL`, and
+    // only one has a writer: POST /rent-a-buddy/admin/buddies/:buddyId/
+    // nightlife-approve writes `nightlife_admin_approved` (rentABuddy.ts), and
+    // the booking gate reads that same column. `nightlife_approved` is a
+    // stranded duplicate nothing has ever written, so reading it here pinned
+    // every buddy's nightlife category score to 0 — including buddies an admin
+    // HAD approved, who could be booked for nightlife but never ranked for it.
+    nightlifeApproved: row.nightlife_admin_approved ?? false,
     arrivalApproved: row.arrival_approved ?? false,
     categoryApprovals: row.category_approvals ?? {},
     trustScore,
@@ -326,6 +338,7 @@ router.post("/rent-a-buddy/match/preferences", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
 
   const {
     need, vibe, energy, language,
@@ -363,6 +376,7 @@ router.post("/rent-a-buddy/match", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
 
   const { city, preferences: prefOverride, limit = 20 } = req.body ?? {};
 
@@ -510,10 +524,31 @@ router.get("/rent-a-buddy/sections", async (req, res) => {
   // Helper to run a filtered query.
   //
   // BUDDY_PUBLIC_COLUMNS, not `*`: the section filters below narrow on columns
-  // that are deliberately NOT public (female_only_service, nightlife_approved,
-  // arrival_approved, group_approved, city_ambassador…), and PostgREST filters
-  // on columns whether or not they are selected — so the filters keep working
-  // while the rows that come back carry only public columns.
+  // that are deliberately NOT public (female_only_service,
+  // nightlife_admin_approved, arrival_approved, group_approved,
+  // city_ambassador…), and PostgREST filters on columns whether or not they are
+  // selected — so the filters keep working while the rows that come back carry
+  // only public columns.
+  //
+  // ── FOUR OF THESE SECTIONS ARE STRUCTURALLY EMPTY ──────────────────────────
+  // Four filter columns have NO writer anywhere in src/ or in any migration, so
+  // they sit at their `DEFAULT false NOT NULL` forever and the section returns
+  // zero rows for every city, permanently:
+  //
+  //   female_favorites -> female_only_service  (no writer; no producer designed)
+  //   arrival_help     -> arrival_approved     (no writer)
+  //   group            -> group_approved       (no writer; see the booking gate
+  //                                             in POST /packages/:id/book)
+  //   new_verified     -> rent_buddy_profiles.verified  (no writer — POST
+  //                        /admin/users/:userId/verify writes `profiles`, a
+  //                        DIFFERENT table)
+  //
+  // They are NOT "fixed" by pointing them at some other column: unlike the
+  // nightlife pair below there is no already-written twin to switch to, and
+  // choosing what earns a buddy `group_approved` or `female_only_service` is a
+  // product decision, not a defect. Left as-is, named here so the next reader
+  // does not spend an afternoon proving the query is correct — it is; the data
+  // behind it has never existed.
   //
   // The block filter is applied HERE, to every section's rows, so no section can
   // be added later that forgets it.
@@ -543,7 +578,12 @@ router.get("/rent-a-buddy/sections", async (req, res) => {
     section((q) => cityFilter(q).eq("available_now", true), 10),
     section((q) => cityFilter(q).order("completed_count", { ascending: false }), 10),
     section((q) => cityFilter(q).eq("female_only_service", true), 10),
-    section((q) => cityFilter(q).eq("nightlife_approved", true).contains("categories", ["nightlife"]), 10),
+    // nightlife_admin_approved — the column the admin approval endpoint writes
+    // and the booking gate reads. This filter used `nightlife_approved`, its
+    // never-written twin, so "Nightlife Guides" was structurally empty: an
+    // admin could approve a buddy for nightlife, that buddy could be booked for
+    // nightlife, and they still never appeared in the nightlife section.
+    section((q) => cityFilter(q).eq("nightlife_admin_approved", true).contains("categories", ["nightlife"]), 10),
     section((q) => cityFilter(q).contains("categories", ["language"]), 10),
     section((q) => cityFilter(q).eq("arrival_approved", true).contains("categories", ["arrival"]), 10),
     section((q) => cityFilter(q).contains("categories", ["content"]), 10),
@@ -663,6 +703,7 @@ router.patch("/rent-a-buddy/me/availability-settings", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
   if (!buddyProfile) return sendError(res, 'not_found', "Buddy profile not found.");
 
@@ -698,6 +739,7 @@ router.post("/rent-a-buddy/me/available-now", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
   if (!buddyProfile) return sendError(res, 'not_found', "Buddy profile not found.");
 
@@ -725,6 +767,7 @@ router.delete("/rent-a-buddy/me/available-now", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
   if (!buddyProfile) return sendError(res, 'not_found', "Buddy profile not found.");
 
@@ -764,6 +807,7 @@ router.post("/rent-a-buddy/requests", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
 
   const {
     city, lat, lng, category, desiredDate, desiredTime,
@@ -1011,6 +1055,7 @@ router.post("/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
 
   const buddyProfile = await requireBuddyProfile(svc, user.id);
   if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required.");
@@ -1300,6 +1345,7 @@ router.post("/rent-a-buddy/offers/:offerId/decline", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const { offerId } = req.params;
 
   const { data: offer } = await svc.from("rent_buddy_offers").select("*, request:rent_buddy_requests(traveler_id)").eq("id", offerId).maybeSingle();
@@ -1317,6 +1363,7 @@ router.post("/rent-a-buddy/offers/:offerId/withdraw", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const { offerId } = req.params;
 
   const { data: offer } = await svc.from("rent_buddy_offers").select("buddy_user_id").eq("id", offerId).maybeSingle();
@@ -1334,6 +1381,7 @@ router.post("/rent-a-buddy/me/packages/v2", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
   if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required.");
 
@@ -1380,6 +1428,7 @@ router.patch("/rent-a-buddy/me/packages/v2/:packageId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
   if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required.");
 
@@ -1489,6 +1538,21 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
 
   const buddy = p.buddy;
   if (!buddy || buddy.status !== "active") return sendError(res, 'invalid_payload', "Buddy is not available.");
+  // SILENT GATE — FAIL DIRECTION: ALWAYS-DENY. `group_approved` is
+  // `boolean DEFAULT false NOT NULL` and has no writer anywhere: not in src/,
+  // not in a migration, not in a trigger, and `rb_adjust_buddy_counter` is
+  // hard-restricted to the three reliability counters. So this line refuses
+  // EVERY package booking with groupSize > 1, for every buddy, permanently.
+  //
+  // Deliberately not "fixed" here: denial is the safe direction, and deciding
+  // what grants group approval (admin review, like nightlife? a training item?
+  // automatic above some completed_count?) is a product decision. The group
+  // path is gated three times over and `max_group_size` — DEFAULT 4, written by
+  // PATCH /rent-a-buddy/me/profile — is the one of the three that works, so the
+  // capability is not unguarded, only unreachable.
+  // See also CompatibilityScoreService's 'group_not_approved' exclusion, which
+  // empties /rent-a-buddy/match for any traveller whose stored group_size > 1;
+  // src/test/rentBuddyWriterlessGateDirection.test.ts proves both directions.
   if (groupSize > 1 && !buddy.group_approved) return sendError(res, 'invalid_payload', "This Buddy is not approved for group bookings.");
 
   // City/category rollout. Placed here because both values come off the loaded
@@ -1616,6 +1680,7 @@ router.post("/rent-a-buddy/me/addons", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
   if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required.");
 
@@ -1654,6 +1719,7 @@ router.patch("/rent-a-buddy/me/addons/:addonId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const buddyProfile = await requireBuddyProfile(svc, auth.user.id);
   if (!buddyProfile) return sendError(res, 'forbidden', "Active Buddy profile required.");
 
@@ -1682,6 +1748,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
 
   const { bookingId } = req.params;
   const { data: booking } = await svc
@@ -1800,6 +1867,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/tip", async (req, res) => {
   if (!auth) return;
   const { user } = auth;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
 
   const { bookingId } = req.params;
   const { data: booking } = await svc
@@ -1853,6 +1921,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
   const { notes } = req.body ?? {};
 
   const { error } = await svc
@@ -1873,6 +1942,7 @@ router.delete("/rent-a-buddy/buddies/:buddyId/save", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
 
   const { error: unsaveErr } = await svc.from("rent_buddy_saved").delete().eq("user_id", auth.user.id).eq("buddy_id", req.params.buddyId);
   if (unsaveErr) return sendError(res, 'db_error', unsaveErr.message);
@@ -1960,6 +2030,7 @@ router.post("/rent-a-buddy/waitlist/v2", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const svc = sc() ?? auth.client;
+  if (!await requireRentBuddyEnabled(svc, res)) return;
 
   const {
     city, lat, lng, category, language, budgetMaxUsd,

@@ -2,7 +2,11 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows } from "./rentABuddy.js";
+// requireRentBuddyEnabled is the lane's ONE master-switch guard, defined in
+// rentABuddy.ts (which already gates its own 70 handlers with it). Imported
+// rather than re-implemented so this router cannot drift from the meaning of
+// `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
+import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
@@ -109,6 +113,7 @@ router.post("/me/buddy-services", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -152,6 +157,7 @@ router.patch("/me/buddy-services/:serviceId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -200,6 +206,7 @@ router.delete("/me/buddy-services/:serviceId", asyncHandler(async (req, res) => 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -284,6 +291,7 @@ router.post("/me/buddy-availability-exceptions", asyncHandler(async (req, res) =
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -322,6 +330,7 @@ router.patch("/me/buddy-availability-exceptions/:exceptionId", asyncHandler(asyn
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -357,6 +366,7 @@ router.delete("/me/buddy-availability-exceptions/:exceptionId", asyncHandler(asy
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -656,6 +666,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/check-in", asyncHandler(async (re
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { checkinType, response: checkinResponse } = req.body ?? {};
@@ -787,6 +798,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler(asy
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { notes } = req.body ?? {};
@@ -1114,6 +1126,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/favorite", asyncHandler(async (req, 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { buddyId } = req.params;
 
   const { error } = await serviceClient
@@ -1131,6 +1144,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (req
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { buddyId } = req.params;
   const { error } = await serviceClient
     .from("rent_buddy_saved")
@@ -1147,6 +1161,7 @@ router.delete("/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (r
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { buddyId } = req.params;
 
   const { error } = await serviceClient
@@ -1348,6 +1363,7 @@ router.post("/rent-a-buddy/me/profile/submit", asyncHandler(async (req, res) => 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: profile } = await serviceClient
     .from("rent_buddy_profiles")
@@ -1474,6 +1490,7 @@ router.post("/rent-a-buddy/me/profile/pause", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: profile } = await serviceClient
     .from("rent_buddy_profiles")
@@ -1505,6 +1522,7 @@ router.post("/rent-a-buddy/me/profile/resume", asyncHandler(async (req, res) => 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: profile } = await serviceClient
     .from("rent_buddy_profiles")
@@ -1826,6 +1844,7 @@ router.post("/rent-a-buddy/me/profile", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const {
     displayName, tagline, bio, city, country, categories,
     languages, hourlyRateUsd, maxGroupSize, coverPhotoUrl,
@@ -1909,6 +1928,7 @@ router.patch("/me/buddy-availability", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { slots } = req.body ?? {};
   if (!Array.isArray(slots) || slots.length === 0) {
     return res.status(400).json({ error: "invalid_payload", message: "slots (array) is required." });
@@ -1946,6 +1966,7 @@ router.patch("/me/buddy-availability-exceptions", asyncHandler(async (req, res) 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { exceptions } = req.body ?? {};
   if (!Array.isArray(exceptions) || exceptions.length === 0) {
     return res.status(400).json({ error: "invalid_payload", message: "exceptions (array) is required." });

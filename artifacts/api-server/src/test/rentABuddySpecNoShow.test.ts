@@ -122,6 +122,24 @@ function makeClient() {
         }
 
         // Selects
+
+        // FIXTURE, not behaviour. POST /rent-a-buddy/bookings/:id/report-no-show
+        // writes a rent_buddy_safety_event and moves the booking status, so it
+        // now clears the Rent-a-Buddy master switch like every other write
+        // handler in the lane. This fake fell through to `{ data: null }` for
+        // feature_flags, which a real database reports as "the flag row does not
+        // exist" — the lane is off — and the handler correctly 403s. The
+        // assertions below are about no-show semantics, not about the master
+        // switch, so the fixture is corrected to describe a database in which
+        // Rent-a-Buddy is enabled. Nothing here is relaxed.
+        if (t === "feature_flags") {
+          const eqFlag = this._filters.find(([op, col]) => op === "eq" && col === "flag");
+          const flag = eqFlag ? eqFlag[2] : null;
+          const row = flag ? { flag, enabled: true } : null;
+          if (this._maybeSingle) return { data: row, error: null };
+          return { data: row ? [row] : [], error: null };
+        }
+
         if (t === "rent_buddy_bookings") {
           const eqId = this._filters.find(([op, col]) => op === "eq" && col === "id");
           if (eqId && this._maybeSingle) return { data: state.bookings[eqId[2]] ?? null, error: null };
