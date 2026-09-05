@@ -322,3 +322,94 @@ describe("GET /api/trips/:tripId/posts — trip feed membership", () => {
     assert.equal(body.isMember, false);
   });
 });
+
+/* ===========================================================================
+ * GET /api/trips/:tripId/posts — delayed-publish gate (§23 / §37)
+ * ===========================================================================
+ * POST /posts writes a delayed-geotag post as status='active' with a PENDING
+ * post_status ('pending_location_exit' / 'pending_delay'; moderation can park
+ * one at 'pending_safety_review'), and a sweeper flips it to 'published' later.
+ * The trip feed gated only status='active' — and POST_COLUMNS has SELECTED
+ * post_status all along, the same "selected but never read" shape as the
+ * visibility leak on GET /posts/:postId. Every trip member saw the post, its
+ * city and its venue label while the author was still standing at the place.
+ *
+ * The predicate is author-OR-published, matching GET /posts/:postId rather than
+ * the strict gate on the Wall / global / Following feeds: this route
+ * deliberately shows a viewer their own posts, so a strict gate would hide an
+ * author's own pending post from their own trip.
+ */
+describe("GET /api/trips/:tripId/posts — delayed-publish gate", () => {
+  const tripPost = (id: string, over: Record<string, any> = {}) => ({
+    id, trip_id: TRIP, author_id: "member-1", content: `post ${id}`,
+    visibility: "public", status: "active",
+    // NOT NULL DEFAULT 'published' in the schema — a real row always has one.
+    post_status: "published",
+    created_at: "2026-09-01T10:00:00Z", media_urls: [],
+    ...over,
+  });
+  const PENDING_IDS = ["pending-exit-1", "pending-delay-1", "review-1"];
+  function feedState(extra: Partial<FakeState> = {}): FakeState {
+    return {
+      ...baseState(),
+      posts: [
+        tripPost("published-1"),
+        tripPost("pending-exit-1", { post_status: "pending_location_exit" }),
+        tripPost("pending-delay-1", { post_status: "pending_delay" }),
+        tripPost("review-1", { post_status: "pending_safety_review" }),
+        // No post_status key at all: absent reads as published, exactly as
+        // GET /posts/:postId and lib/mediaEligibility treat it.
+        (() => { const r: any = tripPost("legacy-1"); delete r.post_status; return r; })(),
+      ],
+      ...extra,
+    };
+  }
+  const idsOf = (body: any) => ((body.posts ?? []) as any[]).map((p: any) => p.id).sort();
+
+  it("17d. the feed query CARRIES the publication predicate (DB layer)", async () => {
+    const captured: FakeState["captured"] = [];
+    const { baseUrl, close } = await startApp(feedState({ captured }));
+    const { status, body } = await doGet(baseUrl, `/api/trips/${TRIP}/posts`, BEARER("stranger-tok"));
+    await close();
+    assert.equal(status, 200);
+    // The fake applies `post_status.eq.published` the way the DB would, so the
+    // key-less legacy row does not match here. That is faithful: the column is
+    // NOT NULL DEFAULT 'published', so no real row lacks a value — absence only
+    // ever comes from a caller that did not select the column, which is what
+    // 17e covers.
+    assert.deepEqual(idsOf(body), ["published-1"], "only the published post is served");
+
+    const feedReads = (captured ?? []).filter((c) => c.table === "posts" && c.eqs.trip_id === TRIP);
+    assert.ok(feedReads.length >= 1, "the trip feed read posts");
+    for (const q of feedReads) {
+      assert.equal(q.eqs.status, "active");
+      assert.ok(
+        q.ors.some((o) => o.includes("post_status.eq.published")),
+        "the trip-feed query must carry the publication predicate",
+      );
+    }
+  });
+
+  it("17e. pending rows fed PAST the query filter are still refused in memory", async () => {
+    const { baseUrl, close } = await startApp(feedState({ ignorePredicateCols: ["post_status"] }));
+    const { status, body } = await doGet(baseUrl, `/api/trips/${TRIP}/posts`, BEARER("stranger-tok"));
+    await close();
+    assert.equal(status, 200);
+    const ids = idsOf(body);
+    for (const id of PENDING_IDS) {
+      assert.ok(!ids.includes(id), `${id} (status='active', pending post_status) must never be served`);
+    }
+    assert.deepEqual(ids, ["legacy-1", "published-1"], "published + legacy (absent ⇒ published)");
+  });
+
+  it("17f. the AUTHOR still sees their own pending post (no lockout)", async () => {
+    const { baseUrl, close } = await startApp(feedState({ ignorePredicateCols: ["post_status"] }));
+    const { status, body } = await doGet(baseUrl, `/api/trips/${TRIP}/posts`, BEARER("member-tok"));
+    await close();
+    assert.equal(status, 200);
+    const ids = idsOf(body);
+    for (const id of PENDING_IDS) {
+      assert.ok(ids.includes(id), `the author must still see their own ${id}`);
+    }
+  });
+});
