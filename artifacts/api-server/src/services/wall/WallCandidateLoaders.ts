@@ -41,8 +41,9 @@ import { loadViewerTripIds } from "../../lib/mediaEligibility.js";
 import {
   resolveViewer,
   loadEligibleCandidates,
+  projectCandidatesProtected,
 } from "../media/MediaProjectionService.js";
-import { toMediaProjection, type MediaCandidateRow } from "../../lib/media/mediaProjection.js";
+import { type MediaCandidateRow } from "../../lib/media/mediaProjection.js";
 import { areSharedMomentsEnabled } from "../../lib/places/sharedMoments.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
 import { isWallRabEnabled } from "./wallRabGate.js";
@@ -522,9 +523,17 @@ export async function loadVideoMediaCandidates(
     if (rows.length === 0) return emptyLoaded();
 
     const nowMs = Date.now();
+    // Through the SAME location/gem choke point the World shell uses: the Wall's
+    // PublicPlaceRef below is built from the projection's venue label and
+    // canonical place id, so it must honour the owner's location_privacy_mode
+    // and any hosting Hidden Gem's ceiling. Rows with no renderable media are
+    // dropped by the projector, so a missing entry means "skip", as before.
+    const projections = new Map(
+      (await projectCandidatesProtected(sc, resolved, rows, nowMs)).map((p) => [p.id, p]),
+    );
     const out = emptyLoaded();
     for (const row of rows) {
-      const proj = toMediaProjection(row, nowMs);
+      const proj = projections.get(String(row.id));
       if (!proj) continue; // only media-bearing posts belong to this loader
 
       const id = String(row.id);
