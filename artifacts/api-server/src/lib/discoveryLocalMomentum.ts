@@ -54,6 +54,9 @@
  * every cache-A hit would pay a 30-day rank_events scan.
  */
 import { pruneAndBound } from "./boundedMapCache.js";
+import { logger as rootLogger } from "./logger.js";
+
+const logger = rootLogger.child({ mod: "localMomentum" });
 
 export const MOMENTUM_RECENT_WINDOW_MS   = 48 * 60 * 60 * 1_000;
 export const MOMENTUM_BASELINE_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -67,8 +70,34 @@ export const MOMENTUM_SMOOTHING          = 2;
 /** Velocity at which momentum reads 1.0 — anything faster is still 1.0. */
 export const MOMENTUM_SATURATION         = 3;
 
-/** Bound on rank_events rows read per candidate set. */
+/**
+ * Bound on rank_events rows read per candidate set, across ALL pages.
+ *
+ * This used to be passed as a single `.limit(5000)`, which was three separate
+ * problems wearing one number:
+ *   1. PostgREST caps a response at `db-max-rows` (1000). Asking for 5000
+ *      returned 1000 and reported nothing, so the "30-day window" was in fact
+ *      whatever fraction of it fitted in 1000 rows.
+ *   2. The query carried no ORDER BY, so which 1000 rows came back was
+ *      arbitrary — Postgres's physical scan order, free to differ between two
+ *      runs of the same query. The momentum of a place could change without a
+ *      single new event.
+ *   3. Silently. Both (1) and (2) are invisible from the return value: a
+ *      truncated arbitrary sample and a complete window are the same shape.
+ *
+ * The loader now pages in MOMENTUM_PAGE_SIZE chunks under a stable total order
+ * and stops at this ceiling, so the window is well defined: the most recent
+ * MOMENTUM_ROW_LIMIT events for these places. When the ceiling is what stopped
+ * the read, the loader logs it — the bound is deliberate and reported, never
+ * silent.
+ */
 export const MOMENTUM_ROW_LIMIT = 5_000;
+/**
+ * Rows per page. Must not exceed PostgREST's `db-max-rows` (1000) or a full
+ * page becomes indistinguishable from a capped one and paging never terminates
+ * correctly.
+ */
+export const MOMENTUM_PAGE_SIZE = 1_000;
 /** Cache: per candidate key, short-lived, bounded. */
 export const MOMENTUM_CACHE_TTL_MS = 10 * 60 * 1_000;
 export const MOMENTUM_CACHE_MAX    = 200;
@@ -159,15 +188,48 @@ export async function loadLocalMomentum(
   let map: Record<string, number> = {};
   try {
     const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
-    const { data, error } = await sc
-      .from("rank_events")
-      .select("item_id, outcome, served_at, outcome_at")
-      .eq("surface", "discovery")
-      .neq("outcome", "analytics")
-      .in("item_id", [...new Set(placeIds)])
-      .gte("served_at", since)
-      .limit(MOMENTUM_ROW_LIMIT);
-    if (!error && Array.isArray(data)) map = computeLocalMomentum(data as MomentumRow[], nowMs);
+    const ids = [...new Set(placeIds)];
+    const rows: MomentumRow[] = [];
+    let failed = false;
+    let truncated = false;
+
+    for (let offset = 0; offset < MOMENTUM_ROW_LIMIT; offset += MOMENTUM_PAGE_SIZE) {
+      // `served_at DESC, id DESC` is a stable total order AND the useful one:
+      // when the ceiling truncates, what survives is the most RECENT window,
+      // which is the half the recent/baseline split actually turns on. Ordering
+      // by served_at alone would not be total (timestamps collide), and paging
+      // over a non-total order can return one row twice and skip another.
+      const { data, error } = await sc
+        .from("rank_events")
+        .select("item_id, outcome, served_at, outcome_at")
+        .eq("surface", "discovery")
+        .neq("outcome", "analytics")
+        .in("item_id", ids)
+        .gte("served_at", since)
+        .order("served_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(offset, Math.min(offset + MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT) - 1);
+
+      if (error || !Array.isArray(data)) { failed = true; break; }
+      rows.push(...(data as MomentumRow[]));
+
+      // A short page is the end of the corpus, not a cap.
+      if (data.length < MOMENTUM_PAGE_SIZE) break;
+      // A full last page means the ceiling — not the data — ended the read.
+      if (rows.length >= MOMENTUM_ROW_LIMIT) { truncated = true; break; }
+    }
+
+    if (truncated) {
+      // Deliberate bound, said out loud. The window is still well defined (the
+      // most recent MOMENTUM_ROW_LIMIT events), but a reader of the momentum
+      // map deserves to know the baseline half may be clipped for a hot
+      // candidate set rather than discovering it from a drifting score.
+      logger.warn(
+        { cacheKey: opts.cacheKey, placeCount: ids.length, rowLimit: MOMENTUM_ROW_LIMIT },
+        "localMomentum: row ceiling reached — baseline window is bounded to the most recent rows",
+      );
+    }
+    if (!failed) map = computeLocalMomentum(rows, nowMs);
   } catch {
     // resolves-not-throws-ok: a momentum read failure degrades to "no surge",
     // which is the documented honest default; the ranker must never throw here.
