@@ -120,7 +120,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 //   outcome      text        NOT NULL DEFAULT 'impression'
 //                            CHECK IN ('impression','tap','save','join','rsvp',
 //                                      'attended','analytics','dismiss')
-//                            ('dismiss' added by 2294)
+//                            ('dismiss' added by 2297)
 //   served_at    timestamptz NOT NULL DEFAULT now()
 //   outcome_at   timestamptz NULL
 //   surface      text        NOT NULL
@@ -145,7 +145,7 @@ const DEFAULTED_NOT_NULL = ["id", "features", "outcome", "served_at"] as const;
 const ITEM_KIND_VALUES = new Set(["post", "event", "plan", "buddy", "place", "gem"]);
 const OUTCOME_VALUES   = new Set([
   "impression", "tap", "save", "join", "rsvp", "attended", "analytics",
-  // 2294 — the negative outcome. Live Pulse never writes it (its rows are always
+  // 2297 — the negative outcome. Live Pulse never writes it (its rows are always
   // 'impression'), but this set mirrors the live CHECK and must not drift.
   "dismiss",
 ]);

@@ -82,7 +82,7 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
 // sending the legacy string values.  New outcome event types are emitted
 // as additional analytics rows using the typed RankingEvent constants.
 //
-// 'dismiss' is the ONE negative value, added with migration 2294. Before it the
+// 'dismiss' is the ONE negative value, added with migration 2297. Before it the
 // vocabulary was entirely positive (tap/save/join/rsvp/attended), so negative
 // user intent was unrecordable — a client had nothing to send — and
 // content_distribution_stats.negative_signal_count consequently had NO WRITER
@@ -91,7 +91,7 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
 // suppression rate, so every item crossing the threshold classified 'boosting'.
 // See the handler below, and DiscoveryRankingService.recordNegativeDistributionSignal.
 //
-// REQUIRES migration 2294_rank_events_dismiss_outcome.sql to be applied LIVE
+// REQUIRES migration 2297_rank_events_dismiss_outcome.sql to be applied LIVE
 // before this ships: rank_events.outcome carries a CHECK constraint, and the
 // analytics insert further down echoes an outcome-derived row back into the
 // table. Shipping first would 404 every dismiss (the UPDATE would violate the
@@ -255,7 +255,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
 
   // ── The underexposure NUMERATOR ─────────────────────────────────────────────
   // This is the only place content_distribution_stats.negative_signal_count is
-  // ever written. It calls record_distribution_negative_signal (2294), NOT
+  // ever written. It calls record_distribution_negative_signal (2297), NOT
   // increment_distribution_stats: the latter moves eligible_impressions in the
   // same statement, and an outcome must never move the exposure denominator
   // (see the note at the end of this handler). Fire-and-forget.

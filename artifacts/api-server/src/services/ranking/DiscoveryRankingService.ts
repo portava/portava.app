@@ -1080,7 +1080,7 @@ const ZERO_COMPONENTS: ScoreComponents = {
 // recordNegativeDistributionSignal below, from the outcome route, when a viewer
 // reports outcome='dismiss'.
 //
-// THE DEFECT THAT FIXES: until migration 2294 there was NO writer of
+// THE DEFECT THAT FIXES: until migration 2297 there was NO writer of
 // negative_signal_count at all. Nothing anywhere incremented it, so v_negatives
 // was 0 for every row, 0/N is never >= the 0.3 suppression rate, and every item
 // that crossed the 100-impression threshold classified 'boosting'
@@ -1173,7 +1173,7 @@ export async function recordImpressionDistributionStats(
 }
 
 /**
- * RPC that writes the underexposure NUMERATOR (migration 2294).
+ * RPC that writes the underexposure NUMERATOR (migration 2297).
  *
  * Deliberately a different function from `increment_distribution_stats`: that
  * one moves eligible_impressions and negative_signal_count in the same
@@ -1187,7 +1187,7 @@ export const NEGATIVE_SIGNAL_RPC = "record_distribution_negative_signal";
  *
  * The ONLY writer of `content_distribution_stats.negative_signal_count`. Called
  * from POST /api/rank-events/outcome when the reported outcome is 'dismiss',
- * which is the only negative outcome the vocabulary carries (2294).
+ * which is the only negative outcome the vocabulary carries (2297).
  *
  * Fire-and-forget: never throws, never rejects, and never touches
  * eligible_impressions. A failure is warned once and dropped — a lost negative

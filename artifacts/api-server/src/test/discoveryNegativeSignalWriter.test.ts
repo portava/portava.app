@@ -36,11 +36,11 @@
  *      dismisses, end to end through the real route, classifies 'normal'. The
  *      same 100 impressions with no dismiss classify 'boosting'. Both verdicts
  *      are now reachable; before, only one was.
- *   D. MIGRATION 2294 — the CHECK is widened and never narrowed, the function
+ *   D. MIGRATION 2297 — the CHECK is widened and never narrowed, the function
  *      leaves eligible_impressions alone, its grants are service_role-only, and
  *      it does not touch increment_distribution_stats (no overload set).
  *
- * The fakes model migrations 2059 and 2294 in memory, exactly as
+ * The fakes model migrations 2059 and 2297 in memory, exactly as
  * src/test/distributionStatsExposure.test.ts models 2059, so section C can
  * state a STATUS and not merely a call count.
  *
@@ -71,7 +71,7 @@ const EXPECTED_THRESHOLD = 100;
 const EXPECTED_RATE      = 0.3;
 
 const MIGRATIONS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../migrations");
-const MIGRATION_2294 = "2294_rank_events_dismiss_outcome.sql";
+const MIGRATION_2297 = "2297_rank_events_dismiss_outcome.sql";
 
 // ── In-memory model of the two RPCs ───────────────────────────────────────────
 
@@ -85,7 +85,7 @@ const blankRow = (): StatsRow => ({
   eligible_impressions: 0, negative_signal_count: 0, underexposure_status: "pending_evaluation",
 });
 
-/** Shared classification rule — 2059 and 2294 must agree, so it is written once. */
+/** Shared classification rule — 2059 and 2297 must agree, so it is written once. */
 function classify(row: StatsRow, threshold: number, rate: number): void {
   if (row.eligible_impressions < threshold) return;
   row.underexposure_status =
@@ -102,7 +102,7 @@ function applyIncrement(stats: Map<string, StatsRow>, p: Record<string, any>): v
 }
 
 /**
- * Migration 2294: +1 negative and NOTHING ELSE, then re-classify.
+ * Migration 2297: +1 negative and NOTHING ELSE, then re-classify.
  *
  * eligible_impressions is deliberately not touched here — that is the whole
  * reason this is a separate function from the one above rather than a call to
@@ -387,7 +387,7 @@ describe("rank-events outcome — the negative signal", () => {
     for (const c of f.calls(INCREMENT_RPC)) {
       assert.equal(
         c.params.p_negative_signal, false,
-        "the impression path contributes no negatives — 'normal' is reachable only via the 2294 writer",
+        "the impression path contributes no negatives — 'normal' is reachable only via the 2297 writer",
       );
     }
   });
@@ -450,10 +450,10 @@ describe("recordNegativeDistributionSignal — the numerator writer", () => {
   });
 });
 
-// ── D. Migration 2294, read as text ───────────────────────────────────────────
+// ── D. Migration 2297, read as text ───────────────────────────────────────────
 
-describe("migration 2294 — dismiss outcome + numerator-only RPC", () => {
-  const sql = readFileSync(resolve(MIGRATIONS_DIR, MIGRATION_2294), "utf8");
+describe("migration 2297 — dismiss outcome + numerator-only RPC", () => {
+  const sql = readFileSync(resolve(MIGRATIONS_DIR, MIGRATION_2297), "utf8");
 
   it("D1. widens the outcome CHECK to admit 'dismiss' and keeps every prior value", () => {
     const m = /ADD CONSTRAINT rank_events_outcome_check\s*\n?\s*CHECK \(outcome IN \(([^)]*)\)\)/m.exec(sql);

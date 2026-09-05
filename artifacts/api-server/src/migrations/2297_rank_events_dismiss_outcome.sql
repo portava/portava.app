@@ -1,4 +1,4 @@
--- 2294_rank_events_dismiss_outcome.sql
+-- 2297_rank_events_dismiss_outcome.sql
 --
 -- THE NEGATIVE-SIGNAL NUMERATOR GETS A WRITER
 -- ===========================================
@@ -96,7 +96,7 @@ BEGIN;
 --         rank_events_outcome_check.
 --         Values: ('impression','tap','save','join','rsvp','attended')
 --   0197  widened to add the server-side 'analytics' sentinel
---   2294  (this file) adds 'dismiss'. No value is removed.
+--   2297  (this file) adds 'dismiss'. No value is removed.
 
 ALTER TABLE rank_events
   DROP CONSTRAINT IF EXISTS rank_events_outcome_check;

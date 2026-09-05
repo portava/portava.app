@@ -821,7 +821,7 @@ const WRITTEN_SURFACES = [
 /**
  * Outcome values the codebase writes. 'analytics' was added by 0197.
  *
- * 'dismiss' is added by 2294_rank_events_dismiss_outcome.sql and is written by
+ * 'dismiss' is added by 2297_rank_events_dismiss_outcome.sql and is written by
  * POST /api/rank-events/outcome. Until that migration is applied live it will
  * print ABSENT here — correctly: the code writes it and the live CHECK does not
  * yet permit it. This comparison is INFORMATIONAL ONLY (see the header) and
