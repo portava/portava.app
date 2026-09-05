@@ -46,7 +46,7 @@ import {
 import { type MediaCandidateRow } from "../../lib/media/mediaProjection.js";
 import { areSharedMomentsEnabled } from "../../lib/places/sharedMoments.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { isWallRabEnabled } from "./wallRabGate.js";
 import { checkBookingKycGate } from "../../lib/rentBuddyKycGate.js";
 // The ONE booking-creation gate (audit RAB-1/RAB-2). The RAB opportunity
 // producer below runs every surfaced buddy through it so the Wall never shows
@@ -890,8 +890,8 @@ function gateCapture(): { status: (c: number) => any; json: (b: unknown) => any;
  * is a small `buddyRole` tag on the actor (§7/§19).
  *
  * FAIL-CLOSED ON BOTH FLAGS: `wall_rab_integration_enabled` AND the RAB master
- * `rent_buddy_enabled` are read here through isFlagEnabled, so an unreadable
- * flag yields no opportunities. Both must be ON.
+ * `rent_buddy_enabled` are read here through the shared `isWallRabEnabled`, so
+ * an unreadable flag yields no opportunities. Both must be ON.
  *
  * HONOURS THE CONSOLIDATED BOOKING GATE: every matched buddy is run through the
  * SAME enforceBookingCreationGates that seats a booking (kill switches, rollout
@@ -916,15 +916,7 @@ export async function loadContextualOpportunityCandidates(
   opts: LoaderOptions = {},
 ): Promise<LoadedWallCandidates> {
   // ── Flags (both fail-closed) ──────────────────────────────────────────────
-  try {
-    const [wallRab, rabMaster] = await Promise.all([
-      isFlagEnabled(sc, "wall_rab_integration_enabled"),
-      isFlagEnabled(sc, "rent_buddy_enabled"),
-    ]);
-    if (!wallRab || !rabMaster) return emptyLoaded();
-  } catch {
-    return emptyLoaded();
-  }
+  if (!(await isWallRabEnabled(sc))) return emptyLoaded();
 
   // ── Bookings must be possible at all (KYC gate, fail-closed) ─────────────
   try {

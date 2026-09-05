@@ -428,7 +428,11 @@ export interface AttachContextThreadsOptions {
   windowSize?: number;
   /** Live For You strip subjects — a thread that repeats one is suppressed (§4). */
   liveStripSubjectIds?: Set<string>;
-  /** wall_rab_integration_enabled — enables the buddy candidate reader. */
+  /**
+   * wall_rab_integration_enabled — NECESSARY but not sufficient for the buddy
+   * candidate reader, which also re-reads the RAB master `rent_buddy_enabled`
+   * itself (fail-closed).
+   */
   rabEnabled?: boolean;
   now?: Date;
 }
