@@ -223,6 +223,66 @@ export const AMBIENT_PRESENCE_KINDS: readonly MapObjectKind[] = [
 ];
 
 /**
+ * Kinds for which COARSENING IS NOT A WEAKER DISCLOSURE — it is the same one.
+ *
+ * `coarsenForZone` deletes TOP-LEVEL fields (`count`, `observedAt`, `freshness`,
+ * `provenance`, `sourceRefs`) and snaps a Point to the zone anchor. Both of
+ * these kinds restate exactly those facts one level down, inside `payload`,
+ * which coarsening does not descend into:
+ *
+ *   • `crowd_flow` carries `payload.observed.{cohortSize, observedAt}`, and its
+ *     geometry is a LineString between zone centroids, which coarsening
+ *     deliberately leaves alone. A coarsened flow keeps everything coarsening
+ *     exists to remove.
+ *   • `prediction` carries `payload.{cohort, predictedFor}` for a plan cohort —
+ *     "20 people are due to arrive at this clinic at 13:00" survives the
+ *     deletion of the top-level `count` untouched — and for the event and
+ *     itinerary sources it carries `payload.{eventId, stopId, locationName}`,
+ *     back-references that re-sharpen the very coordinate the anchor snap just
+ *     blurred. §37 makes this worse rather than better: the object is labelled
+ *     a forecast, so it publishes a FUTURE association with the protected place
+ *     to a viewer who is watching it happen.
+ *
+ * And there is no honest coarser version of either to fall back to: a flow's
+ * geometry is already zone-level, and a prediction with its payload removed is
+ * an unattributable pin that asserts nothing. So inside a coarsen-class zone
+ * these are SUPPRESSED. This only ever tightens.
+ *
+ * THE §36 PHASE 7 AGGREGATE KINDS ARE HERE FOR THE SAME REASON. Each restates
+ * inside its own `payload` exactly the facts `coarsenForZone` deletes at the top
+ * level, and each already sits on geometry coarsening does not touch:
+ *
+ *   • `traveler_flow` carries `payload.{cohortBucket, observedAt}` on a
+ *     LineString between city centroids.
+ *   • `world_pulse` carries `payload.people.cohortBucket` and its density counts
+ *     on an aggregation-cell polygon.
+ *   • `city_model` carries `payload.rhythm`, a per-time-band activity reading,
+ *     on a city centroid.
+ *
+ * `personal_city` is DELIBERATELY NOT here, on the same grounds as the
+ * relationship-gated kinds below: it is the viewer's own history shown to the
+ * viewer, it asserts nothing about who is at the protected place, and coarsening
+ * exists to protect other people rather than the reader from themselves. It
+ * still takes the zone's own action, so inside a SUPPRESS-class zone it is
+ * withheld like anything else.
+ *
+ * ONE POLICY, NOT TWO. `classifyAgainstProtected` escalates on this table and
+ * `mapProjection.withholdCoarsenableAggregates` filters on it, so a route that
+ * calls the gate directly and a route that pre-filters cannot disagree. The
+ * pre-filter is a reporting convenience (it lets the crowd-flow producer report
+ * its own withheld count); the escalation below is what makes the gate correct
+ * for a caller that forgets it — which is exactly how the prediction hole got
+ * in.
+ */
+export const COARSEN_UNSAFE_KINDS: readonly MapObjectKind[] = [
+  "crowd_flow",
+  "prediction",
+  "traveler_flow",
+  "world_pulse",
+  "city_model",
+];
+
+/**
  * Deliberately NOT escalated, and this is a considered choice rather than an
  * omission. `crew_member`, `meeting_point` and `trip_stop` are relationship
  * gated by the caller — routes/mapProjection.ts only ever collects them for a
@@ -289,6 +349,8 @@ export type ProtectionReason =
   | "safety_notice_exempt"
   | "inside_protected_zone"
   | "presence_in_protected_zone"
+  /** A `COARSEN_UNSAFE_KINDS` object: coarsening would not weaken it. */
+  | "uncoarsenable_in_protected_zone"
   | "unparseable_object_geometry"
   | "unparseable_zone_geometry"
   | "unknown_zone_category";
@@ -569,6 +631,15 @@ export function classifyAgainstProtected(
         reason = "presence_in_protected_zone";
       }
 
+      // Escalation, second reason: for a COARSEN_UNSAFE kind the coarsened
+      // object keeps the disclosure in `payload`, which coarsenForZone does not
+      // descend into, and there is no honest coarser version to fall back to.
+      // Escalation only ever tightens.
+      if (action === "coarsen" && COARSEN_UNSAFE_KINDS.includes(obj.kind)) {
+        action = "suppress";
+        reason = "uncoarsenable_in_protected_zone";
+      }
+
       candidate = { action, zone, reason, privacyFloor: policy.privacyFloor };
     }
 
@@ -586,7 +657,7 @@ export function classifyAgainstProtected(
  * arithmetic and a `precisionRank` re-check backstops it, so a future edit to
  * the floor table cannot accidentally sharpen an object.
  *
- * Three things happen, and the last two matter as much as the first:
+ * Four things happen, and the last three matter as much as the first:
  *
  *  1. GEOMETRY. A Point is snapped to the zone's anchor, so the residual
  *     precision the client receives is the zone's extent rather than the
@@ -663,8 +734,53 @@ export function coarsenForZone(
   delete out.freshness;
   out.distanceKm = null;
 
+  // 4. THE PAYLOAD MIRROR. Everything above deletes a TOP-LEVEL field, and for
+  //    a long time that was the whole of coarsening — which is how a prediction
+  //    reached the wire with `count` deleted and `payload.cohort` intact, saying
+  //    the identical thing one level down. Producers legitimately restate a
+  //    top-level fact inside `payload` (that is what a payload is for), so the
+  //    strip has to follow them down.
+  //
+  //    Only keys that MIRROR a field this function already deleted are removed,
+  //    which is why the list is closed and short rather than "delete payload":
+  //    a coarsened object still has to render, and its payload carries the
+  //    render data. `COARSEN_UNSAFE_KINDS` is the primary answer for the kinds
+  //    where even this is not enough; this is the backstop for every other kind
+  //    and for any future producer that adds a cohort count to a payload.
+  const payload = out.payload;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    let stripped: Record<string, unknown> | null = null;
+    for (const key of COARSENED_PAYLOAD_KEYS) {
+      if (!(key in payload)) continue;
+      if (stripped === null) stripped = { ...(payload as Record<string, unknown>) };
+      delete stripped[key];
+    }
+    if (stripped !== null) out.payload = stripped;
+  }
+
   return out;
 }
+
+/**
+ * Payload keys that restate a field `coarsenForZone` deletes at the top level.
+ * Each entry names the top-level deletion it mirrors, so the list stays
+ * auditable and cannot quietly grow into "delete everything interesting".
+ */
+export const COARSENED_PAYLOAD_KEYS: readonly string[] = [
+  // mirrors `count` — how many people
+  "cohort",
+  "cohortSize",
+  "count",
+  "distinctActors",
+  // mirrors `observedAt` / `expiresAt` / `freshness` — when
+  "observedAt",
+  "predictedFor",
+  // mirrors ALL of the above at once: crowd_flow's observation block
+  "observed",
+  // mirrors `provenance` / `sourceRefs` — back-references that re-sharpen
+  "provenance",
+  "sourceRefs",
+];
 
 // ── The pass ─────────────────────────────────────────────────────────────────
 

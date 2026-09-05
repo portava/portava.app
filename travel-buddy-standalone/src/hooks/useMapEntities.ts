@@ -786,16 +786,28 @@ export function useMapEntities(opts: {
       // finally must not clear the spinner an in-flight newer fetch still needs.
       if (current()) setLoading(false);
     }
-    // `places` and the other optional §16 flags are fetch-key inputs: each
-    // carries a §16 preference that loads asynchronously, and a change that did
-    // not refetch would leave the kind permanently unrequested (or permanently
-    // requested) for the session.
+    // EVERY OPTIONAL §16 FLAG IS A FETCH-KEY INPUT, AND THE LIST BELOW IS THE
+    // WHOLE OF IT. Each carries a §16 preference that loads asynchronously and
+    // that the viewer can toggle, so a flag this callback READS but does not
+    // depend on leaves its kind permanently unrequested (or permanently
+    // requested) for the session: the callback identity never changes, the
+    // effect below never re-runs, and the layer simply never loads.
+    //
+    // `crowdFlow` was missing from this list, which is exactly what happened to
+    // §16 Crowd Flow — the layer could be switched on and never arrived. It is
+    // read TWICE in this callback (the all-off early return and the wantedKinds
+    // build), and both readings were stale.
+    //
+    // If you add an option that this callback reads, add it here. The invariant
+    // is mechanical: the array must name every value read inside `doFetch` that
+    // is not a ref, a state setter or a module constant.
     //
     // effective{Lat,Lng,Zoom} carry the §34 settled camera; when a settle moves
     // them the fetch re-keys and re-queries the new viewport.
   }, [
     enabledLayers, city, effectiveLat, effectiveLng, effectiveZoom, radiusKm,
-    places, saved, memories, safety, meetingPoints, worldIntelligence, myCities,
+    crowdFlow, places, saved, memories, safety, meetingPoints,
+    worldIntelligence, myCities,
   ]);
 
   const refresh = useCallback(() => {

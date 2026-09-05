@@ -80,6 +80,7 @@ import {
 import {
   classifyAgainstProtected,
   zoneCovers,
+  COARSEN_UNSAFE_KINDS,
   type ProtectedZone,
 } from "./protectedLocations.js";
 import { haversineKm } from "./mapSearch.js";
@@ -1593,43 +1594,36 @@ export function parseCityGeographies(
 }
 
 /**
- * Kinds for which §24's COARSEN outcome is wrong, so the answer is to withhold.
+ * The kinds for which §24's COARSEN outcome is wrong, so the answer is to
+ * withhold. THIS IS AN ALIAS, NOT A SECOND TABLE.
  *
- * `coarsenForZone` strips an object's `count`, `observedAt` and `freshness`
- * because "how busy is the clinic right now" is the disclosure. Every kind
- * below RESTATES exactly those facts inside its own `payload`, which coarsening
- * does not touch, so a coarsened one would keep everything coarsening exists to
- * remove. None of them has an honest coarser version to fall back to either:
- * their geometry is already a zone centroid, a city centroid or an aggregation
- * cell. Withholding is therefore a TIGHTENING of the existing decision and
- * changes no policy, category or constant.
- *
- *   crowd_flow      payload.observed.cohortSize + observedAt (§10).
- *   traveler_flow   payload.cohortBucket + observedAt (§36 Phase 7). Its
- *                   geometry is a LineString, which coarsening leaves alone.
- *   world_pulse     payload.people.cohortBucket + density counts, on a polygon
- *                   coarsening also leaves alone.
- *   city_model      payload.rhythm restates a per-time-band activity reading.
- *
- * `personal_city` is DELIBERATELY NOT here. It is the viewer's own history
- * shown to the viewer, it asserts nothing about who is at the protected place
- * or when, and coarsening protects other people rather than the reader from
- * themselves. It takes the zone's own action like any other object — which
- * still means WITHHELD inside a suppress-class zone.
+ * The policy lives in exactly one place — `protectedLocations`, which is also
+ * what `classifyAgainstProtected` escalates on — so this name exists only
+ * because the §36 Phase 7 surfaces read better under it. A second literal list
+ * here is precisely how the `prediction` hole (#406) got in: a pre-filter and
+ * the gate disagreed. The Phase 7 aggregate kinds (`traveler_flow`,
+ * `world_pulse`, `city_model`) were ADDED to that one table rather than kept in
+ * a private list here; `personal_city` is deliberately absent from it, for the
+ * reason recorded there.
  */
-export const WITHHELD_RATHER_THAN_COARSENED_KINDS: readonly MapObjectKind[] = [
-  "crowd_flow",
-  "traveler_flow",
-  "world_pulse",
-  "city_model",
-];
+export const WITHHELD_RATHER_THAN_COARSENED_KINDS: readonly MapObjectKind[] =
+  COARSEN_UNSAFE_KINDS;
 
 /**
- * §24 for the aggregate kinds above: inside a protected zone they are WITHHELD,
- * never coarsened.
+ * §24 for the kinds coarsening cannot help: inside a protected zone a
+ * `crowd_flow`, a `prediction` or a §36 Phase 7 aggregate is WITHHELD, never
+ * coarsened.
  *
  * `applyProtection` still runs over these objects afterwards and is still the
- * gate; this only removes the one outcome that would be wrong for them.
+ * gate; this only removes ahead of it the one outcome that would be wrong for
+ * these kinds, so a producer can report its own withheld count. The policy
+ * itself lives in ONE place — `protectedLocations.COARSEN_UNSAFE_KINDS`, which
+ * `classifyAgainstProtected` escalates on — so this pre-filter and the gate
+ * cannot disagree, and a route that forgets to call this still gets the right
+ * answer. (Formerly `withholdCoarsenableFlows`, crowd-flow only. It was renamed
+ * when `prediction` joined the table: a coarsened prediction reached the wire
+ * with its top-level `count` deleted and `payload.cohort` intact, which is the
+ * same disclosure restated one level down.)
  *
  * Returns the surviving objects and a COUNT — never which zone, never which
  * object, for the reason `ProtectionReport` gives.
@@ -1637,13 +1631,17 @@ export const WITHHELD_RATHER_THAN_COARSENED_KINDS: readonly MapObjectKind[] = [
 export function withholdCoarsenableAggregates(
   objects: readonly MapObject[],
   zones: readonly ProtectedZone[] | null | undefined,
-): { objects: MapObject[]; withheld: number } {
-  if (!Array.isArray(objects) || objects.length === 0) return { objects: [], withheld: 0 };
-  if (!Array.isArray(zones) || zones.length === 0) return { objects: [...objects], withheld: 0 };
+): { objects: MapObject[]; withheld: number; withheldByKind: Record<string, number> } {
+  const empty = (kept: MapObject[]) => ({ objects: kept, withheld: 0, withheldByKind: {} });
+  if (!Array.isArray(objects) || objects.length === 0) return empty([]);
+  if (!Array.isArray(zones) || zones.length === 0) return empty([...objects]);
   const kept: MapObject[] = [];
+  // Per-kind, because a producer's own "withheld for protection" counter must
+  // not absorb another kind's removals once more than one kind is on the table.
+  const withheldByKind: Record<string, number> = {};
   let withheld = 0;
   for (const obj of objects) {
-    if (!WITHHELD_RATHER_THAN_COARSENED_KINDS.includes(obj.kind)) {
+    if (!COARSEN_UNSAFE_KINDS.includes(obj.kind)) {
       kept.push(obj);
       continue;
     }
@@ -1652,8 +1650,9 @@ export function withholdCoarsenableAggregates(
       continue;
     }
     withheld += 1;
+    withheldByKind[obj.kind] = (withheldByKind[obj.kind] ?? 0) + 1;
   }
-  return { objects: kept, withheld };
+  return { objects: kept, withheld, withheldByKind };
 }
 
 // ── shared ────────────────────────────────────────────────────────────────────

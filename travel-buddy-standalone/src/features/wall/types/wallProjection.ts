@@ -58,7 +58,12 @@ export interface DisplayMedia {
   width?: number | null;
   height?: number | null;
   durationMs?: number | null;
-  /** Video only: whether the client may autoplay under product/user/device policy. */
+  /**
+   * Video only. Advisory server note, never a command (§11/§36): `true` = the
+   * media is a ready, playable video; `false`/absent = NO server opinion, which
+   * is NOT a veto. Autoplay is decided entirely by client policy
+   * (services/videoAutoplayPolicy — viewport, reduced motion, user setting).
+   */
   autoplayEligible?: boolean;
   processing?: boolean;
 }

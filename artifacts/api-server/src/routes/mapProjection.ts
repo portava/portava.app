@@ -982,17 +982,23 @@ router.get(
       });
       return;
     }
-    // §24, one step ahead of the gate, for `crowd_flow` only: inside a
-    // protected zone a flow is WITHHELD rather than coarsened, because a
-    // coarsened flow would keep — in `payload.observed` — exactly the cohort
+    // §24, one step ahead of the gate, for the kinds coarsening cannot help:
+    // inside a protected zone a flow is WITHHELD rather than coarsened, because
+    // a coarsened flow would keep — in `payload.observed` — exactly the cohort
     // size and observation time that coarsening exists to strip. See
-    // lib/mapProjection.withholdCoarsenableAggregates. This only ever removes
-    // objects, and `applyProtection` below is still the gate.
+    // lib/mapProjection.withholdCoarsenableAggregates; the policy itself is
+    // protectedLocations.COARSEN_UNSAFE_KINDS, which the gate escalates on too.
+    // This only ever removes objects, and `applyProtection` below is still the
+    // gate — the pre-filter is here so the crowd-flow producer can report its
+    // own withheld count.
     const flowGate = withholdCoarsenableAggregates(objects, zones);
     objects = flowGate.objects;
     if (crowdFlow.report) {
-      crowdFlow.report.withheldForProtection = flowGate.withheld;
-      crowdFlow.report.published = Math.max(0, crowdFlow.report.published - flowGate.withheld);
+      // crowd_flow ONLY — the helper covers every COARSEN_UNSAFE kind, and this
+      // producer's counter must report its own removals, not someone else's.
+      const flowsWithheld = flowGate.withheldByKind.crowd_flow ?? 0;
+      crowdFlow.report.withheldForProtection = flowsWithheld;
+      crowdFlow.report.published = Math.max(0, crowdFlow.report.published - flowsWithheld);
     }
 
     const protection = applyProtection(objects, zones);
