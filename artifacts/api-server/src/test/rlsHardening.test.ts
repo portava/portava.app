@@ -49,7 +49,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { fixtureEmail, matchesFixtureEmail } from "./liveFixtureUsers.js";
+import { fixtureEmail, isSweepableFixtureUser } from "./liveFixtureUsers.js";
 
 // ── Env-var checks ────────────────────────────────────────────────────────────
 
@@ -159,16 +159,21 @@ const MAX_USER_PAGES = 20;
 const USERS_PER_PAGE = 1000;
 
 /**
- * Ids of any auth user currently holding one of this suite's fixture emails.
+ * Ids of any auth user this suite is ALLOWED TO DELETE.
  *
- * Matching is delegated to matchesFixtureEmail so it covers BOTH this run's
- * `+r<run>`-scoped addresses and any stranded variant a previous run left
- * behind. An exact-string set stopped working the moment the addresses became
- * run-scoped: it would have swept only its own users and reported the project
- * clean while leftovers accumulated.
+ * The decision is delegated to isSweepableFixtureUser, which is the same one
+ * purgeFixtureUsers makes, so there is one answer to "may I delete this" rather
+ * than two that can disagree. It covers this run's `+r<run>`-scoped addresses
+ * at any age, and a stranded variant from another run only once that account is
+ * old enough that no live run can still own it.
+ *
+ * This used to match on address ALONE (matchesFixtureEmail), which swept a
+ * concurrent run's live fixtures out from under it — measured 2026-09-05, five
+ * suites red across two overlapping runs. See liveFixtureUsers.ts.
  */
 async function findFixtureUserIds(admin: SupabaseClient): Promise<string[]> {
   const found: string[] = [];
+  const now = Date.now();
 
   for (let page = 1; page <= MAX_USER_PAGES; page++) {
     const { data, error } = await admin.auth.admin.listUsers({
@@ -179,8 +184,7 @@ async function findFixtureUserIds(admin: SupabaseClient): Promise<string[]> {
 
     const users = data?.users ?? [];
     for (const u of users) {
-      const email = (u as { email?: string | null }).email;
-      if (email && FIXTURE_EMAILS.some((base) => matchesFixtureEmail(email, base))) found.push(u.id);
+      if (isSweepableFixtureUser(u, FIXTURE_EMAILS, now)) found.push(u.id);
     }
     // A short page is the last page.
     if (users.length < USERS_PER_PAGE) return found;

@@ -44,7 +44,15 @@
  * 2291_intel_stmt_trigger_removal_round2.sql removes it again, and
  * src/test/appendOnlyStatementTriggers.test.ts refuses the next copy.
  *
- * ── SO THERE ARE NOW THREE LAYERS, AND THEY ARE INDEPENDENT ─────────────────
+ * ── AND WHY LAYER 3 THEN BROKE LAYER 1 (2026-09-05, ROUND 2) ────────────────
+ * Layer 3 below sweeps "every stranded run-scoped variant" of a fixture
+ * address. It had no way to tell a STRANDED variant from a LIVE one, so a sweep
+ * by run A deleted run B's fixture users while B was still using them — undoing
+ * layer 1 for both runs. Layer 4 (`isSweepableFixtureUser`) is the missing
+ * distinction: ours at any age, somebody else's only once it is too old to
+ * belong to a live run. Its header carries the measurement and the reasoning.
+ *
+ * ── SO THERE ARE NOW FOUR LAYERS, AND THEY ARE INDEPENDENT ──────────────────
  *   1. RUN-SCOPED EMAILS (`fixtureEmail`). A leftover row from a previous run
  *      can no longer collide with this run's fixtures AT ALL, whatever went
  *      wrong last time and whether or not any cleanup works. This is the layer
@@ -58,14 +66,19 @@
  *      Callers pass the same base emails as before; matching is on the local
  *      part before any `+` sub-address, so one call collects this run's users
  *      AND every stranded run-scoped variant of them.
+ *   4. PEER PROTECTION (`isSweepableFixtureUser`). What (3) collects is a
+ *      candidate list, not a delete list. An address belonging to another run
+ *      is deleted only when the account is old enough that no live run can
+ *      still own it; an address belonging to THIS run is deleted at any age,
+ *      because that is the teardown path.
  *
  * ── WHY DELETING HERE IS SAFE ───────────────────────────────────────────────
  * This only ever deletes an account whose email is a fixture email the suite
  * itself owns: the exact local part it is about to create, optionally carrying
  * a `+`-suffixed run id, at the same fixture domain (@example.com /
  * @portava-test.invalid — both reserved, neither routable). It cannot match a
- * real account, and it is precisely what the suite's own `after` hook would
- * have done had it run.
+ * real account, it cannot take a concurrent run's account with it, and it is
+ * precisely what the suite's own `after` hook would have done had it run.
  */
 
 import { randomBytes } from "node:crypto";
@@ -110,17 +123,140 @@ export function fixtureEmail(base: string): string {
  * The exact-or-run-scoped matcher. `stem@domain` and `stem+anything@domain`
  * match; nothing else does. Case-insensitive, because GoTrue lower-cases.
  *
- * Exported because a suite that sweeps its own fixtures (rlsHardening) has to
- * ask the same question, and two implementations of "is this one of mine" is
- * how one of them ends up wrong.
+ * ── THIS ANSWERS "IS THIS ADDRESS ONE OF OURS", NOT "MAY I DELETE IT" ───────
+ * Those are different questions and conflating them is the defect fixed below.
+ * `classifyFixtureEmail` and `isSweepableFixtureUser` answer the second one.
+ * Keep using this one to RECOGNISE a fixture address; never to authorise a
+ * delete.
  */
 export function matchesFixtureEmail(candidateEmail: string, base: string): boolean {
+  return classifyFixtureEmail(candidateEmail, base) !== null;
+}
+
+/**
+ * Which run an address belongs to, relative to THIS process.
+ *
+ *   "mine"     — `stem+r<FIXTURE_RUN_ID>@domain`: this process created it.
+ *   "foreign"  — `stem+<anything else>@domain`: some OTHER run created it. That
+ *                run may be dead (stranded leftovers) or ALIVE RIGHT NOW.
+ *   "unscoped" — exactly `stem@domain`: predates run-scoping, so it has no run
+ *                to belong to. Treated like "foreign": unowned, not ours.
+ *   null       — not one of ours at all.
+ */
+export type FixtureEmailScope = "mine" | "foreign" | "unscoped";
+
+export function classifyFixtureEmail(candidateEmail: string, base: string): FixtureEmailScope | null {
   const candidate = candidateEmail.toLowerCase();
   const at = base.lastIndexOf("@");
-  if (at < 0) return false;
+  if (at < 0) return null;
   const stem = base.slice(0, at).split("+")[0].toLowerCase();
   const domain = base.slice(at + 1).toLowerCase();
-  return candidate === `${stem}@${domain}` || (candidate.startsWith(`${stem}+`) && candidate.endsWith(`@${domain}`));
+  if (candidate === `${stem}@${domain}`) return "unscoped";
+  if (!candidate.startsWith(`${stem}+`) || !candidate.endsWith(`@${domain}`)) return null;
+  const suffix = candidate.slice(stem.length + 1, candidate.length - domain.length - 1);
+  return suffix === `r${FIXTURE_RUN_ID.toLowerCase()}` ? "mine" : "foreign";
+}
+
+/**
+ * ── DEFECT, MEASURED 2026-09-05: THE SWEEP DELETED OTHER RUNS' USERS ────────
+ *
+ * `purgeFixtureUsers` is called from some suites' `before` hooks to sweep
+ * fixtures a dead run stranded. It deleted every account `matchesFixtureEmail`
+ * accepted — which includes `stem+r<SOMEBODY ELSE'S RUN>@domain`. So a sweep by
+ * run A deleted run B's live fixture users, mid-suite, and defeated the exact
+ * property `fixtureEmail()` had just been introduced to provide. On main's
+ * attempt 2 that day, three suites that were ALREADY run-scoped
+ * (profile-role-not-self-writable, local-guide-self-promotion,
+ * rbp-self-verification) still went red with `readRole(<uuid>): Cannot coerce
+ * the result to a single JSON object` — their own rows, deleted by a peer.
+ *
+ * ── WHY NEITHER HALF OF THE FIX WORKS ALONE ────────────────────────────────
+ *
+ * RUN-ID ALONE ("only delete addresses carrying my run id") is safe but inert:
+ * every genuinely stranded account carries some OTHER run's id, so nothing
+ * would ever be swept and the 56-orphaned-user problem returns. It cannot
+ * distinguish a stranded run from a live one — both are "not me".
+ *
+ * AGE ALONE ("only delete accounts older than N") protects live peers, but
+ * breaks the case the helper exists for: a suite's own `after` hook purges the
+ * users it created SECONDS ago, and an age gate would refuse to. Teardown would
+ * stop working and every run would strand its own fixtures — the orphan problem
+ * again, arriving from the other direction. It also still races: a run slower
+ * than N is indistinguishable from a dead one.
+ *
+ * BOTH, and each half is load-bearing:
+ *
+ *   mine                → always sweepable. Definitionally safe: no other run
+ *                         can hold this address, and this is the teardown path.
+ *   foreign / unscoped  → sweepable ONLY if the account is older than
+ *                         FIXTURE_SWEEP_MIN_AGE_MS.
+ *
+ * The age gate is a bound on how long a peer's fixtures are protected, so it
+ * must exceed the longest a live run can hold one. The DB jobs in live-db.yml
+ * cap at 45 minutes INCLUDING the slot re-verification, and fixture users are
+ * created after that; two hours is more than twice the worst case. A stranded
+ * account younger than that is simply swept by the next run — sweeping is
+ * hygiene, not a correctness dependency, because run-scoped addresses mean a
+ * leftover can no longer block anybody.
+ *
+ * An account whose age cannot be determined is NOT swept. "I could not tell how
+ * old it is" and "it is old" are different answers and only one of them is safe
+ * to act on.
+ */
+export const FIXTURE_SWEEP_MIN_AGE_MS: number = sweepMinAgeMs(
+  process.env.PORTAVA_FIXTURE_SWEEP_MIN_AGE_MINUTES,
+);
+
+/**
+ * Exported so the rule is testable rather than only its one evaluation.
+ *
+ * A blank value falls back to the default rather than parsing as zero:
+ * `Number("")` is 0, and a zero window would make every foreign address
+ * immediately sweepable — the original defect, reintroduced by an empty
+ * environment variable. Non-positive and unparseable values are refused for the
+ * same reason.
+ */
+export function sweepMinAgeMs(raw: string | undefined): number {
+  const DEFAULT_MS = 120 * 60_000; // two hours; see the block comment above
+  if (typeof raw !== "string" || raw.trim() === "") return DEFAULT_MS;
+  const minutes = Number(raw.trim());
+  if (!Number.isFinite(minutes) || minutes <= 0) return DEFAULT_MS;
+  return minutes * 60_000;
+}
+
+/** Parse GoTrue's `created_at`. Returns null when it is absent or unusable. */
+function createdAtMs(user: unknown): number | null {
+  const raw = (user as { created_at?: unknown } | null)?.created_at;
+  if (typeof raw !== "string" && typeof raw !== "number") return null;
+  const ms = new Date(raw as string | number).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * THE ONE DECISION. Both sweepers (this module's `purgeFixtureUsersDetailed`
+ * and rlsHardening's `findFixtureUserIds`) route through it, because two
+ * implementations of "may I delete this" is how one of them deletes a peer's
+ * account.
+ */
+export function isSweepableFixtureUser(
+  user: unknown,
+  baseEmails: readonly string[],
+  nowMs: number = Date.now(),
+): boolean {
+  const email = String((user as { email?: unknown } | null)?.email ?? "");
+  if (email === "") return false;
+
+  let scope: FixtureEmailScope | null = null;
+  for (const base of baseEmails) {
+    const s = classifyFixtureEmail(email, base);
+    if (s === "mine") return true; // ours, at any age — this is the teardown path
+    if (s !== null && scope === null) scope = s;
+  }
+  if (scope === null) return false;
+
+  const created = createdAtMs(user);
+  if (created === null) return false; // cannot date it -> cannot claim it is stranded
+  return nowMs - created >= FIXTURE_SWEEP_MIN_AGE_MS;
 }
 
 /** Pages to scan before giving up. GoTrue caps per_page server-side, so the
@@ -215,10 +351,11 @@ export async function purgeFixtureUsersDetailed(
     return outcome;
   }
 
-  const targets = users.filter((u) => {
-    const email = String(u?.email ?? "");
-    return email !== "" && baseEmails.some((base) => matchesFixtureEmail(email, base));
-  });
+  // isSweepableFixtureUser, NOT matchesFixtureEmail. The difference is the whole
+  // 2026-09-05 fix: a matching address belonging to a LIVE concurrent run is
+  // recognisably one of ours and still must not be deleted. See its header.
+  const now = Date.now();
+  const targets = users.filter((u) => isSweepableFixtureUser(u, baseEmails, now));
 
   for (const user of targets) {
     const email = String(user.email);
