@@ -204,6 +204,18 @@ export const KIND_PROMPTS: Record<MapObjectKind, readonly MapContributionKind[]>
   // §37: "Do not make predictions look like observations." You cannot observe a
   // forecast.
   prediction: [],
+  // §36 Phase 7. None of the four takes a prompt, for one reason each:
+  //   world_pulse / traveler_flow / city_model are ALREADY AGGREGATES over many
+  //   people. §22's zone contributions anchor to a nearby PLACE
+  //   (resolveZoneAnchorSubject); a continent cell or a city→city edge has no
+  //   place to anchor to, and "I observe that a continent is busy" is not an
+  //   observation of a physical state anyone can make.
+  //   personal_city is the viewer's own history — the same reason `memory` is
+  //   empty above.
+  world_pulse: [],
+  traveler_flow: [],
+  city_model: [],
+  personal_city: [],
 };
 
 /** Whether this prompt is legal for this object kind (§22 semantics, not UI). */
