@@ -188,7 +188,9 @@ describe("threadDuplicatesLiveStrip — which thread kinds a strip item silences
 
   it("is inert without a place id or without a strip", () => {
     assert.equal(threadDuplicatesLiveStrip("hidden_gem", null, viewerWithStrip("hidden_gem")), false);
-    assert.equal(threadDuplicatesLiveStrip("hidden_gem", PLACE, { viewerId: "v" }), false);
+    // A viewer whose strip set was never populated — the shape every caller had
+    // before routes/wall.ts started supplying it.
+    assert.equal(threadDuplicatesLiveStrip("hidden_gem", PLACE, {}), false);
   });
 });
 
