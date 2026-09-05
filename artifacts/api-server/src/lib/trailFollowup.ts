@@ -21,6 +21,18 @@
  * gated by `movementPrivacyMet` + `MOVEMENT_CONFIDENCE_FLOOR`.
  */
 
+// Type-only import: lib/canonicalEvents pulls in the logger at runtime, and this
+// module's "no runtime effect" property is load-bearing. lib/eventFamilies is
+// pure (its own canonicalEvents import is type-only), so VERB_FAMILY is the
+// runtime source of the verb vocabulary here.
+import type { CanonicalEventVerb } from "./canonicalEvents.js";
+import { VERB_FAMILY } from "./eventFamilies.js";
+// Value import on purpose. lib/intelContracts is declarations plus pure
+// functions with NO imports of its own, so pulling PRIVACY_THRESHOLD_V1 in at
+// runtime preserves this module's load-bearing "no runtime effect" property —
+// the same reason canonicalEvents above is imported for types only.
+import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
+
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -138,13 +150,30 @@ export function computeMovementStrength(c: MovementCounts): number {
   return c.verifiedArrivals + 0.6 * c.headingTo + 0.25 * c.saves - 0.5 * c.cancellations;
 }
 
-/** §13 Privacy threshold v1 — the defaults that gate any movement publication. */
+/**
+ * §13 Privacy threshold v1 — the values that gate any movement publication.
+ *
+ * DERIVED, NEVER RESTATED. Until 2026-09-05 every number here was written out
+ * as a literal under a comment claiming these were "the defaults". They were a
+ * COPY of lib/intelContracts.PRIVACY_THRESHOLD_V1, and a copy of a threshold is
+ * a threshold that silently stops tracking: tightening the shared gate (the one
+ * the A0 packet §09 requires to cover the Compass aggregate path too) would have
+ * left every movement reader — lib/trailServe's cohort floor included — on the
+ * old, looser floor with nothing red to show for it. This is the same
+ * hard-coded-mirror class as the phantom TRAIL_OUTCOME_VERBS vocabulary below.
+ *
+ * The names differ from the shared record's on purpose (`minGroups` vs
+ * `minIndependentGroups`, `minTimeBucketMinutes` vs `timeBucketMinutes`) — this
+ * is the movement-side vocabulary and callers depend on it — so the mapping is
+ * spelled out here, once, rather than left to a spread that would also drag in
+ * `minVenueCohortForVenueGeography`, which is a GEOGRAPHY rule, not a floor.
+ */
 export const MOVEMENT_PRIVACY_V1 = {
-  minUniqueActors: 15,
-  minGroups: 5,
-  maxSingleGroupShare: 0.2,
-  minTimeBucketMinutes: 30,
-  minPublicationDelayMinutes: 10,
+  minUniqueActors: PRIVACY_THRESHOLD_V1.minUniqueActors,
+  minGroups: PRIVACY_THRESHOLD_V1.minIndependentGroups,
+  maxSingleGroupShare: PRIVACY_THRESHOLD_V1.maxSingleGroupShare,
+  minTimeBucketMinutes: PRIVACY_THRESHOLD_V1.timeBucketMinutes,
+  minPublicationDelayMinutes: PRIVACY_THRESHOLD_V1.publicationDelayMinutes,
 } as const;
 
 export const MOVEMENT_CONFIDENCE_FLOOR = 0.65;
@@ -245,9 +274,25 @@ export function aggregateNextMoves(
 }
 
 // ── §14 Arrival / outcome link (derivation over family='outcome' events) ──────
-/** Outcome verbs that close a Trail (mirror canonical_event_families family='outcome'). */
-export const TRAIL_OUTCOME_VERBS = ["arrival_confirmed", "next_stop", "entry_succeeded", "entry_failed"] as const;
-export type TrailOutcomeVerb = (typeof TRAIL_OUTCOME_VERBS)[number];
+/**
+ * The outcome verbs that can close a Trail — DERIVED from lib/eventFamilies, the
+ * one place the verb→family map lives, so this list cannot drift from the
+ * `canonical_event_families` view (2123/2277) or from the
+ * `canonical_events_verb_check` CHECK that decides what may be stored at all.
+ *
+ * WHY DERIVED, NOT WRITTEN OUT. Until 2026-09-05 this constant read
+ * `["arrival_confirmed","next_stop","entry_succeeded","entry_failed"]` under a
+ * comment claiming it mirrored family='outcome'. It mirrored nothing: NONE of
+ * those four strings is a canonical verb, so `canonical_events` (CHECK verb IN
+ * (…), 2120 widened by 2277) can never hold one and `linkTrailOutcomes` could
+ * never count a single real event — the §14 derivation was inert by construction
+ * and its test was green only because the fixture used the same phantom
+ * vocabulary. The real outcome family is arrival | completion | rejection.
+ */
+export const TRAIL_OUTCOME_VERBS: readonly CanonicalEventVerb[] = (
+  Object.keys(VERB_FAMILY) as CanonicalEventVerb[]
+).filter((v) => VERB_FAMILY[v] === "outcome");
+export type TrailOutcomeVerb = CanonicalEventVerb;
 
 export interface OutcomeEventRow {
   verb: string;
@@ -257,9 +302,16 @@ export interface OutcomeEventRow {
 
 export interface TrailArrivalLink {
   destinationArea: string;   // matched via the next_move
-  arrivals: number;          // arrival_confirmed at the destination after the declaration
-  entrySucceeded: number;
-  entryFailed: number;
+  arrivals: number;          // verb 'arrival' at the destination after the declaration
+  completions: number;       // verb 'completion'
+  rejections: number;        // verb 'rejection'
+  /**
+   * Rows at the destination and after the declaration whose verb is NOT an
+   * outcome-family canonical verb. Counted rather than silently dropped: a
+   * non-zero value here is the signature of the vocabulary drift described
+   * above, and a caller can see it instead of reading a zero as "no arrivals".
+   */
+  ignoredNonOutcome: number;
 }
 
 /**
@@ -274,14 +326,22 @@ export function linkTrailOutcomes(
   outcomes: readonly OutcomeEventRow[],
 ): TrailArrivalLink {
   const t0 = Date.parse(declaredAt);
-  const after = outcomes.filter(
-    (o) => o.subjectId === destinationPlaceId && Number.isFinite(Date.parse(o.observedAt)) && Date.parse(o.observedAt) >= t0,
-  );
+  // An unparseable declaration time matches nothing (fail-closed) rather than
+  // letting NaN comparisons decide which side of the declaration a row is on.
+  const after = Number.isFinite(t0)
+    ? outcomes.filter((o) => {
+        if (o.subjectId !== destinationPlaceId) return false;
+        const t = Date.parse(o.observedAt);
+        return Number.isFinite(t) && t >= t0;
+      })
+    : [];
+  const outcomeVerbs = new Set<string>(TRAIL_OUTCOME_VERBS);
   return {
     destinationArea,
-    arrivals: after.filter((o) => o.verb === "arrival_confirmed" || o.verb === "next_stop").length,
-    entrySucceeded: after.filter((o) => o.verb === "entry_succeeded").length,
-    entryFailed: after.filter((o) => o.verb === "entry_failed").length,
+    arrivals: after.filter((o) => o.verb === "arrival").length,
+    completions: after.filter((o) => o.verb === "completion").length,
+    rejections: after.filter((o) => o.verb === "rejection").length,
+    ignoredNonOutcome: after.filter((o) => !outcomeVerbs.has(o.verb)).length,
   };
 }
 

@@ -31,6 +31,7 @@ import type { StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
 import { EntityMapLayers } from '../map/EntityMarkers.tsx';
 import { ActivityZoneLayer } from '../map/ActivityZone.tsx';
 import { CrowdFlowLayer } from '../map/CrowdFlowLine.tsx';
+import { TravelerFlowLayer } from '../map/TravelerFlowLine.tsx';
 import type { MapObject } from '../../types/mapObjects.ts';
 import type { MapEntity, ToggleableEntityType } from '../../types/mapTypes.ts';
 import { color, space, radius, type as t, avatar, icon, dot } from '../../theme/tokens.ts';
@@ -561,6 +562,11 @@ export function DiscoveryMapView({
           <>
             <ActivityZoneLayer objects={zoneObjects} />
             <CrowdFlowLayer objects={zoneObjects} anomalousIds={anomalousFlowIds} />
+            {/* §36 Phase 7 city→city edges. A separate layer from CrowdFlow
+                because the two carry OPPOSITE structural guarantees — §10
+                requires a cohort count, Phase 7 forbids one — and both fail
+                closed on their own. */}
+            <TravelerFlowLayer objects={zoneObjects} />
           </>
         ) : null}
         {visiblePlaces.map((place) => {

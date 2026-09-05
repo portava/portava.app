@@ -1826,6 +1826,15 @@ router.post("/circle/pause-on-session-end", async (req, res) => {
   if (!await requireFeatureEnabled(res, sc)) return;
 
   // Fetch all active (non-paused) presence rows for the caller.
+  //
+  // `paused` was NOT a member of circle_presence_status_check
+  // (active | arrived | with_group | leaving | safe | needs_help) until
+  // migration 2298 admitted it. Until then the `.neq` below excluded nothing
+  // and — far worse — the UPDATE that follows was rejected 23514 on every
+  // press, so this endpoint has always returned db_error and Circle sharing
+  // could never actually be paused. The same rejected write sits on the
+  // deactivation path at routes/profile.ts:1413. 2298 is the fix; the code
+  // here was already saying the right thing.
   const { data: presenceRows, error: fetchErr } = await sc
     .from("circle_presence")
     .select("context_type, context_id")

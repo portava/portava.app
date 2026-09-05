@@ -374,7 +374,19 @@ interface Handler {
  */
 const IN_FLIGHT_EXCEPTIONS: string[] = [
   "rentABuddyMarketplace.ts DELETE /rent-a-buddy/waitlist/:waitlistId",
-  "rentABuddyMarketplace.ts GET /rent-a-buddy/me/earnings/ledger",
+  // SHRUNK when #420 merged (2026-09-05T17:54Z) — exactly what the assertion
+  // below asks for, and the only direction it permits.
+  // `GET /rent-a-buddy/me/earnings/ledger` was recorded while an open PR owned
+  // its body. On main that handler is now a pure read: requireUser, then one
+  // `.select()` on rent_buddy_earnings_ledger scoped to buddy_user_id, and no
+  // write of any kind (routes/rentABuddyMarketplace.ts:2270). A read is not a
+  // write handler, so it cannot be an ungated write handler.
+  //
+  // Checked rather than assumed, because "the scanner stopped seeing it" and
+  // "the handler stopped writing" look identical from the assertion: the
+  // detector still reports the DELETE above, and both sibling assertions — "no
+  // non-admin handler writes Rent-a-Buddy state without the master switch" and
+  // "every admin-exempt handler actually proves admin" — still pass.
 ];
 
 const RAB_ROUTERS = [

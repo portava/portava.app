@@ -399,12 +399,27 @@ export function cohortSizeOf(objects: readonly MapObject[]): number | null {
  * `crowd_flow` is excluded because it is already an aggregate with its own §10
  * gates — re-aggregating it into an area summary would destroy the observed /
  * inferred separation those gates exist to preserve.
+ *
+ * The four §36 Phase 7 kinds join it, for two distinct reasons:
+ *
+ *   world_pulse / traveler_flow / city_model  are ALREADY AGGREGATES that
+ *     cleared their own k decision. Re-binning them would fold a bucketed
+ *     cohort back into an exact `count`, which is precisely the disclosure the
+ *     bucket exists to prevent — and `cohortWeightOf` would read their absent
+ *     `count` as 1, understating the cohort and letting a cell of five
+ *     already-published aggregates read as five people.
+ *   personal_city  is a PRIVATE summary of the viewer's own history. It has no
+ *     business contributing a body to a cell that is drawn as public activity.
  */
 export const NEVER_AGGREGATED_KINDS: readonly MapObjectKind[] = [
   "safety_notice",
   "crew_member",
   "meeting_point",
   "crowd_flow",
+  "world_pulse",
+  "traveler_flow",
+  "city_model",
+  "personal_city",
 ];
 
 export function isNeverAggregated(kind: MapObjectKind): boolean {

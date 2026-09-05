@@ -76,6 +76,7 @@ import { Router } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
+import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
@@ -2083,10 +2084,14 @@ router.get("/rent-a-buddy/me/waitlist/v2", async (req, res) => {
   if (!auth) return;
   const svc = sc() ?? auth.client;
 
+  // Cancelled entries are excluded for the same reason as the v1 list in
+  // rentABuddy.ts: the sibling DELETE below is a soft cancel, and a list that
+  // still shows the entry makes the cancel look like it did nothing.
   const { data, error } = await svc
     .from("rent_buddy_waitlist")
     .select("*")
     .eq("user_id", auth.user.id)
+    .neq("status", "cancelled")
     .order("created_at", { ascending: false });
 
   if (error) return sendError(res, 'db_error', error.message);
@@ -2284,50 +2289,9 @@ router.get("/rent-a-buddy/me/earnings/ledger", async (req, res) => {
   res.json({ ledger: entries, total: count ?? 0 });
 });
 
-// ── Earnings ledger creation helper ──────────────────────────────────────────
-
-async function createEarningsLedgerEntry(svc: any, booking: any, buddyProfileId: string) {
-  const { data: buddy } = await svc
-    .from("rent_buddy_profiles")
-    .select("user_id, buddy_level")
-    .eq("id", buddyProfileId)
-    .maybeSingle();
-  if (!buddy) return;
-
-  const { data: feeRule } = await svc
-    .from("rent_buddy_fee_rules")
-    .select("*")
-    .eq("buddy_level", (buddy as any).buddy_level ?? "new")
-    .maybeSingle();
-
-  const feePercent = (feeRule as any)?.platform_fee_percent ?? 22;
-  const travelerSvcFee = Number((feeRule as any)?.traveler_service_fee_usd ?? 0);
-  const total = Number(booking.total_usd ?? 0);
-  const platformFeeAmount = Math.round(total * feePercent / 100 * 100) / 100;
-  const buddyGross = total + Number(booking.tip_usd ?? 0);
-  const buddyNet = Math.round((buddyGross - platformFeeAmount) * 100) / 100;
-
-  const { error: ledgerErr } = await svc.from("rent_buddy_earnings_ledger").upsert({
-    booking_id: booking.id,
-    buddy_user_id: (buddy as any).user_id,
-    traveler_id: booking.traveler_id,
-    pricing_type: booking.pricing_type ?? "hourly",
-    total_booking_usd: total,
-    addons_usd: Number(booking.addons_total_usd ?? 0),
-    tip_usd: Number(booking.tip_usd ?? 0),
-    platform_fee_percent: feePercent,
-    platform_fee_amount: platformFeeAmount,
-    traveler_service_fee_amount: travelerSvcFee,
-    buddy_gross_amount: buddyGross,
-    buddy_net_estimated_amount: buddyNet,
-    deposit_amount: Number(booking.deposit_usd ?? 0),
-    in_app_amount_collected: Number(booking.deposit_usd ?? 0),
-    cash_balance_due: Number(booking.cash_balance_usd ?? 0),
-    cash_balance_confirmed: false,
-    is_estimated: true,
-  }, { onConflict: "booking_id" });
-  if (ledgerErr) logger.error({ err: ledgerErr, bookingId: booking.id }, "earnings ledger upsert failed (best-effort)");
-}
+// The earnings-ledger writer moved to lib/rentBuddyEarningsLedger.ts so the
+// three booking-creation paths in rentABuddy.ts and rentABuddySpec.ts can share
+// it. It was module-private here, which is exactly why they never wrote a row.
 
 // ── Admin Marketplace ─────────────────────────────────────────────────────────
 

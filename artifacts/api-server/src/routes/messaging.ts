@@ -760,6 +760,9 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     severity: "minor",
     sourceType: "message_request",
     sourceId: requestId,
+    // Each side's counterpart is the other side — this is the reciprocal shape
+    // a connection ring farms, so the mutual-ring scan needs to see the pair.
+    counterpartyUserId: req_.sender_id,
     dedupWindowHours: 72,
   });
   void recordTrustEvent(sc, {
@@ -770,6 +773,7 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     severity: "minor",
     sourceType: "message_request",
     sourceId: requestId,
+    counterpartyUserId: user.id,
     dedupWindowHours: 72,
   });
 

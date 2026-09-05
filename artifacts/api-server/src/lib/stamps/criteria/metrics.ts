@@ -25,9 +25,30 @@ export interface EvalContext {
 
 export type MetricResolver = (sc: any, userId: string, ctx: EvalContext) => Promise<number>;
 
+/**
+ * Head-count helper.
+ *
+ * ⚠ The select list MUST stay `"*"`, never a named column. PostgREST validates
+ * the select list against the table even for a `head: true` count, so naming a
+ * column the table does not have fails the WHOLE query (42703) and the
+ * `if (error) return 0` below turns that into a silent zero.
+ *
+ * This is not hypothetical: `select("id")` was the shape here, and two of the
+ * four tables counted through this helper have no `id` column at all —
+ * `user_follows` (follower_id, following_id, created_at) and `event_rsvps`
+ * (event_id, user_id, status, created_at) are both composite-key tables. That
+ * made `following_count`, `followers_count` and `events_joined` permanently 0
+ * for every user, so the follower-milestone stamps seeded by migration 0179 and
+ * every event-category stamp activated by 0180 could never be awarded.
+ * `user_follows.id` is independently recorded as verified-missing-in-production
+ * on the repo's own dead-reference ratchet (checkSchemaReferences.ts).
+ *
+ * `"*"` is valid on every table, so the count is the only thing PostgREST has
+ * to resolve. Guarded by stampCriteriaSchemaTruth.test.ts.
+ */
 async function countRows(sc: any, table: string, filters: Array<[string, any]>): Promise<number> {
   try {
-    let q = sc.from(table).select("id", { count: "exact", head: true });
+    let q = sc.from(table).select("*", { count: "exact", head: true });
     for (const [k, v] of filters) q = q.eq(k, v);
     const { count, error } = await q;
     if (error) return 0;
@@ -72,8 +93,10 @@ const DB_METRICS: Record<string, MetricResolver> = {
   events_hosted: (sc, u) => countRows(sc, "events", [["host_id", u]]),
   events_joined: (sc, u) => countRows(sc, "event_rsvps", [["user_id", u], ["status", "going"]]),
 
-  // Content
-  posts_count: (sc, u) => countRows(sc, "posts", [["user_id", u]]),
+  // Content (posts.author_id — the table has NO user_id column; filtering on a
+  // column that does not exist fails the whole query, so this metric was 0 for
+  // every user)
+  posts_count: (sc, u) => countRows(sc, "posts", [["author_id", u]]),
 
   // Passport aggregates (non-revoked user_stamps)
   stamps_earned:     (sc, u) => countRows(sc, "user_stamps", [["user_id", u], ["is_revoked", false]]),

@@ -80,7 +80,7 @@ its denominator.
 > The report no longer reads the corpus through `outcome` at all. It selects by
 > **`event_type IS NULL`** — the documented ranked/impression corpus
 > (`lib/rankLog.ts`, migration `0197`) — in `fetchDiscoveryServeRows`
-> (`lib/discoveryServePointReport.ts:572#fetchDiscoveryServeRows`, predicate at `:587#event_type`), which keeps
+> (`lib/discoveryServePointReport.ts:574#fetchDiscoveryServeRows`, predicate at `:589#event_type`), which keeps
 > every serve whatever rung its outcome later reached and excludes the
 > analytics-sentinel rows the outcome route inserts (`event_type` set,
 > `outcome='analytics'`). A regression test proves a converted serve survives
