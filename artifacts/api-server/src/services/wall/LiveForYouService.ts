@@ -31,6 +31,29 @@ import {
   type LiveClaimEnvelope,
 } from "../../lib/liveClaimRead.js";
 import { deriveGemProjection } from "../hiddenGems/HiddenGemContributionService.js";
+import { fetchBlockedSet } from "../../lib/blocks.js";
+// The ONE privacy-complete events reader (visibility + friendship + eligibility
+// + block set + show_exact_location redaction). routes/mapProjection.ts and
+// routes/mapProjectionTemporal.ts already consume it the same way; the Wall
+// strip must NOT grow a second events gate of its own (spec §22: "The Wall must
+// not implement a second place-state system").
+import { loadNearbyEvents } from "../../routes/mapSearch.js";
+// The canonical event-timing derivation (ongoing / upcoming / ended) and the
+// canonical assumed duration, shared with the Map's §10 inferred-cause producer
+// so the two surfaces cannot disagree about when an event is on.
+import {
+  eventPhaseAt,
+  causeTitle,
+  EVENT_CAUSE_DEFAULT_DURATION_MINUTES,
+  EVENT_CAUSE_UPCOMING_MINUTES,
+  type EventContextLike,
+} from "../../lib/mapProducers/eventContextProducer.js";
+// The canonical trip-plan-item expiry (ends_at, else starts_at + grace), shared
+// with the Map's meeting-point producer for the same reason.
+import { meetingPointExpiryMs } from "../../lib/mapProducers/meetingPointProducer.js";
+import { haversineMeters } from "../../lib/protectedLocations.js";
+// The RAB master gate (`rent_buddy_enabled`), re-read inside the buddy producer
+// so a globally disabled product can never be advertised by the strip.
 import { isRentBuddyMasterEnabled } from "./wallRabGate.js";
 import { logger } from "../../lib/logger.js";
 import type {
@@ -253,12 +276,31 @@ export async function buildLiveForYou(
 
 // ── Strip producers for the non-intel kinds (spec §4 / TABLE 0) ──────────────
 //
-// place_state (and event_state) come from the intel projection through
-// buildLiveForYou's envelope read. The remaining kinds come from their own
-// canonical systems; each producer reads + gates a fact and returns a candidate
-// carrying a RESOLVED fact, so LiveForYouService.actionFor's per-kind mapping
-// binds and the strip is genuinely multi-kind. Every producer is fail-soft:
-// any read failure yields fewer/zero candidates, never an error (spec §34).
+// place_state comes from the intel projection through buildLiveForYou's envelope
+// read. Every OTHER kind comes from its own canonical system; each producer
+// reads + gates a fact and returns a candidate carrying a RESOLVED fact, so
+// LiveForYouService.actionFor's per-kind mapping binds and the strip is
+// genuinely multi-kind. Every producer is fail-soft: any read failure yields
+// fewer/zero candidates, never an error (spec §34).
+//
+// THE §37 TRUTH BOUNDARY AND `state: "live"`
+// ==========================================
+// Only the intel projection can put "Live now" on the strip. A SCHEDULE — an
+// event's start/end, a trip plan item's start/end — is a record of what someone
+// INTENDS, not an observation of conditions at the place. lib/mapProducers/
+// meetingPointProducer records the same ruling for the Map ("A plan is not an
+// observation of conditions at the place: no observedAt, no freshness, no
+// confidence"). So the schedule-derived kinds below are ALWAYS `state:
+// "emerging"` (the client renders "Emerging", never "Live now") and always
+// carry `confidence: null` — a schedule has no confidence score to badge, and
+// inventing one would be a fabricated number in a decision surface.
+//
+// For the same reason neither producer ever emits a crowd/capacity phrase.
+// TABLE 0's illustrative "Beach Festival · Peak now" is a CROWD claim: crowd
+// state belongs to Live Intelligence (§22 — the Wall does not implement a second
+// place-state system), and `events.going_count` is a cached counter that
+// routes/events.ts already recomputes because it drifts, so it is not a fact
+// this strip may assert.
 
 /** Distinct feed places, bounded, in first-seen order. */
 function boundedPlaces(placeRefs: PublicPlaceRef[]): PublicPlaceRef[] {
@@ -469,6 +511,469 @@ export async function buildBuddyLiveCandidates(
     return out;
   } catch (err) {
     logger.warn({ err }, "liveForYou: buddy producer failed — no buddy strip items");
+    return [];
+  }
+}
+
+// ── event_state (spec §4 / TABLE 0: "Event state · time-valid and relevant") ──
+
+/** How many feed places the event producer probes. Deliberately far smaller
+ *  than MAX_PRODUCER_PLACES: each probe is a spatial read whose per-row privacy
+ *  pass costs several more reads, and the strip only ever shows four items.
+ *  This bound and EVENT_PROBE_LIMIT together cap the first page's event cost
+ *  (spec TABLE 4: < 500 ms backend). */
+export const MAX_EVENT_PROBE_PLACES = 2;
+/** Bounding radius handed to loadNearbyEvents. Small on purpose — the strip
+ *  wants events AT the place the viewer is already looking at, not a city
+ *  listing (spec §4: no generic city-wide firehose). */
+export const EVENT_PROBE_RADIUS_KM = 1;
+/** Rows one probe may consider. The strip keeps at most one per place. */
+export const EVENT_PROBE_LIMIT = 8;
+/** How close an event must actually be to count as "at" this place. */
+export const EVENT_AT_PLACE_METERS = 400;
+
+type EventPhase = "ongoing" | "upcoming";
+
+function finiteCoord(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+/**
+ * The public venue coordinate of each of these canonical places, read from the
+ * `places` table — used ONLY to bound a spatial probe, never emitted.
+ *
+ * WHY THIS READ EXISTS AT ALL. routes/wall.ts builds its PublicPlaceRefs from
+ * `id, name, city, country_code` and deliberately omits the coordinate: "the
+ * feed never needs a venue coordinate, and omitting it removes any risk of a
+ * coarse/protected place leaking one" (spec §23). That ruling stands — the
+ * strip item's `subject` is still that coordinate-free ref. But "is an event on
+ * AT this place" is a spatial question, and answering it with a city name would
+ * be the city-wide firehose §4 forbids. So the coordinate is resolved here,
+ * used to bound the probe, and dropped: it never enters a LiveForYouItem, a
+ * label, or an action.
+ *
+ * Merged and non-active places are skipped — the same predicate the Map's
+ * canonical place read applies, so the Wall cannot anchor on a place the Map
+ * would not serve.
+ */
+async function loadPlaceAnchors(
+  sc: any,
+  placeIds: string[],
+): Promise<Map<string, { lat: number; lng: number }>> {
+  const out = new Map<string, { lat: number; lng: number }>();
+  if (placeIds.length === 0) return out;
+  const { data, error } = await sc
+    .from("places")
+    .select("id, latitude, longitude, status, merged_into_place_id")
+    .in("id", placeIds)
+    .eq("status", "active")
+    .is("merged_into_place_id", null);
+  if (error || !Array.isArray(data)) return out;
+  for (const row of data as any[]) {
+    const id = row?.id ? String(row.id) : "";
+    const lat = row?.latitude;
+    const lng = row?.longitude;
+    if (!id || !finiteCoord(lat) || !finiteCoord(lng)) continue;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+    out.set(id, { lat, lng });
+  }
+  return out;
+}
+
+/** The instant an event stops being on: `ends_at` when it is after the start,
+ *  else the canonical assumed duration the Map's §10 producer uses. */
+function eventEndMs(ev: EventContextLike, startMs: number): number {
+  const end = Date.parse(String(ev.ends_at ?? ""));
+  if (!Number.isNaN(end) && end > startMs) return end;
+  return startMs + EVENT_CAUSE_DEFAULT_DURATION_MINUTES * 60_000;
+}
+
+/**
+ * event_state strip items (spec §4 / TABLE 0). An event that is ON NOW, or
+ * starts within the canonical upcoming window, AT one of the feed's places.
+ *
+ * WHERE THE TRUTH COMES FROM
+ * ==========================
+ * `loadNearbyEvents` — the same privacy-complete reader the Map gateway uses. It
+ * applies event visibility, the friends-only friendship check, per-event
+ * eligibility (age / trust / verified-only) and the viewer's block set, and it
+ * NULLS the coordinates of an event whose host hid its exact location. Nothing
+ * here re-decides any of that; an event this viewer could not already see never
+ * reaches the strip. Timing is `eventPhaseAt`, the Map's own derivation, so the
+ * two surfaces cannot disagree about whether an event is on.
+ *
+ * An event with no usable coordinate (including one redacted by the reader) is
+ * SKIPPED, never approximated — the same rule eventContextProducer records: no
+ * coordinate, no adjacency. An `ended` event is not a live state and is dropped.
+ *
+ * Blocks fail CLOSED: an unreadable block set is not an empty one, so a failed
+ * `fetchBlockedSet` yields no event items at all rather than unfiltered ones.
+ */
+export async function buildEventStateLiveCandidates(
+  sc: any,
+  viewerId: string,
+  placeRefs: PublicPlaceRef[],
+  opts: { now?: Date } = {},
+): Promise<LiveForYouCandidate[]> {
+  if (!sc || !viewerId) return [];
+  const probe = boundedPlaces(placeRefs).slice(0, MAX_EVENT_PROBE_PLACES);
+  if (probe.length === 0) return [];
+  const now = opts.now ?? new Date();
+  const nowMs = now.getTime();
+  try {
+    const blockedSet = await fetchBlockedSet(sc, viewerId);
+    if (blockedSet === null) return []; // fail-closed (§23)
+    const anchors = await loadPlaceAnchors(sc, probe.map((p) => p.placeId));
+    // A place with no public venue coordinate cannot be probed spatially, and is
+    // never approximated (the rule eventContextProducer records for events).
+    const places = probe.filter((p) => anchors.has(p.placeId));
+    if (places.length === 0) return [];
+    // Narrow the candidate rows to what could be on or about to start, so the
+    // reader's per-row privacy pass runs over a handful of rows instead of 60.
+    // The bounds are a SUPERSET of what eventPhaseAt accepts, never a mirror of
+    // it: eventPhaseAt takes `ongoing` while the end is ahead, `upcoming` up to
+    // EVENT_CAUSE_UPCOMING_MINUTES out, and assumes
+    // EVENT_CAUSE_DEFAULT_DURATION_MINUTES whenever the recorded end is missing
+    // OR not after the start. The window is stated in exactly those two constants
+    // and is deliberately wider than the derivation at the edges (see
+    // NearbyEventsWindow), so narrowing can only ever cost a wasted row — never a
+    // candidate the per-row pass would have kept.
+    const window = {
+      nowIso: now.toISOString(),
+      startsBeforeIso: new Date(nowMs + EVENT_CAUSE_UPCOMING_MINUTES * 60_000).toISOString(),
+      openEndedStartsAfterIso: new Date(
+        nowMs - EVENT_CAUSE_DEFAULT_DURATION_MINUTES * 60_000,
+      ).toISOString(),
+    };
+    const perPlace = await Promise.all(
+      places.map((p) => {
+        const anchor = anchors.get(p.placeId)!;
+        return loadNearbyEvents(
+          sc,
+          viewerId,
+          anchor.lat,
+          anchor.lng,
+          EVENT_PROBE_RADIUS_KM,
+          blockedSet,
+          { window, limit: EVENT_PROBE_LIMIT },
+        ).catch(() => null);
+      }),
+    );
+    const out: LiveForYouCandidate[] = [];
+    for (let i = 0; i < places.length; i++) {
+      const place = places[i];
+      const anchor = anchors.get(place.placeId)!;
+      const events = perPlace[i];
+      // null ⇒ the read FAILED. An unreadable neighbourhood is not an empty one:
+      // say nothing about this place rather than claim there is nothing on.
+      if (!Array.isArray(events)) continue;
+
+      let best: { ev: EventContextLike; phase: EventPhase; minutes: number } | null = null;
+      for (const raw of events as EventContextLike[]) {
+        if (!raw || typeof raw.id !== "string" || raw.id === "") continue;
+        const lat = raw.location_lat;
+        const lng = raw.location_lng;
+        if (!finiteCoord(lat) || !finiteCoord(lng)) continue; // redacted / unplaced
+        const away = haversineMeters(anchor.lat, anchor.lng, lat, lng);
+        if (!(away <= EVENT_AT_PLACE_METERS)) continue;
+        const timing = eventPhaseAt(raw, nowMs);
+        if (!timing || timing.phase === "ended") continue;
+        const phase = timing.phase as EventPhase;
+        // Deterministic: ongoing beats upcoming; then the closest in time; then
+        // the event id — so the same world always yields the same strip item.
+        if (
+          !best ||
+          (best.phase !== "ongoing" && phase === "ongoing") ||
+          (best.phase === phase && timing.minutes < best.minutes) ||
+          (best.phase === phase && timing.minutes === best.minutes && raw.id < best.ev.id)
+        ) {
+          best = { ev: raw, phase, minutes: timing.minutes };
+        }
+      }
+      if (!best) continue;
+
+      const startMs = Date.parse(String(best.ev.starts_at ?? ""));
+      if (Number.isNaN(startMs)) continue; // eventPhaseAt guarantees this, belt-and-braces
+      const title = causeTitle(best.ev.title);
+      const label =
+        best.phase === "ongoing"
+          ? `${title} · happening now`
+          : `${title} · starts in ${best.minutes} min`;
+      out.push({
+        subjectId: place.placeId,
+        liveObjectType: "event_state",
+        subject: place,
+        resolved: {
+          id: `event-${best.ev.id}`,
+          label,
+          // Schedule, not observation — never "live" (see the §37 note above).
+          state: "emerging",
+          confidence: null,
+          // A schedule has no observation instant; record the read instant, the
+          // same thing the buddy producer does for an availability flag.
+          observedAt: now.toISOString(),
+          // Once it starts, "starts in N min" is wrong; once it ends, "happening
+          // now" is wrong. Either way the item ages out on the event's OWN clock.
+          validUntil: new Date(
+            best.phase === "ongoing" ? eventEndMs(best.ev, startMs) : startMs,
+          ).toISOString(),
+        },
+      });
+    }
+    return out;
+  } catch (err) {
+    logger.warn({ err }, "liveForYou: event producer failed — no event strip items");
+    return [];
+  }
+}
+
+// ── trip_signal (spec §4 / TABLE 0: "Crew gathering near saved stop") ─────────
+
+/** Trips probed at once. A viewer with more than this many live trips still
+ *  gets a bounded read (spec §4: personalized strip, never a scan). */
+export const MAX_TRIP_SIGNAL_TRIPS = 20;
+/** Plan items read at once across those trips. */
+const MAX_TRIP_PLAN_ITEMS = 100;
+/** How far a milestone may be from the saved stop and still be "near" it. */
+export const TRIP_SIGNAL_NEAR_METERS = 2000;
+/** How far ahead a milestone counts as a live signal. */
+export const TRIP_SIGNAL_UPCOMING_MINUTES = 120;
+/**
+ * The trip_plan_items.visibility values a trip MEMBER may be shown. 0010 defines
+ * the column as `NOT NULL DEFAULT 'members'` and routes/trips.ts' write schema
+ * never sets anything else, so this is the whole current domain — an unknown
+ * future value is withheld rather than guessed (fail-closed, §23).
+ */
+export const TRIP_SIGNAL_PLAN_VISIBILITY: ReadonlySet<string> = new Set(["members"]);
+
+interface TripPlanItemRow {
+  id: string;
+  trip_id: string;
+  title?: string | null;
+  category?: string | null;
+  status?: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  location_is_private?: boolean | null;
+  removed_at?: string | null;
+  visibility?: string | null;
+}
+
+/**
+ * trip_signal strip items (spec §4 / TABLE 0). A milestone on a trip the VIEWER
+ * belongs to that is happening now (or starts within TRIP_SIGNAL_UPCOMING_MINUTES)
+ * near a stop that trip has saved — and that stop is a place already in the
+ * viewer's feed, so the item is anchored on something they are looking at.
+ *
+ * TRIP-SCOPED AUTHORIZATION
+ * =========================
+ * `viewerTripIds` is the caller's accepted-membership set (routes/wall.ts reads
+ * trip_members with `status == null || status === 'accepted'`). Both reads below
+ * are keyed on those trip ids, so this producer can only ever surface a trip the
+ * viewer is already a member of. It never reads another user's trip, and it
+ * never names a PERSON: "crew gathering" is the trip's own plan, not anybody's
+ * position (§23 — exact person location is never inferred, and crew/strangers
+ * are coarse areas only). No coordinate is ever emitted.
+ *
+ * WHAT IS DROPPED, AND WHY
+ * ========================
+ *   • `location_is_private` items — routes/trips.ts nulls their coordinate for
+ *     every reader and lib/mapProducers/meetingPointProducer drops them outright.
+ *     This producer would otherwise use the service client's raw coordinate to
+ *     assert "near <place>", which discloses the area the owner marked private.
+ *   • removed / cancelled items, and items whose visibility is not member-visible.
+ *   • meetup-sourced items whose meetup has been cancelled — cancelling a meetup
+ *     leaves its plan item standing (the defect meetingPointProducer records), so
+ *     the source is cross-checked. If that check cannot be READ, every
+ *     meetup-sourced item is withheld: fail-closed, never a phantom gathering.
+ */
+export async function buildTripSignalLiveCandidates(
+  sc: any,
+  viewerId: string,
+  viewerTripIds: Set<string> | undefined,
+  placeRefs: PublicPlaceRef[],
+  opts: { now?: Date } = {},
+): Promise<LiveForYouCandidate[]> {
+  const places = boundedPlaces(placeRefs);
+  if (!sc || !viewerId || places.length === 0) return [];
+  const tripIds = [...(viewerTripIds ?? [])].filter((t) => !!t).slice(0, MAX_TRIP_SIGNAL_TRIPS);
+  if (tripIds.length === 0) return [];
+  const now = opts.now ?? new Date();
+  const nowMs = now.getTime();
+  const byPlace = new Map(places.map((p) => [p.placeId, p]));
+
+  try {
+    // 1) Which of the feed's places are SAVED STOPS on those trips.
+    //    trip_saved_places.place_id is client-supplied text (routes/trips-expansion
+    //    POST /trips/:id/saved-places), so this is an exact-id match: a stop saved
+    //    under a canonical place id joins, one saved under a provider id simply
+    //    does not — fewer signals, never a wrong one.
+    const { data: savedRows, error: savedErr } = await sc
+      .from("trip_saved_places")
+      .select("trip_id, place_id, lat, lng")
+      .in("trip_id", tripIds)
+      .in("place_id", [...byPlace.keys()])
+      .limit(200);
+    if (savedErr || !Array.isArray(savedRows)) return [];
+    const savedPlaceIds = [
+      ...new Set(
+        (savedRows as any[])
+          .map((r) => (r?.place_id ? String(r.place_id) : ""))
+          .filter((id) => id !== "" && byPlace.has(id)),
+      ),
+    ];
+    if (savedPlaceIds.length === 0) return [];
+    // The stop's canonical public coordinate (see loadPlaceAnchors: used only to
+    // decide "near", never emitted). The saved row's own client-supplied
+    // coordinate is the fallback when the canonical place has none.
+    const anchors = await loadPlaceAnchors(sc, savedPlaceIds);
+    /** trip id -> the feed places that trip has saved (with the anchor coordinate). */
+    const stopsByTrip = new Map<string, { place: PublicPlaceRef; lat: number | null; lng: number | null }[]>();
+    for (const row of savedRows as any[]) {
+      const tripId = row.trip_id ? String(row.trip_id) : "";
+      const placeId = row.place_id ? String(row.place_id) : "";
+      const place = byPlace.get(placeId);
+      if (!tripId || !place) continue;
+      const anchor = anchors.get(placeId);
+      const lat = anchor ? anchor.lat : finiteCoord(row.lat) ? Number(row.lat) : null;
+      const lng = anchor ? anchor.lng : finiteCoord(row.lng) ? Number(row.lng) : null;
+      const list = stopsByTrip.get(tripId) ?? stopsByTrip.set(tripId, []).get(tripId)!;
+      if (!list.some((s) => s.place.placeId === place.placeId)) list.push({ place, lat, lng });
+    }
+    if (stopsByTrip.size === 0) return [];
+
+    // 2) Time-current milestones on exactly those trips.
+    const windowStart = new Date(
+      nowMs - EVENT_CAUSE_DEFAULT_DURATION_MINUTES * 60_000,
+    ).toISOString();
+    const windowEnd = new Date(nowMs + TRIP_SIGNAL_UPCOMING_MINUTES * 60_000).toISOString();
+    const { data: itemRows, error: itemErr } = await sc
+      .from("trip_plan_items")
+      .select(
+        "id, trip_id, title, category, status, source_type, source_id, starts_at, ends_at, " +
+          "lat, lng, location_is_private, removed_at, visibility",
+      )
+      .in("trip_id", [...stopsByTrip.keys()])
+      .is("removed_at", null)
+      .neq("status", "cancelled")
+      .not("starts_at", "is", null)
+      .gte("starts_at", windowStart)
+      .lte("starts_at", windowEnd)
+      .limit(MAX_TRIP_PLAN_ITEMS);
+    if (itemErr || !Array.isArray(itemRows)) return [];
+
+    const eligible: { row: TripPlanItemRow; phase: EventPhase; minutes: number; expiresMs: number }[] = [];
+    for (const row of itemRows as TripPlanItemRow[]) {
+      if (!row || typeof row.id !== "string" || row.id === "") continue;
+      if (row.removed_at != null) continue;
+      if (row.status === "cancelled") continue;
+      if (row.location_is_private === true) continue;
+      if (!TRIP_SIGNAL_PLAN_VISIBILITY.has(String(row.visibility ?? "members"))) continue;
+      const startMs = Date.parse(String(row.starts_at ?? ""));
+      if (Number.isNaN(startMs)) continue;
+      const expiresMs = meetingPointExpiryMs(row);
+      if (expiresMs === null || expiresMs <= nowMs) continue;
+      const phase: EventPhase = startMs <= nowMs ? "ongoing" : "upcoming";
+      const minutes =
+        phase === "ongoing"
+          ? Math.round((nowMs - startMs) / 60_000)
+          : Math.max(1, Math.round((startMs - nowMs) / 60_000));
+      if (phase === "upcoming" && startMs - nowMs > TRIP_SIGNAL_UPCOMING_MINUTES * 60_000) continue;
+      eligible.push({ row, phase, minutes, expiresMs });
+    }
+    if (eligible.length === 0) return [];
+
+    // 3) A cancelled meetup leaves its plan item standing — cross-check, and
+    //    withhold every meetup-sourced item if the check cannot be read.
+    const meetupIds = [
+      ...new Set(
+        eligible
+          .filter((e) => e.row.source_type === "meetup" && !!e.row.source_id)
+          .map((e) => String(e.row.source_id)),
+      ),
+    ];
+    let liveMeetupIds: Set<string> | null = null;
+    if (meetupIds.length > 0) {
+      const { data: meetupRows, error: meetupErr } = await sc
+        .from("meetups")
+        .select("id, status")
+        .in("id", meetupIds);
+      if (meetupErr || !Array.isArray(meetupRows)) {
+        liveMeetupIds = null;
+      } else {
+        liveMeetupIds = new Set(
+          (meetupRows as any[])
+            .filter((m) => String(m.status ?? "") !== "cancelled")
+            .map((m) => String(m.id)),
+        );
+      }
+    }
+
+    // 4) Anchor each surviving milestone on the saved stop(s) of its own trip.
+    const best = new Map<string, { e: (typeof eligible)[number]; near: boolean }>();
+    for (const e of eligible) {
+      if (e.row.source_type === "meetup" && e.row.source_id) {
+        if (liveMeetupIds === null) continue; // unreadable ⇒ withheld
+        if (!liveMeetupIds.has(String(e.row.source_id))) continue; // cancelled meetup
+      }
+      const stops = stopsByTrip.get(String(e.row.trip_id));
+      if (!stops) continue;
+      for (const stop of stops) {
+        let near = false;
+        if (finiteCoord(e.row.lat) && finiteCoord(e.row.lng) && stop.lat !== null && stop.lng !== null) {
+          const away = haversineMeters(stop.lat, stop.lng, e.row.lat as number, e.row.lng as number);
+          // A milestone with a KNOWN coordinate that is far from this stop is not
+          // "near" it — drop the pairing rather than soften the claim.
+          if (!(away <= TRIP_SIGNAL_NEAR_METERS)) continue;
+          near = true;
+        }
+        const key = stop.place.placeId;
+        const cur = best.get(key);
+        if (
+          !cur ||
+          (cur.e.phase !== "ongoing" && e.phase === "ongoing") ||
+          (cur.e.phase === e.phase && e.minutes < cur.e.minutes) ||
+          (cur.e.phase === e.phase && e.minutes === cur.e.minutes && e.row.id < cur.e.row.id)
+        ) {
+          best.set(key, { e, near });
+        }
+      }
+    }
+
+    const out: LiveForYouCandidate[] = [];
+    for (const [placeId, { e, near }] of best) {
+      const place = byPlace.get(placeId)!;
+      const when = e.phase === "ongoing" ? "now" : `in ${e.minutes} min`;
+      const title = causeTitle(e.row.title);
+      // "near" is only claimed when both coordinates were known and checked;
+      // otherwise the item says only what is certain — it is on this trip.
+      const where = near ? "nearby" : "on your trip";
+      const label =
+        e.row.category === "meeting_point"
+          ? `Crew gathering ${when} ${where} · ${title}`
+          : `${title} ${when} · ${where}`;
+      out.push({
+        subjectId: placeId,
+        liveObjectType: "trip_signal",
+        subject: place,
+        resolved: {
+          id: `trip-${e.row.id}`,
+          label,
+          // A plan is not an observation (see the §37 note above).
+          state: "emerging",
+          confidence: null,
+          observedAt: now.toISOString(),
+          validUntil: new Date(e.expiresMs).toISOString(),
+        },
+      });
+    }
+    return out;
+  } catch (err) {
+    logger.warn({ err }, "liveForYou: trip signal producer failed — no trip strip items");
     return [];
   }
 }
