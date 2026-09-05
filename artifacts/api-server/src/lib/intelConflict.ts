@@ -68,6 +68,32 @@ export const CONFLICT_STATES = ["none", "minor", "material"] as const;
 export type ConflictState = (typeof CONFLICT_STATES)[number];
 
 /**
+ * The PERSISTED spelling of a conflict state — the spec's Table 17 vocabulary,
+ * and the exact set both CHECK constraints admit:
+ *
+ *   2273 intel_state_snapshots_conflict_state_check
+ *   2273 intel_state_snapshot_versions_conflict_state_check
+ *     CHECK (conflict_state IS NULL OR conflict_state IN ('none','contextualized','material'))
+ *
+ * The in-memory vocabulary above names the middle state 'minor'; the schema (and
+ * the spec's Table 17) names the SAME state 'contextualized'. Writing 'minor'
+ * violates both CHECKs, and because lib/intelProjection appends the version row
+ * FIRST and skips the current-state upsert when that append fails, a single
+ * cohort in mild disagreement stopped projecting entirely — silently, as a
+ * warn-log. `toStoredConflictState` is the one translation at the write
+ * boundary; `normalizeConflictState` already reads 'contextualized' back as
+ * 'minor', so the READ path is unchanged in every respect (only 'material' has
+ * serving consequences — see capForConflict).
+ */
+export const STORED_CONFLICT_STATES = ["none", "contextualized", "material"] as const;
+export type StoredConflictState = (typeof STORED_CONFLICT_STATES)[number];
+
+/** Translate an in-memory conflict state into the spelling the CHECKs admit. */
+export function toStoredConflictState(state: ConflictState): StoredConflictState {
+  return state === "minor" ? "contextualized" : state;
+}
+
+/**
  * Normalise a stored/served conflict state. NULL, '' and 'none' are 'none'
  * (the pre-2275 rows and every non-conflicting snapshot). The spec's
  * 'contextualized' is the same middle state as 'minor'. ANY other non-empty
