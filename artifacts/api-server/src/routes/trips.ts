@@ -429,15 +429,14 @@ router.get("/trips/:tripId/members", async (req, res) => {
  * it drops the stamps / memories / plans / availability / shared-context /
  * numeric-trust sections a crew list has no business receiving.
  *
- * "NARROWING" is relative to the PASSPORT AGGREGATE, and only to it. It is NOT
- * a claim about the sibling GET /trips/:tripId/members above, which runs names
- * through nameVisibilitySet + sanitizeIdentity and therefore honours TABLE 24
- * `show_real_name`. The Passport projection layer (buildIdentity) does not read
- * that setting on any of its paths, so a member who has hidden their real name
- * from the crew list is still named by this endpoint. That is a PRE-EXISTING
- * gap in the projection layer, not something this route introduces, and it is
- * being closed there rather than patched here — a per-consumer name filter
- * would be exactly the "rebuild identity in the Trip surface" §21 forbids.
+ * "NARROWING" is relative to the PASSPORT AGGREGATE, and only to it. The
+ * aggregate now honours TABLE 24 `show_real_name` itself: buildIdentity runs
+ * the profile row through nameVisibilitySet + sanitizeIdentity before any
+ * name-derived field is read, exactly as the sibling GET /trips/:tripId/members
+ * above does. So a member who has hidden their real name from the crew list is
+ * unnamed by this endpoint too, inherited from the assembler rather than
+ * re-filtered here — a per-consumer name filter would be exactly the "rebuild
+ * identity in the Trip surface" §21 forbids.
  *
  * Both the caller and the target must be accepted members of THIS trip, so the
  * viewer relationship the projection resolves (trip_crew / trip_host) is one

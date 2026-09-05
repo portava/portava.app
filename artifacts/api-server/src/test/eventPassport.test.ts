@@ -104,9 +104,15 @@ function seed(opts: SeedOpts = {}) {
     }],
     event_rsvps: rsvps,
     event_passport_shares: opts.shares ?? [],
+    // `show_real_name: true` is NOT decoration: the universal display-name rule
+    // (lib/publicIdentity, applied in buildIdentity) fails CLOSED, so an owner
+    // with no settings row has `identity.name === null` and every name-derived
+    // field — including this variant's `firstName` — is null. These cases are
+    // about the event variant's allow-list, not about a hidden name, so the
+    // owner opts in here; the hidden-name behaviour is asserted separately.
     profile_privacy_settings: opts.homeCountryHidden
-      ? [{ user_id: OWNER, show_home_country: false, show_current_city: true }]
-      : [],
+      ? [{ user_id: OWNER, show_real_name: true, show_home_country: false, show_current_city: true }]
+      : [{ user_id: OWNER, show_real_name: true }],
     profiles: [{
       id: OWNER, handle: "wanderer", display_name: "Mai Nguyen Tran", name: "Mai Nguyen Tran",
       avatar_url: "https://x/a.png", cover_photo_url: "https://x/c.png",
