@@ -45,6 +45,7 @@ import {
   eventPhaseAt,
   causeTitle,
   EVENT_CAUSE_DEFAULT_DURATION_MINUTES,
+  EVENT_CAUSE_UPCOMING_MINUTES,
   type EventContextLike,
 } from "../../lib/mapProducers/eventContextProducer.js";
 // The canonical trip-plan-item expiry (ends_at, else starts_at + grace), shared
@@ -504,14 +505,18 @@ export async function buildBuddyLiveCandidates(
 
 // ── event_state (spec §4 / TABLE 0: "Event state · time-valid and relevant") ──
 
-/** How many feed places the event producer probes. Deliberately smaller than
- *  MAX_PRODUCER_PLACES: each probe is a spatial read with per-row eligibility
- *  checks, and the strip only ever shows four items. */
-export const MAX_EVENT_PROBE_PLACES = 4;
+/** How many feed places the event producer probes. Deliberately far smaller
+ *  than MAX_PRODUCER_PLACES: each probe is a spatial read whose per-row privacy
+ *  pass costs several more reads, and the strip only ever shows four items.
+ *  This bound and EVENT_PROBE_LIMIT together cap the first page's event cost
+ *  (spec TABLE 4: < 500 ms backend). */
+export const MAX_EVENT_PROBE_PLACES = 2;
 /** Bounding radius handed to loadNearbyEvents. Small on purpose — the strip
  *  wants events AT the place the viewer is already looking at, not a city
  *  listing (spec §4: no generic city-wide firehose). */
 export const EVENT_PROBE_RADIUS_KM = 1;
+/** Rows one probe may consider. The strip keeps at most one per place. */
+export const EVENT_PROBE_LIMIT = 8;
 /** How close an event must actually be to count as "at" this place. */
 export const EVENT_AT_PLACE_METERS = 400;
 
@@ -519,6 +524,48 @@ type EventPhase = "ongoing" | "upcoming";
 
 function finiteCoord(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
+}
+
+/**
+ * The public venue coordinate of each of these canonical places, read from the
+ * `places` table — used ONLY to bound a spatial probe, never emitted.
+ *
+ * WHY THIS READ EXISTS AT ALL. routes/wall.ts builds its PublicPlaceRefs from
+ * `id, name, city, country_code` and deliberately omits the coordinate: "the
+ * feed never needs a venue coordinate, and omitting it removes any risk of a
+ * coarse/protected place leaking one" (spec §23). That ruling stands — the
+ * strip item's `subject` is still that coordinate-free ref. But "is an event on
+ * AT this place" is a spatial question, and answering it with a city name would
+ * be the city-wide firehose §4 forbids. So the coordinate is resolved here,
+ * used to bound the probe, and dropped: it never enters a LiveForYouItem, a
+ * label, or an action.
+ *
+ * Merged and non-active places are skipped — the same predicate the Map's
+ * canonical place read applies, so the Wall cannot anchor on a place the Map
+ * would not serve.
+ */
+async function loadPlaceAnchors(
+  sc: any,
+  placeIds: string[],
+): Promise<Map<string, { lat: number; lng: number }>> {
+  const out = new Map<string, { lat: number; lng: number }>();
+  if (placeIds.length === 0) return out;
+  const { data, error } = await sc
+    .from("places")
+    .select("id, latitude, longitude, status, merged_into_place_id")
+    .in("id", placeIds)
+    .eq("status", "active")
+    .is("merged_into_place_id", null);
+  if (error || !Array.isArray(data)) return out;
+  for (const row of data as any[]) {
+    const id = row?.id ? String(row.id) : "";
+    const lat = row?.latitude;
+    const lng = row?.longitude;
+    if (!id || !finiteCoord(lat) || !finiteCoord(lng)) continue;
+    if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+    out.set(id, { lat, lng });
+  }
+  return out;
 }
 
 /** The instant an event stops being on: `ends_at` when it is after the start,
@@ -557,30 +604,48 @@ export async function buildEventStateLiveCandidates(
   opts: { now?: Date } = {},
 ): Promise<LiveForYouCandidate[]> {
   if (!sc || !viewerId) return [];
-  const places = boundedPlaces(placeRefs)
-    .filter((p) => finiteCoord(p.lat) && finiteCoord(p.lng))
-    .slice(0, MAX_EVENT_PROBE_PLACES);
-  if (places.length === 0) return [];
+  const probe = boundedPlaces(placeRefs).slice(0, MAX_EVENT_PROBE_PLACES);
+  if (probe.length === 0) return [];
   const now = opts.now ?? new Date();
   const nowMs = now.getTime();
   try {
     const blockedSet = await fetchBlockedSet(sc, viewerId);
     if (blockedSet === null) return []; // fail-closed (§23)
+    const anchors = await loadPlaceAnchors(sc, probe.map((p) => p.placeId));
+    // A place with no public venue coordinate cannot be probed spatially, and is
+    // never approximated (the rule eventContextProducer records for events).
+    const places = probe.filter((p) => anchors.has(p.placeId));
+    if (places.length === 0) return [];
+    // Narrow the candidate rows to what could be on or about to start, so the
+    // reader's per-row privacy pass runs over a handful of rows instead of 60.
+    // The bounds mirror eventPhaseAt exactly: it accepts `ongoing` while the end
+    // is ahead, `upcoming` up to EVENT_CAUSE_UPCOMING_MINUTES out, and assumes
+    // EVENT_CAUSE_DEFAULT_DURATION_MINUTES for an event with no recorded end.
+    const window = {
+      nowIso: now.toISOString(),
+      startsBeforeIso: new Date(nowMs + EVENT_CAUSE_UPCOMING_MINUTES * 60_000).toISOString(),
+      openEndedStartsAfterIso: new Date(
+        nowMs - EVENT_CAUSE_DEFAULT_DURATION_MINUTES * 60_000,
+      ).toISOString(),
+    };
     const perPlace = await Promise.all(
-      places.map((p) =>
-        loadNearbyEvents(
+      places.map((p) => {
+        const anchor = anchors.get(p.placeId)!;
+        return loadNearbyEvents(
           sc,
           viewerId,
-          p.lat as number,
-          p.lng as number,
+          anchor.lat,
+          anchor.lng,
           EVENT_PROBE_RADIUS_KM,
           blockedSet,
-        ).catch(() => null),
-      ),
+          { window, limit: EVENT_PROBE_LIMIT },
+        ).catch(() => null);
+      }),
     );
     const out: LiveForYouCandidate[] = [];
     for (let i = 0; i < places.length; i++) {
       const place = places[i];
+      const anchor = anchors.get(place.placeId)!;
       const events = perPlace[i];
       // null ⇒ the read FAILED. An unreadable neighbourhood is not an empty one:
       // say nothing about this place rather than claim there is nothing on.
@@ -592,7 +657,7 @@ export async function buildEventStateLiveCandidates(
         const lat = raw.location_lat;
         const lng = raw.location_lng;
         if (!finiteCoord(lat) || !finiteCoord(lng)) continue; // redacted / unplaced
-        const away = haversineMeters(place.lat as number, place.lng as number, lat, lng);
+        const away = haversineMeters(anchor.lat, anchor.lng, lat, lng);
         if (!(away <= EVENT_AT_PLACE_METERS)) continue;
         const timing = eventPhaseAt(raw, nowMs);
         if (!timing || timing.phase === "ended") continue;
@@ -737,6 +802,18 @@ export async function buildTripSignalLiveCandidates(
       .in("place_id", [...byPlace.keys()])
       .limit(200);
     if (savedErr || !Array.isArray(savedRows)) return [];
+    const savedPlaceIds = [
+      ...new Set(
+        (savedRows as any[])
+          .map((r) => (r?.place_id ? String(r.place_id) : ""))
+          .filter((id) => id !== "" && byPlace.has(id)),
+      ),
+    ];
+    if (savedPlaceIds.length === 0) return [];
+    // The stop's canonical public coordinate (see loadPlaceAnchors: used only to
+    // decide "near", never emitted). The saved row's own client-supplied
+    // coordinate is the fallback when the canonical place has none.
+    const anchors = await loadPlaceAnchors(sc, savedPlaceIds);
     /** trip id -> the feed places that trip has saved (with the anchor coordinate). */
     const stopsByTrip = new Map<string, { place: PublicPlaceRef; lat: number | null; lng: number | null }[]>();
     for (const row of savedRows as any[]) {
@@ -744,10 +821,9 @@ export async function buildTripSignalLiveCandidates(
       const placeId = row.place_id ? String(row.place_id) : "";
       const place = byPlace.get(placeId);
       if (!tripId || !place) continue;
-      // Prefer the canonical place's own public coordinate; fall back to the one
-      // recorded on the saved stop.
-      const lat = finiteCoord(place.lat) ? place.lat : finiteCoord(row.lat) ? Number(row.lat) : null;
-      const lng = finiteCoord(place.lng) ? place.lng : finiteCoord(row.lng) ? Number(row.lng) : null;
+      const anchor = anchors.get(placeId);
+      const lat = anchor ? anchor.lat : finiteCoord(row.lat) ? Number(row.lat) : null;
+      const lng = anchor ? anchor.lng : finiteCoord(row.lng) ? Number(row.lng) : null;
       const list = stopsByTrip.get(tripId) ?? stopsByTrip.set(tripId, []).get(tripId)!;
       if (!list.some((s) => s.place.placeId === place.placeId)) list.push({ place, lat, lng });
     }

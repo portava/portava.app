@@ -176,9 +176,13 @@ describe("hidden_gem producer — disclosure policy (spec §20)", () => {
 
 describe("event_state producer — time-valid, at the place, privacy-complete", () => {
   const VIEWER = "viewer-1";
-  /** A place with a public venue coordinate (An Thuong, Da Nang). */
-  const PLACE = { placeId: "p1", name: "An Thuong", city: "Da Nang", lat: 16.041, lng: 108.246 };
+  /** The Wall's place ref carries NO coordinate (routes/wall.ts, §23) — the
+   *  producer resolves the venue coordinate from `places` itself. */
+  const PLACE = { placeId: "p1", name: "An Thuong", city: "Da Nang" };
   const PLACES = [PLACE];
+  const LAT = 16.041;
+  const LNG = 108.246;
+  const PLACE_ROWS = [{ id: "p1", latitude: LAT, longitude: LNG, status: "active", merged_into_place_id: null }];
 
   /** An events row shaped as loadNearbyEvents returns it (public, current). */
   function eventRow(over: Record<string, unknown> = {}) {
@@ -187,8 +191,8 @@ describe("event_state producer — time-valid, at the place, privacy-complete", 
       host_id: "host-1",
       title: "Beach Festival",
       location_name: "An Thuong beach",
-      location_lat: PLACE.lat,
-      location_lng: PLACE.lng,
+      location_lat: LAT,
+      location_lng: LNG,
       show_exact_location: true,
       starts_at: new Date(NOW.getTime() - 30 * 60_000).toISOString(), // started 30m ago
       ends_at: new Date(NOW.getTime() + 90 * 60_000).toISOString(),
@@ -201,7 +205,7 @@ describe("event_state producer — time-valid, at the place, privacy-complete", 
   }
 
   const eventClient = (events: any[], over: Record<string, any> = {}) =>
-    tableClient({ events, blocks: [], event_roles: [], feature_flags: [], ...over });
+    tableClient({ events, places: PLACE_ROWS, blocks: [], event_roles: [], feature_flags: [], ...over });
 
   it("an event on now at the place becomes one event_state candidate", async () => {
     const cands = await buildEventStateLiveCandidates(eventClient([eventRow()]), VIEWER, PLACES, { now: NOW });
@@ -247,7 +251,7 @@ describe("event_state producer — time-valid, at the place, privacy-complete", 
     // ~0.05 degrees of latitude ≈ 5.5 km, far past EVENT_AT_PLACE_METERS.
     assert.ok(EVENT_AT_PLACE_METERS < 5_000);
     const cands = await buildEventStateLiveCandidates(
-      eventClient([eventRow({ location_lat: PLACE.lat + 0.05 })]), VIEWER, PLACES, { now: NOW },
+      eventClient([eventRow({ location_lat: LAT + 0.05 })]), VIEWER, PLACES, { now: NOW },
     );
     assert.deepEqual(cands, []);
   });
@@ -260,10 +264,13 @@ describe("event_state producer — time-valid, at the place, privacy-complete", 
     assert.deepEqual(cands, []);
   });
 
-  it("an unreadable block set yields no event items, and the events table is never even read", async () => {
+  it("an unreadable block set yields no event items, and nothing else is read", async () => {
     const calls: string[] = [];
     const sc = tableClient(
-      { events: [eventRow()], blocks: { error: { message: "down" } }, event_roles: [], feature_flags: [] },
+      {
+        events: [eventRow()], places: PLACE_ROWS,
+        blocks: { error: { message: "down" } }, event_roles: [], feature_flags: [],
+      },
       calls,
     );
     assert.deepEqual(await buildEventStateLiveCandidates(sc, VIEWER, PLACES, { now: NOW }), []);
@@ -271,18 +278,28 @@ describe("event_state producer — time-valid, at the place, privacy-complete", 
     // block set rather than reading events and filtering them against nothing.
     assert.ok(calls.includes("blocks"), "the block set is read first");
     assert.ok(!calls.includes("events"), `events must not be read; calls were ${calls.join(",")}`);
+    assert.ok(!calls.includes("places"), `places must not be read; calls were ${calls.join(",")}`);
   });
 
   it("an unreadable events table says nothing rather than 'nothing is on'", async () => {
-    const sc = tableClient({ events: { error: { message: "down" } }, blocks: [], event_roles: [], feature_flags: [] });
+    const sc = tableClient({
+      events: { error: { message: "down" } }, places: PLACE_ROWS,
+      blocks: [], event_roles: [], feature_flags: [],
+    });
     assert.deepEqual(await buildEventStateLiveCandidates(sc, VIEWER, PLACES, { now: NOW }), []);
   });
 
-  it("a place with no public coordinate is never probed", async () => {
-    const cands = await buildEventStateLiveCandidates(
-      eventClient([eventRow()]), VIEWER, [{ placeId: "p9", name: "Coarse only" }], { now: NOW },
+  it("a place with no canonical public coordinate is never probed", async () => {
+    // The Wall's place ref never carries a coordinate; when `places` has none
+    // either (or the row is merged/inactive), the place cannot be probed — and
+    // is never approximated from its city.
+    const calls: string[] = [];
+    const sc = tableClient(
+      { events: [eventRow()], places: [], blocks: [], event_roles: [], feature_flags: [] },
+      calls,
     );
-    assert.deepEqual(cands, []);
+    assert.deepEqual(await buildEventStateLiveCandidates(sc, VIEWER, PLACES, { now: NOW }), []);
+    assert.ok(!calls.includes("events"), `events must not be read; calls were ${calls.join(",")}`);
   });
 
   it("prefers the ongoing event over one starting later at the same place", async () => {
@@ -302,10 +319,13 @@ describe("event_state producer — time-valid, at the place, privacy-complete", 
 
 describe("trip_signal producer — trip-scoped, anchored on a saved stop", () => {
   const VIEWER = "viewer-1";
-  const PLACE = { placeId: "p1", name: "Riverside", city: "Bangkok", lat: 13.7275, lng: 100.5241 };
+  const PLACE = { placeId: "p1", name: "Riverside", city: "Bangkok" };
   const PLACES = [PLACE];
+  const LAT = 13.7275;
+  const LNG = 100.5241;
   const TRIPS = new Set(["trip-1"]);
-  const SAVED = [{ trip_id: "trip-1", place_id: "p1", lat: PLACE.lat, lng: PLACE.lng }];
+  const SAVED = [{ trip_id: "trip-1", place_id: "p1", lat: LAT, lng: LNG }];
+  const PLACE_ROWS = [{ id: "p1", latitude: LAT, longitude: LNG, status: "active", merged_into_place_id: null }];
 
   function planItem(over: Record<string, unknown> = {}) {
     return {
@@ -318,8 +338,8 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
       source_id: null,
       starts_at: new Date(NOW.getTime() + 20 * 60_000).toISOString(),
       ends_at: new Date(NOW.getTime() + 80 * 60_000).toISOString(),
-      lat: PLACE.lat,
-      lng: PLACE.lng,
+      lat: LAT,
+      lng: LNG,
       location_is_private: false,
       removed_at: null,
       visibility: "members",
@@ -328,7 +348,7 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
   }
 
   const tripClient = (items: any[], over: Record<string, any> = {}) =>
-    tableClient({ trip_saved_places: SAVED, trip_plan_items: items, meetups: [], ...over });
+    tableClient({ trip_saved_places: SAVED, places: PLACE_ROWS, trip_plan_items: items, meetups: [], ...over });
 
   it("a crew gathering near a saved stop becomes one trip_signal candidate", async () => {
     const cands = await buildTripSignalLiveCandidates(tripClient([planItem()]), VIEWER, TRIPS, PLACES, { now: NOW });
@@ -351,10 +371,19 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
     assert.ok(!cands[0].resolved!.label.includes("nearby"));
   });
 
+  it("falls back to the saved stop's own coordinate when the canonical place has none", async () => {
+    const sc = tableClient({
+      trip_saved_places: SAVED, places: [], trip_plan_items: [planItem()], meetups: [],
+    });
+    const cands = await buildTripSignalLiveCandidates(sc, VIEWER, TRIPS, PLACES, { now: NOW });
+    assert.equal(cands.length, 1);
+    assert.ok(cands[0].resolved!.label.includes("nearby"));
+  });
+
   it("a milestone with a known coordinate far from the stop is not 'near' it", async () => {
     assert.ok(TRIP_SIGNAL_NEAR_METERS < 20_000);
     const cands = await buildTripSignalLiveCandidates(
-      tripClient([planItem({ lat: PLACE.lat + 0.5 })]), VIEWER, TRIPS, PLACES, { now: NOW },
+      tripClient([planItem({ lat: LAT + 0.5 })]), VIEWER, TRIPS, PLACES, { now: NOW },
     );
     assert.deepEqual(cands, []);
   });
@@ -405,12 +434,14 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
     // only pair with its own stop. The meetup-sourced one is withheld because the
     // cancellation check is unreadable; the manual one is unaffected — the
     // withholding is targeted, not the whole producer collapsing.
-    const FAR = { placeId: "p2", name: "Old Town", city: "Bangkok", lat: PLACE.lat + 0.5, lng: PLACE.lng };
+    const FAR = { placeId: "p2", name: "Old Town", city: "Bangkok" };
+    const FAR_LAT = LAT + 0.5;
     const sc = tableClient({
-      trip_saved_places: [...SAVED, { trip_id: "trip-1", place_id: "p2", lat: FAR.lat, lng: FAR.lng }],
+      trip_saved_places: [...SAVED, { trip_id: "trip-1", place_id: "p2", lat: FAR_LAT, lng: LNG }],
+      places: [...PLACE_ROWS, { id: "p2", latitude: FAR_LAT, longitude: LNG, status: "active", merged_into_place_id: null }],
       trip_plan_items: [
         planItem({ id: "pi-manual", title: "Breakfast", category: "activity" }),
-        planItem({ id: "pi-meetup", source_type: "meetup", source_id: "m1", lat: FAR.lat, lng: FAR.lng }),
+        planItem({ id: "pi-meetup", source_type: "meetup", source_id: "m1", lat: FAR_LAT, lng: LNG }),
       ],
       meetups: { error: { message: "down" } },
     });
@@ -428,7 +459,7 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
   });
 
   it("a feed place that is not a saved stop yields nothing", async () => {
-    const sc = tableClient({ trip_saved_places: [], trip_plan_items: [planItem()], meetups: [] });
+    const sc = tableClient({ trip_saved_places: [], places: PLACE_ROWS, trip_plan_items: [planItem()], meetups: [] });
     assert.deepEqual(await buildTripSignalLiveCandidates(sc, VIEWER, TRIPS, PLACES, { now: NOW }), []);
   });
 
