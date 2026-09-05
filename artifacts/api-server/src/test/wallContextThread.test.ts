@@ -528,3 +528,68 @@ describe("selection priority — the new bridges never outrank a live/social fac
     assert.equal(selectContextThread([compass, map])?.kind, "map", "map outranks compass on a utility tie");
   });
 });
+
+// ── buddy reader — BOTH RAB flags, fail-closed ────────────────────────────────
+
+/**
+ * REGRESSION — a producer must not advertise a globally disabled product.
+ *
+ * `viewer.rabEnabled` carries the Wall's own `wall_rab_integration_enabled`,
+ * handed down by routes/wall.ts. This reader used to treat that as sufficient,
+ * so pressing the Wall flag would have attached "Buddy available in this area"
+ * threads while the RAB master `rent_buddy_enabled` was false — as it is in
+ * production — offering a booking nobody could complete. The master is now
+ * re-read HERE rather than trusted from the caller's boolean, so no caller can
+ * reintroduce the misfire.
+ */
+describe("buddy context thread — requires BOTH the Wall flag and the RAB master", () => {
+  const BUDDY_ROWS = [{ id: "b1", categories: ["nightlife"] }];
+
+  /** Flag-aware fake: each `feature_flags` read resolves by the flag NAME. */
+  function buddyClient(flags: Record<string, boolean>, rows: any[] = BUDDY_ROWS) {
+    return {
+      from(table: string) {
+        const eqs: Record<string, unknown> = {};
+        const b: any = {
+          select: () => b, in: () => b, limit: () => b, order: () => b, gt: () => b, gte: () => b, lte: () => b,
+          eq: (col: string, val: unknown) => { eqs[col] = val; return b; },
+          maybeSingle: () => Promise.resolve(
+            table === "feature_flags"
+              ? { data: { enabled: flags[String(eqs["flag"])] === true }, error: null }
+              : { data: null, error: null },
+          ),
+          then: (onF: any, onR: any) =>
+            Promise.resolve({ data: table === "rent_buddy_profiles" ? rows : [], error: null }).then(onF, onR),
+        };
+        return b;
+      },
+    };
+  }
+
+  const rabViewer: ContextThreadViewerContext = { ...VIEWER, rabEnabled: true };
+
+  it("no candidate when the Wall RAB flag is off", async () => {
+    const sc = buddyClient({ wall_rab_integration_enabled: false, rent_buddy_enabled: true });
+    const out = await _internal.readBuddyCandidate(sc, projectionWithPlace(), { ...VIEWER, rabEnabled: false });
+    assert.equal(out, null);
+  });
+
+  it("no candidate when the RAB MASTER is off, even with the Wall flag on", async () => {
+    const sc = buddyClient({ wall_rab_integration_enabled: true, rent_buddy_enabled: false });
+    const out = await _internal.readBuddyCandidate(sc, projectionWithPlace(), rabViewer);
+    assert.equal(out, null, "an available buddy row must not surface while RAB is globally disabled");
+  });
+
+  it("no candidate when the flag table is unreadable (fail-closed)", async () => {
+    const sc = { from() { throw new Error("flag table down"); } };
+    const out = await _internal.readBuddyCandidate(sc, projectionWithPlace(), rabViewer);
+    assert.equal(out, null);
+  });
+
+  it("a candidate WHEN BOTH flags are on — the control for the assertions above", async () => {
+    const sc = buddyClient({ wall_rab_integration_enabled: true, rent_buddy_enabled: true });
+    const out = await _internal.readBuddyCandidate(sc, projectionWithPlace(), rabViewer);
+    assert.ok(out, "both flags on and an available buddy in the city ⇒ a buddy thread");
+    assert.equal(out!.thread.kind, "buddy");
+  });
+});
