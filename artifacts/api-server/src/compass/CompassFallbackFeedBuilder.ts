@@ -436,18 +436,37 @@ async function fetchVerifiedEvents(
     const now = new Date().toISOString();
     // City filter is applied at the DB level via `location_city` so only
     // events in the user's city are returned.
+    // Delayed-publish gate (§23/§37). This query used to say
+    // `.not("post_status", "eq", "delayed_post")` — the same dead literal
+    // fetchPopularPosts carried below. `delayed_post` is not a label of the
+    // `delayed_post_status` enum that types posts.post_status (the labels are
+    // draft / private / pending_location_exit / pending_delay /
+    // pending_safety_review / published / canceled / expired, migration 0049),
+    // so PostgREST could never match it: at best the filter excluded nothing
+    // and this lane served pending posts, at worst the read failed 22P02 and
+    // the best-effort catch below swallowed it. Either way there was no gate.
+    //
+    // This lane is keyed on `location_city` and the row it emits is titled with
+    // the post's own body, so an ungated read announces "this person is in this
+    // city right now" — precisely what a delayed geotag withholds.
     const { data } = await db
       .from("posts")
-      .select("id, author_id, content, created_at, location_city")
+      .select("id, author_id, content, created_at, location_city, post_status")
       // posts.category (not post_type); location_verified is the verified
       // signal on posts (is_verified does not exist). posts carry no
       // event_starts_at column, so no upcoming filter is possible here.
       .eq("category", "event")
       .eq("location_verified", true)
       .eq("location_city", city)
-      .not("post_status", "eq", "delayed_post")
+      .eq("post_status", "published")
       .limit(5);
     return ((data as any[]) ?? [])
+      // In-memory re-check of the same canonical predicate, as every other
+      // serving surface does: a row fed past the query filter must still never
+      // be served. Unlike fetchPopularPosts these items are typed "event", so
+      // CompassSafetyFilter's delayed-post gate (which only inspects posts)
+      // is not a second layer here — this filter is the last one.
+      .filter((r: any) => isPostPublished(r))
       .filter((r: any) => !blockedIds.has(r.author_id as string))
       .map((r: any): FallbackItem => ({
         id:       r.id as string,
