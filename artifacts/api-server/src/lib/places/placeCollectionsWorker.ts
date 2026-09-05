@@ -463,12 +463,18 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
   // Limit 5 000 — Supabase default cap is 1 000 without an explicit limit.
   //
   // The gate columns (author_id / trip_id / visibility / post_status) ride along
-  // because the consumers below need DIFFERENT sets: place_top_contributors is a
-  // PUBLIC rail and must see only stranger-readable, published posts, while the
-  // place_contributor stamp keeps counting every active post at the place as it
-  // always has. That is why the visibility/publication predicate is applied in
-  // memory in computeContributors rather than narrowed at the query — one read,
-  // two rules, neither imposed on the other.
+  // because the consumers below need DIFFERENT sets:
+  //
+  //   • place_best_of — a PUBLIC rail: only stranger-readable, published posts.
+  //   • place_top_contributors — also a PUBLIC rail: same stranger-readable,
+  //     published subset, for both the top-3 selection and contribution_count.
+  //   • the place_contributor STAMP — keeps counting every active post at the
+  //     place as it always has, private and pending posts included.
+  //
+  // That is why the visibility/publication predicate is applied in memory (here
+  // for Best-Of, and inside computeContributors for the rail-vs-stamp split)
+  // rather than narrowed at the query — one read, three rules, none imposed on
+  // the others.
   //
   // PostgREST returns ONLY the projected columns, so a column omitted here reads
   // back `undefined` and isPublicPlaceRailPost would treat it as a legacy row:
@@ -491,7 +497,16 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
   const posts = ((postRows ?? []) as any[]);
 
   // A. Best-of computation → upsert place_best_of.
-  const bestOf = computeBestOf(posts);
+  //
+  // THE SAME GATES getBestOf's realtime path applies (lib/postVisibility, via
+  // isPublicPlaceRailPost), because this worker WRITES `place_best_of` and
+  // getBestOf serves that cache FIRST — a post the realtime path refuses but the
+  // cache baked in is served all the same, so gating only the fallback would fix
+  // nothing in practice. `status = 'active'` is not a publication filter (a
+  // delayed post is written active + pending), and there was no visibility
+  // filter at all, so a private / trip_only post attached to this place was
+  // cached onto its public rails.
+  const bestOf = computeBestOf(posts.filter((r) => isPublicPlaceRailPost(r)));
 
   const { error: bestOfErr } = await sc
     .from("place_best_of")
