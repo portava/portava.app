@@ -20,8 +20,9 @@
  *                       gem's disclosure policy (protected / reveal-after-acceptance
  *                       gems are suppressed unless the viewer is authorized, §20).
  *   buddy            → rent_buddy_profiles availability at CITY granularity only —
- *                       never a precise Buddy coordinate (spec §19). Behind the
- *                       wall_rab_integration_enabled flag.
+ *                       never a precise Buddy coordinate (spec §19). Behind BOTH
+ *                       wall_rab_integration_enabled AND the RAB master
+ *                       rent_buddy_enabled, fail-closed.
  *
  * THE DEFAULT IS "NO THREAD" (spec §9). Contextual intelligence earns space; it
  * does not receive space merely because data exists. `shouldAttachContextThread`
@@ -45,6 +46,7 @@ import type {
 import { readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
 import { deriveGemProjection } from "../hiddenGems/HiddenGemContributionService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { isRentBuddyMasterEnabled } from "./wallRabGate.js";
 import { logger } from "../../lib/logger.js";
 
 // ── Policy (spec §9 thresholds) ──────────────────────────────────────────────
@@ -180,7 +182,11 @@ export interface ContextThreadViewerContext {
   liveStripSubjectIds?: Set<string>;
   /** True when the per-window context-thread cap is already reached (§15). */
   windowSaturated?: boolean;
-  /** wall_rab_integration_enabled — gates the buddy candidate reader. */
+  /**
+   * wall_rab_integration_enabled — NECESSARY but not sufficient for the buddy
+   * candidate reader, which also re-reads the RAB master `rent_buddy_enabled`
+   * itself (fail-closed) so it can never advertise a disabled product.
+   */
   rabEnabled?: boolean;
   /** wall_compass_handoff_enabled — gates the compass candidate reader (§21:
    *  Compass is opt-in per object, never a permanent panel). */
@@ -573,9 +579,17 @@ async function readHiddenGemCandidate(
 
 /**
  * buddy — a Rent-a-Buddy is available in this place's AREA (city granularity
- * only, spec §19: never a precise Buddy coordinate). Behind
- * wall_rab_integration_enabled. Paid promotion cannot manufacture this thread —
- * it reads only the honest `available_now` availability flag.
+ * only, spec §19: never a precise Buddy coordinate). Paid promotion cannot
+ * manufacture this thread — it reads only the honest `available_now` flag.
+ *
+ * BOTH FLAGS, FAIL-CLOSED. `viewer.rabEnabled` carries the Wall's own
+ * `wall_rab_integration_enabled` from the caller; that is NECESSARY BUT NOT
+ * SUFFICIENT. The RAB master `rent_buddy_enabled` is re-read HERE rather than
+ * trusted from the caller's boolean, because this reader must not advertise a
+ * globally disabled product no matter which caller wires it up — the same
+ * contract loadContextualOpportunityCandidates already holds. The master read
+ * sits after the cheap guards, so it costs nothing on the (current) OFF path
+ * and at most one extra flag read where a buddy read was going to happen anyway.
  */
 async function readBuddyCandidate(
   sc: any,
@@ -585,6 +599,7 @@ async function readBuddyCandidate(
   if (!viewer.rabEnabled) return null;
   const place = projection.place;
   if (!place?.city || !sc) return null;
+  if (!(await isRentBuddyMasterEnabled(sc))) return null;
   try {
     const { data, error } = await sc
       .from("rent_buddy_profiles")
