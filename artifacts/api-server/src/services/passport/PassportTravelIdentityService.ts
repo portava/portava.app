@@ -384,8 +384,19 @@ export function inferTravelIdentity(
 /** Stored per-dimension/-trait override, keyed by dimension/trait key. */
 type PrefMap = Map<string, TravelDnaState>;
 
+/**
+ * The owner's stored Show/Hide/Not-Me state plus whether it was actually
+ * applied (flag ON + table readable). Exposed so a caller that builds MANY
+ * identity readings for one owner (the Yearbook builds one per year) can read
+ * the prefs ONCE and pass them in — the same gate, not a second copy of it.
+ */
+export interface TravelDnaPrefs {
+  prefs: PrefMap;
+  applied: boolean;
+}
+
 /** Read stored Show/Hide/Not-Me prefs. Best-effort: OFF flag or missing table → empty. */
-async function loadPrefs(sc: SupabaseClient, userId: string): Promise<{ prefs: PrefMap; applied: boolean }> {
+export async function loadTravelDnaPrefs(sc: SupabaseClient, userId: string): Promise<TravelDnaPrefs> {
   const empty = { prefs: new Map<string, TravelDnaState>(), applied: false };
   try {
     const on = await isFlagEnabled(sc, TRAVEL_DNA_FLAG);
@@ -409,16 +420,20 @@ async function loadPrefs(sc: SupabaseClient, userId: string): Promise<{ prefs: P
 /**
  * Build the full Travel Identity projection for an owner, applying stored
  * Show/Hide/Not-Me state. `editable` is true only on the owner's own view.
+ *
+ * `opts.prefs` lets a caller supply prefs it already read (see
+ * `loadTravelDnaPrefs`); omitted, they are read here. Either way the SAME
+ * override rule is applied — there is only one.
  */
 export async function buildTravelIdentity(
   sc: SupabaseClient,
   userId: string,
   profile: Record<string, any> | null,
   signals: TravelIdentitySignals,
-  opts: { isSelf: boolean },
+  opts: { isSelf: boolean; prefs?: TravelDnaPrefs },
 ): Promise<TravelIdentityProjection> {
   const { dimensions, traits } = inferTravelIdentity(userId, profile, signals);
-  const { prefs, applied } = await loadPrefs(sc, userId);
+  const { prefs, applied } = opts.prefs ?? (await loadTravelDnaPrefs(sc, userId));
 
   for (const d of dimensions) d.state = prefs.get(d.key) ?? "shown";
   for (const t of traits) t.state = prefs.get(t.key) ?? "shown";
