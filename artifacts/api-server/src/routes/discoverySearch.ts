@@ -48,6 +48,7 @@ import { DiscoverySearchQueryParams } from "@workspace/api-zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
+import { isPostPublished } from "../lib/postVisibility.js";
 import { checkRateLimit } from "../lib/rateLimit";
 import { logger as rootLogger } from "../lib/logger";
 import {
@@ -1060,11 +1061,18 @@ async function searchPosts(
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
     const pat = sqlPattern(q);
+    // Delayed-publish gate (§23/§37). This read had no publication filter at
+    // all — only "not deleted, not banned" — so a delayed-geotag post was
+    // full-text searchable by its own body the instant it was created, before
+    // its author had left the place. Same canonical predicate as every other
+    // serving surface, at the query and again in memory
+    // (lib/postVisibility.isPostPublished).
     const { data, error } = await sc
       .from("posts")
-      .select("id, content, author_id, media_urls, created_at, like_count")
+      .select("id, content, author_id, media_urls, created_at, like_count, post_status")
       .ilike("content", pat)
       .eq("visibility", "public")
+      .eq("post_status", "published")
       .neq("status", "deleted")
       .neq("status", "banned")
       .order("created_at", { ascending: false })
@@ -1073,7 +1081,10 @@ async function searchPosts(
     if (error || !data) return [];
 
     const rows = (data as any[]).filter(
-      (p: any) => !blockedSet.has(p.author_id as string) && !ageRestrictedSet.has(p.author_id as string),
+      (p: any) =>
+        isPostPublished(p) &&
+        !blockedSet.has(p.author_id as string) &&
+        !ageRestrictedSet.has(p.author_id as string),
     );
     if (rows.length === 0) return [];
 

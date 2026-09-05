@@ -226,7 +226,8 @@ DECLARE
   actor_nullable text;
   policy_expr text;
   client_grants int;
-  obs_update_grants int;
+  obs_owner text;
+  obs_write_grants text;
 BEGIN
   SELECT 7 - count(*) INTO missing_cols FROM information_schema.columns
    WHERE table_schema = 'public' AND table_name = 'intel_claims'
@@ -271,10 +272,25 @@ BEGIN
   IF client_grants > 0 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: anon/authenticated hold % privilege(s) on intel_claims', client_grants;
   END IF;
-  SELECT count(*) INTO obs_update_grants FROM information_schema.role_table_grants
-   WHERE table_schema = 'public' AND table_name = 'intel_observations' AND privilege_type IN ('UPDATE','DELETE','TRUNCATE');
-  IF obs_update_grants > 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: % UPDATE/DELETE/TRUNCATE grant(s) exist on append-only intel_observations', obs_update_grants;
+  -- Nobody GRANTABLE may UPDATE/DELETE/TRUNCATE the append-only observation
+  -- table. Asserted per role, excluding the table's OWNER: an owner holds ALL on
+  -- its own table inherently, cannot be meaningfully revoked (it re-grants
+  -- itself at will), and 2093 already ruled on precisely this for
+  -- discovery_shadow_serves — whose certified live grant set is
+  -- `postgres: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE` plus
+  -- `service_role: INSERT,SELECT`. A grantee-blind count here would report 3
+  -- (postgres.UPDATE/DELETE/TRUNCATE) on every correctly-configured database and
+  -- could never pass; the append-only enforcement against the owner is the
+  -- intel_append_only() trigger from 2130, which binds it.
+  SELECT pg_get_userbyid(relowner) INTO obs_owner
+    FROM pg_class WHERE oid = 'public.intel_observations'::regclass;
+  SELECT COALESCE(string_agg(DISTINCT grantee::text || '.' || privilege_type::text, ', ' ORDER BY grantee::text || '.' || privilege_type::text), '(none)')
+    INTO obs_write_grants FROM information_schema.role_table_grants
+   WHERE table_schema = 'public' AND table_name = 'intel_observations'
+     AND privilege_type IN ('UPDATE','DELETE','TRUNCATE')
+     AND grantee <> obs_owner;
+  IF obs_write_grants <> '(none)' THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: non-owner UPDATE/DELETE/TRUNCATE grant(s) on append-only intel_observations: % (owner % is exempt by construction)', obs_write_grants, obs_owner;
   END IF;
 END $$;
 

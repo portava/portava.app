@@ -7,7 +7,7 @@ import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 const postsLogger = rootLogger.child({ route: "posts" });
 import { nameVisibilitySet, sanitizeIdentity, presentedName } from "../lib/publicIdentity";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
-import { decidePostReadable, needsTripMembershipCheck, needsFollowerCheck } from "../lib/postVisibility.js";
+import { decidePostReadable, isPostPublished, needsTripMembershipCheck, needsFollowerCheck } from "../lib/postVisibility.js";
 import {
   requireUser,
   sendError,
@@ -1526,11 +1526,26 @@ router.get("/trips/:tripId/posts", async (req, res) => {
 
   // Non-members may only ever see public trip-attached posts; accepted members
   // additionally see trip_only. Nobody sees another user's private post.
+  //
+  // DELAYED-PUBLISH GATE. `status = 'active'` is what POST /posts writes for a
+  // delayed-geotag post; the publication state lives in `post_status`, and this
+  // feed read neither of them together. POST_COLUMNS has always SELECTED
+  // post_status (the same "selected but never read" shape as the visibility
+  // leak below it), so a pending post — content, city, venue label — reached
+  // every trip member while its author was still standing at the place (§23/§37).
+  //
+  // Author-or-published, matching GET /posts/:postId, not the strict
+  // `post_status = 'published'` of the Wall / global / following feeds: this
+  // route deliberately shows a viewer their OWN posts (see the private branch
+  // below), so a strict gate would hide the author's own pending post from
+  // their own trip. PostgREST ANDs repeated `or=` params, so this composes with
+  // the visibility `or` rather than replacing it.
   let q = client
     .from("posts")
     .select(POST_COLUMNS)
     .eq("trip_id", tripId)
     .eq("status", "active")
+    .or(`post_status.eq.published,author_id.eq.${user.id}`)
     .order("created_at", { ascending: false })
     .limit(100);
 
@@ -1550,7 +1565,11 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-  const tripPosts: any[] = data ?? [];
+  // In-memory re-check of the same predicate: a row fed past the query filter
+  // (a widened `or`, a client that drops the param) must still never be served.
+  const tripPosts: any[] = (data ?? []).filter(
+    (p: any) => isPostPublished(p) || p.author_id === user.id,
+  );
   const tripPostIds = tripPosts.map((p) => p.id);
   const tripAuthorIds = [...new Set(tripPosts.map((p) => p.author_id))];
 

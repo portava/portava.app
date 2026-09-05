@@ -37,6 +37,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { logger } from "../lib/logger.js";
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
+import { isPostPublished } from "../lib/postVisibility.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
   resolveByIata,
@@ -1464,11 +1465,19 @@ router.get("/airport/pulse", async (req, res) => {
     return;
   }
 
+  // Delayed-publish gate (§23/§37). `status='active'` is exactly what POST
+  // /posts writes for a delayed-geotag post; the publication state lives in
+  // `post_status`, which this query neither selected nor read. Airport Pulse is
+  // keyed on location_city, so an ungated read announced "this person is in
+  // this city right now" — the one thing delayed geotagging exists to prevent.
+  // Same canonical predicate as the Wall / global / Following feeds, applied at
+  // the query and again in memory (lib/postVisibility.isPostPublished).
   let query = sc
     .from("posts")
-    .select("id, author_id, content, media_urls, created_at, location_city, location_country, profiles!author_id(id, username, display_name, name, full_name, avatar_url)")
+    .select("id, author_id, content, media_urls, created_at, location_city, location_country, post_status, profiles!author_id(id, username, display_name, name, full_name, avatar_url)")
     .eq("status", "active")
     .eq("visibility", "public")
+    .eq("post_status", "published")
     .ilike("location_city", `%${city}%`)
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -1478,7 +1487,7 @@ router.get("/airport/pulse", async (req, res) => {
   const { data, error } = await query;
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  const rows = (data ?? []) as any[];
+  const rows = ((data ?? []) as any[]).filter((r) => isPostPublished(r));
   const authorIds = [...new Set(rows.map((r: any) => r.author_id as string))];
   const allowedNames = await nameVisibilitySet(sc, authorIds);
 

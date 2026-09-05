@@ -46,6 +46,35 @@
 -- teardown); this table follows the post-2137 shape: row trigger + truncate
 -- guard, nothing at statement level.
 --
+-- ── THE TABLE OWNER IS NOT A GRANT WE CAN REMOVE ─────────────────────────────
+-- The first version of this file's grant postcondition counted EVERY row in
+-- information_schema.role_table_grants with UPDATE/DELETE/TRUNCATE, with no
+-- grantee filter, and refused to commit if any existed. It could never have
+-- succeeded: the role that runs the migration owns the table, and an owner
+-- holds ALL privileges on its own table from the instant CREATE TABLE returns.
+-- The applier stopped here with "3 UPDATE/DELETE/TRUNCATE grant(s) exist" —
+-- those three were postgres.UPDATE, postgres.DELETE and postgres.TRUNCATE, and
+-- nothing in this file could have removed them: an owner may re-grant itself at
+-- will, so REVOKE from the owner buys the appearance of a constraint, not the
+-- constraint. 2093 settled this for discovery_shadow_serves in exactly these
+-- words ("postgres still holds ALL. It owns the table ... the audit does not
+-- assert against it for the same reason"), and the certified append-only table
+-- this repository already ships looks like this in the live catalog:
+--
+--   discovery_shadow_serves
+--     postgres      DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE
+--     service_role  INSERT, SELECT
+--   ✔ discovery_shadow_serves is append-only as documented.
+--
+-- The old assertion, run against THAT table, would have counted 3 and failed.
+-- An assertion that refuses the repository's own certified reference shape is
+-- wrong about Postgres, not protective. So the postcondition below asserts the
+-- invariant that is actually enforceable, the same one auditShadowAppendOnly.ts
+-- asserts: the exact privilege set held by service_role, nothing at all for the
+-- client roles, no write-beyond-INSERT for any NON-OWNER grantee, and the
+-- append-only triggers present AND enabled. The triggers are the enforcement;
+-- they bind the owner too.
+--
 -- ── NO FOREIGN KEYS, DELIBERATELY ────────────────────────────────────────────
 -- A version row is a record of a computation. subject_id is a places(id) value
 -- but carries no FK: an ON DELETE CASCADE from places would issue a DELETE that
@@ -166,9 +195,12 @@ CREATE TRIGGER intel_state_snapshot_versions_no_truncate
   FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only();
 
 -- RLS + grants: deny-default, REVOKE first (2093/2130 shape), then INSERT+SELECT
--- for service_role only. No UPDATE, no DELETE, for anyone — the trigger and the
--- grant say the same thing. No policies: service_role bypasses RLS and no other
--- role holds a privilege, so this is deny-all by design.
+-- for service_role only. No UPDATE, no DELETE for any grantable role — the
+-- trigger and the grant say the same thing. (The owner role keeps its inherent
+-- ALL; see "THE TABLE OWNER IS NOT A GRANT WE CAN REMOVE" above. The triggers
+-- bind it regardless — they are the enforcement, the grants are the fence.)
+-- No policies: service_role bypasses RLS and no other role holds a privilege,
+-- so this is deny-all by design.
 ALTER TABLE public.intel_state_snapshot_versions ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.intel_state_snapshot_versions FROM PUBLIC;
 REVOKE ALL ON public.intel_state_snapshot_versions FROM anon;
@@ -182,9 +214,13 @@ COMMENT ON TABLE public.intel_state_snapshot_versions IS
 -- ── Postconditions (conditional RAISE only) ──────────────────────────────────
 DO $$
 DECLARE
-  missing_cols int;
-  bad_grants int;
-  client_grants int;
+  missing_cols  int;
+  tbl_owner     text;
+  svc_privs     text;
+  client_privs  text;
+  bad_grants    text;
+  trig_present  int;
+  trig_disabled int;
 BEGIN
   SELECT 4 - count(*) INTO missing_cols FROM information_schema.columns
    WHERE table_schema = 'public' AND table_name = 'intel_state_snapshots'
@@ -202,25 +238,65 @@ BEGIN
     RAISE EXCEPTION 'POSTCONDITION FAILED: RLS is not enabled on intel_state_snapshot_versions';
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'intel_state_snapshot_versions_no_update_delete')
-     OR NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'intel_state_snapshot_versions_no_truncate') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: append-only triggers missing on intel_state_snapshot_versions';
+  -- The append-only ENFORCEMENT: both triggers must exist ON THIS TABLE (scoped
+  -- by tgrelid — an unscoped name lookup would be satisfied by a same-named
+  -- trigger on some other relation) and must be ENABLED. tgenabled 'D' is a
+  -- trigger that is present and doing nothing, which is the worst state to be
+  -- blind to; auditShadowAppendOnly.ts checks the same thing for the same reason.
+  SELECT count(*), count(*) FILTER (WHERE tgenabled = 'D')
+    INTO trig_present, trig_disabled
+    FROM pg_trigger
+   WHERE tgrelid = 'public.intel_state_snapshot_versions'::regclass
+     AND NOT tgisinternal
+     AND tgname IN ('intel_state_snapshot_versions_no_update_delete',
+                    'intel_state_snapshot_versions_no_truncate');
+  IF trig_present <> 2 THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: expected 2 append-only triggers on intel_state_snapshot_versions, found %', trig_present;
+  END IF;
+  IF trig_disabled <> 0 THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: % append-only trigger(s) on intel_state_snapshot_versions are DISABLED — present and doing nothing', trig_disabled;
   END IF;
 
-  -- The grant must not contradict the trigger: nobody may hold UPDATE or DELETE.
-  SELECT count(*) INTO bad_grants FROM information_schema.role_table_grants
+  -- The grants must not contradict the triggers. Asserted per ROLE, never as a
+  -- grantee-blind count: the table's OWNER holds ALL on its own table from the
+  -- moment CREATE TABLE returns, and cannot be meaningfully revoked (it may
+  -- re-grant itself at will). 2093 made exactly this ruling for
+  -- discovery_shadow_serves, whose live, certified, append-only grant set is
+  -- `postgres: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE` +
+  -- `service_role: INSERT,SELECT`. The owner row is the ambient truth of every
+  -- table in this schema; the enforcement against it is the trigger, above.
+  SELECT pg_get_userbyid(relowner) INTO tbl_owner
+    FROM pg_class WHERE oid = 'public.intel_state_snapshot_versions'::regclass;
+
+  -- 1. service_role holds EXACTLY insert + select. Not a presence check: an
+  --    equality check, so excess privilege is visible (the 2092 defect).
+  SELECT COALESCE(string_agg(DISTINCT privilege_type, ',' ORDER BY privilege_type), '(none)')
+    INTO svc_privs FROM information_schema.role_table_grants
    WHERE table_schema = 'public' AND table_name = 'intel_state_snapshot_versions'
-     AND privilege_type IN ('UPDATE','DELETE','TRUNCATE');
-  IF bad_grants > 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: % UPDATE/DELETE/TRUNCATE grant(s) exist on the append-only version table', bad_grants;
+     AND grantee = 'service_role';
+  IF svc_privs <> 'INSERT,SELECT' THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: service_role holds "%" on intel_state_snapshot_versions, expected exactly INSERT,SELECT', svc_privs;
   END IF;
 
-  -- Client roles hold nothing at all.
-  SELECT count(*) INTO client_grants FROM information_schema.role_table_grants
+  -- 2. Client roles hold nothing at all. This table has no client surface.
+  SELECT COALESCE(string_agg(DISTINCT grantee::text || '.' || privilege_type::text, ', ' ORDER BY grantee::text || '.' || privilege_type::text), '(none)')
+    INTO client_privs FROM information_schema.role_table_grants
    WHERE table_schema = 'public' AND table_name = 'intel_state_snapshot_versions'
-     AND grantee IN ('anon','authenticated');
-  IF client_grants > 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: anon/authenticated hold % privilege(s) on intel_state_snapshot_versions', client_grants;
+     AND grantee IN ('anon','authenticated','PUBLIC');
+  IF client_privs <> '(none)' THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: client roles hold % on intel_state_snapshot_versions; this table has no client surface', client_privs;
+  END IF;
+
+  -- 3. No NON-OWNER grantee holds UPDATE, DELETE or TRUNCATE — the generic form
+  --    of the invariant, so a role invented later is caught too. TRUNCATE is the
+  --    sharpest: it empties the table without firing the row trigger.
+  SELECT COALESCE(string_agg(DISTINCT grantee::text || '.' || privilege_type::text, ', ' ORDER BY grantee::text || '.' || privilege_type::text), '(none)')
+    INTO bad_grants FROM information_schema.role_table_grants
+   WHERE table_schema = 'public' AND table_name = 'intel_state_snapshot_versions'
+     AND privilege_type IN ('UPDATE','DELETE','TRUNCATE')
+     AND grantee <> tbl_owner;
+  IF bad_grants <> '(none)' THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: non-owner UPDATE/DELETE/TRUNCATE grant(s) on the append-only version table: % (owner % is exempt by construction)', bad_grants, tbl_owner;
   END IF;
 END $$;
 
