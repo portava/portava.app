@@ -95,6 +95,8 @@ import {
   type Trajectory,
 } from "./intelContracts.js";
 import type { LiveClaimEnvelope, SourceCountBucket } from "./liveClaimRead.js";
+import { canonicalCityKey } from "./canonicalLocations.js";
+import type { CityGeography } from "./mapProducers/cityModelProducer.js";
 
 // ── Traveler (spec §23 aggregate social presence) ─────────────────────────────
 
@@ -1508,25 +1510,131 @@ export function buildFlowZoneModel(
 }
 
 /**
- * §24 for crowd flow: inside a protected zone a flow is WITHHELD, never
- * coarsened.
+ * §36 Phase 7's CITY model, from the same curated `geo_zones` geography §10's
+ * flow zones come from.
+ *
+ * WHY IT IS A SEPARATE PARSE AND NOT A FILTER OVER `FlowZone`
+ * ==========================================================
+ * A `FlowZone` deliberately keeps no display name — only `nameKey`, the
+ * normalized matching key — because §10 never draws one. Phase 7 does: a
+ * traveller-flow edge titled "Bangkok → Da Nang" and a city model titled with
+ * the city's name both need the label, and a city model additionally needs
+ * `canonicalCityKey(label)`, which is the join key into `compass_city_models`.
+ * So this parse keeps the label, and reuses `parseFlowZones` for everything
+ * else — the geometry validation, the MIN_FLOW_ZONE_EXTENT_METERS floor and the
+ * centroid — rather than restating any of it.
+ *
+ * `zone_type` must be `city`. A `neighborhood` is a valid flow zone and is NOT
+ * a valid city: publishing intercity movement between two neighbourhoods of one
+ * city would be a within-city trajectory at a granularity §10 already refuses.
+ *
+ * AMBIGUITY RESOLVES TO REFUSAL, exactly as it does for flow-zone names. Two
+ * geo_zones canonicalizing to one city key would either merge two cities into
+ * one edge or publish one city's aggregate at the other's centroid, so a key
+ * held by more than one zone yields NO city at all. The count is reported so a
+ * curator can find and fix it.
+ */
+export interface CityGeographyParseResult {
+  cities: CityGeography[];
+  /** City keys dropped for being held by more than one zone. COUNT only. */
+  ambiguousKeys: number;
+  /** Rows that were city-typed but had no usable name/geometry. */
+  unusable: number;
+}
+
+export function parseCityGeographies(
+  rows: readonly any[] | null | undefined,
+): CityGeographyParseResult {
+  const result: CityGeographyParseResult = { cities: [], ambiguousKeys: 0, unusable: 0 };
+  if (!Array.isArray(rows)) return result;
+
+  const byKey = new Map<string, CityGeography[]>();
+  for (const row of rows) {
+    if (!row || String(row.zone_type) !== "city") continue;
+    const label = typeof row.name === "string" ? row.name.trim() : "";
+    if (label === "") {
+      result.unusable += 1;
+      continue;
+    }
+    const cityKey = canonicalCityKey(label);
+    if (!cityKey) {
+      result.unusable += 1;
+      continue;
+    }
+    // One row at a time, so the geometry rules (extent floor, ring parsing,
+    // centroid) are the SAME code path §10 uses and cannot drift from it.
+    const [zone] = parseFlowZones([row]);
+    if (!zone) {
+      result.unusable += 1;
+      continue;
+    }
+    const city: CityGeography = {
+      id: zone.id,
+      label,
+      cityKey,
+      centroid: zone.centroid,
+      contains: (lat: number, lng: number) => flowZoneContains(zone, lat, lng),
+    };
+    const list = byKey.get(cityKey) ?? [];
+    list.push(city);
+    byKey.set(cityKey, list);
+  }
+
+  for (const [, list] of byKey) {
+    if (list.length !== 1) {
+      result.ambiguousKeys += 1;
+      continue;
+    }
+    result.cities.push(list[0]);
+  }
+  // Deterministic order so downstream ids and paging are input-order independent.
+  result.cities.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return result;
+}
+
+/**
+ * Kinds for which §24's COARSEN outcome is wrong, so the answer is to withhold.
+ *
+ * `coarsenForZone` strips an object's `count`, `observedAt` and `freshness`
+ * because "how busy is the clinic right now" is the disclosure. Every kind
+ * below RESTATES exactly those facts inside its own `payload`, which coarsening
+ * does not touch, so a coarsened one would keep everything coarsening exists to
+ * remove. None of them has an honest coarser version to fall back to either:
+ * their geometry is already a zone centroid, a city centroid or an aggregation
+ * cell. Withholding is therefore a TIGHTENING of the existing decision and
+ * changes no policy, category or constant.
+ *
+ *   crowd_flow      payload.observed.cohortSize + observedAt (§10).
+ *   traveler_flow   payload.cohortBucket + observedAt (§36 Phase 7). Its
+ *                   geometry is a LineString, which coarsening leaves alone.
+ *   world_pulse     payload.people.cohortBucket + density counts, on a polygon
+ *                   coarsening also leaves alone.
+ *   city_model      payload.rhythm restates a per-time-band activity reading.
+ *
+ * `personal_city` is DELIBERATELY NOT here. It is the viewer's own history
+ * shown to the viewer, it asserts nothing about who is at the protected place
+ * or when, and coarsening protects other people rather than the reader from
+ * themselves. It takes the zone's own action like any other object — which
+ * still means WITHHELD inside a suppress-class zone.
+ */
+export const WITHHELD_RATHER_THAN_COARSENED_KINDS: readonly MapObjectKind[] = [
+  "crowd_flow",
+  "traveler_flow",
+  "world_pulse",
+  "city_model",
+];
+
+/**
+ * §24 for the aggregate kinds above: inside a protected zone they are WITHHELD,
+ * never coarsened.
  *
  * `applyProtection` still runs over these objects afterwards and is still the
- * gate; this only removes the one outcome that would be wrong for this kind.
- * `coarsenForZone` strips an object's `count`, `observedAt` and `freshness`
- * because "how busy is the clinic right now" is the disclosure — but a
- * `crowd_flow` restates exactly those three inside `payload.observed`
- * (cohortSize, observedAt), which coarsening does not touch, and its geometry
- * is a LineString, which coarsening deliberately leaves alone. A coarsened flow
- * would therefore keep everything coarsening exists to remove. There is also no
- * honest coarser version of it to fall back to: the geometry is already zone
- * centroids. So the answer for this kind is to withhold, which is a tightening
- * of the existing decision and changes no policy, category or constant.
+ * gate; this only removes the one outcome that would be wrong for them.
  *
  * Returns the surviving objects and a COUNT — never which zone, never which
- * flow, for the reason `ProtectionReport` gives.
+ * object, for the reason `ProtectionReport` gives.
  */
-export function withholdCoarsenableFlows(
+export function withholdCoarsenableAggregates(
   objects: readonly MapObject[],
   zones: readonly ProtectedZone[] | null | undefined,
 ): { objects: MapObject[]; withheld: number } {
@@ -1535,7 +1643,7 @@ export function withholdCoarsenableFlows(
   const kept: MapObject[] = [];
   let withheld = 0;
   for (const obj of objects) {
-    if (obj.kind !== "crowd_flow") {
+    if (!WITHHELD_RATHER_THAN_COARSENED_KINDS.includes(obj.kind)) {
       kept.push(obj);
       continue;
     }

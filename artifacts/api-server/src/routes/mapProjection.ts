@@ -124,6 +124,16 @@ import { readSafetyNotices } from "../lib/mapProducers/safetyNoticeProducer.js";
 import { readSavedPlacePins } from "../lib/mapProducers/savedPlaceProducer.js";
 import { deriveEventCauseHypotheses } from "../lib/mapProducers/eventContextProducer.js";
 import { loadViewportPlaceRows, projectPlace } from "../lib/mapProjectPlace.js";
+import {
+  WORLD_INTELLIGENCE_FLAG,
+  WORLD_INTELLIGENCE_KINDS,
+  bandCarriesWorldIntelligence,
+  type WorldIntelligenceRefusal,
+} from "../lib/mapProducers/worldIntelligence.js";
+import { deriveWorldPulse, type WorldPulseReport } from "../lib/mapProducers/worldPulseProducer.js";
+import { readTravelerFlowEdges, type TravelerFlowReport } from "../lib/mapProducers/travelerFlowProducer.js";
+import { readCityModels, type CityModelReport } from "../lib/mapProducers/cityModelProducer.js";
+import { readPersonalCityPins, type PersonalCityReport } from "../lib/mapProducers/personalCityProducer.js";
 
 /**
  * Compile-time pin for the flag literal used at the crowd-flow call site.
@@ -132,6 +142,9 @@ import { loadViewportPlaceRows, projectPlace } from "../lib/mapProjectPlace.js";
  */
 const CROWD_FLOW_FLAG_PIN: "map_crowd_flow_enabled" = CROWD_FLOW_FLAG;
 void CROWD_FLOW_FLAG_PIN;
+/** The same pin for §36 Phase 7's flag (migration 2291). */
+const WORLD_INTELLIGENCE_FLAG_PIN: "map_world_intelligence_enabled" = WORLD_INTELLIGENCE_FLAG;
+void WORLD_INTELLIGENCE_FLAG_PIN;
 import { type MapObject, type MapObjectKind } from "../lib/mapObjects.js";
 import {
   FLOW_ZONE_TYPES,
@@ -143,6 +156,7 @@ import {
   indexPlaceZones,
   paginate,
   parseBbox,
+  parseCityGeographies,
   parseFlowZones,
   parseKinds,
   projectBuddy,
@@ -153,7 +167,8 @@ import {
   projectTrip,
   rankObjects,
   servableOnly,
-  withholdCoarsenableFlows,
+  withholdCoarsenableAggregates,
+  type CityGeographyParseResult,
   type FlowZone,
   type TripViewLike,
 } from "../lib/mapProjection.js";
@@ -245,6 +260,41 @@ async function loadFlowZones(sc: any, nowMs: number): Promise<FlowZone[] | null>
   const zones = parseFlowZones(data as any[]);
   _flowZoneCache = { zones, at: nowMs };
   return zones;
+}
+
+/**
+ * §36 Phase 7's CITY model (`geo_zones` where zone_type = 'city').
+ *
+ * A SECOND, NARROWER read rather than a filter over `loadFlowZones`, and the
+ * difference is not tidiness. `loadFlowZones` is scoped to the viewport and
+ * carries `neighborhood` rows too; Phase 7 needs city rows ONLY (a
+ * neighbourhood-to-neighbourhood "intercity" edge would be a within-city
+ * trajectory), and it needs the row's display NAME, which `FlowZone`
+ * deliberately discards. `parseCityGeographies` does the label + join-key work
+ * and reuses §10's own geometry validation for everything else.
+ *
+ * Fail-closed the same way: null means "could not be read", [] means "there are
+ * none", and the caller must not confuse them.
+ */
+const CITY_ZONE_CACHE_TTL_MS = 30_000;
+const MAX_CITY_ZONE_ROWS = 2_000;
+let _cityZoneCache: { parsed: CityGeographyParseResult; at: number } | null = null;
+
+export function _clearCityZoneCache(): void { _cityZoneCache = null; }
+
+async function loadCityZones(sc: any, nowMs: number): Promise<CityGeographyParseResult | null> {
+  if (_cityZoneCache && nowMs - _cityZoneCache.at < CITY_ZONE_CACHE_TTL_MS) {
+    return _cityZoneCache.parsed;
+  }
+  const { data, error } = await sc
+    .from("geo_zones")
+    .select("id, name, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
+    .eq("zone_type", "city")
+    .limit(MAX_CITY_ZONE_ROWS);
+  if (error || !Array.isArray(data)) return null;
+  const parsed = parseCityGeographies(data as any[]);
+  _cityZoneCache = { parsed, at: nowMs };
+  return parsed;
 }
 
 /**
@@ -357,6 +407,33 @@ interface ProducerReports {
 }
 
 /**
+ * §36 Phase 7 World Intelligence, in counts and refusals — the same discipline
+ * `CrowdFlowReport` established, for the same reason: an empty world layer
+ * because the gates said no looks EXACTLY like an empty world layer because the
+ * wiring is broken.
+ *
+ * Per-producer entries are null when that kind was not requested. `refusal` is
+ * the layer-wide answer: `flag_off` (migration 2291's seed), `band_not_eligible`
+ * (the camera is below the city band, where none of these kinds exists) or
+ * `no_city_model` (no curated `geo_zones` city geography covers this viewport).
+ *
+ * Every count here is a COUNT. Naming which city withheld which time band, or
+ * which pair withheld an edge, would describe the shape of the cohorts that did
+ * not clear the floor — the rule `aggregation.suppressedForKAnonymity` and
+ * `protection` already follow.
+ */
+interface WorldIntelligenceReport {
+  refusal: WorldIntelligenceRefusal | null;
+  cityModelGeography: { cities: number; ambiguousKeys: number; unusable: number } | null;
+  worldPulse: WorldPulseReport | null;
+  travelerFlow: TravelerFlowReport | null;
+  cityModels: CityModelReport | null;
+  personalCities: PersonalCityReport | null;
+  /** Phase 7 objects §24 withheld rather than coarsened, and then suppressed. */
+  withheldForProtection: number;
+}
+
+/**
  * The viewer's own trips, scoped exactly as GET /api/trips/me scopes them.
  *
  * WHY THIS READ IS HERE AND NOT EXTRACTED
@@ -432,6 +509,7 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        worldIntelligence: null,
         generatedAt,
       });
       return;
@@ -482,6 +560,7 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        worldIntelligence: null,
         generatedAt,
       });
       return;
@@ -898,6 +977,7 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        worldIntelligence: null,
         generatedAt,
       });
       return;
@@ -906,9 +986,9 @@ router.get(
     // protected zone a flow is WITHHELD rather than coarsened, because a
     // coarsened flow would keep — in `payload.observed` — exactly the cohort
     // size and observation time that coarsening exists to strip. See
-    // lib/mapProjection.withholdCoarsenableFlows. This only ever removes
+    // lib/mapProjection.withholdCoarsenableAggregates. This only ever removes
     // objects, and `applyProtection` below is still the gate.
-    const flowGate = withholdCoarsenableFlows(objects, zones);
+    const flowGate = withholdCoarsenableAggregates(objects, zones);
     objects = flowGate.objects;
     if (crowdFlow.report) {
       crowdFlow.report.withheldForProtection = flowGate.withheld;
@@ -924,8 +1004,168 @@ router.get(
     // Every collapse and suppression is reported — a silently shrunk result is
     // indistinguishable from an empty city.
     const aggregation = aggregateForViewport(objects, { bbox, zoom });
+    let finalObjects = aggregation.objects;
 
-    const ranked = rankObjects(aggregation.objects, { lat, lng });
+    // ── §36 Phase 7 World Intelligence ──────────────────────────────────────
+    //
+    // IT RUNS HERE, AFTER AGGREGATION, AND THAT POSITION IS THE DESIGN.
+    // World Pulse summarizes the §31 aggregation's OWN OUTPUT — the
+    // `activity_zone` objects `summarizeCell` just emitted, each of which
+    // already cleared the cohort floor — and the city model's `topZones` reads
+    // the same objects. Producing them earlier would mean summarizing raw
+    // contributors, which is the one thing §36 Phase 7's brief forbids ("built
+    // from ALREADY-AGGREGATED sources ... never from individual presence").
+    //
+    // Running after aggregation does NOT mean running after §24. Everything
+    // Phase 7 produces goes through the same two gates every other kind went
+    // through, in the same order, against the same `zones` list:
+    // withhold-rather-than-coarsen for the aggregate kinds, then
+    // `applyProtection`. It is then ranked with everything else, so a Phase 7
+    // object cannot outrank a safety notice.
+    //
+    // The four kinds are also NEVER_AGGREGATED_KINDS, so re-running the
+    // aggregation over them would be a no-op — they are appended rather than
+    // re-binned, which keeps `aggregation`'s own counts describing exactly the
+    // objects it was given.
+    const worldIntelligence: { report: WorldIntelligenceReport | null } = { report: null };
+    const wantsWorldIntelligence = WORLD_INTELLIGENCE_KINDS.some((k) => wantKind(k));
+    if (wantsWorldIntelligence) {
+      const report: WorldIntelligenceReport = {
+        refusal: null,
+        cityModelGeography: null,
+        worldPulse: null,
+        travelerFlow: null,
+        cityModels: null,
+        personalCities: null,
+        withheldForProtection: 0,
+      };
+      worldIntelligence.report = report;
+
+      // The flag is checked HERE as well as inside each producer so a disabled
+      // capability costs nothing: no city-zone read, no plan read, no stamp
+      // read. A LITERAL, not the constant, so check:flag-polarity can resolve
+      // it — WORLD_INTELLIGENCE_FLAG_PIN below stops the two drifting apart.
+      if (!(await isFlagEnabled(sc, "map_world_intelligence_enabled"))) {
+        report.refusal = "flag_off";
+      } else if (!bandCarriesWorldIntelligence(aggregation.band)) {
+        // §17: none of these kinds exists below the city band. Say so rather
+        // than reporting an empty layer that looks like a broken one.
+        report.refusal = "band_not_eligible";
+      } else {
+        const cityParse = await loadCityZones(sc, nowMs).catch(() => null);
+        if (cityParse === null) {
+          // Unreadable geography is NOT absent geography — see loadCityZones.
+          report.refusal = "read_failed";
+        } else {
+          report.cityModelGeography = {
+            cities: cityParse.cities.length,
+            ambiguousKeys: cityParse.ambiguousKeys,
+            unusable: cityParse.unusable,
+          };
+          // The city model is grown by one viewport on each side, exactly as
+          // §10's flow zones are, so a city→city edge whose MIDPOINT is on
+          // screen still has both endpoints in the model.
+          const near = expandBbox(bbox);
+          const viewportCities = cityParse.cities.filter((c) =>
+            bboxContains(near, c.centroid.lat, c.centroid.lng),
+          );
+
+          const produced: MapObject[] = [];
+
+          if (wantKind("world_pulse")) {
+            // PURE, and its only input is the aggregation output above.
+            const pulse = deriveWorldPulse(aggregation.objects, { bbox, zoom });
+            report.worldPulse = pulse.report;
+            for (const p of pulse.pulses) produced.push(p);
+            sources.push("world_pulse");
+          }
+
+          if (wantKind("traveler_flow")) {
+            const flow = await readTravelerFlowEdges(sc, {
+              now: nowMs,
+              // The city model, injected. The producer REFUSES rather than
+              // approximating an endpoint to a coordinate without it.
+              resolveCityForPoint: (pt) => {
+                for (const c of viewportCities) {
+                  try {
+                    if (c.contains(pt.lat, pt.lng)) return c.id;
+                  } catch { /* an unusable shape covers nothing */ }
+                }
+                return null;
+              },
+              cityCentroids: new Map(viewportCities.map((c) => [c.id, c.centroid])),
+              cityLabels: new Map(viewportCities.map((c) => [c.id, c.label])),
+            }).catch(() => null);
+            if (!flow) {
+              report.travelerFlow = {
+                refusal: "read_failed", hops: 0, hopsSkipped: 0,
+                transitions: 0, published: 0, withheld: 0,
+              };
+            } else {
+              report.travelerFlow = flow.report;
+              for (const e of flow.edges) produced.push(e);
+              // A refusal means we never looked, so the layer must not appear
+              // in `sources` claiming an empty answer it did not obtain.
+              if (flow.report.refusal === null) sources.push("traveler_flow");
+            }
+          }
+
+          if (wantKind("city_model")) {
+            const read = await readCityModels(sc, {
+              bbox,
+              cities: viewportCities,
+              // This request's own already-k-gated activity zones. Their
+              // cohorts are re-published as BUCKETS by the producer, never as
+              // the counts these objects carry.
+              activityZones: aggregation.objects.filter((o) => o.kind === "activity_zone"),
+            }).catch(() => null);
+            if (!read) {
+              report.cityModels = {
+                cities: viewportCities.length, capped: false, modelsRead: 0,
+                published: 0, slicesWithheld: 0, slicesPublished: 0,
+              };
+            } else if (!read.ok) {
+              if (report.refusal === null) report.refusal = read.reason;
+            } else {
+              report.cityModels = read.report;
+              for (const m of read.models) produced.push(m);
+              sources.push("city_models");
+            }
+          }
+
+          if (wantKind("personal_city")) {
+            // `user.id` is the SESSION identity — the personal city read takes
+            // it as the owner and returns that owner's own history, so it must
+            // never come from a query parameter (the 2182 lesson).
+            const read = await readPersonalCityPins(sc, user.id, {
+              bbox,
+              cities: viewportCities,
+            }).catch(() => null);
+            if (read && read.ok) {
+              report.personalCities = read.report;
+              for (const p of read.pins) produced.push(p);
+              sources.push("personal_cities");
+            }
+          }
+
+          // The SAME §24 gate, in the SAME order, against the SAME zone list.
+          const servableProduced = servableOnly(produced);
+          const wiGate = withholdCoarsenableAggregates(servableProduced, zones);
+          const wiProtection = applyProtection(wiGate.objects, zones);
+          // servableOnly again AFTER protection: coarsening can drop an object
+          // to a rung that must not be serialized, and that decision is made
+          // downstream of the gate.
+          const wiSurvived = servableOnly(wiProtection.objects);
+          // A COUNT of what §24 removed — withheld plus suppressed plus dropped
+          // for an unusable coarsened rung, as one number. Which zone removed
+          // which object is exactly what `ProtectionReport` refuses to say.
+          report.withheldForProtection = servableProduced.length - wiSurvived.length;
+          finalObjects = [...finalObjects, ...wiSurvived];
+        }
+      }
+    }
+
+    const ranked = rankObjects(finalObjects, { lat, lng });
     const { page, nextCursor } = paginate(ranked, cursor, limit);
 
     res.json({
@@ -963,6 +1203,10 @@ router.get(
       // also absent from `sources`). Otherwise the row count and whether the
       // bounded read was a SAMPLE of the viewport — see lib/mapProjectPlace.
       places: placesReport.report,
+      // Null when no Phase 7 kind was requested. Otherwise counts + refusals,
+      // so "no world intelligence" is never ambiguous between "the gates said
+      // no", "the flag is off" and "nothing asked". See WorldIntelligenceReport.
+      worldIntelligence: worldIntelligence.report,
       generatedAt,
     });
   }),
