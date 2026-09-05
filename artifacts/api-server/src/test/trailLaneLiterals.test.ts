@@ -35,7 +35,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PILOT_CLAIMABLE_MODERATION_STATES } from "../lib/intelContracts.js";
+import { PILOT_CLAIMABLE_MODERATION_STATES, INTEL_FLAGS } from "../lib/intelContracts.js";
 import { CAPTURE_SURFACES } from "../services/intel/IntelCaptureService.js";
 import { extractColumnRefs } from "./helpers/schemaColumnExtractor.js";
 
@@ -208,5 +208,78 @@ describe("Trails · the gating flag names a seeded row", () => {
   it("intel_capture_quick_signal — the declared dependency the chain now reads — is seeded too", () => {
     assert.match(TRAIL_SERVE, /isFlagEnabled\(sc, "intel_capture_quick_signal"\)/);
     assert.match(MIGRATIONS, /INSERT INTO public\.feature_flags[\s\S]{0,600}?'intel_capture_quick_signal'/);
+  });
+
+  /**
+   * READ ⇔ SEEDED, both ways, for the whole §26 flag family.
+   *
+   * Three comments — in lib/trailServe, routes/intel and check-flag-polarity —
+   * used to say `intel_movement_prediction` was "seeded OFF". It is not seeded at
+   * all: no migration creates the row (nor for `intel_external_api` or
+   * `intel_qiu_cash_pool`), because the rule migration 2165 records is that "a
+   * flag row arrives with the unit that reads it, never before". Nothing reads
+   * those three, so there is no live defect — but the comments were false, and a
+   * false comment about a privacy gate is how the next reader concludes the gate
+   * is configured when it is merely absent.
+   *
+   * The prose is now correct. This makes it LOAD-BEARING in both directions:
+   *   • a flag the code reads MUST be seeded (an unseeded literal reads as OFF
+   *     forever — the failure mode this whole file exists to catch);
+   *   • a flag nothing reads must NOT be seeded (check-flag-polarity's own
+   *     "seeded but never read" rule, restated here for this family).
+   * Adding a reader for one of the three without its seed migration turns this
+   * red, which is exactly when the comments would go stale again.
+   */
+  it("every §26 intel flag is EITHER read AND seeded, OR unread AND unseeded", () => {
+    /**
+     * A flag counts as READ when its literal appears QUOTED in production source
+     * outside its declaration home. Quoted, because prose names a flag in
+     * backticks or bare (`index.ts` mentions intel_missions in a comment) and a
+     * comment is not a reader. Not "inline in an isFlagEnabled(…) call",
+     * because a real reader may route through a named constant — CoverageService
+     * reads `const MISSIONS_FLAG = "intel_missions"` — and a detector that
+     * missed that would report a live gate as dead config.
+     */
+    const sources: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name === "dist" || e.name === "migrations") continue;
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        // intelContracts.ts DECLARES the family (INTEL_FLAGS, the dependency
+        // table). Declaring a flag is not reading one, so it is excluded — that
+        // exclusion is the whole reason the three unread flags are detectable.
+        else if (e.name.endsWith(".ts") && !e.name.endsWith(".test.ts") && e.name !== "intelContracts.ts")
+          sources.push(readFileSync(p, "utf8"));
+      }
+    };
+    walk(join(HERE, ".."));
+    const code = sources.join("\n");
+
+    assert.ok(INTEL_FLAGS.length > 0, "the flag family must be non-empty for this guard to mean anything");
+    const seenRead: string[] = [];
+    const seenSeeded: string[] = [];
+    for (const flag of INTEL_FLAGS) {
+      const read = new RegExp(`["']${flag}["']`).test(code);
+      const seeded = new RegExp(`INSERT INTO public\\.feature_flags[\\s\\S]{0,600}?'${flag}'`).test(MIGRATIONS);
+      if (read) seenRead.push(flag);
+      if (seeded) seenSeeded.push(flag);
+      assert.equal(
+        read, seeded,
+        read
+          ? `${flag} is READ in src/ but seeded by NO migration — the gate reads a missing row as OFF forever.`
+          : `${flag} is SEEDED but read by nothing — dead config, or a reader that was removed.`,
+      );
+    }
+    // Neither side may be vacuously empty: a regex that silently stopped
+    // matching would make every assertion above pass by finding nothing.
+    assert.ok(seenRead.length > 0, "no intel flag matched the READ pattern — the guard has lost its target");
+    assert.ok(seenSeeded.length > 0, "no intel flag matched the SEED pattern — the guard has lost its target");
+    // …and the three the comments name really are on the unread/unseeded side.
+    for (const flag of ["intel_movement_prediction", "intel_external_api", "intel_qiu_cash_pool"] as const) {
+      assert.ok((INTEL_FLAGS as readonly string[]).includes(flag), `${flag} must still be declared in INTEL_FLAGS`);
+      assert.ok(!seenRead.includes(flag), `${flag} gained a reader — its seed migration is now owed`);
+      assert.ok(!seenSeeded.includes(flag), `${flag} gained a seed — the "NOT SEEDED" comments are now false`);
+    }
   });
 });
