@@ -99,6 +99,24 @@
  * layer caused by broken wiring — which is why `crowdFlow` reports refusals and
  * counts, and why src/test/mapCrowdFlowLayer.test.ts drives a synthetic cohort
  * that CLEARS every gate through this route and asserts the object arrives.
+ *
+ * §36 PHASE 6 — "ALONG MY WAY" IS A PARAMETER HERE, NOT AN ENDPOINT
+ * =================================================================
+ *   flag: map_journey_intelligence_enabled (OFF by default; migration 2292)
+ *
+ * `corridor=lat,lng;lat,lng;…` (+ optional `corridorMeters`) filters this
+ * request's already-privacy-complete answer down to the objects within a
+ * bounded distance of the VIEWER'S OWN route polyline, keeping §31 rank order
+ * and attaching an explicit, explicitly-estimated detour cost per object
+ * (lib/mapCorridor). It is a bbox plus a distance predicate — it reads nothing,
+ * adds nothing, and can only ever REMOVE objects from the answer this same
+ * viewer would get for the same bbox with no corridor at all, so it opens no
+ * privacy surface. A separate /api/map/along-my-way would have had to restate
+ * all eleven privacy-complete reads above, which is the exact bypass
+ * src/test/gatewayBypassGuard.test.ts exists to catch.
+ *
+ * With the flag off the parameter is IGNORED (reported as `corridor.refusal =
+ * "flag_off"`) and this endpoint answers exactly as it did before Phase 6.
  */
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -124,6 +142,15 @@ import { readSafetyNotices } from "../lib/mapProducers/safetyNoticeProducer.js";
 import { readSavedPlacePins } from "../lib/mapProducers/savedPlaceProducer.js";
 import { deriveEventCauseHypotheses } from "../lib/mapProducers/eventContextProducer.js";
 import { loadViewportPlaceRows, projectPlace } from "../lib/mapProjectPlace.js";
+import {
+  buildCorridor,
+  corridorBBox,
+  filterToCorridor,
+  parseCorridorMeters,
+  parseCorridorPath,
+  type CorridorMatch,
+  type CorridorReport,
+} from "../lib/mapCorridor.js";
 
 /**
  * Compile-time pin for the flag literal used at the crowd-flow call site.
@@ -432,6 +459,8 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        corridor: null,
+        corridorMatches: null,
         generatedAt,
       });
       return;
@@ -446,7 +475,47 @@ router.get(
       return;
     }
 
-    const bbox = parseBbox(req.query.bbox);
+    // ── §36 Phase 6 "Along My Way" — a corridor FILTER, not a new surface ────
+    //
+    // Behind `map_journey_intelligence_enabled`, seeded OFF (migration 2292).
+    // With the flag off the parameter is IGNORED and reported as `flag_off`, so
+    // this endpoint's answer is byte-for-byte what it served before Phase 6.
+    //
+    // The corridor can only ever REMOVE objects from the answer this viewer
+    // would already get for the same bbox — see lib/mapCorridor's header. That
+    // is why it is a parameter here rather than an endpoint of its own: a
+    // bespoke /api/map/along-my-way would have to restate every one of this
+    // route's privacy-complete reads, which is exactly the second
+    // implementation src/test/gatewayBypassGuard.test.ts exists to prevent.
+    const corridorRaw = req.query.corridor;
+    // The flag is read ONLY when a corridor was actually asked for, so a
+    // request that does not use Phase 6 costs nothing extra — and so the
+    // overwhelmingly common path through this endpoint is untouched by it.
+    const journeyEnabled =
+      corridorRaw === undefined
+        ? false
+        : await isFlagEnabled(sc, "map_journey_intelligence_enabled");
+    const corridor = journeyEnabled
+      ? buildCorridor(parseCorridorPath(corridorRaw), parseCorridorMeters(req.query.corridorMeters))
+      : null;
+    const corridorReport: CorridorReport | null =
+      corridorRaw === undefined
+        ? null
+        : {
+            refusal: !journeyEnabled ? "flag_off" : corridor ? null : "invalid_corridor",
+            meters: corridor?.meters ?? null,
+            points: corridor?.path.length ?? null,
+            considered: 0,
+            kept: 0,
+            droppedOffRoute: 0,
+            droppedNoGeometry: 0,
+          };
+
+    // A valid corridor DEFINES a viewport when the caller did not send one: the
+    // polyline's extent padded by the corridor width is exactly the region the
+    // filter can keep anything from, so deriving it is strictly tighter than
+    // asking the client to guess a bbox that contains its own route.
+    const bbox = parseBbox(req.query.bbox) ?? (corridor ? corridorBBox(corridor) : null);
     if (!bbox) {
       sendError(
         res,
@@ -482,6 +551,8 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        corridor: corridorReport,
+        corridorMatches: null,
         generatedAt,
       });
       return;
@@ -843,6 +914,22 @@ router.get(
 
     objects = filterKinds(objects, kinds);
 
+    // §36 Phase 6 — the corridor filter, applied HERE and not later. It runs
+    // before enrichment so a live-claim read is never spent on an object that
+    // is about to be dropped, and it PRESERVES ORDER, so the §31 ladder that
+    // `rankObjects` applies below is the one that decides what the client sees.
+    // Nothing after this point can re-add what the corridor removed.
+    const corridorMatches = new Map<string, CorridorMatch>();
+    if (corridor && corridorReport) {
+      corridorReport.considered = objects.length;
+      const filtered = filterToCorridor(objects, corridor);
+      objects = filtered.objects;
+      for (const m of filtered.matches) corridorMatches.set(m.objectId, m);
+      corridorReport.kept = filtered.objects.length;
+      corridorReport.droppedOffRoute = filtered.droppedOffRoute;
+      corridorReport.droppedNoGeometry = filtered.droppedNoGeometry;
+    }
+
     // Attach already-computed live claims. Bounded and REPORTED — a capped
     // enrichment must never read as "no live intelligence here".
     const enrichment = await enrichWithLiveClaims(
@@ -898,6 +985,8 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        corridor: corridorReport,
+        corridorMatches: null,
         generatedAt,
       });
       return;
@@ -927,6 +1016,15 @@ router.get(
 
     const ranked = rankObjects(aggregation.objects, { lat, lng });
     const { page, nextCursor } = paginate(ranked, cursor, limit);
+
+    // The detour lines for THIS page, in page order, so a client never has to
+    // join two differently-ordered arrays. An aggregated cell has an id the
+    // corridor never saw, so it simply has no detour line — a cell is not a
+    // place you can step off your route to reach, and inventing a cost for one
+    // would be a number about nothing.
+    const corridorPageMatches: CorridorMatch[] | null = corridor
+      ? page.map((o) => corridorMatches.get(o.id)).filter((m): m is CorridorMatch => m != null)
+      : null;
 
     res.json({
       enabled: true,
@@ -959,6 +1057,16 @@ router.get(
       // Per-producer refusals + pre-gate counts for the four M5 kinds. See
       // ProducerReports: null per entry when that kind was not requested.
       producers,
+      // Null when the layer was not requested or could not be read (then it is
+      // also absent from `sources`). Otherwise the row count and whether the
+      // §36 Phase 6 Along My Way. Null when no corridor= was sent at all.
+      // Otherwise counts + a refusal (`flag_off` / `invalid_corridor`), plus
+      // the page's detour estimates. Counts only in the report, for the same
+      // reason `protection` is counts only: naming which objects fell outside
+      // the corridor would describe what is near this viewer's route but not on
+      // it, which is a sharper statement than the one they asked for.
+      corridor: corridorReport,
+      corridorMatches: corridorPageMatches,
       // Null when the layer was not requested or could not be read (then it is
       // also absent from `sources`). Otherwise the row count and whether the
       // bounded read was a SAMPLE of the viewport — see lib/mapProjectPlace.
