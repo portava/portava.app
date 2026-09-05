@@ -2259,8 +2259,19 @@ router.post("/media/:id/share", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  // Gate: MEDIA_SHARING_ENABLED
-  if (!(await isFlagEnabled(sc, "MEDIA_SHARING_ENABLED"))) {
+  // Gate: MEDIA_SHARES_ENABLED — seeded by 2038_media_admin_flags.sql:47
+  // ("Enable share/export interactions on media items"), false.
+  //
+  // This read said "MEDIA_SHARING_ENABLED" until 2300. No such row has ever
+  // existed in any migration or in either live database, so isFlagEnabled
+  // resolved nothing and returned its fail-closed false on every request: this
+  // endpoint answered `feature_disabled` unconditionally and no operator action
+  // could change that. The row the author meant is MEDIA_SHARES_ENABLED, seeded
+  // false alongside MEDIA_LIKES_ENABLED / MEDIA_SAVES_ENABLED /
+  // MEDIA_COMMENTS_ENABLED by the same INSERT. Correcting the literal is
+  // behaviour-neutral today (the row is false, so the gate still closes) and
+  // makes the gate flippable, which it was not before.
+  if (!(await isFlagEnabled(sc, "MEDIA_SHARES_ENABLED"))) {
     sendError(res, "feature_disabled", "Media sharing is not available");
     return;
   }
