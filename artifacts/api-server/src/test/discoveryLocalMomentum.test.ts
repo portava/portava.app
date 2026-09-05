@@ -16,6 +16,7 @@ import {
   computeLocalMomentum, loadLocalMomentum, _resetLocalMomentumCacheForTest,
   MOMENTUM_MIN_RECENT_WEIGHT, MOMENTUM_BASELINE_WINDOWS, MOMENTUM_SMOOTHING, MOMENTUM_SATURATION,
   MOMENTUM_EVENT_WEIGHTS, MOMENTUM_CACHE_TTL_MS,
+  MOMENTUM_ROW_LIMIT, MOMENTUM_PAGE_SIZE,
   type MomentumRow,
 } from "../lib/discoveryLocalMomentum.js";
 
@@ -119,26 +120,77 @@ describe("computeLocalMomentum — the arithmetic", () => {
 
 // ── Loader ────────────────────────────────────────────────────────────────────
 
-/** rank_events-only client: counts reads, captures the id filter, can fail. */
-function fakeClient(rows: MomentumRow[] | Error) {
+/**
+ * rank_events-only client: counts reads, captures the id filter, can fail.
+ *
+ * A FRESH builder per `from()` call, because the loader PAGES — one shared
+ * builder would carry page 1's `.range()` into page 2 and every page would
+ * return the same rows.
+ *
+ * `dbMaxRows` emulates PostgREST's `db-max-rows` cap: the server silently
+ * truncating a response to 1000 rows with no error and no signal. That cap is
+ * what made `.limit(5000)` a lie. `orders` records the ORDER BY the loader asks
+ * for, and the fake refuses to invent one — with no `.order()` the rows come
+ * back in fixture order, standing in for Postgres's arbitrary physical order.
+ */
+function fakeClient(
+  rows: MomentumRow[] | Error,
+  opts: { dbMaxRows?: number } = {},
+) {
   let reads = 0;
   let capturedIn: string[] | null = null;
+  let capturedRanges: Array<[number, number]> = [];
+  let capturedOrders: Array<{ col: string; asc: boolean }> = [];
+  let sawLimit = false;
+  const dbMaxRows = opts.dbMaxRows ?? Infinity;
+
   const client = {
     from(table: string) {
       assert.equal(table, "rank_events");
-      const q = {
-        select: () => q, eq: () => q, neq: () => q, gte: () => q, limit: () => q,
+      const orders: Array<{ col: string; asc: boolean }> = [];
+      let from = 0;
+      let to = Infinity;
+      const q: any = {
+        select: () => q, eq: () => q, neq: () => q, gte: () => q,
+        limit: (_n: number) => { sawLimit = true; return q; },
+        order: (col: string, o?: { ascending?: boolean }) => {
+          const rec = { col, asc: o?.ascending !== false };
+          orders.push(rec); capturedOrders.push(rec);
+          return q;
+        },
+        range: (f: number, t: number) => {
+          from = f; to = t; capturedRanges.push([f, t]);
+          return q;
+        },
         in: (_k: string, ids: string[]) => { capturedIn = ids; return q; },
         then: (resolve: (v: { data: MomentumRow[]; error: null }) => unknown, reject?: (e: unknown) => unknown) => {
           reads += 1;
           if (rows instanceof Error) return Promise.reject(rows).then(resolve, reject);
-          return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
+          const sorted = [...rows];
+          for (const o of [...orders].reverse()) {
+            sorted.sort((x, y) => {
+              const a = String((x as any)[o.col] ?? "");
+              const b = String((y as any)[o.col] ?? "");
+              return (a < b ? -1 : a > b ? 1 : 0) * (o.asc ? 1 : -1);
+            });
+          }
+          // The requested range first, then the server's silent cap. Both.
+          const windowed = sorted.slice(from, to === Infinity ? undefined : to + 1);
+          const data = windowed.slice(0, dbMaxRows);
+          return Promise.resolve({ data, error: null }).then(resolve, reject);
         },
       };
       return q;
     },
   };
-  return { client, reads: () => reads, capturedIn: () => capturedIn };
+  return {
+    client,
+    reads: () => reads,
+    capturedIn: () => capturedIn,
+    ranges: () => capturedRanges,
+    orders: () => capturedOrders,
+    sawLimit: () => sawLimit,
+  };
 }
 
 describe("loadLocalMomentum — bounded per-key cache, never throws", () => {
@@ -174,5 +226,104 @@ describe("loadLocalMomentum — bounded per-key cache, never throws", () => {
     assert.deepEqual(await loadLocalMomentum(f.client, [], { cacheKey: "k", nowMs: NOW }), {});
     assert.deepEqual(await loadLocalMomentum(null, ["p"], { cacheKey: "k", nowMs: NOW }), {});
     assert.equal(f.reads(), 0);
+  });
+});
+
+// ── The momentum window is DEFINED, not whatever 1000 rows Postgres felt like ──
+//
+// DEFECT: the loader asked for `.limit(MOMENTUM_ROW_LIMIT)` with MOMENTUM_ROW_LIMIT
+// = 5000 and NO ORDER BY. Two failures in one line:
+//
+//   * PostgREST caps a response at db-max-rows (1000), silently. Asking for 5000
+//     got 1000, with no error and nothing on the result to say so — so the
+//     "30-day baseline window" was in fact whatever fraction of it fitted.
+//   * With no ORDER BY, WHICH 1000 is Postgres's physical scan order — arbitrary,
+//     and free to differ between two runs of the identical query. A place's
+//     momentum could move without a single new event.
+//
+// Momentum feeds the ranker. A signal that is silently computed over an
+// arbitrary sample is worse than no signal, because it looks like a measurement.
+describe("loadLocalMomentum — the window is bounded deliberately, never silently", () => {
+  beforeEach(() => _resetLocalMomentumCacheForTest());
+
+  /** n impressions on `id`, each one minute apart, newest first, with ids. */
+  function paged(id: string, n: number, baseDeltaMs = 0): MomentumRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      ...impression(id, at(baseDeltaMs - i * 60_000)),
+      id: String(n - i).padStart(8, "0"),
+    })) as unknown as MomentumRow[];
+  }
+
+  it("pages past PostgREST's silent 1000-row cap instead of stopping at it", async () => {
+    // 2500 recent impressions on one place. Pre-fix this read returns 1000.
+    const f = fakeClient(paged("p", 2_500), { dbMaxRows: MOMENTUM_PAGE_SIZE });
+    await loadLocalMomentum(f.client, ["p"], { cacheKey: "k", nowMs: NOW });
+
+    assert.equal(
+      f.reads(), 3,
+      "2500 rows over 1000-row pages is 3 reads. One read means the loader accepted " +
+      "the server's silent cap and called a 1000-row sample the 30-day window.",
+    );
+    assert.deepEqual(
+      f.ranges(), [[0, 999], [1000, 1999], [2000, 2999]],
+      "each page must ask for an EXPLICIT range — that is the only thing that " +
+      "distinguishes 'the corpus ended' from 'the server truncated me'",
+    );
+  });
+
+  it("asks for a stable TOTAL order, so which rows survive is defined", async () => {
+    const f = fakeClient(paged("p", 5), { dbMaxRows: MOMENTUM_PAGE_SIZE });
+    await loadLocalMomentum(f.client, ["p"], { cacheKey: "k", nowMs: NOW });
+
+    const cols = f.orders().map((o) => o.col);
+    assert.ok(
+      cols.includes("served_at"),
+      "no ORDER BY means the rows kept under any bound are arbitrary — Postgres's " +
+      "physical scan order, free to change between two runs of the same query",
+    );
+    assert.ok(
+      cols.includes("id"),
+      "served_at alone is not a TOTAL order (timestamps collide), and paging over " +
+      "a non-total order can return one row on two pages and skip another",
+    );
+    // Newest-first: when the ceiling truncates, what survives is the recent
+    // window — the half the recent/baseline split actually turns on.
+    assert.equal(f.orders().find((o) => o.col === "served_at")?.asc, false);
+  });
+
+  it("the page size cannot exceed the cap it exists to defeat", () => {
+    // If MOMENTUM_PAGE_SIZE > db-max-rows, a full page and a capped page are
+    // indistinguishable and the loop terminates one page early, forever.
+    assert.ok(
+      MOMENTUM_PAGE_SIZE <= 1_000,
+      "a page larger than PostgREST's db-max-rows is silently truncated, which is " +
+      "the exact defect this pagination replaced",
+    );
+    assert.ok(MOMENTUM_ROW_LIMIT >= MOMENTUM_PAGE_SIZE);
+  });
+
+  it("an exhausted corpus ends on a short page — no wasted read, no false ceiling", async () => {
+    const f = fakeClient(paged("p", 5), { dbMaxRows: MOMENTUM_PAGE_SIZE });
+    const m = await loadLocalMomentum(f.client, ["p"], { cacheKey: "k", nowMs: NOW });
+    assert.equal(f.reads(), 1);
+    assert.ok(m.p! > 0, "the five recent impressions still produce momentum");
+  });
+
+  it("the paged corpus produces the SAME momentum as computing over all of it directly", async () => {
+    // The pagination must not change the arithmetic — only how much of the
+    // corpus reaches it.
+    const rows = [
+      ...paged("p", 1_400),                       // recent surge, spans 2 pages
+      ...paged("q", 60, -5 * DAY),                // baseline-only, no surge
+    ];
+    const f = fakeClient(rows, { dbMaxRows: MOMENTUM_PAGE_SIZE });
+    const viaLoader = await loadLocalMomentum(f.client, ["p", "q"], { cacheKey: "k", nowMs: NOW });
+    const direct = computeLocalMomentum(rows, NOW);
+    assert.deepEqual(viaLoader, direct, "paging dropped or duplicated rows");
+  });
+
+  it("still degrades to 'no surge' when a page fails — never a partial fabricated signal", async () => {
+    const f = fakeClient(new Error("boom"), { dbMaxRows: MOMENTUM_PAGE_SIZE });
+    assert.deepEqual(await loadLocalMomentum(f.client, ["p"], { cacheKey: "k", nowMs: NOW }), {});
   });
 });
