@@ -24,6 +24,14 @@
  *   • COARSE only — an action carries opaque entity ids + coarse labels, never a
  *     coordinate. Current/live framing is never fabricated here (that lives in
  *     the live-claim read consumed by Compass / the place projection).
+ *   • The place ref and its label run through the SAME location/gem choke point
+ *     as every other media surface (lib/mediaLocationVisibility, via
+ *     MediaProjectionService.disclosureForRow), so the owner's
+ *     `location_privacy_mode` and a hosting gem's ceiling bind here too.
+ *   • A gem ref is emitted ONLY for a gem the viewer is entitled to be told
+ *     about (HiddenGemPrivacyGuard.mayDiscloseGemIdentity). Naming a gem here
+ *     binds it to an ordinary post's canonical place, so a protected /
+ *     reveal-gated gem gets no ref at all — not its id, not its name.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -31,10 +39,13 @@ import { canEditPlan, isAcceptedTripMember } from "../../lib/http.js";
 import { isKillSwitchEngaged } from "../../lib/featureFlags.js";
 import { isCompassEnabled } from "../../compass/flags.js";
 import {
+  disclosureForRow,
   loadEligibleCandidates,
+  loadProjectionGemContext,
   type ViewerResolved,
 } from "./MediaProjectionService.js";
 import { resolveExperience } from "./MediaExperienceResolver.js";
+import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import type { MediaCandidateRow } from "../../lib/media/mediaProjection.js";
 
 // ── Entity refs the media resolves to ─────────────────────────────────────────
@@ -168,31 +179,45 @@ export async function resolveMediaEntities(
   _nowMs: number,
 ): Promise<ResolvedMediaEntities> {
   const mediaId = String((row as any).id);
-  const placeId =
+  const rawPlaceId =
     typeof (row as any).canonical_place_id === "string" ? (row as any).canonical_place_id : null;
   const rawTripId = typeof (row as any).trip_id === "string" ? (row as any).trip_id : null;
-  const city = typeof (row as any).location_city === "string" ? (row as any).location_city : null;
-  const placeLabel =
-    (typeof (row as any).location_name === "string" ? (row as any).location_name : null) ?? city;
+
+  // The SAME location/gem choke point every other media surface runs through
+  // (lib/mediaLocationVisibility). The rail's labels are the venue name and the
+  // canonical place id, so it honours the owner's `location_privacy_mode` and a
+  // hosting gem's ceiling exactly like the World shell does — a place a viewer
+  // may not be told about is not a place they may be handed an action for.
+  const gemCtx = await loadProjectionGemContext(sc, [row]);
+  const disclosure = disclosureForRow(row, viewer.viewerId, gemCtx);
+  const city = disclosure.city;
+  const placeLabel = disclosure.name ?? disclosure.city;
+  const placeId = disclosure.mayDisclosePlaceId ? rawPlaceId : null;
 
   const refs: MediaEntityRef[] = [{ kind: "media", id: mediaId, label: null }];
 
-  // Place ref (canonical places.id) — coarse label only.
+  // Place ref (canonical places.id) — coarse label only, and only at a tier that
+  // permits disclosing the place itself.
   if (placeId) refs.push({ kind: "place", id: placeId, label: placeLabel });
 
-  // Hidden-gem ref: only when the canonical place is a live hidden gem. Location
-  // protection is honored downstream by the gem surfaces; here we only expose the
-  // opaque gem id so the client can open the (protected) gem view.
+  // Hidden-gem ref: only when the canonical place is a hidden gem the viewer is
+  // ENTITLED to be told about. Naming (or id-exposing) a gem here binds it to an
+  // ordinary post's canonical place, which de-anonymizes the gem's location just
+  // as surely as handing out its coordinates — so identity disclosure runs
+  // through the gem surfaces' own predicate (mayDiscloseGemIdentity, which is
+  // the `hidden_gems_public_read` RLS policy plus the owner bypass). A protected
+  // / reveal-gated / non-active gem yields NO ref at all: not its id, not its
+  // name. FAIL CLOSED — a failed lookup also yields no ref.
   let gemId: string | null = null;
-  if (placeId) {
+  if (rawPlaceId) {
     try {
       const { data } = await (sc as any)
         .from("hidden_gems")
-        .select("id, name, status")
-        .eq("canonical_place_id", placeId)
+        .select("id, name, status, sensitivity_level, submitted_by")
+        .eq("canonical_place_id", rawPlaceId)
         .maybeSingle();
       const g = data as any;
-      if (g && g.id && (g.status == null || g.status === "active" || g.status === "published")) {
+      if (g && g.id && mayDiscloseGemIdentity(g, viewer.viewerId)) {
         gemId = String(g.id);
         refs.push({ kind: "gem", id: gemId, label: typeof g.name === "string" ? g.name : placeLabel });
       }

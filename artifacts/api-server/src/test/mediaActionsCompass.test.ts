@@ -294,10 +294,23 @@ describe("GET /media/:id/actions — resolveMediaActions", () => {
   });
 
   it("a hidden-gem canonical place adds a gem ref (opaque id, coarse label)", async () => {
+    // `sensitivity_level` is NOT NULL DEFAULT 'public' in the live schema
+    // (0043_hidden_gems). The fixture spells it out because gem IDENTITY
+    // disclosure now depends on it — see mediaGemAndPrivacyDisclosure.test.ts,
+    // which proves a non-public gem yields NO ref.
     const sc = makeSc(
       baseData({
         posts: [makePost()],
-        hidden_gems: [{ id: GEM_1, name: "Quiet cove", status: "active", canonical_place_id: PLACE_1 }],
+        hidden_gems: [
+          {
+            id: GEM_1,
+            name: "Quiet cove",
+            status: "active",
+            sensitivity_level: "public",
+            canonical_place_id: PLACE_1,
+            submitted_by: AUTHOR_A,
+          },
+        ],
       }),
     );
     const viewer = await resolveViewer(sc, VIEWER, { needFollows: true });
