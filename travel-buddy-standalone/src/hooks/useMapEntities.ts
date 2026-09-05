@@ -167,6 +167,21 @@ export const GATEWAY_KIND_FOR_OPTIONAL_LAYER: Record<string, MapObjectKind> = {
   // §11/§16 Trip meeting points (trip layer, contextual): the viewer's own trip
   // meeting context, requested when a trip is on the map.
   meeting_point: 'meeting_point',
+  // ── §36 Phase 7 World Intelligence layers ─────────────────────────────────
+  // Same shape as the M5 entries above: gateway-served kinds that are NOT
+  // members of `ToggleableEntityType`, each requested on its own hook option
+  // and resolved by the shell from the §16 preferences.
+  //
+  // The three PUBLIC aggregates ride ONE option (`worldIntelligence`), because
+  // layerModel puts them on one layer; the viewer's OWN city history rides its
+  // own (`myCities`), because a single toggle cannot honestly govern both.
+  // Three kinds therefore share one option — which is why they are keyed by
+  // KIND here rather than by layer: the asymmetry guard compares this map's
+  // VALUES against the route's wantKind() gates, and it must see all four.
+  world_pulse: 'world_pulse',
+  traveler_flow: 'traveler_flow',
+  city_model: 'city_model',
+  personal_city: 'personal_city',
 };
 
 /** The `sources` name the route pushes for each optional kind. */
@@ -179,6 +194,13 @@ export const GATEWAY_SOURCE_FOR_OPTIONAL_LAYER: Record<string, string> = {
   memories: 'memories',
   safety: 'safety',
   meeting_point: 'meeting_points',
+  // §36 Phase 7. The route pushes these exact names — note that two of them are
+  // PLURAL there and singular as a kind, which is precisely the drift a hand
+  // -copied map rots into.
+  world_pulse: 'world_pulse',
+  traveler_flow: 'traveler_flow',
+  city_model: 'city_models',
+  personal_city: 'personal_cities',
 };
 
 export const GATEWAY_SOURCE_FOR_LAYER: Record<ToggleableEntityType, string> = {
@@ -441,6 +463,22 @@ export function useMapEntities(opts: {
    */
   meetingPoints?: boolean;
   /**
+   * §36 Phase 7 World Intelligence (contextual) — the three PUBLIC aggregates:
+   * the world/continent pulse, the city→city traveller-flow graph and the
+   * per-city profile. Resolved by the shell from the §16 `world_intelligence`
+   * layer, which is contextual on the world and city zoom bands because none of
+   * these kinds exists below them. GATEWAY ONLY — no rollback fetcher, because
+   * there is no legacy path that ever produced them.
+   */
+  worldIntelligence?: boolean;
+  /**
+   * §36 Phase 7 My Cities (default off) — the viewer's OWN city history
+   * summary. A separate option from `worldIntelligence` because it is private
+   * data on a private layer: switching on "what is the world doing" must never
+   * switch on "show my own travel history". GATEWAY ONLY.
+   */
+  myCities?: boolean;
+  /**
    * §34 camera-driven re-query. The LIVE camera the map has actually settled
    * on — reported by DiscoveryMapView's onCameraChange and held in the shell.
    *
@@ -480,6 +518,8 @@ export function useMapEntities(opts: {
     memories = false,
     safety = false,
     meetingPoints = false,
+    worldIntelligence = false,
+    myCities = false,
     camera = null,
     settleDebounceMs = DEFAULT_SETTLE_DEBOUNCE_MS,
   } = opts;
@@ -581,7 +621,8 @@ export function useMapEntities(opts: {
     // nothing".
     if (
       enabledLayers.length === 0 &&
-      !crowdFlow && !places && !saved && !memories && !safety && !meetingPoints
+      !crowdFlow && !places && !saved && !memories && !safety && !meetingPoints &&
+      !worldIntelligence && !myCities
     ) {
       // Abort any in-flight fetch and take the newest stamp so a fetch that
       // resolves after this "nothing enabled" state cannot repaint the map.
@@ -628,6 +669,15 @@ export function useMapEntities(opts: {
     if (memories) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.memories);
     if (safety) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.safety);
     if (meetingPoints) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.meeting_point);
+    // §36 Phase 7. The three PUBLIC aggregates ride one option; the viewer's own
+    // history rides its own, so turning on the world view can never turn on the
+    // private layer.
+    if (worldIntelligence) {
+      wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.world_pulse);
+      wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.traveler_flow);
+      wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.city_model);
+    }
+    if (myCities) wantedKinds.push(GATEWAY_KIND_FOR_OPTIONAL_LAYER.personal_city);
 
     try {
       // ── 1. Try the gateway ────────────────────────────────────────────────
@@ -745,7 +795,7 @@ export function useMapEntities(opts: {
     // them the fetch re-keys and re-queries the new viewport.
   }, [
     enabledLayers, city, effectiveLat, effectiveLng, effectiveZoom, radiusKm,
-    places, saved, memories, safety, meetingPoints,
+    places, saved, memories, safety, meetingPoints, worldIntelligence, myCities,
   ]);
 
   const refresh = useCallback(() => {
