@@ -58,3 +58,43 @@ scope. Where a phase-1–5 item is unbuilt, it is a gap and is counted as one.
 
 If the owner wants phases 6–7, they need specification first — at the same
 level of detail §§1–35 carry. That is a design task, not an implementation one.
+
+---
+
+## AMENDMENT — 2026-09-05: the owner approved Phase 7, and specified it
+
+**Decided by:** the owner, relayed through the final-100 build brief for unit
+`map-p7`. This section supersedes the ruling above *for phase 7 only*. Phase 6
+is untouched and remains out of scope on the reasoning above.
+
+### What changed
+
+The ruling's condition was met. It did not say "never build phase 7"; it said
+"a two-word mention is not a specification, so specify it first". The owner has
+now done exactly that. The brief names, for each capability, the source class it
+may draw from, the privacy rung it must clear, the granularity it may publish
+at, and the failure direction — which is the level §§1–35 carry:
+
+| capability | specified as |
+|---|---|
+| World Pulse | a world/continent-zoom aggregate layer **over the existing §31 aggregation**, built only from ALREADY-AGGREGATED sources (crowd-flow zones, event density, projected place activity), never from individual presence, clearing `PRIVACY_THRESHOLD_V1`, served through the existing §19 gateway as a new aggregate kind |
+| traveler-flow graph | **city→city** aggregate movement from consented, already-published aggregates (accepted plans / itinerary stops at city granularity), never per-person trajectories, k-floor enforced, counts **bucketed, never exact** |
+| city model | a per-city aggregate profile — activity rhythm by time band, top zones |
+| personal city model | the viewer's **own** city history summary, owner-scoped, their data only |
+| all three | fail closed on any read error; gated behind ONE new flag seeded OFF |
+
+### What was built against it
+
+Migration lane 2291 seeds `map_world_intelligence_enabled` OFF. Four kinds were
+added to the §18 contract on both mirrors — `world_pulse`, `traveler_flow`,
+`city_model`, `personal_city` — and four producers under
+`src/lib/mapProducers/`. See `docs/map/phase-7-world-intelligence.md` for the
+built contract, the sources each producer is allowed to read, and the
+capabilities that were deliberately NOT built.
+
+### What this amendment does NOT do
+
+It does not re-open Phase 6, and it does not turn §36 into a specification. The
+authority here is the owner's brief, not the two-line §36 entry; a future phase-7
+capability that the brief does not name is in exactly the position "World Pulse"
+was in yesterday.

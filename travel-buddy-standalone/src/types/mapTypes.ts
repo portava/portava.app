@@ -169,6 +169,13 @@ export const KIND_TO_ENTITY_TYPE: Record<MapObjectKind, MapEntityType> = {
   // A saved place is a place the viewer chose; the legacy renderer draws it
   // with the places layer, the new renderer reads the kind directly (§6 gold).
   saved_place: 'places',
+  // §36 Phase 7 kinds have no legacy layer either. Same rule as the zone-like
+  // kinds above: 'places' keeps the OLD renderer from crashing on them, and the
+  // new renderer reads MapObject directly and never comes through this view.
+  world_pulse: 'places',
+  traveler_flow: 'places',
+  city_model: 'places',
+  personal_city: 'places',
 };
 
 /** The legacy action slugs, keyed by contract action. Unmapped actions drop. */
