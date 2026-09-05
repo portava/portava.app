@@ -108,30 +108,26 @@ export const KNOWN_DEAD_LITERALS: Record<string, { count: number; note: string }
       "Repointing this at any existing label would make the detector count a " +
       "different behaviour and flag people for it. Needs a producer.",
   },
-  "src/services/trust/TrustGamingDetectionService.ts:plan_attendance_events.event_type:checked_in": {
-    count: 1,
-    note:
-      "Gaming detector: same-location check-in clusters. plan_attendance_events " +
-      "is an ANOMALY log — its CHECK is suspicious | late | override | excused — " +
-      "and it has no production writer anywhere in src/. The routine check-in it " +
-      "wants is not in that vocabulary and plan_checkins is a per-user SNAPSHOT " +
-      "(upserted, one row per user+geofence), so it cannot answer 'more than N " +
-      "check-ins in 24 h' either. Repointing this at `suspicious` would turn a " +
-      "check-in-frequency detector into one that opens gaming reviews for " +
-      "already-flagged anomalies. Needs an event producer.",
-  },
-  // NOT of the same kind as the three below, and the only entry here with a
-  // real label waiting for it. `posts.status` is active | hidden | reported |
-  // deleted, so every creator's post contribution has always been zero. It is
-  // recorded rather than fixed because PR #413 — open, and the founding example
-  // of this whole class — changes exactly this line, and two PRs editing one
-  // literal is how a merge silently reverts a fix. WHEN #413 LANDS, DELETE THIS
-  // ENTRY IN THE SAME COMMIT: the check fails on a stale ratchet entry as well
-  // as a new dead literal, so it will tell you.
-  "src/services/ranking/CreatorActivityScoreService.ts:posts.status:published": {
-    count: 1,
-    note: "Fixed by open PR #413. Strike this entry off in that PR, not this one.",
-  },
+  // TWO ENTRIES WERE STRUCK OFF HERE, and both were struck for the same reason:
+  // the sites they named are repaired by other PRs in this batch, and a ratchet
+  // entry whose site no longer exists fails this check exactly as loudly as a
+  // new dead literal does.
+  //
+  //   1. `TrustGamingDetectionService.ts:plan_attendance_events.event_type:
+  //      checked_in` — struck for PR #416, which replaces that `.eq` with
+  //      `.in("event_type", CHECKIN_CLUSTER_EVENT_TYPES)` (checked_in_successfully
+  //      | late_check_in). Its note was also WRONG on the fact it rested on: it
+  //      claimed plan_attendance_events "has no production writer anywhere in
+  //      src/", but routes/geofence.ts:153 inserts into it from three call sites
+  //      (:557, :588, :852). The table is empty because its CHECK rejects every
+  //      one of those inserts 23514 — a constraint defect, not a missing
+  //      producer — and #416's migration 2302 is what fixes it.
+  //   2. `CreatorActivityScoreService.ts:posts.status:published` — struck for
+  //      PR #413, exactly as this entry's own note instructed.
+  //
+  // CONSEQUENCE: this branch now depends on #413 and #416. Until both are on
+  // main, `check:enum-literals` reports those two sites as fresh findings here,
+  // because the fixes live in those PRs. #418 must merge last.
   "src/services/location/GeoZoneService.ts:location_sessions.session_type:private_stay": {
     count: 1,
     note:
