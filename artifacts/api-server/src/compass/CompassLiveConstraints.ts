@@ -109,10 +109,21 @@ export const PACKED_CROWD_LEVELS: readonly string[] = ["packed", "unsafe_density
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/**
+ * `closed_now` is a JOURNEY-ONLY code and is listed here for ONE reason: so a
+ * §36 Phase-6 recovery entry can be a real {@link LiveConstraintDecision} and
+ * go through {@link computePlanB} rather than growing a parallel Plan B beside
+ * it. `constraintReasonFor` below NEVER produces it, so the Compass pipeline's
+ * behaviour is byte-for-byte unchanged by its presence: nothing in this file
+ * reads a `closure.state` claim, and adding the code does not make it do so.
+ * Its only producer is lib/journeyRecovery, which applies the same
+ * {@link isLiveConstraintEligible} truth boundary before emitting one.
+ */
 export type LiveConstraintReasonCode =
   | "walk_in_denied"
   | "queue_exceeds_tolerance"
-  | "packed_vs_quiet_intent";
+  | "packed_vs_quiet_intent"
+  | "closed_now";
 
 export type LiveConstraintKind = "exclude" | "demote";
 
@@ -686,22 +697,42 @@ export interface PlanBRankedCandidate {
  * Capped at PLAN_B_MAX, in the order the constrained candidates are supplied
  * (exclusions first, then demotions in rank order).
  */
+/**
+ * The next-best UNCONSTRAINED alternative to `item` in the SAME category —
+ * fine key (type:category) first, coarse type as the fallback — and its index
+ * in the ranked list.
+ *
+ * EXTRACTED FROM {@link computePlanB}, WHICH STILL CALLS IT, so the selection
+ * rule has exactly one definition. §36 Phase-6 recovery (lib/journeyRecovery)
+ * needs the same rule for a stop whose planned WINDOW has passed — a schedule
+ * fact with no live claim behind it, which therefore cannot be expressed as a
+ * `LiveConstraintDecision` and cannot go through `computePlanB`. Exporting the
+ * selector is how that case reuses the rule instead of restating it.
+ */
+export function bestSameCategoryAlternative(
+  item: CompassItem,
+  ranked: readonly PlanBRankedCandidate[],
+): { candidate: PlanBRankedCandidate; rank: number } | null {
+  const keys = categoryKeysOf(item);
+  for (const want of [keys.fine, keys.coarse]) {
+    for (let i = 0; i < ranked.length; i++) {
+      const r = ranked[i]!;
+      if (r.hasHardConstraint || r.item.id === item.id) continue;
+      const k = categoryKeysOf(r.item);
+      if (want === keys.fine ? k.fine === want : k.coarse === want) return { candidate: r, rank: i };
+    }
+  }
+  return null;
+}
+
 export function computePlanB(
   constrained: readonly PlanBConstrainedCandidate[],
   ranked: readonly PlanBRankedCandidate[],
 ): PlanBEntry[] {
   const out: PlanBEntry[] = [];
   const bestAlternative = (item: CompassItem): { r: PlanBRankedCandidate; rank: number } | null => {
-    const keys = categoryKeysOf(item);
-    for (const want of [keys.fine, keys.coarse]) {
-      for (let i = 0; i < ranked.length; i++) {
-        const r = ranked[i]!;
-        if (r.hasHardConstraint || r.item.id === item.id) continue;
-        const k = categoryKeysOf(r.item);
-        if (want === keys.fine ? k.fine === want : k.coarse === want) return { r, rank: i };
-      }
-    }
-    return null;
+    const found = bestSameCategoryAlternative(item, ranked);
+    return found ? { r: found.candidate, rank: found.rank } : null;
   };
 
   for (const c of constrained) {
