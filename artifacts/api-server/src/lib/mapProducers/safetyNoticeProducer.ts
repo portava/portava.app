@@ -39,6 +39,19 @@
  * restricted, so it is never selected. `source_count` is never selected either:
  * a safety notice is not a consensus badge.
  *
+ * §10 MATERIAL CONFLICT. The snapshot's `conflict_state` travels with the claim
+ * and is honoured HERE, through the SAME helper the place read path uses
+ * (lib/intelConflict.capForConflict, ceiling MATERIAL_CONFLICT_BAND_CEILING) —
+ * one policy, two readers, so the map cannot present at full band what
+ * lib/liveClaimRead already capped below the live band. A safety claim that
+ * independent parties materially DISAGREE about is still projected — §5 forbids
+ * silently removing a safety notice, and "reports differ about a crush" is
+ * itself safety information — but never at a live/strong band, and the state
+ * travels in the payload so the sheet can say so instead of implying certainty.
+ * `conflict_state` is therefore SELECTED by readSafetyNotices; an unrecognised
+ * marker reads as material (normalizeConflictState fails closed), and an
+ * unreadable snapshot read is already a refusal, never an empty layer.
+ *
  * GATES. lib/liveClaimRead.liveLabelsServable — the flag chain (capture →
  * projection → live label), the `disable_intel_live_labels` emergency stop and
  * the IG-09 master switch — is the ONE global answer to "may live intelligence
@@ -53,6 +66,7 @@
  */
 import { liveLabelsServable } from "../liveClaimRead.js";
 import { SPECIALIST_ONLY_CROWD_LEVELS, confidenceBand } from "../intelContracts.js";
+import { normalizeConflictState, capForConflict, type ConflictState } from "../intelConflict.js";
 import {
   KIND_DEFAULT_PRIORITY,
   deriveFreshness,
@@ -82,6 +96,8 @@ export interface SafetySnapshotLike {
   observed_at: string;
   expires_at: string;
   privacy_eligible?: boolean | null;
+  /** §10 conflict state (2275). Absent/null ⇒ 'none'; anything unrecognised ⇒ 'material'. */
+  conflict_state?: unknown;
 }
 
 /** The places columns this producer reads. */
@@ -127,7 +143,12 @@ export function projectSafetyNotice(
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
 
-  const band = confidenceBand(typeof row.confidence === "number" ? row.confidence : null);
+  // §10: cap the served band under material conflict, through the one shared
+  // policy (lib/intelConflict). Only ever LOWERS — a 'none'/'minor' snapshot,
+  // and every pre-2275 row, keeps exactly the band it had.
+  const conflictState: ConflictState = normalizeConflictState(row.conflict_state);
+  const rawConfidence = typeof row.confidence === "number" ? row.confidence : null;
+  const { band } = capForConflict(conflictState, rawConfidence, confidenceBand(rawConfidence));
   const observedAt = new Date(String(row.observed_at));
   const observedIso = Number.isFinite(observedAt.getTime()) ? observedAt.toISOString() : undefined;
   const expiresIso = new Date(expiresMs).toISOString();
@@ -165,6 +186,9 @@ export function projectSafetyNotice(
       level: SAFETY_CLAIM_LEVEL,
       zoneId: row.zone_id && row.zone_id !== "" ? row.zone_id : null,
       band,
+      // Counts-free: the STATE only. "Reports differ" is renderable from this
+      // without any cohort size, side size or contributor identity leaving.
+      conflictState,
     },
   };
 }
@@ -194,7 +218,9 @@ export async function readSafetyNotices(
   const nowIso = new Date(opts.now).toISOString();
   const { data, error } = await sc
     .from("intel_state_snapshots")
-    .select("id, subject_id, zone_id, claim_type, value, confidence, observed_at, expires_at, privacy_eligible")
+    // conflict_state is SELECTED, never omitted: projectSafetyNotice caps the
+    // band with it, and a column that is not read reads as "no conflict".
+    .select("id, subject_id, zone_id, claim_type, value, confidence, observed_at, expires_at, privacy_eligible, conflict_state")
     .eq("claim_type", SAFETY_CLAIM_TYPE)
     .eq("privacy_eligible", true)
     .gt("expires_at", nowIso)

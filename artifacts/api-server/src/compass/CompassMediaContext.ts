@@ -26,6 +26,12 @@
  *   • COARSE only — entity refs are opaque ids + coarse labels, never a
  *     coordinate. User-authored labels are wrapped in <portava:ugc> data-not-
  *     instructions delimiters, exactly like every other Compass context source.
+ *   • The refs come from resolveMediaEntities, which now runs the media
+ *     location/gem choke point: a venue the owner chose to hide, a canonical
+ *     place under a Hidden Gem's ceiling, and a protected / reveal-gated gem's
+ *     id and NAME are all withheld before anything is rendered into the prompt.
+ *     That matches CompassHiddenGemService's long-standing rule that only
+ *     `sensitivity_level = 'public'` gems ever reach the model.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
