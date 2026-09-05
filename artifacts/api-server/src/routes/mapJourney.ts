@@ -57,7 +57,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { isAcceptedTripMember, requireUser, sendError } from "../lib/http.js";
+import {
+  ACCEPTED_TRIP_MEMBER_ROLES,
+  isAcceptedTripMember,
+  isAcceptedTripMemberRow,
+  requireUser,
+  sendError,
+} from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
@@ -88,6 +94,7 @@ const JOURNEY_FLAG = "map_journey_intelligence_enabled";
 
 /** Bounded reads: a trip's plan and its votes are small, and must stay small. */
 const MAX_PLAN_ROWS = 200;
+const MAX_MEMBER_ROWS = 500;
 const MAX_VOTE_ROWS = 2_000;
 const MAX_CANDIDATE_ROWS = 100;
 /** Stops we will read live claims for. Mirrors the Compass live-stage cap. */
@@ -99,27 +106,46 @@ const PLAN_COLUMNS =
 /**
  * The trip's accepted members — the eligible voters.
  *
- * 'invited' is EXCLUDED. A pending invitee may look at the crew (that is the
- * documented exception on GET /trips/:tripId/crew/map, so they can decide
- * whether to accept) but they are not on the trip yet and their vote must not
- * decide it. Null on a read failure, never [] — an empty electorate would make
- * every candidate trivially "ready to confirm".
+ * THE ELECTORATE IS EXACTLY WHO THE VOTE GATE LETS IN. Both this list and the
+ * gate above (`isAcceptedTripMember` → `requireTripMember`) are decided by the
+ * SHARED `isAcceptedTripMemberRow` predicate over the same role set, so the two
+ * cannot drift. When they did drift, both directions were wrong:
+ *
+ *   - a role the gate accepts but the list omits (a 'viewer') could cast a vote
+ *     that was written to the table and then dropped by `tallyItem` as
+ *     ineligible — the member is told nothing, and their own vote reads back as
+ *     `myVote: null`;
+ *   - a row with an accepted role but a non-'accepted' status ('invited',
+ *     'declined', 'removed', 'left') would swell the electorate with somebody
+ *     who cannot pass the gate to vote, so `pending` never reaches zero and
+ *     `readyToConfirm` stays false forever.
+ *
+ * 'invited' is EXCLUDED by that predicate. A pending invitee may look at the
+ * crew (the documented exception on GET /trips/:tripId/crew/map, so they can
+ * decide whether to accept) but they are not on the trip yet and their vote
+ * must not decide it. Null on a read failure, never [] — an empty electorate
+ * would make every candidate trivially "ready to confirm".
  */
 async function loadEligibleVoters(sc: any, tripId: string): Promise<string[] | null> {
   const [ownerRes, memberRes] = await Promise.all([
     sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
     sc
       .from("trip_members")
-      .select("user_id")
+      .select("user_id, role, status")
       .eq("trip_id", tripId)
-      .in("role", ["owner", "co_host", "member"]),
+      .in("role", ACCEPTED_TRIP_MEMBER_ROLES)
+      .limit(MAX_MEMBER_ROWS),
   ]);
   if (ownerRes.error || memberRes.error) return null;
   const ids = new Set<string>();
   const ownerId = (ownerRes.data as any)?.owner_id;
+  // The owner is on their own trip whether or not a trip_members row exists —
+  // the same allowance requireTripMember makes when the row is missing.
   if (typeof ownerId === "string") ids.add(ownerId);
   for (const row of ((memberRes.data as any[]) ?? [])) {
-    if (typeof row?.user_id === "string") ids.add(row.user_id);
+    if (typeof row?.user_id !== "string") continue;
+    if (!isAcceptedTripMemberRow(row)) continue;
+    ids.add(row.user_id);
   }
   return [...ids];
 }

@@ -233,13 +233,50 @@ export async function requireUser(
 }
 
 /**
+ * The `trip_members.role` values that mean "on the trip". 'invited' is absent:
+ * a pending invitee has not joined yet.
+ *
+ * THIS IS THE ONE DEFINITION. `requireTripMember` (every trip route's gate) and
+ * every caller that needs the membership LIST rather than a yes/no — the
+ * Phase-6 electorate in routes/mapJourney, for one — must filter on this same
+ * set through {@link isAcceptedTripMemberRow}. Two hand-written role lists is
+ * how a row comes to pass the gate yet be dropped from the list (a vote written
+ * and then silently ignored), or to swell the list without being able to pass
+ * the gate (a quorum that can never be reached).
+ */
+export const ACCEPTED_TRIP_MEMBER_ROLES: readonly string[] = [
+  "owner",
+  "co_host",
+  "member",
+  "viewer",
+];
+
+/**
+ * Is this `trip_members` row an ACCEPTED membership?
+ *
+ * Both halves matter. The role must be one the trip recognises as joined, and
+ * the status must not be an explicit non-accepted one — the column also holds
+ * 'invited', 'declined', 'removed' and 'left'. A null/absent status is treated
+ * as accepted for backwards compatibility with pre-migration rows.
+ */
+export function isAcceptedTripMemberRow(
+  row: { role?: string | null; status?: string | null } | null | undefined,
+): boolean {
+  if (!row || typeof row.role !== "string") return false;
+  if (!ACCEPTED_TRIP_MEMBER_ROLES.includes(row.role)) return false;
+  if (row.status != null && row.status !== "accepted") return false;
+  return true;
+}
+
+/**
  * Unified membership lookup for trip routes.
  *
  * Returns the membership row `{ role }` when the user is a trip member, or
  * `null` when they are not (or when a DB error occurs).
  *
  * Options:
- *   status: "accepted" (default) — only owner/member rows qualify.
+ *   status: "accepted" (default) — only rows passing
+ *                                  {@link isAcceptedTripMemberRow} qualify.
  *   status: "any"                — any role including "invited" qualifies.
  *
  * Callers that only need a boolean can call `isAcceptedTripMember`, which
@@ -280,15 +317,10 @@ export async function requireTripMember(
 
   const row = data as { role: string; status?: string | null };
 
-  if (status === "accepted") {
-    // Exclude pending "invited" rows by role.
-    const acceptedRoles = ["owner", "co_host", "member", "viewer"];
-    if (!acceptedRoles.includes(row.role)) return null;
-    // Also exclude rows with an explicit non-accepted status.
-    // Rows with no status column (null/undefined) are treated as accepted
-    // for backwards compatibility with pre-migration data.
-    if (row.status != null && row.status !== "accepted") return null;
-  }
+  // Excludes pending "invited" rows by role AND rows with an explicit
+  // non-accepted status, through the shared predicate so that a caller
+  // enumerating members applies exactly the same rule.
+  if (status === "accepted" && !isAcceptedTripMemberRow(row)) return null;
 
   return { role: row.role };
 }

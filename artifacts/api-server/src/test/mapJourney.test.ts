@@ -8,18 +8,25 @@
  *      live-share grant actually produces — and the SERIALIZED response is
  *      searched for the coordinate. Not the object: the JSON, because a type
  *      that omits a field does not stop a spread from carrying it to the wire.
+ *      The ROUTE test proves the same thing end to end, and it first asserts
+ *      that the crew read actually produced a live-sharing member — a
+ *      coordinate grep over an empty array proves nothing.
  *   2. RECOVERY FIRES ONLY ON A REAL LIVE CONSTRAINT, AND CITES IT. The same
  *      walk-in denial is replayed as emerging, as a prediction source class, as
  *      an expired claim and as a weak band; none of them may produce a live
  *      recovery. The one that clears `isLiveConstraintEligible` produces one,
- *      and it carries the claim reference it acted on.
+ *      and it carries the claim reference it acted on. The `closure.state`
+ *      reading — the ONE rule this unit adds, and the one Compass's own
+ *      evaluator does not gate — gets that whole replay AGAIN, against its own
+ *      claim type, plus direct assertions on `closureDecision`.
  *   3. A SCHEDULE FACT IS NEVER DRESSED AS AN OBSERVATION (§37). A missed
  *      window carries `evidence.kind: 'schedule'` and there is no branch that
  *      can give it a claimRef.
  *
- * Plus the route: membership is checked BEFORE the flag (so a stranger cannot
- * probe whether Phase 6 is on for someone else's trip), a disabled flag records
- * nothing, and a vote on a non-candidate item is refused.
+ * Plus the route: membership is checked BEFORE the flag — proved with the flag
+ * OFF, the only arrangement in which the two orderings give different answers —
+ * a disabled flag records nothing, a vote on a non-candidate item is refused,
+ * and the electorate is exactly the set of people the vote gate admits.
  *
  * Run:
  *   node --import tsx/esm --test src/test/mapJourney.test.ts
@@ -29,7 +36,11 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 
-import { _setTestClient } from "../lib/http.js";
+import {
+  ACCEPTED_TRIP_MEMBER_ROLES,
+  _setTestClient,
+  isAcceptedTripMemberRow,
+} from "../lib/http.js";
 import mapJourneyRouter from "../routes/mapJourney.js";
 import {
   MIN_ACCEPTS_FOR_READY,
@@ -43,6 +54,7 @@ import {
 import {
   MISSED_WINDOW_GRACE_MINUTES,
   RECOVERABLE_CLOSURE_STATES,
+  closureDecision,
   closureStateOf,
   computeRecovery,
   type PlannedStop,
@@ -402,6 +414,97 @@ describe("recovery — closure", () => {
   });
 });
 
+/**
+ * §37 ON THE CLOSURE PATH SPECIFICALLY.
+ *
+ * `closure.state` is the ONE reading this module adds; every other claim type
+ * is gated by Compass's own `evaluateLiveConstraints`, so the replay above
+ * (which uses `access.walk_in`) exercises the Compass boundary, not this one.
+ * These replay the SAME temporary-closure claim through each way an envelope
+ * can fail `isLiveConstraintEligible`. Deleting that check from
+ * `closureDecision` reroutes a traveller on a guess, and every case here fires.
+ */
+describe("recovery — closure obeys the SAME truth boundary (§37)", () => {
+  function closureEnv(over: Partial<LiveClaimEnvelope> = {}): LiveClaimEnvelope {
+    return envelope({
+      id: "closure-ref",
+      claimType: "closure.state",
+      value: { state: "temporarily_closed" },
+      ...over,
+    } as Partial<LiveClaimEnvelope>);
+  }
+
+  it("the eligible closure IS the control: it fires", () => {
+    const r = recoverWith([closureEnv()]);
+    assert.equal(r.entries.length, 1);
+    assert.equal(r.entries[0]!.reasonCode, "closed_now");
+  });
+
+  it("an EMERGING closure does not fire — emerging is a nudge, never a reroute", () => {
+    const r = recoverWith([closureEnv({ state: "emerging" } as Partial<LiveClaimEnvelope>)]);
+    assert.equal(r.entries.length, 0);
+    assert.equal(r.weakEvidenceStops, 1, "the weak evidence is counted, not hidden");
+  });
+
+  it("a PREDICTED closure does not fire — a prediction is not an observation", () => {
+    const r = recoverWith([
+      closureEnv({ sourceClass: "portava_prediction" } as Partial<LiveClaimEnvelope>),
+    ]);
+    assert.equal(r.entries.length, 0);
+    assert.equal(r.weakEvidenceStops, 1);
+  });
+
+  it("a HISTORICAL-PATTERN closure does not fire — 'usually shut by now' is not shut", () => {
+    const r = recoverWith([
+      closureEnv({ sourceClass: "historical_pattern" } as Partial<LiveClaimEnvelope>),
+    ]);
+    assert.equal(r.entries.length, 0);
+  });
+
+  it("an EXPIRED closure does not fire — it closed then, not now", () => {
+    const r = recoverWith([
+      closureEnv({ validUntil: new Date(Date.now() - MIN).toISOString() }),
+    ]);
+    assert.equal(r.entries.length, 0);
+  });
+
+  it("a WEAK-BAND closure does not fire", () => {
+    const r = recoverWith([closureEnv({ band: "unverified" } as Partial<LiveClaimEnvelope>)]);
+    assert.equal(r.entries.length, 0);
+  });
+
+  it("the gate is closureDecision's own, asserted directly", () => {
+    const now = Date.now();
+    assert.notEqual(closureDecision([closureEnv()], now), null, "the control clears the boundary");
+    for (const ineligible of [
+      closureEnv({ state: "emerging" } as Partial<LiveClaimEnvelope>),
+      closureEnv({ sourceClass: "portava_prediction" } as Partial<LiveClaimEnvelope>),
+      closureEnv({ sourceClass: "historical_pattern" } as Partial<LiveClaimEnvelope>),
+      closureEnv({ validUntil: new Date(now - MIN).toISOString() }),
+      closureEnv({ band: "unverified" } as Partial<LiveClaimEnvelope>),
+    ]) {
+      assert.equal(
+        closureDecision([ineligible], now),
+        null,
+        `an ineligible envelope must not become a decision (state=${ineligible.state} band=${ineligible.band} source=${ineligible.sourceClass})`,
+      );
+    }
+  });
+
+  it("an ineligible closure does not mask an eligible one on the same stop", () => {
+    const r = recoverWith([
+      closureEnv({ id: "weak-ref", band: "unverified" } as Partial<LiveClaimEnvelope>),
+      closureEnv({ id: "strong-ref" }),
+    ]);
+    assert.equal(r.entries.length, 1);
+    assert.equal(
+      r.entries[0]!.evidence.kind === "live" ? r.entries[0]!.evidence.claimRef : null,
+      "strong-ref",
+      "the recovery cites the claim that actually cleared the boundary",
+    );
+  });
+});
+
 describe("recovery — a missed window is a SCHEDULE fact, not an observation (§37)", () => {
   const past = new Date(Date.now() - (MISSED_WINDOW_GRACE_MINUTES + 10) * MIN).toISOString();
 
@@ -501,7 +604,22 @@ function buildQuery(table: string, spec: TableSpec) {
     limit(n: number) { rows = rows.slice(0, n); return q; },
     eq(col: string, val: any) { rows = rows.filter((r) => r[col] === val); return q; },
     neq(col: string, val: any) { rows = rows.filter((r) => r[col] !== val); return q; },
+    gt(col: string, val: any) { rows = rows.filter((r) => r[col] > val); return q; },
     in(col: string, vals: any[]) { rows = rows.filter((r) => vals.includes(r[col])); return q; },
+    /**
+     * PostgREST `.or("a.eq.x,b.eq.y")`. Only `eq` is implemented, which is all
+     * the production callers reached from these routes use (lib/blocks). It is
+     * a real filter, not a pass-through: without it the block read throws, the
+     * crew map fails closed to zero members, and every crew assertion below
+     * would pass by emptiness.
+     */
+    or(filter: string) {
+      const terms = String(filter).split(",").map((t) => t.split("."));
+      rows = rows.filter((r) =>
+        terms.some(([col, op, val]) => op === "eq" && String(r[col!]) === val),
+      );
+      return q;
+    },
     is(col: string, val: any) {
       rows = val === null ? rows.filter((r) => r[col] == null) : rows.filter((r) => r[col] === val);
       return q;
@@ -589,7 +707,44 @@ function baseState(over: FakeState = {}): FakeState {
     ],
     trip_plan_item_votes: [],
     trip_saved_places: [],
-    profiles: [{ id: VIEWER, travel_styles: [] }],
+    profiles: [
+      { id: VIEWER, travel_styles: [] },
+      { id: "crew-1", travel_styles: [], display_name: "Mai", username: "mai", avatar_url: null },
+    ],
+    // ── The crew read, wired for real ──────────────────────────────────────
+    // getCrewMap fails CLOSED to zero members if the block list is unreadable,
+    // so without these tables every crew assertion would be vacuous.
+    blocks: [],
+    profile_privacy_settings: [],
+    trip_crew_location_preferences: [],
+    location_preferences: [],
+    plan_checkins: [],
+    safe_return_sessions: [],
+    // crew-1 has granted VIEWER an ACTIVE live share — the one grant that puts
+    // exactCoords on a CrewMemberCard. The decision sheet must still publish
+    // only the coarse area (§23).
+    trip_crew_location_sessions: [
+      {
+        id: "session-1",
+        trip_id: TRIP,
+        user_id: "crew-1",
+        status: "active",
+        visibility_level: "neighborhood",
+        expires_at: new Date(Date.now() + 60 * MIN).toISOString(),
+        allowed_member_ids: [VIEWER],
+      },
+    ],
+    user_location_state: [
+      {
+        user_id: "crew-1",
+        city: "Da Nang",
+        district: "Riverside",
+        country: "VN",
+        updated_at: null,
+        lat: LIVE_SHARE_LAT,
+        lng: LIVE_SHARE_LNG,
+      },
+    ],
     ...over,
   };
 }
@@ -624,6 +779,25 @@ describe("route — GET /map/journey/shortlist", () => {
     assert.ok(!("enabled" in res.body));
   });
 
+  /**
+   * The ORDER is the property, and only a flag-OFF request can prove it: with
+   * the flag ON both orderings answer `not_member`, so the previous test alone
+   * does not pin the two blocks down. Here a stranger must STILL be told
+   * `not_member` — if the flag were consulted first they would receive
+   * `enabled:false`, which is exactly the fact about someone else's trip they
+   * are not entitled to learn.
+   */
+  it("refuses a non-member even when the flag is OFF — the flag state never leaks", async () => {
+    state = baseState({
+      trip_members: [],
+      trips: [{ id: TRIP, owner_id: "someone-else" }],
+      feature_flags: [{ flag: "map_journey_intelligence_enabled", enabled: false }],
+    });
+    const res = await call("GET", `/map/journey/shortlist?tripId=${TRIP}`);
+    assert.equal(res.body.error, "not_member");
+    assert.ok(!("enabled" in res.body), "a stranger learns nothing about the capability's state");
+  });
+
   it("answers enabled:false and empty when the flag is off", async () => {
     state = baseState({ feature_flags: [{ flag: "map_journey_intelligence_enabled", enabled: false }] });
     const res = await call("GET", `/map/journey/shortlist?tripId=${TRIP}`);
@@ -637,10 +811,6 @@ describe("route — GET /map/journey/shortlist", () => {
       trip_plan_item_votes: [
         { trip_id: TRIP, plan_item_id: ITEM, user_id: VIEWER, vote: "accept" },
       ],
-      user_location_state: [
-        { user_id: "crew-1", city: "Da Nang", district: "Riverside",
-          lat: LIVE_SHARE_LAT, lng: LIVE_SHARE_LNG, updated_at: null },
-      ],
     });
     const res = await call("GET", `/map/journey/shortlist?tripId=${TRIP}`);
     assert.equal(res.status, 200);
@@ -649,8 +819,24 @@ describe("route — GET /map/journey/shortlist", () => {
     assert.equal(res.body.items[0]!.tally.accepts, 1);
     assert.equal(res.body.items[0]!.tally.myVote, "accept");
     assert.equal(res.body.items[0]!.tally.readyToConfirm, false, "one member has not voted");
+
+    // THE CREW READ ACTUALLY PRODUCED SOMEBODY. Without this the coordinate
+    // grep below would be satisfied by an empty array, and a projection that
+    // spread the whole card would sail through it.
+    assert.equal(res.body.crewReadFailed, false, "the crew map was read, not skipped");
+    assert.equal(res.body.crew.length, 1, "crew-1 is on the sheet — the grep is not vacuous");
+    assert.equal(res.body.crew[0]!.userId, "crew-1");
+    assert.equal(res.body.crew[0]!.statusLabel, "live_sharing_active",
+      "this member is LIVE-SHARING: the card carried exactCoords into the projection");
+    assert.equal(res.body.crew[0]!.areaLabel, "Riverside, Da Nang",
+      "the coarse area survived — §23 coarsens, it does not blank");
+    assert.deepEqual(Object.keys(res.body.crew[0]!).sort(),
+      ["areaLabel", "name", "statusLabel", "userId"]);
+
     assert.ok(!res.raw.includes(String(LIVE_SHARE_LAT)), "no crew coordinate on the wire");
     assert.ok(!res.raw.includes(String(LIVE_SHARE_LNG)), "no crew coordinate on the wire");
+    assert.ok(!res.raw.includes("exactCoords"), "no exactCoords key on the wire");
+    assert.ok(!/"lat"|"lng"/.test(res.raw), "no lat/lng key anywhere in the response");
   });
 
   it("refuses rather than showing an empty tally when the vote read fails", async () => {
@@ -671,10 +857,23 @@ describe("route — POST /map/journey/shortlist/:planItemId/vote", () => {
   });
 
   it("refuses a non-member", async () => {
-    state = baseState({ trip_members: [] });
+    state = baseState({ trip_members: [], trips: [{ id: TRIP, owner_id: "someone-else" }] });
     writes.length = 0;
     const res = await call("POST", `/map/journey/shortlist/${ITEM}/vote`, { tripId: TRIP, vote: "accept" });
     assert.equal(res.body.error, "not_member");
+    assert.deepEqual(writes, []);
+  });
+
+  it("refuses a non-member even when the flag is OFF — membership is checked first", async () => {
+    state = baseState({
+      trip_members: [],
+      trips: [{ id: TRIP, owner_id: "someone-else" }],
+      feature_flags: [{ flag: "map_journey_intelligence_enabled", enabled: false }],
+    });
+    writes.length = 0;
+    const res = await call("POST", `/map/journey/shortlist/${ITEM}/vote`, { tripId: TRIP, vote: "accept" });
+    assert.equal(res.body.error, "not_member");
+    assert.ok(!("enabled" in res.body), "a stranger learns nothing about the capability's state");
     assert.deepEqual(writes, []);
   });
 
@@ -733,11 +932,121 @@ describe("route — POST /map/journey/shortlist/:planItemId/vote", () => {
   });
 });
 
+/**
+ * ONE DEFINITION OF "MEMBER".
+ *
+ * The vote gate (`isAcceptedTripMember` → `requireTripMember`) and the
+ * electorate (`loadEligibleVoters`) used to be two hand-written role lists, and
+ * both directions of the gap were wrong:
+ *
+ *   - the gate accepted role 'viewer', the electorate did not: the vote was
+ *     WRITTEN and then dropped by `tallyItem`, so the voter's own vote read
+ *     back as `myVote: null` with no error anywhere;
+ *   - the electorate ignored `status` entirely, so an 'invited'/'declined'/
+ *     'removed'/'left' row counted as a voter who could never pass the gate to
+ *     vote — `pending` never reaches zero and `readyToConfirm` never arms.
+ *
+ * Both now run through `isAcceptedTripMemberRow`.
+ */
+describe("route — the electorate is exactly who the gate lets in", () => {
+  it("the shared predicate is the definition", () => {
+    for (const role of ACCEPTED_TRIP_MEMBER_ROLES) {
+      assert.equal(isAcceptedTripMemberRow({ role, status: "accepted" }), true, role);
+      assert.equal(isAcceptedTripMemberRow({ role, status: null }), true, `${role} (legacy null status)`);
+    }
+    assert.equal(isAcceptedTripMemberRow({ role: "invited", status: "accepted" }), false);
+    for (const status of ["invited", "declined", "removed", "left"]) {
+      assert.equal(isAcceptedTripMemberRow({ role: "member", status }), false, status);
+    }
+    assert.equal(isAcceptedTripMemberRow(null), false);
+    assert.equal(isAcceptedTripMemberRow({ status: "accepted" }), false, "no role is not a membership");
+  });
+
+  it("a 'viewer' who may vote is counted — their own vote is not silently dropped", async () => {
+    state = baseState({
+      trip_members: [
+        { trip_id: TRIP, user_id: VIEWER, role: "viewer", status: "accepted" },
+        { trip_id: TRIP, user_id: "crew-1", role: "member", status: "accepted" },
+      ],
+      trip_plan_item_votes: [
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: VIEWER, vote: "accept" },
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: "crew-1", vote: "accept" },
+      ],
+    });
+    writes.length = 0;
+    const res = await call("POST", `/map/journey/shortlist/${ITEM}/vote`, { tripId: TRIP, vote: "accept" });
+    // The gate let them in…
+    assert.equal(res.body.recorded, true, "the gate accepts role 'viewer'");
+    assert.equal(writes.length, 1, "and the row was written");
+    // …so the tally must count them.
+    assert.equal(res.body.tally.myVote, "accept", "a vote the gate accepted must not be dropped as ineligible");
+    assert.equal(res.body.tally.accepts, 2);
+    assert.equal(res.body.tally.readyToConfirm, true);
+  });
+
+  it("a non-'accepted' status does not swell the electorate", async () => {
+    state = baseState({
+      trip_members: [
+        { trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" },
+        { trip_id: TRIP, user_id: "crew-1", role: "member", status: "accepted" },
+        // Accepted ROLE, non-accepted STATUS — cannot pass the gate to vote.
+        { trip_id: TRIP, user_id: "left-1", role: "member", status: "left" },
+        { trip_id: TRIP, user_id: "invited-1", role: "member", status: "invited" },
+        { trip_id: TRIP, user_id: "removed-1", role: "member", status: "removed" },
+      ],
+      trip_plan_item_votes: [
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: VIEWER, vote: "accept" },
+        { trip_id: TRIP, plan_item_id: ITEM, user_id: "crew-1", vote: "accept" },
+      ],
+    });
+    const res = await call("GET", `/map/journey/shortlist?tripId=${TRIP}`);
+    assert.equal(res.body.eligibleVoters, 2, "only the two who could actually vote");
+    assert.equal(res.body.items[0]!.tally.pending, 0);
+    assert.equal(
+      res.body.items[0]!.tally.readyToConfirm,
+      true,
+      "a departed member must not hold the crew's decision open forever",
+    );
+  });
+
+  it("role 'invited' is still excluded — a pending invitee does not decide the trip", async () => {
+    state = baseState({
+      trip_members: [
+        { trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" },
+        { trip_id: TRIP, user_id: "crew-1", role: "member", status: "accepted" },
+        { trip_id: TRIP, user_id: "pending-1", role: "invited", status: "invited" },
+      ],
+    });
+    const res = await call("GET", `/map/journey/shortlist?tripId=${TRIP}`);
+    assert.equal(res.body.eligibleVoters, 2);
+  });
+
+  it("the owner is an eligible voter with no trip_members row of their own", async () => {
+    state = baseState({
+      trips: [{ id: TRIP, owner_id: "solo-owner" }],
+      trip_members: [{ trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" }],
+    });
+    const res = await call("GET", `/map/journey/shortlist?tripId=${TRIP}`);
+    assert.equal(res.body.eligibleVoters, 2, "owner + the one member");
+  });
+});
+
 describe("route — GET /map/journey/recovery", () => {
   it("refuses a non-member before the flag", async () => {
-    state = baseState({ trip_members: [] });
+    state = baseState({ trip_members: [], trips: [{ id: TRIP, owner_id: "someone-else" }] });
     const res = await call("GET", `/map/journey/recovery?tripId=${TRIP}`);
     assert.equal(res.body.error, "not_member");
+  });
+
+  it("refuses a non-member even when the flag is OFF", async () => {
+    state = baseState({
+      trip_members: [],
+      trips: [{ id: TRIP, owner_id: "someone-else" }],
+      feature_flags: [{ flag: "map_journey_intelligence_enabled", enabled: false }],
+    });
+    const res = await call("GET", `/map/journey/recovery?tripId=${TRIP}`);
+    assert.equal(res.body.error, "not_member");
+    assert.ok(!("enabled" in res.body), "a stranger learns nothing about the capability's state");
   });
 
   it("answers enabled:false when the flag is off", async () => {
