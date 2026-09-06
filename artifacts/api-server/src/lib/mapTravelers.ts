@@ -12,7 +12,8 @@
  *   - user_privacy_settings.age_restriction_enabled=true → excluded
  *     (viewer age unknown here — fail-closed, same as discovery search).
  *   - Blocked relationships (either direction) → excluded; a null blockedSet
- *     (block state unknown) returns [] — never leak when uncertain.
+ *     (block state unknown) REFUSES (`blocks_unknown`) — never leak when
+ *     uncertain, and never report the refusal as an empty neighbourhood.
  *   - EXACT COORDINATES NEVER LEAVE THIS MODULE. Output positions are either
  *     the canonical city centroid, or grid-snapped + deterministically
  *     jittered coarse coordinates (~11 km cells for city precision fallback,
@@ -167,12 +168,31 @@ export function _clearMapTravelersCache(): void {
 
 // ── Candidate loading ─────────────────────────────────────────────────────────
 
+/**
+ * A candidate load, WITH the difference between "nobody is here" and "we could
+ * not look".
+ *
+ * Both of this function's fail-closed exits used to `return []`, so a
+ * PostgREST error on `user_location_state` — or on any of the four
+ * privacy-relevant reads — was delivered to the caller as the same value an
+ * empty city produces. supabase-js RETURNS errors rather than throwing, so the
+ * gateway's `.catch(() => [])` never saw them either: a permission change or a
+ * column rename would have emptied the traveler layer while every surface went
+ * on reporting a successful, empty read.
+ *
+ * The GATES DO NOT MOVE. A failure still yields no travelers; it is now
+ * NAMEABLE, which is the whole of the change.
+ */
+type CandidateLoad =
+  | { ok: true; rows: MapTravelerPayload[] }
+  | { ok: false; reason: "candidate_read_failed" | "privacy_read_failed" };
+
 async function loadCandidates(
   db: SupabaseClient,
   lat: number,
   lng: number,
   radiusKm: number,
-): Promise<MapTravelerPayload[]> {
+): Promise<CandidateLoad> {
   const cutoff = new Date(Date.now() - FRESH_MAX_MS).toISOString();
   const dLat = radiusKm / 111.32;
   const dLng = radiusKm / (111.32 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
@@ -194,7 +214,11 @@ async function loadCandidates(
     .gte("lng", lng - dLng)
     .lte("lng", lng + dLng)
     .limit(SCAN_LIMIT);
-  if (locErr || !locsRaw || locsRaw.length === 0) return [];
+  // An error, or a null payload without one, is a FAILED read. Zero rows is an
+  // empty neighbourhood. They are not the same fact and are no longer the same
+  // return value.
+  if (locErr || !locsRaw) return { ok: false, reason: "candidate_read_failed" };
+  if (locsRaw.length === 0) return { ok: true, rows: [] };
   const locs = locsRaw as LocStateRow[];
 
   const ids = locs.map((l) => l.user_id);
@@ -215,8 +239,11 @@ async function loadCandidates(
       .in("user_id", ids),
   ]);
 
-  // Fail-closed: if ANY privacy-relevant query fails, show nobody.
-  if (prefsQ.error || profsQ.error || noDiscQ.error || upsQ.error) return [];
+  // Fail-closed: if ANY privacy-relevant query fails, show nobody — and SAY SO.
+  // The suppression is unchanged; only its visibility to the caller is new.
+  if (prefsQ.error || profsQ.error || noDiscQ.error || upsQ.error) {
+    return { ok: false, reason: "privacy_read_failed" };
+  }
 
   const prefsById = new Map<string, LocationPrefsRow>(
     (prefsQ.data ?? []).map((p: any) => [p.user_id as string, p as LocationPrefsRow]),
@@ -252,7 +279,7 @@ async function loadCandidates(
       if (norm) cityNames.add(norm);
     }
   }
-  if (eligible.length === 0) return [];
+  if (eligible.length === 0) return { ok: true, rows: [] };
 
   // City centroids from the canonical location registry (one source of truth).
   // Failure here is non-fatal — the grid fallback is at least as coarse.
@@ -316,10 +343,38 @@ async function loadCandidates(
       ? a.displayName.localeCompare(b.displayName)
       : a.freshness === "live" ? -1 : 1,
   );
-  return rows;
+  return { ok: true, rows };
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Why a traveler read returned nobody, when the answer is not "nobody is here".
+ *
+ *   blocks_unknown        the shared block set could not be resolved, so the
+ *                         module refuses rather than risk showing a blocked
+ *                         person (the pre-existing rule, now nameable).
+ *   candidate_read_failed `user_location_state` could not be read.
+ *   privacy_read_failed   one of the four privacy-relevant reads
+ *                         (location_preferences, profiles,
+ *                         profile_privacy_settings, user_privacy_settings)
+ *                         could not be read, so eligibility is unknown.
+ */
+export type MapTravelerRefusal =
+  | "blocks_unknown"
+  | "candidate_read_failed"
+  | "privacy_read_failed";
+
+/**
+ * `ok: false` is NEVER an empty list. A caller that renders a layer must be
+ * able to tell "no travelers are here" from "we could not tell", because only
+ * one of those may be reported as a successfully-read, empty layer — the rule
+ * `readCircleLocations`, `readBuddyMapPins` and the four M5 producers already
+ * follow, and the one src/test/mapProjectionLayers.test.ts pins for `sources`.
+ */
+export type MapTravelerReadResult =
+  | { ok: true; travelers: MapTravelerPayload[] }
+  | { ok: false; reason: MapTravelerRefusal };
 
 export async function listMapTravelers(
   db: SupabaseClient,
@@ -328,11 +383,11 @@ export async function listMapTravelers(
     lat: number;
     lng: number;
     radiusKm: number;
-    /** null = block state unknown → fail-closed empty result. */
+    /** null = block state unknown → fail-closed refusal, never an empty list. */
     blockedSet: Set<string> | null;
   },
-): Promise<MapTravelerPayload[]> {
-  if (opts.blockedSet === null) return [];
+): Promise<MapTravelerReadResult> {
+  if (opts.blockedSet === null) return { ok: false, reason: "blocks_unknown" };
 
   const key = cacheKey(opts.lat, opts.lng, opts.radiusKm);
   const hit = candCache.get(key);
@@ -340,7 +395,13 @@ export async function listMapTravelers(
   if (hit && Date.now() - hit.at < CAND_TTL_MS) {
     rows = hit.rows;
   } else {
-    rows = await loadCandidates(db, opts.lat, opts.lng, opts.radiusKm);
+    const load = await loadCandidates(db, opts.lat, opts.lng, opts.radiusKm);
+    // A FAILED read is not cached. Caching it would hold the layer empty for
+    // the whole 20 s window on the strength of one transient error, and every
+    // poll inside that window would then be answered from a cache entry that
+    // no longer knows a read ever failed.
+    if (!load.ok) return { ok: false, reason: load.reason };
+    rows = load.rows;
     candCache.set(key, { at: Date.now(), rows });
     if (candCache.size > 80) {
       const oldest = [...candCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
@@ -349,7 +410,10 @@ export async function listMapTravelers(
   }
 
   const blocked = opts.blockedSet;
-  return rows
-    .filter((r) => r.id !== opts.viewerId && !blocked.has(r.id))
-    .slice(0, MAX_RESULTS);
+  return {
+    ok: true,
+    travelers: rows
+      .filter((r) => r.id !== opts.viewerId && !blocked.has(r.id))
+      .slice(0, MAX_RESULTS),
+  };
 }

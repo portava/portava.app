@@ -170,8 +170,14 @@ router.get("/map/search", asyncHandler(async (req, res) => {
   const tasks: Promise<void>[] = [];
 
   if (want("traveler")) tasks.push((async () => {
-    const travelers = await listMapTravelers(sc, { viewerId: user.id, lat, lng, radiusKm, blockedSet }).catch(() => []);
-    for (const t of travelers) results.push(normalizeTraveler(t));
+    // /api/map/search merges every source into ONE ranked list and has no
+    // per-source field to report a refusal in, so a failed traveler read is
+    // coalesced to no travelers here exactly as it always was. The DIFFERENCE
+    // is that the coalescing is now written down at the call site instead of
+    // happening invisibly inside the reader.
+    const read = await listMapTravelers(sc, { viewerId: user.id, lat, lng, radiusKm, blockedSet })
+      .catch(() => ({ ok: false as const, reason: "candidate_read_failed" as const }));
+    if (read.ok) for (const t of read.travelers) results.push(normalizeTraveler(t));
   })());
 
   if (want("gem")) tasks.push((async () => {
