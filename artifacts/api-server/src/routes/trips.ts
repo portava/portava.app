@@ -501,6 +501,19 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
     sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`),
   ]);
 
+  // FAIL CLOSED: `blockResult.data ?? []` read a PostgREST error as "nobody is
+  // blocked", and the whole list below is filtered on this set — so an
+  // unreadable blocks table surfaced blocked people in the trip mention candidates.
+  // There is no honest partial answer here, so the route refuses.
+  if ((blockResult as any).error) {
+    req.log?.warn(
+      { userId: user.id, err: (blockResult as any).error },
+      "trip mention candidates: block-state read failed — refusing rather than listing unfiltered people",
+    );
+    sendError(res, "db_error", "Block state could not be verified");
+    return;
+  }
+
   const blockedSet = new Set<string>();
   for (const b of (blockResult.data ?? [])) {
     if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);

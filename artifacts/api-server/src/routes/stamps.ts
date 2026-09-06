@@ -104,20 +104,32 @@ async function areFriends(
 
 // ── Block check helper ────────────────────────────────────────────────────────
 
+/**
+ * Fail-CLOSED block check, matching lib/blockGuard.isBlockedBetween.
+ *
+ * The previous body was fail-open twice over:
+ *   1. it read only `data`, so a PostgREST error (which supabase-js RESOLVES
+ *      with `{ data: null, error }`) answered "not blocked";
+ *   2. it used `.maybeSingle()`, which RAISES on more than one row — and a
+ *      MUTUAL block is exactly two rows, (A,B) and (B,A). The strongest block
+ *      state therefore produced PGRST116, `data: null`, and "not blocked".
+ * `.limit(1)` removes the second, `error → true` removes the first.
+ */
 async function isBlocked(
   sc: ReturnType<typeof getServiceClient>,
   callerId: string,
   targetId: string,
 ): Promise<boolean> {
   if (!sc) return false;
-  const { data } = await sc
+  const { data, error } = await sc
     .from("blocks")
     .select("id")
     .or(
       `and(blocker_id.eq.${callerId},blocked_id.eq.${targetId}),and(blocker_id.eq.${targetId},blocked_id.eq.${callerId})`,
     )
-    .maybeSingle();
-  return data != null;
+    .limit(1);
+  if (error) return true; // block state unknown → treat as blocked
+  return Array.isArray(data) && data.length > 0;
 }
 
 /**

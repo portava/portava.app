@@ -1117,20 +1117,21 @@ router.get("/pulse/live", async (req, res) => {
   ]);
 
   // ── Load blocked user IDs (both directions) ──────────────────────────────
+  // FAIL CLOSED, matching the feed endpoint at the top of this file. "No blocks"
+  // and "the blocks query was rejected" both leave blockedSet empty, and every
+  // rail below (events, plans, buddies, bookings, requests) filters on it — so a
+  // schema/query error silently surfaced blocked users across the whole Live
+  // rail. PostgREST reports such rejections in `error`, so the catch never saw
+  // them. An empty rail is the correct answer when block state is unknown.
   const blockedSet = new Set<string>();
+  let blockFetchFailed = false;
   try {
     const [outRes, inRes] = await Promise.all([
       sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
       sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
     ]);
-    // "No blocks" and "the blocks query was rejected" both leave blockedSet
-    // empty, and every rail below (events, plans, buddies, bookings, requests)
-    // filters on it — so a schema/query error silently surfaces blocked users
-    // across the whole Live rail. The feed endpoint at the top of this file
-    // treats the same unknown as fail-closed; this one stays best-effort by
-    // design, but the failure must at least be visible. PostgREST returns such
-    // errors in `error`, so the catch never sees them.
     if (outRes.error || inRes.error) {
+      blockFetchFailed = true;
       req.log?.warn(
         {
           userId: user.id,
@@ -1138,16 +1139,23 @@ router.get("/pulse/live", async (req, res) => {
           inCode: (inRes.error as any)?.code,
           err: outRes.error ?? inRes.error,
         },
-        "pulse/live: block-state read failed — blocked users are NOT being filtered from this response",
+        "pulse/live: block-state read failed — returning an empty rail (fail-closed)",
       );
+    } else {
+      for (const r of (outRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
+      for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
     }
-    for (const r of (outRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
-    for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
   } catch (err) {
+    blockFetchFailed = true;
     req.log?.warn(
       { err, userId: user.id },
-      "pulse/live: block-state read rejected — blocked users are NOT being filtered from this response",
+      "pulse/live: block-state read rejected — returning an empty rail (fail-closed)",
     );
+  }
+
+  if (blockFetchFailed) {
+    res.json({ items: [], fallbackContext: fallbackContext ?? null, sessionId });
+    return;
   }
 
   // Internal-only fields, stripped before the response is serialised:

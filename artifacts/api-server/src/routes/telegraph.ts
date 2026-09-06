@@ -246,17 +246,22 @@ ${weatherBrief ? "Important: factor in the weather forecast when writing 'reason
             // An empty result means "none of these profiles is blocked"; a
             // rejected one (a malformed or() filter is the usual cause here,
             // since this predicate is string-built) means "we did not check".
-            // Both leave blockedSet empty and both let blocked users through.
+            // Both used to leave blockedSet empty, which let blocked users
+            // through as mentionable handles. FAIL CLOSED instead: when the
+            // check did not run, treat every candidate as blocked so no handle
+            // becomes mentionable on an unverified block state.
             if (blockErr) {
               req.log?.warn(
                 { userId: auth.user.id, code: (blockErr as any)?.code, err: blockErr },
-                "telegraph: block-state read failed — blocked users are NOT being filtered from suggestions",
+                "telegraph: block-state read failed — suppressing every mention suggestion (fail-closed)",
               );
-            }
-            for (const row of (blockRows ?? []) as any[]) {
-              blockedSet.add(
-                row.blocker_id === auth.user.id ? row.blocked_id : row.blocker_id,
-              );
+              for (const id of profileIds) blockedSet.add(id);
+            } else {
+              for (const row of (blockRows ?? []) as any[]) {
+                blockedSet.add(
+                  row.blocker_id === auth.user.id ? row.blocked_id : row.blocker_id,
+                );
+              }
             }
 
             // Follow sets for friends_only / interacted checks

@@ -301,12 +301,14 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
   {
     file: "routes/pulse.ts",
     markers: [
-      "blocked users are NOT being filtered from this response",
+      "returning an empty rail (fail-closed)",
       "buddy-side block filter is OFF for this response",
     ],
     reason:
-      "The Live rail's block set, fail-open, in the same file whose feed endpoint treats the identical unknown as fail-closed " +
-      "and says so in the log.",
+      "The Live rail's block set. It WAS fail-open in the same file whose feed endpoint treats the identical unknown as " +
+      "fail-closed; the 2026-09-06 block fail-open sweep made the rail match the feed, so the marker now pins the " +
+      "fail-CLOSED wording. If it ever reverts to 'blocked users are NOT being filtered from this response', the text " +
+      "changes and this rule trips.",
   },
   {
     file: "routes/discovery.ts",
@@ -320,24 +322,28 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
   },
   {
     file: "routes/follows.ts",
-    markers: ["blocked users are NOT being filtered from this response"],
+    markers: ["returning no suggestions (fail-closed)"],
     reason:
       "Follow suggestions bound `blockErr` already but the two outcomes were indistinguishable downstream: an unreadable " +
-      "blocks table leaves the same empty set as a viewer who has blocked nobody.",
+      "blocks table left the same empty set as a viewer who has blocked nobody, and every suggestion is filtered on that " +
+      "set. The 2026-09-06 sweep made it fail CLOSED (serve nothing); the marker pins that wording, so a revert to " +
+      "'blocked users are NOT being filtered from this response' trips this rule.",
   },
   {
     file: "routes/telegraph.ts",
-    markers: ["blocked users are NOT being filtered from suggestions"],
+    markers: ["suppressing every mention suggestion (fail-closed)"],
     reason:
       "A string-built or() predicate, so a malformed filter is the likely failure — and it emptied the block set for the " +
-      "suggestion list.",
+      "mention-suggestion list. The 2026-09-06 sweep made an unreadable block state treat every candidate as blocked; " +
+      "the marker pins that wording.",
   },
   {
     file: "compass/CompassNotificationEngine.ts",
-    markers: ["push is being delivered WITHOUT block suppression"],
+    markers: ["suppressing the push (fail-closed)"],
     reason:
       "maybeSingle() returns null both for 'no block row' and for a rejected query, against a gate whose stated contract is " +
-      "that a blocked sender must never reach the recipient via push.",
+      "that a blocked sender must never reach the recipient via push. The engine used to log and DELIVER anyway; the " +
+      "2026-09-06 sweep made it suppress, and the marker pins that wording.",
   },
   {
     file: "lib/mediaAccess.ts",

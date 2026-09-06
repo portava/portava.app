@@ -14,6 +14,7 @@ import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 import { normalizeLaunchControlKey, upsertLaunchControlRow } from "../lib/rentBuddyLaunchControls.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
 
@@ -501,22 +502,13 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   }
 
   // Block-table enforcement — traveler must not be blocked by, or have blocked, the buddy's user.
+  //
+  // Same fail-CLOSED helper as the canonical gate in rentABuddy.ts. The two
+  // maybeSingle() reads this replaces both answered "not blocked" when the
+  // blocks table was unreadable AND when the block was fully mutual (>1 row),
+  // and this shorthand alias INSERTs a booking straight after.
   if (buddyUserId) {
-    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
-      serviceClient
-        .from("blocks")
-        .select("id")
-        .eq("blocker_id", buddyUserId)
-        .eq("blocked_id", auth.user.id)
-        .maybeSingle(),
-      serviceClient
-        .from("blocks")
-        .select("id")
-        .eq("blocker_id", auth.user.id)
-        .eq("blocked_id", buddyUserId)
-        .maybeSingle(),
-    ]);
-    if (blockedByBuddy.data || blockedByTraveler.data) {
+    if (await isBlockedBetween(serviceClient, auth.user.id, buddyUserId)) {
       return res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
     }
   }
