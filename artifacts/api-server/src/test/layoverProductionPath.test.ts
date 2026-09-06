@@ -52,7 +52,7 @@ import {
   ENTRY_STATUS_POLICY,
 } from "../lib/layoverEntryEligibility.js";
 import { ENTRY_FLAG } from "../lib/entryRequirements.js";
-import { computePlanFit } from "../routes/airport.js";
+import { computePlanFit, resolveAirportForSession, mirrorSessionToTrip } from "../routes/airport.js";
 
 const USER = "11111111-2222-4333-8444-555555555555";
 const NOW = Date.parse("2026-03-10T02:00:00.000Z");
@@ -336,6 +336,130 @@ describe("Layover production path — entry eligibility", () => {
     assert.ok(w.usableMinutes >= 90, "precondition: the clock alone would have said yes");
     assert.equal(advice.verdict, "entry_unverified");
     assert.notEqual(advice.verdict, "yes");
+  });
+});
+
+// ══ AN UNREADABLE AIRPORT IS NOT A GENERIC AIRPORT ════════════════════════════
+
+describe("Layover production path — the airport behind the buffers", () => {
+  const airportRow = {
+    id: "ap-1", iata_code: "TPE", name: "Taoyuan", city: "Taoyuan", country: "Taiwan",
+    country_code: "TW", timezone: "Asia/Taipei", lat: 25.077, lng: 121.233,
+    domestic_buffer_min: 240, domestic_buffer_max: 300,
+    international_buffer_min: 95, international_buffer_max: 55,
+    immigration_extra_min: 90, checked_bags_extra_min: 45, traffic_extra_min: 70,
+    verified: true,
+  };
+  const clientFor = (result: any) => ({
+    from: () => {
+      const b: any = {
+        select: () => b, eq: () => b,
+        maybeSingle: async () => result,
+        then: (r: any) => Promise.resolve(result).then(r),
+      };
+      return b;
+    },
+  });
+
+  it("a CURATED airport keeps its own buffers", async () => {
+    const r = await resolveAirportForSession(
+      clientFor({ data: airportRow, error: null }) as any, { airportId: "ap-1" });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.curated, true);
+    assert.equal(r.airport.internationalBufferMin, 95,
+      "the admin-configured buffer, not the generic 120");
+    assert.equal(r.airport.immigrationExtraMin, 90);
+  });
+
+  it("a FAILED read refuses — it does not become a generic airport", async () => {
+    // The fallback profile carries 60/90/120/180/30/15/20, and those numbers ARE
+    // the safety arithmetic: computeWindow subtracts them to produce
+    // usableMinutes and hardReturnTime, and adviseLeaving turns that into "can I
+    // leave?". A failed read used to swap a curated airport\u2019s return buffers for
+    // generic ones and keep answering — the same defect as the category-constant
+    // travel time, one layer further in and on the same live surface.
+    const r = await resolveAirportForSession(
+      clientFor({ data: null, error: { message: "permission denied" } }) as any,
+      { airportId: "ap-1" });
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.reason, "airport_read_failed");
+  });
+
+  it("the trip mirror writes NOTHING when the airport could not be read", async () => {
+    // Passing `null` was not enough on its own: the mirror falls back to
+    // `session.manualCity ?? "stopover city"`, so a failed read still produced a
+    // durable trip_plan_items row titled "Layover in stopover city" — a plan
+    // entry in someone\u2019s trip derived from an airport nobody read.
+    const writes: any[] = [];
+    const cli: any = {
+      from: (t: string) => {
+        const b: any = {
+          select: () => b, eq: () => b, is: () => b, limit: () => b, order: () => b,
+          maybeSingle: async () => ({ data: { user_id: USER, status: "accepted", role: "owner" }, error: null }),
+          upsert: (p: any) => { writes.push({ t, p }); return b; },
+          insert: (p: any) => { writes.push({ t, p }); return b; },
+          update: (p: any) => { writes.push({ t, p }); return b; },
+          delete: () => b,
+          then: (r: any) => Promise.resolve({ data: [{ user_id: USER, status: "accepted", role: "owner" }], error: null }).then(r),
+        };
+        return b;
+      },
+    };
+    const sess: any = { ...session, tripId: "trip-1", manualCity: null, manualIata: null };
+
+    await mirrorSessionToTrip(cli, cli, sess, { ok: false, reason: "airport_read_failed" }, USER);
+    assert.deepEqual(writes, [],
+      "an unread airport must not leave a plan item behind");
+
+    // Control: the honest no-airport case DOES still mirror, from the session\u2019s
+    // own fields. The fix must stop failure arriving here, not this.
+    await mirrorSessionToTrip(cli, cli, { ...sess, manualCity: "Taoyuan" }, { ok: true, airport: null }, USER);
+    assert.ok(writes.length > 0, "a session with no airport row still mirrors honestly");
+  });
+
+  it("a THROWN transport error is a failure, not an absent row", async () => {
+    // supabase-js usually resolves, but a socket-level fault rejects. The catch
+    // used to swallow that into the generic-buffer fallback, so the same wrong
+    // verdict arrived by a second route.
+    const throwing = {
+      from: () => {
+        const b: any = {
+          select: () => b, eq: () => b,
+          maybeSingle: async () => { throw new Error("socket hang up"); },
+          then: (_r: any, rej: any) => Promise.reject(new Error("socket hang up")).catch(rej),
+        };
+        return b;
+      },
+    };
+    const r = await resolveAirportForSession(throwing as any, { airportId: "ap-1" });
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.equal(r.reason, "airport_read_failed");
+  });
+
+  it("a SUCCESSFUL empty read still gets the fallback, marked as uncurated", async () => {
+    // The honest case the fallback exists for: a manually-entered airport has no
+    // row to read, and generic buffers are the best available answer. The fix
+    // must not break it — it must only stop failure from arriving here.
+    const r = await resolveAirportForSession(
+      clientFor({ data: null, error: null }) as any,
+      { airportId: "ap-1", manualIata: "XXX", manualCity: "Somewhere" });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.curated, false, "the caller can tell these buffers are generic");
+    assert.equal(r.airport.iataCode, "XXX");
+  });
+
+  it("a session with NO airport id needs no read at all", async () => {
+    const r = await resolveAirportForSession(clientFor({ data: null, error: null }) as any, {
+      manualIata: "ZZZ", manualCity: "Elsewhere",
+    });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.curated, false);
+    assert.equal(r.airport.city, "Elsewhere");
   });
 });
 
