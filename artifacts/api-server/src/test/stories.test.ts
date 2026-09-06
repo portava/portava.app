@@ -611,7 +611,7 @@ describe("POST /api/stories/:id/save-to-highlight", () => {
     assert.equal(status, 400);
     assert.deepEqual((client as any)._db.highlights.rows, [],
       "a refused save must not leave a highlight behind");
-    const story = (client as any)._db.stories.rows.find((r) => r.id === U.story3);
+    const story = (client as any)._db.stories.rows.find((r: any) => r.id === U.story3);
     assert.equal(story?.saved_to_highlight_id, null, "and must not consume the story");
   });
 
