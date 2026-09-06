@@ -4,6 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
@@ -62,6 +63,9 @@ function makeClient(store: Store = { route_plans: [], route_stops: [], route_leg
         _flush();
         if (table === "trip_members") return { data: null, error: null };
         if (table === "route_plans") {
+          // If the flush already produced a row (an update path), that IS the
+          // result — including a null from a CAS that matched nothing.
+          if (_patch === null && _data !== null) return { data: _data, error: null };
           const id = _conds["id"] ?? _conds["route_plan_id"];
           const found = store.route_plans.find((p) => p.id === id);
           return { data: found ?? null, error: null };
@@ -111,7 +115,23 @@ function makeClient(store: Store = { route_plans: [], route_stops: [], route_leg
       }
 
       if (_patch) {
-        if (table === "route_stops") {
+        if (table === "route_plans") {
+          // COMPARE-AND-SET, honoured properly. The accept and complete handlers
+          // both write `.eq("id", id).eq("status", <expected>)` so two concurrent
+          // transitions collapse into one. A fake that ignored the status
+          // condition would apply the update unconditionally and every
+          // race/invalid-transition assertion below would pass for the wrong
+          // reason — which is exactly the vacuous-fixture shape this repo keeps
+          // getting caught by.
+          const idx = store.route_plans.findIndex((pl) =>
+            Object.entries(_conds).every(([col, val]) => pl[col] === val));
+          if (idx !== -1) {
+            store.route_plans[idx] = { ...store.route_plans[idx], ..._patch };
+            _data = store.route_plans[idx];
+          } else {
+            _data = null; // CAS matched nothing -> the handler must report conflict
+          }
+        } else if (table === "route_stops") {
           const id     = _conds["id"];
           const planId = _conds["route_plan_id"];
           const idx    = store.route_stops.findIndex((s) => s.id === id && s.route_plan_id === planId);
@@ -306,4 +326,158 @@ test("DELETE /api/route-plans/:id — non-owner gets 403", async () => {
     assert.equal(status, 403);
     assert.equal(body.error, "forbidden");
   } finally { await srv.close(); }
+});
+
+// ─── ROUTE LIFECYCLE: acceptance and termination ─────────────────────────────
+//
+// Start Route is the act that means the traveller is actually doing the route,
+// and it is authoritative only on the server. Before this lane was wired, the
+// accept endpoint had ZERO callers: "Start Route" set a local boolean, no plan
+// ever reached status='active', and both Map layers that read only active plans
+// (§36 traveler_flow, and the §10 crowd_flow accepted_plan family) were starved.
+//
+// Termination had no endpoint at all, so an ended walk stayed 'active' and kept
+// contributing route-flow intelligence for the whole freshness window after the
+// traveller went home. lib/routeHopSignal.ts:118 declares ACCEPTED_PLAN_STATUS
+// = 'active' as the ONLY contributing status, so 'completed' stops it.
+//
+// The vocabulary here is the EXISTING route_plan_status enum
+// (draft | active | completed | cancelled) — nothing is invented.
+
+const draftPlan = (owner = "user-001") => ({
+  id: PLAN_ID, owner_user_id: owner, trip_id: null, title: "T",
+  route_style: "custom", status: "draft", is_approximated: true,
+  accepted_at: null, accepted_by_user_id: null,
+});
+const activePlan = (owner = "user-001", acceptedAt = "2026-09-01T00:00:00.000Z") => ({
+  ...draftPlan(owner), status: "active",
+  accepted_at: acceptedAt, accepted_by_user_id: owner,
+});
+const storeWith = (plan: any): Store => ({ route_plans: [plan], route_stops: [], route_legs: [] });
+
+test("a freshly created plan is 'draft' — creating or viewing a route is NOT accepting it", async () => {
+  const store = storeWith(draftPlan());
+  const srv = await startServer(store);
+  try {
+    const { status, body } = await req(srv.port, "GET", `/api/route-plans/${PLAN_ID}`);
+    assert.equal(status, 200);
+    assert.equal(store.route_plans[0].status, "draft", "a GET must not transition the plan");
+    assert.equal(store.route_plans[0].accepted_at, null, "viewing must not stamp acceptance");
+    assert.ok(body);
+  } finally { await srv.close(); }
+});
+
+test("Start Route: accept stamps status='active', accepted_at and accepted_by_user_id", async () => {
+  const store = storeWith(draftPlan());
+  const srv = await startServer(store);
+  try {
+    const { status, body } = await req(srv.port, "POST", `/api/route-plans/${PLAN_ID}/accept`);
+    assert.equal(status, 200);
+    assert.equal(body.status, "active");
+    assert.equal(body.alreadyAccepted, false);
+    const row = store.route_plans[0];
+    assert.equal(row.status, "active", "the DB row itself must transition");
+    assert.ok(row.accepted_at, "accepted_at must be stamped server-side");
+    assert.equal(row.accepted_by_user_id, "user-001", "and attributed to the accepter");
+  } finally { await srv.close(); }
+});
+
+test("Start Route by a non-owner is denied and changes nothing", async () => {
+  const store = storeWith(draftPlan("someone-else"));
+  const srv = await startServer(store);
+  try {
+    const { status, body } = await req(srv.port, "POST", `/api/route-plans/${PLAN_ID}/accept`);
+    assert.equal(status, 403);
+    assert.equal(body.error, "forbidden");
+    assert.equal(store.route_plans[0].status, "draft", "a refused accept must not transition");
+    assert.equal(store.route_plans[0].accepted_at, null);
+  } finally { await srv.close(); }
+});
+
+test("Start Route is idempotent — a retry reports alreadyAccepted and does not re-stamp", async () => {
+  const original = "2026-09-01T00:00:00.000Z";
+  const store = storeWith(activePlan("user-001", original));
+  const srv = await startServer(store);
+  try {
+    const { status, body } = await req(srv.port, "POST", `/api/route-plans/${PLAN_ID}/accept`);
+    assert.equal(status, 200);
+    assert.equal(body.alreadyAccepted, true);
+    assert.equal(store.route_plans[0].accepted_at, original,
+      "a retry must not rewrite the original acceptance instant");
+  } finally { await srv.close(); }
+});
+
+test("End Route: complete transitions active -> completed, so the plan stops contributing", async () => {
+  const store = storeWith(activePlan());
+  const srv = await startServer(store);
+  try {
+    const { status, body } = await req(srv.port, "POST", `/api/route-plans/${PLAN_ID}/complete`);
+    assert.equal(status, 200);
+    assert.equal(body.status, "completed");
+    assert.equal(body.alreadyCompleted, false);
+    const row = store.route_plans[0];
+    assert.equal(row.status, "completed");
+    assert.notEqual(row.status, "active",
+      "routeHopSignal counts ONLY status='active'; leaving it active is what made an " +
+      "ended walk keep contributing for the rest of the freshness window");
+    assert.ok(row.accepted_at, "the acceptance instant is history and must be preserved");
+    assert.equal(row.accepted_by_user_id, "user-001",
+      "migration 2224's CHECK requires any non-draft row to keep both acceptance columns");
+  } finally { await srv.close(); }
+});
+
+test("End Route by a non-owner is denied and leaves the plan active", async () => {
+  const store = storeWith(activePlan("someone-else"));
+  const srv = await startServer(store);
+  try {
+    const { status, body } = await req(srv.port, "POST", `/api/route-plans/${PLAN_ID}/complete`);
+    assert.equal(status, 403);
+    assert.equal(body.error, "forbidden");
+    assert.equal(store.route_plans[0].status, "active");
+  } finally { await srv.close(); }
+});
+
+test("End Route is idempotent — completing a completed plan is a no-op success", async () => {
+  const store = storeWith({ ...activePlan(), status: "completed" });
+  const srv = await startServer(store);
+  try {
+    const { status, body } = await req(srv.port, "POST", `/api/route-plans/${PLAN_ID}/complete`);
+    assert.equal(status, 200);
+    assert.equal(body.alreadyCompleted, true);
+    assert.equal(store.route_plans[0].status, "completed");
+  } finally { await srv.close(); }
+});
+
+test("a draft plan cannot be completed — termination requires acceptance first", async () => {
+  const store = storeWith(draftPlan());
+  const srv = await startServer(store);
+  try {
+    const { status, body } = await req(srv.port, "POST", `/api/route-plans/${PLAN_ID}/complete`);
+    // 409, per the repo's own mapping in lib/http.ts:97 — not 400.
+    assert.equal(status, 409);
+    assert.equal(body.error, "invalid_state_transition");
+    assert.equal(store.route_plans[0].status, "draft");
+  } finally { await srv.close(); }
+});
+
+test("a completed plan cannot be re-accepted", async () => {
+  const store = storeWith({ ...activePlan(), status: "completed" });
+  const srv = await startServer(store);
+  try {
+    const { status, body } = await req(srv.port, "POST", `/api/route-plans/${PLAN_ID}/accept`);
+    assert.equal(status, 409);
+    assert.equal(body.error, "invalid_state_transition");
+  } finally { await srv.close(); }
+});
+
+test("accept and complete are the ONLY writers of active/completed in this router", () => {
+  // Source-level, because no fixture can prove absence. If a third writer appears,
+  // the invariant routeHopSignal depends on — that status='active' means a human
+  // accepted this plan — stops holding.
+  const src = readFileSync(new URL("../routes/routePlan.ts", import.meta.url), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const actives = src.match(/status:\s*"active"/g) ?? [];
+  const completes = src.match(/status:\s*"completed"/g) ?? [];
+  assert.equal(actives.length, 1, "exactly one writer of status='active' (the accept handler)");
+  assert.equal(completes.length, 1, "exactly one writer of status='completed' (the complete handler)");
 });
