@@ -353,6 +353,14 @@ export interface LongPressContext {
   /** A shorter TTL than the ceiling. Clamped DOWN; never up. */
   shareTtlMs?: number;
   /**
+   * §22 capture is switched on for this session — both
+   * `map_contributions_enabled` and `intel_capture_quick_signal`. Required for
+   * `report` on a contributable object, and fails closed when absent: with the
+   * capture door shut the observation cannot reach storage, so offering the row
+   * would ask a question whose answer is already discarded.
+   */
+  contributionsEnabled?: boolean;
+  /**
    * Clock, epoch ms. Required for grant expiry to mean anything — omitting it
    * makes every grant read as not-live, which is the safe direction.
    */
@@ -601,6 +609,13 @@ function resolveOne(
       }
       if (contributionPromptsFor(obj).length === 0) {
         return disabledItem(action, 'There is nothing here you can report on');
+      }
+      // Last, so every object-specific reason above still wins: those say what
+      // is wrong with THIS object, which stays true whatever the flag says. This
+      // one says the surface is shut. Fails closed when the caller supplies no
+      // flag at all.
+      if (ctx.contributionsEnabled !== true) {
+        return disabledItem(action, 'Reporting what you see is not switched on here yet');
       }
       return enabledItem(action);
     }
