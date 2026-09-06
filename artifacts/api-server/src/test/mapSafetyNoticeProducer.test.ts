@@ -59,7 +59,7 @@ import {
 } from "../lib/protectedLocations.js";
 import { parseBbox } from "../lib/mapProjection.js";
 import { NEVER_AGGREGATED_KINDS, type BBox } from "../lib/mapAggregation.js";
-import { projectSavedPlace } from "../lib/mapProducers/savedPlaceProducer.js";
+import { projectSavedPlace, resolveDiscoveryVenue } from "../lib/mapProducers/savedPlaceProducer.js";
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -176,8 +176,8 @@ describe("projectSafetyNotice — shape", () => {
 
   it("§5: sorts ahead of a saved place at the same spot, however close either is", () => {
     const saved = projectSavedPlace(
-      { id: "sp-1", place_id: "dp-1" },
-      { id: "dp-1", name: "Han Market", lat: SPOT.lat, lng: SPOT.lng },
+      { key: "dp:dp-1" },
+      resolveDiscoveryVenue({ id: "dp-1", name: "Han Market", lat: SPOT.lat, lng: SPOT.lng }),
     ) as MapObject;
     const s = notice();
     s.distanceKm = 5;
@@ -246,8 +246,8 @@ describe("projectSafetyNotice — TTL and what never renders", () => {
 describe("safety_notice through the §24 gate", () => {
   it("SURVIVES inside a suppress-class zone (shelter), counted as safetyExempt, while a saved place there is withheld", () => {
     const saved = projectSavedPlace(
-      { id: "sp-1", place_id: "dp-1" },
-      { id: "dp-1", name: "Han Market", lat: SPOT.lat, lng: SPOT.lng },
+      { key: "dp:dp-1" },
+      resolveDiscoveryVenue({ id: "dp-1", name: "Han Market", lat: SPOT.lat, lng: SPOT.lng }),
     ) as MapObject;
     const out = applyProtection([notice(), saved], [zone({ category: "shelter" })]);
     assert.deepEqual(out.objects.map((o: MapObject) => o.kind), ["safety_notice"]);
@@ -380,8 +380,11 @@ function gatewayWorld(over: FakeState = {}): FakeState {
     feature_flags: [{ flag: "map_projection_enabled", enabled: true }, ...LIVE_GATES_OPEN],
     blocks: [],
     protected_zones: [],
-    saved_places: [{ id: "sp-1", user_id: VIEWER, place_id: "dp-1", saved_at: iso(-1440) }],
-    discovery_places: [{ id: "dp-1", name: "Han Market", city: "Da Nang", lat: SPOT.lat, lng: SPOT.lng, canonical_location_id: null }],
+    // The saved layer reads the tables saves actually land in; `saved_places`
+    // has no writers in production, so seeding it here would pin nothing.
+    discovery_place_saves: [{ user_id: VIEWER, place_id: "dp-1", saved_at: iso(-1440) }],
+    wishlist_places: [],
+    discovery_places: [{ id: "dp-1", name: "Han Market", city: "Da Nang", neighborhood: null, primary_category: null, lat: SPOT.lat, lng: SPOT.lng, canonical_location_id: null }],
     ...over,
   });
 }
