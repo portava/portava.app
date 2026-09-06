@@ -1714,10 +1714,16 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       replyToBody: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.body ?? null) : null,
       replyToSenderName: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.senderName ?? null) : null,
       // Media fields (migration 0152_messages_media.sql)
-      mediaUrl: (m as any).media_url ?? null,
-      mediaType: (m as any).media_type ?? null,
-      mediaThumbnailUrl: (m as any).media_thumbnail_url ?? null,
-      mediaDurationSeconds: (m as any).media_duration_seconds ?? null,
+      // Gated on isDeleted for the same reason `body` is: an unsent message
+      // must not keep serving its attachment. These were emitted
+      // unconditionally, so unsending a photo blanked the caption and still
+      // handed every thread member a working media_url. The DELETE handler now
+      // also nulls these columns; this guard additionally covers rows that were
+      // tombstoned before that fix shipped.
+      mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),
+      mediaType: isDeleted ? null : ((m as any).media_type ?? null),
+      mediaThumbnailUrl: isDeleted ? null : ((m as any).media_thumbnail_url ?? null),
+      mediaDurationSeconds: isDeleted ? null : ((m as any).media_duration_seconds ?? null),
     };
   });
 
