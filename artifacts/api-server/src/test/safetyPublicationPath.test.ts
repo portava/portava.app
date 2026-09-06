@@ -416,6 +416,19 @@ describe("S2 negative — nothing but an approved, current assertion renders", (
     });
   });
 
+  it("an approval that does not match where the claim actually IS grants nothing", async () => {
+    // The audit table is the authority, so a row is trusted only when it is
+    // internally consistent with the claim it says it moved. This shape is
+    // unreachable through SafetyReviewService — its approve/reconfirm
+    // transitions all land on 'active' — which is precisely why refusing it
+    // matters: it can only be a corrupt, foreign or hand-written row, and "some
+    // row in the reviews table mentions this claim" is not an approval.
+    await refuses("approval inconsistent with the claim's status", {
+      claims: [safetyClaim({ status: "active" })],
+      reviews: [approval({ new_status: "candidate" })],
+    });
+  });
+
   it("an unreadable audit trail is never an approval (fail-closed)", async () => {
     await refuses("review read error", { errorTable: "intel_claim_reviews" });
   });
@@ -453,6 +466,69 @@ describe("S2 negative — nothing but an approved, current assertion renders", (
     assert.ok(r.ok);
     if (r.ok) assert.equal(r.notices.length, 0,
       "a conflict state nobody has taught this reader about must not become servable");
+  });
+});
+
+/**
+ * A recording wrapper over the reader client.
+ *
+ * `privacy_eligible = true` is enforced three times over — the query filter, the
+ * in-code re-filter, and projectSafetyNotice — so deleting any ONE of them
+ * changes no observable behaviour, which is exactly how a defence quietly
+ * disappears. The query filter is not redundant with the other two: it is what
+ * stops an ineligible hazard row leaving the database at all, and a suppressed
+ * safety assertion is restricted data that should never reach application
+ * memory. So it is pinned where it lives, by recording the filters the read
+ * actually issues rather than only their effect.
+ */
+function recordingReader(state: FakeState) {
+  const inner = makeFakeMapDb(state, { token: TOKEN, userId: VIEWER });
+  const filters: Array<{ table: string; op: string; col: string; val: unknown }> = [];
+  const CHAIN = ["select", "eq", "gt", "gte", "lt", "lte", "is", "in", "not", "contains", "or", "order", "range", "limit"];
+  const RECORD = new Set(["eq", "gt", "is", "contains"]);
+  function wrap(q: any, table: string) {
+    const w: any = {};
+    for (const m of CHAIN) {
+      w[m] = (...args: any[]) => {
+        if (RECORD.has(m)) filters.push({ table, op: m, col: args[0], val: args[1] });
+        q[m](...args);
+        return w;
+      };
+    }
+    w.maybeSingle = () => q.maybeSingle();
+    w.single = () => q.single();
+    w.then = (res: any, rej?: any) => q.then(res, rej);
+    return w;
+  }
+  return {
+    client: { auth: inner.auth, rpc: inner.rpc, from: (t: string) => wrap(inner.from(t), t) },
+    filters,
+  };
+}
+
+describe("S2 read filters — the defences are issued, not merely redundant", () => {
+  it("the snapshot read filters on privacy_eligible, expiry, claim type and level AT THE DATABASE", async () => {
+    const { snapshots } = await project();
+    const { client, filters } = recordingReader(readerWorld(snapshots));
+    const r = await readSafetyNotices(client as any, { bbox: BBOX, now: NOW_MS });
+    assert.ok(r.ok, "precondition: the read succeeded, so these filters really were the ones issued");
+
+    const snap = filters.filter((f) => f.table === "intel_state_snapshots");
+    assert.ok(
+      snap.some((f) => f.op === "eq" && f.col === "privacy_eligible" && f.val === true),
+      "a suppressed safety assertion must not leave the database: the read filters " +
+      "privacy_eligible = true itself, rather than relying on the projector to drop it later",
+    );
+    assert.ok(snap.some((f) => f.op === "gt" && f.col === "expires_at"),
+      "and an expired hazard is filtered at the database too");
+    assert.ok(snap.some((f) => f.op === "eq" && f.col === "claim_type" && f.val === SAFETY_CLAIM_TYPE));
+    assert.ok(snap.some((f) => f.op === "contains" && f.col === "value"),
+      "and only the specialist-only level is asked for — ordinary crowd rows are never fetched");
+
+    // The places read is where the canonical anchor is constrained.
+    const places = filters.filter((f) => f.table === "places");
+    assert.ok(places.some((f) => f.op === "eq" && f.col === "status" && f.val === "active"));
+    assert.ok(places.some((f) => f.op === "is" && f.col === "merged_into_place_id" && f.val === null));
   });
 });
 
