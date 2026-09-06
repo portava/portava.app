@@ -1838,14 +1838,44 @@ router.patch("/me/privacy", async (req, res) => {
 
   const now = new Date().toISOString();
 
-  // Fetch existing to merge (prevents overwriting fields not in this PATCH)
+  // Fetch existing to merge (prevents overwriting fields not in this PATCH).
+  //
+  // A FAILED read is not an EMPTY read. supabase-js RESOLVES `{ data, error }`
+  // rather than throwing, so a query that fails arrives here as `data: null`
+  // with a populated `error` — indistinguishable, if the error is dropped, from
+  // "this user has no saved preferences". Merging PRIVACY_DEFAULTS on top of
+  // that null and upserting the result would PERSIST the maximally permissive
+  // defaults over whatever the user had actually chosen: a user who had hidden
+  // their city, home country, trips and stamps, flipping one unrelated switch
+  // during a transient DB blip, would have every one of those choices reset to
+  // public — and the reset survives the outage, because it was written.
+  //
+  // So: read the error, and never write a merge built on a read we could not
+  // perform. `.then(undefined, ...)` is kept for the rejecting-client case
+  // (a thrown network error) and normalised into the same {data, error} shape.
   const existingRes = await sc
     .from("profile_privacy_settings")
     .select("*")
     .eq("user_id", user.id)
     .maybeSingle()
-    .then(undefined, () => ({ data: null }));
-  const existing = existingRes.data;
+    .then(
+      (r: any) => r,
+      (e: any) => ({ data: null, error: e ?? new Error("privacy settings read rejected") }),
+    );
+  const existingErr = (existingRes as any)?.error ?? null;
+  if (existingErr) {
+    req.log.error(
+      { err: existingErr },
+      "privacy/patch: could not read existing settings — refusing to overwrite them with defaults",
+    );
+    sendError(
+      res,
+      "degraded_unavailable",
+      "Could not read your current privacy settings, so nothing was changed. Please try again.",
+    );
+    return;
+  }
+  const existing = (existingRes as any)?.data ?? null;
 
   // show_profile_picture_publicly lives on `profiles`, not `profile_privacy_settings`.
   // Extract it before building the upsert row so it never reaches the wrong table.

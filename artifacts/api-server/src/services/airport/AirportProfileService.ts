@@ -92,22 +92,54 @@ function rowToProfile(row: any): AirportProfile {
   };
 }
 
+/**
+ * Outcome of a single-airport resolution.
+ *
+ * The `ok:false` arm exists because a FAILED read and a SUCCESSFUL read that
+ * found nothing are not the same fact, and the difference is load-bearing here.
+ * supabase-js RESOLVES `{ data, error }` rather than throwing, so dropping
+ * `error` collapses "the database is unreachable" into "this airport is not in
+ * the database" — and the caller in routes/airport.ts reacts to the latter by
+ * SEEDING the static fallback (generic buffers, verified:false) over the real
+ * row via `upsert(..., { onConflict: "iata_code" })`. An admin-curated airport
+ * would be flattened for every future user by one transient read failure.
+ *
+ * `ok:true` with `profile:null` still means "genuinely nowhere" — DB reachable,
+ * no row, and no static record either. That is the only case a caller may treat
+ * as absence.
+ */
+export type AirportResolution =
+  | { ok: true; profile: AirportProfile | null }
+  | { ok: false; error: string };
+
+function readFailed(err: unknown): AirportResolution {
+  const message =
+    (err as any)?.message ??
+    (typeof err === "string" ? err : null) ??
+    "airport_profiles read failed";
+  return { ok: false, error: String(message) };
+}
+
 /** Resolve by IATA code (e.g. "TPE", "NRT"). Case-insensitive. */
 export async function resolveByIata(
   db: SupabaseClient,
   iataCode: string,
-): Promise<AirportProfile | null> {
+): Promise<AirportResolution> {
+  let res: { data: any; error: any };
   try {
-    const { data } = await db
+    res = (await db
       .from("airport_profiles")
       .select("*")
       .ilike("iata_code", iataCode.trim())
-      .maybeSingle();
-    if (data) return rowToProfile(data);
-  } catch { /* fall through */ }
-  // Static fallback
+      .maybeSingle()) as any;
+  } catch (err) {
+    return readFailed(err);
+  }
+  if (res?.error) return readFailed(res.error);
+  if (res?.data) return { ok: true, profile: rowToProfile(res.data) };
+  // Read succeeded and the row is genuinely absent — static fallback is correct.
   const s = resolveStaticByIata(iataCode);
-  return s ? staticToProfile(s) : null;
+  return { ok: true, profile: s ? staticToProfile(s) : null };
 }
 
 /** Resolve by nearest GPS coordinate within maxDistanceKm. */
@@ -116,63 +148,77 @@ export async function resolveByGps(
   lat: number,
   lng: number,
   maxDistanceKm = 50,
-): Promise<AirportProfile | null> {
+): Promise<AirportResolution> {
+  const delta = maxDistanceKm / 111; // rough degree equivalent
+  let res: { data: any; error: any };
   try {
-    const delta = maxDistanceKm / 111; // rough degree equivalent
-    const { data } = await db
+    res = (await db
       .from("airport_profiles")
       .select("*")
       .gte("lat", lat - delta)
       .lte("lat", lat + delta)
       .gte("lng", lng - delta)
       .lte("lng", lng + delta)
-      .limit(20);
-
-    if (!data || data.length === 0) {
-      // Static GPS fallback
-      const s = resolveStaticByGps(lat, lng);
-      return s ? staticToProfile(s) : null;
-    }
-
-    // Find closest DB row
-    let closest: any = null;
-    let closestDist = Infinity;
-    for (const row of data) {
-      const dLat = Number(row.lat) - lat;
-      const dLng = Number(row.lng) - lng;
-      const dist = Math.sqrt(dLat * dLat + dLng * dLng);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closest = row;
-      }
-    }
-    return closest ? rowToProfile(closest) : null;
-  } catch {
-    const s = resolveStaticByGps(lat, lng);
-    return s ? staticToProfile(s) : null;
+      .limit(20)) as any;
+  } catch (err) {
+    return readFailed(err);
   }
+  if (res?.error) return readFailed(res.error);
+
+  const rows: any[] = Array.isArray(res?.data) ? res.data : [];
+  if (rows.length === 0) {
+    // Read succeeded, nothing within the box — static GPS fallback is correct.
+    const s = resolveStaticByGps(lat, lng);
+    return { ok: true, profile: s ? staticToProfile(s) : null };
+  }
+
+  // Find closest DB row
+  let closest: any = null;
+  let closestDist = Infinity;
+  for (const row of rows) {
+    const dLat = Number(row.lat) - lat;
+    const dLng = Number(row.lng) - lng;
+    const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+    if (dist < closestDist) {
+      closestDist = dist;
+      closest = row;
+    }
+  }
+  return { ok: true, profile: closest ? rowToProfile(closest) : null };
 }
 
 /** Resolve by city name search. Returns the first match. */
 export async function resolveByCity(
   db: SupabaseClient,
   city: string,
-): Promise<AirportProfile | null> {
+): Promise<AirportResolution> {
+  let res: { data: any; error: any };
   try {
-    const { data } = await db
+    res = (await db
       .from("airport_profiles")
       .select("*")
       .ilike("city", `%${city.trim()}%`)
       .limit(1)
-      .maybeSingle();
-    if (data) return rowToProfile(data);
-  } catch { /* fall through */ }
-  // Static fallback
+      .maybeSingle()) as any;
+  } catch (err) {
+    return readFailed(err);
+  }
+  if (res?.error) return readFailed(res.error);
+  if (res?.data) return { ok: true, profile: rowToProfile(res.data) };
+  // Read succeeded and no city matched — static fallback is correct.
   const s = resolveStaticByCity(city);
-  return s ? staticToProfile(s) : null;
+  return { ok: true, profile: s ? staticToProfile(s) : null };
 }
 
-/** Search airports by query (IATA, city, name). Returns up to 10 results. */
+/**
+ * Search airports by query (IATA, city, name). Returns up to 10 results.
+ *
+ * Unlike the single-airport resolvers above, this one deliberately keeps the
+ * "degrade to the static dataset" behaviour on a failed read: nothing it
+ * returns is ever written back. The picker's selection is re-resolved
+ * server-side by `resolveByIata` before any seeding decision is taken, so a
+ * static row surfaced here cannot become a row in `airport_profiles`.
+ */
 export async function searchAirports(
   db: SupabaseClient,
   query: string,
