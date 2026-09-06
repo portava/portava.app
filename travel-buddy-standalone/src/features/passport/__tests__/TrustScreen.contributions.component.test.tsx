@@ -56,7 +56,23 @@ function makeProjection(overrides: Partial<TrustProjectionEnvelope> = {}): Trust
   return {
     userId: 'u1',
     identity: { name: 'Ana', handle: 'ana', verified: true },
-    trust: { label: 'Strong', publicLevel: 'strong', score: 87, confidence: 'high', strengths: [] },
+    // Domains as the server ships them (buildDomainTrust) — the screen reads
+    // this array verbatim; a projection carrying trust always carries it.
+    trust: {
+      label: 'Strong',
+      publicLevel: 'strong',
+      score: 87,
+      confidence: 'high',
+      strengths: [],
+      domains: [
+        { key: 'overall', domain: 'Overall', presentation: 'Excellent', applicable: true },
+        { key: 'traveler', domain: 'Traveler', presentation: 'Established', applicable: true },
+        { key: 'trip_guest', domain: 'Trip Guest', presentation: 'Established', applicable: true },
+        { key: 'trip_host', domain: 'Trip Host', presentation: 'Established', applicable: true },
+        { key: 'contributor', domain: 'Contributor', presentation: 'Established', applicable: true },
+        { key: 'buddy', domain: 'Buddy', presentation: 'Not applicable', applicable: false },
+      ],
+    },
     credentials: [{ key: 'identity', label: 'Identity Verified', detail: null, tier: 'verified' }],
     capabilities: {
       owner: {
