@@ -136,7 +136,14 @@ export interface TrustView {
   confidenceLabel: string;
   /** Non-stigmatizing sentence explaining the evidence level (§10). */
   confidenceCopy: string;
+  /** Server-chosen strongest trust areas (at most 2, already privacy-filtered).
+   *  Rendered verbatim; an absent/empty list stays empty — the client never
+   *  substitutes a placeholder strength. */
+  strengths: string[];
   domains: TrustDomainRow[];
+  /** Positive credentials, minus the server's `strength_*` re-encoding of any
+   *  strength this view already renders (see `strengths`) — so a strength is
+   *  shown exactly once, never twice on the same screen. */
   credentials: CredentialProjection[];
   capabilityChips: CapabilityChip[];
 }
@@ -223,6 +230,24 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
     .filter((c) => caps[c.key])
     .map((c) => ({ key: c.key, label: c.label }));
 
+  // Strengths are SERVER-chosen (top categories above the server's threshold).
+  // We only drop values that are not renderable strings — we never invent one,
+  // and an absent list stays empty rather than becoming a default.
+  const strengths: string[] = Array.isArray(trust?.strengths)
+    ? trust!.strengths.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    : [];
+
+  // The server ALSO re-encodes the same top strengths as `strength_*`
+  // credentials (PassportProjectionService.buildCredentials). Rendering both
+  // would print the identical label twice on one screen, so a strength we
+  // render here is removed from the credentials list — and only then, so no
+  // credential is ever hidden without being shown somewhere.
+  const shown = new Set(strengths);
+  const rawCredentials = Array.isArray(p.credentials) ? p.credentials : [];
+  const credentials = rawCredentials.filter(
+    (c) => !(typeof c?.key === 'string' && c.key.startsWith('strength_') && shown.has(c.label)),
+  );
+
   return {
     hasTrust,
     label: trust?.label ?? 'Trust summary unavailable',
@@ -231,8 +256,9 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
     confidence,
     confidenceLabel: meta.label,
     confidenceCopy: meta.copy,
+    strengths,
     domains,
-    credentials: Array.isArray(p.credentials) ? p.credentials : [],
+    credentials,
     capabilityChips,
   };
 }
