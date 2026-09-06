@@ -765,3 +765,62 @@ describe("CreatorSignalAggregator — owner lookup survives a large id set", () 
     assert.equal(signals.participationDistinctUsers, N, "all owners are distinct");
   });
 });
+
+// ─── Every .in() on a built list is chunked, not just the owner lookup ───────
+
+/**
+ * The owner lookup was chunked first, and the four reads in
+ * _fetchPositiveResponses were left with an unbounded list — the same 414, the
+ * same silent zero, on the component weighted 0.20. A repo-wide sweep found it
+ * afterwards. This test covers ALL of them so the next one cannot slip through:
+ * the double refuses any `.in()` above the limit exactly as PostgREST does.
+ */
+describe("CreatorSignalAggregator — no unbounded .in() reaches the database", () => {
+  const CREATOR = "44444444-4444-4444-8444-444444444444";
+  const post = (n: number) => `post-${n}`;
+  const actor = (n: number) => `55555555-5555-4555-8555-${String(n).padStart(12, "0")}`;
+  const N = 260; // > IN_LIST_CHUNK (100), so every read must span 3 requests
+
+  it("counts engagement for a prolific creator instead of silently reading zero", async () => {
+    const posts = Array.from({ length: N }, (_, i) => ({
+      id: post(i), author_id: CREATOR, status: "active",
+      post_status: "published", created_at: "2026-09-01T00:00:00Z",
+    }));
+    const savers = Array.from({ length: N }, (_, i) => ({
+      user_id: actor(i), post_id: post(i), created_at: "2026-09-02T00:00:00Z",
+    }));
+
+    const { db, rejections } = makeUrlLimitedDb({
+      blocks: [],
+      posts,
+      post_saves: savers,
+      post_shares: [],
+      posts_comments: [],
+      user_follows: [],
+      content_stamps: [],
+      post_edits: [],
+      profile_views: [],
+      events: [],
+      trips: [],
+      reviews: [],
+      discovery_places: [],
+      event_rsvps: [],
+      trust_profiles: [],
+    }, 100);
+
+    const agg = new CreatorSignalAggregator(db as any);
+    const signals = await agg.aggregate(CREATOR);
+
+    assert.equal(
+      rejections(), 0,
+      `${rejections()} read(s) sent an .in() larger than the limit. Against a real ` +
+        `PostgREST that is a 414 which supabase-js RETURNS rather than throws, so the ` +
+        `component reads 0 for exactly the most prolific creators — and the more they ` +
+        `post, the more certain the zero.`,
+    );
+    assert.ok(
+      signals.receivedPositiveActions >= N,
+      `expected at least ${N} received actions, got ${signals.receivedPositiveActions}`,
+    );
+  });
+});
