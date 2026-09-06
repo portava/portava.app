@@ -484,7 +484,14 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
     .select(
       "id, author_id, trip_id, visibility, post_status, content, media_type, " +
       "media_urls, media_thumbnail_url, " +
-      "post_buckets, like_count, save_count, share_count, view_count, qualified_view_count",
+      // view_count / qualified_view_count are NOT columns of `posts` (verified
+      // against the live CI schema 2026-09-06: the table has post_buckets,
+      // like_count, save_count, share_count, media_type, media_urls and no view
+      // counters at all). PostgREST fails the WHOLE select on an unknown column,
+      // so naming them meant this read returned 42703 every time and the
+      // collections worker's ranking has never seen a single row. Nothing in
+      // this file ever consumed either value — they were selected and dropped.
+      "post_buckets, like_count, save_count, share_count",
     )
     .eq("canonical_place_id", placeId)
     .eq("status", "active")

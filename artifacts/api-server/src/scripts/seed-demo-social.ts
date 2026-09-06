@@ -326,7 +326,11 @@ async function seedVideoPostcard(targetUserId: string) {
     user_id: targetUserId,
     caption: existingPost?.content ?? content,
     media_url: VIDEO_POSTCARD_URL,
-    media_type: "video",
+    // No `media_type` here: passport_postcards carries media_url only (verified
+    // against the live CI schema 2026-09-06). The posts insert above DOES set
+    // media_type, because `posts` really has that column — the two tables were
+    // being written from one mental model. This insert was rejected outright,
+    // so the demo seeder has never produced a postcard.
     location_name: existingPost?.location_name ?? locationName,
     location_city: dest.city,
     location_country: dest.country,
