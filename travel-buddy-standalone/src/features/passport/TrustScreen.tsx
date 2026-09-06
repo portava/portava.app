@@ -50,6 +50,7 @@ import {
   Star,
   BadgeCheck,
   Info,
+  TrendingUp,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
 import {
@@ -190,6 +191,26 @@ function CapabilityChips({ view }: { view: TrustView }) {
   );
 }
 
+// ── Recovery hints (owner-only) ──────────────────────────────────────────────
+
+/**
+ * Ordered, server-authored steps the OWNER can take to rebuild standing.
+ *
+ * Owner-only by construction: the server sends `trust.recoveryHints` ONLY on the
+ * owner's own view (a non-self viewer's projection has no such key), so a
+ * non-empty list here already means "this is the owner". The screen renders the
+ * strings verbatim, in server order — it never composes, translates or tops up
+ * advice of its own, and shows nothing at all when the server sent nothing.
+ */
+function RecoveryHintRow({ hint }: { hint: string }) {
+  return (
+    <View style={s.hintRow} accessibilityLabel={hint}>
+      <TrendingUp size={icon.s16} color={color.deep} />
+      <Text style={s.hintText}>{hint}</Text>
+    </View>
+  );
+}
+
 // ── Section header ───────────────────────────────────────────────────────────
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
@@ -325,6 +346,20 @@ export default function TrustScreen({
                 <DomainRow key={row.key} row={row} />
               ))}
             </View>
+
+            {/* Ways to strengthen (§10) — owner-only recovery advice the server
+                projected for THIS viewer. Rendered only when the server sent
+                hints; nothing is inferred or defaulted when it did not. */}
+            {view.recoveryHints.length > 0 ? (
+              <>
+                <SectionTitle>Ways to strengthen your standing</SectionTitle>
+                <View style={s.card}>
+                  {view.recoveryHints.map((hint) => (
+                    <RecoveryHintRow key={hint} hint={hint} />
+                  ))}
+                </View>
+              </>
+            ) : null}
 
             {/* Positive credentials (TABLE 13) */}
             {view.credentials.length > 0 ? (
@@ -537,6 +572,23 @@ const s = StyleSheet.create({
   standingTextOff: {
     color: color.faint,
     fontWeight: '600',
+  },
+
+  // Recovery hints (owner-only)
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+    paddingVertical: space.md,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
+  hintText: {
+    ...t.body,
+    flex: 1,
+    color: color.ink,
+    fontSize: 14,
+    lineHeight: 20,
   },
 
   // Credentials
