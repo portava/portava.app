@@ -17,22 +17,29 @@
  *
  * Follows the compassSenseScheduler / compassAbuseScanScheduler pattern.
  *
- * COLD START: THIS JOB CANNOT SEED ITSELF
- * --------------------------------------
- * The candidate pool is (stale rows in `creator_activity_scores`) ∪ (actor_ids
- * seen in `activity_events` in the last 90 days). `creator_activity_scores`
- * has exactly one writer — persistActivityScore, called from this job — and
- * `activity_events` has no producer at all (see the header of
- * services/ranking/CreatorActivityScoreService.ts). So on an empty
- * creator_activity_scores the union is empty, the batch is empty, and the job
- * logs "no stale users" forever: no creator is ever scored a first time, and
- * DiscoveryRankingService's activity boost stays at its no-row default.
+ * COLD START: THIS JOB COULD NOT SEED ITSELF (fixed 2026-09-06)
+ * ------------------------------------------------------------
+ * The candidate pool used to be (stale rows in `creator_activity_scores`) ∪
+ * (actor_ids seen in `activity_events` in the last 90 days). `creator_activity_
+ * scores` has exactly one writer — persistActivityScore, called from this job —
+ * and `activity_events` had no producer at all. So on an empty
+ * creator_activity_scores the union was empty, the batch was empty, and the job
+ * logged "no stale users" forever: NO CREATOR WAS EVER SCORED A FIRST TIME, and
+ * DiscoveryRankingService's activity boost sat at its no-row default. The job
+ * ran on schedule, succeeded every time, and did nothing.
  *
- * The fix is a real never-scored pool, and the obvious source is the same set
- * of contribution tables the scorer itself already reads (posts, events,
- * trips, reviews, discovery_places — all of which do have producers). That
- * changes who gets ranked and how, so it is left as an owner decision rather
- * than slipped in here.
+ * The seed half is now `profiles` anti-joined against `creator_activity_scores`
+ * — every profile that has never been scored, capped at SEED_SCAN_LIMIT. Two
+ * properties worth keeping in mind if you change it:
+ *
+ *   - It seeds EVERY profile, not only contributors. A profile with no posts
+ *     scores the NEW_USER_BASE_SCORE floor and is then a stale row like any
+ *     other, so the cost is one wasted recalculation per empty profile per
+ *     staleness window, and the benefit is that a creator's first contribution
+ *     does not have to wait for a separate discovery pass to be noticed.
+ *   - The anti-join is done client-side over a bounded scan, not as a SQL NOT
+ *     EXISTS, because PostgREST cannot express it. That is fine while the id
+ *     space is small; at real scale this wants a view or an RPC.
  */
 
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
@@ -46,6 +53,13 @@ const logger = rootLogger.child({ job: "CreatorActivityScoreScheduler" });
 
 const STARTUP_DELAY_MS    = 2 * 60_000;          // 2 min — let other init finish
 const JOB_INTERVAL_MS     = 4 * 60 * 60_000;     // every 4 hours
+/**
+ * How many rows the seed half may scan per tick. Bounded so the first run on a
+ * large profiles table cannot become an unbounded scan; the half drains anyway,
+ * so a low ceiling only means seeding takes a few more ticks.
+ */
+const SEED_SCAN_LIMIT = 2000;
+
 const BATCH_SIZE          = 500;
 const STALE_THRESHOLD_MS  = 6 * 60 * 60_000;     // 6 hours
 
@@ -150,20 +164,59 @@ export async function runActivityScoreJob(): Promise<ActivityScoreJobSummary> {
       ((staleRows as any[]) ?? []).map((r) => String(r.user_id)).filter(Boolean),
     );
 
-    // Also pick up users with recent activity who have never been scored.
-    // Use activity_events (actor_id) from the last 90 days as the candidate pool.
-    const { data: activeRows, error: activeErr } = await (db as any)
-      .from("activity_events")
-      .select("actor_id")
-      .gte("created_at", new Date(Date.now() - 90 * 24 * 60 * 60_000).toISOString())
-      .limit(BATCH_SIZE);
-
+    // ── SEED HALF: profiles that have never been scored ─────────────────────
+    //
+    // THIS IS THE COLD-START FIX, and it is the actual bug in this lane. The
+    // previous seed half read `activity_events` — a table with no writer — so it
+    // was permanently empty. The stale half reads `creator_activity_scores`,
+    // which is written ONLY by this job. Both halves empty at cold start meant
+    // the pool was empty forever and NO CREATOR WAS EVER SCORED A FIRST TIME.
+    //
+    // The pool is now `profiles` anti-joined against the scores table. Three
+    // properties make this the right source, and the alternatives were rejected
+    // on measurement, not taste:
+    //   COMPLETE      — every creator is a profile. A union over the
+    //                   contribution tables misses anyone whose only signal is
+    //                   participation, anyone receiving follows on older
+    //                   content, and every zero-contribution account — who still
+    //                   needs a row, because a MISSING row and a NEW_USER_BASE
+    //                   floor-10 row produce different boosts downstream
+    //                   (DiscoveryRankingService defaults a missing row to 0).
+    //   SELF-DRAINING — the job writes a row for every user it visits, so this
+    //                   half shrinks to nothing after the first full pass and
+    //                   the 6-hour staleness rule sustains the job alone
+    //                   thereafter. Cold start is a seeding problem, not a
+    //                   permanent second query.
+    //   NEEDS NO NEW INDEX — it is an anti-join over two unique btrees that both
+    //                   already exist. The contribution-union alternative would
+    //                   sequential-scan `trips` on every tick forever: trips has
+    //                   no index on created_at in the baseline or any migration,
+    //                   and discovery_places.submitted_by is nullable AND
+    //                   unindexed on a table dominated by bulk OSM imports.
     const newIds = new Set<string>();
-    if (!activeErr) {
-      for (const r of (activeRows as any[]) ?? []) {
-        const id = String(r.actor_id ?? "");
-        if (id && !staleIds.has(id)) newIds.add(id);
+    try {
+      const { data: scoredRows } = await (db as any)
+        .from("creator_activity_scores")
+        .select("user_id")
+        .limit(SEED_SCAN_LIMIT);
+      const alreadyScored = new Set<string>(
+        ((scoredRows as any[]) ?? []).map((r) => String(r.user_id)).filter(Boolean),
+      );
+
+      const { data: profileRows, error: profileErr } = await (db as any)
+        .from("profiles")
+        .select("id")
+        .limit(SEED_SCAN_LIMIT);
+      if (!profileErr) {
+        for (const r of (profileRows as any[]) ?? []) {
+          const id = String(r?.id ?? "");
+          if (!id || staleIds.has(id) || alreadyScored.has(id)) continue;
+          newIds.add(id);
+          if (newIds.size >= BATCH_SIZE) break;
+        }
       }
+    } catch {
+      // A failed seed scan must not stop the stale half from running.
     }
 
     // Merge: stale first, then new, up to BATCH_SIZE
