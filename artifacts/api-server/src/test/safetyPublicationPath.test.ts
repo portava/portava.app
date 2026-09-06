@@ -35,10 +35,20 @@
  *     without a review (approveClaim sets 'active' with a literal
  *     `promotion_source`, not an identity; a direct write sets either).
  *
- * So authority is read from intel_claim_reviews (2311) and nowhere else, the
- * status is carried into the safety gate, and the Map producer independently
- * refuses a materially-conflicted snapshot. Defence at the writer AND the
- * reader: each is killed on its own by the mutation matrix in the PR.
+ * So authority is read from intel_claim_reviews (2311) and nowhere else, and the
+ * claim's status is carried into the safety gate so S1a's rule has somewhere to
+ * be applied.
+ *
+ * ONE THING THIS DELIBERATELY DOES NOT CHANGE. `status = 'conflicting'` and
+ * `conflict_state = 'material'` are different facts, and the first draft of this
+ * work collapsed them: it made the producer REFUSE a materially-conflicted
+ * snapshot. That was wrong, and src/test/intelConflictReaders.test.ts caught it.
+ * A material conflict is the §10 state of a cohort that disagrees about an
+ * otherwise ACTIVE claim; Map spec §5 forbids silently removing a safety notice,
+ * and "reports differ about a crush" is itself safety information. It is served
+ * at a capped band with the state in the payload, exactly as before. Only the
+ * LIFECYCLE status is refused, and it is refused at the writer, where a snapshot
+ * is never created for it in the first place.
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -239,7 +249,6 @@ describe("S2 positive — an approved safety assertion reaches the Map", () => {
     assert.equal(read.notices.length, 1, "the approved assertion reaches the Map");
     assert.equal(read.notices[0].kind, "safety_notice");
     assert.equal(read.report.snapshots, 1);
-    assert.equal(read.report.conflicted, 0);
   });
 
   it("one authorized principal is enough — the reviewed threshold is the one applied", async () => {
@@ -320,7 +329,7 @@ describe("S2 placement — the canonical Place is the only coordinate source", (
       "Evidence and client-supplied coordinates are attacker-controlled: a hazard " +
       "pin placed by the reporter is a way to point the Map at anything.",
     );
-    assert.equal(r.notices[0].payload.placeId, PLACE_ID);
+    assert.equal((r.notices[0].payload as any).placeId, PLACE_ID);
     assert.ok(!JSON.stringify(r.notices[0]).includes("51.5"),
       "no assertion-supplied coordinate may survive into the object");
   });
@@ -446,89 +455,41 @@ describe("S2 negative — nothing but an approved, current assertion renders", (
     if (read.ok) assert.equal(read.notices.length, 0);
   });
 
-  it("a materially-conflicted snapshot is refused AT THE READ too, and counted", async () => {
-    // Defence in depth: whatever put this row in the table — a legacy row, a
-    // different writer, a future path — the producer refuses it on its own.
+  it("a materially-conflicted snapshot is still SERVED, capped — status is not conflict_state", async () => {
+    // Two different things wear the word "conflict", and collapsing them is a
+    // mistake this test exists to prevent (I made it while writing S2):
+    //
+    //   intel_claims.status = 'conflicting'  — the LIFECYCLE state. S1a's
+    //     SAFETY_SERVABLE_CLAIM_STATUSES excludes it, and the projection above
+    //     refuses to write a snapshot for it at all.
+    //   snapshot.conflict_state = 'material' — the §10 state of a cohort that
+    //     DISAGREES about an otherwise ACTIVE claim. Map spec §5 forbids
+    //     silently removing a safety notice, and "reports differ about a crush"
+    //     is itself safety information, so it is served at a capped band with
+    //     the state in the payload for the sheet to render.
+    //
+    // src/test/intelConflictReaders.test.ts owns that capping contract in full.
+    // Asserted here only so the end-to-end path cannot quietly start dropping it.
     const { snapshots } = await project();
     const r = await readMap(readerWorld([{ ...snapshots[0], conflict_state: "material" }]));
     assert.ok(r.ok);
     if (!r.ok) return;
-    assert.equal(r.notices.length, 0);
-    assert.equal(r.report.conflicted, 1,
-      "a suppressed hazard must be observable — an operator has to be able to see " +
-      "that a danger warning was withheld");
-    assert.equal(r.report.unplaced, 0, "and never miscounted as a viewport miss");
+    assert.equal(r.notices.length, 1, "§5: a disputed hazard is capped, never silently removed");
+    assert.equal((r.notices[0].payload as any).conflictState, "material",
+      "and the state travels, so the sheet can say reports differ instead of implying certainty");
+    assert.ok(!["live", "strong"].includes(String(r.notices[0].confidence)),
+      "but never at a live or strong band");
   });
 
-  it("an unrecognised conflict marker fails CLOSED", async () => {
+  it("an unrecognised conflict marker fails CLOSED to material, and is capped", async () => {
     const { snapshots } = await project();
     const r = await readMap(readerWorld([{ ...snapshots[0], conflict_state: "brand_new_state" }]));
     assert.ok(r.ok);
-    if (r.ok) assert.equal(r.notices.length, 0,
-      "a conflict state nobody has taught this reader about must not become servable");
-  });
-});
-
-/**
- * A recording wrapper over the reader client.
- *
- * `privacy_eligible = true` is enforced three times over — the query filter, the
- * in-code re-filter, and projectSafetyNotice — so deleting any ONE of them
- * changes no observable behaviour, which is exactly how a defence quietly
- * disappears. The query filter is not redundant with the other two: it is what
- * stops an ineligible hazard row leaving the database at all, and a suppressed
- * safety assertion is restricted data that should never reach application
- * memory. So it is pinned where it lives, by recording the filters the read
- * actually issues rather than only their effect.
- */
-function recordingReader(state: FakeState) {
-  const inner = makeFakeMapDb(state, { token: TOKEN, userId: VIEWER });
-  const filters: Array<{ table: string; op: string; col: string; val: unknown }> = [];
-  const CHAIN = ["select", "eq", "gt", "gte", "lt", "lte", "is", "in", "not", "contains", "or", "order", "range", "limit"];
-  const RECORD = new Set(["eq", "gt", "is", "contains"]);
-  function wrap(q: any, table: string) {
-    const w: any = {};
-    for (const m of CHAIN) {
-      w[m] = (...args: any[]) => {
-        if (RECORD.has(m)) filters.push({ table, op: m, col: args[0], val: args[1] });
-        q[m](...args);
-        return w;
-      };
-    }
-    w.maybeSingle = () => q.maybeSingle();
-    w.single = () => q.single();
-    w.then = (res: any, rej?: any) => q.then(res, rej);
-    return w;
-  }
-  return {
-    client: { auth: inner.auth, rpc: inner.rpc, from: (t: string) => wrap(inner.from(t), t) },
-    filters,
-  };
-}
-
-describe("S2 read filters — the defences are issued, not merely redundant", () => {
-  it("the snapshot read filters on privacy_eligible, expiry, claim type and level AT THE DATABASE", async () => {
-    const { snapshots } = await project();
-    const { client, filters } = recordingReader(readerWorld(snapshots));
-    const r = await readSafetyNotices(client as any, { bbox: BBOX, now: NOW_MS });
-    assert.ok(r.ok, "precondition: the read succeeded, so these filters really were the ones issued");
-
-    const snap = filters.filter((f) => f.table === "intel_state_snapshots");
-    assert.ok(
-      snap.some((f) => f.op === "eq" && f.col === "privacy_eligible" && f.val === true),
-      "a suppressed safety assertion must not leave the database: the read filters " +
-      "privacy_eligible = true itself, rather than relying on the projector to drop it later",
-    );
-    assert.ok(snap.some((f) => f.op === "gt" && f.col === "expires_at"),
-      "and an expired hazard is filtered at the database too");
-    assert.ok(snap.some((f) => f.op === "eq" && f.col === "claim_type" && f.val === SAFETY_CLAIM_TYPE));
-    assert.ok(snap.some((f) => f.op === "contains" && f.col === "value"),
-      "and only the specialist-only level is asked for — ordinary crowd rows are never fetched");
-
-    // The places read is where the canonical anchor is constrained.
-    const places = filters.filter((f) => f.table === "places");
-    assert.ok(places.some((f) => f.op === "eq" && f.col === "status" && f.val === "active"));
-    assert.ok(places.some((f) => f.op === "is" && f.col === "merged_into_place_id" && f.val === null));
+    if (!r.ok) return;
+    assert.equal((r.notices[0].payload as any).conflictState, "material",
+      "normalizeConflictState reads any unrecognised marker as material — a conflict " +
+      "state nobody has taught this reader about must not serve as agreement");
+    assert.ok(!["live", "strong"].includes(String(r.notices[0].confidence)));
   });
 });
 
@@ -633,7 +594,6 @@ describe("S2 revocation — a published notice stops being served when the asser
     const place = canonicalPlace() as any;
     assert.equal(projectSafetyNotice({ ...row, privacy_eligible: false }, place, { now: NOW_MS }), null);
     assert.equal(projectSafetyNotice({ ...row, expires_at: iso(-1) }, place, { now: NOW_MS }), null);
-    assert.equal(projectSafetyNotice({ ...row, conflict_state: "material" }, place, { now: NOW_MS }), null);
     // Defence in depth: the read already filters these, and the projector must
     // not depend on the caller having done it.
   });

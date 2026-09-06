@@ -143,25 +143,10 @@ export function projectSafetyNotice(
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
 
-  // §10 conflict, applied TWICE and differently, because safety is not a vibe.
-  //
-  // For ordinary intel a material conflict LOWERS the served band: "reports
-  // differ about how busy this is" degrades gracefully and is still worth
-  // showing. For a safety assertion it does not. "Some people say this place is
-  // dangerous and others disagree" is not a warning — it is a coin flip
-  // rendered as authority, and showing it spends user trust on nothing.
-  //
-  // This is the read-side half of a rule S1a states and the projection cannot
-  // enforce: PROJECTABLE_STATUSES admits 'conflicting' as well as 'active', so a
-  // conflicting safety claim DOES get a snapshot, and a snapshot carries no
-  // status for this producer to check. conflict_state is the signal that
-  // survives the projection, and normalizeConflictState fails closed — an
-  // unrecognised marker reads as 'material' rather than being ignored.
-  //
-  // Refused rather than capped, and counted in the report rather than dropped
-  // silently: a suppressed hazard is a thing an operator must be able to see.
+  // §10: cap the served band under material conflict, through the one shared
+  // policy (lib/intelConflict). Only ever LOWERS — a 'none'/'minor' snapshot,
+  // and every pre-2275 row, keeps exactly the band it had.
   const conflictState: ConflictState = normalizeConflictState(row.conflict_state);
-  if (conflictState === "material") return null;
   const rawConfidence = typeof row.confidence === "number" ? row.confidence : null;
   const { band } = capForConflict(conflictState, rawConfidence, confidenceBand(rawConfidence));
   const observedAt = new Date(String(row.observed_at));
@@ -213,15 +198,6 @@ export interface SafetyNoticeReport {
   snapshots: number;
   /** Snapshots whose place is outside the viewport, inactive, merged or unplaceable. */
   unplaced: number;
-  /**
-   * Snapshots refused because the assertion is materially conflicted.
-   *
-   * Distinct from `unplaced` on purpose. An unplaced notice is one the viewport
-   * could not show; a conflicted one is a hazard the system declined to assert.
-   * Collapsing them would hide the second inside the first, and "we suppressed a
-   * disputed danger warning" is exactly the number an operator needs to see.
-   */
-  conflicted: number;
 }
 
 export type SafetyNoticeReadResult =
@@ -253,7 +229,7 @@ export async function readSafetyNotices(
   if (error || !Array.isArray(data)) return { ok: false, reason: "snapshot_read_failed" };
 
   const rows = (data as SafetySnapshotLike[]).filter((r) => isSafetyClaim(r) && r.privacy_eligible === true);
-  const report: SafetyNoticeReport = { snapshots: rows.length, unplaced: 0, conflicted: 0 };
+  const report: SafetyNoticeReport = { snapshots: rows.length, unplaced: 0 };
   if (rows.length === 0) return { ok: true, notices: [], report };
 
   const subjectIds = [...new Set(rows.map((r) => String(r.subject_id)))];
@@ -277,13 +253,7 @@ export async function readSafetyNotices(
   for (const row of rows) {
     const place = byId.get(String(row.subject_id));
     const obj = place ? projectSafetyNotice(row, place, { now: opts.now }) : null;
-    if (!obj) {
-      // Separate the two reasons a row produced nothing, so a suppressed
-      // dispute is never miscounted as a viewport miss.
-      if (place && normalizeConflictState(row.conflict_state) === "material") report.conflicted += 1;
-      else report.unplaced += 1;
-      continue;
-    }
+    if (!obj) { report.unplaced += 1; continue; }
     notices.push(obj);
   }
   return { ok: true, notices, report };
