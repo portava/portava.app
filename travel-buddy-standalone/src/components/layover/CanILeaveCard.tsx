@@ -21,6 +21,10 @@ const VERDICT: Record<LeaveAdvice['verdict'], { label: string; bg: string; fg: s
   tight:       { label: 'Tight — stay close',       bg: 'rgba(200,133,26,0.14)', fg: color.warn },
   no:          { label: 'No — stay airside',        bg: 'rgba(255,77,46,0.12)',  fg: color.signalDim },
   stay_airside:{ label: 'Staying in — good call',   bg: 'rgba(10,61,74,0.10)',   fg: color.deep },
+  // Not styled as a refusal and not as an approval: the honest middle. Uses the
+  // caution palette rather than the success one, because an unchecked border is
+  // a reason to slow down, not a green light with a footnote.
+  entry_unverified: { label: "Can't confirm you may enter", bg: 'rgba(200,133,26,0.14)', fg: color.warn },
 };
 
 export function CanILeaveCard({ advice, window: win, airport }: Props) {
