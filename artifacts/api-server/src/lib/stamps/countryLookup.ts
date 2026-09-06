@@ -10,7 +10,34 @@
  * If neither path resolves, callers must treat the code as unknown ("XX")
  * rather than abbreviating the country name (the old `slice(0, 2)` behaviour
  * produced fake codes like "UN" for "United Kingdom" typos or "PH" collisions).
+ *
+ * COVERAGE — why the ISO map below is a FALLBACK, not a replacement
+ * ----------------------------------------------------------------
+ * `NAME_TO_CODE` covers ~120 countries plus stamp-specific aliases ("uk" →
+ * "GB"). `lib/countryCodes.ts` carries the full ISO-3166-1 list. Names present
+ * only in the full list — Senegal among them — used to fall through to "XX",
+ * which is baked into `canonical_location_key` by `locationKey.ts` and so
+ * forks the catalog.
+ *
+ * Consolidating them was previously held because a code change would fork
+ * catalog keys. Two facts make the fallback safe:
+ *
+ *   1. The two tables DO NOT DISAGREE. Over the 142 names both resolve, every
+ *      code is identical (checked programmatically, and pinned by
+ *      stampCountryCodeCoverage.test.ts). The local table is still consulted
+ *      FIRST, so no name that resolves today can change code — the only
+ *      possible transition is XX → a real code, never A → B.
+ *   2. XX → real is exactly what `lib/stamps/xxCatalogRepair.ts` exists for:
+ *      it re-keys an XX catalog entry in place, or merges it into the real
+ *      entry (repointing user_stamps / passport_stamps / artwork versions,
+ *      transferring earn_count, dropping the XX queue jobs). It is idempotent
+ *      and `startXXCatalogSweeper` runs it from index.ts by default.
+ *
+ * So the key migration this needed already exists and already runs; widening
+ * coverage here just gives the sweeper fewer unresolvable rows to leave behind.
  */
+
+import { toCountryCode, countryName } from "../countryCodes.js";
 
 const NAME_TO_CODE: Record<string, string> = {
   "afghanistan": "AF", "albania": "AL", "algeria": "DZ", "argentina": "AR",
@@ -90,7 +117,8 @@ const CITY_TO_CODE: Record<string, string> = {
   "san francisco": "US", "chicago": "US", "miami": "US", "seattle": "US",
   "boston": "US", "austin": "US", "las vegas": "US", "honolulu": "US",
   "washington": "US", "denver": "US", "portland": "US", "new orleans": "US",
-  "san diego": "US", "toronto": "CA", "vancouver": "CA", "montreal": "CA",
+  "san diego": "US", "fort lauderdale": "US", "ft lauderdale": "US",
+  "toronto": "CA", "vancouver": "CA", "montreal": "CA",
   "calgary": "CA", "ottawa": "CA", "mexico city": "MX", "cancun": "MX",
   "guadalajara": "MX", "tulum": "MX", "rio de janeiro": "BR",
   "sao paulo": "BR", "buenos aires": "AR", "santiago": "CL", "lima": "PE",
@@ -140,7 +168,13 @@ function norm(raw: string): string {
     .trim();
 }
 
-/** ISO code for a country name, or null when unknown. Never guesses. */
+/**
+ * ISO code for a country name, or null when unknown. Never guesses.
+ *
+ * The stamp-local table wins; the full ISO list is consulted only when the
+ * local table has nothing, so no name that resolves today can change code.
+ * See the COVERAGE note at the top of this file.
+ */
 export function countryCodeFromName(name: string | null | undefined): string | null {
   if (!name) return null;
   const trimmed = name.trim();
@@ -148,13 +182,16 @@ export function countryCodeFromName(name: string | null | undefined): string | n
   if (VALID_CODE_RE.test(trimmed) && CODE_TO_NAME[trimmed.toUpperCase()]) {
     return trimmed.toUpperCase();
   }
-  return NAME_TO_CODE[norm(trimmed)] ?? null;
+  return NAME_TO_CODE[norm(trimmed)] ?? toCountryCode(trimmed);
 }
 
 /** Canonical country name for an ISO code, or null when unknown. */
 export function countryNameFromCode(code: string | null | undefined): string | null {
   if (!code) return null;
-  return CODE_TO_NAME[code.trim().toUpperCase()] ?? null;
+  const upper = code.trim().toUpperCase();
+  // Same precedence as countryCodeFromName: local table first, full ISO list
+  // second, so a code resolved via the fallback still gets a country name.
+  return CODE_TO_NAME[upper] ?? countryName(upper);
 }
 
 /** Country info derived from a well-known city name, or null when unknown. */

@@ -70,8 +70,18 @@ function parseCity(raw: unknown): string | null {
  * Send a projection, applying the fail-closed precise-location boundary scrub.
  * In the healthy case nothing is removed; if anything ever is, it is logged so
  * the leak is visible rather than silent.
+ *
+ * EXPORTED FOR PROOF, not for reuse. Until 2026-09-05 this whole second line of
+ * defence was untested wiring: replacing the body with `res.json(payload)` left
+ * every media suite green, because the projectors are already coarse so no test
+ * fixture could ever reach the scrub with a coordinate on it. The scrub could
+ * have been deleted from all seven endpoints and nothing would have noticed —
+ * which is the definition of a defence that is not there.
+ * `src/test/mediaWorldBoundaryScrub.test.ts` now drives this function directly
+ * with a payload that DOES carry coordinates, and separately asserts that every
+ * response in this router still leaves through it.
  */
-function sendProjection(res: any, route: string, payload: unknown): void {
+export function sendProjection(res: any, route: string, payload: unknown): void {
   const { value, removed } = scrubPreciseLocation(payload);
   if (removed > 0) {
     logger.error(

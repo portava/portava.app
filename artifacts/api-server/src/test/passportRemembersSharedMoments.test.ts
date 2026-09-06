@@ -29,6 +29,7 @@ import {
   buildSharedMoments,
   sharedMomentVisibility,
 } from "../compass/PassportRemembersService.js";
+import { projectionKeys, projectRow } from "./helpers/selectProjection.js";
 
 const OWNER = "5m0000000-0000-0000-0000-0000000000o1";
 const STRANGER = "5m0000000-0000-0000-0000-0000000000s1";
@@ -50,8 +51,14 @@ type Row = Record<string, any>;
 
 /**
  * A supabase-js surface that behaves like PostgREST on an unknown select-list
- * column: the whole query fails (42703) and `data` is null. This is the only
- * thing that would have caught the defect.
+ * column: the whole query fails (42703) and `data` is null.
+ *
+ * It ALSO projects the select list, via the shared projector (#436) rather than
+ * a private copy of the rule. Without that this file's own header claim — that
+ * putting `visibility` back in the select turns every test here RED — was FALSE:
+ * measured 5/5 green with the production select stripped of `join_policy` while
+ * the mapper still read it. Rejecting an unknown column and returning only the
+ * KNOWN ones are two different properties, and only the first was implemented.
  */
 function strictDb(tables: Record<string, Row[]>) {
   return {
@@ -61,6 +68,8 @@ function strictDb(tables: Record<string, Row[]>) {
       const filters: Array<(r: Row) => boolean> = [];
       let bad: string | null = null;
       let limitN: number | null = null;
+      // `null` = do not project (see selectProjection.ts for the bail rules).
+      let projection: Array<[string, string]> | null = null;
 
       const builder: any = {
         select(fields?: string) {
@@ -70,6 +79,7 @@ function strictDb(tables: Record<string, Row[]>) {
               if (col && col !== "*" && !known.includes(col)) bad = col;
             }
           }
+          projection = projectionKeys(fields);
           return builder;
         },
         eq(col: string, val: any) { filters.push((r) => r[col] === val); return builder; },
@@ -85,7 +95,9 @@ function strictDb(tables: Record<string, Row[]>) {
           }
           let rows = store.filter((r) => filters.every((f) => f(r)));
           if (limitN !== null) rows = rows.slice(0, limitN);
-          return Promise.resolve({ data: rows, error: null }).then(onF, onR);
+          // Narrow on the way OUT only — the database filters on the full row.
+          const out = projection ? rows.map((r) => projectRow(r, projection!) as Row) : rows;
+          return Promise.resolve({ data: out, error: null }).then(onF, onR);
         },
       };
       return builder;

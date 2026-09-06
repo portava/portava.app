@@ -557,11 +557,13 @@ export async function buildSharedMoments(
     if (consented.size === 0) return;
     const { data: moments } = await client
       .from("shared_moments")
-      // shared_moments has NO `visibility` column (baseline + prod, verified
-      // 2026-09-05). Selecting one made PostgREST fail the WHOLE query 42703,
-      // so `moments` came back null and this entire group — the shared-moments
-      // source of Passport Remembers — silently produced nothing. The column
-      // that actually carries "who can be in this" is `join_policy`.
+      // `visibility` is NOT a column of shared_moments — the table's audience
+      // control is `join_policy` (invite_only | approval_required), and its
+      // lifecycle control is `status` (active | archived). Selecting a column
+      // that does not exist fails the WHOLE read with 42703, so `moments` was
+      // always undefined and the shared-moment group of "What Portava
+      // Remembers" has never rendered a single row, even for a user with
+      // accepted memberships.
       .select("id, title, status, join_policy, archived_at, created_at")
       .in("id", Array.from(consented))
       .limit(SOURCE_LIMIT);

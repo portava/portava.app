@@ -29,6 +29,12 @@ import { buildYearbook } from "../services/passport/PassportYearbookService.js";
 import { writeTravelDnaPref } from "../services/passport/PassportTravelIdentityService.js";
 import { buildReputationSummary } from "../services/passport/PassportReputationService.js";
 import {
+  createEventPassportShare,
+  revokeEventPassportShare,
+  getOwnEventPassportShare,
+  resolveEventPassport,
+} from "../services/passport/EventPassportService.js";
+import {
   PASSPORT_TELEMETRY_EVENTS,
   normalizeClientPayload,
   recordPassportEvent,
@@ -1819,6 +1825,153 @@ router.post("/passport/telemetry", async (req, res) => {
   }
 
   res.status(202).json({ accepted, rejected });
+});
+
+/* ===========================================================================
+ * Temporary / event Passport (§25 "Share Passport options", §31 "Explicitly
+ * expire … event Passport, temporary sharing", TABLE 31 Phase 8)
+ * ===========================================================================
+ * Three endpoints around EventPassportService. The service owns every rule —
+ * flag gate, bounded TTL, revocation, the event's own end, co-attendance, and
+ * the narrowing to the `event` consumer-projection variant. These handlers only
+ * translate its refusals into status codes, so there is exactly ONE place where
+ * an event Passport can be granted.
+ *
+ * With `passport_event_share_enabled` OFF (its seed, migration 2294) every one
+ * of them answers `{ enabled: false }` and nothing is minted or resolved.
+ */
+
+/** Map a service refusal onto an HTTP answer. */
+function sendEventShareRefusal(res: any, reason: string): void {
+  switch (reason) {
+    case "disabled":
+      res.status(200).json({ enabled: false });
+      return;
+    case "event_not_found":
+    case "not_found":
+      sendError(res, "not_found", "Share not found");
+      return;
+    case "event_not_live":
+      sendError(res, "invalid_payload", "That event is not currently running");
+      return;
+    case "owner_not_attending":
+      sendError(res, "forbidden", "You are not attending that event");
+      return;
+    case "revoked":
+      sendError(res, "forbidden", "This event Passport was revoked");
+      return;
+    case "expired":
+      sendError(res, "forbidden", "This event Passport has expired");
+      return;
+    case "not_attending":
+      sendError(res, "forbidden", "This event Passport is only for people at the event");
+      return;
+    default:
+      sendError(res, "not_found", "Share not found");
+  }
+}
+
+const EventShareCreateSchema = z.object({ eventId: z.string().uuid() });
+
+// POST /api/passport/event-share — mint (or re-mint) the caller's event Passport.
+router.post("/passport/event-share", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+
+  const parsed = EventShareCreateSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", "eventId must be a uuid"); return; }
+
+  try {
+    const out = await createEventPassportShare(sc, auth.user.id, parsed.data.eventId);
+    if (!out.ok) { sendEventShareRefusal(res, out.reason); return; }
+    res.status(201).json({
+      enabled: true,
+      share: {
+        token: out.value.token,
+        eventId: out.value.eventId,
+        expiresAt: out.value.expiresAt,
+      },
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, "event passport share create failed");
+    sendError(res, "db_error", e?.message ?? "Share failed");
+  }
+});
+
+// POST /api/passport/event-share/:eventId/revoke — withdraw the caller's share.
+router.post("/passport/event-share/:eventId/revoke", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+
+  const eventId = String(req.params.eventId ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(eventId)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  try {
+    const out = await revokeEventPassportShare(sc, auth.user.id, eventId);
+    if (!out.ok) { sendEventShareRefusal(res, out.reason); return; }
+    res.status(200).json({ enabled: true, revoked: out.value.revoked });
+  } catch (e: any) {
+    req.log.error({ err: e }, "event passport share revoke failed");
+    sendError(res, "db_error", e?.message ?? "Revoke failed");
+  }
+});
+
+// GET /api/passport/event-share/:eventId — the caller's OWN live share, if any.
+// Expiry is applied on this read too, so the owner is never shown "sharing"
+// for a share that has already lapsed (§31 "never render stale … as current").
+router.get("/passport/event-share/:eventId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+
+  const eventId = String(req.params.eventId ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(eventId)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  try {
+    if (!(await isFlagEnabled(sc, "passport_event_share_enabled"))) {
+      res.status(200).json({ enabled: false, share: null });
+      return;
+    }
+    const share = await getOwnEventPassportShare(sc, auth.user.id, eventId);
+    res.status(200).json({
+      enabled: true,
+      share: share ? { token: share.token, eventId: share.eventId, expiresAt: share.expiresAt } : null,
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, "event passport share read failed");
+    sendError(res, "db_error", e?.message ?? "Share read failed");
+  }
+});
+
+// GET /api/passport/event-passport/:token — resolve a scanned event Passport.
+//
+// Authentication is REQUIRED: the share is event-scoped and an anonymous caller
+// can never be an attendee, so there is no anonymous read path to fall through
+// to. The response is `private, no-store` — it is viewer-specific and expires.
+router.get("/passport/event-passport/:token", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+
+  try {
+    const out = await resolveEventPassport(sc, String(req.params.token ?? ""), auth.user.id);
+    if (!out.ok) { sendEventShareRefusal(res, out.reason); return; }
+    res.setHeader("Cache-Control", "private, no-store");
+    res.status(200).json({
+      enabled: true,
+      share: out.value.share,
+      passport: out.value.passport,
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, "event passport resolve failed");
+    sendError(res, "db_error", e?.message ?? "Resolve failed");
+  }
 });
 
 export default router;

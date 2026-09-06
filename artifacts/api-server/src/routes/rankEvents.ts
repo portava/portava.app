@@ -19,6 +19,7 @@ import { getServiceClient } from "../lib/supabase";
 import { asyncHandler } from "../lib/asyncHandler";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 import { RankingEvent, OUTCOME_TO_ANALYTICS_EVENT } from "../services/ranking/rankingAnalytics.js";
+import { recordNegativeDistributionSignal } from "../services/ranking/DiscoveryRankingService.js";
 
 const router = Router();
 
@@ -80,8 +81,33 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
 // Existing outcome values — kept for backward compatibility with clients
 // sending the legacy string values.  New outcome event types are emitted
 // as additional analytics rows using the typed RankingEvent constants.
-const OUTCOME_VALUES = ["tap", "save", "join", "rsvp", "attended"] as const;
+//
+// 'dismiss' is the ONE negative value, added with migration 2297. Before it the
+// vocabulary was entirely positive (tap/save/join/rsvp/attended), so negative
+// user intent was unrecordable — a client had nothing to send — and
+// content_distribution_stats.negative_signal_count consequently had NO WRITER
+// AT ALL. That made the underexposure classifier structurally incapable of a
+// negative verdict: 0 negatives over N impressions is never >= the 0.3
+// suppression rate, so every item crossing the threshold classified 'boosting'.
+// See the handler below, and DiscoveryRankingService.recordNegativeDistributionSignal.
+//
+// REQUIRES migration 2297_rank_events_dismiss_outcome.sql to be applied LIVE
+// before this ships: rank_events.outcome carries a CHECK constraint, and the
+// analytics insert further down echoes an outcome-derived row back into the
+// table. Shipping first would 404 every dismiss (the UPDATE would violate the
+// CHECK) while looking identical to "nobody dismisses anything".
+const OUTCOME_VALUES = ["tap", "save", "join", "rsvp", "attended", "dismiss"] as const;
 type OutcomeValue = typeof OUTCOME_VALUES[number];
+
+/**
+ * The negative outcome. Not a funnel rung — see upgradableOutcomesFor.
+ *
+ * Typed `Extract<OutcomeValue, "dismiss">` and not `OutcomeValue`: the literal
+ * type is what lets `outcome === DISMISS` narrow the union in the branches
+ * below, and the Extract is what makes the declaration fail to compile if
+ * 'dismiss' is ever dropped from OUTCOME_VALUES (Extract would be `never`).
+ */
+const DISMISS: Extract<OutcomeValue, "dismiss"> = "dismiss";
 
 /**
  * Funnel rungs (0153_add_rank_events.sql: impression → tap → save/join/rsvp →
@@ -98,7 +124,9 @@ type OutcomeValue = typeof OUTCOME_VALUES[number];
  * after an 'rsvp') never downgrades: it finds no row and returns 404 exactly as
  * a duplicate did before.
  */
-const OUTCOME_RUNG: Record<OutcomeValue | "impression", number> = {
+type FunnelOutcome = Exclude<OutcomeValue, typeof DISMISS>;
+
+const OUTCOME_RUNG: Record<FunnelOutcome | "impression", number> = {
   impression: 0,
   tap:        1,
   save:       2,
@@ -109,6 +137,15 @@ const OUTCOME_RUNG: Record<OutcomeValue | "impression", number> = {
 
 /** rank_events.outcome values a row may hold and still be upgraded to `outcome`. */
 export function upgradableOutcomesFor(outcome: OutcomeValue): string[] {
+  // 'dismiss' is NOT a rung on the positive funnel and is deliberately absent
+  // from OUTCOME_RUNG. Two consequences, both wanted:
+  //   • a dismiss may only be recorded against a row still at 'impression' —
+  //     you dismiss something you were shown, not something you already saved;
+  //   • 'dismiss' appears in no other outcome's upgradable set, so a later tap
+  //     or save can never silently overwrite a recorded negative. A dismissed
+  //     row is terminal, and a stronger signal after it 404s exactly as a
+  //     duplicate does.
+  if (outcome === DISMISS) return ["impression"];
   const rung = OUTCOME_RUNG[outcome];
   return (Object.keys(OUTCOME_RUNG) as Array<keyof typeof OUTCOME_RUNG>)
     .filter((o) => OUTCOME_RUNG[o] < rung);
@@ -202,11 +239,29 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
 
   // Phase 14 — map the rank-events funnel outcome onto the Compass outcome
   // chain and link it back to the originating served recommendation.
-  const stage =
-    outcome === "tap"  ? "viewed" :
-    outcome === "save" ? "saved"  :
-    "went"; // join / rsvp / attended
-  void linkOutcomeSignal(sc, user.id, item_id, stage, `route:rank_event_${outcome}`);
+  //
+  // 'dismiss' is excluded: the Compass chain models progress toward acting on a
+  // recommendation (viewed → saved → went) and has no negative stage. The
+  // `else` arm here is "went", so a dismiss falling through would record the
+  // viewer as having GONE to a place they explicitly waved away — the strongest
+  // positive signal the chain carries, written from its opposite.
+  if (outcome !== DISMISS) {
+    const stage =
+      outcome === "tap"  ? "viewed" :
+      outcome === "save" ? "saved"  :
+      "went"; // join / rsvp / attended
+    void linkOutcomeSignal(sc, user.id, item_id, stage, `route:rank_event_${outcome}`);
+  }
+
+  // ── The underexposure NUMERATOR ─────────────────────────────────────────────
+  // This is the only place content_distribution_stats.negative_signal_count is
+  // ever written. It calls record_distribution_negative_signal (2297), NOT
+  // increment_distribution_stats: the latter moves eligible_impressions in the
+  // same statement, and an outcome must never move the exposure denominator
+  // (see the note at the end of this handler). Fire-and-forget.
+  if (outcome === DISMISS) {
+    void recordNegativeDistributionSignal(sc, item_id, user.id);
+  }
 
   // Emit typed analytics event for this outcome (fire-and-forget).
   // Maps the legacy outcome string to the new RankingEvent constant so
@@ -232,13 +287,15 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
       });
   }
 
-  // content_distribution_stats is deliberately NOT touched here.  This route
-  // used to be the ONLY writer of eligible_impressions — "an outcome confirms
+  // content_distribution_stats.eligible_impressions is deliberately NOT touched
+  // here.  This route used to be the ONLY writer of it — "an outcome confirms
   // the impression was real" — which made the exposure denominator a count of
-  // conversions (docs/architecture/00_STATUS.md defect 4).  The counter is now
+  // conversions (docs/architecture/00_STATUS.md defect 4).  The DENOMINATOR is
   // incremented where the impression is written (lib/rankLog.ts,
   // lib/discoveryServeLog.ts → recordImpressionDistributionStats); an outcome
-  // is a numerator event and must never move the denominator.
+  // is a numerator event and must never move it.  The NUMERATOR is written
+  // above, for outcome='dismiss' only, through a separate RPC that leaves
+  // eligible_impressions alone.
 
   res.json({ ok: true });
 }));

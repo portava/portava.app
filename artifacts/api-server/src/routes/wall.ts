@@ -56,6 +56,7 @@ import {
   applyFeedDiversity,
   DEFAULT_FEED_DIVERSITY_POLICY,
 } from "../services/wall/WallDiversityService.js";
+import { liveStripSignalKey } from "../services/wall/ContextThreadService.js";
 import {
   explainDiscovery,
   type DiscoveryViewerSignals,
@@ -100,6 +101,21 @@ import type {
 
 const router = Router();
 const logger = rootLogger.child({ route: "wall" });
+
+/**
+ * §37 mutation rate limits. Exported so the 429 tests derive their fixture from
+ * the gate's own constant instead of hard-coding a number that can silently
+ * drift away from the route (a test pinned to a stale literal passes while the
+ * limit it claims to prove no longer exists).
+ *
+ * Generous by design: the ceilings stop impression flooding and self-engagement
+ * manipulation without touching a real scrolling session.
+ */
+export const WALL_RATE_LIMITS = {
+  sessionIntent: { id: "wall_session_intent", limit: 30, windowMs: 60_000 },
+  impression: { id: "wall_impression", limit: 600, windowMs: 60_000 },
+  action: { id: "wall_action", limit: 300, windowMs: 60_000 },
+} as const;
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 40;
@@ -895,10 +911,15 @@ router.get(
       nextCursor = built.nextCursor ? encodeForYouCursor(built.nextCursor) : undefined;
 
       // ── Feed Diversity Controller (For You only, spec §15). Reorders to
-      //    prevent one-creator floods / five-videos-in-a-row / a wall of
-      //    annotations, and prunes over-budget discovery insertions so For You
-      //    never becomes a disguised Discovery page. Following is a strict-
-      //    chronology trust anchor and is deliberately NOT reordered.
+      //    prevent one-creator floods / five-videos-in-a-row, and prunes
+      //    over-budget discovery insertions so For You never becomes a disguised
+      //    Discovery page. Following is a strict-chronology trust anchor and is
+      //    deliberately NOT reordered.
+      //    The §15 ANNOTATION cap is not applied here and must not be: at this
+      //    point no object carries a context thread yet (attachContextThreads
+      //    runs below), so an annotation pass here is a no-op by construction.
+      //    attachContextThreads owns it — it is handed
+      //    maxContextThreadsInWindow and declines to build the excess thread.
       const diversified = applyFeedDiversity(items, DEFAULT_FEED_DIVERSITY_POLICY);
       items = diversified.items;
     }
@@ -906,7 +927,8 @@ router.get(
     // ── Live For You strip: bounded, multi-kind, from the feed's places (§4).
     //    The §4 "do not repeat a live signal that already appears in the strip"
     //    rule is enforced on the FEED side — attachContextThreads (below) dedups
-    //    context threads against the strip's subjects (liveStripSubjectIds). The
+    //    context threads against the strip, by subject for `live_place` and by
+    //    (subject, kind) for every other place-anchored kind. The
     //    strip itself is therefore built from the feed's relevant places WITHOUT
     //    self-deduping against them (self-dedup would empty it, since every
     //    candidate subject is by construction a feed place).
@@ -935,10 +957,18 @@ router.get(
     //    Dedups against the Live For You strip (§4/§15) and caps annotations per
     //    window (§15 maxContextThreadsInWindow). Runs in both modes.
     const liveStripSubjectIds = new Set<string>(liveForYou.map((i) => i.subjectId));
+    // §4 needs the strip's (subject, KIND) pairs, not just its subjects: a
+    // `hidden_gem` thread repeats a `hidden_gem` strip item, and must not be
+    // suppressed by an unrelated `buddy` one. Without this set the dedup could
+    // only ever fire for `live_place` — every other kind hardcoded `false`.
+    const liveStripSignals = new Set<string>(
+      liveForYou.map((i) => liveStripSignalKey(i.subjectId, i.liveObjectType)),
+    );
     try {
       items = await attachContextThreads(sc, items, projectViewer, {
         maxContextThreadsInWindow: DEFAULT_FEED_DIVERSITY_POLICY.maxContextThreadsInWindow,
         liveStripSubjectIds,
+        liveStripSignals,
         rabEnabled,
       });
     } catch (err) {
@@ -1035,8 +1065,10 @@ router.post(
       return;
     }
 
-    const rl = checkRateLimit("wall_session_intent", user.id, 30, 60_000);
+    const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.sessionIntent;
+    const rl = checkRateLimit(id, user.id, rlLimit, windowMs);
     if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
       sendError(res, "rate_limited", "Too many intent updates. Please wait.");
       return;
     }
@@ -1087,8 +1119,10 @@ router.post(
     }
     // Rate-limit mutation endpoints (spec §37): a generous window that stops
     // impression flooding / self-engagement manipulation without hurting real use.
-    const rl = checkRateLimit("wall_impression", user.id, 600, 60_000);
+    const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.impression;
+    const rl = checkRateLimit(id, user.id, rlLimit, windowMs);
     if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
       sendError(res, "rate_limited", "Too many impressions. Please slow down.");
       return;
     }
@@ -1134,8 +1168,10 @@ router.post(
       sendError(res, "invalid_payload", "objectId, objectType and a valid action are required");
       return;
     }
-    const rl = checkRateLimit("wall_action", user.id, 300, 60_000);
+    const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.action;
+    const rl = checkRateLimit(id, user.id, rlLimit, windowMs);
     if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
       sendError(res, "rate_limited", "Too many actions. Please slow down.");
       return;
     }

@@ -180,7 +180,9 @@ describe("Route trigger — awardSocialPostStamps (post-creation stamp path)", (
             });
           }
           if (table === "posts") {
-            return Promise.resolve({ data: { status: "published" }, error: null });
+            // "active" — the real live label of the post_status enum. This
+            // fixture said "published", which no row can hold.
+            return Promise.resolve({ data: { status: "active" }, error: null });
           }
           if (table === "stamp_award_events") {
             return Promise.resolve({ data: null, error: null });
@@ -307,7 +309,10 @@ describe("StampAwardEngine — first_post engine guard conditions", () => {
     const {
       v2Enabled        = true,
       definitionActive = true,
-      postStatus       = "published",
+      // `post_status` is active | hidden | reported | deleted (baseline enum).
+      // The default here used to be "published", which no row can ever hold —
+      // the happy path passed for the wrong reason. "active" is the live label.
+      postStatus       = "active",
       existingEvent    = false,
       existingStamp    = false,
     } = flags;

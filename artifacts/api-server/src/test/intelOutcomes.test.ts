@@ -20,7 +20,7 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -180,6 +180,55 @@ describe("I4a outcomes — the enum and its verbs honour the 2130 ruling", () =>
   it("Table-22 touches and traveler modes are the documented sets", () => {
     assert.deepEqual([...ATTRIBUTION_TOUCHES], ["direct_paid_answer", "go_tap", "compass_explanation", "impression", "pre_committed"]);
     assert.deepEqual([...TRAVELER_MODES], ["solo", "couple", "group", "family", "unknown"]);
+  });
+
+  /**
+   * Every reader that selects outcome events off the spine must filter on the
+   * VERB, not on the payload envelope alone.
+   *
+   * payload.intel is not an outcome marker: lib/intelDomainEvents gives
+   * intel.observation.recorded, intel.claim.promoted and intel.state.changed the
+   * same envelope. A reader matching only `payload->intel is not null` therefore
+   * tallies system transitions as traveler-reported outcomes — which read as
+   * successful arrivals in the §24 decision section and as finalized outcome
+   * evidence in the density gate. Three separate readers had that shape (the
+   * observability route, the calibration scheduler and its on-demand CLI twin),
+   * so this is a source-level ratchet rather than three per-reader tests: a new
+   * reader written the old way fails here even if nobody writes a test for it.
+   */
+  it("no reader matches intel outcome events on payload.intel without a verb filter", () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name === "test" || e.name === "node_modules" || e.name === "migrations") continue;
+          walk(p);
+        } else if (e.name.endsWith(".ts")) files.push(p);
+      }
+    };
+    walk(root);
+    assert.ok(files.length > 100, `expected to scan the server source, found ${files.length} files`);
+
+    const NEEDLE = '.not("payload->intel", "is", null)';
+    const offenders: string[] = [];
+    let matched = 0;
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      for (let i = src.indexOf(NEEDLE); i !== -1; i = src.indexOf(NEEDLE, i + 1)) {
+        matched += 1;
+        // The query text from its own .from("canonical_events") up to the predicate.
+        const start = src.lastIndexOf('from("canonical_events")', i);
+        const query = start === -1 ? "" : src.slice(start, i);
+        if (!query.includes('.in("verb", OUTCOME_VERBS')) {
+          offenders.push(`${f.slice(root.length + 1)}:${src.slice(0, i).split("\n").length}`);
+        }
+      }
+    }
+    // The needle must still exist, or this ratchet would pass by matching nothing.
+    assert.ok(matched >= 3, `expected the intel-payload predicate in the known readers, found ${matched}`);
+    assert.deepEqual(offenders, [], `these readers count intel domain events as outcomes: ${offenders.join(", ")}`);
   });
 });
 

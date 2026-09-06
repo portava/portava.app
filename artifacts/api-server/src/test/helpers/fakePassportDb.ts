@@ -9,6 +9,8 @@
  * the pattern used by the existing trust tests. Unknown tables resolve empty.
  */
 
+import { projectionKeys, projectRow } from "./selectProjection.js";
+
 type Row = Record<string, any>;
 
 export function makePassportDb(tables: Record<string, Row[]>) {
@@ -19,9 +21,20 @@ export function makePassportDb(tables: Record<string, Row[]>) {
     let pendingInsert: Row | null = null;
     let pendingUpdate: Row | null = null;
     let pendingDelete = false;
+    // `null` = do not project (the historical behaviour: the whole seeded row).
+    // See selectProjection.ts for why an unparseable select falls back to that.
+    let projection: Array<[string, string]> | null = null;
+
+    /** Narrow on the way OUT only — the real database filters on the full row. */
+    function project<T extends Row>(rows: T[]): Row[] {
+      return projection ? rows.map((r) => projectRow(r, projection!)) : rows;
+    }
+    function projectOne(row: Row | null): Row | null {
+      return row && projection ? projectRow(row, projection) : row;
+    }
 
     const builder: any = {
-      select(_fields?: string, _opts?: any) { return builder; },
+      select(_fields?: string, _opts?: any) { projection = projectionKeys(_fields); return builder; },
       insert(row: Row) { pendingInsert = { id: `fake-${Math.random().toString(16).slice(2)}`, ...row }; store.push(pendingInsert); return builder; },
       update(patch: Row) { pendingUpdate = patch; return builder; },
       upsert(row: Row) { pendingInsert = row; return builder; },
@@ -50,18 +63,20 @@ export function makePassportDb(tables: Record<string, Row[]>) {
     }
     async function resolveSingle() {
       if (pendingInsert || pendingUpdate) {
-        if (pendingUpdate) { const rows = matched(); rows.forEach((r) => Object.assign(r, pendingUpdate)); return { data: rows[0] ?? null, error: null }; }
-        return { data: pendingInsert, error: null };
+        if (pendingUpdate) { const rows = matched(); rows.forEach((r) => Object.assign(r, pendingUpdate)); return { data: projectOne(rows[0] ?? null), error: null }; }
+        return { data: projectOne(pendingInsert), error: null };
       }
-      if (pendingDelete) { const rows = matched(); rows.forEach((r) => store.splice(store.indexOf(r), 1)); return { data: rows[0] ?? null, error: null }; }
+      if (pendingDelete) { const rows = matched(); rows.forEach((r) => store.splice(store.indexOf(r), 1)); return { data: projectOne(rows[0] ?? null), error: null }; }
       const rows = matched();
-      return { data: rows[0] ?? null, error: null };
+      return { data: projectOne(rows[0] ?? null), error: null };
     }
     async function resolveList() {
-      if (pendingUpdate) { const rows = matched(); rows.forEach((r) => Object.assign(r, pendingUpdate)); return { data: rows, error: null, count: rows.length }; }
-      if (pendingDelete) { const rows = matched(); rows.forEach((r) => store.splice(store.indexOf(r), 1)); return { data: rows, error: null, count: rows.length }; }
+      // `count` is a row count and is unaffected by projection, so it is taken
+      // from the matched rows before they are narrowed.
+      if (pendingUpdate) { const rows = matched(); rows.forEach((r) => Object.assign(r, pendingUpdate)); return { data: project(rows), error: null, count: rows.length }; }
+      if (pendingDelete) { const rows = matched(); rows.forEach((r) => store.splice(store.indexOf(r), 1)); return { data: project(rows), error: null, count: rows.length }; }
       const rows = matched();
-      return { data: rows, error: null, count: rows.length };
+      return { data: project(rows), error: null, count: rows.length };
     }
     return builder;
   }

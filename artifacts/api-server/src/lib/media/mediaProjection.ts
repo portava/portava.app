@@ -46,9 +46,18 @@ export const MEDIA_PROJECTION_POST_MEDIA_COLUMNS =
   "id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, " +
   "processing_status, moderation_status";
 
-/** Profile columns safe for a secondary contributor credit. */
+/**
+ * Profile columns safe for a secondary contributor credit.
+ *
+ * `is_private` is read but never projected: it is a GATE input, consumed by
+ * `loadEligibleCandidates` (lib/privacyFilter.excludePrivateAuthorPosts) so a
+ * private account's post is dropped before it is ever shaped. Selecting it here
+ * is what lets that guard run without a second round trip — the same trick the
+ * Watch feed uses (`{ profilesKey: "profiles" }`). It is deliberately absent
+ * from `MediaContributor`, so it cannot reach a client.
+ */
 export const MEDIA_PROJECTION_PROFILE_COLUMNS =
-  "id, username, full_name, name, display_name, avatar_url, verified, is_official, account_status";
+  "id, username, full_name, name, display_name, avatar_url, verified, is_official, account_status, is_private";
 
 export interface MediaContributor {
   id: string;

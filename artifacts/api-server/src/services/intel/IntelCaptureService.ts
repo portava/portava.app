@@ -72,14 +72,28 @@ function validateForSurface(surface: CaptureSurface, claimType: string, value: u
 }
 
 /**
- * Whether the surface's gating flag is on. The flag args below are LITERALS on
- * purpose — check-flag-polarity resolves each isFlagEnabled() call statically and
- * cannot follow SURFACE_FLAG[surface]. Keep them literal so each stop is visible.
+ * Whether the surface's gating flag is on — AND, for a surface whose flag has a
+ * dependency, whether that dependency is on too.
+ *
+ * INTEL_FLAG_DEPENDENCIES (lib/intelContracts) says "a flag may only be honoured
+ * when everything it depends on is also on", and lists
+ * `intel_trail_followup → intel_capture_quick_signal`. Until 2026-09-05 that
+ * chain was declared and pinned by a test but enforced NOWHERE for this surface:
+ * the trail flag alone opened the write path, so `intel_trail_followup` could be
+ * honoured with its dependency off. lib/liveClaimRead.liveLabelsServable is the
+ * precedent — it walks its whole chain by hand for the same reason.
+ *
+ * The flag args below are LITERALS on purpose — check-flag-polarity resolves each
+ * isFlagEnabled() call statically and cannot follow SURFACE_FLAG[surface]. Keep
+ * them literal so each stop is visible. Order matters: the surface's own flag is
+ * read first, so an off trail flag still short-circuits before anything else.
  */
 async function surfaceFlagEnabled(sc: any, surface: CaptureSurface): Promise<boolean> {
-  return surface === "trail"
-    ? isFlagEnabled(sc, "intel_trail_followup")
-    : isFlagEnabled(sc, "intel_capture_quick_signal");
+  if (surface === "trail") {
+    if (!(await isFlagEnabled(sc, "intel_trail_followup"))) return false;
+    return isFlagEnabled(sc, "intel_capture_quick_signal");
+  }
+  return isFlagEnabled(sc, "intel_capture_quick_signal");
 }
 
 /** The capture lifecycle (propose/approve/confirm) is shared across surfaces; it

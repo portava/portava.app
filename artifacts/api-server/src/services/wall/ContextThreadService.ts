@@ -118,6 +118,57 @@ export function shouldAttachContextThread(
   );
 }
 
+// ── §4 live-strip signal identity ─────────────────────────────────────────────
+
+/**
+ * The key under which a Live For You strip item's (subject, kind) pair is
+ * recorded for §4 dedup. Built from `LiveForYouItem.subjectId` +
+ * `LiveForYouItem.liveObjectType` on the route side, and looked up here.
+ *
+ * The separator cannot occur inside a uuid subject id or a `LiveObjectType`
+ * token, so two different pairs can never collide into one key.
+ */
+export function liveStripSignalKey(subjectId: string, liveObjectType: string): string {
+  return `${subjectId}::${liveObjectType}`;
+}
+
+/**
+ * The strip kind a Context Thread of this kind would RESTATE (§4: "never repeat
+ * a live signal that already appears in the strip").
+ *
+ * `live_place` is deliberately absent: it is deduped at SUBJECT level instead,
+ * because a strip item of any kind on that place already carries the place's
+ * current state. `map`, `memory` and `compass` are absent because they are not
+ * live signals at all — a "you saved this in March" thread does not repeat
+ * anything the strip said, so suppressing it would lose information rather than
+ * remove a duplicate.
+ */
+const THREAD_KIND_TO_LIVE_OBJECT_TYPE: Partial<Record<ContextThreadKind, string>> = {
+  hidden_gem: "hidden_gem",
+  social_presence: "social_presence",
+  buddy: "buddy",
+  trip_relevance: "trip_signal",
+};
+
+/**
+ * True when the strip already shows THIS kind of live signal about THIS place.
+ *
+ * Before this existed, `duplicatesLiveStrip` was hardcoded `false` in six of the
+ * seven candidate builders, so the §9 gate's dedup condition could only ever
+ * fire for `live_place`: a `hidden_gem` strip item and a `hidden_gem` thread on
+ * the same place both rendered, and §4 was enforced for one kind out of five.
+ */
+export function threadDuplicatesLiveStrip(
+  kind: ContextThreadKind,
+  placeId: string | null | undefined,
+  viewer: Pick<ContextThreadViewerContext, "liveStripSignals">,
+): boolean {
+  if (!placeId) return false;
+  const liveObjectType = THREAD_KIND_TO_LIVE_OBJECT_TYPE[kind];
+  if (!liveObjectType) return false;
+  return viewer.liveStripSignals?.has(liveStripSignalKey(placeId, liveObjectType)) ?? false;
+}
+
 // ── Candidates ────────────────────────────────────────────────────────────────
 
 /** A proposed thread plus the §9 gate input that decides whether it renders. */
@@ -180,6 +231,20 @@ export interface ContextThreadViewerContext {
   currentCity?: string | null;
   /** Subjects already shown in the Live For You strip (dedup, spec §4/§15). */
   liveStripSubjectIds?: Set<string>;
+  /**
+   * The strip's (subject, live-object-type) pairs, keyed by
+   * `liveStripSignalKey`. §4 forbids repeating a live signal that already
+   * appears in the strip; `liveStripSubjectIds` alone can only express "this
+   * place is in the strip somehow", which is the right rule for the `live_place`
+   * thread (it restates the strip's place-state claim whatever kind won the
+   * slot) but far too coarse for the others — a `hidden_gem` thread must be
+   * suppressed by a `hidden_gem` strip item on the same place, not by a
+   * `buddy` one.
+   *
+   * Optional: when it is absent, only the `live_place` subject-level rule
+   * applies, which is exactly the behaviour that existed before.
+   */
+  liveStripSignals?: ReadonlySet<string>;
   /** True when the per-window context-thread cap is already reached (§15). */
   windowSaturated?: boolean;
   /**
@@ -366,7 +431,7 @@ async function readTripRelevanceCandidate(
         confidence: 0.95,
         freshnessAgeMs: 0,
         sensitiveDisclosure: false,
-        duplicatesLiveStrip: false,
+        duplicatesLiveStrip: threadDuplicatesLiveStrip("trip_relevance", place.placeId, viewer),
         visualOverload: false,
         expectedUtility,
       },
@@ -453,7 +518,7 @@ async function readSocialPresenceCandidate(
         confidence: 0.8,
         freshnessAgeMs: newestMs > 0 ? Math.max(0, now.getTime() - newestMs) : Number.POSITIVE_INFINITY,
         sensitiveDisclosure: false,
-        duplicatesLiveStrip: false,
+        duplicatesLiveStrip: threadDuplicatesLiveStrip("social_presence", place.placeId, viewer),
         visualOverload: false,
         expectedUtility,
       },
@@ -565,7 +630,7 @@ async function readHiddenGemCandidate(
         // aging context, not current.
         freshnessAgeMs: ageMs(row.updated_at ?? null, now),
         sensitiveDisclosure,
-        duplicatesLiveStrip: false,
+        duplicatesLiveStrip: threadDuplicatesLiveStrip("hidden_gem", place.placeId, viewer),
         visualOverload: false,
         // Capped — never optimize gem exposure for virality (spec §20).
         expectedUtility: state === "recently_confirmed" ? 0.6 : 0.5,
@@ -641,7 +706,7 @@ async function readBuddyCandidate(
         confidence: 0.7,
         freshnessAgeMs: 0,
         sensitiveDisclosure: false,
-        duplicatesLiveStrip: false,
+        duplicatesLiveStrip: threadDuplicatesLiveStrip("buddy", place.placeId, viewer),
         visualOverload: false,
         // The lowest-priority contextual option; only shows when nothing more
         // decision-relevant is present, and never a flood.

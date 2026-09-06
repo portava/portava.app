@@ -206,7 +206,7 @@ describe("IG-07 gate — env-guarded constant, default OFF", () => {
 // ── AT-14: hard constraint before ranking ─────────────────────────────────────
 
 describe("AT-14 — a Live walk-in denial is a hard constraint ranking cannot override", () => {
-  it("excludes the top-scoring pick and surfaces the next-best same-category Plan B", async () => {
+  it("AT-02 / AT-14: an officially-available top pick is functionally excluded by a Live walk-in denial, and Plan B takes its place", async () => {
     const denied = envelope({ id: "snap-walkin-a", claimType: "access.walk_in", value: { accepted: false } });
     const o = liveOverrides({ [SUBJECT_A]: [denied] });
     const out = await runPipeline(candidates(), profile(), context(), null, o);
@@ -285,7 +285,7 @@ describe("truth boundary — below the Live band is never a hard fact", () => {
     assert.equal(out.results[0]!.finalScore, 90);
   });
 
-  it("a prediction or historical pattern dressed as state:'live' is never a constraint", () => {
+  it("AT-08: a prediction or historical pattern dressed as state:'live' is never a constraint", () => {
     for (const sourceClass of ["portava_prediction", "historical_pattern"] as const) {
       const hostile = envelope({ claimType: "access.walk_in", value: { accepted: false }, band: "strong", sourceClass, state: "live" });
       assert.equal(isLiveConstraintEligible(hostile, NOW_MS), false, sourceClass);
