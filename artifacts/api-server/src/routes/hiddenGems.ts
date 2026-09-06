@@ -968,6 +968,27 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
             sourceType: "hidden_gem_visit",
           });
 
+          // §20 ledger (TABLE 21): this is the ONLY producer of
+          // `hidden_gem_verified`, the sole type behind the projection's
+          // `hiddenGems` headline count — which was structurally zero for every
+          // traveller until now. Only reached when the check-in is
+          // GPS-verified and not flagged suspicious (see the guard above).
+          const { recordContributionIfEnabled } = await import(
+            "../services/passport/PassportContributionService.js"
+          );
+          void recordContributionIfEnabled(sc, {
+            userId: user.id,
+            eventType: "hidden_gem_verified",
+            sourceType: "hidden_gem_visit",
+            sourceId: req.params.id,
+            verificationLevel: "checkin",
+            metadata: {
+              city: (gem as any).city ?? null,
+              country: (gem as any).country ?? null,
+              category: "hidden_gem",
+            },
+          });
+
           if (stampResult?.isNew) {
             const { data: memFlag } = await sc
               .from("feature_flags").select("enabled").eq("flag", "passport_memories_enabled").maybeSingle();

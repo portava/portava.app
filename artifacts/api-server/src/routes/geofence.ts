@@ -18,6 +18,7 @@ import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { calculateDistanceMeters } from "../lib/locationVerify.js";
 import { checkAndRecordSnapshot } from "../services/location/LocationSafetyService.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
+import { recordContributionIfEnabled } from "../services/passport/PassportContributionService.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { recordActivityEvent } from "../compass/CompassActiveUserRewardEngine.js";
@@ -638,6 +639,19 @@ router.post("/trips/:tripId/geofence/check-in", async (req, res) => {
         neighborhood: gfNeighborhood,
         verificationLevel: "checkin",
         sourceType: "geofence_checkin",
+      });
+      // §20 ledger (TABLE 21): a geofence check-in is a CONFIRMATION of
+      // real-world plan attendance — one of the three types
+      // PassportReputationService counts as `confirmations`, and until now it
+      // had no writer anywhere. Keyed on the geofence so re-entering the fence
+      // cannot double-credit.
+      void recordContributionIfEnabled(sc, {
+        userId: user.id,
+        eventType: "plan_attendance_verified",
+        sourceType: "geofence_checkin",
+        sourceId: geofenceId,
+        verificationLevel: "checkin",
+        metadata: { city: gfCity, category: "meetup" },
       });
       if (result?.isNew) {
         const { data: memFlagRow } = await sc

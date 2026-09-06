@@ -788,6 +788,28 @@ router.patch("/trips/:tripId", async (req, res) => {
         if (members && (members as any[]).length > 0) {
           const memberIds: string[] = (members as any[]).map((m: any) => m.user_id);
           const tripTitle: string = (updated as any)?.title ?? "your trip";
+          // §20 ledger (TABLE 21): a COMPLETED trip is the verified moment for
+          // `trip_crew_participation` — a positive event that adds to the
+          // contributor level. It had no writer anywhere before 2026-09-05.
+          // Same accepted-participant set as the review prompt (owner/member,
+          // never a pending invitee), keyed on the trip so re-completing it
+          // cannot double-credit.
+          const { recordContributionIfEnabled } = await import(
+            "../services/passport/PassportContributionService.js"
+          );
+          const crewCity: string | null = (updated as any)?.destination_city ?? null;
+          await Promise.allSettled(
+            memberIds.map((uid) =>
+              recordContributionIfEnabled(sc, {
+                userId: uid,
+                eventType: "trip_crew_participation",
+                sourceType: "trips",
+                sourceId: tripId,
+                verificationLevel: "crew",
+                metadata: { city: crewCity, category: "trip" },
+              }),
+            ),
+          );
           // Route through NotificationService so the privacy guard + dedup run.
           // notifRouter.route() is intentionally NOT called here; push is sent
           // below via sendPushWithRetry to avoid double-delivery.

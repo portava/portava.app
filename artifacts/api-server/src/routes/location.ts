@@ -20,6 +20,7 @@ import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import { invalidateCompassHomeCache } from "./compassHome.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
+import { recordContributionIfEnabled } from "../services/passport/PassportContributionService.js";
 import { createSuggestedMemory } from "../services/passport/PassportMemoryService.js";
 
 const router = Router();
@@ -339,6 +340,20 @@ router.post("/me/passport-stamps/gps", async (req, res) => {
           sourceType: "gps_pipeline",
         });
         if (result?.isNew) {
+          // §20 ledger (TABLE 21): a GPS-verified city visit is a qualified
+          // contribution. Carries the city + a category so `cityExpertise`
+          // ("Knows Da Nang well") and `topExpertise` have something to derive
+          // from — the existing writer defaulted metadata to {} and both were
+          // permanently empty. Keyed on the stamp id so a repeat cannot
+          // double-credit.
+          void recordContributionIfEnabled(sc, {
+            userId: user.id,
+            eventType: "city_visit_verified",
+            sourceType: "gps_pipeline",
+            sourceId: result.id,
+            verificationLevel: "gps",
+            metadata: { city, country: country ?? null, category: "city_visit" },
+          });
           const { data: memFlagRow } = await sc
             .from("feature_flags")
             .select("enabled")

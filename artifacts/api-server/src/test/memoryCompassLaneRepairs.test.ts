@@ -182,20 +182,28 @@ describe("PassportRemembersService — shared moments read real columns", () => 
   });
 
   it("reports the moment's audience from its real join_policy, never as public", async () => {
-    // `m-yes` deliberately carries `approval_required`, NOT the mapper's
-    // `?? "invite_only"` fallback. It used to carry the fallback value, which
-    // made this assertion unfalsifiable: reading join_policy, failing to read it,
-    // or not selecting it at all ALL produced "invite_only" and all passed. A
-    // fixture whose expected value equals the code's own default proves nothing.
+    // The wire vocabulary is `sharedMomentVisibility`'s, not the raw column's:
+    // both real join policies (invite_only, approval_required) are audiences of
+    // the same class, so both report "participants_only", and ANYTHING else —
+    // an unrecognised future policy, a null, or a column that was never
+    // selected — falls to "private", the more private of the two. The internal
+    // policy vocabulary does not reach the wire.
     //
-    // With the two now distinct, dropping join_policy from the `.select()` while
-    // the mapper still reads it — the exact hybrid a hunk-by-hunk resolution of
-    // the #427/#431/#432 conflict produces — yields the fallback and turns this
-    // RED. That only works because schemaStrictSupabase now projects the select
-    // list (#436); before, the fixture supplied the column regardless.
+    // That fail-closed default is what makes this assertion non-vacuous BY
+    // CONSTRUCTION, and it is stronger than the fixture trick it replaces. The
+    // previous mapper defaulted to "invite_only" while `m-yes` was seeded
+    // "invite_only", so reading the column, misreading it, and never selecting
+    // it all produced the same answer. Now the correct read gives
+    // "participants_only" and every failure mode gives "private".
+    //
+    // Concretely: dropping join_policy from the `.select()` while the mapper
+    // still reads it — the exact hybrid a hunk-by-hunk resolution of the
+    // #427/#431/#432 conflict produces — turns this RED. It relies on
+    // schemaStrictSupabase projecting the select list (#436); before that, the
+    // fixture supplied the column no matter what the query asked for.
     const c = makeSchemaStrictClient(seed());
     const [item] = await buildSharedMoments(c as any, ME);
-    assert.equal(item.visibility, "approval_required");
+    assert.equal(item.visibility, "participants_only");
     assert.notEqual(item.visibility, "public", "a shared moment is never a public audience");
   });
 

@@ -321,7 +321,14 @@ describe("deny-list is omitted (defence-in-depth gate)", () => {
     const surfaced = groupItems(res.body, "shared_moment");
     const titles = surfaced.map((i) => i.title);
     assert.deepEqual(titles, ["Dinner in Da Nang"], "only the accepted + active moment is surfaced");
-    assert.equal(surfaced[0].visibility, "invite_only",
+    // The wire value is `sharedMomentVisibility`'s class, not the raw column:
+    // both real join policies (invite_only, approval_required) are the same
+    // audience class and report "participants_only", while anything else — an
+    // unrecognised policy, a null, or a column the query never selected — falls
+    // to "private". The internal vocabulary does not reach the wire, and the
+    // fail-closed default is what keeps this assertion non-vacuous: a read that
+    // silently stopped resolving would give "private", not this value.
+    assert.equal(surfaced[0].visibility, "participants_only",
       "the moment's audience is reported from its real join_policy, never 'public'");
   });
 });
