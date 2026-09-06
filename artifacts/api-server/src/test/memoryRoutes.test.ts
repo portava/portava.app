@@ -21,6 +21,8 @@ import { _setTestClient } from "../lib/http.js";
 
 const ALICE = "a1a1a1a1-aaaa-aaaa-aaaa-00000000ae01";
 const MALLORY = "bad00000-0000-0000-0000-00000000bad0";
+const FOREIGN_PROJECTION = "11111111-2222-3333-4444-555555555555";
+const OWN_PROJECTION     = "99999999-8888-7777-6666-555555555555";
 
 type RpcCall = { name: string; params: any };
 let rpcCalls: RpcCall[] = [];
@@ -32,8 +34,20 @@ function makeClient(cfg: {
   rediscover?: any[];
   rpcError?: string;
   insertError?: { code?: string; message?: string } | null;
-  /** Row returned by the ownership lookup on memory_projections; null = not the caller's. */
-  projection?: Record<string, unknown> | null;
+  /**
+   * Rows that EXIST in memory_projections. The fake applies the route's own
+   * `.eq()` filters to them, so ownership is decided by the production filter
+   * and not by the fixture.
+   *
+   * This used to be a single `projection` row handed back unconditionally,
+   * with `eq: () => chain` discarding every filter. That made the
+   * "rejects a projection id the caller does not own" test VACUOUS: deleting
+   * `.eq("user_id", auth.user.id)` from routes/compass.ts left the whole file
+   * green, and since the route uses the service_role client (which bypasses
+   * RLS) that TS filter is the ONLY thing standing between a guessed uuid and
+   * suppressing another user's memory.
+   */
+  projections?: Array<Record<string, unknown>>;
   exportRows?: any[];
   resetRow?: Record<string, unknown>;
 } = {}) {
@@ -64,13 +78,23 @@ function makeClient(cfg: {
     //      looks like a route bug and is not one.
     //   2. the feedback route resolves a projection scoped to the caller, which
     //      is how ownership is enforced — .select().eq().eq().maybeSingle().
+    //
+    // `.eq()` RECORDS its filters and `maybeSingle()` applies them. That is the
+    // whole point: an ownership gate expressed as a `.eq()` can only be proven
+    // by a fake that honours `.eq()`. A fake that discards filters cannot tell
+    // an enforced gate from a deleted one.
     from: (table: string) => {
+      const filters: Array<[string, unknown]> = [];
       const chain: any = {
         select: () => chain,
-        eq: () => chain,
+        eq: (col: string, val: unknown) => { filters.push([col, val]); return chain; },
         maybeSingle: async () => {
           if (table === "profiles") return { data: { account_status: "active" }, error: null };
-          if (table === "memory_projections") return { data: cfg.projection ?? null, error: null };
+          if (table === "memory_projections") {
+            const match = (cfg.projections ?? []).find((row) =>
+              filters.every(([col, val]) => row[col] === val));
+            return { data: match ?? null, error: null };
+          }
           return { data: null, error: null };
         },
         insert: async (row: any) => {
@@ -273,15 +297,45 @@ describe("POST /api/compass/me/memory/feedback", () => {
   });
 
   it("rejects a projection id the caller does not own (no cross-user suppression)", async () => {
-    // The ownership lookup is scoped to the caller, so another user's projection
-    // resolves to nothing. Guessing an id must not hide someone else's memory.
-    // projection: null => the ownership lookup finds nothing for this caller.
-    _setTestClient(makeClient({ projection: null }), true as any);
+    // The projection EXISTS — it just belongs to Mallory. The route reads
+    // through the service_role client, which bypasses RLS, so the only thing
+    // that stops Alice suppressing Mallory's memory is the route's own
+    // `.eq("user_id", auth.user.id)`. The fake applies the route's filters, so
+    // deleting that one line turns this RED (the row resolves, a feedback row
+    // is written, and the status is 201).
+    _setTestClient(makeClient({
+      projections: [{
+        id: FOREIGN_PROJECTION, user_id: MALLORY,
+        memory_type: "semantic", subject_type: "city", subject_id: "Lisbon",
+      }],
+    }), true as any);
     const res = await api("POST", "/compass/me/memory/feedback", {
-      kind: "hide", projectionId: "11111111-2222-3333-4444-555555555555",
+      kind: "hide", projectionId: FOREIGN_PROJECTION,
     });
     assert.equal(res.status, 404, "a foreign projection id must not be actionable");
     assert.deepEqual(inserts, [], "no feedback row may be written for a foreign projection");
+  });
+
+  it("accepts the caller's OWN projection and denormalises its subject key", async () => {
+    // The positive control for the test above. Without it, a route that
+    // rejected EVERY projection id would also pass the ownership test, so the
+    // pair together pin "scoped to the caller" rather than "always refuses".
+    _setTestClient(makeClient({
+      projections: [{
+        id: OWN_PROJECTION, user_id: ALICE,
+        memory_type: "semantic", subject_type: "city", subject_id: "Porto",
+      }],
+    }), true as any);
+    const res = await api("POST", "/compass/me/memory/feedback", {
+      kind: "hide", projectionId: OWN_PROJECTION,
+    });
+    assert.equal(res.status, 201);
+    assert.equal(inserts.length, 1);
+    assert.equal(inserts[0].row.user_id, ALICE);
+    assert.equal(inserts[0].row.projection_id, OWN_PROJECTION);
+    assert.equal(inserts[0].row.subject_type, "city", "the projection's durable subject key is denormalised onto the feedback row");
+    assert.equal(inserts[0].row.subject_id, "Porto");
+    assert.equal(inserts[0].row.memory_type, "semantic");
   });
 
   it("is idempotent — a duplicate signal (23505) still reports success", async () => {

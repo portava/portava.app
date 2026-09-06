@@ -92,7 +92,17 @@ async function applyReachReduction(
       cooldown_type: "reach_reduction",
       reason:       `abuse_defense:${severity}`,
       ends_at:      endsAt,
-      updated_at:   new Date(nowMs).toISOString(),
+      // `updated_at` is NOT a column of compass_visibility_cooldowns — the
+      // table is (id, author_id, cooldown_type, started_at, ends_at, reason).
+      // PostgREST rejects an unknown column in a write body with 42703 and the
+      // WHOLE upsert fails, so this reach reduction was NEVER recorded: every
+      // confirmed medium/high/severe abuse pattern logged a warning and left
+      // the offender's visibility untouched. `started_at` is the column that
+      // carries "when this cooldown began"; writing it explicitly is what makes
+      // an EXTENSION of an existing cooldown (the ON CONFLICT path) restate the
+      // clock, and it matches the two sibling writers in
+      // CompassFairExposureEngine.ts:112,218 exactly.
+      started_at:   new Date(nowMs).toISOString(),
     },
     { onConflict: "author_id,cooldown_type" },
   );

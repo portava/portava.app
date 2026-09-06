@@ -286,10 +286,13 @@ const CLASSIFIED = [
     flag: 'SEARCH_SIGNAL_DECAY_DAYS',
     kind: 'CONFIG',
     reason:
-      'NOT A GATE. A tuning value — the reader wants a numeric_value column holding a decay half-life. ' +
-      'Neither polarity rule applies. Classified so the name is accounted for rather than silently skipped ' +
-      'by a check that assumes every feature_flags row is a boolean. SEE the UNSEEDED_READS entry: there is ' +
-      'no such row AND no such column, so this read has never resolved in any environment.',
+      'NOT A GATE. A tuning value — the row carries the decay half-life in `metadata->>half_life_days`. Neither ' +
+      'polarity rule applies. Classified so the name is accounted for rather than silently skipped by a check ' +
+      'that assumes every feature_flags row is a boolean. Seeded by 2306, and seeded OFF: the read used to ' +
+      'select a `numeric_value` column that does not exist (42703), and the capability behind it — the ' +
+      'compass_search_signal_log table and the upsert_compass_search_signal RPC — is not in the live schema ' +
+      'either, its DDL sitting unapplied in the frozen root artifacts/api-server/supabase/migrations/. Port ' +
+      'that DDL before enabling this row.',
   },
 
   // ── SCREAMING_CASE. A second naming scheme, deliberately given no ────────
@@ -841,24 +844,35 @@ const UNSEEDED_DISPOSITIONS = new Set([
   'owner-decision', // examined, remedy argued, call handed to an owner
 ]);
 
+// ── RETIRED 2026-09-05: SEARCH_SIGNAL_DECAY_DAYS ────────────────────────────
+// The entry asked for exactly one of two outcomes, and this PR delivers the one
+// it called "the real repair": A COLUMN PLUS A SEED, not a seed alone.
+//
+// Its objection was specifically to seeding ALONE — getDecayConfig selected a
+// `numeric_value` column that does not exist, so the read 42703'd before the row
+// was ever reached and a seeded row would only have added an admin switch that
+// did nothing. This change moves the reader onto `metadata->>'half_life_days'`
+// (metadata IS a real column) AND seeds the row in 2306. The objection is met.
+//
+// Its second concern — that this "would make decay disableable for the first
+// time, which is a behaviour change and an owner decision" — does not bite,
+// because there is nothing to disable. The capability writes through the
+// `upsert_compass_search_signal` RPC into `compass_search_signal_log`, and
+// NEITHER EXISTS: the table is absent from the canonical migration chain and
+// from the live CI schema, its DDL still sitting unapplied in the frozen root
+// artifacts/api-server/supabase/migrations/. logSearchNudge's RPC call fails and
+// is only logger.warn'd, so the log is never written and decay has never
+// operated on any data in any environment.
+//
+// That also corrects a claim this entry made: "Search-signal decay has been
+// running, at the default half-life, since it shipped." The CONFIG resolved to a
+// compiled-in default, but the capability it configures has no writer. 2306
+// therefore seeds `enabled = false` and records the precondition for turning it
+// on — port the DDL into the canonical chain first.
+//
+// The entry has outlived its subject, which is the second of the two outcomes
+// check-flag-polarity offers when a migration seeds an UNSEEDED_READS flag.
 const UNSEEDED_READS = [
-  {
-    flag: 'SEARCH_SIGNAL_DECAY_DAYS',
-    file: 'compass/CompassSearchDecayService.ts',
-    disposition: 'owner-decision',
-    reason:
-      'DO NOT SEED — seeding this row alone would make the defect WORSE. getDecayConfig issues ' +
-      '`.select("enabled, numeric_value").eq("flag", "SEARCH_SIGNAL_DECAY_DAYS")`, and feature_flags has no ' +
-      'numeric_value column: not in any migration under src/migrations, and not in the live schema of either ' +
-      'the CI project or production (flag, enabled, description, updated_at, metadata — verified by ' +
-      'information_schema on 2026-09-05). The select therefore returns 42703 and the reader falls to its ' +
-      'compiled-in { enabled: true, halfLifeDays: 7 } on every call in every environment. Search-signal decay ' +
-      'has been running, at the default half-life, since it shipped. Seed the row and NOTHING changes — the ' +
-      'select still errors before the row is read — except that the admin list now shows a switch that does ' +
-      'nothing, which is strictly worse than showing none. The real repair is a column plus a seed, and that ' +
-      'would make decay disableable for the first time, which is a behaviour change and an owner decision. ' +
-      'Recorded here rather than half-fixed.',
-  },
   {
     flag: 'place_provenance_stamping_enabled',
     file: 'lib/placeProvenance.ts',

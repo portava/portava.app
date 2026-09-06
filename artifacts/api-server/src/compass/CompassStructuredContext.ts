@@ -36,8 +36,19 @@ export interface StructuredCircle {
 
 export interface StructuredBooking {
   city: string;
-  dateFrom: string;
-  dateTo: string;
+  /**
+   * The booking day (`rent_buddy_bookings.booking_date`). A Rent-a-Buddy
+   * booking is single-day by construction — the schema carries
+   * `booking_date` + `start_time` + `duration_h`, and there is no
+   * `date_from` / `date_to` pair anywhere on the table. This field used to be
+   * `dateFrom`/`dateTo` read from those two non-existent columns, which made
+   * the whole select fail 42703 and the booking context permanently empty.
+   */
+  date: string;
+  /** Local start time (`start_time`), or null when the booking has none. */
+  startTime: string | null;
+  /** Booked duration in hours (`duration_h`), or null. */
+  durationHours: number | null;
   status: string;
   /** @handle of the buddy, or null if unavailable/filtered. */
   buddyHandle: string | null;
@@ -189,7 +200,16 @@ export async function buildStructuredCompassContext(
   try {
     const { data: bookings } = await sc
       .from("rent_buddy_bookings")
-      .select("buddy_id, city, date_from, date_to, status")
+      // `date_from` / `date_to` are NOT columns of rent_buddy_bookings — the
+      // table has `booking_date` (date) + `start_time` + `duration_h`, and
+      // routes/rentABuddy.ts:4625 already proves the mapping by translating its
+      // own ?dateFrom/?dateTo query params onto `booking_date`. PostgREST
+      // rejects an unknown column with 42703 and fails the WHOLE select, so
+      // `bookings` was always undefined here and `result.activeBookings` was
+      // always []. Compass's Ask/chat prompt has therefore never known that the
+      // caller has a buddy booking, and `social_mode` ("user has an active
+      // buddy booking") could never be evidenced from this context.
+      .select("buddy_id, city, booking_date, start_time, duration_h, status")
       .eq("traveler_id", userId)
       .in("status", ["confirmed", "in_progress"])
       .limit(5);
@@ -213,11 +233,16 @@ export async function buildStructuredCompassContext(
 
     result.activeBookings = rows.slice(0, 3).map((r: any) => ({
       city:        String(r.city ?? ""),
-      dateFrom:    String(r.date_from ?? ""),
-      dateTo:      String(r.date_to ?? ""),
+      date:        String(r.booking_date ?? ""),
+      startTime:   r.start_time != null ? String(r.start_time) : null,
+      durationHours:
+        r.duration_h != null && Number.isFinite(Number(r.duration_h))
+          ? Number(r.duration_h)
+          : null,
       status:      String(r.status ?? ""),
       buddyHandle: buddyHandleById.get(r.buddy_id as string) ?? null,
-      // note: rent_buddy_bookings.note is intentionally NEVER selected/included
+      // rent_buddy_bookings.notes (the traveller's free text — hotel, room
+      // number, meeting point) is intentionally NEVER selected or included.
     }));
   } catch { /* non-fatal — no booking context */ }
 
@@ -273,7 +298,11 @@ export function formatStructuredContextLines(ctx: StructuredCompassContext): str
     lines.push("Active buddy bookings (city-level only):");
     for (const bkg of ctx.activeBookings) {
       const buddy = bkg.buddyHandle ? ` with ${bkg.buddyHandle}` : "";
-      lines.push(`• ${bkg.city}${buddy} — ${bkg.dateFrom} → ${bkg.dateTo} (${bkg.status})`);
+      const when = [
+        bkg.startTime ? String(bkg.startTime).slice(0, 5) : null,
+        bkg.durationHours != null ? `${bkg.durationHours}h` : null,
+      ].filter(Boolean).join(", ");
+      lines.push(`• ${bkg.city}${buddy} — ${bkg.date}${when ? ` (${when})` : ""} (${bkg.status})`);
     }
   }
 

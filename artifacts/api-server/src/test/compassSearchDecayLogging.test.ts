@@ -2,7 +2,7 @@
  * CompassSearchDecayService — silent-failure lane (audit M2, code half).
  *
  * The whole compass_search_signal_log migration is unapplied in CI + prod, so
- * the RPC (42883) / table (42P01) / numeric_value column (42703) are absent.
+ * the RPC (42883) and the table (42P01) are absent.
  * supabase-js RESOLVES rather than throws on those, so the service's three DB
  * touch points used to discard the error and silently fall back — the boost the
  * feature is supposed to decay never decays, invisibly. These assert the error
@@ -57,7 +57,7 @@ describe("CompassSearchDecayService — errors are logged, not swallowed", () =>
   });
 
   it("getDecayConfig logs on a feature_flags read error and still returns the default", async () => {
-    const db = fakeDb({ selectErrorTable: "feature_flags", selectError: { code: "42703", message: "column numeric_value does not exist" } });
+    const db = fakeDb({ selectErrorTable: "feature_flags", selectError: { code: "42P01", message: "relation feature_flags does not exist" } });
     const cfg = await getDecayConfig(db);
     assert.equal(warnCalls.length, 1, "the feature_flags error must be logged");
     assert.deepEqual(cfg, { enabled: true, halfLifeDays: 7 }, "still falls back to the default config");

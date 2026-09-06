@@ -253,15 +253,49 @@ describe("phantom feature flags — the six repaired reads", () => {
     }
   });
 
-  it("the two deliberately-unseeded reads are still unseeded", () => {
-    for (const flag of ["SEARCH_SIGNAL_DECAY_DAYS", "place_provenance_stamping_enabled"]) {
+  // This list is hard-coded ON PURPOSE and must stay that way. It is the
+  // independent half of the pair: deriving it from check-flag-polarity.mjs's own
+  // UNSEEDED_READS would make it self-confirming — deleting an entry there would
+  // silently shrink the list here and still pass. See the note above seededFlags().
+  //
+  // SHRUNK 2026-09-05, from two flags to one. SEARCH_SIGNAL_DECAY_DAYS is now
+  // seeded by migration 2306, and its UNSEEDED_READS entry has been retired in
+  // the same change — read for the reason the assertion below demands, not
+  // assumed. That entry objected to seeding ALONE: getDecayConfig selected a
+  // `numeric_value` column that does not exist, so the read 42703'd before the
+  // row was reached and a bare seed would only have added an admin switch that
+  // did nothing. This PR performs the "column plus a seed" repair the entry
+  // itself named as the real fix, moving the reader onto `metadata`.
+  //
+  // The entry's second concern — that this makes decay disableable for the first
+  // time, a behaviour change — does not apply: the capability writes through the
+  // `upsert_compass_search_signal` RPC into `compass_search_signal_log`, and
+  // neither exists in the canonical chain or the live schema, so decay has never
+  // operated on data. 2306 seeds `enabled = false` and records the precondition.
+  it("the deliberately-unseeded read is still unseeded", () => {
+    for (const flag of ["place_provenance_stamping_enabled"]) {
       assert.ok(
         !seeded.has(flag),
         `${flag} is now seeded by ${seeded.get(flag)}. Read the UNSEEDED_READS entry in ` +
-          `scripts/check-flag-polarity.mjs before assuming that is an improvement — both entries argue that ` +
-          `a row would be WORSE than no row.`,
+          `scripts/check-flag-polarity.mjs before assuming that is an improvement — it argues that ` +
+          `a row would be WORSE than no row: the absent row IS the interlock, and seeding it puts a ` +
+          `switch in the admin list whose ON position breaks place-supply writes on any database ` +
+          `that has not had 2101's source_id column applied.`,
       );
     }
+  });
+
+  it("SEARCH_SIGNAL_DECAY_DAYS is seeded, and seeded OFF", () => {
+    // The other half of the shrink above: having removed the flag from the
+    // unseeded pin, assert the state that replaced it rather than simply
+    // dropping the coverage. A retired entry with no successor assertion is how
+    // a list quietly loses a member.
+    assert.ok(
+      seeded.has("SEARCH_SIGNAL_DECAY_DAYS"),
+      "SEARCH_SIGNAL_DECAY_DAYS is no longer seeded by any migration. It was removed from the " +
+        "unseeded-reads pin on the basis that 2306 seeds it; if that seed is gone, restore the " +
+        "UNSEEDED_READS entry rather than leaving the flag phantom.",
+    );
   });
 });
 

@@ -542,7 +542,14 @@ export async function buildSharedMoments(
     if (consented.size === 0) return;
     const { data: moments } = await client
       .from("shared_moments")
-      .select("id, title, status, visibility, archived_at, created_at")
+      // `visibility` is NOT a column of shared_moments — the table's audience
+      // control is `join_policy` (invite_only | approval_required), and its
+      // lifecycle control is `status` (active | archived). Selecting a column
+      // that does not exist fails the WHOLE read with 42703, so `moments` was
+      // always undefined and the shared-moment group of "What Portava
+      // Remembers" has never rendered a single row, even for a user with
+      // accepted memberships.
+      .select("id, title, status, join_policy, archived_at, created_at")
       .in("id", Array.from(consented))
       .limit(SOURCE_LIMIT);
     for (const r of asRows(moments)) {
@@ -554,9 +561,11 @@ export async function buildSharedMoments(
         title: String(r.title ?? "Shared Moment"),
         subjectType: "passport:shared_moment", subjectId: String(r.id),
         originTable: "shared_moments", originId: String(r.id),
-        // The moment involves other people; visibility of the moment as set by
-        // its owner. Shown to this owner only because they consented (accepted).
-        visibility: String(r.visibility ?? "private"),
+        // The moment involves other people, so its audience is the moment's own
+        // join policy as set by its owner — never "public": a shared moment is
+        // reachable only by invitation or approval. Shown to this member at all
+        // only because they consented (accepted the membership).
+        visibility: String(r.join_policy ?? "invite_only"),
         correctSupported: false,
         correctNote: "Manage this in Shared Moments.",
         occurredAt: isoOrUndefined(r.created_at),
