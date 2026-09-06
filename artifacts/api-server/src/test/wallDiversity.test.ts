@@ -1,11 +1,19 @@
 /**
  * WallDiversityService — the Feed Diversity Controller (spec §15).
  *
- * Proves the controller prevents the four failure modes it exists to prevent:
- * five-videos-in-a-row (object-type window cap), one-creator floods (actor
- * window cap), a disguised Discovery page (discovery pruning + social ratio),
- * and a wall of annotations (context-thread window cap + live-strip dedup) — and
- * that it is otherwise reorder-preserving (every social object survives).
+ * Proves the controller prevents the failure modes it OWNS: five-videos-in-a-row
+ * (object-type window cap), one-creator floods (actor window cap) and a
+ * disguised Discovery page (discovery pruning + social ratio) — and that it is
+ * otherwise reorder-preserving (every social object survives).
+ *
+ * It no longer owns annotation capping or §4 live-strip dedup. Those used to
+ * live here as a second copy that could never fire — routes/wall.ts calls
+ * applyFeedDiversity before attachContextThreads, so the copy always saw zero
+ * context threads and an empty strip set, and the two tests that covered it
+ * exercised a path production never took. Both rules are enforced upstream by
+ * ContextThreadService's §9 gate, where the excess/duplicate thread is never
+ * BUILT; wallContextThread.test.ts covers them there, including the four
+ * place-anchored kinds the old copy never handled.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +22,7 @@ import {
   DEFAULT_FEED_DIVERSITY_POLICY,
   type FeedDiversityPolicy,
 } from "../services/wall/WallDiversityService.js";
-import type { ContextThread, WallObjectType, WallProjection } from "../lib/wallProjection.js";
+import type { WallObjectType, WallProjection } from "../lib/wallProjection.js";
 
 let seq = 0;
 function item(
@@ -138,70 +146,5 @@ describe("Feed Diversity Controller — disguised-Discovery-page defense", () =>
     ];
     const out = applyFeedDiversity(input, policy, { windowSize: 2 });
     assertWindowCap(out.items, (p) => (p.objectType === "discovery" ? "d" : null), 1, 2, "discovery cap");
-  });
-});
-
-describe("Feed Diversity Controller — annotation overload + live-strip dedup", () => {
-  const thread = (kind: ContextThread["kind"], targetId?: string): ContextThread => ({
-    kind,
-    label: `${kind} thread`,
-    confidence: 0.8,
-    action: targetId ? { type: "see_place", label: "See place", targetType: "place", targetId } : undefined,
-  });
-
-  it("strips context threads beyond maxContextThreadsInWindow (object stays)", () => {
-    const policy: FeedDiversityPolicy = {
-      ...DEFAULT_FEED_DIVERSITY_POLICY,
-      maxContextThreadsInWindow: 1,
-      // Disable reordering constraints so positions are stable for the assertion.
-      maxSameActorInWindow: 9,
-      maxSameObjectTypeInWindow: 9,
-    };
-    const input = [
-      item("social_post", "a", { contextThread: thread("trip_relevance") }),
-      item("social_post", "b", { contextThread: thread("trip_relevance") }),
-      item("social_post", "c", { contextThread: thread("trip_relevance") }),
-    ];
-    const out = applyFeedDiversity(input, policy, { windowSize: 3 });
-    assert.equal(out.items.length, 3, "no object dropped — only annotations stripped");
-    const withThread = out.items.filter((i) => !!i.contextThread).length;
-    assert.ok(withThread <= 1, "at most one thread survives per window");
-    assert.ok(out.strippedThreads >= 2);
-  });
-
-  it("de-duplicates a live_place thread already shown in the Live For You strip", () => {
-    const policy: FeedDiversityPolicy = {
-      ...DEFAULT_FEED_DIVERSITY_POLICY,
-      liveStripDeduplication: true,
-      maxContextThreadsInWindow: 9, // isolate the live-strip dedup
-      maxSameActorInWindow: 9,
-      maxSameObjectTypeInWindow: 9,
-    };
-    const input = [
-      item("social_post", "a", {
-        place: { placeId: "place-live", name: "P" },
-        contextThread: thread("live_place", "place-live"),
-      }),
-      item("social_post", "b", {
-        place: { placeId: "place-other", name: "Q" },
-        contextThread: thread("live_place", "place-other"),
-      }),
-    ];
-    const out = applyFeedDiversity(input, policy, {
-      windowSize: 3,
-      liveStripSubjectIds: new Set(["place-live"]),
-    });
-    const a = out.items.find((i) => i.canonicalObjectId === input[0].canonicalObjectId)!;
-    const b = out.items.find((i) => i.canonicalObjectId === input[1].canonicalObjectId)!;
-    assert.equal(a.contextThread, undefined, "live thread duplicating the strip is removed");
-    assert.ok(b.contextThread, "a distinct live thread is kept");
-    assert.ok(out.strippedThreads >= 1);
-  });
-});
-
-describe("Feed Diversity Controller — degenerate inputs", () => {
-  it("returns empty unchanged", () => {
-    const out = applyFeedDiversity([]);
-    assert.deepEqual(out.items, []);
   });
 });

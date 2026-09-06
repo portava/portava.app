@@ -56,7 +56,7 @@ import {
   verifyUploadedBytes,
   ALLOWED_MEDIA_MIME,
 } from "../lib/mediaPipeline.js";
-import { recordMediaAsset } from "../lib/mediaAssets.js";
+import { recordMediaAsset, capturedAtFromImageBytes } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
@@ -137,6 +137,11 @@ router.post(
     let feed: { buffer: Buffer; mime: string } | null = null;
     let processed = false;
     let phash: string | null = null;
+    // §6 capture time / Wall §16 "two clocks". Read from the RAW bytes, before
+    // processImage strips the metadata — after the strip there is nothing left
+    // to read. Null for video and for any image without a plausible EXIF date.
+    const capturedAt =
+      sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;
 
     if (sniffed.kind === "image") {
       try {
@@ -260,6 +265,10 @@ router.post(
       height,
       thumbnailPath,
       thumbnailUrl,
+      // The §6 clock. Absent before this: both recordMediaAsset call sites
+      // omitted the field, so media_assets.captured_at had no writer at all and
+      // the Wall's §16 experienceAt could never differ from publishedAt.
+      capturedAt,
     });
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
