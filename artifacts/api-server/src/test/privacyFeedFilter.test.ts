@@ -9,8 +9,9 @@
  *   5. Viewer's own posts always pass (self-exempt)
  *   6. Mix of public + private + followed-private + own → correct subset
  *   7. profilesKey path (inline is_private from joined profile) behaves identically
- *   8. Profiles query failure → fail-open (all rows pass)
+ *   8. Profiles query failure → FAIL-CLOSED (only the viewer's own rows pass)
  *   9. Follows query failure → fail-closed (private author excluded)
+ *  10. Profiles query rejection (thrown, not resolved) → also fail-closed
  */
 
 import { test, describe } from "node:test";
@@ -23,12 +24,15 @@ function makeFakeClient(opts: {
   privateAuthorIds?: string[];
   viewerFollowedIds?: string[];
   profilesError?: boolean;
+  /** Transport-level rejection (the `catch` path) rather than a resolved error. */
+  profilesThrows?: boolean;
   followsError?: boolean;
 } = {}) {
   const {
     privateAuthorIds = [],
     viewerFollowedIds = [],
     profilesError = false,
+    profilesThrows = false,
     followsError = false,
   } = opts;
 
@@ -42,6 +46,7 @@ function makeFakeClient(opts: {
             eq(key: string, val: any)    { filters[key] = val;  return builder; },
             then(resolve: (v: any) => any) {
               if (table === "profiles") {
+                if (profilesThrows) throw new Error("connection reset");
                 if (profilesError) return resolve({ data: null, error: new Error("DB error") });
                 const ids: string[] = filters["id"] ?? [];
                 return resolve({
@@ -171,12 +176,38 @@ describe("excludePrivateAuthorPosts", () => {
     assert.equal(result.length, 2);
   });
 
-  test("profiles query failure → fail-open (all rows pass)", async () => {
-    const rows = [makePost(PUB), makePost(PRIV)];
+  /**
+   * ASSERTION DELIBERATELY STRENGTHENED (2026-09-06). This test previously
+   * asserted `result.length === 2` — "profiles query failure → fail-open (all
+   * rows pass)" — and so CODIFIED the defect it was meant to guard.
+   *
+   * The standing rule is never to weaken an assertion; this is the rare inverse.
+   * The old expectation was not a deliberate availability trade-off that a
+   * reviewer could weigh: supabase-js RESOLVES `{data: null, error}` instead of
+   * throwing, so `data ?? []` produced an EMPTY private-author list and the
+   * filter returned every row unfiltered — publishing private accounts' posts
+   * to mediaFeed, pulse, placeRecaps, placeDays, sharedMoments and
+   * MediaProjection. The documented `catch` "fail-open" never even ran.
+   *
+   * Fail-closed is the only defensible reading of an unreadable privacy input:
+   * we cannot prove ANY other author is public, so only the viewer's own rows
+   * survive. A degraded feed is recoverable; a leaked private post is not.
+   */
+  test("profiles query failure → FAIL-CLOSED (only the viewer's own rows pass)", async () => {
+    const rows = [makePost(PUB), makePost(PRIV), makePost(VIEWER)];
     const sc = makeFakeClient({ profilesError: true });
     const result = await excludePrivateAuthorPosts(rows, VIEWER, sc);
-    // Fail-open: cannot determine privacy → let everything through
-    assert.equal(result.length, 2);
+    const ids = result.map((r) => r.author_id);
+    assert.deepEqual(ids, [VIEWER], "an unreadable is_private must withhold every other author");
+    assert.ok(!ids.includes(PUB), "a public author cannot be PROVEN public when the read failed");
+    assert.ok(!ids.includes(PRIV), "the private author's post must never survive the failure");
+  });
+
+  test("profiles query REJECTION (throws) → fail-closed on the same terms", async () => {
+    const rows = [makePost(PUB), makePost(PRIV), makePost(VIEWER)];
+    const sc = makeFakeClient({ profilesThrows: true });
+    const result = await excludePrivateAuthorPosts(rows, VIEWER, sc);
+    assert.deepEqual(result.map((r) => r.author_id), [VIEWER]);
   });
 
   test("follows query failure → fail-closed (private author excluded)", async () => {

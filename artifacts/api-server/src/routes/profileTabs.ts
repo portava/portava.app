@@ -98,10 +98,12 @@ async function applyVisibilityGuard(
 
   let visibility: string;
   let privacySettings: PrivacySettings | null;
+  let privacySettingsUnavailable = false;
   try {
     const result = await resolveProfileVisibility(sc, viewerId, targetId, targetRow);
     visibility = result.visibility;
     privacySettings = result.privacySettings;
+    privacySettingsUnavailable = result.privacySettingsUnavailable;
   } catch (e: any) {
     res.status(500).json({ error: "db_error", message: e.message ?? "Visibility check failed" });
     return { allowed: false, privacySettings: null, isOwner: false };
@@ -117,6 +119,17 @@ async function applyVisibilityGuard(
   }
   if (visibility === "limited_preview") {
     res.status(200).json({ items: [], nextCursor: null });
+    return { allowed: false, privacySettings: null, isOwner: false };
+  }
+
+  // The per-tab gates below all read `privacySettings?.show_x === false`, so a
+  // NULL settings object reads as "the owner opted in to everything". When the
+  // row could not be READ that inference is wrong and serves posts / stamps /
+  // trips to strangers who opted out. Answer honestly and retryably instead of
+  // guessing — a filtered-empty 200 would be indistinguishable from "this user
+  // has nothing".
+  if (privacySettingsUnavailable) {
+    sendError(res, "degraded_unavailable", "Privacy settings could not be read");
     return { allowed: false, privacySettings: null, isOwner: false };
   }
 

@@ -116,11 +116,22 @@ export interface InteractionPermissions {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * TRUE only for a genuinely ABSENT TABLE (Phase-2 tables that may not be
+ * migrated yet).
+ *
+ * PGRST204 — "column not found in schema cache" — used to be listed here, which
+ * meant COLUMN drift was silently classified as a missing table: `optQuery`
+ * returned null, and the three opt-outs read from profile_privacy_settings
+ * (`allow_follow`, `allow_tagging`, `allow_friend_requests`) all fell to their
+ * `!== false` default and were PERMITTED. Renaming or dropping one column
+ * therefore disabled every one of those opt-outs, silently. A column error is
+ * now a real error: it throws, and the caller reports a degraded check.
+ */
 function isTableMissingError(error: any): boolean {
   if (!error) return false;
   return (
     error.code === "42P01" ||
-    error.code === "PGRST204" ||
     String(error.message ?? "").toLowerCase().includes("does not exist")
   );
 }

@@ -430,8 +430,14 @@ router.get("/users/:userId/followers", async (req, res) => {
 
   if (!isMe) {
     try {
-      const { visibility, privacySettings } = await resolveProfileVisibility(sc, viewerId, target, profile);
+      const { visibility, privacySettings, privacySettingsUnavailable } =
+        await resolveProfileVisibility(sc, viewerId, target, profile);
       if (visibility === "unavailable" || visibility === "blocked" || visibility === "limited_preview") {
+        res.status(200).json({ users: [] });
+        return;
+      }
+      // Fail-closed: an UNREADABLE settings row is not "show_followers is true".
+      if (privacySettingsUnavailable) {
         res.status(200).json({ users: [] });
         return;
       }
@@ -490,8 +496,14 @@ router.get("/users/:userId/following", async (req, res) => {
 
   if (!isMe) {
     try {
-      const { visibility, privacySettings } = await resolveProfileVisibility(sc, viewerId, target, profile);
+      const { visibility, privacySettings, privacySettingsUnavailable } =
+        await resolveProfileVisibility(sc, viewerId, target, profile);
       if (visibility === "unavailable" || visibility === "blocked" || visibility === "limited_preview") {
+        res.status(200).json({ users: [] });
+        return;
+      }
+      // Fail-closed: an UNREADABLE settings row is not "show_friends is true".
+      if (privacySettingsUnavailable) {
         res.status(200).json({ users: [] });
         return;
       }
