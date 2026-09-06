@@ -678,7 +678,7 @@ export async function buildYearbook(
     loadCollectionVisibility(sc, userId, perms.callerCtx).catch(() => {
       failed.add("stamps");
       failed.add("memories");
-      return { stamps: false, memories: false };
+      return { stamps: false, memories: false, unavailable: true };
     }),
     buildJourneys(sc, userId, journeyPerms).catch(() => {
       failed.add("journeys");
@@ -696,6 +696,18 @@ export async function buildYearbook(
     // can see, so it is not a collection-level exclusion.
     loadTravelDnaPrefs(sc, userId).catch(() => ({ prefs: new Map(), applied: false }) as TravelDnaPrefs),
   ]);
+
+  // `loadCollectionVisibility` does not THROW when the preference row is
+  // unreadable — PostgREST resolves `{data:null, error}` — so the `.catch()`
+  // above never fired for the commonest failure. It now reports `unavailable`
+  // instead, which is the same "we could not check" answer the catch produces.
+  // (Marked per-collection on the DENIED side only: the owner's own view still
+  // permits both, and an unreadable preference row is no reason to hide an
+  // owner's content from themselves.)
+  if (visibility.unavailable === true) {
+    if (!visibility.stamps) failed.add("stamps");
+    if (!visibility.memories) failed.add("memories");
+  }
 
   const canSeeStamps = visibility.stamps === true && !failed.has("stamps");
   const canSeeMemories = visibility.memories === true && !failed.has("memories");

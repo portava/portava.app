@@ -1358,33 +1358,46 @@ router.get("/posts", async (req, res) => {
   //   2. profiles.passport_visibility = 'private'  (separate passport toggle)
   //   3. profile_privacy_settings.profile_visibility = 'private'  (canonical settings row)
   const privateAuthorIdSet = new Set<string>();
-  try {
-    const [profRes, settingsRes] = await Promise.all([
-      svc.from("profiles").select("id").or("is_private.eq.true,passport_visibility.eq.private"),
-      svc.from("profile_privacy_settings").select("user_id").eq("profile_visibility", "private"),
-    ]);
-    // An empty set means "no private accounts exist"; a rejected query means
-    // "we could not find out". Both produce the same empty exclusion list, and
-    // the second one publishes every private account's posts to the global
-    // feed. PostgREST reports such failures in `error` rather than throwing, so
-    // the catch below never fires for them — inspect both results explicitly.
-    if (profRes.error || settingsRes.error) {
-      req.log.warn(
-        {
-          profilesCode: (profRes.error as any)?.code,
-          settingsCode: (settingsRes.error as any)?.code,
-          err: profRes.error ?? settingsRes.error,
-        },
-        "global feed: private-author lookup failed — private accounts are NOT being excluded from this page",
+  {
+    let lookupFailure: unknown = null;
+    try {
+      const [profRes, settingsRes] = await Promise.all([
+        svc.from("profiles").select("id").or("is_private.eq.true,passport_visibility.eq.private"),
+        svc.from("profile_privacy_settings").select("user_id").eq("profile_visibility", "private"),
+      ]);
+      // An empty set means "no private accounts exist"; a failed query means
+      // "we could not find out". Both used to produce the same empty exclusion
+      // list, and the second one published every private account's posts to the
+      // global feed for that page. PostgREST reports such failures in `error`
+      // rather than throwing, so the catch below never fires for them — inspect
+      // both results explicitly and FAIL CLOSED.
+      if (profRes.error || settingsRes.error) {
+        lookupFailure = profRes.error ?? settingsRes.error;
+        req.log.error(
+          {
+            profilesCode: (profRes.error as any)?.code,
+            settingsCode: (settingsRes.error as any)?.code,
+            err: lookupFailure,
+          },
+          "global feed: private-author lookup failed — refusing to serve an unfiltered page",
+        );
+      } else {
+        for (const p of profRes.data ?? []) privateAuthorIdSet.add((p as any).id);
+        for (const p of settingsRes.data ?? []) privateAuthorIdSet.add((p as any).user_id);
+      }
+    } catch (err) {
+      lookupFailure = err ?? new Error("private-author lookup rejected");
+      req.log.error(
+        { err },
+        "global feed: private-author lookup rejected — refusing to serve an unfiltered page",
       );
     }
-    for (const p of profRes.data ?? []) privateAuthorIdSet.add((p as any).id);
-    for (const p of settingsRes.data ?? []) privateAuthorIdSet.add((p as any).user_id);
-  } catch (err) {
-    req.log.warn(
-      { err },
-      "global feed: private-author lookup rejected — private accounts are NOT being excluded from this page",
-    );
+    if (lookupFailure) {
+      // Fail-closed: without the exclusion list every private account's posts
+      // would surface to this page. A retryable 503 is the honest answer.
+      sendError(res, "degraded_unavailable", "Feed privacy filter unavailable");
+      return;
+    }
   }
   const privateAuthorIds = [...privateAuthorIdSet];
 
@@ -2524,6 +2537,14 @@ router.get("/posts/:postId/savers", async (req, res) => {
     sc.from("profile_privacy_settings").select("user_id, allow_profile_discovery, show_real_name").in("user_id", saverIds),
   ]);
 
+  // Fail-closed: an UNREAD privacy table is not "everybody allows discovery".
+  // `privacyRes.error` resolves (PostgREST does not throw), so an unchecked read
+  // yielded an empty map and `!== false` then listed every opted-out saver.
+  if (privacyRes.error) {
+    req.log.error({ err: privacyRes.error }, "posts/:postId/savers: discovery-privacy lookup failed");
+    sendError(res, "degraded_unavailable", "Privacy settings could not be read");
+    return;
+  }
   const profileMap = new Map(((profilesRes.data ?? []) as any[]).map((p) => [p.id as string, p]));
   // No row in profile_privacy_settings means allow_profile_discovery defaults to true.
   const privacyMap = new Map(((privacyRes.data ?? []) as any[]).map((p) => [p.user_id as string, p.allow_profile_discovery as boolean]));

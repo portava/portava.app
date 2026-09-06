@@ -340,6 +340,14 @@ router.get("/me/profile/viewers", async (req, res) => {
     nameVisibilitySet(sc, viewerIds),
   ]);
 
+  // Fail-closed: an UNREAD privacy table is not "everybody allows discovery".
+  // `privacyRes.error` resolves rather than throwing, so an unchecked read left
+  // the map empty and `!== false` then listed every discovery-opted-out viewer.
+  if (privacyRes.error) {
+    req.log.error({ err: privacyRes.error }, "me/profile/viewers: discovery-privacy lookup failed");
+    sendError(res, "degraded_unavailable", "Privacy settings could not be read");
+    return;
+  }
   const profileMap = new Map(((profilesRes.data ?? []) as any[]).map((p) => [p.id as string, p]));
   const privacyMap = new Map(((privacyRes.data ?? []) as any[]).map((p) => [p.user_id as string, p.allow_profile_discovery as boolean]));
 

@@ -1133,18 +1133,51 @@ async function loadBuddyReputation(sc: SupabaseClient, userId: string): Promise<
   }
 }
 
-/** Load passport visibility preferences (best-effort). */
-async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<Record<string, any> | null> {
+/**
+ * Load passport visibility preferences.
+ *
+ * Three-state on purpose. `{ok:true, prefs:null}` is an ABSENT row (the owner
+ * never set preferences — the column defaults govern, unchanged by this fix);
+ * `{ok:false}` is an UNREADABLE row, which must never be confused with the
+ * former. This used to destructure only `data`: PostgREST resolves
+ * `{data:null, error}` instead of throwing, so a failed read produced the exact
+ * same `null` as an absent row and `tierPermits(undefined)` PERMITTED — a
+ * stranger saw stamps and memories the owner had restricted (memories_visible
+ * defaults to 'circle', so the failure genuinely WIDENED exposure).
+ */
+type VisibilityPrefsRead =
+  | { ok: true; prefs: Record<string, any> | null }
+  | { ok: false; prefs: null };
+
+async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<VisibilityPrefsRead> {
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("passport_visibility_preferences")
       .select("stamps_visible, memories_visible")
       .eq("user_id", userId)
       .maybeSingle();
-    return (data as any) ?? null;
+    if (error) return { ok: false, prefs: null };
+    return { ok: true, prefs: (data as any) ?? null };
   } catch {
-    return null;
+    return { ok: false, prefs: null };
   }
+}
+
+/**
+ * Collection gate, fail-closed on an unreadable preference row.
+ *
+ * The owner always sees their own passport (an unreadable preference row is not
+ * a reason to hide someone's own content from them); every other caller is
+ * DENIED when the tier could not be read.
+ */
+function collectionPermits(
+  read: VisibilityPrefsRead,
+  key: "stamps_visible" | "memories_visible",
+  caller: CallerContext,
+): boolean {
+  if (caller === "owner") return true;
+  if (!read.ok) return false;
+  return tierPermits((read.prefs as any)?.[key], caller);
 }
 
 /**
@@ -1157,13 +1190,17 @@ async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<
  * only composes them, so a viewer can never be shown more by the aggregate than
  * by the yearbook or the reverse.
  *
- * Fail-closed inputs: an unreadable preference row resolves to `null`, which
- * `tierPermits` treats as the default "public" tier — exactly as the aggregate
- * already does, so the two surfaces stay identical even in the degraded case.
+ * Fail-closed inputs: an UNREADABLE preference row denies both collections to
+ * every non-owner caller and raises `unavailable`, so the caller can say "we
+ * could not check" instead of silently serving restricted content. An ABSENT
+ * row is a successful read and keeps its existing default handling — exactly as
+ * the aggregate does, so the two surfaces stay identical in both cases.
  */
 export interface PassportCollectionVisibility {
   stamps: boolean;
   memories: boolean;
+  /** True when the preference row could not be read at all (not merely absent). */
+  unavailable: boolean;
 }
 
 export async function loadCollectionVisibility(
@@ -1171,10 +1208,11 @@ export async function loadCollectionVisibility(
   userId: string,
   caller: CallerContext,
 ): Promise<PassportCollectionVisibility> {
-  const prefs = await loadVisibilityPrefs(sc, userId);
+  const read = await loadVisibilityPrefs(sc, userId);
   return {
-    stamps: tierPermits(prefs?.stamps_visible, caller),
-    memories: tierPermits(prefs?.memories_visible, caller),
+    stamps: collectionPermits(read, "stamps_visible", caller),
+    memories: collectionPermits(read, "memories_visible", caller),
+    unavailable: !read.ok,
   };
 }
 
@@ -1565,7 +1603,7 @@ export async function buildPassportProjection(
   //    private / circle_only was projected to any viewer that cleared (a).
   //    filterUnifiedStamps fails closed on an absent/unknown tier.
   let stamps: StampProjection[] = [];
-  if (tierPermits(prefs?.stamps_visible, callerCtx)) {
+  if (collectionPermits(prefs, "stamps_visible", callerCtx)) {
     stamps = filterUnifiedStamps(unified.stamps as UnifiedStamp[], callerCtx)
       .slice(0, 24)
       .map(mapStamp);
@@ -1589,7 +1627,7 @@ export async function buildPassportProjection(
 
   // 9. Memories (privacy-guarded per item + collection tier).
   let memories: MemoryProjection[] = [];
-  if (tierPermits(prefs?.memories_visible, callerCtx)) {
+  if (collectionPermits(prefs, "memories_visible", callerCtx)) {
     try {
       const raw = await loadMemories(sc, userId);
       const guarded = filterMemories(raw as any[], callerCtx);

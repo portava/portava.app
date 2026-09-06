@@ -8,8 +8,18 @@
  *   "blocked"        — block relationship exists between viewer and target (either direction)
  *   "unavailable"    — account is deactivated, suspended, or deleted
  *
- * SAFETY: block check is FAIL-CLOSED (throws on DB error, not on missing table).
- * Account-state and privacy-settings checks are FAIL-OPEN (table missing → skip).
+ * SAFETY: every privacy input is FAIL-CLOSED.
+ *   • block check       — throws on any DB error.
+ *   • account state     — a genuinely ABSENT table (42P01 / PGRST205) is skipped;
+ *                         any OTHER error (RLS denial, connection failure,
+ *                         PGRST204 missing-column) yields "unavailable". It used
+ *                         to test `if (!acctErr && acct?.state)`, so a failed read
+ *                         read as "no restriction" and a deactivated / banned /
+ *                         deleted profile stayed fully visible.
+ *   • privacy settings  — a failed read no longer collapses to `null` (which every
+ *                         caller's `?.show_x === false` test read as "opted in").
+ *                         `privacySettingsUnavailable` is raised so callers can
+ *                         withhold, and the profile is treated as non-public.
  */
 
 export type VisibilityLevel = "full" | "followers_only" | "limited_preview" | "blocked" | "unavailable";
@@ -39,12 +49,27 @@ export interface PrivacySettings {
 export interface ProfileVisibilityResult {
   visibility: VisibilityLevel;
   privacySettings: PrivacySettings | null;
+  /**
+   * TRUE when profile_privacy_settings could not be READ (as distinct from
+   * "the owner has no row", which is a successful read and leaves this false).
+   * A caller that gates content on `privacySettings?.show_x === false` MUST
+   * withhold that content when this is true — the flags are unknown, not false.
+   */
+  privacySettingsUnavailable: boolean;
 }
 
+/**
+ * TRUE only for a genuinely ABSENT TABLE. PGRST204 ("column not found") is
+ * deliberately NOT here: column drift is not a missing table, and treating it as
+ * one turns a schema mismatch into a silent privacy fail-open. The message probe
+ * likewise requires "relation" so that `column "x" does not exist` does not
+ * sneak through it.
+ */
 function isTableMissingErr(e: any): boolean {
   if (!e) return false;
-  return e.code === "42P01" || e.code === "PGRST204" || e.code === "PGRST205" ||
-    String(e.message ?? "").toLowerCase().includes("does not exist");
+  if (e.code === "42P01" || e.code === "PGRST205") return true;
+  const msg = String(e.message ?? "").toLowerCase();
+  return msg.includes("relation") && msg.includes("does not exist");
 }
 
 /**
@@ -74,16 +99,20 @@ export async function resolveProfileVisibility(
     } catch {
       ps = null;
     }
-    return { visibility: "full", privacySettings: ps };
+    // The owner is never gated by their own flags, so an unreadable row cannot
+    // leak anything here.
+    return { visibility: "full", privacySettings: ps, privacySettingsUnavailable: false };
   }
 
   // ── 1. Account status — profile row first (fast path), then state table ───
   const profileAccountStatus = targetProfileRow.account_status ?? null;
   if (profileAccountStatus && profileAccountStatus !== "active") {
-    return { visibility: "unavailable", privacySettings: null };
+    return { visibility: "unavailable", privacySettings: null, privacySettingsUnavailable: false };
   }
 
-  // Fallback: query user_account_states (fail-open on missing table)
+  // Fallback: query user_account_states. FAIL-CLOSED on any error other than a
+  // genuinely absent table — an RLS denial or a connection failure tells us
+  // NOTHING about the account's state, and must not be read as "still active".
   try {
     const { data: acct, error: acctErr } = await sc
       .from("user_account_states")
@@ -91,10 +120,20 @@ export async function resolveProfileVisibility(
       .eq("user_id", targetId)
       .in("state", ["deleted", "deactivated", "banned", "suspended"])
       .maybeSingle();
-    if (!acctErr && acct?.state) {
-      return { visibility: "unavailable", privacySettings: null };
+    if (acctErr) {
+      if (!isTableMissingErr(acctErr)) {
+        return { visibility: "unavailable", privacySettings: null, privacySettingsUnavailable: false };
+      }
+      // table genuinely absent → no restriction to read
+    } else if (acct?.state) {
+      return { visibility: "unavailable", privacySettings: null, privacySettingsUnavailable: false };
     }
-  } catch { /* table missing → no restriction */ }
+  } catch (e: any) {
+    if (!isTableMissingErr(e)) {
+      return { visibility: "unavailable", privacySettings: null, privacySettingsUnavailable: false };
+    }
+    /* table missing → no restriction */
+  }
 
   // ── 2. Block check (FAIL-CLOSED) ───────────────────────────────────────────
   if (viewerId) {
@@ -104,35 +143,51 @@ export async function resolveProfileVisibility(
       .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${targetId}),and(blocker_id.eq.${targetId},blocked_id.eq.${viewerId})`);
     if (blockErr) throw new Error(`Block check failed: ${blockErr.message}`);
     if ((blockRows ?? []).length > 0) {
-      return { visibility: "blocked", privacySettings: null };
+      return { visibility: "blocked", privacySettings: null, privacySettingsUnavailable: false };
     }
   }
 
   // ── 3. Privacy settings ────────────────────────────────────────────────────
   let privacySettings: PrivacySettings | null = null;
+  let privacySettingsUnavailable = false;
   try {
     const { data: ps, error: psErr } = await sc
       .from("profile_privacy_settings")
       .select("*")
       .eq("user_id", targetId)
       .maybeSingle();
-    if (!psErr) privacySettings = ps ?? null;
-  } catch { /* table missing → null */ }
+    if (psErr) {
+      // A genuinely absent table is the pre-launch case this used to cover; any
+      // other error means the flags are UNKNOWN, and `null` is indistinguishable
+      // from "no row / all defaults on" at every call site.
+      if (!isTableMissingErr(psErr)) privacySettingsUnavailable = true;
+    } else {
+      privacySettings = ps ?? null;
+    }
+  } catch (e: any) {
+    if (!isTableMissingErr(e)) privacySettingsUnavailable = true;
+  }
 
   // ── 4. Effective visibility level ─────────────────────────────────────────
   // Derive effective visibility: privacy settings row wins; fall back to the
   // profile-level fields.  All three privacy tiers must be mapped so that
   // callers without a profile_privacy_settings row still get the correct tier.
-  const profileVis =
-    privacySettings?.profile_visibility ??
-    (targetProfileRow.passport_visibility === "private" || targetProfileRow.is_private
-      ? "private"
-      : targetProfileRow.passport_visibility === "followers_only"
-      ? "followers_only"
-      : "public");
+  //
+  // When the settings row was UNREADABLE we cannot know the canonical tier, so
+  // the profiles-row fallback is not trustworthy either: treat the profile as
+  // approval-required ("private") rather than inferring "public" from a source
+  // the owner may have overridden.
+  const profileVis = privacySettingsUnavailable
+    ? "private"
+    : privacySettings?.profile_visibility ??
+      (targetProfileRow.passport_visibility === "private" || targetProfileRow.is_private
+        ? "private"
+        : targetProfileRow.passport_visibility === "followers_only"
+        ? "followers_only"
+        : "public");
 
   if (profileVis === "public") {
-    return { visibility: "full", privacySettings };
+    return { visibility: "full", privacySettings, privacySettingsUnavailable };
   }
 
   // Non-public tiers — decide what grants access:
@@ -159,11 +214,11 @@ export async function resolveProfileVisibility(
     const grantedByFriend = Boolean(friendRes.data);
     const grantedByFollow = followTierGrantsAccess && Boolean(followRes.data);
     if (grantedByFriend || grantedByFollow) {
-      return { visibility: "followers_only", privacySettings };
+      return { visibility: "followers_only", privacySettings, privacySettingsUnavailable };
     }
   }
 
-  return { visibility: "limited_preview", privacySettings };
+  return { visibility: "limited_preview", privacySettings, privacySettingsUnavailable };
 }
 
 /**
