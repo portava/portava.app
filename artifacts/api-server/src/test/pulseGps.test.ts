@@ -51,8 +51,19 @@ function makeFakeDb(opts: {
         limit:     () => self,
         order:     () => self,
         maybeSingle: async () => {
-          if (table === "user_location_preferences") {
+          // `location_preferences` is the table PATCH /api/me/location-preferences
+          // actually upserts. This fixture used to answer for
+          // `user_location_preferences` — the writerless duplicate the production
+          // reader was pointed at — so the suite was green BECAUSE it mirrored the
+          // defect: fixture and code agreed on a table that no user's settings ever
+          // reach. Answering only for the canonical table is what makes these tests
+          // able to fail when the reader drifts back.
+          if (table === "location_preferences") {
             return { data: prefs, error: null };
+          }
+          if (table === "user_location_preferences") {
+            // Deliberately empty, mirroring production: nothing writes this table.
+            return { data: null, error: null };
           }
           return { data: null, error: null };
         },
