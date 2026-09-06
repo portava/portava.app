@@ -53,6 +53,7 @@ import {
 // The ONE bidirectional, fail-closed block resolver. Marketplace search filters
 // against the same set the map layer does.
 import { fetchBlockedSet } from "../lib/blocks.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
@@ -1333,12 +1334,17 @@ export async function enforceBookingCreationGates(opts: {
 
   // ── Block-table enforcement ─────────────────────────────────────────────────
   // Traveler must not be blocked by, or have blocked, the buddy's user.
+  //
+  // This gate stands between two strangers and a PHYSICAL meeting, so it runs
+  // through the canonical fail-CLOSED helper rather than reading `.data` off two
+  // maybeSingle() calls. The hand-rolled pair it replaces was fail-OPEN twice
+  // over: supabase-js RESOLVES with { data: null, error } on a PostgREST error,
+  // so an unreadable blocks table left both `.data` null, made this `if` false,
+  // and the booking was INSERTED; and .maybeSingle() raises on >1 row, so a
+  // fully MUTUAL block (two rows) errored into the same "not blocked" answer.
+  // The client here is service-role, so RLS is not a backstop behind it.
   if (buddyUserId) {
-    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
-      serviceClient.from("blocks").select("id").eq("blocker_id", buddyUserId).eq("blocked_id", userId).maybeSingle(),
-      serviceClient.from("blocks").select("id").eq("blocker_id", userId).eq("blocked_id", buddyUserId).maybeSingle(),
-    ]);
-    if (blockedByBuddy.data || blockedByTraveler.data) {
+    if (await isBlockedBetween(serviceClient, userId, buddyUserId)) {
       res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
       return false;
     }

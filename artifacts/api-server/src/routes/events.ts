@@ -246,13 +246,19 @@ async function canManageAttendance(sc: any, eventId: string, userId: string): Pr
   return role === "host" || role === "co_host" || role === "moderator";
 }
 
-/** Check if blocked relationship exists in either direction */
+/**
+ * Check if blocked relationship exists in either direction — fail CLOSED.
+ * `error` was unbound, so an unreadable blocks table answered "not blocked" and
+ * let a blocked user RSVP to / join an event hosted by someone who blocked them.
+ * Matches lib/blockGuard.isBlockedBetween.
+ */
 async function isBlocked(sc: any, userA: string, userB: string): Promise<boolean> {
-  const { data } = await sc
+  const { data, error } = await sc
     .from("blocks")
     .select("id")
     .or(`and(blocker_id.eq.${userA},blocked_id.eq.${userB}),and(blocker_id.eq.${userB},blocked_id.eq.${userA})`)
     .limit(1);
+  if (error) return true; // block state unknown → treat as blocked
   return ((data as any[]) ?? []).length > 0;
 }
 
@@ -719,15 +725,26 @@ router.get("/events", async (req, res) => {
   const rows = (events as any[]) ?? [];
   const otherHostIds = [...new Set(rows.map((e: any) => e.host_id as string))].filter((h) => h !== user.id);
 
-  // Blocks in either direction — two batched queries
+  // Blocks in either direction — two batched queries. FAIL CLOSED: an errored
+  // read left blockedHosts empty, which reads as "no host is blocked", and the
+  // feed listed events hosted by people the viewer had blocked. When the block
+  // set is unknown, treat EVERY other host as blocked rather than none.
   const blockedHosts = new Set<string>();
   if (otherHostIds.length > 0) {
     const [b1, b2] = await Promise.all([
       sc.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", otherHostIds),
       sc.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", otherHostIds),
     ]);
-    for (const b of (((b1 as any).data as any[]) ?? [])) blockedHosts.add(b.blocked_id as string);
-    for (const b of (((b2 as any).data as any[]) ?? [])) blockedHosts.add(b.blocker_id as string);
+    if ((b1 as any).error || (b2 as any).error) {
+      req.log.warn(
+        { userId: user.id, err: (b1 as any).error ?? (b2 as any).error },
+        "events list: block-state read failed — withholding every other host's events (fail-closed)",
+      );
+      for (const h of otherHostIds) blockedHosts.add(h);
+    } else {
+      for (const b of (((b1 as any).data as any[]) ?? [])) blockedHosts.add(b.blocked_id as string);
+      for (const b of (((b2 as any).data as any[]) ?? [])) blockedHosts.add(b.blocker_id as string);
+    }
   }
 
   // Friendships, only for hosts of friends_only events

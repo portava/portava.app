@@ -232,11 +232,22 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Build blocked-user set (both directions from viewer's perspective)
-  const { data: blockRows } = await sc
+  // Build blocked-user set (both directions from viewer's perspective).
+  // FAIL CLOSED: `error` was unbound, so an unreadable blocks table left the set
+  // empty and the liker list — which is filtered on exactly this set — showed
+  // people in a block relationship with the viewer.
+  const { data: blockRows, error: blockErr } = await sc
     .from("blocks")
     .select("blocker_id, blocked_id")
     .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
+  if (blockErr) {
+    req.log?.warn(
+      { userId: user.id, err: blockErr },
+      "reactions list: block-state read failed — refusing rather than listing unfiltered users",
+    );
+    sendError(res, "db_error", "Block state could not be verified");
+    return;
+  }
   const blockedSet = new Set<string>();
   for (const b of (blockRows ?? []) as any[]) {
     if (b.blocker_id === user.id) blockedSet.add(b.blocked_id);

@@ -276,6 +276,19 @@ router.get("/users/:userId/block-status", async (req, res) => {
     client.from("blocks").select("blocked_id").eq("blocker_id", target).eq("blocked_id", user.id).maybeSingle(),
   ]);
 
+  // Reading only `.data` reported a confident "not blocked, not blocked by" for
+  // BOTH fields during an outage — supabase-js RESOLVES with `{ data: null,
+  // error }` — and clients gate "can I message / see this person" on exactly
+  // this answer. Say we don't know rather than say no.
+  if (iBlocked.error || theyBlocked.error) {
+    req.log.error(
+      { err: iBlocked.error ?? theyBlocked.error, targetId: target },
+      "block-status read failed",
+    );
+    sendError(res, "db_error", "Block status could not be determined");
+    return;
+  }
+
   res.status(200).json({
     userId: target,
     iBlocked: Boolean(iBlocked.data),

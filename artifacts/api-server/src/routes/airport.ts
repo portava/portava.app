@@ -1370,12 +1370,21 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
     let rows = (buddies ?? []) as any[];
     rows = rows.filter((b) => b.user_id !== user.id);
 
-    // Exclude blocked users in both directions.
+    // Exclude blocked users in both directions — fail CLOSED on an unreadable
+    // blocks table, exactly as the layover-travellers count above does. `error`
+    // was not bound here, so a PostgREST rejection (which supabase-js RESOLVES
+    // rather than throws, leaving the catch below unreached) produced an empty
+    // exclusion set and recommended a blocked person as someone to MEET during
+    // the layover. No block set → no buddies.
     try {
-      const { data: blockRows } = await sc
+      const { data: blockRows, error: blockErr } = await sc
         .from("blocks")
         .select("blocker_id, blocked_id")
         .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
+      if (blockErr) {
+        res.json({ ok: true, city, buddies: [] });
+        return;
+      }
       const excluded = new Set<string>();
       for (const b of (blockRows ?? []) as any[]) {
         excluded.add(b.blocker_id === user.id ? b.blocked_id : b.blocker_id);

@@ -441,6 +441,13 @@ export async function canBeSeenByViewersBatch(
     }
   }
 
+  // Fail CLOSED on an unreadable blocks table. `blocksRes.data ?? []` alone read
+  // a PostgREST error as "nobody is blocked" and handed live circle presence —
+  // status, venue label, approximate location — to a viewer the target had
+  // blocked. The single-shot canViewCirclePresence above already denies with
+  // reason "blocked" in this case (via isBlockedBetween); this batch path must
+  // give the SAME answer, or the two guards disagree on the same pair.
+  const blocksUnreadable = Boolean((blocksRes as any).error);
   const blocks = (blocksRes.data ?? []) as Array<{ blocker_id: string; blocked_id: string }>;
   const blockedWithTarget = new Set<string>();
   for (const b of blocks) {
@@ -486,7 +493,7 @@ export async function canBeSeenByViewersBatch(
       out.set(viewerId, { allowed: false, reason: targetDenyReason });
       continue;
     }
-    if (blockedWithTarget.has(viewerId)) {
+    if (blocksUnreadable || blockedWithTarget.has(viewerId)) {
       out.set(viewerId, { allowed: false, reason: "blocked" });
       continue;
     }
@@ -610,6 +617,10 @@ export async function canViewCirclePresenceBatch(
   for (const s of (settingsRes.data ?? []) as any[]) settingsById.set(s.user_id as string, s);
   const ctxById = new Map<string, any>();
   for (const c of (ctxRes.data ?? []) as any[]) ctxById.set(c.user_id as string, c);
+  // Same fail-CLOSED rule as the per-viewer batch above: an errored blocks read
+  // is "block state unknown", not "no blocks". Every target in this sweep is
+  // withheld rather than served to a viewer who may have blocked them.
+  const blocksUnreadable = Boolean((blocksRes as any).error);
   const blocks = (blocksRes.data ?? []) as Array<{ blocker_id: string; blocked_id: string }>;
   const now = new Date();
   const restricted = new Set<string>();
@@ -693,7 +704,7 @@ export async function canViewCirclePresenceBatch(
         (b.blocker_id === viewerId && b.blocked_id === targetUserId) ||
         (b.blocker_id === targetUserId && b.blocked_id === viewerId),
     );
-    if (mutualBlock) {
+    if (blocksUnreadable || mutualBlock) {
       out.set(targetUserId, { allowed: false, reason: "blocked" });
       continue;
     }

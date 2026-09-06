@@ -403,9 +403,14 @@ export async function evaluateNotification(
       // reports rejections in `error` rather than throwing, so the catch below
       // never fires for them: without binding these, a schema/query error
       // delivers the push and leaves no trace that the check did not run.
+      // FAIL CLOSED. This gate's whole contract is that "a blocked sender must
+      // never reach the recipient via push"; an unreadable blocks table means we
+      // do not know whether this is such a sender, and the only safe answer is
+      // to suppress. Logging and then DELIVERING was the exact fail-open the
+      // comment above describes.
       if (senderBlockErr || recipientBlockErr) {
         console.warn(
-          "CompassNotificationEngine: blocked-sender check failed — push is being delivered WITHOUT block suppression",
+          "CompassNotificationEngine: blocked-sender check failed — suppressing the push (fail-closed)",
           {
             userId,
             senderId,
@@ -415,16 +420,18 @@ export async function evaluateNotification(
               (senderBlockErr as any)?.message ?? (recipientBlockErr as any)?.message,
           },
         );
+        return decide("suppressed_blocked_sender", `blocked:${senderId}`);
       }
       if (senderBlockedRecipient || recipientBlockedSender) {
         return decide("suppressed_blocked_sender", `blocked:${senderId}`);
       }
     } catch (err) {
-      // fail-open: a DB error should not block safety checking elsewhere
+      // Fail closed for the same reason: a rejected check is an unchecked one.
       console.warn(
-        "CompassNotificationEngine: blocked-sender check rejected — push is being delivered WITHOUT block suppression",
+        "CompassNotificationEngine: blocked-sender check rejected — suppressing the push (fail-closed)",
         { userId, senderId, err },
       );
+      return decide("suppressed_blocked_sender", `blocked:${senderId}`);
     }
   }
 

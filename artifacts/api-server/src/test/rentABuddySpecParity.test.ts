@@ -123,6 +123,10 @@ function makeReqClient() {
       gte(col: string, val: any) { this._filters.push(["gte", col, val]); return this; },
       ilike(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       or() { return this; },
+      // The block guard now uses .limit(1) (lib/blockGuard.isBlockedBetween):
+      // .maybeSingle() raised PGRST116 on a MUTUAL block, i.e. the strongest
+      // block state read as 'not blocked'.
+      limit() { return this; },
       order() { return this; },
       maybeSingle() { this._maybeSingle = true; return this; },
       single() { this._maybeSingle = true; return this; },

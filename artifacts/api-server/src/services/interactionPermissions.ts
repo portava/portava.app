@@ -443,9 +443,19 @@ export async function resolveInteractionPermissions(
     ? (() => { throw new Error(`msg settings query failed: ${(msgSettingsRes as any).error.message}`); })()
     : ((msgSettingsRes as any).data as { message_privacy: string; allow_message_requests: boolean } | null);
 
-  // Cooldown: active if row exists and not expired (or no expiry = permanent)
+  // Cooldown: active if row exists and not expired (or no expiry = permanent).
+  //
+  // FAIL CLOSED on a read error. These cooldown rows are written when one user
+  // BLOCKS another (the follow cooldown is 90 days), so answering "no cooldown"
+  // on an unreadable `user_interaction_cooldowns` made the whole post-block
+  // cooldown evaporate during any blip and re-opened messaging / nudging /
+  // friend requests / follows between those two users. A missing TABLE stays
+  // "no cooldown" — that is a deployment shape, not an outage, and the Phase 2
+  // tables are documented as optional.
   function isActiveCooldown(res: { data: { expires_at: string | null } | null; error: any } | any): boolean {
-    if ((res as any).error && !isTableMissingError((res as any).error)) return false; // skip on error
+    if ((res as any).error) {
+      return !isTableMissingError((res as any).error);
+    }
     if (!(res as any).data) return false;
     const exp = (res as any).data.expires_at as string | null;
     return !exp || new Date(exp) > new Date();

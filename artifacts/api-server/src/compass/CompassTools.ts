@@ -955,20 +955,30 @@ async function resolveGroupMemberIds(
   return { memberIds: [...ids], groupLabel: trip.title ? wrapUgc(String(trip.title)) : "the trip group", circleOwnerId: null };
 }
 
-/** Union of block relationships (both directions) involving any group member. */
-async function groupBlockUnion(sc: SupabaseClient, memberIds: string[]): Promise<string[]> {
+/**
+ * Union of block relationships (both directions) involving any group member.
+ *
+ * Returns null when the block state could not be READ — a distinct sentinel, the
+ * same contract lib/blocks.fetchBlockedSet uses. Both `error` values were
+ * discarded here and the catch never saw a PostgREST rejection (supabase-js
+ * RESOLVES those), so an unreadable blocks table returned `[]` — indistinguishable
+ * from "this group has blocked nobody" — and the group recommendation excluded
+ * nobody. Callers MUST treat null as "recommend nothing".
+ */
+async function groupBlockUnion(sc: SupabaseClient, memberIds: string[]): Promise<string[] | null> {
   try {
-    const [{ data: asBlocker }, { data: asBlocked }] = await Promise.all([
+    const [{ data: asBlocker, error: blockerErr }, { data: asBlocked, error: blockedErr }] = await Promise.all([
       sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id", memberIds),
       sc.from("blocks").select("blocker_id, blocked_id").in("blocked_id", memberIds),
     ]);
+    if (blockerErr || blockedErr) return null;
     const out = new Set<string>();
     for (const b of ((asBlocker ?? []) as any[])) out.add(String(b.blocked_id));
     for (const b of ((asBlocked ?? []) as any[])) out.add(String(b.blocker_id));
     for (const id of memberIds) out.delete(id); // members themselves stay
     return [...out];
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -996,6 +1006,12 @@ async function toolGroupRecommendation(
   ]);
   const members = ((profRows ?? []) as any[]).map(prefsFromRow);
   if (members.length === 0) return { candidates: [], info: "Group member profiles are not available." };
+
+  // null === the block union could not be read. Fail closed: recommend nothing
+  // rather than a group list that silently excluded nobody.
+  if (blockUnion === null) {
+    return { candidates: [], info: "Group block state is unavailable right now, so no group recommendation can be made." };
+  }
 
   const agg = aggregateGroupPreferences(members);
   const viewerProfile: CompassProfile =

@@ -125,6 +125,7 @@ function makeClient() {
     return {
       _table: table,
       _filters: [] as Array<[string, string, any]>,
+      _or: null as string | null,
       _insertData: null as any,
       _updateData: null as any,
       _maybeSingle: false,
@@ -142,7 +143,7 @@ function makeClient() {
       in(col: string, val: any) { this._filters.push(["in", col, val]); return this; },
       ilike(col: string, val: any) { this._filters.push(["ilike", col, val]); return this; },
       is(col: string, val: any) { this._filters.push(["is", col, val]); return this; },
-      or() { return this; },
+      or(expr: string) { this._or = expr; return this; },
       order() { return this; },
       limit() { return this; },
       maybeSingle() { this._maybeSingle = true; return this; },
@@ -234,10 +235,30 @@ function makeClient() {
         }
 
         if (t === "blocks") {
-          const blocker = this._eq("blocker_id");
-          const blocked = this._eq("blocked_id");
-          const hit = state.blocks.find((b) => b.blocker_id === blocker && b.blocked_id === blocked);
-          return { data: hit ? { id: "block-1" } : null, error: null };
+          // The block guard is now lib/blockGuard.isBlockedBetween, which asks
+          // for BOTH directions in one `.or(...)` + `.limit(1)` list read
+          // (.maybeSingle() raised PGRST116 on a mutual block, so the strongest
+          // block state read as "not blocked"). Honour both shapes.
+          let hits: any[];
+          if (this._or) {
+            const ids = [...String(this._or).matchAll(/(blocker_id|blocked_id)\.eq\.([^,)]+)/g)];
+            const pairs: Array<[string, string]> = [];
+            for (let i = 0; i + 1 < ids.length; i += 2) {
+              const a = ids[i], b = ids[i + 1];
+              const blocker = a[1] === "blocker_id" ? a[2] : b[2];
+              const blocked = a[1] === "blocked_id" ? a[2] : b[2];
+              pairs.push([blocker, blocked]);
+            }
+            hits = state.blocks.filter((b) =>
+              pairs.some(([bl, bd]) => b.blocker_id === bl && b.blocked_id === bd));
+          } else {
+            const blocker = this._eq("blocker_id");
+            const blocked = this._eq("blocked_id");
+            hits = state.blocks.filter((b) => b.blocker_id === blocker && b.blocked_id === blocked);
+          }
+          const rows = hits.map(() => ({ id: "block-1" }));
+          if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, error: null };
         }
 
         if (t === "rent_buddy_launch_controls") {
