@@ -31,7 +31,7 @@ import {
   type OwnerFieldVisibility,
 } from "./PassportPrivacyGuard.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyGuard.js";
-import { getDisplayTrustScore, getTrustProfile } from "../trust/TrustScoreService.js";
+import { getDisplayTrustScore, getTrustProfile, getTrustProfileResult } from "../trust/TrustScoreService.js";
 import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
 import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
@@ -935,38 +935,87 @@ function presentationWord(score: number): string {
   return "New";
 }
 
-function mean(...xs: number[]): number {
-  const vals = xs.filter((x) => Number.isFinite(x));
-  if (vals.length === 0) return 50;
+/**
+ * Mean of the categories that actually exist, or NULL when none do.
+ *
+ * It used to return 50 for an empty set, which is how a domain with no
+ * contributing categories still produced the word "Established".
+ */
+function mean(...xs: Array<number | null>): number | null {
+  const vals = xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+  if (vals.length === 0) return null;
   return vals.reduce((a, b) => a + b, 0) / vals.length;
 }
 
+/** Presentation for a domain whose inputs are all missing. */
+function wordOrUnrated(score: number | null): string {
+  return score === null ? "Not yet rated" : presentationWord(score);
+}
+
+const DOMAIN_LABELS: Record<string, string> = {
+  overall: "Overall", traveler: "Traveler", trip_guest: "Trip Guest",
+  trip_host: "Trip Host", contributor: "Contributor", buddy: "Buddy",
+};
+
 /**
  * TABLE 12 — project the nine canonical category scores into per-domain trust
- * PRESENTATIONS (no raw numbers reach the viewer). Categories default to the
- * neutral 50 when there is no trust profile, matching the trust engine's own
- * neutral default, so a brand-new account reads "Established" everywhere rather
- * than an alarming zero.
+ * PRESENTATIONS (no raw numbers reach the viewer).
+ *
+ * WHAT CHANGED, AND WHY IT MATTERED
+ * =================================
+ * Every missing category used to default to the neutral 50, "so a brand-new
+ * account reads 'Established' everywhere rather than an alarming zero". The
+ * intent was kind and the effect was a lie: `presentationWord(50)` is
+ * "Established", so EVERY user with no trust profile — which today is every
+ * user, since `trust_engine_enabled` is off and `trust_profiles` is empty — was
+ * shown as an established member of the community across all six domains. A
+ * constant presented as a measurement.
+ *
+ * The same 50 also absorbed a FAILED read, so "we could not reach the trust
+ * engine" and "this person is established" rendered identically.
+ *
+ * Both now resolve through `applicable: false`, which this contract already had
+ * for the Buddy domain and which clients already handle as "do not render a
+ * rating". No new field, no new vocabulary, and no alarming zero — the domain
+ * simply does not make a claim it cannot support.
  */
 function buildDomainTrust(
-  overallScore: number,
+  overallScore: number | null,
   categories: Record<string, number> | null | undefined,
   isBuddy: boolean,
+  /** Why there is no score, when there is none. */
+  absence: "none" | "not_yet_rated" | "unavailable" = "none",
 ): DomainTrust[] {
-  const c = (k: string): number => {
+  if (absence !== "none" || overallScore === null) {
+    const presentation = absence === "unavailable" ? "Unavailable" : "Not yet rated";
+    return ["overall", "traveler", "trip_guest", "trip_host", "contributor", "buddy"].map((key) => ({
+      key,
+      domain: DOMAIN_LABELS[key] ?? key,
+      presentation,
+      applicable: false,
+    }));
+  }
+  const c = (k: string): number | null => {
     const v = Number((categories as Record<string, number> | undefined)?.[k]);
-    return Number.isFinite(v) ? v : 50;
+    return Number.isFinite(v) ? v : null;
   };
+  // A domain is `applicable` only when at least one of its categories exists.
+  // Otherwise it says so instead of borrowing a neutral number.
+  const dom = (key: string, score: number | null): DomainTrust => ({
+    key, domain: DOMAIN_LABELS[key] ?? key,
+    presentation: wordOrUnrated(score),
+    applicable: score !== null,
+  });
   const domains: DomainTrust[] = [
-    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true },
-    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true },
-    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true },
-    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true },
-    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true },
+    dom("overall", overallScore),
+    dom("traveler", mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))),
+    dom("trip_guest", mean(c("plan_attendance"), c("respect_safety"), c("communication"))),
+    dom("trip_host", c("host_quality")),
+    dom("contributor", mean(c("content_quality"), c("community_value"), c("guide_accuracy"))),
     // Buddy is a contextual projection (§20): "Not applicable" unless the user
     // actually offers a buddy service.
     isBuddy
-      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true }
+      ? dom("buddy", mean(c("host_quality"), c("respect_safety"), c("communication")))
       : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false },
   ];
   return domains;
@@ -988,9 +1037,19 @@ async function buildTrust(
   // The canonical category scores + overall drive the TABLE 12 per-domain
   // presentation for EVERY context (public included) — domains carry only words,
   // never numbers, so they are safe to project to any viewer (§9/§10).
-  const profile = await getTrustProfile(sc, userId).catch(() => null);
-  const overallForDomains = profile && Number.isFinite(Number(profile.overall_score)) ? Number(profile.overall_score) : 50;
-  const domains = buildDomainTrust(overallForDomains, profile?.categories as Record<string, number> | undefined, isBuddy);
+  // Three states, not two. `getTrustProfile` collapses "absent" and "unreadable"
+  // into null, and collapsing them again here is what produced a constant
+  // presented as a measurement.
+  const read = await getTrustProfileResult(sc, userId);
+  const profile = read.state === "ok" ? read.profile : null;
+  const overallForDomains =
+    profile && Number.isFinite(Number(profile.overall_score)) ? Number(profile.overall_score) : null;
+  const domains = buildDomainTrust(
+    overallForDomains,
+    profile?.categories as Record<string, number> | undefined,
+    isBuddy,
+    read.state === "unavailable" ? "unavailable" : read.state === "absent" ? "not_yet_rated" : "none",
+  );
 
   if (context === "public") {
     const badge = await getPublicTrustBadge(sc, userId);
