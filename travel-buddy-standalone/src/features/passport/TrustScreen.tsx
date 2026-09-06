@@ -55,10 +55,10 @@ import { color, space, radius, type as t, avatar, icon } from '../../theme/token
 import {
   useTrustProjection,
   deriveTrustView,
-  NOT_APPLICABLE,
   type TrustProjectionEnvelope,
   type TrustView,
   type TrustDomainRow,
+  type CapabilityChip,
   type CredentialProjection,
 } from './useTrustProjection.ts';
 import { useContributions } from './useContributions.ts';
@@ -127,25 +127,33 @@ function ScoreHero({ view }: { view: TrustView }) {
 
 // ── Domain trust (TABLE 12) ──────────────────────────────────────────────────
 
+/** Shown when the server sent no standing for a domain — an absence, not a
+ *  measurement (mirrors the null-score convention). */
+const UNKNOWN_STANDING = 'Not shown';
+
 function DomainRow({ row }: { row: TrustDomainRow }) {
   const Glyph = domainIcon(row.key);
+  // A null standing is UNKNOWN: render it as an absence, never as a standing.
+  const known = row.standing !== null;
+  const standing = known ? row.standing : UNKNOWN_STANDING;
+  const positive = row.applicable && known;
   return (
     <View
       style={s.domainRow}
-      accessibilityLabel={`${row.domain}: ${row.standing}`}
+      accessibilityLabel={`${row.domain}: ${standing}`}
     >
-      <Glyph size={icon.s16} color={row.applicable ? color.deep : color.faint} />
-      <Text style={[s.domainName, !row.applicable && s.domainNameMuted]} numberOfLines={1}>
+      <Glyph size={icon.s16} color={positive ? color.deep : color.faint} />
+      <Text style={[s.domainName, !positive && s.domainNameMuted]} numberOfLines={1}>
         {row.domain}
       </Text>
       <View
-        style={[s.standingPill, row.applicable ? s.standingPillOn : s.standingPillOff]}
+        style={[s.standingPill, positive ? s.standingPillOn : s.standingPillOff]}
       >
         <Text
-          style={[s.standingText, row.applicable ? s.standingTextOn : s.standingTextOff]}
+          style={[s.standingText, positive ? s.standingTextOn : s.standingTextOff]}
           numberOfLines={1}
         >
-          {row.standing}
+          {standing}
         </Text>
       </View>
     </View>
@@ -177,10 +185,10 @@ function CredentialRow({ cred }: { cred: CredentialProjection }) {
 
 // ── Capability chips (TABLE 14) ──────────────────────────────────────────────
 
-function CapabilityChips({ view }: { view: TrustView }) {
+function CapabilityChips({ chips }: { chips: CapabilityChip[] }) {
   return (
     <View style={s.chips}>
-      {view.capabilityChips.map((chip) => (
+      {chips.map((chip) => (
         <View key={chip.key} style={s.chip} accessibilityLabel={chip.label}>
           <BadgeCheck size={icon.s14} color={color.success} />
           <Text style={s.chipText}>{chip.label}</Text>
@@ -318,13 +326,23 @@ export default function TrustScreen({
           <>
             <ScoreHero view={view} />
 
-            {/* Domain-specific trust (§9, TABLE 12) */}
+            {/* Domain-specific trust (§9, TABLE 12) — server-measured rows,
+                rendered verbatim. When the server sent none, say so rather than
+                inventing rows the client would have to guess at. */}
             <SectionTitle>Trust by area</SectionTitle>
-            <View style={s.card}>
-              {view.domains.map((row) => (
-                <DomainRow key={row.key} row={row} />
-              ))}
-            </View>
+            {view.hasDomains && view.domains && view.domains.length > 0 ? (
+              <View style={s.card}>
+                {view.domains.map((row) => (
+                  <DomainRow key={row.key} row={row} />
+                ))}
+              </View>
+            ) : (
+              <View style={s.card}>
+                <Text style={s.unknownText}>
+                  Trust by area isn&apos;t shown in this view.
+                </Text>
+              </View>
+            )}
 
             {/* Positive credentials (TABLE 13) */}
             {view.credentials.length > 0 ? (
@@ -346,11 +364,23 @@ export default function TrustScreen({
               <ContributionCard data={contributions} />
             ) : null}
 
-            {/* Positive capabilities (TABLE 14) */}
-            {view.capabilityChips.length > 0 ? (
+            {/* Positive capabilities (TABLE 14). Three distinct states: the
+                server granted some (chips), the server granted none (nothing to
+                show), or the server projected no capabilities at all — which is
+                UNKNOWN and must not be rendered as "nothing unlocked". */}
+            {!view.hasCapabilities ? (
               <>
                 <SectionTitle>What this unlocks</SectionTitle>
-                <CapabilityChips view={view} />
+                <View style={s.card}>
+                  <Text style={s.unknownText}>
+                    Capabilities aren&apos;t shown in this view.
+                  </Text>
+                </View>
+              </>
+            ) : view.capabilityChips && view.capabilityChips.length > 0 ? (
+              <>
+                <SectionTitle>What this unlocks</SectionTitle>
+                <CapabilityChips chips={view.capabilityChips} />
               </>
             ) : null}
 
@@ -620,6 +650,13 @@ const s = StyleSheet.create({
     flexShrink: 1,
     fontSize: 12,
     lineHeight: 17,
+  },
+
+  /** Copy for an ABSENT server measurement — muted, never styled as a value. */
+  unknownText: {
+    ...t.small,
+    color: color.mute,
+    paddingVertical: space.xs,
   },
 
   // States

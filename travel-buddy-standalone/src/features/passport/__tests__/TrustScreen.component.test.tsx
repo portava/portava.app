@@ -70,6 +70,26 @@ jest.mock('../useTrustProjection', () => {
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
+/**
+ * The TABLE 12 domain block exactly as the server builds it
+ * (PassportProjectionService.buildDomainTrust): one presentation word per
+ * domain plus its applicability. A projection carrying trust ALWAYS carries
+ * this array, so the fixtures carry it too — the screen reads it verbatim.
+ */
+function serverDomains(overallWord: string) {
+  return [
+    { key: 'overall', domain: 'Overall', presentation: overallWord, applicable: true },
+    // The remaining domains fall back to the trust engine's neutral 50 →
+    // "Established" when there is no trust profile.
+    { key: 'traveler', domain: 'Traveler', presentation: 'Established', applicable: true },
+    { key: 'trip_guest', domain: 'Trip Guest', presentation: 'Established', applicable: true },
+    { key: 'trip_host', domain: 'Trip Host', presentation: 'Established', applicable: true },
+    { key: 'contributor', domain: 'Contributor', presentation: 'Established', applicable: true },
+    // Non-buddy accounts: the server itself marks Buddy out of scope.
+    { key: 'buddy', domain: 'Buddy', presentation: 'Not applicable', applicable: false },
+  ];
+}
+
 function makeProjection(
   overrides: Partial<TrustProjectionEnvelope> = {},
 ): TrustProjectionEnvelope {
@@ -82,6 +102,7 @@ function makeProjection(
       score: 87,
       confidence: 'high',
       strengths: ['Safe & Respectful'],
+      domains: serverDomains('Excellent'),
     },
     credentials: [
       { key: 'identity', label: 'Identity Verified', detail: null, tier: 'verified' },
@@ -176,6 +197,7 @@ describe('TrustScreen', () => {
         score: null, // server withholds the number in this view
         confidence: 'low',
         strengths: [],
+        domains: serverDomains('Established'),
       },
       capabilities: {
         owner: {
@@ -200,7 +222,8 @@ describe('TrustScreen', () => {
     expect(screen.getByText('Early days')).toBeTruthy();
     // No numeric score anywhere.
     expect(screen.queryByText('/ 100')).toBeNull();
-    // Out-of-scope domains read the neutral "Not applicable" (TABLE 12).
+    // The domain the SERVER marked out of scope carries the server's own
+    // neutral "Not applicable" word (TABLE 12) — the client substitutes nothing.
     expect(screen.getAllByText('Not applicable').length).toBeGreaterThan(0);
   });
 });

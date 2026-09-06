@@ -14,15 +14,23 @@
  *                    server strips private report counts / moderation evidence
  *                    before they ever reach the client (§10); this hook only
  *                    ever reads the whitelisted positive fields.
+ *   • domains      — the server's per-domain trust presentations (TABLE 12):
+ *                    one non-stigmatizing word per domain plus the server's own
+ *                    applicability decision. Read verbatim, never recomputed.
  *   • capabilities — server-projected POSITIVE capability flags (TABLE 14). The
  *                    UI shows them as "what this unlocks" chips; it must NOT
  *                    infer authorization from the numeric score (§11) — the
- *                    server is the sole authority, so applicability comes from
- *                    these flags, never from `score`.
+ *                    server is the sole authority. These flags drive the chips
+ *                    ONLY; domain applicability comes from `trust.domains`.
  *
  * `deriveTrustView` is a pure function exported for direct unit/component
- * testing. It does NOT read the numeric score to decide domain applicability —
- * that is derived from server-owned capability flags and travel evidence only.
+ * testing. It does NOT compute domain applicability or standing at all: both are
+ * SERVER measurements, read verbatim off `trust.domains` (TABLE 12).
+ *
+ * UNKNOWN STAYS UNKNOWN. Where the server did not ship a measurement, this
+ * module returns `null` rather than a plausible-looking default — the same
+ * convention the numeric score already uses (`score: number | null` +
+ * `hasScore`). A missing measurement must never be rendered as if it were one.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useSession } from '../../context/SessionContext.tsx';
@@ -37,6 +45,21 @@ import { freshToken } from '../../services/apiToken.ts';
 
 export type TrustConfidence = 'low' | 'medium' | 'high';
 
+/**
+ * TABLE 12 — one domain's trust presentation, exactly as the SERVER computed it
+ * (PassportProjectionService buildDomainTrust). `presentation` is the server's
+ * non-stigmatizing word ("Excellent" | "Strong" | "Established" | "Building" |
+ * "New" | "Not applicable"); `applicable` is the server's scope decision (e.g.
+ * Buddy is false for a user who offers no buddy service). The client renders
+ * both verbatim and derives neither.
+ */
+export interface DomainTrustProjection {
+  key: string;
+  domain: string;
+  presentation: string;
+  applicable: boolean;
+}
+
 export interface TrustProjection {
   /** Qualitative standing (e.g. "Strong", "New Traveler · Verified"). */
   label: string;
@@ -46,6 +69,9 @@ export interface TrustProjection {
   /** Evidence-aware band: an 82 with high evidence ≠ an 82 with little (§10). */
   confidence: TrustConfidence;
   strengths: string[];
+  /** TABLE 12 per-domain presentations. Absent on a projection that predates
+   *  the field — absent means UNKNOWN, never "nothing applies". */
+  domains?: DomainTrustProjection[];
 }
 
 export interface CredentialProjection {
@@ -67,7 +93,9 @@ export interface PassportPositiveCapabilities {
 }
 
 export interface PassportActionCapabilities {
-  owner: PassportPositiveCapabilities;
+  /** Absent when the server did not project owner capabilities for this viewer.
+   *  Absent means UNKNOWN — never "every capability denied". */
+  owner?: PassportPositiveCapabilities;
   /** Per-viewer action flags (TABLE 29). Not rendered by the Trust surface. */
   actions?: Record<string, boolean>;
 }
@@ -96,8 +124,8 @@ export interface TrustProjectionEnvelope {
   identity?: { name?: string | null; handle?: string | null; verified?: boolean };
   trust?: TrustProjection;
   credentials: CredentialProjection[];
-  capabilities: PassportActionCapabilities;
-  stats: TrustStats;
+  capabilities?: PassportActionCapabilities;
+  stats?: TrustStats;
   viewerContext: PassportViewerContext;
   /** Present when privacy/blocking reduced the projection to a minimal card. */
   restricted?: { reason: string };
@@ -107,15 +135,18 @@ export interface TrustProjectionEnvelope {
 // Presentation model
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A single domain-trust row (TABLE 12). */
+/**
+ * A single domain-trust row (TABLE 12) — a straight read of the server's own
+ * DomainTrust. Nothing here is derived on the client.
+ */
 export interface TrustDomainRow {
   key: string;
-  /** Display name — Overall / Traveler / Trip Guest / … */
+  /** Display name — Overall / Traveler / Trip Guest / … (server-supplied). */
   domain: string;
-  /** Server says this domain is in scope for the owner. */
+  /** The SERVER's scope decision for this domain. */
   applicable: boolean;
-  /** Qualitative standing, or the non-stigmatizing "Not applicable". */
-  standing: string;
+  /** The SERVER's presentation word, or null when it shipped none (unknown). */
+  standing: string | null;
 }
 
 export interface CapabilityChip {
@@ -136,16 +167,26 @@ export interface TrustView {
   confidenceLabel: string;
   /** Non-stigmatizing sentence explaining the evidence level (§10). */
   confidenceCopy: string;
-  domains: TrustDomainRow[];
+  /** Server-measured domain rows, or null when the server shipped none.
+   *  null is UNKNOWN — the screen must not render six invented rows. */
+  domains: TrustDomainRow[] | null;
+  /** True only when the server actually measured the domains. */
+  hasDomains: boolean;
   credentials: CredentialProjection[];
-  capabilityChips: CapabilityChip[];
+  /** Granted capability chips, or null when the server projected no owner
+   *  capabilities at all. null is UNKNOWN, distinct from "[] = none granted". */
+  capabilityChips: CapabilityChip[] | null;
+  /** True only when the server actually projected owner capabilities. */
+  hasCapabilities: boolean;
 }
 
-/** Sentinel standing for out-of-scope domains — deliberately neutral (§10). */
+/**
+ * The word the SERVER sends for an out-of-scope domain (§10, deliberately
+ * neutral) — see PassportProjectionService.buildDomainTrust. Exported so tests
+ * and future callers can name it; the client never SUBSTITUTES it for a missing
+ * measurement, because "out of scope" is a server decision, not a fallback.
+ */
 export const NOT_APPLICABLE = 'Not applicable';
-
-/** Standing shown for an in-scope domain the server vouches for. */
-const IN_GOOD_STANDING = 'In good standing';
 
 /**
  * Confidence copy is intentionally non-stigmatizing for new users (§10): the
@@ -176,52 +217,58 @@ const CAPABILITY_LABELS: ReadonlyArray<{ key: keyof PassportPositiveCapabilities
   { key: 'canBecomeBuddy', label: 'Become a Buddy' },
 ];
 
-const EMPTY_CAPS: PassportPositiveCapabilities = {
-  canJoinPublicTrip: false,
-  canHostTrip: false,
-  canCreateLargePlan: false,
-  canUseCrewLocation: false,
-  canContributeLiveIntel: false,
-  canBecomeBuddy: false,
-};
-
 /**
  * Re-shape the trust slice of a PassportProjection into the display model.
  * Pure — no I/O, safe to unit-test.
  *
- * Domain applicability (TABLE 12) is derived from SERVER-OWNED capability flags
- * and travel evidence — never from the numeric score (§11). "Overall" carries
- * the server's qualitative label; in-scope specific domains read "In good
- * standing"; out-of-scope domains read the neutral "Not applicable".
+ * Domain rows (TABLE 12) are a VERBATIM read of `trust.domains` — the server
+ * computed both the presentation word (buildDomainTrust → presentationWord) and
+ * the applicability decision. The client does not recompute either from
+ * capability flags, travel stats or the numeric score (§11).
+ *
+ * Where a measurement is absent it stays absent: no domains → `domains: null`;
+ * no owner capabilities → `capabilityChips: null`. Callers branch on
+ * `hasDomains` / `hasCapabilities` the same way they already branch on
+ * `hasScore`, and render an honest unknown rather than a plausible default.
  */
 export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
   const trust = p.trust ?? null;
-  const caps = p.capabilities?.owner ?? EMPTY_CAPS;
-  const stats = p.stats ?? { countries: 0, cities: 0, stamps: 0, trips: 0 };
 
   const hasTrust = !!trust;
   const confidence: TrustConfidence = trust?.confidence ?? 'low';
   const meta = CONFIDENCE_META[confidence];
   const hasScore = typeof trust?.score === 'number';
-  const overall = trust?.label ?? NOT_APPLICABLE;
 
-  // Traveler scope: any real travel evidence, or the base "join trips" grant.
-  const hasTravelEvidence = stats.stamps > 0 || stats.countries > 0 || caps.canJoinPublicTrip;
+  // TABLE 12 — server measurement, read straight through. An absent array is
+  // UNKNOWN (e.g. a cached projection from before the field shipped), never
+  // "no domain applies".
+  const serverDomains = Array.isArray(trust?.domains) ? trust!.domains : null;
+  const domains: TrustDomainRow[] | null = serverDomains
+    ? serverDomains
+        .filter((d): d is DomainTrustProjection => !!d && typeof d.key === 'string')
+        .map((d) => ({
+          key: d.key,
+          domain: typeof d.domain === 'string' && d.domain !== '' ? d.domain : d.key,
+          // Only an explicit `false` denies scope; anything else is not a
+          // server "no", so the row stays in scope and its standing carries
+          // whatever the server actually said.
+          applicable: d.applicable !== false,
+          standing:
+            typeof d.presentation === 'string' && d.presentation !== ''
+              ? d.presentation
+              : null,
+        }))
+    : null;
 
-  const specific = (applicable: boolean): string => (applicable ? IN_GOOD_STANDING : NOT_APPLICABLE);
-
-  const domains: TrustDomainRow[] = [
-    { key: 'overall', domain: 'Overall', applicable: hasTrust, standing: hasTrust ? overall : NOT_APPLICABLE },
-    { key: 'traveler', domain: 'Traveler', applicable: hasTrust && hasTravelEvidence, standing: specific(hasTrust && hasTravelEvidence) },
-    { key: 'trip_guest', domain: 'Trip Guest', applicable: caps.canJoinPublicTrip, standing: specific(caps.canJoinPublicTrip) },
-    { key: 'trip_host', domain: 'Trip Host', applicable: caps.canHostTrip, standing: specific(caps.canHostTrip) },
-    { key: 'contributor', domain: 'Contributor', applicable: caps.canContributeLiveIntel, standing: specific(caps.canContributeLiveIntel) },
-    { key: 'buddy', domain: 'Buddy', applicable: caps.canBecomeBuddy, standing: specific(caps.canBecomeBuddy) },
-  ];
-
-  const capabilityChips: CapabilityChip[] = CAPABILITY_LABELS
-    .filter((c) => caps[c.key])
-    .map((c) => ({ key: c.key, label: c.label }));
+  // TABLE 14 — an absent `owner` block is UNKNOWN. Substituting all-false here
+  // would hide the chips as though the server had denied every capability.
+  const caps = p.capabilities?.owner ?? null;
+  const capabilityChips: CapabilityChip[] | null = caps
+    ? CAPABILITY_LABELS.filter((c) => caps[c.key] === true).map((c) => ({
+        key: c.key,
+        label: c.label,
+      }))
+    : null;
 
   return {
     hasTrust,
@@ -232,8 +279,10 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
     confidenceLabel: meta.label,
     confidenceCopy: meta.copy,
     domains,
+    hasDomains: domains !== null,
     credentials: Array.isArray(p.credentials) ? p.credentials : [],
     capabilityChips,
+    hasCapabilities: capabilityChips !== null,
   };
 }
 
