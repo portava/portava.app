@@ -576,14 +576,20 @@ router.get(
     if (wantKind("social_zone")) {
       tasks.push(
         (async () => {
-          const travelers = await listMapTravelers(sc, {
+          const read = await listMapTravelers(sc, {
             viewerId: user.id,
             lat,
             lng,
             radiusKm,
             blockedSet,
-          }).catch(() => []);
-          for (const t of travelers) collected.push(projectTraveler(t));
+          }).catch(() => null);
+          // A read failure is NOT an empty city. `listMapTravelers` used to
+          // swallow its own PostgREST errors and return [], and this layer then
+          // pushed "travelers" into `sources` — telling the client the layer had
+          // been read successfully and nobody was here. Same rule as circle,
+          // buddies, trips and places: leave the layer OUT of `sources`.
+          if (!read || !read.ok) return;
+          for (const t of read.travelers) collected.push(projectTraveler(t));
           sources.push("travelers");
         })(),
       );
@@ -592,15 +598,26 @@ router.get(
     if (wantKind("hidden_gem")) {
       tasks.push(
         (async () => {
-          const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 }).catch(() => []);
+          // `discoverGems` THROWS on a query error, so this catch is the only
+          // thing standing between a failed read and the layer. It used to
+          // catch to [] and still claim the source; a failed gem read is now
+          // absent from `sources` like every other failed layer.
+          const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 100 }).catch(
+            () => null,
+          );
+          if (ranked === null) return;
           const notBlocked = ranked.filter(
             (r: any) => !r.gem?.submitted_by || !blockedSet.has(r.gem.submitted_by),
           );
+          // The privacy pass is part of the read: if it cannot be applied, the
+          // gems it would have redacted must not be served, and the layer has
+          // not been read.
           const safe = await applyGemPrivacyBatch(
             notBlocked.map((r: any) => r.gem),
             sc,
             user.id,
-          ).catch(() => []);
+          ).catch(() => null);
+          if (safe === null) return;
           safe.forEach((g: any, i: number) =>
             collected.push(projectGem(g, notBlocked[i]?.distanceKm ?? null)),
           );
@@ -614,8 +631,9 @@ router.get(
     // privacy-complete source (visibility, friendship, eligibility, the shared
     // block set, show_exact_location redaction) — so a cause hypothesis can
     // only ever name an event the viewer could see as a pin anyway. `null`
-    // means the read failed; the event layer keeps its historical "empty on
-    // failure" behaviour, the cause producer reports it.
+    // means the read failed: the cause producer reports it as
+    // `eventsReadFailed`, and the event layer drops out of `sources` rather
+    // than serving the failure as an empty neighbourhood.
     let eventsOnce: Promise<any[] | null> | null = null;
     const loadEventsOnce = (): Promise<any[] | null> => {
       if (!eventsOnce) {
@@ -627,7 +645,13 @@ router.get(
     if (wantKind("event")) {
       tasks.push(
         (async () => {
-          const events = (await loadEventsOnce()) ?? [];
+          const events = await loadEventsOnce();
+          // `loadNearbyEvents` already returns null for a FAILED read, and the
+          // §10 inferred-cause path already reports it as `eventsReadFailed`.
+          // This layer used to coalesce that null to [] and push "events"
+          // anyway, so the same failure the crowd-flow report named honestly
+          // was served to the event layer as "no events nearby".
+          if (events === null) return;
           for (const ev of events) collected.push(projectEvent(ev, nowMs));
           sources.push("events");
         })(),

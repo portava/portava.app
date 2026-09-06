@@ -6,11 +6,19 @@
  * for the full privacy contract. Blocked relationships are excluded
  * fail-closed: if the block list cannot be read, nobody is returned.
  *
+ * A FAILED READ IS NOT AN EMPTY MAP. `listMapTravelers` refuses (it does not
+ * return an empty list) when the block set is unresolvable or when the
+ * candidate or privacy reads fail, and this route answers `db_error` for all
+ * three — the same answer it has always given when the read THREW. supabase-js
+ * returns its errors rather than throwing, so before this the identical failure
+ * arrived as 200 { travelers: [] }: "nobody is on the map".
+ *
  * Query params:
  *   lat, lng   — map viewport centre (required, finite, in range)
  *   radiusKm   — search radius, clamped to 1..100 (default 50)
  *
  * Response: { travelers: MapTravelerPayload[], generatedAt: string }
+ *           or the standard db_error envelope (500) when the read refused.
  */
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
@@ -51,14 +59,23 @@ router.get("/map/travelers", async (req, res) => {
 
   try {
     const blockedSet = await fetchBlockedSet(db, user.id);
-    const travelers = await listMapTravelers(db, {
+    const read = await listMapTravelers(db, {
       viewerId: user.id,
       lat,
       lng,
       radiusKm,
       blockedSet,
     });
-    res.json({ travelers, generatedAt: new Date().toISOString() });
+    if (!read.ok) {
+      // This route ALREADY answers db_error when the read THROWS (see the catch
+      // below). supabase-js returns its errors instead of throwing, so the same
+      // failure used to arrive here as an empty list and was served as 200
+      // "nobody is on the map". One failure, one answer.
+      req.log.error({ reason: read.reason }, "map/travelers read refused");
+      sendError(res, "db_error", "Could not load map travelers", { exposeDetail: true });
+      return;
+    }
+    res.json({ travelers: read.travelers, generatedAt: new Date().toISOString() });
   } catch (err) {
     req.log.error({ err }, "map/travelers failed");
     sendError(res, "db_error", "Could not load map travelers", { exposeDetail: true });
