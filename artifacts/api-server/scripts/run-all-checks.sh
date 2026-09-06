@@ -111,6 +111,12 @@ run_check "check:guard-coverage" pnpm run check:guard-coverage
 # its own JWT accepts a banned user's still-valid token. Six mutating routes in
 # trips.ts did exactly that. Structural rule: if a handler writes, it goes
 # through requireUser.
+# check:route-shadowing — Express matches in registration order, so a literal
+# path registered after a parameterised one that fits it is never reached. The
+# handler exists and typechecks; it is simply never called, and the caller gets
+# whatever the parameterised handler does with a non-id. Silent by construction.
+run_check "check:route-shadowing" pnpm run check:route-shadowing
+
 run_check "check:route-auth-gate" pnpm run check:route-auth-gate
 # check:flag-polarity — every feature flag is classified STOP/CAPABILITY/CONFIG
 # and read through the reader that classification demands. Wired 2026-08-10
