@@ -643,12 +643,32 @@ describe("sensing aggregation — routed through the existing privacy gate", () 
     assert.equal(a.published, null);
   });
 
-  it("counts PEOPLE, not contributions — ten rows from one holder are one actor", () => {
+  it("counts PEOPLE, not contributions — a cohort that would publish on ROW count is still suppressed", () => {
+    // The discriminating shape, and the reason a smaller one is not enough: five
+    // people in five independent parties, each contributing four times. TWENTY
+    // contributions is past the fifteen-actor threshold; FIVE people is far
+    // below it. A gate handed the row count publishes this — which is exactly
+    // the defect lib/privacyGate.ts records for CompassGraphEngine, where three
+    // stamps from one traveller read as "3 observations".
+    const people = cohort({ actors: 5, groups: 5 });
+    const repeated = people.flatMap((r) => Array.from({ length: 4 }, () => r));
+    const a = aggregateSensingCohort(repeated, { bucketStartMs: BUCKET, nowMs: NOW });
+    assert.equal(a.contributions, 20);
+    assert.ok(
+      a.contributions > PRIVACY_THRESHOLD_V1.minUniqueActors,
+      "the fixture must be one that a row-counting gate WOULD publish, or it proves nothing",
+    );
+    assert.equal(a.distinctActors, 5);
+    assert.equal(a.decision.publishable, false);
+    assert.equal(a.decision.reason, "below_actor_threshold");
+  });
+
+  it("ten rows from one holder are one actor", () => {
     const one = cohort({ actors: 1, groups: 1 });
     const repeated = Array.from({ length: 10 }, () => one[0]!);
     const a = aggregateSensingCohort(repeated, { bucketStartMs: BUCKET, nowMs: NOW });
     assert.equal(a.contributions, 10);
-    assert.equal(a.distinctActors, 1, "the CompassGraphEngine failure — events read as people — must not recur");
+    assert.equal(a.distinctActors, 1);
     assert.equal(a.decision.publishable, false);
   });
 });
