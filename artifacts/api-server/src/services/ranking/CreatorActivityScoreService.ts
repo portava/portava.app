@@ -612,42 +612,62 @@ export class CreatorSignalAggregator {
    * never had a writer.
    */
   private async _fetchActiveDays(userId: string, ago90d: string): Promise<number> {
-    /** [table, actorColumn, timeColumn] — time column is NOT always created_at. */
-    const ACTOR_DAY_SOURCES: Array<[string, string, string]> = [
-      // Authored contributions — the same rows recentContribution counts.
-      ["posts",             "author_id",    "created_at"],
-      ["events",            "host_id",      "created_at"],
-      ["trips",             "owner_id",     "created_at"],
-      ["reviews",           "reviewer_id",  "created_at"],
-      ["discovery_places",  "submitted_by", "created_at"],
-      // Actions on other people's content — the half publish-days would lose.
-      ["posts_comments",    "user_id",      "created_at"],
-      ["post_saves",        "user_id",      "created_at"],
-      ["post_shares",       "user_id",      "created_at"],
-      ["content_stamps",    "user_id",      "created_at"],
-      ["event_rsvps",       "user_id",      "created_at"],
-      ["user_follows",      "follower_id",  "created_at"],
-      ["post_edits",        "user_id",      "edited_at"],
-      ["profile_views",     "viewer_id",    "viewed_at"],
-    ];
+    // WRITTEN OUT, ONE STATIC `.from("literal")` PER SOURCE, ON PURPOSE.
+    //
+    // The obvious shape here is a [table, actorCol, timeCol] table driven by a
+    // loop. It was that, and check:write-path-columns rejected it: a dynamic
+    // `.from(table)` is a blind spot the live-schema column checker cannot
+    // resolve, so nothing would verify that `post_edits.edited_at` and
+    // `profile_views.viewed_at` are real columns. Getting one of those wrong is
+    // a 42703, which supabase-js RETURNS rather than throws — the per-source
+    // catch below would swallow it and the source would contribute zero days,
+    // silently. That is the same failure this whole file exists to remove, so
+    // the loop is not worth its brevity: spelled out, every column name here is
+    // checked against the live schema on every CI run.
+    const q = this.db as any;
+    const src = (
+      builder: () => any,
+      timeCol: string,
+    ): Promise<{ rows: any[]; timeCol: string }> =>
+      Promise.resolve()
+        .then(builder)
+        .then((res: any) => ({ rows: (res?.data as any[]) ?? [], timeCol }))
+        // One unavailable source must not zero the whole component — that is
+        // how the previous version failed, silently and completely.
+        .catch(() => ({ rows: [] as any[], timeCol }));
 
+    const results = await Promise.all([
+      // Authored contributions — the same rows recentContribution counts.
+      src(() => q.from("posts").select("created_at")
+        .eq("author_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("events").select("created_at")
+        .eq("host_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("trips").select("created_at")
+        .eq("owner_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("reviews").select("created_at")
+        .eq("reviewer_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("discovery_places").select("created_at")
+        .eq("submitted_by", userId).gte("created_at", ago90d), "created_at"),
+      // Actions on other people's content — the half publish-days would lose.
+      src(() => q.from("posts_comments").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("post_saves").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("post_shares").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("content_stamps").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("event_rsvps").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("user_follows").select("created_at")
+        .eq("follower_id", userId).gte("created_at", ago90d), "created_at"),
+      // The two that do NOT use created_at. Spelled out is the point.
+      src(() => q.from("post_edits").select("edited_at")
+        .eq("user_id", userId).gte("edited_at", ago90d), "edited_at"),
+      src(() => q.from("profile_views").select("viewed_at")
+        .eq("viewer_id", userId).gte("viewed_at", ago90d), "viewed_at"),
+    ]);
     const days = new Set<string>();
-    const results = await Promise.all(
-      ACTOR_DAY_SOURCES.map(async ([table, actorCol, timeCol]) => {
-        try {
-          const { data } = await (this.db as any)
-            .from(table)
-            .select(timeCol)
-            .eq(actorCol, userId)
-            .gte(timeCol, ago90d);
-          return { rows: ((data as any[]) ?? []), timeCol };
-        } catch {
-          // One unavailable source must not zero the whole component — that is
-          // how the previous version failed, silently and completely.
-          return { rows: [] as any[], timeCol };
-        }
-      }),
-    );
     for (const { rows, timeCol } of results) {
       for (const r of rows) {
         const d = String(r?.[timeCol] ?? "").slice(0, 10);
@@ -670,6 +690,15 @@ export class CreatorSignalAggregator {
   /**
    * Resolve `ids` on `table` to their owner column, as a Map(id -> ownerId).
    *
+   * The CALLER passes the query, already bound to a literal table and a literal
+   * select list. It used to take a table name and build `.from(table).select(
+   * `id, ${ownerCol}`)` itself, and check:write-path-columns rejected that: a
+   * dynamic table name is a blind spot the live-schema column checker cannot
+   * resolve, so nothing verified that `posts.author_id` and `events.host_id`
+   * are real columns. Naming one wrong is a 42703 that supabase-js RETURNS
+   * rather than throws, so the catch below would swallow it and participation
+   * would read zero — silently.
+   *
    * Two-step rather than a PostgREST embedded select (`posts!inner(author_id)`)
    * ON PURPOSE. The in-memory Supabase doubles in this repo do not model embeds;
    * an embed against them returns rows with the joined key ABSENT, which reads
@@ -677,7 +706,11 @@ export class CreatorSignalAggregator {
    * exact failure mode this whole rewrite exists to remove, so the query shape
    * stays one the doubles can actually answer.
    */
-  private async _ownersOf(table: string, ownerCol: string, ids: string[]): Promise<Map<string, string>> {
+  private async _ownersOf(
+    fetchChunk: (chunk: string[]) => any,
+    ownerCol: string,
+    ids: string[],
+  ): Promise<Map<string, string>> {
     const out = new Map<string, string>();
     const unique = [...new Set(ids.filter(Boolean))];
     if (unique.length === 0) return out;
@@ -693,7 +726,7 @@ export class CreatorSignalAggregator {
     for (let i = 0; i < unique.length; i += OWNER_LOOKUP_CHUNK) {
       const chunk = unique.slice(i, i + OWNER_LOOKUP_CHUNK);
       try {
-        const { data } = await (this.db as any).from(table).select(`id, ${ownerCol}`).in("id", chunk);
+        const { data } = await fetchChunk(chunk);
         for (const r of ((data as any[]) ?? [])) {
           const owner = r?.[ownerCol];
           if (r?.id && owner) out.set(String(r.id), String(owner));
@@ -745,8 +778,14 @@ export class CreatorSignalAggregator {
       ]);
 
       const [postOwners, eventOwners] = await Promise.all([
-        this._ownersOf("posts", "author_id", comments),
-        this._ownersOf("events", "host_id", rsvps),
+        this._ownersOf(
+          (chunk) => (this.db as any).from("posts").select("id, author_id").in("id", chunk),
+          "author_id", comments,
+        ),
+        this._ownersOf(
+          (chunk) => (this.db as any).from("events").select("id, host_id").in("id", chunk),
+          "host_id", rsvps,
+        ),
       ]);
 
       // Same two exclusions the activity_events version applied: never count
@@ -814,24 +853,27 @@ export class CreatorSignalAggregator {
       const authored = await this._fetchAuthoredPostIds(userId, ago90d);
       const postIdSet = new Set(authored);
 
-      const countOn = async (table: string, actorCol: string, timeCol: string): Promise<string[]> => {
+      // Static `.from()` and static select list per source, for the same reason
+      // as _fetchActiveDays: a dynamic table name is unverifiable against the
+      // live schema, and a wrong column here reads as "nobody engaged".
+      const countOn = async (builder: () => any, actorCol: string): Promise<string[]> => {
         if (postIdSet.size === 0) return [];
         try {
-          const { data } = await (this.db as any)
-            .from(table)
-            .select(`${actorCol}, post_id`)
-            .in("post_id", authored)
-            .gte(timeCol, ago90d);
+          const { data } = await builder();
           return ((data as any[]) ?? [])
             .map((r) => String(r?.[actorCol] ?? ""))
             .filter((a) => a && a !== userId && !blockedIds.has(a));
         } catch { return []; }
       };
+      const qq = this.db as any;
 
       const [saves, shares, comments, follows, stamps] = await Promise.all([
-        countOn("post_saves",     "user_id", "created_at"),
-        countOn("post_shares",    "user_id", "created_at"),
-        countOn("posts_comments", "user_id", "created_at"),
+        countOn(() => qq.from("post_saves").select("user_id, post_id")
+          .in("post_id", authored).gte("created_at", ago90d), "user_id"),
+        countOn(() => qq.from("post_shares").select("user_id, post_id")
+          .in("post_id", authored).gte("created_at", ago90d), "user_id"),
+        countOn(() => qq.from("posts_comments").select("user_id, post_id")
+          .in("post_id", authored).gte("created_at", ago90d), "user_id"),
         (async () => {
           try {
             const { data } = await (this.db as any)
