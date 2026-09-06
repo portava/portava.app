@@ -916,7 +916,7 @@ async function loadStops(sc: any, sessionId: string): Promise<any[]> {
  * case and `travelUnknown` says why, so the UI can tell "your plan is too long"
  * apart from "we cannot tell how long your plan is".
  */
-function computePlanFit(window: ReturnType<typeof computeWindow>, stops: any[]) {
+export function computePlanFit(window: ReturnType<typeof computeWindow>, stops: any[]) {
   const landside = stops.filter((s) => !s.insideAirport);
   const travelUnknown = landside.some((s) => typeof s.travelMin !== "number");
 

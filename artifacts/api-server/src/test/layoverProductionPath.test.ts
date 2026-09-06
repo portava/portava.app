@@ -52,6 +52,7 @@ import {
   ENTRY_STATUS_POLICY,
 } from "../lib/layoverEntryEligibility.js";
 import { ENTRY_FLAG } from "../lib/entryRequirements.js";
+import { computePlanFit } from "../routes/airport.js";
 
 const USER = "11111111-2222-4333-8444-555555555555";
 const NOW = Date.parse("2026-03-10T02:00:00.000Z");
@@ -212,15 +213,23 @@ describe("Layover production path — travel time", () => {
     assert.equal(typeof a.requiredMinutes, "number");
   });
 
-  it("ranking puts an unmeasured candidate last, not first", () => {
-    // `null` through arithmetic coerces to 0, which would have sorted the
-    // least-known option ahead of a measured 5-minute one.
+  it("ranking puts an unmeasured candidate last among EQUALS, not first", () => {
+    // The tie-break only runs between candidates of the SAME rating. An earlier
+    // version of this test compared an unmeasured landside candidate against an
+    // airside one, whose ratings already differed — so the comparator was never
+    // exercised and `null` coerced to 0 sailed straight through the matrix.
+    // Both candidates below rate not_recommended: one because its journey is
+    // unmeasured, one because its measured journey is absurdly long.
     const ranked = rankActivities(airport, session, [
       { title: "Unknown", travelTimeMin: null, activityTimeMin: 30, insideAirport: false, verified: true },
-      { title: "Lounge", travelTimeMin: 0, activityTimeMin: 30, insideAirport: true, verified: true },
+      { title: "Measured but far", travelTimeMin: 600, activityTimeMin: 30, insideAirport: false, verified: true },
     ], NOW);
-    assert.equal(ranked[0].title, "Lounge");
-    assert.equal(ranked[ranked.length - 1].title, "Unknown");
+    assert.deepEqual(ranked.map((r) => r.assessment.rating), ["not_recommended", "not_recommended"],
+      "precondition: both rate the same, so the travel-time tie-break decides the order");
+    assert.equal(ranked[0].title, "Measured but far");
+    assert.equal(ranked[1].title, "Unknown",
+      "an unmeasured journey must sort BEHIND even a terrible measured one — " +
+      "`null` through arithmetic becomes 0 and would have ranked it first");
   });
 
   it("the overall session rating claims nothing about any journey", () => {
@@ -327,6 +336,74 @@ describe("Layover production path — entry eligibility", () => {
     assert.ok(w.usableMinutes >= 90, "precondition: the clock alone would have said yes");
     assert.equal(advice.verdict, "entry_unverified");
     assert.notEqual(advice.verdict, "yes");
+  });
+});
+
+// ══ 3. THE PLAN, AND THE SESSION'S OVERALL VERDICT ════════════════════════════
+
+describe("Layover production path — plan fit", () => {
+  const win = () => computeWindow(airport, session, NOW);
+
+  it("a plan containing ANY unmeasured landside leg never reports as fitting", () => {
+    const fit = computePlanFit(win(), [{ insideAirport: false, durationMin: 30, travelMin: null }]);
+    assert.equal(fit.travelUnknown, true);
+    assert.equal(fit.fitsWindow, false,
+      "`?? 0` used to make an unmeasured leg free, so a plan of nothing but " +
+      "unknowns summed to its durations alone and reported a comfortable fit");
+    assert.equal(fit.neededMin, null, "and there is no total to report");
+    assert.equal(fit.totalPlannedMin, null);
+  });
+
+  it("a fully measured plan still fits when it genuinely fits", () => {
+    const fit = computePlanFit(win(), [{ insideAirport: false, durationMin: 30, travelMin: 20 }]);
+    assert.equal(fit.travelUnknown, false);
+    assert.equal(fit.fitsWindow, true, "the fix must not refuse plans it can actually verify");
+    assert.equal(fit.neededMin, 70, "duration + travel out + the return leg");
+  });
+
+  it("an airside-only plan is measurable, because there is no journey in it", () => {
+    const fit = computePlanFit(win(), [{ insideAirport: true, durationMin: 60, travelMin: null }]);
+    assert.equal(fit.travelUnknown, false);
+    assert.equal(fit.fitsWindow, true);
+  });
+
+  it("a measured plan that overshoots is still refused", () => {
+    const fit = computePlanFit(win(), [{ insideAirport: false, durationMin: 5000, travelMin: 10 }]);
+    assert.equal(fit.fitsWindow, false);
+    assert.ok(fit.overflowMin > 0);
+  });
+});
+
+describe("Layover production path — no invented journey anywhere on the surface", () => {
+  it("neither producer nor route may hardcode, nor coalesce away, a travel time", async () => {
+    // A source-level guard, deliberately. `src/routes/airport.ts` has NO HTTP
+    // test harness in this repo — its 35 endpoints have no route-level tests at
+    // all — so this suite's behavioural reach stops at the exported functions.
+    // What these two patterns pin is the invariant itself: on this surface a
+    // journey time is never born from a literal, and an unknown one is never
+    // quietly turned into zero.
+    const fs = await import("node:fs/promises");
+    for (const rel of [
+      "../services/airport/LayoverRecommendationService.ts",
+      "../routes/airport.ts",
+      "../services/airport/LayoverSafetyEngine.ts",
+    ]) {
+      const raw = await fs.readFile(new URL(rel, import.meta.url), "utf8");
+      const code = raw.split("\n").filter((l) => {
+        const t = l.trim();
+        return !t.startsWith("*") && !t.startsWith("//") && !t.startsWith("/*");
+      }).join("\n");
+
+      // `travelTimeMin: 0` stays legal — inside the terminal there is no journey.
+      assert.ok(!/travelTimeMin:\s*[1-9]/.test(code),
+        `${rel} must not construct a candidate with a literal travel time`);
+
+      // `travel_min ?? 0` reads as harmless defaulting and means "this journey
+      // takes no time" — the most optimistic value in the whole model. It
+      // laundered a null back into a confident zero at three call sites.
+      assert.ok(!/(travel_?[Mm]in|travel_time_min)[^\n]{0,80}\?\?\s*0/.test(code),
+        `${rel} must not coalesce an unmeasured journey to 0 — null is not zero minutes`);
+    }
   });
 });
 
