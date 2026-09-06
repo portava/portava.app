@@ -21,7 +21,8 @@
  * When `getDecayedWeights` is called (from CompassProfileService on every
  * profile build), it:
  *   1. Reads the search signal log for the user.
- *   2. Reads `SEARCH_SIGNAL_DECAY_DAYS` from feature_flags (default 7).
+ *   2. Reads `SEARCH_SIGNAL_DECAY_DAYS` from feature_flags — `enabled` gates
+ *      decay, `metadata->>'half_life_days'` tunes it (default 7).
  *      If the flag is disabled, decay is skipped entirely.
  *   3. For each logged category computes:
  *        age_days       = (now − last_nudge_at) / 86_400_000
@@ -138,6 +139,22 @@ export function applySearchDecay(
 }
 
 /**
+ * Pull the half-life out of the flag row's `metadata` jsonb.
+ *
+ * Accepts `{"half_life_days": 14}`. PostgREST hands jsonb back as a parsed
+ * object, but a numeric written as a JSON string still has to be tolerated, so
+ * a numeric string is coerced. Anything absent, non-finite or <= 0 falls back
+ * to DEFAULT_DECAY_DAYS — a zero or negative half-life would make the decay
+ * factor 0 or explosive and shed every point of accumulated weight at once.
+ */
+export function readHalfLifeDays(metadata: unknown): number {
+  if (metadata == null || typeof metadata !== "object") return DEFAULT_DECAY_DAYS;
+  const raw = (metadata as Record<string, unknown>).half_life_days;
+  const n = typeof raw === "string" ? Number(raw) : raw;
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : DEFAULT_DECAY_DAYS;
+}
+
+/**
  * Read the SEARCH_SIGNAL_DECAY_DAYS flag.
  *
  * Returns `{ enabled: boolean; halfLifeDays: number }`.
@@ -149,20 +166,27 @@ export async function getDecayConfig(
   try {
     const { data, error } = await db
       .from("feature_flags")
-      .select("enabled, numeric_value")
+      // `numeric_value` is NOT a column of feature_flags — the table is
+      // (flag, enabled, description, updated_at, metadata). Selecting it made
+      // PostgREST fail the WHOLE read with 42703, so `data` was always null and
+      // this function ALWAYS returned the hard-coded default: an operator could
+      // neither disable search-signal decay nor tune its half-life, whatever
+      // the row said. The tuning value lives in the `metadata` jsonb, which is
+      // the repo's existing convention for a non-boolean flag payload
+      // (lib/featureFlags.ts getFlagRow selects exactly `enabled, metadata`).
+      // The `numeric_value` column exists only in the frozen, never-applied
+      // migration that also defines this feature's table — see migration 2306.
+      .select("enabled, metadata")
       .eq("flag", "SEARCH_SIGNAL_DECAY_DAYS")
       .maybeSingle();
 
     if (error) {
-      // e.g. numeric_value column absent (42703) in an under-migrated env.
       logger.warn({ err: error }, "getDecayConfig: feature_flags read failed — using default decay config");
     }
     if (!data) return { enabled: true, halfLifeDays: DEFAULT_DECAY_DAYS };
 
     const enabled      = Boolean((data as any).enabled);
-    const rawValue     = (data as any).numeric_value;
-    const halfLifeDays =
-      typeof rawValue === "number" && rawValue > 0 ? rawValue : DEFAULT_DECAY_DAYS;
+    const halfLifeDays = readHalfLifeDays((data as any).metadata);
 
     return { enabled, halfLifeDays };
   } catch {

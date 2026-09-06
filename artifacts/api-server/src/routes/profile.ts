@@ -1649,7 +1649,12 @@ router.post("/internal/deletion-requests/execute-due", async (req, res) => {
   const { data: due, error: dueErr } = await sc
     .from("user_deletion_requests")
     .select("user_id, scheduled_at, status")
-    .in("status", ["pending", "confirmed"])
+    // `user_deletion_requests.status` is TEXT with a CHECK last set by
+    // migration 2178 to pending | executing | cancelled | executed | completed |
+    // failed. "confirmed" is not among them and nothing writes it, so that arm
+    // could never match. `pending` is the status this route's own creator
+    // writes and the only one lib/accountDeletionScheduler.ts:69 picks up.
+    .eq("status", "pending")
     .lte("scheduled_at", now)
     .order("scheduled_at", { ascending: true })
     .limit(BATCH_CAP);

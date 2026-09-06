@@ -97,8 +97,17 @@ function WITH_PAGE(over: Partial<MapObject> = {}): MapObject {
 }
 
 const COORD = coordinateTarget(DA_NANG_LAT, DA_NANG_LNG);
-/** A checkpoint needs a group to drop into; most cases below supply one. */
-const IN_GROUP: LongPressContext = { checkpointScopeId: 'event-42' };
+/**
+ * A checkpoint needs a group to drop into; most cases below supply one.
+ *
+ * `contributionsEnabled` is set here, not defaulted in the resolver: §22 report
+ * now also requires the capture flags, and the resolver fails CLOSED when the
+ * caller says nothing. Declaring it on the shared context keeps every existing
+ * report case below asserting exactly what it asserted before the gate existed
+ * — an object-specific rule — while the gate itself is exercised on its own
+ * (see "§22 · capture gate" at the end of the report suite).
+ */
+const IN_GROUP: LongPressContext = { checkpointScopeId: 'event-42', contributionsEnabled: true };
 /**
  * A context WITH the §12 session that is the share channel. `share` is offered
  * only when one exists — like a checkpoint, a share with no group has nobody to
@@ -639,6 +648,14 @@ describe('§22 · report', () => {
     'safety_notice',
     'memory',
     'prediction',
+    // §36 Phase 7. Three are aggregates over many people with no place to
+    // anchor an observation to, and the fourth is the viewer's own history —
+    // the same reason `memory` is here. Mirrors liveTruth.KIND_PROMPTS and the
+    // server's routes/mapObservations.KIND_PROMPTS.
+    'world_pulse',
+    'traveler_flow',
+    'city_model',
+    'personal_city',
   ];
 
   test('offered only for kinds §22 has a prompt for', () => {
@@ -667,6 +684,54 @@ describe('§22 · report', () => {
       obj({ kind: 'place', privacyClass: 'place_level', interaction: { actions: [], contributable: false } }),
     );
     assert.equal(itemFor(target, 'report').enabled, false);
+  });
+
+  // ── the capture gate ────────────────────────────────────────────────────────
+  // §22 capture is seeded OFF (map_contributions_enabled, and capture itself
+  // additionally behind intel_capture_quick_signal). With it off the route
+  // answers 200 {accepted:0, enabled:false} and the contribution is discarded —
+  // so the row must be closed BEFORE the question is asked, not refused after it
+  // has been answered.
+  const REPORTABLE = objectTarget(obj({ kind: 'place', privacyClass: 'place_level' }));
+
+  test('closed when the capture flags are off, and it says so', () => {
+    const item = itemFor(REPORTABLE, 'report', { checkpointScopeId: 'event-42' });
+    assert.equal(item.enabled, false);
+    assert.match(item.reason ?? '', /not switched on/i);
+  });
+
+  test('fails CLOSED when the caller supplies no flag at all', () => {
+    // A caller that has not thought about the flag has not established that a
+    // contribution can reach storage. Absent must never read as permitted.
+    assert.equal(itemFor(REPORTABLE, 'report', {}).enabled, false);
+    assert.equal(
+      itemFor(REPORTABLE, 'report', { checkpointScopeId: 'event-42', contributionsEnabled: false })
+        .enabled,
+      false,
+    );
+  });
+
+  test('open when the capture flags are on', () => {
+    // Anti-vacuity: without this, the two cases above are satisfiable by
+    // disabling `report` outright.
+    const item = itemFor(REPORTABLE, 'report', {
+      checkpointScopeId: 'event-42',
+      contributionsEnabled: true,
+    });
+    assert.equal(item.enabled, true);
+    assert.equal(item.reason, undefined);
+  });
+
+  test('an object-specific refusal still wins over the flag refusal', () => {
+    // The flag check is LAST so a kind that has no prompt keeps saying why it
+    // has no prompt — that reason is true whatever the flag says.
+    const noPrompt = objectTarget(obj({ kind: 'crew_member', privacyClass: 'place_level' }));
+    const item = itemFor(noPrompt, 'report', {
+      checkpointScopeId: 'event-42',
+      contributionsEnabled: true,
+    });
+    assert.equal(item.enabled, false);
+    assert.match(item.reason ?? '', /nothing here you can report/i);
   });
 });
 

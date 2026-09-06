@@ -87,8 +87,24 @@ export type CoreLayerId = (typeof CORE_LAYER_IDS)[number];
  * `kind: 'place'`, the single most common object on the map — so it is modelled
  * here rather than quietly folded into Live Activity. It is kept OUT of
  * `CORE_LAYER_IDS` so that constant stays a faithful quote of the spec.
+ *
+ * `world_intelligence` and `my_cities` are the §36 PHASE 7 layers, added
+ * 2026-09-05 on the owner's approval (docs/map/scope-ruling-phases-6-7.md
+ * AMENDMENT). They are here for the same reason `relevant_places` is: they are
+ * real layers carrying real kinds, and §16's "Core layers" line is a quote that
+ * must stay a quote.
+ *
+ * They are TWO layers, not one, because they answer to two different consent
+ * regimes and one toggle could not honestly govern both. `world_intelligence`
+ * carries the three PUBLIC aggregates (world_pulse, traveler_flow, city_model);
+ * `my_cities` carries `personal_city`, which is the viewer's OWN history and
+ * therefore defaults OFF like Memories, the other private layer.
  */
-export const EXTRA_LAYER_IDS = ['relevant_places'] as const;
+export const EXTRA_LAYER_IDS = [
+  'relevant_places',
+  'world_intelligence',
+  'my_cities',
+] as const;
 
 export const MAP_LAYER_IDS = [...CORE_LAYER_IDS, ...EXTRA_LAYER_IDS] as const;
 
@@ -155,6 +171,14 @@ export const LAYER_DEFAULTS: Record<MapLayerId, LayerDefaultState> = {
   transport: 'off',
 
   safety: 'always_on',
+
+  // §36 Phase 7. `world_intelligence` is contextual on the §17 zoom model: its
+  // kinds only EXIST at the world/continent and city bands (collision.ts
+  // BAND_INTRODUCES), so an `on` default would be a permanently-empty layer at
+  // every zoom a traveller actually uses. `my_cities` follows Memories: it is
+  // the viewer's own history and is shown only when they ask for it.
+  world_intelligence: 'contextual',
+  my_cities: 'off',
 };
 
 // ── The user's explicit choice ─────────────────────────────────────────────────
@@ -331,6 +355,17 @@ function resolveContextual(
       return { visible: false, reason: 'Not enough movement to show flow' };
     }
 
+    case 'world_intelligence': {
+      // §17: the World band renders "countries visited, upcoming Trips,
+      // Passport, major destinations" and the City band "neighborhoods,
+      // activity zones, major events, major flow". A continent-scale pulse cell
+      // and a city→city edge belong to exactly those two bands and are
+      // meaningless below them — a district viewport is smaller than one cell.
+      if (ctx.zoomBand === 'world') return { visible: true, reason: 'Zoomed out to the world view' };
+      if (ctx.zoomBand === 'city') return { visible: true, reason: 'City view — city rhythm and movement' };
+      return { visible: false, reason: 'Zoom out to see world activity' };
+    }
+
     default:
       // Unreachable for the declared defaults; fail closed rather than guess.
       return { visible: false, reason: 'No automatic rule for this layer' };
@@ -440,6 +475,13 @@ export const LAYER_FOR_KIND: Record<MapObjectKind, MapLayerId> = {
   memory: 'memories',
   prediction: 'live_activity',
   saved_place: 'saved',
+  // §36 Phase 7. The three PUBLIC aggregates ride one layer; the viewer's own
+  // city history rides its own, because a single toggle cannot honestly govern
+  // both "show me what the world is doing" and "show me my own history".
+  world_pulse: 'world_intelligence',
+  traveler_flow: 'world_intelligence',
+  city_model: 'world_intelligence',
+  personal_city: 'my_cities',
 };
 
 export function layerForKind(kind: MapObjectKind): MapLayerId {
@@ -612,6 +654,20 @@ export const LAYER_META: Record<MapLayerId, LayerMeta> = {
     description: 'Places Portava thinks are relevant to you now',
     accent: '#F59E0B',
     glyphs: ['marker', 'star'],
+  },
+  world_intelligence: {
+    id: 'world_intelligence',
+    label: 'World Pulse',
+    description: 'Where the world is active, how travellers move between cities, and a city\u2019s rhythm \u2014 aggregate only',
+    accent: '#38BDF8',
+    glyphs: ['soft_fill', 'arrows'],
+  },
+  my_cities: {
+    id: 'my_cities',
+    label: 'My Cities',
+    description: 'Your own history in the cities you have been to \u2014 only you can see this',
+    accent: '#FBBF24',
+    glyphs: ['gold_marker'],
   },
 };
 

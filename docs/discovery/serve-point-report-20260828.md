@@ -11,7 +11,7 @@
 >    route UPDATEs a served row's `outcome` in place, that filter dropped every
 >    serve that had converted — **differentially, against the serve points that
 >    rank, which convert best.** The report now selects the serve corpus by
->    `event_type IS NULL` (`lib/discoveryServePointReport.ts:587#event_type`). **Every count
+>    `event_type IS NULL` (`lib/discoveryServePointReport.ts:589#event_type`). **Every count
 >    below is therefore a FLOOR.** It happens not to change this run's verdict —
 >    the `GET /discovery` denominator was 0, and no filter turns 0 into a
 >    population — but a *later* comparison against these numbers would be
@@ -126,7 +126,7 @@ Two further reasons it would be inert anyway:
 2. **It could not be validated.** Divergence and engagement both need traffic.
 
 **A modelling trap to record before anyone does build it.** `LEGACY_RANKED_POINTS`
-(`discoveryServePointReport.ts:127#LEGACY_RANKED_POINTS`; it was called `RANKED_POINTS` when this
+(`discoveryServePointReport.ts:129#LEGACY_RANKED_POINTS`; it was called `RANKED_POINTS` when this
 report was written) is the static set `{5, 6}` and is documented as "serve
 points on which a ranker ran during the request itself". Under pde, serve points 1–3 *would*
 rank, and that set silently becomes wrong. Whoever wires the pde branch must derive

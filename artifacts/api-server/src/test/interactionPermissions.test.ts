@@ -680,11 +680,20 @@ describe("RaB pre-booking — off-app payment warning", () => {
     const { default: router } = await import("../routes/interactionContext.js");
     const client = makeClient(baseState({
       rent_buddy_bookings: [
+        // FIXTURE REPAIRED, twice over. This row said `client_id` — a column
+        // rent_buddy_bookings does not have (the traveller side is
+        // `traveler_id`) — and `status: "pre_booking"`, which is not a label
+        // of the rent_buddy_booking_status enum. The production read carried
+        // BOTH mistakes, so the double agreed with it and this test passed
+        // while the real query died 42703/22P02 into `.catch(() => false)`:
+        // ctx.rabPreBooking has always been false and the
+        // rab_off_app_payment_risk warning has never been emitted, from any
+        // of its six callers.
         {
           id: "booking-1",
-          client_id: ALICE_ID,
+          traveler_id: ALICE_ID,
           buddy_id: BOB_ID,
-          status: "pre_booking",
+          status: "confirmed",
         },
       ],
     }));

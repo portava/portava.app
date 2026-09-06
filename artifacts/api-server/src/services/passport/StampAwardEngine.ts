@@ -73,9 +73,25 @@ export type StampLogger = Pick<Logger, "warn">;
 // Checks that the triggering source entity is in an award-eligible state.
 // Revoked/cancelled/draft source objects must be rejected.
 
-const INVALID_TRIP_STATUSES   = new Set(["cancelled", "draft", "deleted"]);
-const INVALID_POST_STATUSES   = new Set(["draft", "deleted", "removed", "revoked"]);
-const INVALID_EVENT_STATUSES  = new Set(["cancelled", "draft", "deleted"]);
+//
+// ⚠ EVERY literal below must be a real label of the corresponding Postgres
+// enum, or the membership test can never fire and the guard silently passes an
+// ineligible source through. The sets are the COMPLEMENT of the award-eligible
+// states, derived from the enums in baseline/20260819_baseline_structure.sql:
+//
+//   trip_status  = draft | planning | upcoming | active | completed | cancelled | archived
+//   post_status  = active | hidden | reported | deleted
+//   event_state  = draft | open | full | waitlist | started | completed | cancelled | archived
+//
+// Before this was derived from the enums the sets carried three labels that no
+// column can ever hold — `deleted` for trips and events, and `draft`/`removed`/
+// `revoked` for posts — while omitting states that really are ineligible
+// (`archived` trips and events; `hidden` and `reported` posts, which
+// routes/posts.ts:1100 already documents as not-live content). Guarded by
+// stampSourceStatusTruth.test.ts.
+export const INVALID_TRIP_STATUSES  = new Set(["draft", "cancelled", "archived"]);
+export const INVALID_POST_STATUSES  = new Set(["hidden", "reported", "deleted"]);
+export const INVALID_EVENT_STATUSES = new Set(["draft", "cancelled", "archived"]);
 
 async function validateSource(
   sc: SupabaseClient,

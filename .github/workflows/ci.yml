@@ -203,6 +203,35 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:schema-references
 
+      # The VALUE half of the same contract. check:schema-references asks whether
+      # a column exists; this asks whether a literal is something that column can
+      # HOLD. A 2026-09-05 audit found thirty-two live sites filtering on a value
+      # the column cannot hold — `trips.status = 'in_progress'`, `events.state <>
+      # 'banned'`, `posts.status = 'published'` — where an unknown enum label is
+      # rejected 22P02 and fails the WHOLE request. No test could see it: every
+      # fake Supabase client in the repo asks "does my fixture's value appear in
+      # what you passed?", never "is what you passed a real label?", so a fixture
+      # written from a fiction pinned the fiction. Static, so like its sibling it
+      # needs no database and cannot be starved. See src/scripts/checkEnumLiterals.ts.
+      - name: 'check:enum-literals (static; no DB, cannot be starved)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:enum-literals
+
+      # check:writerless-reads — the THIRD member of the same family, and the one
+      # that asks the question the other two cannot. check:enum-literals judges
+      # filter VALUES and check:schema-references judges that columns EXIST; both
+      # pass happily on a query that is perfectly well-formed and matches nothing
+      # because the table it reads has no producer at all. That is how
+      # `activity_events` killed 0.70 of the creator-activity score's weight for
+      # months, and how `public.circles` left an authorization predicate denying
+      # every user in silence. Static, so like its siblings it needs no database
+      # and cannot be starved. See src/scripts/checkWriterlessReads.ts.
+      - name: 'check:writerless-reads (static; no DB, cannot be starved)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:writerless-reads
+
       # check:doc-citations — the documentation half of the same idea.
       # docs/discovery/ROADMAP.md carries its own rule, "maintain this table in
       # the same PR as the work", and the 2026-09-05 reconciliation exists

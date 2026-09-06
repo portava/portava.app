@@ -59,6 +59,14 @@ function makeClient(userId: string, captured: { payload?: any }) {
     from: (table: string) => {
       if (table === "rent_buddy_addons") return capturingAddonBuilder(captured);
       if (table === "rent_buddy_profiles") return trackingBuilder({ id: BP_ID, user_id: userId, status: "active", admin_status: "active" });
+      // FIXTURE, not behaviour. POST /rent-a-buddy/me/addons INSERTs a
+      // rent_buddy_addons row, so it now clears the Rent-a-Buddy master switch
+      // like every other write handler in the lane. Falling through to
+      // trackingBuilder(null) hands the gate "no feature_flags row", which a
+      // real database means as "the lane is off", and the handler correctly
+      // 403s before the insert this suite is here to inspect. The auto-approve
+      // assertions are untouched; only the database the fake describes changes.
+      if (table === "feature_flags") return trackingBuilder({ enabled: true });
       return trackingBuilder(null);
     },
   };

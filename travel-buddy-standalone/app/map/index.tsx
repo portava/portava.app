@@ -755,6 +755,36 @@ function FullScreenMapScreenInner() {
 
   const { isEnabled: isFlagEnabled } = useFeatureFlags();
 
+  /**
+   * §22 map contributions — is the capture door actually open for this session?
+   *
+   * WHY THIS EXISTS. Every §22 entry point on this screen used to open the
+   * contribution sheet unconditionally, and the refusal only arrived AFTER the
+   * user had answered: `map_contributions_enabled` is seeded OFF
+   * (2216_map_observations.sql), the route answers HTTP 200
+   * `{ ok: true, accepted: 0, enabled: false }` (routes/mapObservations.ts), and
+   * contributionFlow turns that into "Reporting is not switched on here yet, so
+   * Your report was not recorded." Asking a question you have already decided to
+   * throw away is worse than not asking it.
+   *
+   * WHY BOTH FLAGS. `map_contributions_enabled` opens the MAP door only; the
+   * capture itself still runs behind `intel_capture_quick_signal` inside
+   * IntelCaptureService (2216's own note says so). With the second flag off the
+   * route produces the byte-identical dead end — REASON_CODE `disabled` maps to
+   * `feature_disabled` and the same 200/accepted:0 is returned — so gating on
+   * the map flag alone would leave the exact defect alive in that configuration.
+   * `useIntelPrompts` states the house rule for the sibling surfaces: with the
+   * flag off, every entry point hides.
+   *
+   * FAIL-CLOSED BY CONSTRUCTION, no extra handling needed: `isEnabled` returns
+   * `flags[key] === true`, `flags` starts `{}` so this is false for the whole
+   * first fetch, an unknown key is false, and the no-provider context default is
+   * `() => false`. An environment where 2216 was never applied simply has no
+   * such key and the entry points stay hidden — which is the correct direction.
+   */
+  const contributionsEnabled =
+    isFlagEnabled('map_contributions_enabled') && isFlagEnabled('intel_capture_quick_signal');
+
   const {
     enabledLayers,
     setEnabledLayers,
@@ -908,6 +938,7 @@ function FullScreenMapScreenInner() {
    */
   const placesWanted = mode !== 'passport' && layerPrefs.relevant_places !== 'off';
 
+
   // ── §34 live camera ──────────────────────────────────────────────────────────
   // Where the camera actually SETTLED, reported by DiscoveryMapView through its
   // onCameraChange prop. Declared above useMapEntities because the hook now
@@ -930,6 +961,37 @@ function FullScreenMapScreenInner() {
     },
     [],
   );
+
+  /**
+   * §36 Phase 7 World Intelligence through the gateway.
+   *
+   * `world_intelligence` is `contextual` in §16, and — UNLIKE crowd_flow — its
+   * trigger is not circular. crowd_flow's two automatic inputs (`density` and
+   * CROWD_FLOW mode) are both properties of the RESPONSE, so the request cannot
+   * condition on them; this layer's input is the §17 ZOOM BAND, which the shell
+   * knows before it fetches. So the request can honour the contextual rule
+   * honestly instead of falling back to explicit choice only.
+   *
+   * The precedence below mirrors `resolveLayers` exactly: an explicit `off`
+   * wins over everything, an explicit `on` outranks the band, and otherwise the
+   * band decides. Requesting out of band would cost a round trip for kinds the
+   * server refuses with `band_not_eligible` anyway.
+   */
+  const requestZoomBand = zoomRenderBand(liveCamera?.zoom ?? cameraZoom ?? paramZoom);
+  const worldIntelligenceWanted =
+    mode !== 'passport' &&
+    layerPrefs.world_intelligence !== 'off' &&
+    (layerPrefs.world_intelligence === 'on' ||
+      requestZoomBand === 'world' ||
+      requestZoomBand === 'city');
+
+  /**
+   * §36 Phase 7 My Cities — the viewer's OWN city history. Default OFF, like
+   * Memories: private history is requested only on an explicit opt-in, so it
+   * never rides a default-on load and turning the world view on can never turn
+   * it on.
+   */
+  const myCitiesWanted = mode !== 'passport' && layerPrefs.my_cities === 'on';
 
   // passportEntities — React hooks cannot be called conditionally.
   const {
@@ -966,6 +1028,10 @@ function FullScreenMapScreenInner() {
     // trip is on the map — trip mode, or the legacy Trips pin that seeds the
     // §16 trip layer on. Downstream §16 filtering owns final visibility.
     meetingPoints: mode !== 'passport' && (machine.mode === 'TRIP' || enabledLayers.includes('trips')),
+    // §36 Phase 7. Two options, because the three public aggregates and the
+    // viewer's own history answer to two different consent regimes.
+    worldIntelligence: worldIntelligenceWanted,
+    myCities: myCitiesWanted,
   });
 
   // ── Places: projected through the gateway, or the legacy Discovery fetch ───
@@ -1912,8 +1978,13 @@ function FullScreenMapScreenInner() {
   // It must NOT be added to ZONE_KINDS to fix that: a flow is a LineString and
   // ActivityZone draws polygons, so widening the kind list would send it to a
   // renderer that cannot draw it. The feed widens; the vocabulary does not.
+  // `traveler_flow` rides the same widening as `crowd_flow`, for the same
+  // reason and with the same limit: it is a LineString, so TravelerFlowLayer
+  // owns it and ActivityZone must never be asked to draw it. `world_pulse` is
+  // NOT listed here — it is a polygon and is a real member of ZONE_KINDS, so
+  // isZoneKind already admits it.
   const zoneObjects = useMemo(
-    () => objects.filter((o) => isZoneKind(o.kind) || o.kind === 'crowd_flow'),
+    () => objects.filter((o) => isZoneKind(o.kind) || o.kind === 'crowd_flow' || o.kind === 'traveler_flow'),
     [objects],
   );
 
@@ -2023,6 +2094,12 @@ function FullScreenMapScreenInner() {
   // they are already doing. detectArrivalPick is pure and fail-closed.
   useEffect(() => {
     if (mode === 'passport') return;
+    // §22 gate, and it MUST be here — above detectArrivalPick and above the
+    // arrivalPromptedIdsRef.current.add() below. Returning after the add would
+    // correctly keep the sheet shut, but would also burn the pick as
+    // already-prompted for the rest of the session: turn the flag on and that
+    // pick never prompts again. A silent under-count, not a closed door.
+    if (!contributionsEnabled) return;
     if (contributeObject !== null) return; // don't interrupt an open sheet
     if (userLat == null || userLng == null) return;
     const pick = detectArrivalPick(
@@ -2034,7 +2111,7 @@ function FullScreenMapScreenInner() {
     arrivalPromptedIdsRef.current.add(pick.id);
     setArrivalPromptId(pick.id);
     setContributeObject(pick);
-  }, [mode, userLat, userLng, compassPickObjects, contributeObject]);
+  }, [mode, userLat, userLng, compassPickObjects, contributeObject, contributionsEnabled]);
 
   /**
    * §25 `report` on a person or a listing. Held as the OBJECT rather than a
@@ -2169,6 +2246,11 @@ function FullScreenMapScreenInner() {
           if (c) openInMaps(c.lat, c.lng);
           return;
         case 'contribute':
+          // Declared in MAP_ACTIONS but not currently emitted by any projector
+          // (they all offer `report` on a contributable object instead). Gated
+          // anyway so the door is shut wherever it is eventually opened — the
+          // REAL entry point is the `report` branch below.
+          if (!contributionsEnabled) return;
           setContributeObject(obj);
           return;
         case 'ask_compass':
@@ -2223,7 +2305,17 @@ function FullScreenMapScreenInner() {
           // Anything else is a MODERATION report about a person or a listing,
           // which is the ReportSheet. A harassment report must never land in a
           // place-observation flow.
+          //
+          // §22 GATE. With capture switched off a contributable object's Report
+          // does NOTHING — the button is hidden by LivePlaceSheet and the
+          // long-press row is disabled-with-reason, so this is the backstop for
+          // any caller that hands the action over anyway. It deliberately does
+          // NOT fall through to setReportTarget: routing a place-observation
+          // into the human-moderation queue is the exact inversion the comment
+          // above forbids, and "the button still does something" is not a reason
+          // to file the wrong kind of report.
           if (obj.interaction?.contributable) {
+            if (!contributionsEnabled) return;
             setContributeObject(obj);
           } else {
             setReportTarget(obj);
@@ -2244,7 +2336,17 @@ function FullScreenMapScreenInner() {
           return;
       }
     },
-    [dispatchMapEvent, compassPickObjects, locateSessionId, dropCheckpoint],
+    // `contributionsEnabled` MUST be listed. Flags arrive from a fetch, so on
+    // the first render it is false for every session; memoising this callback
+    // without it would freeze that first-render `false` in place and the §22
+    // entry point would stay dead even after the flag is switched on.
+    [
+      dispatchMapEvent,
+      compassPickObjects,
+      locateSessionId,
+      dropCheckpoint,
+      contributionsEnabled,
+    ],
   );
 
   /**
@@ -2721,6 +2823,7 @@ function FullScreenMapScreenInner() {
               provenanceRefs: obj.sourceRefs,
             });
           }}
+          contributionsEnabled={contributionsEnabled}
           onContribute={setContributeObject}
         />
       ) : null}
@@ -2741,7 +2844,10 @@ function FullScreenMapScreenInner() {
           order and only the sheet can show the contributor how both landed.
           `onSubmit` is telemetry, and must not post again. */}
       <MapContributionSheet
-        visible={contributeObject !== null}
+        // Backstop only. The real gate is at each entry point above — hiding
+        // the sheet while leaving the affordances tappable would trade an
+        // honest after-the-fact refusal for a silent no-op button.
+        visible={contributionsEnabled && contributeObject !== null}
         object={contributeObject}
         onClose={() => { setContributeObject(null); setArrivalPromptId(null); }}
         onRequestMedia={requestContributionMedia}
@@ -2885,6 +2991,10 @@ function FullScreenMapScreenInner() {
           // the bounded, expiring, revocable channel. Same value as the
           // checkpoint scope: with no live session, neither row has anywhere to go.
           shareChannelSessionId: locateSessionId,
+          // §22: with capture switched off the "Report what is here" row is
+          // disabled-with-reason rather than hidden, preserving §25's fixed
+          // seven rows while closing the path.
+          contributionsEnabled,
           now: Date.now(),
         }}
         onClose={() => setLongPress(null)}

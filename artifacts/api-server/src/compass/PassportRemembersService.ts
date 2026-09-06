@@ -517,6 +517,21 @@ export async function buildSavedCompassMemories(
 }
 
 // ── Group 6: consented Shared Moments (involving other people) ───────────────
+
+/**
+ * A shared moment's disclosure label for the §12 transparency view.
+ *
+ * `shared_moments` has no `visibility` column; `join_policy` is the column that
+ * says who may be in the moment, and BOTH of its permitted values
+ * (`invite_only`, `approval_required`) mean participants-only. Anything else —
+ * including a null — reports as "private", the more private of the two, so a
+ * future policy value can never read as more open than it is.
+ */
+export function sharedMomentVisibility(joinPolicy: unknown): string {
+  const p = typeof joinPolicy === "string" ? joinPolicy : "";
+  return p === "invite_only" || p === "approval_required" ? "participants_only" : "private";
+}
+
 // ONLY moments the caller has ACCEPTED membership in, and that are active. That
 // accepted membership IS the recorded consent. We surface the moment's own
 // title only — never another participant's private contribution.
@@ -542,7 +557,14 @@ export async function buildSharedMoments(
     if (consented.size === 0) return;
     const { data: moments } = await client
       .from("shared_moments")
-      .select("id, title, status, visibility, archived_at, created_at")
+      // `visibility` is NOT a column of shared_moments — the table's audience
+      // control is `join_policy` (invite_only | approval_required), and its
+      // lifecycle control is `status` (active | archived). Selecting a column
+      // that does not exist fails the WHOLE read with 42703, so `moments` was
+      // always undefined and the shared-moment group of "What Portava
+      // Remembers" has never rendered a single row, even for a user with
+      // accepted memberships.
+      .select("id, title, status, join_policy, archived_at, created_at")
       .in("id", Array.from(consented))
       .limit(SOURCE_LIMIT);
     for (const r of asRows(moments)) {
@@ -554,9 +576,11 @@ export async function buildSharedMoments(
         title: String(r.title ?? "Shared Moment"),
         subjectType: "passport:shared_moment", subjectId: String(r.id),
         originTable: "shared_moments", originId: String(r.id),
-        // The moment involves other people; visibility of the moment as set by
-        // its owner. Shown to this owner only because they consented (accepted).
-        visibility: String(r.visibility ?? "private"),
+        // The moment involves other people; shown to this owner only because
+        // they consented (accepted). A shared moment is never public — both
+        // join policies are participants-only — and anything unrecognised
+        // reports as the MORE private value, never less.
+        visibility: sharedMomentVisibility(r.join_policy),
         correctSupported: false,
         correctNote: "Manage this in Shared Moments.",
         occurredAt: isoOrUndefined(r.created_at),

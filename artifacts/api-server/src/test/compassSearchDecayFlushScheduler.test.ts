@@ -132,7 +132,7 @@ describe("CompassSearchDecayFlushScheduler", () => {
 
   it("no-ops when SEARCH_SIGNAL_DECAY_DAYS is disabled", async () => {
     const store: FakeStore = {
-      feature_flags: [{ flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: false, numeric_value: 7 }],
+      feature_flags: [{ flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: false, metadata: { half_life_days: 7 } }],
       compass_search_signal_log: [
         { user_id: UID_A, category: "food", last_nudge_at: daysAgoIso(14), search_weight: 4 },
       ],
@@ -163,7 +163,7 @@ describe("CompassSearchDecayFlushScheduler", () => {
     }));
     // Provide a client that returns enabled config.
     const store: FakeStore = {
-      feature_flags: [{ flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, numeric_value: 7 }],
+      feature_flags: [{ flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, metadata: { half_life_days: 7 } }],
       compass_search_signal_log: [],
       compass_user_preferences: [],
     };
@@ -177,7 +177,7 @@ describe("CompassSearchDecayFlushScheduler", () => {
 
   it("survives a hard top-level flush failure without throwing", async () => {
     const store: FakeStore = {
-      feature_flags: [{ flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, numeric_value: 7 }],
+      feature_flags: [{ flag: "SEARCH_SIGNAL_DECAY_DAYS", enabled: true, metadata: { half_life_days: 7 } }],
       compass_search_signal_log: [],
       compass_user_preferences: [],
     };

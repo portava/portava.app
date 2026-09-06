@@ -415,6 +415,15 @@ function makeFakeDb(tableData: Record<string, any[]>) {
       neq(col: string, val: any)  { filters.push((r) => r[col] !== val); return chain; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return chain; },
       gte(col: string, val: any)  { filters.push((r) => r[col] >= val); return chain; },
+      // `.is(col, null)` — needed by the soft-delete filter on posts_comments.
+      // It was ABSENT, and its absence did not throw where the caller could see
+      // it: the aggregator's per-source try/catch turned the TypeError into an
+      // empty result, so the component read 0 and the test failed for a reason
+      // that had nothing to do with the code under test. A double that lacks an
+      // operator silently is the same class of defect as one that ignores
+      // `.select()` — cf. fakeMapDb, which THROWS on an unimplemented operator
+      // rather than answering "no rows".
+      is(col: string, val: any)   { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return chain; },
       or()              { return chain; },
       order()           { return chain; },
       limit()           { return chain; },
@@ -443,14 +452,19 @@ describe("CreatorSignalAggregator — blocked-account exclusion", () => {
       blocks: [
         { blocker_id: CREATOR_ID, blocked_id: BLOCKED_ID },
       ],
-      activity_events: [
-        // Participation by creator on FRIEND's content (should count)
-        { actor_id: CREATOR_ID, user_id: FRIEND_ID,  event_type: "comment_posted", created_at: ago1d },
-        // Participation by creator on BLOCKED's content (should NOT count)
-        { actor_id: CREATOR_ID, user_id: BLOCKED_ID, event_type: "comment_posted", created_at: ago1d },
+      // The creator commented on two people's posts. Ownership is resolved
+      // through `posts`, so the post rows ARE the fixture — a comment whose
+      // post has no owner row cannot be attributed and must not be counted.
+      posts_comments: [
+        { user_id: CREATOR_ID, post_id: "p-friend",  deleted_at: null, created_at: ago1d },
+        { user_id: CREATOR_ID, post_id: "p-blocked", deleted_at: null, created_at: ago1d },
       ],
-      // No contributions or trust data needed for this sub-test
-      posts: [], events: [], trips: [], reviews: [], discovery_places: [],
+      posts: [
+        { id: "p-friend",  author_id: FRIEND_ID,  status: "active", created_at: ago1d },
+        { id: "p-blocked", author_id: BLOCKED_ID, status: "active", created_at: ago1d },
+      ],
+      event_rsvps: [],
+      events: [], trips: [], reviews: [], discovery_places: [],
       trust_profiles: [],
     });
 
@@ -473,13 +487,14 @@ describe("CreatorSignalAggregator — blocked-account exclusion", () => {
       blocks: [
         { blocker_id: BLOCKED_ID, blocked_id: CREATOR_ID }, // blocked_by direction
       ],
-      activity_events: [
-        // Save from FRIEND (should count)
-        { actor_id: FRIEND_ID,  user_id: CREATOR_ID, event_type: "content_saved", created_at: ago1d },
-        // Save from BLOCKED (should NOT count)
-        { actor_id: BLOCKED_ID, user_id: CREATOR_ID, event_type: "content_saved", created_at: ago1d },
+      // Two people saved the creator's post. Received signals are joined on the
+      // creator's OWN post ids, so the post row is what makes them attributable.
+      post_saves: [
+        { user_id: FRIEND_ID,  post_id: "p-mine", created_at: ago1d },
+        { user_id: BLOCKED_ID, post_id: "p-mine", created_at: ago1d },
       ],
-      posts: [], events: [], trips: [], reviews: [], discovery_places: [],
+      posts: [{ id: "p-mine", author_id: CREATOR_ID, status: "active", created_at: ago1d }],
+      events: [], trips: [], reviews: [], discovery_places: [],
       trust_profiles: [],
     });
 
@@ -497,13 +512,16 @@ describe("CreatorSignalAggregator — self-engagement exclusion", () => {
   it("self-actions (actor_id = creator) do not count as positive responses", async () => {
     const db = makeFakeDb({
       blocks: [],
-      activity_events: [
-        // Creator saved their own content (actor_id = user_id = CREATOR_ID → excluded)
-        { actor_id: CREATOR_ID, user_id: CREATOR_ID, event_type: "content_saved",  created_at: ago1d },
-        // Genuine save from FRIEND (should count)
-        { actor_id: FRIEND_ID,  user_id: CREATOR_ID, event_type: "content_saved",  created_at: ago1d },
+      // A self-save is a REAL possibility on the first-class tables: unlike
+      // routes/mediaFeed.ts, routes/posts.ts has no self-stamp/self-save guard,
+      // so the exclusion has to live in the aggregator — which is what this
+      // asserts. Under activity_events it was hypothetical; now it is reachable.
+      post_saves: [
+        { user_id: CREATOR_ID, post_id: "p-mine", created_at: ago1d },
+        { user_id: FRIEND_ID,  post_id: "p-mine", created_at: ago1d },
       ],
-      posts: [], events: [], trips: [], reviews: [], discovery_places: [],
+      posts: [{ id: "p-mine", author_id: CREATOR_ID, status: "active", created_at: ago1d }],
+      events: [], trips: [], reviews: [], discovery_places: [],
       trust_profiles: [],
     });
 
@@ -521,16 +539,25 @@ describe("CreatorSignalAggregator — end-to-end signal wiring", () => {
   it("aggregate() produces non-zero signals for an active creator", async () => {
     const db = makeFakeDb({
       blocks: [],
-      activity_events: [
-        // Active-days signal
-        { actor_id: CREATOR_ID, user_id: FRIEND_ID,  event_type: "comment_posted", created_at: ago1d },
-        // Participation
-        { actor_id: CREATOR_ID, user_id: FRIEND_ID,  event_type: "event_attended", created_at: ago1d },
-        // Received positive response
-        { actor_id: FRIEND_ID,  user_id: CREATOR_ID, event_type: "content_saved",  created_at: ago1d },
+      // Every lane is now fed by a table that has a real production writer.
+      // This is the end-to-end control for the whole rewrite: if any component
+      // silently returns to zero, one of the four assertions below fails.
+      posts_comments: [{ user_id: CREATOR_ID, post_id: "p-theirs", deleted_at: null, created_at: ago1d }],
+      post_saves:     [{ user_id: FRIEND_ID,  post_id: "p-mine",   created_at: ago1d }],
+      event_rsvps:    [],
+      // One published post in the 90d window.
+      // Real column shape: posts.status is public.post_status
+      // ('active','hidden','reported','deleted') and posts.post_status is
+      // public.delayed_post_status (…,'published',…). This fixture previously
+      // carried status:"published" — a value the real enum cannot hold — which
+      // matched the service's then-broken .eq("status","published") predicate
+      // and so kept this test green over a query that returned nothing in
+      // production. See creatorActivityEnumLiterals.test.ts.
+      posts: [
+        { id: "p-mine",   author_id: CREATOR_ID, status: "active", post_status: "published", created_at: ago1d },
+        // Someone else's post, so the creator's comment on it is participation.
+        { id: "p-theirs", author_id: FRIEND_ID,  status: "active", post_status: "published", created_at: ago1d },
       ],
-      // One published post in the 90d window
-      posts:  [{ author_id: CREATOR_ID, status: "published", created_at: ago1d }],
       events: [], trips: [], reviews: [], discovery_places: [],
       trust_profiles: [{ user_id: CREATOR_ID, overall_score: 75, public_level: "trusted_traveler" }],
     });
@@ -549,25 +576,27 @@ describe("CreatorSignalAggregator — end-to-end signal wiring", () => {
     // Without blocked actors: FRIEND save counts
     const dbClean = makeFakeDb({
       blocks: [],
-      activity_events: [
-        { actor_id: FRIEND_ID, user_id: CREATOR_ID, event_type: "content_saved", created_at: ago1d },
-      ],
-      posts: [], events: [], trips: [], reviews: [], discovery_places: [],
+      post_saves: [{ user_id: FRIEND_ID, post_id: "p-mine", created_at: ago1d }],
+      posts: [{ id: "p-mine", author_id: CREATOR_ID, status: "active", created_at: ago1d }],
+      events: [], trips: [], reviews: [], discovery_places: [],
       trust_profiles: [],
     });
 
     // With blocked actors: BLOCKED_ID save should be stripped
     const dbBlocked = makeFakeDb({
       blocks: [{ blocker_id: CREATOR_ID, blocked_id: BLOCKED_ID }],
-      activity_events: [
+      post_saves: [
         // Same FRIEND save
-        { actor_id: FRIEND_ID,  user_id: CREATOR_ID, event_type: "content_saved", created_at: ago1d },
-        // Extra saves from blocked user — must not inflate the score
-        { actor_id: BLOCKED_ID, user_id: CREATOR_ID, event_type: "content_saved", created_at: ago1d },
-        { actor_id: BLOCKED_ID, user_id: CREATOR_ID, event_type: "content_saved", created_at: ago1d },
-        { actor_id: BLOCKED_ID, user_id: CREATOR_ID, event_type: "content_saved", created_at: ago1d },
+        { user_id: FRIEND_ID,  post_id: "p-mine", created_at: ago1d },
+        // Extra saves from a blocked user — must not inflate the score. Three of
+        // them, so a filter that silently stopped working would be visible as a
+        // score difference rather than a rounding wobble.
+        { user_id: BLOCKED_ID, post_id: "p-mine", created_at: ago1d },
+        { user_id: BLOCKED_ID, post_id: "p-mine", created_at: ago1d },
+        { user_id: BLOCKED_ID, post_id: "p-mine", created_at: ago1d },
       ],
-      posts: [], events: [], trips: [], reviews: [], discovery_places: [],
+      posts: [{ id: "p-mine", author_id: CREATOR_ID, status: "active", created_at: ago1d }],
+      events: [], trips: [], reviews: [], discovery_places: [],
       trust_profiles: [],
     });
 
@@ -582,6 +611,216 @@ describe("CreatorSignalAggregator — end-to-end signal wiring", () => {
       sigsBlocked.receivedPositiveActions,
       sigsClean.receivedPositiveActions,
       `blocked saves must be excluded: clean=${sigsClean.receivedPositiveActions}, blocked=${sigsBlocked.receivedPositiveActions}`,
+    );
+  });
+});
+
+// ─── The admin tier boundaries are reachable ─────────────────────────────────
+
+/**
+ * adminRankingMetrics.bucketScoreToTier splits creators at 21 / 41 / 66 / 86.
+ * Those boundaries were written for the 0-100 design. They were FICTION until
+ * 2026-09-06: four of the five components read `activity_events`, a table with
+ * no producer, so 0.70 of the weight was structurally zero and the reachable
+ * ceiling was about 30. Every creator in every environment bucketed to
+ * new_inactive or occasional, and the top three tiers could not be occupied by
+ * any input whatsoever.
+ *
+ * This is the aggregate counterpart to the per-component mutation proof: a
+ * component that silently returns to zero drops the ceiling back under a
+ * boundary, and this test is what notices. It asserts REACHABILITY, not any
+ * particular creator's score.
+ *
+ * NOTE ON THE INPUTS: the contribution windows are CUMULATIVE, and
+ * weightedContributionScore saturates each window's MARGINAL count
+ * (c7d - c24h, and so on) against SOFT_CAP_CONTRIBUTION = 20. So a creator with
+ * 200 posts in 90d but only 5 in the last day scores ~52 on that component, not
+ * ~100 — the marginals, not the totals, are what saturate. Building these
+ * fixtures from totals is an easy way to write a test that fails against
+ * perfectly good code; it is what the first draft of this test did.
+ */
+describe("activity tiers — the admin dashboard's boundaries are occupiable", () => {
+  /** Cumulative windows carrying `perWindow` NEW contributions in each band. */
+  const withMarginals = (perWindow: number, rest: Partial<CreatorSignals>): CreatorSignals =>
+    baseSignals({
+      contributions24h: perWindow,
+      contributions7d:  perWindow * 2,
+      contributions30d: perWindow * 3,
+      contributions90d: perWindow * 4,
+      ...rest,
+    });
+
+  const MAXED = withMarginals(100, {
+    activeDays90: 90,
+    participationEvents: 120, participationDistinctUsers: 90,
+    receivedPositiveActions: 400, receivedInteractionVolume: 400,
+    maintenanceActions: 60,
+  });
+
+  it("a maximally active creator reaches highly_active (>= 86)", () => {
+    const { score } = computeActivityScore("max", MAXED);
+    assert.ok(
+      score >= 86,
+      `a creator maxed on every component scores ${score}, below the highly_active ` +
+        `boundary of 86. Some component is returning zero for inputs that should ` +
+        `saturate it — that is how this lane died the first time. Check which of ` +
+        `the five reads is empty before adjusting the boundary.`,
+    );
+  });
+
+  it("scales monotonically with activity, and spans from below moderate to the top tier", () => {
+    const at = (m: number) =>
+      computeActivityScore("s", withMarginals(Math.max(0, Math.round(100 * m)), {
+        activeDays90:               Math.round(90 * m),
+        participationEvents:        Math.round(120 * m),
+        participationDistinctUsers: Math.round(90 * m),
+        receivedPositiveActions:    Math.round(400 * m),
+        receivedInteractionVolume:  Math.round(400 * m),
+        maintenanceActions:         Math.round(60 * m),
+      })).score;
+
+    const scores = [0.002, 0.02, 0.1, 1.0].map(at);
+    for (let i = 1; i < scores.length; i++) {
+      assert.ok(
+        scores[i]! > scores[i - 1]!,
+        `score is not monotonic in activity: ${JSON.stringify(scores)}. A component ` +
+          `that ignores its input entirely produces exactly this flatness.`,
+      );
+    }
+    assert.ok(scores[0]! < 41, `lowest sample ${scores[0]} should sit under moderate`);
+    assert.ok(scores[3]! >= 86, `highest sample ${scores[3]} should reach highly_active`);
+  });
+});
+
+// ─── Owner lookup is chunked ─────────────────────────────────────────────────
+
+/**
+ * A double that fails the way PostgREST fails on an over-long query string.
+ *
+ * The ordinary makeFakeDb `.in()` accepts a list of any size, so it is
+ * structurally incapable of catching an unchunked lookup — the same blindness
+ * that let the original `activity_events` reads look healthy. This double
+ * refuses any `.in()` above the limit, which is what a 414 does in practice.
+ */
+function makeUrlLimitedDb(tableData: Record<string, any[]>, maxInSize: number) {
+  let rejections = 0;
+  function buildChain(table: string) {
+    const filters: Array<(r: any) => boolean> = [];
+    let refused = false;
+    const chain: any = {
+      select() { return chain; },
+      eq(c: string, v: any)  { filters.push((r) => r[c] === v); return chain; },
+      neq(c: string, v: any) { filters.push((r) => r[c] !== v); return chain; },
+      gte(c: string, v: any) { filters.push((r) => r[c] >= v); return chain; },
+      is(c: string, v: any)  { filters.push((r) => (v === null ? r[c] == null : r[c] === v)); return chain; },
+      or() { return chain; }, order() { return chain; }, limit() { return chain; },
+      maybeSingle() { return chain; }, single() { return chain; },
+      in(c: string, vals: any[]) {
+        if (vals.length > maxInSize) { refused = true; rejections++; return chain; }
+        filters.push((r) => vals.includes(r[c]));
+        return chain;
+      },
+      then(resolve: any, reject: any) {
+        return Promise.resolve().then(() => {
+          // supabase-js RETURNS the error; it does not throw. A caller that only
+          // guards with try/catch sees `data === undefined`, not an exception.
+          if (refused) return resolve({ data: undefined, error: { code: "414", message: "URI too long" } });
+          return resolve({ data: (tableData[table] ?? []).filter((r) => filters.every((f) => f(r))), error: null });
+        }).catch(reject);
+      },
+    };
+    return chain;
+  }
+  return { db: { from: (t: string) => buildChain(t) }, rejections: () => rejections };
+}
+
+describe("CreatorSignalAggregator — owner lookup survives a large id set", () => {
+  const CREATOR = "22222222-2222-4222-8222-222222222222";
+  const uuid = (n: number) => `33333333-3333-4333-8333-${String(n).padStart(12, "0")}`;
+  const N = 250; // > OWNER_LOOKUP_CHUNK (100), so it must span 3 requests
+
+  it("counts participation for a prolific commenter instead of silently reading zero", async () => {
+    const authors = Array.from({ length: N }, (_, i) => uuid(i + 1));
+    const { db, rejections } = makeUrlLimitedDb({
+      blocks: [],
+      posts_comments: authors.map((_, i) => ({
+        user_id: CREATOR, post_id: `post-${i}`, deleted_at: null, created_at: "2026-09-01T00:00:00Z",
+      })),
+      posts: authors.map((a, i) => ({ id: `post-${i}`, author_id: a })),
+      event_rsvps: [],
+      events: [],
+    }, 100);
+
+    const agg = new CreatorSignalAggregator(db as any);
+    const signals = await agg.aggregate(CREATOR);
+
+    assert.equal(
+      rejections(), 0,
+      `the owner lookup sent an .in() larger than the limit ${rejections()} time(s). ` +
+        `Against a real PostgREST that is a 414 which supabase-js RETURNS rather ` +
+        `than throws, so the component reads 0 for precisely the most active ` +
+        `participants — silently, and only above a size threshold no fixture hits.`,
+    );
+    assert.equal(signals.participationEvents, N, "every comment's owner should resolve");
+    assert.equal(signals.participationDistinctUsers, N, "all owners are distinct");
+  });
+});
+
+// ─── Every .in() on a built list is chunked, not just the owner lookup ───────
+
+/**
+ * The owner lookup was chunked first, and the four reads in
+ * _fetchPositiveResponses were left with an unbounded list — the same 414, the
+ * same silent zero, on the component weighted 0.20. A repo-wide sweep found it
+ * afterwards. This test covers ALL of them so the next one cannot slip through:
+ * the double refuses any `.in()` above the limit exactly as PostgREST does.
+ */
+describe("CreatorSignalAggregator — no unbounded .in() reaches the database", () => {
+  const CREATOR = "44444444-4444-4444-8444-444444444444";
+  const post = (n: number) => `post-${n}`;
+  const actor = (n: number) => `55555555-5555-4555-8555-${String(n).padStart(12, "0")}`;
+  const N = 260; // > IN_LIST_CHUNK (100), so every read must span 3 requests
+
+  it("counts engagement for a prolific creator instead of silently reading zero", async () => {
+    const posts = Array.from({ length: N }, (_, i) => ({
+      id: post(i), author_id: CREATOR, status: "active",
+      post_status: "published", created_at: "2026-09-01T00:00:00Z",
+    }));
+    const savers = Array.from({ length: N }, (_, i) => ({
+      user_id: actor(i), post_id: post(i), created_at: "2026-09-02T00:00:00Z",
+    }));
+
+    const { db, rejections } = makeUrlLimitedDb({
+      blocks: [],
+      posts,
+      post_saves: savers,
+      post_shares: [],
+      posts_comments: [],
+      user_follows: [],
+      content_stamps: [],
+      post_edits: [],
+      profile_views: [],
+      events: [],
+      trips: [],
+      reviews: [],
+      discovery_places: [],
+      event_rsvps: [],
+      trust_profiles: [],
+    }, 100);
+
+    const agg = new CreatorSignalAggregator(db as any);
+    const signals = await agg.aggregate(CREATOR);
+
+    assert.equal(
+      rejections(), 0,
+      `${rejections()} read(s) sent an .in() larger than the limit. Against a real ` +
+        `PostgREST that is a 414 which supabase-js RETURNS rather than throws, so the ` +
+        `component reads 0 for exactly the most prolific creators — and the more they ` +
+        `post, the more certain the zero.`,
+    );
+    assert.ok(
+      signals.receivedPositiveActions >= N,
+      `expected at least ${N} received actions, got ${signals.receivedPositiveActions}`,
     );
   });
 });

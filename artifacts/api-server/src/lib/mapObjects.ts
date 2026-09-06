@@ -59,6 +59,32 @@ export function bboxPolygon(w: number, s: number, e: number, n: number): Polygon
  * lets the client's kinds= filter and the §16 layer toggles agree. Appended at
  * the end so the app mirror (src/test/mapObjectsContract.test.ts) compares in
  * order. Produced by lib/mapProducers/savedPlaceProducer.ts.
+ *
+ * THE FOUR §36 PHASE 7 KINDS — World Intelligence
+ * ==============================================
+ * Added 2026-09-05 on the owner's approval (docs/map/scope-ruling-phases-6-7.md
+ * AMENDMENT; built contract in docs/map/phase-7-world-intelligence.md). All four
+ * are AGGREGATE-ONLY or OWNER-ONLY, and none of them is a forecast — they stay
+ * out of FORECAST_KINDS deliberately, because every one of them describes
+ * something that was observed and aggregated, never something projected forward.
+ *
+ *   world_pulse     A world/continent-band concentration cell, summarizing the
+ *                   §31 aggregation's OWN OUTPUT (already-k-gated activity
+ *                   zones and crowd flows) plus public venue/event density.
+ *                   Never reads presence. lib/mapProducers/worldPulseProducer.
+ *   traveler_flow   A city -> city aggregate movement edge from consented,
+ *                   already-published accepted-plan hops. Cohort size is
+ *                   published as an ActivityLevel BUCKET and never as a number.
+ *                   lib/mapProducers/travelerFlowProducer.
+ *   city_model      A per-city aggregate profile: rhythm by time band, top
+ *                   categories, top zones. lib/mapProducers/cityModelProducer.
+ *   personal_city   The VIEWER'S OWN city history summary, owner-scoped, built
+ *                   from the viewer's own rows only. Never another person's.
+ *                   lib/mapProducers/personalCityProducer.
+ *
+ * All four are in mapAggregation.NEVER_AGGREGATED_KINDS: three are already
+ * aggregates carrying their own k decision, and folding the fourth (a private
+ * summary) into a public cell would be a category error.
  */
 export const MAP_OBJECT_KINDS = [
   "place",
@@ -75,6 +101,10 @@ export const MAP_OBJECT_KINDS = [
   "memory",
   "prediction",
   "saved_place",
+  "world_pulse",
+  "traveler_flow",
+  "city_model",
+  "personal_city",
 ] as const;
 
 export type MapObjectKind = (typeof MAP_OBJECT_KINDS)[number];
@@ -279,6 +309,10 @@ export const KIND_DEFAULT_PRIORITY: Record<MapObjectKind, number> = {
   buddy_zone: RENDERING_PRIORITY.social_opportunity,
   memory: RENDERING_PRIORITY.saved_place,
   saved_place: RENDERING_PRIORITY.saved_place,
+  world_pulse: RENDERING_PRIORITY.high_confidence_live_zone,
+  traveler_flow: RENDERING_PRIORITY.high_confidence_live_zone,
+  city_model: RENDERING_PRIORITY.relevant_place,
+  personal_city: RENDERING_PRIORITY.saved_place,
 };
 
 // ── Interaction (spec §18, §25) ────────────────────────────────────────────────

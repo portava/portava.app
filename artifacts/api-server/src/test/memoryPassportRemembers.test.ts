@@ -28,6 +28,8 @@ import { _setTestClient } from "../lib/http.js";
 
 const ALICE = "a1a1a1a1-aaaa-aaaa-aaaa-00000000ae01";
 const MALLORY = "bad00000-0000-0000-0000-00000000bad0";
+const FOREIGN_PROJECTION = "11111111-2222-3333-4444-555555555555";
+const OWN_PROJECTION     = "99999999-8888-7777-6666-555555555555";
 
 type RpcCall = { name: string; params: any };
 let rpcCalls: RpcCall[] = [];
@@ -47,7 +49,12 @@ interface Seed {
   memberships?: any[];
   moments?: any[];
   availability?: Record<string, unknown> | null;
-  projection?: Record<string, unknown> | null; // ownership lookup result
+  /**
+   * Rows that EXIST in memory_projections. The fake applies the route's own
+   * `.eq()` filters to them, so OWNERSHIP is decided by the production filter
+   * rather than by the fixture.
+   */
+  projections?: Array<Record<string, unknown>>;
   rpcError?: string;
   insertError?: { code?: string; message?: string } | null;
 }
@@ -77,7 +84,6 @@ function makeClient(seed: Seed = {}) {
       case "profiles": return profileRow;
       case "compass_user_preferences": return seed.prefs ?? null;
       case "user_availability": return seed.availability ?? null;
-      case "memory_projections": return seed.projection ?? null;
       default: return null;
     }
   };
@@ -99,13 +105,29 @@ function makeClient(seed: Seed = {}) {
       return { data: null, error: null };
     },
     from: (table: string) => {
+      // `.eq()` RECORDS its filters, and the memory_projections lookup APPLIES
+      // them. resolveOwnedProjection enforces ownership with
+      // `.eq("user_id", userId)` against the service_role client, which
+      // bypasses RLS — so that one line is the only thing between a guessed
+      // uuid and forgetting or "correcting" another user's memory. A fake with
+      // `eq: () => chain` cannot tell an enforced gate from a deleted one, and
+      // the ownership test below was passing on a hard-coded `projection: null`
+      // that no filter had to produce.
+      const filters: Array<[string, unknown]> = [];
       const chain: any = {
         select: () => chain,
-        eq: () => chain,
+        eq: (col: string, val: unknown) => { filters.push([col, val]); return chain; },
         in: () => chain,
         order: () => chain,
         limit: () => chain,
-        maybeSingle: async () => ({ data: singleFor(table), error: null }),
+        maybeSingle: async () => {
+          if (table === "memory_projections") {
+            const rows = seed.projections ?? [];
+            const match = rows.find((r) => filters.every(([c, v]) => r[c] === v));
+            return { data: match ?? null, error: null };
+          }
+          return { data: singleFor(table), error: null };
+        },
         insert: async (row: any) => {
           inserts.push({ table, row });
           return { data: null, error: seed.insertError ?? null };
@@ -283,15 +305,31 @@ describe("deny-list is omitted (defence-in-depth gate)", () => {
         { moment_id: "m-invited", status: "invited" },   // not consented
         { moment_id: "m-archived", status: "accepted" },
       ],
+      // FIXTURE CORRECTED to the real schema. These rows used to carry
+      // `visibility: "circle"`. shared_moments has no `visibility` column at
+      // all (and no "circle" anywhere): its audience control is `join_policy`
+      // (invite_only | approval_required). The old fixture made this test pass
+      // against a select that fails 42703 in production, so the shared-moment
+      // group has never rendered a row for a real user.
       moments: [
-        { id: "m-yes", title: "Dinner in Da Nang", status: "active", visibility: "circle", archived_at: null },
-        { id: "m-invited", title: "Should not appear", status: "active", visibility: "circle", archived_at: null },
-        { id: "m-archived", title: "Old moment", status: "archived", visibility: "circle", archived_at: new Date().toISOString() },
+        { id: "m-yes", title: "Dinner in Da Nang", status: "active", join_policy: "invite_only", archived_at: null },
+        { id: "m-invited", title: "Should not appear", status: "active", join_policy: "invite_only", archived_at: null },
+        { id: "m-archived", title: "Old moment", status: "archived", join_policy: "approval_required", archived_at: new Date().toISOString() },
       ],
     }), true as any);
     const res = await api("GET", "/compass/me/passport/remembers");
-    const titles = groupItems(res.body, "shared_moment").map((i) => i.title);
+    const surfaced = groupItems(res.body, "shared_moment");
+    const titles = surfaced.map((i) => i.title);
     assert.deepEqual(titles, ["Dinner in Da Nang"], "only the accepted + active moment is surfaced");
+    // The wire value is `sharedMomentVisibility`'s class, not the raw column:
+    // both real join policies (invite_only, approval_required) are the same
+    // audience class and report "participants_only", while anything else — an
+    // unrecognised policy, a null, or a column the query never selected — falls
+    // to "private". The internal vocabulary does not reach the wire, and the
+    // fail-closed default is what keeps this assertion non-vacuous: a read that
+    // silently stopped resolving would give "private", not this value.
+    assert.equal(surfaced[0].visibility, "participants_only",
+      "the moment's audience is reported from its real join_policy, never 'public'");
   });
 });
 
@@ -379,12 +417,41 @@ describe("FORGET removes the item and blocks regeneration", () => {
   });
 
   it("a projection id the caller does not own is rejected (no cross-user suppression)", async () => {
-    _setTestClient(makeClient({ projection: null }), true as any);
+    // The projection EXISTS and belongs to Mallory. resolveOwnedProjection
+    // reads through the service_role client (RLS bypassed), so its
+    // `.eq("user_id", userId)` is the only barrier. Delete that line and this
+    // goes RED: the row resolves and Alice suppresses Mallory's memory.
+    _setTestClient(makeClient({
+      projections: [{
+        id: FOREIGN_PROJECTION, user_id: MALLORY,
+        memory_type: "semantic", subject_type: "city", subject_id: "Lisbon",
+      }],
+    }), true as any);
     const res = await api("POST", "/compass/me/passport/remembers/forget", {
-      projectionId: "11111111-2222-3333-4444-555555555555",
+      projectionId: FOREIGN_PROJECTION,
     });
     assert.equal(res.status, 404);
     assert.deepEqual(inserts, [], "no feedback written for a foreign projection");
+  });
+
+  it("the caller's OWN projection IS forgettable (positive control)", async () => {
+    // Without this, a route that rejected every projection id would also pass
+    // the test above.
+    _setTestClient(makeClient({
+      projections: [{
+        id: OWN_PROJECTION, user_id: ALICE,
+        memory_type: "episodic", subject_type: "city", subject_id: "Porto",
+      }],
+    }), true as any);
+    const res = await api("POST", "/compass/me/passport/remembers/forget", {
+      projectionId: OWN_PROJECTION,
+    });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.behavior, "suppress_no_regen");
+    assert.equal(inserts.length, 1);
+    assert.equal(inserts[0].row.user_id, ALICE);
+    assert.equal(inserts[0].row.subject_id, "Porto",
+      "the owned projection's durable subject key is denormalised onto the signal");
   });
 
   it("forget is idempotent — a duplicate (23505) still reports success", async () => {

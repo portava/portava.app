@@ -40,6 +40,9 @@ import type { RankingFactor } from "./CompassRecommendationEngine.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { mayPublishRhythm } from "../lib/compassRhythmGate.js";
+import { logger as rootLogger } from "../lib/logger.js";
+
+const logger = rootLogger.child({ service: "CompassGraphEngine" });
 
 // ── Time slicing ──────────────────────────────────────────────────────────────
 
@@ -418,6 +421,16 @@ export interface CityConfidence {
 export interface GraphRebuildReport {
   nodesUpserted: number;
   edgesUpserted: number;
+  /**
+   * Rows in chunks whose upsert was REJECTED. A rebuild that reports
+   * `nodesUpserted: 0, nodesFailed: 12000` and one that reports
+   * `nodesUpserted: 0, nodesFailed: 0` mean opposite things — the first is a
+   * broken write path, the second an empty source. Before these existed the
+   * two were indistinguishable, because a failed chunk was simply not counted
+   * and nothing was logged.
+   */
+  nodesFailed: number;
+  edgesFailed: number;
   citiesModeled: number;
   citiesScored: number;
   strongestCity: string | null;
@@ -514,7 +527,7 @@ const BUILD_LIMIT = 5000;
  */
 export async function buildGraphFromSources(
   db: SupabaseClient,
-): Promise<{ nodesUpserted: number; edgesUpserted: number }> {
+): Promise<{ nodesUpserted: number; edgesUpserted: number; nodesFailed: number; edgesFailed: number }> {
   const batch = new GraphBatch();
 
   // 1. Stamps → person —visited→ city (+ time-slice observation)
@@ -723,6 +736,7 @@ export async function buildGraphFromSources(
 
   // ── Persist ────────────────────────────────────────────────────────────────
   let nodesUpserted = 0, edgesUpserted = 0;
+  let nodesFailed = 0, edgesFailed = 0;
   const nowIso = new Date().toISOString();
 
   const nodeRows = [...batch.nodes.values()].map((n) => ({
@@ -737,7 +751,18 @@ export async function buildGraphFromSources(
     const { error } = await db
       .from("compass_graph_nodes")
       .upsert(chunk, { onConflict: "node_type,node_key" });
-    if (!error) nodesUpserted += chunk.length;
+    // A rejected chunk used to be silently skipped: `nodesUpserted` simply did
+    // not grow, so a write path broken for EVERY chunk reported the same "0"
+    // as an empty graph, with no log line anywhere. Count and log it.
+    if (error) {
+      nodesFailed += chunk.length;
+      logger.warn(
+        { err: error, chunkStart: i, chunkSize: chunk.length },
+        "compass graph: node chunk upsert rejected — those nodes are NOT persisted",
+      );
+    } else {
+      nodesUpserted += chunk.length;
+    }
   }
 
   const edgeRows = [...batch.edges.values()].map((e) => ({
@@ -758,10 +783,18 @@ export async function buildGraphFromSources(
     const { error } = await db
       .from("compass_graph_edges")
       .upsert(chunk, { onConflict: "src_type,src_key,dst_type,dst_key,edge_type" });
-    if (!error) edgesUpserted += chunk.length;
+    if (error) {
+      edgesFailed += chunk.length;
+      logger.warn(
+        { err: error, chunkStart: i, chunkSize: chunk.length },
+        "compass graph: edge chunk upsert rejected — those edges are NOT persisted",
+      );
+    } else {
+      edgesUpserted += chunk.length;
+    }
   }
 
-  return { nodesUpserted, edgesUpserted };
+  return { nodesUpserted, edgesUpserted, nodesFailed, edgesFailed };
 }
 
 // ── Destination World Model ───────────────────────────────────────────────────
@@ -1285,8 +1318,11 @@ export async function cleanupNonCanonicalCityRows(
 
 /** Rebuild graph → world models → confidence index, in order. */
 export async function rebuildIntelligenceGraph(db: SupabaseClient): Promise<GraphRebuildReport> {
-  const { nodesUpserted, edgesUpserted } = await buildGraphFromSources(db);
+  const { nodesUpserted, edgesUpserted, nodesFailed, edgesFailed } = await buildGraphFromSources(db);
   const citiesModeled = await buildCityWorldModels(db);
   const { scored, strongestCity } = await computeCityConfidenceIndex(db);
-  return { nodesUpserted, edgesUpserted, citiesModeled, citiesScored: scored, strongestCity };
+  return {
+    nodesUpserted, edgesUpserted, nodesFailed, edgesFailed,
+    citiesModeled, citiesScored: scored, strongestCity,
+  };
 }

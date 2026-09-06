@@ -28,8 +28,30 @@ import { buildJourneys } from "../services/passport/PassportJourneyService.js";
 import { buildYearbook } from "../services/passport/PassportYearbookService.js";
 import { writeTravelDnaPref } from "../services/passport/PassportTravelIdentityService.js";
 import { buildReputationSummary } from "../services/passport/PassportReputationService.js";
+import {
+  createEventPassportShare,
+  revokeEventPassportShare,
+  getOwnEventPassportShare,
+  resolveEventPassport,
+} from "../services/passport/EventPassportService.js";
+import {
+  PASSPORT_TELEMETRY_EVENTS,
+  normalizeClientPayload,
+  recordPassportEvent,
+  type PassportTelemetryEvent,
+} from "../lib/passportTelemetry.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import { checkRateLimit } from "../lib/rateLimit.js";
 
 const router = Router();
+
+/**
+ * Ceiling on one §32 client telemetry batch. The transport's own default
+ * maxBatch is 25 and its queue cap is 200; 200 is the largest batch it can ever
+ * form, so this accepts every legitimate batch and refuses anything that is not
+ * one of ours.
+ */
+const MAX_TELEMETRY_EVENTS_PER_BATCH = 200;
 
 const PUBLIC_PROFILE_COLUMNS =
   "id, username, display_name, name, bio, avatar_url, cover_photo_url, home_city, home_country, travel_style, interests, verified, verification_status, verified_at, passport_visibility, created_at, is_private, spoken_languages, travel_styles, travel_pace, looking_for, account_status, passport_tab_order, is_official, featured_count, show_profile_picture_publicly";
@@ -1689,6 +1711,266 @@ router.get("/passport/:userId/contributions", async (req, res) => {
   } catch (e: any) {
     req.log.error({ err: e }, "passport contributions failed");
     sendError(res, "db_error", e?.message ?? "Contributions failed");
+  }
+});
+
+/* ===========================================================================
+ * POST /api/passport/telemetry — §32 client telemetry ingest
+ * ===========================================================================
+ * THE SEAM THIS CLOSES. `travel-buddy-standalone/src/features/passport/
+ * passportTelemetryTransport.ts` has been installed as the app's live §32 sink
+ * since `app/_layout.tsx:127`. It batches every Passport client event and POSTs
+ * it to exactly this path. No such route was ever mounted, so every batch 404'd;
+ * the transport's own 404 branch drops the batch and pins its backoff at the
+ * cap, which is why the loss is invisible — no error surfaces, no retry storm,
+ * and sixteen of the eighteen §32 event names have never been recorded once.
+ *
+ * WHAT THE CLIENT IS TRUSTED WITH — AND WHAT IT IS NOT.
+ *   • The ACTOR is stamped from the bearer token, never from the body. The
+ *     client does not send a user id and one sent anyway is ignored: the actor
+ *     is folded in by `recordPassportEvent({ actorId })` AFTER the body's
+ *     payload, so a forged `actor_id` cannot survive.
+ *   • The event NAME must be one of the canonical §32 names; anything else is
+ *     counted as rejected and dropped (projectPassportEvent would drop it
+ *     anyway, and the table's CHECK is the third backstop).
+ *   • The PAYLOAD is renamed onto the store's vocabulary and then passed through
+ *     the same `sanitizePassportPayload` allow-list every server-side emitter
+ *     uses — coordinate- and identity-shaped keys stripped at every depth, then
+ *     projected to the allow-list. A client cannot widen what gets stored.
+ *   • `ts`/`seq` are client-clock values; they never become `occurred_at`. The
+ *     server's own clock times the row.
+ *
+ * ALWAYS 202. Telemetry must never make a Passport screen fail, and a
+ * per-event verdict would tell a caller which names are canonical. The response
+ * is a count only. With `passport_telemetry_enabled` OFF (its shipped state)
+ * every accepted event is still a no-op inside recordPassportEvent — the route
+ * is the transport, the flag is the collection decision.
+ */
+const telemetryBatchSchema = z.object({
+  schemaVersion: z.literal("1"),
+  events: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(64),
+        ts: z.number().optional(),
+        seq: z.number().optional(),
+        payload: z.record(z.unknown()).optional(),
+      }),
+    )
+    .max(MAX_TELEMETRY_EVENTS_PER_BATCH),
+  meta: z.object({ dropped: z.number().optional() }).optional(),
+});
+
+router.post("/passport/telemetry", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  // Same posture as the sibling ingest at routes/mapTelemetry.ts:166 — an
+  // authenticated write endpoint that accepts a batch needs a ceiling of its
+  // own. The transport's idle flush is 4s, so 60/min is far above any honest
+  // client.
+  const rl = checkRateLimit("passport_telemetry", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many requests. Please wait.");
+    return;
+  }
+
+  const parsed = telemetryBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid batch");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { res.status(202).json({ accepted: 0, rejected: parsed.data.events.length }); return; }
+
+  // One flag read per BATCH, not per event: recordPassportEvent reads the flag
+  // itself (and stays the fail-closed authority), but a 200-event batch would
+  // otherwise issue 200 identical feature_flags queries.
+  //
+  // Spelled as a LITERAL, not as PASSPORT_TELEMETRY_FLAG: check:flag-polarity
+  // must be able to see statically which flag a reader gates on, and it refuses
+  // an argument it cannot resolve. `passportTelemetryIngest.test.ts` asserts
+  // this literal still equals the exported constant, so the two cannot drift.
+  const collecting = await isFlagEnabled(sc, "passport_telemetry_enabled");
+
+  let accepted = 0;
+  let rejected = 0;
+  for (const ev of parsed.data.events) {
+    if (!(PASSPORT_TELEMETRY_EVENTS as readonly string[]).includes(ev.name)) {
+      rejected++;
+      continue;
+    }
+    if (!collecting) { accepted++; continue; }
+    const payload = normalizeClientPayload(ev.payload);
+    // Provenance: these came off a device, not off a server action.
+    payload.surface = "client";
+    const subjectId = typeof payload.subject_id === "string" ? payload.subject_id : null;
+    delete payload.subject_id;
+    try {
+      await recordPassportEvent(sc, {
+        event: ev.name as PassportTelemetryEvent,
+        actorId: user.id,   // from the token — never from the body
+        subjectId,
+        payload,
+      });
+      accepted++;
+    } catch {
+      // recordPassportEvent never throws; this is belt-and-braces so one bad
+      // event can never fail the batch.
+      rejected++;
+    }
+  }
+
+  res.status(202).json({ accepted, rejected });
+});
+
+/* ===========================================================================
+ * Temporary / event Passport (§25 "Share Passport options", §31 "Explicitly
+ * expire … event Passport, temporary sharing", TABLE 31 Phase 8)
+ * ===========================================================================
+ * Three endpoints around EventPassportService. The service owns every rule —
+ * flag gate, bounded TTL, revocation, the event's own end, co-attendance, and
+ * the narrowing to the `event` consumer-projection variant. These handlers only
+ * translate its refusals into status codes, so there is exactly ONE place where
+ * an event Passport can be granted.
+ *
+ * With `passport_event_share_enabled` OFF (its seed, migration 2294) every one
+ * of them answers `{ enabled: false }` and nothing is minted or resolved.
+ */
+
+/** Map a service refusal onto an HTTP answer. */
+function sendEventShareRefusal(res: any, reason: string): void {
+  switch (reason) {
+    case "disabled":
+      res.status(200).json({ enabled: false });
+      return;
+    case "event_not_found":
+    case "not_found":
+      sendError(res, "not_found", "Share not found");
+      return;
+    case "event_not_live":
+      sendError(res, "invalid_payload", "That event is not currently running");
+      return;
+    case "owner_not_attending":
+      sendError(res, "forbidden", "You are not attending that event");
+      return;
+    case "revoked":
+      sendError(res, "forbidden", "This event Passport was revoked");
+      return;
+    case "expired":
+      sendError(res, "forbidden", "This event Passport has expired");
+      return;
+    case "not_attending":
+      sendError(res, "forbidden", "This event Passport is only for people at the event");
+      return;
+    default:
+      sendError(res, "not_found", "Share not found");
+  }
+}
+
+const EventShareCreateSchema = z.object({ eventId: z.string().uuid() });
+
+// POST /api/passport/event-share — mint (or re-mint) the caller's event Passport.
+router.post("/passport/event-share", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+
+  const parsed = EventShareCreateSchema.safeParse(req.body);
+  if (!parsed.success) { sendError(res, "invalid_payload", "eventId must be a uuid"); return; }
+
+  try {
+    const out = await createEventPassportShare(sc, auth.user.id, parsed.data.eventId);
+    if (!out.ok) { sendEventShareRefusal(res, out.reason); return; }
+    res.status(201).json({
+      enabled: true,
+      share: {
+        token: out.value.token,
+        eventId: out.value.eventId,
+        expiresAt: out.value.expiresAt,
+      },
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, "event passport share create failed");
+    sendError(res, "db_error", e?.message ?? "Share failed");
+  }
+});
+
+// POST /api/passport/event-share/:eventId/revoke — withdraw the caller's share.
+router.post("/passport/event-share/:eventId/revoke", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+
+  const eventId = String(req.params.eventId ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(eventId)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  try {
+    const out = await revokeEventPassportShare(sc, auth.user.id, eventId);
+    if (!out.ok) { sendEventShareRefusal(res, out.reason); return; }
+    res.status(200).json({ enabled: true, revoked: out.value.revoked });
+  } catch (e: any) {
+    req.log.error({ err: e }, "event passport share revoke failed");
+    sendError(res, "db_error", e?.message ?? "Revoke failed");
+  }
+});
+
+// GET /api/passport/event-share/:eventId — the caller's OWN live share, if any.
+// Expiry is applied on this read too, so the owner is never shown "sharing"
+// for a share that has already lapsed (§31 "never render stale … as current").
+router.get("/passport/event-share/:eventId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+
+  const eventId = String(req.params.eventId ?? "");
+  if (!/^[0-9a-f-]{36}$/i.test(eventId)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
+
+  try {
+    if (!(await isFlagEnabled(sc, "passport_event_share_enabled"))) {
+      res.status(200).json({ enabled: false, share: null });
+      return;
+    }
+    const share = await getOwnEventPassportShare(sc, auth.user.id, eventId);
+    res.status(200).json({
+      enabled: true,
+      share: share ? { token: share.token, eventId: share.eventId, expiresAt: share.expiresAt } : null,
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, "event passport share read failed");
+    sendError(res, "db_error", e?.message ?? "Share read failed");
+  }
+});
+
+// GET /api/passport/event-passport/:token — resolve a scanned event Passport.
+//
+// Authentication is REQUIRED: the share is event-scoped and an anonymous caller
+// can never be an attendee, so there is no anonymous read path to fall through
+// to. The response is `private, no-store` — it is viewer-specific and expires.
+router.get("/passport/event-passport/:token", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+
+  try {
+    const out = await resolveEventPassport(sc, String(req.params.token ?? ""), auth.user.id);
+    if (!out.ok) { sendEventShareRefusal(res, out.reason); return; }
+    res.setHeader("Cache-Control", "private, no-store");
+    res.status(200).json({
+      enabled: true,
+      share: out.value.share,
+      passport: out.value.passport,
+    });
+  } catch (e: any) {
+    req.log.error({ err: e }, "event passport resolve failed");
+    sendError(res, "db_error", e?.message ?? "Resolve failed");
   }
 });
 

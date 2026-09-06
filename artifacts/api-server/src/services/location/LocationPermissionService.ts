@@ -56,7 +56,17 @@ export async function loadPreferences(
   userId: string,
 ): Promise<UserLocationPreferences> {
   const { data, error } = await db
-    .from("user_location_preferences")
+    // `location_preferences`, NOT `user_location_preferences`. The two are
+    // separate base tables with near-identical columns — one is an un-retired
+    // duplicate of the other — and PATCH /api/me/location-preferences upserts
+    // the FORMER. This reader was on the latter, which has no writer anywhere,
+    // so `data` was null for every user in every environment and this function
+    // silently returned DEFAULT_PREFS forever. Because those defaults are
+    // permissive (city_only, not paused), PulseGeoTagService concluded that
+    // sharing was active for users who had turned it OFF: the opt-out was
+    // stored correctly and then ignored. Nothing failed and nothing logged —
+    // an empty table and an absent row are the same value here.
+    .from("location_preferences")
     .select("*")
     .eq("user_id", userId)
     .maybeSingle();

@@ -8,6 +8,10 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+
+/** Capability flag for the §20 ledger. Seeded TRUE (migration 2084). */
+export const CONTRIBUTION_EVENTS_FLAG = "passport_contribution_events_enabled";
 
 export type ContributionEventType =
   | "city_visit_verified"
@@ -67,6 +71,40 @@ export async function recordContribution(
     });
 
   return !error;
+}
+
+/**
+ * Flag-gated, never-throwing wrapper for `recordContribution` — the shape every
+ * PRODUCER should use.
+ *
+ * WHY THIS EXISTS. §20 reputation reads `passport_contribution_events`, and
+ * until 2026-09-05 exactly ONE of the eight ContributionEventType values had a
+ * writer anywhere in the repo (`city_visit_verified`, from the manual-memory
+ * route, with `metadata` defaulted to `{}`). So `acceptedReports`,
+ * `confirmations`, `hiddenGems`, `topExpertise` and `cityExpertise` were
+ * permanently zero/empty for every traveller while the projection that derives
+ * them was fully built and fully tested against fixture rows no producer could
+ * create.
+ *
+ * A producer is a fire-and-forget side effect of an ALREADY-VERIFIED real-world
+ * moment; it must never be able to fail the request that triggered it, so this
+ * swallows everything and returns false.
+ *
+ * ALWAYS PASS `sourceId`. `passport_contribution_events_dedup_idx` is UNIQUE on
+ * (user_id, event_type, source_id) WHERE source_id IS NOT NULL — without one,
+ * a repeated action double-credits.
+ */
+export async function recordContributionIfEnabled(
+  db: SupabaseClient | null | undefined,
+  input: RecordContributionInput,
+): Promise<boolean> {
+  try {
+    if (!db) return false;
+    if (!(await isFlagEnabled(db, CONTRIBUTION_EVENTS_FLAG))) return false;
+    return await recordContribution(db, input);
+  } catch {
+    return false;
+  }
 }
 
 /**

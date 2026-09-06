@@ -78,6 +78,12 @@ export type MapGeometry = PointGeometry | PolygonGeometry | LineStringGeometry;
  * Mirrors the server contract; the drift test compares the two lists in order.
  * KEEP THIS ARRAY LITERAL COMMENT-FREE: the server's mirror test extracts it
  * textually, and a quoted word inside a comment reads as a kind.
+ *
+ * The last four are §36 Phase 7 World Intelligence, added 2026-09-05 on the
+ * owner's approval. All are aggregate-only or owner-only, all fail closed, and
+ * none is a forecast — see the server mirror's header for the full note. They
+ * render at the world/continent bands (features/map/render/collision.ts), except
+ * city_model which joins the city band.
  */
 export const MAP_OBJECT_KINDS = [
   'place',
@@ -94,6 +100,10 @@ export const MAP_OBJECT_KINDS = [
   'memory',
   'prediction',
   'saved_place',
+  'world_pulse',
+  'traveler_flow',
+  'city_model',
+  'personal_city',
 ] as const;
 
 export type MapObjectKind = (typeof MAP_OBJECT_KINDS)[number];
@@ -395,6 +405,10 @@ export const KIND_DEFAULT_PRIORITY: Record<MapObjectKind, number> = {
   buddy_zone: RENDERING_PRIORITY.social_opportunity,
   memory: RENDERING_PRIORITY.saved_place,
   saved_place: RENDERING_PRIORITY.saved_place,
+  world_pulse: RENDERING_PRIORITY.high_confidence_live_zone,
+  traveler_flow: RENDERING_PRIORITY.high_confidence_live_zone,
+  city_model: RENDERING_PRIORITY.relevant_place,
+  personal_city: RENDERING_PRIORITY.saved_place,
 };
 
 // ── Interaction (spec §18, §25) ────────────────────────────────────────────────

@@ -47,7 +47,7 @@ function makeDb(seed: any[], opts: { checkFail?: boolean } = {}) {
   };
 }
 
-describe("completeMission — §16 negative-result acceptance", () => {
+describe("AT-12 / AT-13: completeMission — §16 negative-result acceptance", () => {
   it("completes an ACCEPTED mission and records the result", async () => {
     const db = makeDb([{ id: "m1", status: "accepted" }]);
     const out = await completeMission(db as any, "m1", "negative");
@@ -71,7 +71,14 @@ describe("completeMission — §16 negative-result acceptance", () => {
     assert.equal(out.reason, "invalid_result");
   });
 
-  it("surfaces a DB CHECK rejection (e.g. evidence_contract shape) as a reason", async () => {
+  // Table-36 AT-13 is "Negative mission result ⇒ Paid if evidence contract
+  // satisfied". Only the PRECONDITION half is assertable today: there is no
+  // mission payment path in this codebase (no payout on completeMission, and
+  // the reward ledger's CHECK makes cash structurally zero), so nothing can
+  // assert "paid". This test covers the evidence-contract gate that payment
+  // would depend on, and says so — a label claiming the payment half would be a
+  // traceability mapping to an assertion that does not exist.
+  it("AT-13 (precondition half only — payment is not implemented): surfaces the evidence_contract DB CHECK rejection as a reason", async () => {
     const db = makeDb([{ id: "m1", status: "accepted" }], { checkFail: true });
     const out = await completeMission(db as any, "m1", "positive");
     assert.equal(out.ok, false);

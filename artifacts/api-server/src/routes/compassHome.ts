@@ -194,9 +194,13 @@ async function fetchUpcomingEvents(
       .from("events")
       .select("id, title, city, country, starts_at, category, host_id, state, visibility")
       .eq("visibility", "public")
-      .neq("state", "cancelled")
-      .neq("state", "deleted")
-      .neq("state", "banned")
+      // `deleted` and `banned` are not labels of the `event_state` enum (draft |
+      // open | full | waitlist | started | completed | cancelled | archived).
+      // PostgREST rejected them 22P02, so this read failed whole and the
+      // `if (error) return []` below made Compass Home's event rail
+      // permanently empty. Predicate copied verbatim from
+      // mapSearch.loadNearbyEvents / discoverySearch:615.
+      .not("state", "in", '("draft","cancelled","archived")')
       .gte("starts_at", fromIso)
       .lte("starts_at", toIso)
       .order("starts_at", { ascending: true });

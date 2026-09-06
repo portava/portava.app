@@ -278,6 +278,32 @@ export default function ConnectedFeaturesScreen() {
             onPress={() => router.push('/admin/content-reports' as any)}
           />
           <SettingsDivider />
+          {/* §24 / Table-32 intelligence observability. Four read-only
+              dashboards over the one internal report endpoint. */}
+          <SettingsRow
+            title="Intel Truth Health"
+            subtitle="Claim coverage, conflict rate, source diversity"
+            onPress={() => router.push('/admin/intel-truth-health' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Intel Calibration"
+            subtitle="Density gate and calibration instrumentation"
+            onPress={() => router.push('/admin/intel-calibration' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Intel Decision"
+            subtitle="Arrival, entry, outcomes and regret feedback"
+            onPress={() => router.push('/admin/intel-decision' as any)}
+          />
+          <SettingsDivider />
+          <SettingsRow
+            title="Intel Economy"
+            subtitle="QIU shadow ledger and payout boundary"
+            onPress={() => router.push('/admin/intel-economy' as any)}
+          />
+          <SettingsDivider />
           <SettingsRow
             title="Trust Reviews"
             onPress={() => router.push('/admin/trust-reviews' as any)}

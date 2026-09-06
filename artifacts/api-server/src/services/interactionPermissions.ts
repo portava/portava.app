@@ -487,12 +487,25 @@ export async function resolveInteractionPermissions(
         .maybeSingle(),
     ).then((r: any) => Boolean(r.data)).catch(() => false),
 
-    // RaB pre-booking
+    // RaB pre-booking — the window in which the off-app-payment warning applies.
+    //
+    // This read was dead twice over and both failures were swallowed by the
+    // `.catch(() => false)` below, so `ctx.rabPreBooking` has always been false
+    // and `rab_off_app_payment_risk` has never once been emitted, from any of
+    // its callers:
+    //   1. `client_id` is not a column of rent_buddy_bookings (the traveller
+    //      side is `traveler_id` — see rentABuddy.ts and
+    //      CompassAbuseDefenseEngine.ts) → 42703, the whole query rejected.
+    //   2. `pre_booking` is not a label of the `rent_buddy_booking_status`
+    //      enum → 22P02, the whole query rejected.
+    // The status set below is the pre-session lifecycle in real labels:
+    // requested → pending → confirmed → scheduled. Erring wide is the
+    // fail-closed direction for a safety warning.
     Promise.resolve(
       sc.from("rent_buddy_bookings")
         .select("id")
-        .or(`and(client_id.eq.${viewerId},buddy_id.eq.${targetUserId}),and(client_id.eq.${targetUserId},buddy_id.eq.${viewerId})`)
-        .in("status", ["pre_booking", "confirmed"])
+        .or(`and(traveler_id.eq.${viewerId},buddy_id.eq.${targetUserId}),and(traveler_id.eq.${targetUserId},buddy_id.eq.${viewerId})`)
+        .in("status", ["requested", "pending", "confirmed", "scheduled"])
         .limit(1)
         .maybeSingle(),
     ).then((r: any) => Boolean(r.data)).catch(() => false),

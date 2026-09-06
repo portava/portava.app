@@ -33,7 +33,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -77,7 +77,7 @@ async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   if (cErr || !created?.user) throw new Error(`createUser(${tag}): ${cErr?.message}`);
   const id = created.user.id;
   const { error: pErr } = await sc.from("profiles").upsert(
-    { id, handle: `${PREFIX}${tag}`, username: `${PREFIX}${tag}`, name: `rbp ${tag}` },
+    { id, handle: fixtureLabel(`${PREFIX}${tag}`), username: fixtureLabel(`${PREFIX}${tag}`), name: `rbp ${tag}` },
     { onConflict: "id" },
   );
   if (pErr) throw new Error(`profile(${tag}): ${pErr.message}`);

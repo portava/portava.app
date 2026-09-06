@@ -199,7 +199,12 @@ function circleChangeSignal(store: Record<string, Row[]>): void {
 }
 
 function activeTrip(store: Record<string, Row[]>, city: string): void {
-  store.trips = [{ id: "trip-1", owner_id: USER_ID, destination_city: city, status: "in_progress" }];
+  // FIXTURE REPAIRED: `status: "in_progress"` is not a label of the
+  // `trip_status` enum (draft | planning | upcoming | active | completed |
+  // cancelled | archived), so the fake client matched the production
+  // filter while PostgREST would have rejected BOTH with 22P02. The test
+  // proved the code matched the fixture and nothing about the database.
+  store.trips = [{ id: "trip-1", owner_id: USER_ID, destination_city: city, status: "active" }];
   store.trip_members = [];
 }
 
@@ -530,7 +535,7 @@ describe("Compass Sense", () => {
         feature_flags: [enabledFlag()],
         compass_sense_settings: [senseSettings("active")],
         notification_preferences: tz ? [{ user_id: USER_ID, timezone: tz }] : [],
-        trips: [{ id: "trip-tz", owner_id: USER_ID, destination_city: "ShanghaiFreeCity", status: "in_progress" }],
+        trips: [{ id: "trip-tz", owner_id: USER_ID, destination_city: "ShanghaiFreeCity", status: "active" }], // real trip_status label; see activeTrip()
         trip_members: [],
         trip_plan_items: [
           { id: "pi-tz", trip_id: "trip-tz", day_date: today, starts_at: planStartsAt, status: "planned", removed_at: null },

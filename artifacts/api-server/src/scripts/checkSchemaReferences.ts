@@ -123,44 +123,27 @@ const UNDECLARED_LIVE_COLUMNS = new Set<string>([
  * fails. This list must reach zero.
  */
 const KNOWN_DEAD_REFERENCES: Record<string, { count: number; note: string }> = {
-  // src/lib/inputAssistance/duplicateDetection.ts (places.country, the founding
-  // defect's THIRD recurrence) was struck off: 9e82e8450 moved the read to
-  // `country_code` the same day this ratchet landed, and the two met on main
-  // with the entry still counting 1 — which is exactly the "fixed; delete the
-  // entry" direction of this check firing, on main itself.
-  "src/lib/mediaAccess.ts": {
-    count: 2,
-    note: "close_friends.friend_id and user_follows.id — both reads die whole, " +
-      "and both feed MEDIA ACCESS decisions, so the empty result is a gate outcome.",
-  },
-  "src/lib/places/placeCollectionsWorker.ts": {
-    count: 2,
-    note: "posts.view_count / posts.qualified_view_count — no such columns; the " +
-      "collections worker's ranking read has never returned a row.",
-  },
-  "src/compass/CompassAbuseDefenseEngine.ts": {
-    count: 1,
-    note: "compass_visibility_cooldowns.updated_at on an UPSERT — a write rejected " +
-      "even when the value is null, so the cooldown is never recorded.",
-  },
-  "src/compass/CompassSearchDecayService.ts": {
-    count: 1,
-    note: "feature_flags.numeric_value — the decay service cannot read its own flag.",
-  },
-  "src/compass/CompassStructuredContext.ts": {
-    count: 2,
-    note: "rent_buddy_bookings.date_from / date_to — booking context is always empty.",
-  },
-  "src/compass/PassportRemembersService.ts": {
-    count: 1,
-    note: "shared_moments.visibility — the shared-moments source of Passport " +
-      "Remembers is dead.",
-  },
-  "src/scripts/seed-demo-social.ts": {
-    count: 1,
-    note: "passport_postcards.media_type on an INSERT — the demo seeder's postcard " +
-      "insert is rejected outright.",
-  },
+  // EMPTY, and that is the point. Every reference this ratchet recorded has been
+  // repaired; the last two went with this change:
+  //
+  //   src/lib/places/placeCollectionsWorker.ts (posts.view_count,
+  //     posts.qualified_view_count): struck off. `posts` has no view counters —
+  //     verified against the live CI schema, which carries post_buckets,
+  //     like_count, save_count, share_count and no others. PostgREST fails the
+  //     WHOLE select on an unknown column, so the collections worker's ranking
+  //     read returned 42703 every run and has never seen a row. Neither value
+  //     was ever consumed, so the repair is to stop asking for them.
+  //
+  //   src/scripts/seed-demo-social.ts (passport_postcards.media_type): struck
+  //     off. That table carries media_url and no media_type; the `posts` insert
+  //     a few lines above legitimately sets media_type because `posts` does have
+  //     it. One mental model was being written to two different tables, and the
+  //     postcard insert was rejected outright every time.
+  //
+  // An empty ratchet is self-certifying: any surviving dead reference is now a
+  // hard failure rather than a silently-tolerated entry. Do not add to it to make
+  // a build pass — fix the reference, or the guard stops meaning anything.
+
 };
 
 /** Non-`public` or non-table sources the column model does not cover. */

@@ -12,6 +12,7 @@
 import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../../lib/http.js";
+import { projectionKeys, projectRow } from "./selectProjection.js";
 
 export interface TableSpec {
   rows?: any[];
@@ -50,13 +51,38 @@ function parseInList(raw: unknown): string[] {
     .filter((p) => p !== "");
 }
 
+/**
+ * Split at commas OUTSIDE parentheses. `and(a,b)` and `id.in.(u1,u2)` are each
+ * one token; a bare `a.eq.x,b.eq.y` splits in two.
+ */
+function splitOutsideParens(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if (ch === "(") { depth++; cur += ch; }
+    else if (ch === ")") { depth--; cur += ch; }
+    else if (ch === "," && depth === 0) { if (cur.trim() !== "") out.push(cur.trim()); cur = ""; }
+    else cur += ch;
+  }
+  if (cur.trim() !== "") out.push(cur.trim());
+  return out;
+}
+
 function buildQuery(spec: TableSpec) {
   let rows = [...(spec.rows ?? [])];
   const err = spec.error ?? null;
-  const result = () => (err ? { data: null, error: err } : { data: rows, error: null });
+  // `null` = do not project (the historical behaviour: the whole seeded row).
+  // Narrowing happens on the way OUT only — the real database filters and sorts
+  // on the full row and projects last, and filtering on an unselected column is
+  // legal PostgREST. See selectProjection.ts.
+  let projection: Array<[string, string]> | null = null;
+  const narrow = (rs: any[]) => (projection ? rs.map((r) => projectRow(r, projection!)) : rs);
+  const narrowOne = (r: any) => (r && projection ? projectRow(r, projection) : r);
+  const result = () => (err ? { data: null, error: err } : { data: narrow(rows), error: null });
 
   const q: any = {
-    select() { return q; },
+    select(fields?: string) { projection = projectionKeys(fields); return q; },
     order() { return q; },
     range() { return q; },
     limit(n: number) { rows = rows.slice(0, n); return q; },
@@ -86,12 +112,21 @@ function buildQuery(spec: TableSpec) {
       return q;
     },
     or(expr: string) {
-      // "col.eq.val,col2.eq.val2" and "and(a.eq.x,b.eq.y),and(...)" — the two
-      // shapes the readers under test issue.
-      const groups = String(expr).match(/and\([^)]*\)|[^,]+/g) ?? [];
+      // "col.eq.val,col2.eq.val2", "and(a.eq.x,b.eq.y),and(...)" and
+      // "col.in.(a,b),col2.in.(c)" — the shapes the readers under test issue.
+      //
+      // Splitting is TOP-LEVEL ONLY. An in-list's own commas sit inside
+      // parentheses, and a naive `split(",")` turned `id.in.(u1,u2)` into
+      // `id.in.(u1` plus an unparseable `u2)`, so every id after the first
+      // silently matched nothing — a fake answering a multi-id filter with
+      // fewer rows than the database would, which is exactly the vacuous pass
+      // this helper exists to prevent.
+      const groups = splitOutsideParens(String(expr));
       const conds = groups.map((g) => {
         const inner = g.startsWith("and(") ? g.slice(4, -1) : g;
-        const parts = inner.split(",").map((p) => p.trim().match(/^([\w.]+)\.(\w+)\.(.*)$/)).filter(Boolean) as RegExpMatchArray[];
+        const parts = splitOutsideParens(inner)
+          .map((p) => p.trim().match(/^([\w.]+)\.(\w+)\.(.*)$/))
+          .filter(Boolean) as RegExpMatchArray[];
         const all = g.startsWith("and(");
         return (r: any) => {
           const hits = parts.map((m) => {
@@ -107,10 +142,10 @@ function buildQuery(spec: TableSpec) {
       return q;
     },
     maybeSingle() {
-      return Promise.resolve(err ? { data: null, error: err } : { data: rows[0] ?? null, error: null });
+      return Promise.resolve(err ? { data: null, error: err } : { data: narrowOne(rows[0] ?? null), error: null });
     },
     single() {
-      return Promise.resolve(err ? { data: null, error: err } : { data: rows[0] ?? null, error: null });
+      return Promise.resolve(err ? { data: null, error: err } : { data: narrowOne(rows[0] ?? null), error: null });
     },
     then(resolve: (v: any) => void, reject?: (e: any) => void) {
       return Promise.resolve(result()).then(resolve, reject);

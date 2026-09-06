@@ -429,6 +429,13 @@ export interface AttachContextThreadsOptions {
   /** Live For You strip subjects — a thread that repeats one is suppressed (§4). */
   liveStripSubjectIds?: Set<string>;
   /**
+   * The strip's (subject, live-object-type) pairs, keyed by
+   * `liveStripSignalKey`. Without it the §4 dedup can only fire for
+   * `live_place`; with it every place-anchored thread kind is deduped against
+   * the SAME kind of strip item. See ContextThreadService.threadDuplicatesLiveStrip.
+   */
+  liveStripSignals?: ReadonlySet<string>;
+  /**
    * wall_rab_integration_enabled — NECESSARY but not sufficient for the buddy
    * candidate reader, which also re-reads the RAB master `rent_buddy_enabled`
    * itself (fail-closed).
@@ -467,6 +474,7 @@ export async function attachContextThreads(
   const maxThreads = Math.max(0, opts.maxContextThreadsInWindow ?? 2);
   const windowSize = Math.max(2, opts.windowSize ?? 6);
   const liveStripSubjectIds = opts.liveStripSubjectIds ?? new Set<string>();
+  const liveStripSignals = opts.liveStripSignals ?? new Set<string>();
 
   const out: WallProjection[] = [];
   for (const item of items) {
@@ -481,6 +489,7 @@ export async function attachContextThreads(
       viewerTripIds: viewer.viewerTripIds,
       currentCity: viewer.currentCity ?? null,
       liveStripSubjectIds,
+      liveStripSignals,
       windowSaturated,
       rabEnabled: opts.rabEnabled === true,
       // §21: the compass bridge is opt-in per object, gated by the same flag that

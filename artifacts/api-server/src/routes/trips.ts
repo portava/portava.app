@@ -11,6 +11,7 @@ import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
+import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 import { truncateDisplayName } from "../lib/displayName.js";
 
@@ -414,6 +415,65 @@ router.get("/trips/:tripId/members", async (req, res) => {
 });
 
 /* ===========================================================================
+ * GET /trips/:tripId/members/:userId/passport  — TABLE 22 Trips projection
+ * ===========================================================================
+ * Passport spec §21/§33: a Trip surface does NOT rebuild identity, trust or
+ * travel style — it asks the ONE Passport projection system for the consumer
+ * VARIANT that its TABLE 22 row describes ("Identity, relevant trust
+ * eligibility, languages, travel style, host/guest context").
+ *
+ * This deliberately requests the `trips` variant rather than the full §29
+ * aggregate: the variant is a strict NARROWING built by
+ * PassportConsumerProjections from the same assembler output, so it can never
+ * carry a field the full projection would have withheld from this viewer — and
+ * it drops the stamps / memories / plans / availability / shared-context /
+ * numeric-trust sections a crew list has no business receiving.
+ *
+ * "NARROWING" is relative to the PASSPORT AGGREGATE, and only to it. The
+ * aggregate now honours TABLE 24 `show_real_name` itself: buildIdentity runs
+ * the profile row through nameVisibilitySet + sanitizeIdentity before any
+ * name-derived field is read, exactly as the sibling GET /trips/:tripId/members
+ * above does. So a member who has hidden their real name from the crew list is
+ * unnamed by this endpoint too, inherited from the assembler rather than
+ * re-filtered here — a per-consumer name filter would be exactly the "rebuild
+ * identity in the Trip surface" §21 forbids.
+ *
+ * Both the caller and the target must be accepted members of THIS trip, so the
+ * viewer relationship the projection resolves (trip_crew / trip_host) is one
+ * the caller genuinely holds; the projection layer then applies every block /
+ * privacy rule on top.
+ */
+router.get("/trips/:tripId/members/:userId/passport", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { tripId, userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
+
+  const callerIsMember = await isAcceptedTripMember(client, tripId, user.id);
+  if (!callerIsMember) { sendError(res, "forbidden", "Not a trip member"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  // The target must be on this trip too — this endpoint is a crew-list read,
+  // not a general passport lookup keyed by an arbitrary trip the caller is on.
+  const targetIsMember = await isAcceptedTripMember(sc, tripId, userId);
+  if (!targetIsMember) { sendError(res, "not_found", "Not a trip member"); return; }
+
+  try {
+    const projection = await buildConsumerProjection(sc, "trips", userId, user.id);
+    if (!projection) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ passport: projection });
+  } catch (e: any) {
+    req.log.error({ err: e }, "trip member passport projection failed");
+    sendError(res, "db_error", e?.message ?? "Projection failed");
+  }
+});
+
+/* ===========================================================================
  * GET /trips/:tripId/invitable-users  — grouped invite picker data
  * ===========================================================================
  * Returns trip members (groupMembers) + caller's friends not in the trip
@@ -728,6 +788,28 @@ router.patch("/trips/:tripId", async (req, res) => {
         if (members && (members as any[]).length > 0) {
           const memberIds: string[] = (members as any[]).map((m: any) => m.user_id);
           const tripTitle: string = (updated as any)?.title ?? "your trip";
+          // §20 ledger (TABLE 21): a COMPLETED trip is the verified moment for
+          // `trip_crew_participation` — a positive event that adds to the
+          // contributor level. It had no writer anywhere before 2026-09-05.
+          // Same accepted-participant set as the review prompt (owner/member,
+          // never a pending invitee), keyed on the trip so re-completing it
+          // cannot double-credit.
+          const { recordContributionIfEnabled } = await import(
+            "../services/passport/PassportContributionService.js"
+          );
+          const crewCity: string | null = (updated as any)?.destination_city ?? null;
+          await Promise.allSettled(
+            memberIds.map((uid) =>
+              recordContributionIfEnabled(sc, {
+                userId: uid,
+                eventType: "trip_crew_participation",
+                sourceType: "trips",
+                sourceId: tripId,
+                verificationLevel: "crew",
+                metadata: { city: crewCity, category: "trip" },
+              }),
+            ),
+          );
           // Route through NotificationService so the privacy guard + dedup run.
           // notifRouter.route() is intentionally NOT called here; push is sent
           // below via sendPushWithRetry to avoid double-delivery.

@@ -20,7 +20,7 @@ import "../lib/ciSupabaseGuard.mjs";
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { purgeFixtureUsers, fixtureEmail } from "./liveFixtureUsers.js";
+import { purgeFixtureUsers, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
@@ -44,7 +44,7 @@ async function makeUser(tag: string): Promise<{ id: string; token: string }> {
   const { data: c, error: cErr } = await sc.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (cErr || !c?.user) throw new Error(`createUser(${tag}): ${cErr?.message}`);
   const id = c.user.id;
-  const { error: pErr } = await sc.from("profiles").upsert({ id, handle: `${PREFIX}${tag}`, username: `${PREFIX}${tag}`, name: `vg ${tag}` }, { onConflict: "id" });
+  const { error: pErr } = await sc.from("profiles").upsert({ id, handle: fixtureLabel(`${PREFIX}${tag}`), username: fixtureLabel(`${PREFIX}${tag}`), name: `vg ${tag}` }, { onConflict: "id" });
   if (pErr) throw new Error(`profile(${tag}): ${pErr.message}`);
   const { data: s, error: sErr } = await anonClient().auth.signInWithPassword({ email, password: PASSWORD });
   if (sErr || !s?.session) throw new Error(`signIn(${tag}): ${sErr?.message}`);
@@ -100,7 +100,7 @@ describe("profiles verification columns are not self-writable", { skip: !CREDS_A
   });
   it("a user CANNOT self-verify via upsert on their existing row", async () => {
     const { error } = await userClient(attackerToken).from("profiles")
-      .upsert({ id: attackerId, handle: `${PREFIX}attacker`, name: "Upserted", verification_status: "verified" }, { onConflict: "id" });
+      .upsert({ id: attackerId, handle: fixtureLabel(`${PREFIX}attacker`), name: "Upserted", verification_status: "verified" }, { onConflict: "id" });
     assert.ok(error, "upsert carrying verification must be refused");
     assert.equal((await readVerification(attackerId)).status, "unverified");
   });
@@ -119,12 +119,12 @@ describe("profiles verification columns are not self-writable", { skip: !CREDS_A
       const { data: s } = await anonClient().auth.signInWithPassword({ email: fixtureEmail(`${PREFIX}fresh@example.com`), password: PASSWORD });
       const freshToken = s!.session!.access_token;
       // default insert (no verification columns) must succeed
-      const { error: okErr } = await userClient(freshToken).from("profiles").insert({ id: freshId, handle: `${PREFIX}fresh`, name: "Fresh" });
+      const { error: okErr } = await userClient(freshToken).from("profiles").insert({ id: freshId, handle: fixtureLabel(`${PREFIX}fresh`), name: "Fresh" });
       assert.ifError(okErr);
       // now a forged-verification insert on a second fresh id must be refused
       await admin.from("profiles").delete().eq("id", freshId);
       const { error: forgeErr } = await userClient(freshToken).from("profiles")
-        .insert({ id: freshId, handle: `${PREFIX}fresh`, name: "Fresh", verification_status: "verified", verification_level: "trusted_traveler" });
+        .insert({ id: freshId, handle: fixtureLabel(`${PREFIX}fresh`), name: "Fresh", verification_status: "verified", verification_level: "trusted_traveler" });
       assert.ok(forgeErr, "insert carrying verified status must be refused");
       const { data: after } = await admin.from("profiles").select("verification_status").eq("id", freshId).maybeSingle();
       if (after) assert.notEqual((after as any).verification_status, "verified", "a self-inserted row must not be verified");

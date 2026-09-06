@@ -54,6 +54,34 @@ const MIGRATIONS = [resolve(API_ROOT, "migrations"), resolve(API_ROOT, "src/migr
 let cached: CanonicalSchema | null = null;
 const schema = () => (cached ??= buildCanonicalSchema(BASELINE, MIGRATIONS));
 
+/**
+ * Is (table, column) something the finder would actually judge — i.e. the table
+ * is modelled and the column really is declared on it? Used to pick a probe site
+ * whose ONLY reason to be reported is the doctoring below.
+ */
+function isModelledForProbe(s: CanonicalSchema, table: string, column: string): boolean {
+  if (s.unmodelled.has(table)) return false;
+  return s.columns.get(table)?.has(column) ?? false;
+}
+
+/**
+ * A copy of the schema with exactly one real column removed.
+ *
+ * This is what lets the coverage probe be a POSITIVE CONTROL without the
+ * codebase containing a dead reference: the site is real and currently correct,
+ * so the only thing that can make it report is the finder still judging that
+ * tree. The original is not mutated — `cached` is shared by every test in this
+ * file, and mutating it would silently corrupt the rest of them.
+ */
+function withColumnRemoved(s: CanonicalSchema, table: string, column: string): CanonicalSchema {
+  const columns = new Map(s.columns);
+  const cols = new Set(columns.get(table) ?? []);
+  cols.delete(column);
+  columns.set(table, cols);
+  return { columns, unmodelled: s.unmodelled, sources: s.sources };
+}
+
+
 describe("canonical schema — the model the static check judges against", () => {
   it("models a plausible number of tables", () => {
     // A parse that silently collapsed would make every reference "unmodelled"
@@ -195,15 +223,40 @@ describe("static schema-reference check — catches the recurrence", () => {
     ]);
     assert.ok(sites.length > 500, `only ${sites.length} references outside routes+services`);
     const found = findUndeclaredReferences(schema(), sites).map((f) => `${f.table}.${f.column}`);
-    // The places.country recurrence this test was written against was fixed in
-    // 9e82e8450 (duplicateDetection.ts now reads `country_code`), so it can no
-    // longer serve as the coverage probe. close_friends.friend_id in
-    // src/lib/mediaAccess.ts is the next src/lib entry on the ratchet; when it is
-    // fixed too, move this probe to whichever src/lib dead reference remains.
-    assert.ok(
-      found.includes("close_friends.friend_id"),
-      "the src/lib dead reference close_friends.friend_id is no longer detected — " +
-        `either it was fixed (update this test) or coverage regressed. Found: ${found.join(", ")}`,
+
+    // ── THE PROBE NO LONGER DEPENDS ON A LIVE DEFECT ────────────────────────
+    // This assertion used to name whichever dead reference happened to survive
+    // in src/lib — places.country, then close_friends.friend_id, then
+    // posts.view_count — and its own comment said to "move this probe to
+    // whichever one remains". As of 2026-09-06 NONE remains: the ratchet is
+    // empty, so there is no live defect left to point at. A coverage guard whose
+    // evidence is the very bug it exists to catch cannot outlive the fix, so
+    // rather than re-point it at nothing it is rebuilt on two properties that
+    // hold whether or not the codebase currently carries debt.
+    //
+    // (1) REACH — the scan really produced sites from each root. A regression
+    // that silently stopped walking src/lib would leave findings empty and make
+    // every "found nothing" assertion below vacuously true for that whole tree.
+    for (const root of ["src/lib/", "src/compass/", "src/scripts/"]) {
+      assert.ok(
+        sites.some((s) => s.file.startsWith(root)),
+        `no references extracted from ${root} — the scan is not reaching it, so any ` +
+          `"no undeclared references" result is vacuous for that whole tree`,
+      );
+    }
+
+    // (2) DETECTION — a src/lib site is still JUDGED, not merely collected.
+    // Proven against a doctored schema with one real column removed, so the
+    // positive control needs no defect in the tree.
+    const libSite = sites.find((s) => s.file.startsWith("src/lib/") && s.columns.length > 0
+      && isModelledForProbe(schema(), s.table, s.columns[0]!));
+    assert.ok(libSite, "no modelled src/lib reference to probe with");
+    const doctored = withColumnRemoved(schema(), libSite!.table, libSite!.columns[0]!);
+    const probe = findUndeclaredReferences(doctored, [libSite!]).map((f) => `${f.table}.${f.column}`);
+    assert.deepEqual(
+      probe, [`${libSite!.table}.${libSite!.columns[0]}`],
+      "a src/lib reference to a column the schema does not model was NOT reported — detection " +
+        "has regressed for that tree, independently of whether any real dead reference exists",
     );
     // And the founding defect must not come back a FOURTH time.
     assert.ok(
