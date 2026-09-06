@@ -49,7 +49,7 @@ import {
   Mail,
 } from 'lucide-react-native';
 
-import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail, ensureProfile } from '../../src/services/auth';
+import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail, ensureProfile, reportEnsureProfileFailure } from '../../src/services/auth';
 import { signInWithApple, signInWithGoogle } from '../../src/services/ssoAuth';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
@@ -336,8 +336,16 @@ export default function SignIn() {
   ) {
     try {
       await ensureProfile(userId, email, { name: displayName });
-    } catch {
+    } catch (e) {
       // Non-fatal: profile row may already exist, or SessionContext will recover.
+      // Still surface it — this is the one point in the SSO flow where a
+      // profile-creation failure is directly attributable to a foreground
+      // user action, so a silent failure here is the least visible of all.
+      reportEnsureProfileFailure('sso', userId, e);
+      Alert.alert(
+        "We're finishing setup",
+        "You're signed in, but we hit a snag setting up your profile. If some features seem unavailable, try signing out and back in.",
+      );
     }
     try {
       const profileRes = await getMyProfile();
