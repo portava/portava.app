@@ -25,7 +25,7 @@ import {
 } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
 import { useSession } from '../../src/context/SessionContext';
-import { joinRoutePlan, leaveRoutePlan } from '../../src/services/routePlan';
+import { joinRoutePlan, leaveRoutePlan, acceptRoutePlan, completeRoutePlan } from '../../src/services/routePlan';
 import { postCompassAsk, type CompassQuickAction } from '../../src/services/compass';
 import { useRoutePlan } from '../../src/hooks/useRoutePlan';
 import { RouteMinimapView } from '../../src/components/RouteMinimapView';
@@ -250,23 +250,68 @@ export default function ActiveRouteScreen() {
     ]);
   }, [id]);
 
-  const handleStartRoute = useCallback(async () => {
-    if (locationState.permissionStatus !== 'denied') {
-      requestLocation().catch(() => {});
-    }
-    setRouteStarted(true);
-  }, [locationState.permissionStatus, requestLocation]);
+  const [startingRoute, setStartingRoute] = useState(false);
 
+  // STARTING A ROUTE IS THE ACCEPTANCE ACT, and acceptance is authoritative only
+  // on the server. This used to be `setRouteStarted(true)` and nothing else: the
+  // canonical endpoint (POST /api/route-plans/:id/accept) had zero callers, so
+  // no plan ever reached status='active' and both Map layers that read only
+  // active plans were starved by the missing call.
+  //
+  // The server mutation is AWAITED and its failure is surfaced. A route must
+  // never render as started when the server refused — a client-only "started"
+  // is precisely the defect being fixed here.
+  const handleStartRoute = useCallback(async () => {
+    if (startingRoute) return; // double-tap guard; the endpoint is idempotent anyway
+    setStartingRoute(true);
+    try {
+      await acceptRoutePlan(id);
+      if (locationState.permissionStatus !== 'denied') {
+        requestLocation().catch(() => {});
+      }
+      setRouteStarted(true);
+    } catch (e) {
+      Alert.alert(
+        "Couldn't start this route",
+        e instanceof Error ? e.message : 'Please try again.',
+      );
+    } finally {
+      setStartingRoute(false);
+    }
+  }, [id, startingRoute, locationState.permissionStatus, requestLocation]);
+
+  // ENDING A ROUTE IS TERMINAL, and it must reach the server. routeHopSignal
+  // counts only status='active' plans, so a walk that ended without this call
+  // kept contributing route-flow intelligence for the whole freshness window
+  // after the traveller went home.
+  //
+  // Navigating back is deliberately NOT gated on the mutation: the traveller has
+  // finished, and trapping them on the screen because a request failed would be
+  // worse than a retry. The failure is surfaced instead, and the endpoint is
+  // idempotent so retrying is safe.
   const handleEndSession = useCallback(() => {
     Alert.alert(
       'End route?',
       'This will close the active session.',
       [
         { text: 'Keep going', style: 'cancel' },
-        { text: 'End route', style: 'destructive', onPress: () => router.back() },
+        {
+          text: 'End route',
+          style: 'destructive',
+          onPress: () => {
+            completeRoutePlan(id)
+              .catch((e) => {
+                Alert.alert(
+                  "Couldn't end this route",
+                  e instanceof Error ? e.message : 'It may still show as active.',
+                );
+              })
+              .finally(() => router.back());
+          },
+        },
       ],
     );
-  }, [router]);
+  }, [id, router]);
 
   const estimatedReturnMinutes = fullPlan
     ? Math.ceil((fullPlan.legs?.reduce((sum, l) => sum + l.durationSeconds, 0) ?? 0) / 60) + 15

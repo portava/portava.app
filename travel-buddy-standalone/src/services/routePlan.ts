@@ -175,6 +175,65 @@ export async function patchRoutePlanStop(
   return res.json();
 }
 
+/**
+ * Result of the canonical acceptance / termination mutations.
+ *
+ * `alreadyAccepted` / `alreadyCompleted` distinguish "this call performed the
+ * transition" from "it was already in that state", so a retry is a success
+ * rather than an error the traveller has to see.
+ */
+export interface RoutePlanLifecycleResult {
+  id: string;
+  status: RoutePlanStatus;
+  acceptedAt: string | null;
+  acceptedByUserId?: string | null;
+  alreadyAccepted?: boolean;
+  alreadyCompleted?: boolean;
+}
+
+/**
+ * ACCEPTANCE. Starting a route is the act that means the traveller is actually
+ * doing it, and it is authoritative only on the server: the endpoint stamps
+ * status='active', accepted_at and accepted_by_user_id under an ownership check.
+ *
+ * This wrapper exists because it did not: the endpoint had ZERO callers, so
+ * "Start Route" set a local boolean and nothing was ever accepted. Two Map
+ * layers (§36 traveler_flow and the §10 crowd_flow accepted_plan family) read
+ * only status='active' plans, so both were starved by the missing call.
+ *
+ * THROWS on failure, deliberately. The caller must not show a started route when
+ * the server refused — a client-only "started" is exactly the state this fixes.
+ */
+export async function acceptRoutePlan(id: string): Promise<RoutePlanLifecycleResult> {
+  const res = await authedFetch(`${apiBase()}/api/route-plans/${id}/accept`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).message ?? `acceptRoutePlan ${res.status}`);
+  }
+  return res.json();
+}
+
+/**
+ * TERMINATION. Ending a route stops it contributing route-flow intelligence:
+ * the server writes status='completed', and lib/routeHopSignal.ts counts only
+ * status='active' plans. Without this call an ended walk kept contributing for
+ * the whole freshness window after the traveller went home.
+ *
+ * Idempotent server-side, so a retried "End route" is a success.
+ */
+export async function completeRoutePlan(id: string): Promise<RoutePlanLifecycleResult> {
+  const res = await authedFetch(`${apiBase()}/api/route-plans/${id}/complete`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as any).message ?? `completeRoutePlan ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function deleteRoutePlan(id: string): Promise<void> {
   const res = await authedFetch(`${apiBase()}/api/route-plans/${id}`, {
     method: 'DELETE',
