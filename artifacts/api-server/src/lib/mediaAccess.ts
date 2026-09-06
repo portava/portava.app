@@ -355,10 +355,16 @@ async function decide(
 
   // 3c. Message media → thread membership.
   try {
+    // `deleted_at IS NULL`: an unsent message must not keep granting access to
+    // its attachment. The DELETE handler now nulls the media columns, so a
+    // freshly-unsent row cannot match this lookup at all — but rows tombstoned
+    // before that shipped still carry media_url, and without this filter they
+    // would go on authorising a signed URL for a picture the sender unsent.
     const { data: msgs, error: msgsErr } = await sc
       .from("messages")
       .select("thread_id")
       .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
+      .is("deleted_at", null)
       .limit(1);
     noteLookupFailure("3c messages", msgsErr, { bucket, path });
     const msg = (msgs as any[])?.[0];

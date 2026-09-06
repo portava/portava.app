@@ -368,7 +368,20 @@ router.delete('/messages/:messageId', asyncHandler(async (req, res) => {
     // string still redacts the content, which is the point of the write; readers
     // never surface it either way, because they substitute
     // `body: isDeleted ? null : m.body` off deleted_at.
-    .update({ deleted_at: now, body: '' })
+    // Media must be cleared too. Unsend previously wrote only `deleted_at` and
+    // `body: ''`, leaving media_url/media_thumbnail_url intact — and the DM
+    // reader (GET /threads/:threadId/messages) emitted those fields
+    // unconditionally, so unsending a photo removed the caption and kept
+    // serving the picture. Clearing them here is the write half of that fix;
+    // the reader also refuses to project media for a tombstoned row.
+    .update({
+      deleted_at: now,
+      body: '',
+      media_url: null,
+      media_type: null,
+      media_thumbnail_url: null,
+      media_duration_seconds: null,
+    })
     .eq('id', messageId);
 
   if (error) {

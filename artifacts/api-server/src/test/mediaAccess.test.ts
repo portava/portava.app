@@ -283,6 +283,29 @@ describe("authorizeMediaAccess — bare-key column values (post-2081)", () => {
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
   });
 
+  it("3c messages.media_url — an UNSENT message no longer authorizes its media", async () => {
+    // Unsend previously wrote only deleted_at + body:'' and left media_url in
+    // place, so this branch kept handing thread members a signed URL for a
+    // photo the sender had deleted. The write now clears the media columns;
+    // this filter closes the same hole for rows tombstoned before that shipped.
+    const sc = makeClient({
+      messages: [
+        {
+          thread_id: THREAD,
+          media_url: bare,
+          media_thumbnail_url: null,
+          deleted_at: "2026-01-02T00:00:00Z",
+        },
+      ],
+      threadMembers: [{ thread_id: THREAD, user_id: VIEWER, left_at: null }],
+    });
+    assert.equal(
+      await authorizeMediaAccess(sc, VIEWER, "post-media", path),
+      false,
+      "a deleted message must not keep granting access to its attachment",
+    );
+  });
+
   it("an object referenced by nothing is still denied in either encoding", async () => {
     const sc = makeClient({});
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);

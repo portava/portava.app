@@ -42,19 +42,79 @@ const UUID = /^[0-9a-f-]{36}$/i;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Active-membership check.
+ *
+ * Returns `{ member, failed }`. `failed` is true when the membership lookup
+ * itself errored — the caller must NOT render that as "you are not a member",
+ * because a DB blip would then tell an actual member they have no access. The
+ * request is still refused (fail-closed), but honestly, as a db_error.
+ */
 async function verifyThreadMember(
   client: any,
   threadId: string,
   userId: string,
-): Promise<boolean> {
-  const { data } = await client
+): Promise<{ member: boolean; failed: boolean }> {
+  const { data, error } = await client
     .from("message_thread_members")
     .select("user_id, left_at")
     .eq("thread_id", threadId)
     .eq("user_id", userId)
     .maybeSingle();
-  if (!data) return false;
-  return (data as any).left_at === null;
+  if (error) return { member: false, failed: true };
+  if (!data) return { member: false, failed: false };
+  return { member: (data as any).left_at === null, failed: false };
+}
+
+/**
+ * Shared guard: 500 on a failed membership lookup, 403 on a genuine non-member.
+ * Returns true when the caller may proceed.
+ */
+async function requireThreadMember(
+  res: any,
+  client: any,
+  threadId: string,
+  userId: string,
+  forbiddenMessage: string,
+): Promise<boolean> {
+  const { member, failed } = await verifyThreadMember(client, threadId, userId);
+  if (failed) {
+    chatLogger.error({ threadId, userId }, "thread membership lookup failed");
+    sendError(res, "db_error", "Failed to verify thread membership", { exposeDetail: true });
+    return false;
+  }
+  if (!member) {
+    sendError(res, "forbidden", forbiddenMessage);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Retire a suggestion after its action succeeded.
+ *
+ * The action's primary side effect (plan item, poll message) has already been
+ * committed by the time this runs, so a failure here must NOT turn into a 500:
+ * the caller would retry and duplicate that side effect. It must also not be
+ * swallowed — an un-retired card stays on screen and invites exactly that
+ * duplicate. So the failure is logged and reported to the caller as
+ * `suggestionRetired: false` alongside the successful primary result.
+ */
+async function markSuggestionActed(
+  client: any,
+  suggestionId: string,
+  userId: string,
+): Promise<boolean> {
+  const { error } = await client
+    .from("telegraph_chat_suggestions")
+    .update({ status: "acted", acted_on_at: new Date().toISOString() })
+    .eq("id", suggestionId)
+    .eq("user_id", userId);
+  if (error) {
+    chatLogger.error({ err: error, suggestionId, userId }, "suggestion acted-status update failed");
+    return false;
+  }
+  return true;
 }
 
 // ── GET /api/threads/:threadId/telegraph/suggestions ─────────────────────────
@@ -71,11 +131,8 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
   }
 
   // Verify active membership
-  const isMember = await verifyThreadMember(client, threadId, user.id);
-  if (!isMember) {
-    sendError(res, "forbidden", "You are not an active member of this thread");
-    return;
-  }
+  if (!(await requireThreadMember(res, client, threadId, user.id,
+    "You are not an active member of this thread"))) return;
 
   // Optionally run intent detection on a new message body
   const messageText = typeof req.query.message === "string" ? req.query.message : null;
@@ -115,7 +172,23 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
               time_context: c.time_context ?? null,
               status: "shown",
             }));
-            await client.from("telegraph_chat_suggestions").insert(rows);
+            // The generated cards are only ever surfaced by re-reading this
+            // table below. A discarded insert error therefore renders as an
+            // empty suggestion list — indistinguishable from "nothing to
+            // suggest" — so the write must be checked and surfaced.
+            const { error: insertErr } = await client
+              .from("telegraph_chat_suggestions")
+              .insert(rows);
+            if (insertErr) {
+              chatLogger.error(
+                { err: insertErr, threadId, userId: user.id, count: rows.length },
+                "telegraph suggestion insert failed",
+              );
+              sendError(res, "db_error", "Failed to store Telegraph suggestions", {
+                exposeDetail: true,
+              });
+              return;
+            }
           }
         }
       }
@@ -123,7 +196,7 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
   }
 
   // Return current active (non-expired, non-dismissed) suggestions for this user+thread
-  const { data: suggestions } = await client
+  const { data: suggestions, error: readErr } = await client
     .from("telegraph_chat_suggestions")
     .select(
       "id, intent_type, title, reason, category, action_type, location_context, time_context, created_at, expires_at",
@@ -134,6 +207,14 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false })
     .limit(2);
+
+  // `suggestions ?? []` would turn a failed read into a believable "no
+  // suggestions right now". A read that did not happen is not an empty result.
+  if (readErr) {
+    chatLogger.error({ err: readErr, threadId, userId: user.id }, "telegraph suggestion read failed");
+    sendError(res, "db_error", "Failed to load Telegraph suggestions", { exposeDetail: true });
+    return;
+  }
 
   res.status(200).json({ suggestions: suggestions ?? [] });
 });
@@ -153,20 +234,31 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    if (!(await requireThreadMember(res, client, threadId, user.id, "Not a thread member"))) return;
 
     // Fetch suggestion data before updating so we can write the preference event
-    const { data: suggestion } = await client
+    const { data: suggestion, error: lookupErr } = await client
       .from("telegraph_chat_suggestions")
       .select("category, intent_type")
       .eq("id", suggestionId)
       .eq("user_id", user.id)
       .eq("thread_id", threadId)
       .maybeSingle();
+
+    if (lookupErr) {
+      chatLogger.error({ err: lookupErr, suggestionId }, "dismiss suggestion lookup failed");
+      sendError(res, "db_error", "Failed to load suggestion", { exposeDetail: true });
+      return;
+    }
+
+    // The UPDATE below is scoped by (id, user_id, thread_id) and matches zero
+    // rows when the suggestion does not exist or belongs to someone else — no
+    // error, so the handler used to answer `ok: true` for a dismissal that
+    // never happened. Every sibling action already 404s here; so does this one.
+    if (!suggestion) {
+      sendError(res, "not_found", "Suggestion not found");
+      return;
+    }
 
     const { error } = await client
       .from("telegraph_chat_suggestions")
@@ -219,11 +311,7 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    if (!(await requireThreadMember(res, client, threadId, user.id, "Not a thread member"))) return;
 
     const parsed = AddToPlanSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -279,14 +367,9 @@ router.post(
       return;
     }
 
-    // Mark suggestion as acted
-    await client
-      .from("telegraph_chat_suggestions")
-      .update({ status: "acted", acted_on_at: new Date().toISOString() })
-      .eq("id", suggestionId)
-      .eq("user_id", user.id);
+    const retired = await markSuggestionActed(client, suggestionId, user.id);
 
-    res.status(200).json({ ok: true, planItem });
+    res.status(200).json({ ok: true, planItem, suggestionRetired: retired });
   },
 );
 
@@ -305,11 +388,7 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    if (!(await requireThreadMember(res, client, threadId, user.id, "Not a thread member"))) return;
 
     const { data: suggestion } = await client
       .from("telegraph_chat_suggestions")
@@ -331,14 +410,9 @@ router.post(
       threadId,
     };
 
-    // Mark as acted
-    await client
-      .from("telegraph_chat_suggestions")
-      .update({ status: "acted", acted_on_at: new Date().toISOString() })
-      .eq("id", suggestionId)
-      .eq("user_id", user.id);
+    const retired = await markSuggestionActed(client, suggestionId, user.id);
 
-    res.status(200).json({ ok: true, prefill });
+    res.status(200).json({ ok: true, prefill, suggestionRetired: retired });
   },
 );
 
@@ -366,11 +440,7 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    if (!(await requireThreadMember(res, client, threadId, user.id, "Not a thread member"))) return;
 
     // Never write server-readable plaintext into an end-to-end encrypted thread.
     // A direct thread can be e2ee and telegraph suggestions surface in DMs, so a
@@ -429,14 +499,9 @@ router.post(
       return;
     }
 
-    // Mark suggestion as acted
-    await client
-      .from("telegraph_chat_suggestions")
-      .update({ status: "acted", acted_on_at: new Date().toISOString() })
-      .eq("id", suggestionId)
-      .eq("user_id", user.id);
+    const retired = await markSuggestionActed(client, suggestionId, user.id);
 
-    res.status(200).json({ ok: true, messageId: (msg as any).id, options });
+    res.status(200).json({ ok: true, messageId: (msg as any).id, options, suggestionRetired: retired });
   },
 );
 
