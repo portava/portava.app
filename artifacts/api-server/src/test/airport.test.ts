@@ -247,10 +247,11 @@ describe("AirportProfileService", () => {
     tables.airport_profiles.push(TPE_AIRPORT);
     const db = makeClient(tables);
     const result = await resolveByIata(db, "TPE");
-    assert.ok(result, "should return a profile");
-    assert.equal(result!.iataCode, "TPE");
-    assert.equal(result!.city, "Taoyuan");
-    assert.equal(result!.verified, true);
+    assert.equal(result.ok, true, "read should succeed");
+    assert.ok(result.ok && result.profile, "should return a profile");
+    assert.equal(result.ok && result.profile!.iataCode, "TPE");
+    assert.equal(result.ok && result.profile!.city, "Taoyuan");
+    assert.equal(result.ok && result.profile!.verified, true);
   });
 
   it("resolves airport by GPS proximity", async () => {
@@ -259,15 +260,17 @@ describe("AirportProfileService", () => {
     const db = makeClient(tables);
     // Coords very close to TPE
     const result = await resolveByGps(db, 25.07, 121.23, 50);
-    assert.ok(result, "should find airport near those coords");
-    assert.equal(result!.iataCode, "TPE");
+    assert.equal(result.ok, true, "read should succeed");
+    assert.ok(result.ok && result.profile, "should find airport near those coords");
+    assert.equal(result.ok && result.profile!.iataCode, "TPE");
   });
 
-  it("returns null when no airport found by GPS", async () => {
+  it("returns a successful empty resolution when no airport found by GPS", async () => {
     const tables = makeTables();
     const db = makeClient(tables);
     const result = await resolveByGps(db, 0, 0);
-    assert.equal(result, null);
+    assert.equal(result.ok, true, "an empty result is still a successful read");
+    assert.equal(result.ok && result.profile, null);
   });
 
   it("builds fallback profile with hardcoded defaults when DB empty", () => {

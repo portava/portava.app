@@ -46,6 +46,8 @@ import {
   searchAirports,
   buildFallbackProfile,
   upsertAirportProfile,
+  type AirportProfile,
+  type AirportResolution,
 } from "../services/airport/AirportProfileService.js";
 import {
   createSession,
@@ -283,15 +285,26 @@ router.get("/airport/search", async (req, res) => {
   let results: Awaited<ReturnType<typeof searchAirports>> = [];
   if (q) {
     results = await searchAirports(sc, q);
-  } else if (iata) {
-    const r = await resolveByIata(sc, iata);
-    results = r ? [r] : [];
-  } else if (lat != null && lng != null) {
-    const r = await resolveByGps(sc, lat, lng);
-    results = r ? [r] : [];
-  } else if (city) {
-    const r = await resolveByCity(sc, city);
-    results = r ? [r] : [];
+  } else {
+    // The single-airport resolvers report read failure separately from "not
+    // found" (see AirportResolution). Serving the static fallback for a failed
+    // read here would hand the picker an id:null profile whose selection makes
+    // the session route seed generic buffers over the real row — so a failed
+    // read is surfaced, not papered over.
+    let resolution: AirportResolution | null = null;
+    if (iata) {
+      resolution = await resolveByIata(sc, iata);
+    } else if (lat != null && lng != null) {
+      resolution = await resolveByGps(sc, lat, lng);
+    } else if (city) {
+      resolution = await resolveByCity(sc, city);
+    }
+    if (resolution && !resolution.ok) {
+      logger.error({ err: resolution.error }, "airport/search: airport_profiles read failed");
+      sendError(res, "degraded_unavailable", "Airport lookup is temporarily unavailable. Please try again.");
+      return;
+    }
+    results = resolution?.profile ? [resolution.profile] : [];
   }
 
   res.json({ airports: results, featureEnabled: true });
@@ -320,16 +333,37 @@ router.post("/airport/sessions", async (req, res) => {
   const p = parsed.data;
 
   // ── Resolve the airport up front (picker IATA, explicit id, or manual) ──────
-  let airport: Awaited<ReturnType<typeof resolveByIata>> = null;
+  //
+  // The seeding step below writes with `onConflict: "iata_code"`, so an airport
+  // that resolved to the STATIC dataset (id:null, generic buffers,
+  // verified:false) is upserted straight over whatever row that IATA already
+  // has. That is only ever safe when the resolver actually looked and found
+  // nothing — a resolver that could not READ must never reach it, or one
+  // transient failure permanently flattens an admin-curated airport's safety
+  // buffers for every future user. `AirportResolution` carries that
+  // distinction; abort here rather than write a guess.
+  let airport: AirportProfile | null = null;
   if (p.airportId) {
     const resolved = await resolveAirportForSession(sc, { airportId: p.airportId });
     airport = resolved.iataCode === "UNK" ? null : resolved;
   }
   if (!airport && (p.iata ?? p.manualIata)) {
-    airport = await resolveByIata(sc, (p.iata ?? p.manualIata)!);
+    const r = await resolveByIata(sc, (p.iata ?? p.manualIata)!);
+    if (!r.ok) {
+      logger.error({ err: r.error }, "airport/sessions: airport_profiles read failed — refusing to seed a fallback profile");
+      sendError(res, "degraded_unavailable", "Could not look up that airport. Nothing was saved — please try again.");
+      return;
+    }
+    airport = r.profile;
   }
   if (!airport && p.manualCity) {
-    airport = await resolveByCity(sc, p.manualCity);
+    const r = await resolveByCity(sc, p.manualCity);
+    if (!r.ok) {
+      logger.error({ err: r.error }, "airport/sessions: airport_profiles read failed — refusing to seed a fallback profile");
+      sendError(res, "degraded_unavailable", "Could not look up that airport. Nothing was saved — please try again.");
+      return;
+    }
+    airport = r.profile;
   }
 
   // Ensure a DB profile row exists so the session can reference it (static and

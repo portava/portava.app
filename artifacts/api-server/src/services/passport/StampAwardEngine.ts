@@ -500,12 +500,29 @@ async function _awardStampCore(
         return;
       }
 
-      const { data: prog } = await sc
+      const { data: prog, error: progErr } = await sc
         .from("stamp_progress")
         .select("progress_count")
         .eq("user_id", userId)
         .eq("stamp_definition_id", definition.id)
         .maybeSingle();
+
+      // A FAILED read is not a ZERO count. supabase-js resolves `{data, error}`
+      // instead of throwing, so dropping `error` turns an unreachable table into
+      // `progress_count: 0` — and the upsert below then writes `1` over a user's
+      // real progress toward a repeatable stamp, destroying it permanently. Skip
+      // this increment (the same outcome as the non-PGRST202 RPC failure above)
+      // and make the lost increment visible in ops rather than writing a guess.
+      if (progErr) {
+        console.error(JSON.stringify({
+          event:         "stamp.progress.read_failed",
+          user_id:       userId,
+          definition_id: definition.id,
+          code:          (progErr as any).code ?? null,
+          error:         (progErr as any).message ?? String(progErr),
+        }));
+        return;
+      }
 
       const newCount = ((prog as any)?.progress_count ?? 0) + 1;
 
