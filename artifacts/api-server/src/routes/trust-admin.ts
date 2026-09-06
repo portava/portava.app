@@ -28,7 +28,7 @@ import {
 } from "../services/trust/TrustAdminService.js";
 import { getTrustProfile, recalculateTrustScore } from "../services/trust/TrustScoreService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { getActiveCaps, liftCap } from "../services/trust/TrustCapService.js";
+import { getActiveCapsResult, liftCap } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
@@ -92,9 +92,12 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
   const { userId } = req.params;
   if (!UUID.test(userId)) { sendError(res, "invalid_payload", "Invalid userId"); return; }
 
-  const [profile, caps, restrictionsRes, eventsRes, reviewsRes] = await Promise.all([
+  const [profile, capsRes, restrictionsRes, eventsRes, reviewsRes] = await Promise.all([
     getTrustProfile(sc, userId),
-    getActiveCaps(sc, userId),
+    // Result form, not the array: an admin deciding whether a ceiling still
+    // holds this account down must not read a failed trust_caps query as "no
+    // ceilings". See getActiveCapsResult.
+    getActiveCapsResult(sc, userId),
     sc
       .from("trust_restrictions")
       .select("id, restriction_type, reason, expires_at, created_at, lifted_at")
@@ -119,7 +122,9 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
   res.json({
     userId,
     profile:      profile ?? null,
-    caps,
+    caps:            capsRes.caps,
+    /** True when `caps` is empty because the read failed, not because there are none. */
+    capsUnavailable: capsRes.failed,
     restrictions: (restrictionsRes.data as any[]) ?? [],
     events:       (eventsRes.data as any[]) ?? [],
     openReviews:  (reviewsRes.data as any[]) ?? [],
