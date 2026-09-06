@@ -218,6 +218,20 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:enum-literals
 
+      # check:writerless-reads — the THIRD member of the same family, and the one
+      # that asks the question the other two cannot. check:enum-literals judges
+      # filter VALUES and check:schema-references judges that columns EXIST; both
+      # pass happily on a query that is perfectly well-formed and matches nothing
+      # because the table it reads has no producer at all. That is how
+      # `activity_events` killed 0.70 of the creator-activity score's weight for
+      # months, and how `public.circles` left an authorization predicate denying
+      # every user in silence. Static, so like its siblings it needs no database
+      # and cannot be starved. See src/scripts/checkWriterlessReads.ts.
+      - name: 'check:writerless-reads (static; no DB, cannot be starved)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:writerless-reads
+
       # check:doc-citations — the documentation half of the same idea.
       # docs/discovery/ROADMAP.md carries its own rule, "maintain this table in
       # the same PR as the work", and the 2026-09-05 reconciliation exists

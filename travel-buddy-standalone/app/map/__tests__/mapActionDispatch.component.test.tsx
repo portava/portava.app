@@ -216,6 +216,24 @@ jest.mock('../../../src/components/map/MapContributionSheet', () => {
   };
 });
 
+// §22 capture flags. This file is about WHERE `report` is ROUTED, and routing
+// is only about anything while capture is switched on: with the flags off the
+// map screen now offers no §22 entry point at all, which is the subject of
+// app/map/__tests__/contributionGating.component.test.tsx. Only the two capture
+// flags are switched on — every other flag stays false, exactly as it was when
+// this file had no flags mock at all.
+// NOTE: intentionally exhaustive — the real provider fetches
+// /api/feature-flags over the network at mount.
+jest.mock('../../../src/context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({
+    isEnabled: (flag: string) =>
+      flag === 'map_contributions_enabled' || flag === 'intel_capture_quick_signal',
+    isLivePlacesEnabled: () => false,
+    loading: false,
+  }),
+  FeatureFlagsProvider: ({ children }: { children: unknown }) => children,
+}));
+
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({

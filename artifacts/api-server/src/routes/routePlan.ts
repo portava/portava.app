@@ -418,6 +418,91 @@ router.post("/route-plans/:id/accept", asyncHandler(async (req, res) => {
   });
 }));
 
+// ── POST /api/route-plans/:id/complete ────────────────────────────────────────
+//
+// THE TERMINATION TRANSITION — the only writer of route_plans.status='completed'.
+//
+// WHY THIS EXISTS. Acceptance had a canonical server mutation and termination did
+// not, so a walk that finished stayed 'active' forever. That is not cosmetic:
+// lib/routeHopSignal.ts:118 declares ACCEPTED_PLAN_STATUS='active' as the ONLY
+// status that contributes to the §10 Crowd Flow aggregate, precisely because
+// "a completed plan is a past journey, not a live intent". With nothing ever
+// writing a terminal status, an ended walk kept contributing route-flow
+// intelligence for the whole freshness window after the traveller went home.
+//
+// NO NEW SCHEMA. 'completed' is an existing label of the route_plan_status enum
+// (draft | active | completed | cancelled) and accepted_at / accepted_by_user_id
+// are left UNTOUCHED: migration 2224's CHECK requires any non-draft row to carry
+// both, and the acceptance instant remains the honest observation time for the
+// hops already derived from it. Clearing them would both violate the constraint
+// and rewrite history.
+router.post("/route-plans/:id/complete", asyncHandler(async (req, res) => {
+  const ctx = await requireUser(req, res);
+  if (!ctx) return;
+  const { client, user } = ctx;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid plan id"); return; }
+
+  const { data: plan } = await client
+    .from("route_plans")
+    .select("id, owner_user_id, status, accepted_at, accepted_by_user_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (!plan) { sendError(res, "not_found", "Route plan not found"); return; }
+
+  if ((plan as any).owner_user_id !== user.id) {
+    sendError(res, "forbidden", "Only the route owner can complete this plan"); return;
+  }
+
+  const status = (plan as any).status as string;
+
+  // Idempotent: ending an already-ended route is a no-op success, so a retried
+  // or double-tapped "End route" cannot surface as an error to the traveller.
+  if (status === "completed") {
+    res.json({
+      id,
+      status,
+      acceptedAt:         (plan as any).accepted_at ?? null,
+      alreadyCompleted:   true,
+    });
+    return;
+  }
+  if (status !== "active") {
+    sendError(res, "invalid_state_transition", `A ${status} route plan cannot be completed`);
+    return;
+  }
+
+  const completedAt = new Date().toISOString();
+  // Compare-and-set on status='active', matching the accept path: two concurrent
+  // completions collapse to one instead of racing.
+  const { data: updated, error: completeErr } = await (client as any)
+    .from("route_plans")
+    .update({ status: "completed", updated_at: completedAt })
+    .eq("id", id)
+    .eq("status", "active")
+    .select("id, status, accepted_at, accepted_by_user_id")
+    .maybeSingle();
+
+  if (completeErr) {
+    req.log.error({ err: completeErr }, "complete route_plan");
+    sendError(res, "db_error", completeErr.message ?? "Failed to complete route plan");
+    return;
+  }
+  if (!updated) {
+    sendError(res, "conflict", "Route plan changed state while being completed");
+    return;
+  }
+
+  res.json({
+    id:               (updated as any).id,
+    status:           (updated as any).status,
+    acceptedAt:       (updated as any).accepted_at,
+    alreadyCompleted: false,
+  });
+}));
+
 // ── PATCH /api/route-plans/:id/stops/:stopId ──────────────────────────────────
 
 router.patch("/route-plans/:id/stops/:stopId", asyncHandler(async (req, res) => {

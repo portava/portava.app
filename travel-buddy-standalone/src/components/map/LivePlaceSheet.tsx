@@ -178,6 +178,14 @@ export interface LivePlaceSheetProps {
   onAction?: (action: MapAction, object: MapObject) => void;
   /** §22 one-tap contribution for a section the projection could not fill. */
   onContribute?: (object: MapObject) => void;
+  /**
+   * §22 capture is actually switched on for this session (both
+   * `map_contributions_enabled` and `intel_capture_quick_signal`). FAIL-CLOSED:
+   * absent means off, because a caller that has not thought about the flag has
+   * not established that a contribution can reach storage — and with it off the
+   * prompt and the Report button lead to a 200 that records nothing.
+   */
+  contributionsEnabled?: boolean;
   onSnapChange?: (snap: LivePlaceSnapPoint) => void;
 }
 
@@ -191,6 +199,7 @@ export function LivePlaceSheet({
   onWhyPress,
   onAction,
   onContribute,
+  contributionsEnabled = false,
   onSnapChange,
 }: LivePlaceSheetProps) {
   const { height: screenH, width: screenW } = useWindowDimensions();
@@ -448,8 +457,21 @@ export function LivePlaceSheet({
 
   const metaLine = placeMetaLine(vm);
   const headline = liveStateHeadline(vm.liveState);
-  const canContribute = object.interaction?.contributable === true;
+  const canContribute = object.interaction?.contributable === true && contributionsEnabled;
   const heroWidth = screenW;
+
+  /**
+   * §22: with capture off, a CONTRIBUTABLE object's `report` is removed rather
+   * than left to no-op. Contributable-only on purpose — on a person or a
+   * listing `report` means MODERATION, which is a different flow behind no flag
+   * and must never disappear. And it is removed rather than re-routed into
+   * `ReportSheet`: filing a place-observation into the human-moderation queue is
+   * the inversion the map screen's own dispatcher documents as forbidden.
+   */
+  const visibleActions = vm.actions.filter(
+    (action) =>
+      !(action === 'report' && object.interaction?.contributable === true && !contributionsEnabled),
+  );
 
   const scrimOpacity = translateY.interpolate({
     inputRange: [offsetFor('half'), offsetFor('full')],
@@ -627,11 +649,11 @@ export function LivePlaceSheet({
             ) : null}
 
             {/* ── ACTIONS ── */}
-            {vm.actions.length > 0 ? (
+            {visibleActions.length > 0 ? (
               <View style={s.block}>
                 <SectionLabel>ACTIONS</SectionLabel>
                 <View style={s.actionRow}>
-                  {vm.actions.map((action) => (
+                  {visibleActions.map((action) => (
                     <Pressable
                       key={action}
                       style={s.actionBtn}
