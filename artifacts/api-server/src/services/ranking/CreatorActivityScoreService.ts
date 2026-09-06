@@ -127,10 +127,26 @@ const COMPONENT_WEIGHTS = {
 } as const;
 
 /**
- * Max ids per `.in()` when resolving owners. Keeps the generated query string
- * well inside PostgREST's URL limit; see _ownersOf for why that matters.
+ * Max ids per `.in()` ANYWHERE in this file.
+ *
+ * `.in()` is serialised into the query string. At ~37 characters per uuid an
+ * unbounded list crosses a typical 8KB URL limit at roughly 200 ids and comes
+ * back 414, which supabase-js RETURNS rather than throws — so the surrounding
+ * catch never fires and the read yields nothing.
+ *
+ * The failure has a SIZE THRESHOLD in front of it, which is what makes it so
+ * hard to see: below the threshold the code is correct, above it the result is
+ * identical to "nobody engaged". No fixture reaches the threshold, and the
+ * effect is monotonic in output volume — the more a creator posts, the more
+ * certain their engagement score is zero. That inverts the signal for exactly
+ * the accounts ranking exists to surface.
+ *
+ * This was originally applied to _ownersOf alone. The four reads in
+ * _fetchPositiveResponses kept an unbounded list and were caught later, so the
+ * rule is now: every `.in()` on a list this file builds goes through
+ * `_inChunks`.
  */
-const OWNER_LOOKUP_CHUNK = 100;
+const IN_LIST_CHUNK = 100;
 
 /** Soft-cap for the saturating transform. */
 const SOFT_CAP_CONTRIBUTION      = 20;
@@ -706,6 +722,25 @@ export class CreatorSignalAggregator {
    * exact failure mode this whole rewrite exists to remove, so the query shape
    * stays one the doubles can actually answer.
    */
+  /**
+   * Run `build(chunk)` once per IN_LIST_CHUNK slice of `ids` and concatenate the
+   * rows. A failing chunk is skipped rather than discarding the chunks that
+   * already succeeded — a partial count is a degraded signal, an empty one is a
+   * wrong signal.
+   */
+  private async _inChunks(ids: string[], build: (chunk: string[]) => any): Promise<any[]> {
+    const rows: any[] = [];
+    for (let i = 0; i < ids.length; i += IN_LIST_CHUNK) {
+      try {
+        const { data } = await build(ids.slice(i, i + IN_LIST_CHUNK));
+        for (const r of ((data as any[]) ?? [])) rows.push(r);
+      } catch {
+        continue;
+      }
+    }
+    return rows;
+  }
+
   private async _ownersOf(
     fetchChunk: (chunk: string[]) => any,
     ownerCol: string,
@@ -723,8 +758,8 @@ export class CreatorSignalAggregator {
     // participation silently 0 — for exactly the heaviest participants, the
     // ones the component most needs to see. Same silent-zero signature as the
     // defect this file exists to fix, just with a size threshold in front of it.
-    for (let i = 0; i < unique.length; i += OWNER_LOOKUP_CHUNK) {
-      const chunk = unique.slice(i, i + OWNER_LOOKUP_CHUNK);
+    for (let i = 0; i < unique.length; i += IN_LIST_CHUNK) {
+      const chunk = unique.slice(i, i + IN_LIST_CHUNK);
       try {
         const { data } = await fetchChunk(chunk);
         for (const r of ((data as any[]) ?? [])) {
@@ -856,24 +891,25 @@ export class CreatorSignalAggregator {
       // Static `.from()` and static select list per source, for the same reason
       // as _fetchActiveDays: a dynamic table name is unverifiable against the
       // live schema, and a wrong column here reads as "nobody engaged".
-      const countOn = async (builder: () => any, actorCol: string): Promise<string[]> => {
+      const countOn = async (
+        build: (chunk: string[]) => any,
+        actorCol: string,
+      ): Promise<string[]> => {
         if (postIdSet.size === 0) return [];
-        try {
-          const { data } = await builder();
-          return ((data as any[]) ?? [])
-            .map((r) => String(r?.[actorCol] ?? ""))
-            .filter((a) => a && a !== userId && !blockedIds.has(a));
-        } catch { return []; }
+        const rows = await this._inChunks(authored, build);
+        return rows
+          .map((r) => String(r?.[actorCol] ?? ""))
+          .filter((a) => a && a !== userId && !blockedIds.has(a));
       };
       const qq = this.db as any;
 
       const [saves, shares, comments, follows, stamps] = await Promise.all([
-        countOn(() => qq.from("post_saves").select("user_id, post_id")
-          .in("post_id", authored).gte("created_at", ago90d), "user_id"),
-        countOn(() => qq.from("post_shares").select("user_id, post_id")
-          .in("post_id", authored).gte("created_at", ago90d), "user_id"),
-        countOn(() => qq.from("posts_comments").select("user_id, post_id")
-          .in("post_id", authored).gte("created_at", ago90d), "user_id"),
+        countOn((chunk) => qq.from("post_saves").select("user_id, post_id")
+          .in("post_id", chunk).gte("created_at", ago90d), "user_id"),
+        countOn((chunk) => qq.from("post_shares").select("user_id, post_id")
+          .in("post_id", chunk).gte("created_at", ago90d), "user_id"),
+        countOn((chunk) => qq.from("posts_comments").select("user_id, post_id")
+          .in("post_id", chunk).gte("created_at", ago90d), "user_id"),
         (async () => {
           try {
             const { data } = await (this.db as any)
@@ -896,15 +932,17 @@ export class CreatorSignalAggregator {
           // or a single like would count twice.
           if (postIdSet.size === 0) return [] as string[];
           try {
-            const { data } = await (this.db as any)
-              .from("content_stamps")
-              .select("user_id, entity_id, entity_type")
-              .in("entity_id", authored)
-              .in("entity_type", ["post", "media"])
-              .gte("created_at", ago90d);
+            const rows = await this._inChunks(authored, (chunk) =>
+              (this.db as any)
+                .from("content_stamps")
+                .select("user_id, entity_id, entity_type")
+                .in("entity_id", chunk)
+                .in("entity_type", ["post", "media"])
+                .gte("created_at", ago90d),
+            );
             const seen = new Set<string>();
             const out: string[] = [];
-            for (const r of ((data as any[]) ?? [])) {
+            for (const r of rows) {
               const actor = String(r?.user_id ?? "");
               const key = `${actor}:${String(r?.entity_id ?? "")}`;
               if (!actor || actor === userId || blockedIds.has(actor)) continue;
