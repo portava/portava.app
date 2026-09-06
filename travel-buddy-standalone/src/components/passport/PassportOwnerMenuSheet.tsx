@@ -21,7 +21,7 @@ import {
   Briefcase, Bookmark, Users, UserPlus, UserCheck, UserX,
   VolumeX, Settings, Lock, Bell, HelpCircle, LogOut,
   ChevronRight, X, MoreHorizontal, Edit2, Compass, PlusCircle,
-  BarChart2,
+  BarChart2, Archive,
 } from 'lucide-react-native';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
@@ -274,6 +274,16 @@ const SECTIONS: Section[] = [
         iconColor: '#D4A017',
         live: true,
         action: (p) => { closeThenNavigate(p.onClose, '/saved'); },
+      },
+      {
+        // Expired Highlights and Stories are archived, not deleted — this is
+        // the owner's route back to them.
+        key: 'archive',
+        label: 'Archive',
+        Icon: Archive,
+        iconColor: '#6B6862',
+        live: true,
+        action: (p) => { closeThenNavigate(p.onClose, '/archive'); },
       },
       {
         key: 'drafts',

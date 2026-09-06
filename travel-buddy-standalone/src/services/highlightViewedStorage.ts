@@ -107,7 +107,18 @@ async function resolveHighlightViewedKey(): Promise<string | null> {
  */
 export const viewedHighlightIds = new Set<string>();
 
-/** Map persisted to AsyncStorage: id → ISO expiresAt string. */
+/**
+ * Sentinel stored in place of an ISO date for a PERMANENT highlight.
+ *
+ * A permanent highlight has `expires_at === null`, so there is no date to
+ * store and no date at which the viewed-marker should be pruned. Storing the
+ * literal below keeps the entry out of the date arithmetic entirely — the
+ * alternative (a null or a far-future date) either parses to NaN and gets
+ * pruned on the next load, or invents an expiry the row does not have.
+ */
+const PERMANENT_MARKER = 'permanent';
+
+/** Map persisted to AsyncStorage: id → ISO expiresAt string, or PERMANENT_MARKER. */
 let _persistedMap: Record<string, string> = {};
 
 /**
@@ -140,7 +151,8 @@ async function loadForCurrentAccount(): Promise<void> {
     const now = Date.now();
     const pruned: Record<string, string> = {};
     for (const [id, expiresAt] of Object.entries(stored)) {
-      if (new Date(expiresAt).getTime() > now) {
+      // A permanent highlight never falls out of the viewed set.
+      if (expiresAt === PERMANENT_MARKER || new Date(expiresAt).getTime() > now) {
         pruned[id] = expiresAt;
         viewedHighlightIds.add(id);
       }
@@ -173,15 +185,20 @@ initViewedIds();
  * the ring stays muted across app restarts.
  *
  * @param id        Highlight ID.
- * @param expiresAt ISO-8601 expiry string from the Highlight object (optional;
- *                  if omitted the entry is still added in-memory but not persisted).
+ * @param expiresAt ISO-8601 expiry from the Highlight object, or `null` when the
+ *                  highlight is permanent (both persist). Omit it entirely — i.e.
+ *                  `undefined` — when the expiry is simply not known at the call
+ *                  site: the entry is then added in-memory but not persisted.
  */
-export function markViewed(id: string, expiresAt?: string): void {
+export function markViewed(id: string, expiresAt?: string | null): void {
   viewedHighlightIds.add(id);
-  if (!expiresAt) return;
+  if (expiresAt === undefined) return;
+  // `null` means permanent — a real, persistable state, not a missing value.
+  const stored = expiresAt === null ? PERMANENT_MARKER : expiresAt;
+  if (!stored) return;
   // Skip persistence if this id is already stored with the same expiry
-  if (_persistedMap[id] === expiresAt) return;
-  _persistedMap[id] = expiresAt;
+  if (_persistedMap[id] === stored) return;
+  _persistedMap[id] = stored;
 
   if (!isAccountScopedStorageEnabled()) {
     // Flag off: always the legacy key, independent of _loadedKey, so

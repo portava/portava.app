@@ -173,6 +173,7 @@ const HIGHLIGHT: Highlight = {
   likedByMe: false,
   filterId: 'original',
   filterIntensity: 100,
+  archived: false,
 };
 
 describe('the shared pad is derived from the floor, not guessed', () => {

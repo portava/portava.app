@@ -300,6 +300,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
   {
+    key: 'archive',
+    path: 'archive',
+    title: 'Archive',
+    parent: null,
+    icon: 'Archive',
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
     key: 'discover',
     path: 'discover',
     title: 'Discover',

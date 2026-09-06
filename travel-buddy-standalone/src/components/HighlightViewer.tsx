@@ -42,6 +42,7 @@ import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingS
 import { HighlightViewersSheet } from './HighlightViewersSheet.tsx';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
+import { formatHighlightExpiry } from './highlights/HighlightTermChips.tsx';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -443,7 +444,7 @@ export function HighlightViewer({
                   {locLabel ? <Text style={s.locText}>{locLabel}</Text> : null}
                 </View>
                 <View style={s.timeChip}>
-                  <Text style={s.timeText}>{fmtExpiry(current.expiresAt)}</Text>
+                  <Text style={s.timeText}>{formatHighlightExpiry(current.expiresAt)}</Text>
                 </View>
               </View>
             </UserIdentityLink>
@@ -613,14 +614,6 @@ export function HighlightViewer({
       )}
     </Modal>
   );
-}
-
-function fmtExpiry(expiresAt: string): string {
-  const diff = Math.max(0, new Date(expiresAt).getTime() - Date.now());
-  const hrs = Math.floor(diff / 3600000);
-  const mins = Math.floor((diff % 3600000) / 60000);
-  if (hrs > 0) return `${hrs}h left`;
-  return `${mins}m left`;
 }
 
 const s = StyleSheet.create({
