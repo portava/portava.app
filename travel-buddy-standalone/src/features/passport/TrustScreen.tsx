@@ -121,6 +121,19 @@ function ScoreHero({ view }: { view: TrustView }) {
         <Text style={s.confidenceLabel}>{view.confidenceLabel}</Text>
       </View>
       <Text style={s.confidenceCopy}>{view.confidenceCopy}</Text>
+
+      {/* Server-chosen strongest areas (§9/§10). Rendered verbatim; when the
+          server sent none, nothing is rendered — no placeholder, no copy. */}
+      {view.strengths.length > 0 ? (
+        <View style={s.strengths} accessibilityLabel={`Strongest areas: ${view.strengths.join(', ')}`}>
+          {view.strengths.map((strength) => (
+            <View key={strength} style={s.strengthChip}>
+              <Star size={icon.s14} color={color.deep} />
+              <Text style={s.strengthText} numberOfLines={1}>{strength}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -473,6 +486,30 @@ const s = StyleSheet.create({
     textAlign: 'center',
     marginTop: space.xs,
     paddingHorizontal: space.sm,
+  },
+  strengths: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: space.xs,
+    marginTop: space.sm,
+  },
+  strengthChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: color.paper,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  strengthText: {
+    ...t.small,
+    color: color.deep,
+    fontWeight: '600',
+    fontSize: 12,
   },
 
   // Section
