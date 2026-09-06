@@ -9,7 +9,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { getActiveCaps } from "./TrustCapService.js";
+import { getActiveCapsResult } from "./TrustCapService.js";
 
 const logger = rootLogger.child({ service: "TrustRecoveryService" });
 import { getTrustProfile } from "./TrustScoreService.js";
@@ -31,6 +31,24 @@ export interface RecoveryStatus {
   lowestScore: number | null;
   suggestedSteps: RecoveryStep[];
   overallProgress: number; // 0–100 % toward 50 (neutral)
+  /**
+   * True when the probation read FAILED, so `onProbation: false` /
+   * `probationEndsAt: null` above are a guess, not an answer.
+   *
+   * The probation query destructured only `.data` and dropped `error`, and
+   * supabase-js RETURNS errors rather than throwing — so an unreadable
+   * trust_profiles produced `data: null`, `Boolean(undefined)` produced `false`,
+   * and "this user is not on probation" was the literal output of a failed
+   * query. That is fail-OPEN on a sanction, reported with the same confidence as
+   * a real clean record, and it flows straight through
+   * TrustPrivacyGuard.getSafeTrustSummary into the Passport.
+   */
+  probationUnknown: boolean;
+  /**
+   * True when the active-cap read failed, so `activeCapsCount: 0` means
+   * "could not tell" rather than "no ceilings apply".
+   */
+  activeCapsUnknown: boolean;
 }
 
 const STEP_TEMPLATES: Record<string, (count: number) => string> = {
@@ -90,18 +108,30 @@ export async function getRecoveryStatus(
   db: SupabaseClient,
   userId: string,
 ): Promise<RecoveryStatus> {
-  const [profile, caps, probation] = await Promise.all([
+  const [profile, capsResult, probation] = await Promise.all([
     getTrustProfile(db, userId),
-    getActiveCaps(db, userId),
+    getActiveCapsResult(db, userId),
     db.from("trust_profiles").select("on_probation, probation_ends_at").eq("user_id", userId).maybeSingle(),
   ]);
 
-  const onProbation = Boolean((probation.data as any)?.on_probation);
-  const probationEndsAt = (probation.data as any)?.probation_ends_at ?? null;
+  const caps = capsResult.caps;
+  const activeCapsUnknown = capsResult.failed;
+
+  // `error` is READ, not discarded: without this the line below turns any failed
+  // read into the confident claim "not on probation".
+  const probationUnknown = Boolean((probation as any)?.error);
+  if (probationUnknown) {
+    logger.warn(
+      { err: (probation as any).error, userId },
+      "probation read failed — onProbation is unknown, not false",
+    );
+  }
+  const onProbation = probationUnknown ? false : Boolean((probation.data as any)?.on_probation);
+  const probationEndsAt = probationUnknown ? null : ((probation.data as any)?.probation_ends_at ?? null);
 
   if (!profile) {
     return {
-      userId, onProbation, probationEndsAt,
+      userId, onProbation, probationEndsAt, probationUnknown, activeCapsUnknown,
       activeCapsCount: caps.length,
       lowestCategory: null, lowestScore: null,
       suggestedSteps: [], overallProgress: 50,
@@ -120,7 +150,7 @@ export async function getRecoveryStatus(
   const suggestedSteps = await buildRecoverySteps(db, userId);
 
   return {
-    userId, onProbation, probationEndsAt,
+    userId, onProbation, probationEndsAt, probationUnknown, activeCapsUnknown,
     activeCapsCount: caps.length,
     lowestCategory: lowestCat || null,
     lowestScore: lowestCat ? lowestScore : null,

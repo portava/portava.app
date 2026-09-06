@@ -108,13 +108,39 @@ export async function confirmEvent(
  *
  * Never throws: an admin restoring an account must not be blocked by trust
  * bookkeeping. Returns what it did so the caller can log it.
+ *
+ * ── `incomplete`: THE COUNTS ALONE USED TO LIE ──────────────────────────────
+ * Every failure inside this function produced `{ eventsDismissed: 0, capsLifted: 0 }`
+ * — the identical value returned when the user simply had no moderation
+ * consequences to reverse. Worse, the dismissal UPDATE dropped its `error`
+ * entirely and the function then reported `eventsDismissed: ids.length`: the
+ * count of rows it INTENDED to dismiss, returned unconditionally, whether or not
+ * a single row changed. So a wholly failed reversal reported full success.
+ *
+ * That matters more here than almost anywhere else in the engine, because the
+ * consequence being reversed is PERMANENT if the reversal does not land: a
+ * `behavior_confirmed` respect_safety ceiling has no `expires_at` and no other
+ * code path lifts it. `incomplete: true` is the signal that the sanction was
+ * lifted but its trust consequence may still be standing, and needs a human.
  */
+export interface RevokeModerationTrustResult {
+  /** Events this call actually moved to 'dismissed' (not the count attempted). */
+  eventsDismissed: number;
+  /** Caps this call actually lifted. */
+  capsLifted: number;
+  /**
+   * True when any step could not be completed. NOT the same as "there was
+   * nothing to reverse", which is `incomplete: false` with both counts 0.
+   */
+  incomplete: boolean;
+}
+
 export async function revokeModerationTrustConsequences(
   db: SupabaseClient,
   adminId: string,
   userId: string,
   reason: string,
-): Promise<{ eventsDismissed: number; capsLifted: number }> {
+): Promise<RevokeModerationTrustResult> {
   try {
     const { data: events, error } = await db
       .from("trust_events")
@@ -122,18 +148,35 @@ export async function revokeModerationTrustConsequences(
       .eq("user_id", userId)
       .eq("source_type", "moderation")
       .in("status", ["applied", "confirmed", "pending_review"]);
-    if (error) return { eventsDismissed: 0, capsLifted: 0 };
+    if (error) {
+      logger.warn({ err: error, userId }, "revokeModerationTrustConsequences: event read failed — consequences may still stand");
+      return { eventsDismissed: 0, capsLifted: 0, incomplete: true };
+    }
 
     const ids = ((events as any[]) ?? []).map((e) => e.id).filter(Boolean);
-    if (ids.length === 0) return { eventsDismissed: 0, capsLifted: 0 };
+    // Genuinely nothing to reverse. The only path that returns zeroes WITHOUT
+    // incomplete, and the one every failure above used to be confused with.
+    if (ids.length === 0) return { eventsDismissed: 0, capsLifted: 0, incomplete: false };
 
     const { liftCapsBySourceEvents } = await import("./TrustCapService.js");
-    const capsLifted = await liftCapsBySourceEvents(db, ids, adminId);
+    const lift = await liftCapsBySourceEvents(db, ids, adminId);
+    let incomplete = lift.failed;
 
-    await db
+    // Count what actually changed, and read the error. `.select("id")` turns the
+    // blind write into an observation.
+    const { data: dismissed, error: dismissError } = await db
       .from("trust_events")
       .update({ status: "dismissed", reviewed_by: adminId, reviewed_at: new Date().toISOString() })
-      .in("id", ids);
+      .in("id", ids)
+      .select("id");
+    if (dismissError) {
+      logger.warn({ err: dismissError, userId, attempted: ids.length }, "revokeModerationTrustConsequences: dismissal failed — findings still charged");
+      incomplete = true;
+    }
+    const eventsDismissed = dismissError ? 0 : ((dismissed as any[]) ?? []).length;
+    // A write that reported success but moved fewer rows than it targeted is
+    // still a partial reversal, and must not read as a whole one.
+    if (!dismissError && eventsDismissed < ids.length) incomplete = true;
 
     // A reversed finding must not leave the user on probation for it.
     await setProbation(db, userId, false, null).catch(() => {});
@@ -145,12 +188,26 @@ export async function revokeModerationTrustConsequences(
     // metadata carries what actually happened.
     await logAdminAction(
       db, adminId, userId, "lift_cap", reason,
-      { op: "revoke_moderation_trust", eventsDismissed: ids.length, capsLifted },
+      {
+        op: "revoke_moderation_trust",
+        eventsTargeted: ids.length,
+        eventsDismissed,
+        capsLifted: lift.lifted,
+        incomplete,
+      },
     ).catch(() => {});
 
-    return { eventsDismissed: ids.length, capsLifted };
-  } catch {
-    return { eventsDismissed: 0, capsLifted: 0 };
+    if (incomplete) {
+      logger.error(
+        { userId, adminId, eventsTargeted: ids.length, eventsDismissed, capsLifted: lift.lifted },
+        "moderation trust reversal INCOMPLETE — a permanent ceiling or a charged finding may still stand",
+      );
+    }
+
+    return { eventsDismissed, capsLifted: lift.lifted, incomplete };
+  } catch (err) {
+    logger.warn({ err, userId }, "revokeModerationTrustConsequences threw — consequences may still stand");
+    return { eventsDismissed: 0, capsLifted: 0, incomplete: true };
   }
 }
 

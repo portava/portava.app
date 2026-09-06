@@ -38,6 +38,14 @@ export interface SafeTrustSummary {
   restrictionsDegraded?: boolean;
   /** Which way the degraded read failed — see RestrictionState.degradedReason. */
   restrictionsDegradedReason?: "fail_open" | "fail_closed";
+  /**
+   * True when `onProbation: false` above is a failed read rather than a clean
+   * record. Same shape and same reason as `restrictionsDegraded`: a summary that
+   * flattens a sanction into a boolean must not report "could not tell" and "all
+   * clear" as the same value. Set only when true, so the common case is absent
+   * from the payload exactly as `restrictionsDegraded` is.
+   */
+  probationUnknown?: boolean;
 }
 
 const LEVEL_LABELS: Record<PublicTrustLevel, string> = {
@@ -117,6 +125,7 @@ export async function getSafeTrustSummary(
     ...(restrictions.degraded
       ? { restrictionsDegraded: true, restrictionsDegradedReason: restrictions.degradedReason }
       : {}),
+    ...(recovery.probationUnknown ? { probationUnknown: true } : {}),
   };
 }
 

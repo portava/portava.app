@@ -15,6 +15,44 @@ import { logger as rootLogger } from "../../lib/logger.js";
 
 const logger = rootLogger.child({ service: "TrustScoreService" });
 
+/**
+ * A trust INPUT could not be read. Deliberately distinct from "the input is
+ * empty", because the two used to be the same observation and the difference
+ * decides whether a number may be written at all.
+ *
+ * ── WHY THIS IS AN EXCEPTION AND NOT A FLAG ─────────────────────────────────
+ * `recalculateTrustScore` does not merely return a score, it PERSISTS one to
+ * `trust_profiles` — the row that every display surface reads (getDisplayTrustScore,
+ * lib/trustScore.computeTrustScore, TrustPrivacyGuard) and that
+ * PassportProjectionService maps through LEVEL_RANK into capability grants. A
+ * returned `degraded: true` would have been invisible: every production call site
+ * discards the return value (`.catch(() => {})` in TrustAdminService and
+ * routes/trust-admin.ts, `.then(() => {})` in the settings fan-out, and the
+ * scheduler ignores it too). An exception is the only signal those call sites
+ * already act on — the maintenance scheduler counts it as `recalcFailures` and
+ * logs it, which is exactly the accounting this condition needs.
+ *
+ * The rule it enforces: WHEN AN INPUT CANNOT BE READ, WRITE NOTHING. A stale row
+ * is a known-old measurement; a row computed from inputs that failed to load is
+ * a fabricated one wearing a fresh `last_recalculated_at`.
+ */
+export class TrustInputUnavailableError extends Error {
+  /** Which input failed — 'settings' | 'events' | 'caps'. */
+  readonly input: TrustScoreInput;
+  constructor(input: TrustScoreInput, detail: string) {
+    super(`trust ${input} unavailable — refusing to persist a score: ${detail}`);
+    this.name = "TrustInputUnavailableError";
+    this.input = input;
+  }
+}
+
+export type TrustScoreInput = "settings" | "events" | "caps";
+
+/** Message text out of a PostgREST error object, for the exception detail. */
+function describeDbError(error: any): string {
+  return String(error?.message ?? error?.code ?? "db_error");
+}
+
 export type PublicTrustLevel =
   | "new_traveler"
   | "building_trust"
@@ -69,9 +107,17 @@ async function loadSettings(db: SupabaseClient): Promise<Settings> {
   {
     const { data, error } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
     if (error) {
-      logger.warn({ err: error }, "loadSettings failed — using defaults");
-      return DEFAULT_SETTINGS;
+      // NOT "use defaults". The weights and the six level thresholds are what
+      // turn nine category numbers into `overall_score` and `public_level`, and
+      // `public_level` is a capability grant. Silently swapping an admin's
+      // configured thresholds for the built-in ones and then WRITING the result
+      // publishes a score computed under rules nobody chose. Absence of a row is
+      // still legitimately "defaults" (see below) — a failed READ is not.
+      logger.warn({ err: error }, "loadSettings failed — refusing to score");
+      throw new TrustInputUnavailableError("settings", describeDbError(error));
     }
+    // A missing row IS a legitimate "use the defaults": trust_settings is a
+    // singleton whose columns all carry the same defaults this object holds.
     if (!data) return DEFAULT_SETTINGS;
     const d = data as any;
     // Fall back to the default ONLY when the stored value is null/absent/NaN —
@@ -118,8 +164,27 @@ async function loadEvents(db: SupabaseClient, userId: string): Promise<any[]> {
     .in("status", ["applied", "confirmed"])
     .gt("created_at", since);
   if (error) {
-    logger.warn({ err: error, userId }, "loadEvents failed — treating as no events");
-    return [];
+    // THE MOST DANGEROUS OF THE THREE. Returning [] here did not produce "no
+    // score" — it produced a CONFIDENT one. computeCategoryScore returns the
+    // neutral 50 for a category with no events, the caller loops over the fixed
+    // nine ALL_CATEGORIES, and the nine weights sum to exactly 1.000, so an empty
+    // event list scores exactly 50.00 and `scoreToLevel` promotes it to
+    // `reliable_traveler` (level_reliable is 50, compared with >=).
+    //
+    // That number was then UPSERTED over whatever was already there. So one
+    // transient trust_events read failure rewrote a real, earned profile —
+    // a city_trusted 92 or a capped 35 alike — to a fabricated 50/reliable, with
+    // a fresh `last_recalculated_at` asserting it had just been measured. The
+    // maintenance scheduler runs this every 6 hours over every dirty and stale
+    // user, so a table-wide read failure would have flattened the whole
+    // population to 50 and, via PassportProjectionService's LEVEL_RANK mapping,
+    // handed canHostTrip / canUseCrewLocation / canContributeLiveIntel to every
+    // account that had previously been below reliable.
+    //
+    // A user who genuinely has no events is a DIFFERENT case and is still
+    // handled downstream — it reaches the caller as an empty array, not as this.
+    logger.warn({ err: error, userId }, "loadEvents failed — refusing to score");
+    throw new TrustInputUnavailableError("events", describeDbError(error));
   }
   return (data as any[]) ?? [];
 }
@@ -137,8 +202,17 @@ async function loadCaps(
     .is("lifted_at", null)
     .or(`expires_at.is.null,expires_at.gt.${now}`);
   if (error) {
-    logger.warn({ err: error, userId }, "loadCaps failed — treating as no caps");
-    return {};
+    // Caps are the ONLY thing that makes a serious finding survive a good
+    // record: the ceiling clamps a category from above no matter how much
+    // positive history surrounds it (see computeCategoryScore's note). Treating
+    // an unreadable trust_caps as "no caps" therefore did not just lose
+    // information — it computed the UNCLAMPED score and persisted it, laundering
+    // a `fake_gps_confirmed` ceiling of 35 or a permanent `behavior_confirmed`
+    // ceiling of 40 out of the profile, and re-granting the capabilities the
+    // ceiling existed to withhold. Failing the whole recalculation is the only
+    // safe direction: a stale capped row beats a fresh uncapped one.
+    logger.warn({ err: error, userId }, "loadCaps failed — refusing to score");
+    throw new TrustInputUnavailableError("caps", describeDbError(error));
   }
   const caps: Record<string, number> = {};
   for (const row of (data as any[]) ?? []) {
