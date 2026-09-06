@@ -357,3 +357,65 @@ export async function getTrustProfile(
     return null;
   }
 }
+
+/**
+ * The 3-state read of a trust profile: present, genuinely absent, or unreadable.
+ *
+ * WHY THIS EXISTS BESIDE getTrustProfile RATHER THAN REPLACING IT
+ * ==============================================================
+ * `getTrustProfile` returns `null` for BOTH "this user has no trust profile" and
+ * "the read failed" — it never destructures `error`. Those are different facts
+ * and a consumer that cannot tell them apart will eventually present one as the
+ * other, which is exactly what PassportProjectionService did: a missing profile
+ * and an unreadable one both became the neutral score 50, and 50 renders as
+ * "Established" for every trust domain on the passport.
+ *
+ * `getTrustProfile` is deliberately left alone. It is the function an open PR
+ * already edits, and changing its return type would ripple through six callers
+ * in the middle of that work. This is additive: a caller that needs the
+ * distinction asks for it, and the two can be reconciled once that PR lands.
+ */
+export type TrustProfileRead =
+  | { state: "ok"; profile: TrustScoreResult }
+  | { state: "absent" }
+  | { state: "unavailable"; reason: string };
+
+export async function getTrustProfileResult(
+  db: SupabaseClient,
+  userId: string,
+): Promise<TrustProfileRead> {
+  try {
+    const { data, error } = await db
+      .from("trust_profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle();
+    // supabase-js RESOLVES {data, error} rather than throwing, so this branch is
+    // the only thing standing between a failed read and a fabricated score.
+    if (error) return { state: "unavailable", reason: String(error.message ?? "read failed") };
+    if (!data) return { state: "absent" };
+    const d = data as any;
+    return {
+      state: "ok",
+      profile: {
+        userId,
+        overall_score: d.overall_score,
+        public_level:  d.public_level,
+        capsApplied:   [],
+        categories: {
+          plan_attendance:       d.plan_attendance,
+          host_quality:          d.host_quality,
+          communication:         d.communication,
+          respect_safety:        d.respect_safety,
+          location_honesty:      d.location_honesty,
+          content_quality:       d.content_quality,
+          community_value:       d.community_value,
+          guide_accuracy:        d.guide_accuracy,
+          passport_authenticity: d.passport_authenticity,
+        },
+      } as TrustScoreResult,
+    };
+  } catch (err) {
+    return { state: "unavailable", reason: String((err as any)?.message ?? err) };
+  }
+}
