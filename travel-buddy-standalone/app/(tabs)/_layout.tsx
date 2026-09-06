@@ -16,6 +16,7 @@ import { getIncomingMessageRequests } from '../../src/services/messaging';
 import { getPendingTripInvites } from '../../src/services/trips';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
+import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { navBarProgress } from '../../src/hooks/useNavBarCollapse';
 import { CreateHubSheet } from '../../src/components/create/CreateHubSheet';
 import { useLocationContext } from '../../src/context/LocationContext';
@@ -246,6 +247,12 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  // The Wall's tab-bar entry is driven by the same server flag that gates its
+  // routes, so the tab cannot appear while /wall would refuse to serve it.
+  // isEnabled() returns false for an unknown key and while the initial fetch is
+  // in flight, so this fails closed: no tab until the server says yes.
+  const { isEnabled } = useFeatureFlags();
+  const wallEnabled = isEnabled('wall_enabled');
   const isDesktop = useIsDesktop();
   const { messages: unreadMessages, notifications: unreadNotifications, newHighlights, refresh: refreshUnread } = useUnreadCounts();
   const [pendingRequests, setPendingRequests] = useState(0);
@@ -417,10 +424,17 @@ export default function TabLayout() {
         listeners={{ focus: refreshUnread, tabPress: refreshUnread }}
       />
       <Tabs.Screen name="ai" options={{ href: null, title: 'AI' }} />
-      {/* Wall — flag-gated OFF server-side (wall_enabled). Registered but hidden
-          from the tab bar (href: null) so the Pulse landing tab and the existing
-          tabs are unchanged; reached as a secondary surface until the flag is on. */}
-      <Tabs.Screen name="wall" options={{ href: null, title: 'Wall' }} />
+      {/* Wall — the tab-bar entry follows `wall_enabled`, the same flag that gates
+          routes/wall.ts. While it is OFF this is href: null exactly as before, so
+          the Pulse landing tab and every existing tab are unchanged; the route
+          stays reachable as a secondary surface (deep-link / push) either way.
+          Hardcoding href: null meant the flag could be turned on server-side and
+          the surface would still have no entry point — the Wall would be live and
+          invisible, which reads as "the feature does not work". */}
+      <Tabs.Screen
+        name="wall"
+        options={{ href: wallEnabled ? '/wall' : null, title: 'Wall' }}
+      />
     </Tabs>
   );
 
