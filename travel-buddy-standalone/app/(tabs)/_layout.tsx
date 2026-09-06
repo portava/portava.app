@@ -5,7 +5,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { BlurView } from 'expo-blur';
 import { Tabs, router, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Activity, Compass, Plus, Plane, Film } from 'lucide-react-native';
+import { Activity, Compass, Plus, Plane, Film, LayoutGrid } from 'lucide-react-native';
 import { PassportIcon } from '../../src/components/icons/PassportIcon';
 import { NotificationBell } from '../../src/components/NotificationBell';
 import { color, space, type as t, shadow } from '../../src/theme/tokens';
@@ -31,6 +31,25 @@ const NAV_ITEMS = [
   { href: '/(tabs)/passport', label: 'Passport', icon: PassportIcon, match: ['/(tabs)/passport'] },
 ] as const;
 
+/**
+ * The Wall's nav entry, kept OUT of NAV_ITEMS because NAV_ITEMS is the
+ * always-on set and this one is conditional on the server flag `wall_enabled`
+ * — the same flag that gates every route in routes/wall.ts.
+ *
+ * Why this exists at all: setting `href` on <Tabs.Screen name="wall"> is NOT
+ * enough. That controls expo-router's DEFAULT tab bar, and this app does not
+ * render it — FloatingTabBar and DesktopSidebar draw the visible navigation
+ * from NAV_ITEMS instead. A Wall that is mounted, flag-enabled and absent from
+ * NAV_ITEMS is reachable only by deep link, which to a user is
+ * indistinguishable from not existing.
+ */
+const WALL_NAV_ITEM = {
+  href: '/(tabs)/wall',
+  label: 'Wall',
+  icon: LayoutGrid,
+  match: ['/(tabs)/wall'],
+} as const;
+
 /* ─── Desktop sidebar ──────────────────────────────────────────────────── */
 function DesktopSidebar({
   unreadNotifications,
@@ -45,7 +64,12 @@ function DesktopSidebar({
   const insets = useSafeAreaInsets();
   const [hubVisible, setHubVisible] = useState(false);
 
-  const sidebarItems = [...NAV_ITEMS];
+  // isEnabled() is false for an unknown key and while the first fetch is in
+  // flight, so the Wall entry fails closed: no link until the server says yes.
+  const { isEnabled } = useFeatureFlags();
+  const sidebarItems = isEnabled('wall_enabled')
+    ? [...NAV_ITEMS, WALL_NAV_ITEM]
+    : [...NAV_ITEMS];
 
   return (
     <View style={[ds.sidebar, { paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.lg }]}>
@@ -98,6 +122,8 @@ interface FloatBarProps {
 }
 
 function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications }: FloatBarProps) {
+  const { isEnabled } = useFeatureFlags();
+  const wallEnabled = isEnabled('wall_enabled');
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -238,6 +264,16 @@ function FloatingTabBar({ newHighlights, pendingTripInvites, unreadNotifications
         {/* Trips, Passport */}
         <TabItem href={NAV_ITEMS[3].href} label={NAV_ITEMS[3].label} icon={NAV_ITEMS[3].icon} match={NAV_ITEMS[3].match} badge={pendingTripInvites} />
         <TabItem href={NAV_ITEMS[4].href} label={NAV_ITEMS[4].label} icon={NAV_ITEMS[4].icon} match={NAV_ITEMS[4].match} badge={unreadNotifications} />
+
+        {/* Wall — only once the server flag that gates its routes is on. */}
+        {wallEnabled && (
+          <TabItem
+            href={WALL_NAV_ITEM.href}
+            label={WALL_NAV_ITEM.label}
+            icon={WALL_NAV_ITEM.icon}
+            match={WALL_NAV_ITEM.match}
+          />
+        )}
       </Animated.View>
     </View>
   );
