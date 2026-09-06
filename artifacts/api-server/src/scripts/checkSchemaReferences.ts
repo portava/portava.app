@@ -128,11 +128,12 @@ const KNOWN_DEAD_REFERENCES: Record<string, { count: number; note: string }> = {
   // `country_code` the same day this ratchet landed, and the two met on main
   // with the entry still counting 1 — which is exactly the "fixed; delete the
   // entry" direction of this check firing, on main itself.
-  "src/lib/mediaAccess.ts": {
-    count: 2,
-    note: "close_friends.friend_id and user_follows.id — both reads die whole, " +
-      "and both feed MEDIA ACCESS decisions, so the empty result is a gate outcome.",
-  },
+  // src/lib/mediaAccess.ts (close_friends.friend_id, user_follows.id) was
+  // struck off by the dead-literals batch: isCloseFriend now reads
+  // (owner_id, friend_user_id) as routes/stories.ts always has, and the avatar
+  // follow check selects `follower_id` as lib/profileVisibility does. Both were
+  // media AUTHORIZATION reads that failed 42703 into a `false` verdict, so a
+  // close-friends story denied its own close friends.
   "src/lib/places/placeCollectionsWorker.ts": {
     count: 2,
     note: "posts.view_count / posts.qualified_view_count — no such columns; the " +

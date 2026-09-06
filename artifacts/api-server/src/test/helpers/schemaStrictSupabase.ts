@@ -31,6 +31,7 @@
  * Postgres.
  */
 import { liveColumns } from "./liveColumns.ts";
+import { projectionKeys, projectRow } from "./selectProjection.js";
 
 export type Row = Record<string, unknown>;
 export type Seed = Record<string, Row[]>;
@@ -98,6 +99,8 @@ export function makeSchemaStrictClient(
     let limit: number | null = null;
     let orderKey: { key: string; asc: boolean } | null = null;
     let written: Row[] | null = null;
+    // `null` = do not project (the historical behaviour). See selectProjection.ts.
+    let projection: Array<[string, string]> | null = null;
     let op: "insert" | "upsert" | "update" | null = null;
 
     function fail(column: string, where: string) {
@@ -131,7 +134,7 @@ export function makeSchemaStrictClient(
         writes.push({ table, op: op ?? "insert", rows: written });
         const store = (seed[table] ??= []);
         if (op !== "update") store.push(...written);
-        return { data: written, error: null, count: written.length };
+        return { data: projection ? written.map((r) => projectRow(r, projection!) as Row) : written, error: null, count: written.length };
       }
       let out = (seed[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (orderKey) {
@@ -142,11 +145,19 @@ export function makeSchemaStrictClient(
         });
       }
       if (limit !== null) out = out.slice(0, limit);
-      return { data: out, error: null, count: out.length };
+      return { data: projection ? out.map((r) => projectRow(r, projection!) as Row) : out, error: null, count: out.length };
     }
 
     const b: any = {
-      select: (cols?: string) => { if (cols) note(selectedColumns(cols), `select("${cols}")`); return b; },
+      select: (cols?: string) => {
+        if (cols) note(selectedColumns(cols), `select("${cols}")`);
+        // Adopt the SHARED projector (#436) rather than growing a second copy of
+        // the rule — this double validated the select list but still returned the
+        // whole seeded row, so a read of a column the caller never selected was
+        // undefined in production and green here.
+        projection = projectionKeys(cols);
+        return b;
+      },
       eq: (col: string, val: unknown) => {
         note([col], `eq("${col}")`);
         filters.push((r) => r[col] === val); return b;

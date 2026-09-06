@@ -19,18 +19,30 @@
  *   • disguised Discovery page → discovery insertions are pruned to
  *                               maxDiscoveryInsertionsInWindow and to keep the
  *                               social-object ratio at/above minSocialObjectRatio.
- *   • annotation overload     → context threads are capped per window
- *                               (maxContextThreadsInWindow) by STRIPPING the
- *                               excess annotation (the object stays; §15).
- *   • live-strip repetition   → a context thread that merely re-states a live
- *                               fact already in the Live For You strip is removed
- *                               (liveStripDeduplication, spec §4/§15).
+ *   • annotation overload     → NOT OWNED HERE. See below.
+ *   • live-strip repetition   → NOT OWNED HERE. See below.
+ *
+ * ANNOTATION CAPPING AND §4 LIVE-STRIP DEDUP LIVE IN ContextThreadService
+ * ======================================================================
+ * This controller used to carry a second copy of both rules, and that copy was a
+ * PERMANENT NO-OP: routes/wall.ts calls applyFeedDiversity on the ranked page
+ * BEFORE attachContextThreads runs and before the Live For You strip exists, so
+ * the copy always saw zero context threads and an empty strip set. It could not
+ * fire, and `wallDiversity`'s two tests for it exercised a path production never
+ * took.
+ *
+ * The rules themselves are enforced — earlier, and by the only component that
+ * can enforce them cheaply. `attachContextThreads` folds the per-window cap into
+ * each candidate's `visualOverload`, and ContextThreadService's §9 gate folds the
+ * strip dedup into `duplicatesLiveStrip`, so an over-budget or duplicate thread
+ * is never BUILT rather than being built and then stripped. That copy was also
+ * the weaker of the two: it deduped `live_place` threads only, where the gate now
+ * dedups every place-anchored kind against the same kind of strip item.
  *
  * REORDER-PRESERVING WHERE IT CAN BE. Actor / object-type spacing is a reorder
  * (every item still appears), so ranking is respected as closely as the caps
- * allow. Only two things DROP an item: an over-budget discovery insertion (it is
+ * allow. Only ONE thing DROPS an item: an over-budget discovery insertion (it is
  * an insertion, prunable by design) — never a followed-graph social object.
- * Context-thread capping strips the ANNOTATION, never the object.
  *
  * Pure and DB-free: it transforms an already-ranked, already-gated projection
  * list. Never throws.
@@ -39,7 +51,7 @@ import {
   enforceCreatorCapsGeneric,
   type CreatorCapConfig,
 } from "../ranking/CreatorCapEnforcer.js";
-import type { ContextThread, WallProjection } from "../../lib/wallProjection.js";
+import type { WallProjection } from "../../lib/wallProjection.js";
 
 /** The §15 policy. */
 export interface FeedDiversityPolicy {
@@ -47,7 +59,12 @@ export interface FeedDiversityPolicy {
   maxSameActorInWindow: number;
   /** Max items of one objectType within the sliding window (the "5 videos" cap). */
   maxSameObjectTypeInWindow: number;
-  /** Max context-thread annotations within the sliding window. */
+  /**
+   * Max context-thread annotations within the sliding window. Carried on the
+   * policy because it is a §15 diversity number, but ENFORCED by
+   * WallProjectionService.attachContextThreads, which is handed this value and
+   * refuses to build the excess thread in the first place.
+   */
   maxContextThreadsInWindow: number;
   /** Floor on the fraction of window items that are social (non-insertion). */
   minSocialObjectRatio: number;
@@ -55,8 +72,6 @@ export interface FeedDiversityPolicy {
   maxDiscoveryInsertionsInWindow: number;
   /** Soft minimum spacing (in positions) between two Postcards (spec §10 rhythm). */
   postcardSpacingHint?: number;
-  /** Remove a context thread that duplicates a Live For You strip subject. */
-  liveStripDeduplication: boolean;
 }
 
 export const DEFAULT_FEED_DIVERSITY_POLICY: FeedDiversityPolicy = {
@@ -66,15 +81,12 @@ export const DEFAULT_FEED_DIVERSITY_POLICY: FeedDiversityPolicy = {
   minSocialObjectRatio: 0.5,
   maxDiscoveryInsertionsInWindow: 2,
   postcardSpacingHint: 3,
-  liveStripDeduplication: true,
 };
 
 /** The visible sliding window over which "…InWindow" caps are evaluated. */
 export const DIVERSITY_WINDOW = 6;
 
 export interface ApplyDiversityOptions {
-  /** Live For You subjects to dedup context threads against (spec §4/§15). */
-  liveStripSubjectIds?: Set<string>;
   /** Override the sliding-window size (default DIVERSITY_WINDOW). */
   windowSize?: number;
 }
@@ -83,8 +95,6 @@ export interface ApplyDiversityResult {
   items: WallProjection[];
   /** Discovery insertions dropped to preserve the social ratio / discovery cap. */
   droppedDiscovery: number;
-  /** Context-thread annotations stripped (window cap + live-strip dedup). */
-  strippedThreads: number;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -101,20 +111,6 @@ function isSocialObject(p: WallProjection): boolean {
 
 function isDiscovery(p: WallProjection): boolean {
   return p.objectType === "discovery";
-}
-
-/** The place subject a context thread points at (for live-strip dedup). */
-function threadSubjectId(p: WallProjection): string | null {
-  const t = p.contextThread;
-  if (!t) return null;
-  return t.action?.targetId ?? p.place?.placeId ?? null;
-}
-
-function withoutThread(p: WallProjection): WallProjection {
-  if (!p.contextThread) return p;
-  const clone = { ...p } as WallProjection & { contextThread?: ContextThread };
-  delete clone.contextThread;
-  return clone;
 }
 
 // ── Step 1: prune discovery insertions (disguised-Discovery-page defense) ─────
@@ -212,47 +208,6 @@ function spaceByActorAndType(
   return out;
 }
 
-// ── Step 3: annotation caps (live-strip dedup + context-thread window cap) ───
-
-/**
- * Strip context-thread annotations that (a) merely repeat a Live For You strip
- * subject, or (b) exceed maxContextThreadsInWindow within the sliding window.
- * The OBJECT always stays — only the annotation is removed (spec §15).
- */
-function capAnnotations(
-  items: WallProjection[],
-  policy: FeedDiversityPolicy,
-  windowSize: number,
-  liveStripSubjectIds: Set<string>,
-): { items: WallProjection[]; stripped: number } {
-  const out: WallProjection[] = [];
-  let stripped = 0;
-  for (const item of items) {
-    let current = item;
-    if (current.contextThread) {
-      // (a) live-strip dedup — a live_place thread already shown in the strip.
-      if (policy.liveStripDeduplication && current.contextThread.kind === "live_place") {
-        const subj = threadSubjectId(current);
-        if (subj && liveStripSubjectIds.has(subj)) {
-          current = withoutThread(current);
-          stripped++;
-        }
-      }
-    }
-    if (current.contextThread) {
-      // (b) per-window annotation cap.
-      const window = out.slice(Math.max(0, out.length - (windowSize - 1)));
-      const threadsInWindow = window.filter((w) => !!w.contextThread).length;
-      if (threadsInWindow + 1 > policy.maxContextThreadsInWindow) {
-        current = withoutThread(current);
-        stripped++;
-      }
-    }
-    out.push(current);
-  }
-  return { items: out, stripped };
-}
-
 // ── Public entrypoint ─────────────────────────────────────────────────────────
 
 /**
@@ -266,10 +221,9 @@ export function applyFeedDiversity(
   opts: ApplyDiversityOptions = {},
 ): ApplyDiversityResult {
   if (items.length === 0) {
-    return { items: [], droppedDiscovery: 0, strippedThreads: 0 };
+    return { items: [], droppedDiscovery: 0 };
   }
   const windowSize = Math.max(2, opts.windowSize ?? DIVERSITY_WINDOW);
-  const liveStrip = opts.liveStripSubjectIds ?? new Set<string>();
   try {
     // 1. Prune out-of-budget discovery insertions (disguised-Discovery defense).
     const pruned = pruneDiscovery(items, policy, windowSize);
@@ -285,16 +239,9 @@ export function applyFeedDiversity(
     const capped = enforceCreatorCapsGeneric(pruned.items, actorId, capConfig);
     const spaced = spaceByActorAndType(capped, policy, windowSize);
 
-    // 3. Annotation caps on the FINAL positions (window is post-reorder).
-    const annotated = capAnnotations(spaced, policy, windowSize, liveStrip);
-
-    return {
-      items: annotated.items,
-      droppedDiscovery: pruned.dropped,
-      strippedThreads: annotated.stripped,
-    };
+    return { items: spaced, droppedDiscovery: pruned.dropped };
   } catch {
-    return { items, droppedDiscovery: 0, strippedThreads: 0 };
+    return { items, droppedDiscovery: 0 };
   }
 }
 
@@ -302,8 +249,6 @@ export function applyFeedDiversity(
 export const _internal = {
   pruneDiscovery,
   spaceByActorAndType,
-  capAnnotations,
   isSocialObject,
   isDiscovery,
-  threadSubjectId,
 };

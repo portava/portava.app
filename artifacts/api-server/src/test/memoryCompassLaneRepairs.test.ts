@@ -165,7 +165,7 @@ describe("PassportRemembersService — shared moments read real columns", () => 
       { user_id: ME, moment_id: "m-invited",  status: "invited"  },
     ],
     shared_moments: [
-      { id: "m-yes",     title: "Dinner in Da Nang", status: "active",   join_policy: "invite_only",       archived_at: null, created_at: "2026-03-01T00:00:00Z" },
+      { id: "m-yes",     title: "Dinner in Da Nang", status: "active",   join_policy: "approval_required", archived_at: null, created_at: "2026-03-01T00:00:00Z" },
       { id: "m-invited", title: "Should not appear", status: "active",   join_policy: "invite_only",       archived_at: null, created_at: "2026-03-01T00:00:00Z" },
       { id: "m-old",     title: "Archived",          status: "archived", join_policy: "approval_required", archived_at: "2026-01-01T00:00:00Z", created_at: "2026-01-01T00:00:00Z" },
     ],
@@ -182,9 +182,20 @@ describe("PassportRemembersService — shared moments read real columns", () => 
   });
 
   it("reports the moment's audience from its real join_policy, never as public", async () => {
+    // `m-yes` deliberately carries `approval_required`, NOT the mapper's
+    // `?? "invite_only"` fallback. It used to carry the fallback value, which
+    // made this assertion unfalsifiable: reading join_policy, failing to read it,
+    // or not selecting it at all ALL produced "invite_only" and all passed. A
+    // fixture whose expected value equals the code's own default proves nothing.
+    //
+    // With the two now distinct, dropping join_policy from the `.select()` while
+    // the mapper still reads it — the exact hybrid a hunk-by-hunk resolution of
+    // the #427/#431/#432 conflict produces — yields the fallback and turns this
+    // RED. That only works because schemaStrictSupabase now projects the select
+    // list (#436); before, the fixture supplied the column regardless.
     const c = makeSchemaStrictClient(seed());
     const [item] = await buildSharedMoments(c as any, ME);
-    assert.equal(item.visibility, "invite_only");
+    assert.equal(item.visibility, "approval_required");
     assert.notEqual(item.visibility, "public", "a shared moment is never a public audience");
   });
 

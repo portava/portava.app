@@ -9,10 +9,24 @@
 // WHAT THIS ENFORCES, AND — READ THIS — WHAT IT DOES NOT
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// IT ENFORCES: that a classification EXISTS for every flag name, and that the
-// reader used at each call site MATCHES that classification.
+// IT ENFORCES: that a classification EXISTS for every flag name, that the
+// reader used at each call site MATCHES that classification, and — since
+// 2026-09-05 — that the two populations RECONCILE IN BOTH DIRECTIONS: every
+// seeded flag has a reader or a written reason (R6), and every flag the code
+// reads has a row or a written reason (R9).
 //
-// IT DOES NOT ENFORCE: that the classification is RIGHT.
+// R9 was missing for 24 days and eight phantom flags were live behind the gap,
+// one of them gating the whole Media v2 client surface. Its absence was not an
+// oversight of degree: MEDIA_SHARING_ENABLED had BOTH halves of its defect
+// recorded in this very file — a CLASSIFIED entry for a name no migration
+// creates, and an INERT_SEEDED_FLAGS entry for MEDIA_SHARES_ENABLED saying it
+// was "read by nothing" — 300 lines apart, each individually plausible, and
+// the check went green because no rule ever compared them in that direction.
+// A one-directional reconciliation is not half a reconciliation; it is a
+// reconciliation that reports clean while the two sides disagree.
+//
+// IT DOES NOT ENFORCE: that the classification is RIGHT, or that a flag's
+// seeded VALUE is the one anyone intended.
 //
 // Deciding whether `disable_foo` is a genuine emergency stop or a capability
 // gate wearing a scary name is a judgment about what the flag MEANS to an
@@ -295,11 +309,12 @@ const CLASSIFIED = [
   {
     flag: 'COMPASS_TELEGRAPH', kind: 'CAPABILITY',
     reason:
-      'SCREAMING_CASE capability gate for the Compass telegraph surface (routes/compass.ts:3490, read via ' +
-      'compass/flags.ts isEnabled with a .catch(() => false)). NOT SEEDED by any migration, so through the ' +
-      'COMPASS_% loader it is permanently false and indistinguishable from deliberately-off — the trap ' +
-      'recorded at compass/flags.ts:26-29. Classified CAPABILITY; the always-false behaviour is a separate ' +
-      'question from its polarity.',
+      'SCREAMING_CASE capability gate for the Compass telegraph surface (routes/compass.ts, read via ' +
+      'compass/flags.ts isEnabled with a .catch(() => false)). It was NOT SEEDED by any migration until ' +
+      '2300_phantom_feature_flag_rows.sql: through the COMPASS_% loader it was permanently false and ' +
+      'indistinguishable from deliberately-off — the trap recorded at compass/flags.ts:26-29. That note sat ' +
+      'here, correct and unacted-on, for three weeks, which is why R9 below now FAILS on an unseeded read ' +
+      'instead of leaving it to a reason string. Classified CAPABILITY; polarity was never the problem.',
   },
   { flag: 'COMPASS_FEED_ENABLED',                kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: the Compass feed endpoint. `true` = available.' },
   { flag: 'COMPASS_FALLBACK_MODE_ENABLED',       kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: degraded-mode Compass feed builder. `true` = available.' },
@@ -312,7 +327,15 @@ const CLASSIFIED = [
   { flag: 'RANKING_EXPERIMENT_ENABLED',          kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: ranking experiment arm. `true` = experiment live.' },
   { flag: 'MEDIA_RANKING_ENABLED',               kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: media feed ranking. `true` = ranking applied.' },
   { flag: 'MEDIA_ANALYTICS_ENABLED',             kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: media analytics collection. `true` = collected.' },
-  { flag: 'MEDIA_SHARING_ENABLED',               kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: media sharing surface. `true` = available.' },
+  {
+    flag: 'MEDIA_SHARES_ENABLED', kind: 'CAPABILITY',
+    reason:
+      'SCREAMING_CASE capability gate: the media share/export surface (POST /api/media/:id/share). `true` = ' +
+      'available. Seeded false by 2038_media_admin_flags.sql:47. Until 2300 the read site spelled it ' +
+      '"MEDIA_SHARING_ENABLED" — a name no migration and neither live database has ever held — so the gate ' +
+      'resolved nothing and closed on every request while its real row sat next to it unread and declared ' +
+      'INERT. Rule R9 below exists so a read of an unseeded name cannot go green again.',
+  },
   { flag: 'MEDIA_COMMENTS_ENABLED',              kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: media comments. `true` = available.' },
   { flag: 'MEDIA_VIEW_MODE_GRID_ENABLED',        kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: grid view mode. `true` = available.' },
   { flag: 'MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED', kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: hidden-gems view mode. `true` = available.' },
@@ -344,8 +367,11 @@ const CLASSIFIED = [
       'False-on-error is correct and is the design: the trail write path returns `disabled` and stores ' +
       'nothing, no follow-up prompt is issued, and the internal read refuses with `flag_off` and reads nothing. ' +
       'experience.next_move stays aggregate-only regardless of this flag (proposeClaim refuses a ' +
-      'single-user movement claim), and the §13 privacy threshold + 0.65 confidence floor gate publication, ' +
-      'which no route performs (intel_movement_prediction is seeded off).',
+      'single-user movement claim); the internal read serves only cohorts that clear the §13 floor, ' +
+      'never a below-floor bucket; and the §13 privacy threshold + 0.65 confidence floor gate publication, ' +
+      'which no route performs (intel_movement_prediction is DECLARED in INTEL_FLAGS but NOT SEEDED — ' +
+      'no migration creates the row, per the 2165 rule that a flag arrives with the unit that reads it, ' +
+      'and isFlagEnabled reads an absent row as false).',
   },
   {
     flag: 'intel_missions',
@@ -555,107 +581,104 @@ const INERT_SEEDED_FLAGS = [
   // wanted, it needs a reader first and a seed row second, in that order.
 
   // ── MEDIA_* suite: seeded wholesale by 2038, wired selectively. ──────────
-  {
-    flag: 'MEDIA_TAB_ENABLED', seededIn: '2038_media_admin_flags.sql:7', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
-  },
-  {
-    flag: 'MEDIA_VIEW_MODE_FULLSCREEN_ENABLED', seededIn: '2038_media_admin_flags.sql:11', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded true and read by nothing: the admin list shows a value that gates no code path, and because it reads true an operator would reasonably conclude the surface is on. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
-  },
+  // ── SIX ENTRIES DELETED 2026-09-05 ────────────────────────────────────────
+  //
+  // MEDIA_TAB_ENABLED, MEDIA_VIEW_MODE_FULLSCREEN_ENABLED, MEDIA_UPLOAD_ENABLED,
+  // MEDIA_UPLOAD_PHOTO_ENABLED, MEDIA_UPLOAD_VIDEO_ENABLED and
+  // ai_event_auto_suggest_enabled were each declared inert here, with the stock
+  // reason "read by nothing... OWNER DECISION: wire the reader when the
+  // corresponding surface ships".
+  //
+  // Every one of them was being read, and had been for months:
+  //   MEDIA_TAB_ENABLED                   src/navigation/portavaRoutes.ts:160, :944
+  //   MEDIA_VIEW_MODE_FULLSCREEN_ENABLED  app/(tabs)/media.tsx:55 (the Watch mode)
+  //   MEDIA_UPLOAD_ENABLED                src/components/media/AddGemForm.tsx:107
+  //   MEDIA_UPLOAD_PHOTO_ENABLED          src/components/media/AddGemForm.tsx:108
+  //   MEDIA_UPLOAD_VIDEO_ENABLED          src/components/media/AddGemForm.tsx:110
+  //   ai_event_auto_suggest_enabled       src/components/EventComposerSheet.tsx:256
+  //
+  // R6 asked "read by nothing UNDER src/" and the answer was recorded as "read
+  // by nothing". The gap was the app tree, which this check did not walk for
+  // reads until the R9 work added the app-tree population. These are the exact
+  // inverse of a phantom flag: a phantom makes a live gate look dead to the
+  // CODE, and a false inert entry makes a live gate look dead to the READER,
+  // complete with an action item to build what already exists.
+  //
+  // R7 now fails on this shape (FALSE INERT DECLARATION), so the six cannot
+  // come back, and no seventh can be added.
   {
     flag: 'MEDIA_GRID_RANKING_ENABLED', seededIn: '2038_media_admin_flags.sql:25', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
   {
     flag: 'MEDIA_GEMS_RANKING_ENABLED', seededIn: '2038_media_admin_flags.sql:27', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
-  },
-  {
-    flag: 'MEDIA_UPLOAD_ENABLED', seededIn: '2038_media_admin_flags.sql:31', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
   {
     flag: 'MEDIA_PROCESSING_PIPELINE_ENABLED', seededIn: '2038_media_admin_flags.sql:33', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
-  },
-  {
-    flag: 'MEDIA_UPLOAD_VIDEO_ENABLED', seededIn: '2038_media_admin_flags.sql:35', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
-  },
-  {
-    flag: 'MEDIA_UPLOAD_PHOTO_ENABLED', seededIn: '2038_media_admin_flags.sql:37', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
   {
     flag: 'MEDIA_LIKES_ENABLED', seededIn: '2038_media_admin_flags.sql:41', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
   {
     flag: 'MEDIA_SAVES_ENABLED', seededIn: '2038_media_admin_flags.sql:45', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
-  {
-    flag: 'MEDIA_SHARES_ENABLED', seededIn: '2038_media_admin_flags.sql:47', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
-  },
+  // MEDIA_SHARES_ENABLED was here until 2026-09-05, declared inert with the
+  // boilerplate reason below ("read by nothing... wire the reader when the
+  // corresponding surface ships"). The surface HAD shipped. POST
+  // /api/media/:id/share was reading it under a name that does not exist —
+  // "MEDIA_SHARING_ENABLED" — so R6 correctly reported no reader and the
+  // owner-decision boilerplate absorbed the report. Two halves of one defect,
+  // each individually plausible, neither visible from the other side. That is
+  // exactly the asymmetry R9 closes. Entry deleted: the flag has a reader now.
   {
     flag: 'MEDIA_GEMS_SUBMIT_ENABLED', seededIn: '2038_media_admin_flags.sql:51', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
   {
     flag: 'MEDIA_GEMS_WRONG_PLACE_REPORT_ENABLED', seededIn: '2038_media_admin_flags.sql:53', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
   {
     flag: 'MEDIA_GEMS_ADD_TO_TRIP_ENABLED', seededIn: '2038_media_admin_flags.sql:55', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
   {
     flag: 'MEDIA_GEMS_DIRECTIONS_ENABLED', seededIn: '2038_media_admin_flags.sql:57', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
   {
     flag: 'MEDIA_AI_PROVENANCE_LABELS_ENABLED', seededIn: '2038_media_admin_flags.sql:61', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
   {
     flag: 'MEDIA_ADMIN_REVIEW_ENABLED', seededIn: '2038_media_admin_flags.sql:69', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
-      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARING_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
+      'Part of the MEDIA_* suite seeded by 2038 (its header at :1 reads "All MEDIA_* feature flags for the Media destination"). Sibling flags in the same INSERT ARE read (MEDIA_RANKING_ENABLED, MEDIA_VIEW_MODE_GRID_ENABLED, MEDIA_SHARES_ENABLED and others appear in CLASSIFIED above), so the suite was seeded wholesale and wired selectively. Seeded false and read by nothing: the admin list shows a value that gates no code path, and because it reads false an operator would reasonably conclude the surface is off. OWNER DECISION: wire the reader when the corresponding surface ships, or drop the row until it does. Low severity — CAPABILITY by convention, so the failure is an ungated feature, not a stop that fails to stop.',
   },
 
   // ── Not a boolean at all. ────────────────────────────────────────────────
@@ -742,12 +765,6 @@ const INERT_SEEDED_FLAGS = [
       'Seeded true by the beta flag block. Lower-case, so it is NOT reachable through the COMPASS_% loader either (compass/flags.ts filters on the upper-case prefix) — it could only ever be read through isFlagEnabled, and nothing does. OWNER DECISION: wire or drop. (AI-assisted writing uses its own dedicated compass_ai_writing_enabled flag, migration 2221, NOT this one.)',
   },
   {
-    flag: 'ai_event_auto_suggest_enabled', seededIn: '0194_generated_visuals.sql:89', kind: 'CAPABILITY',
-    disposition: 'owner-decision',
-    reason:
-      'Seeded false alongside the generated-visuals flags that ARE read (ai_visual_provider_enabled, ai_event_headers_enabled, ai_place_headers_enabled all appear in CLASSIFIED). Auto-suggest was seeded and not built. OWNER DECISION: wire when the feature ships, or drop.',
-  },
-  {
     flag: 'ai_visual_regeneration_enabled', seededIn: '0194_generated_visuals.sql:92', kind: 'CAPABILITY',
     disposition: 'owner-decision',
     reason:
@@ -787,6 +804,110 @@ const INERT_SEEDED_FLAGS = [
   // using it — it is the vocabulary for the next time a scanner fix surfaces a
   // flag nobody has examined, and removing it would mean re-deciding what that
   // state is called under time pressure.
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UNSEEDED_READS — the OTHER direction. A flag the code READS that no migration
+// SEEDS: a "phantom flag".
+//
+// INERT_SEEDED_FLAGS above records seeded-but-unread. This records read-but-
+// unseeded, and until 2026-09-05 nothing in this repo checked for it at all.
+// The asymmetry was not theoretical. Eight phantoms were live on main:
+//
+//   MEDIA_WORLD_SHELL_ENABLED         seeded by 2300
+//   MEDIA_HIDDEN_GEMS_NEARBY_ENABLED  seeded by 2300
+//   PORTAVA_PUBLISHER_BOOST_ENABLED   seeded by 2300
+//   PORTAVA_FEATURED_BOOST_ENABLED    seeded by 2300
+//   COMPASS_TELEGRAPH                 seeded by 2300
+//   MEDIA_SHARING_ENABLED             a misspelling — read site corrected to
+//                                     MEDIA_SHARES_ENABLED, which was seeded
+//                                     all along and declared INERT right here
+//   SEARCH_SIGNAL_DECAY_DAYS          below
+//   place_provenance_stamping_enabled below
+//
+// A phantom is quieter than an inert row. An inert row at least appears in the
+// admin list, so an operator can see the lie. A phantom read appears nowhere:
+// the gate reads false forever, the surface looks deliberately disabled, and
+// the only way to tell the difference is to grep the migrations for a name
+// nobody has reason to doubt. MEDIA_SHARING_ENABLED sat one letter away from
+// its own seeded row for weeks with both halves of the defect recorded in this
+// file, in two lists, neither of which could see the other.
+//
+// AN ENTRY HERE IS NOT AN EXEMPTION FOR CONVENIENCE. It is the judgment that
+// this particular flag should NOT be seeded, with the reason. If the answer is
+// "seed it", the answer is a migration, not an entry. R10 keeps each entry
+// honest: seed the flag and the entry must go; delete the read and the entry
+// must go.
+// ─────────────────────────────────────────────────────────────────────────────
+const UNSEEDED_DISPOSITIONS = new Set([
+  'deliberate',     // the ABSENCE is the design; seeding it would be the defect
+  'owner-decision', // examined, remedy argued, call handed to an owner
+]);
+
+// ── RETIRED 2026-09-05: SEARCH_SIGNAL_DECAY_DAYS ────────────────────────────
+// The entry asked for exactly one of two outcomes, and this PR delivers the one
+// it called "the real repair": A COLUMN PLUS A SEED, not a seed alone.
+//
+// Its objection was specifically to seeding ALONE — getDecayConfig selected a
+// `numeric_value` column that does not exist, so the read 42703'd before the row
+// was ever reached and a seeded row would only have added an admin switch that
+// did nothing. This change moves the reader onto `metadata->>'half_life_days'`
+// (metadata IS a real column) AND seeds the row in 2306. The objection is met.
+//
+// Its second concern — that this "would make decay disableable for the first
+// time, which is a behaviour change and an owner decision" — does not bite,
+// because there is nothing to disable. The capability writes through the
+// `upsert_compass_search_signal` RPC into `compass_search_signal_log`, and
+// NEITHER EXISTS: the table is absent from the canonical migration chain and
+// from the live CI schema, its DDL still sitting unapplied in the frozen root
+// artifacts/api-server/supabase/migrations/. logSearchNudge's RPC call fails and
+// is only logger.warn'd, so the log is never written and decay has never
+// operated on any data in any environment.
+//
+// That also corrects a claim this entry made: "Search-signal decay has been
+// running, at the default half-life, since it shipped." The CONFIG resolved to a
+// compiled-in default, but the capability it configures has no writer. 2306
+// therefore seeds `enabled = false` and records the precondition for turning it
+// on — port the DDL into the canonical chain first.
+//
+// The entry has outlived its subject, which is the second of the two outcomes
+// check-flag-polarity offers when a migration seeds an UNSEEDED_READS flag.
+const UNSEEDED_READS = [
+  {
+    flag: 'place_provenance_stamping_enabled',
+    file: 'lib/placeProvenance.ts',
+    disposition: 'deliberate',
+    reason:
+      'DO NOT SEED — unseeded ON PURPOSE, and the code says so at lib/placeProvenance.ts:1-19: "Off by ' +
+      'default (an absent flag reads false), which is also the only safe state on any database where 2101\'s ' +
+      'source_id column does not yet exist: stamping a column that is not there would fail the write. Flip ' +
+      'the flag only after 2101 has been applied to the target." Seeding it would put a switch in the admin ' +
+      'list whose ON position breaks place-supply writes on any database that has not had the source_id ' +
+      'migration applied. The absent row IS the interlock. This entry exists so the next sweep does not ' +
+      '"fix" it: the flag should be seeded by the same migration that guarantees the column, not by a ' +
+      'phantom-flag cleanup.',
+  },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// APP_UNRESOLVED_READS — app-tree call sites whose flag argument is not a
+// literal and not a const this scanner can follow.
+//
+// Same purpose as UNRESOLVABLE below, for the app tree: the scanner must not be
+// allowed to shrug at an argument it cannot read, because "I could not tell
+// which flag this is" and "this flag is fine" must not look the same.
+// ─────────────────────────────────────────────────────────────────────────────
+const APP_UNRESOLVED_READS = [
+  {
+    file: 'app/(tabs)/media.tsx',
+    expr: 'flagKey',
+    reason:
+      'Both sites map over the module-level ALL_MODES array, whose three entries carry literal ' +
+      '`flagKey: \'MEDIA_VIEW_MODE_{FULLSCREEN,GRID,HIDDEN_GEMS}_ENABLED\'` properties. The scanner reads ' +
+      'those literals through its `flagKey:` pattern, so all three names ARE in the app-read population and ' +
+      'ARE checked by R9 — the unresolvable call site adds no name the scan is missing. Verified by hand ' +
+      'against media.tsx on 2026-09-05; all three are seeded by 2037_media_tab_flags.sql.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -952,7 +1073,11 @@ const DIRECT_READS = [
     reason:
       `Read directly, error branch ${V}: FAILS OPEN — a missing row returns \`{ enabled: true, halfLifeDays: ` +
       `DEFAULT_DECAY_DAYS }\`. Deliberate and harmless: this is a CONFIG row, not a gate, and the fallback is ` +
-      `the compiled-in default. Recorded as fail-open because writing "fail-closed" here would be false.`,
+      `the compiled-in default. Recorded as fail-open because writing "fail-closed" here would be false. ` +
+      `2026-09-05: the fallback is not a fallback, it is the ONLY path — the select names a numeric_value ` +
+      `column that exists in no migration and in neither live database, so it returns 42703 before the row ` +
+      `is even consulted. See UNSEEDED_READS; this is the one place in this file where a phantom flag is ` +
+      `NOT fixed by seeding, because seeding it would change nothing an operator could observe.`,
   },
   {
     file: 'lib/rankLog.ts', flag: 'CREATOR_FATIGUE_ENABLED',
@@ -1104,7 +1229,15 @@ const DIRECT_READS = [
 // the tempting fix at that moment is to delete the entries, which the message
 // above expressly warns against. Correcting it a day early is why the archival
 // did not have to touch this file's behaviour at all.
-const APP_TREE_ROOT = resolve(PKG_ROOT, '..', '..', 'travel-buddy-standalone');
+// FLAG_POLARITY_APP_ROOT is the app-tree twin of FLAG_POLARITY_SRC above, and
+// exists for the same reason and with the same safety: it lets a test aim the
+// app-tree scan at a fixture so R9's app half can be PROVEN to fire, and it
+// cannot be used to make the check examine less, because pointing it at an
+// empty or wrong directory produces "VACUOUS: ... has no subject" rather than a
+// quiet pass. R8's CANNOT VERIFY clause has the same property.
+const APP_TREE_ROOT = process.env.FLAG_POLARITY_APP_ROOT
+  ? resolve(process.env.FLAG_POLARITY_APP_ROOT)
+  : resolve(PKG_ROOT, '..', '..', 'travel-buddy-standalone');
 
 const APP_TREE_READS = [
   {
@@ -1119,6 +1252,21 @@ const APP_TREE_READS = [
       'reconciliation rests on — it lived ONLY in production, so a restored environment got no row, read false ' +
       'through the fail-closed helper, and the entry point was permanently invisible, which was mistaken for a ' +
       'deliberate design choice rather than a missing row.',
+  },
+  {
+    flag: 'MEDIA_WORLD_SHELL_ENABLED',
+    file: 'app/(tabs)/media.tsx',
+    line: 190,
+    reason:
+      "isEnabled('MEDIA_WORLD_SHELL_ENABLED') gates the World entry pill on the Media tab and, at " +
+      'app/media-viewer/[id].tsx, the World shell affordances in the viewer — i.e. the whole Media v2 client ' +
+      'surface and its /media-world route. Entered this list on 2026-09-05 with ' +
+      '2300_phantom_feature_flag_rows.sql, which seeds the row: this is the SAME shape as the ' +
+      'MEDIA_HIDDEN_GEMS_CREATE_ENABLED precedent above, one rung worse. That flag at least existed in ' +
+      'production; this one existed nowhere at all, so no operator action of any kind could reach the ' +
+      'surface — it needed a migration first. The reason it survived the reconciliation that caught the ' +
+      'other is that this check reads only the API src/ tree, and a flag read ONLY in the app tree was ' +
+      'invisible to both directions of the old rules. R9 now scans the app tree for exactly this.',
   },
   // city_launch_mode had an entry here from 2026-08-12 until 2026-08-13: an
   // app-tree read whose banner was its ONLY reader, recorded as
@@ -1490,6 +1638,130 @@ if (INERT_SEEDED_FLAGS.length === 0) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// THIRD POPULATION SCAN — flags READ IN THE APP TREE.
+//
+// The first population (uses/reads) walks the API's src/ only. That is the
+// right scope for the polarity rules — the app cannot read a kill switch
+// fail-open, it has no DB access at all — but it is the WRONG scope for R9,
+// and the omission had a live cost: MEDIA_WORLD_SHELL_ENABLED gates the entire
+// Media v2 client surface, is read only in app/(tabs)/media.tsx and
+// app/media-viewer/[id].tsx, and was seeded by nothing. It was invisible from
+// both ends. R6 never asked (it only asks about seeded flags), and there was no
+// R9 to ask the other way.
+//
+// APP_TREE_READS above is a hand-written DECLARATION list; this is a SCAN. They
+// are not redundant: the declaration list exempts specific flags from R6 and R8
+// verifies each claim, while this scan builds the population R9 checks. A flag
+// can be in the scan and not the list (it is also read under src/), or in the
+// list and the scan (MEDIA_WORLD_SHELL_ENABLED, both).
+//
+// The app's reader is FeatureFlagsContext.isEnabled — `flags[key] === true`
+// over GET /api/feature-flags — so every app read is fail-closed and an absent
+// row is indistinguishable from a deliberate off. That is precisely why an
+// unseeded app read must fail the build rather than be argued about.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** flag name -> Set of "file:line" app-tree read sites. */
+const appReads = new Map();
+const appUnresolved = [];
+let appFileCount = 0;
+
+const APP_READERS = /\b(isEnabled|isLivePlacesEnabled|isFlagEnabled)\s*\(\s*([^),]+?)\s*\)/g;
+// `flagKey: 'X'` / `featureFlag: 'X'` — the shape route tables and mode tables
+// use to carry a flag name as data rather than pass it at a call site.
+const APP_FLAG_PROP = /\b(featureFlag|flagKey|flagName|requiresFlag)\s*:\s*(['"`])([A-Za-z0-9_]+)\2/g;
+// `export const NAME = 'literal'` — resolved ACROSS files, because the three
+// Request-a-View components import REQUEST_A_VIEW_FLAG from a fourth.
+const APP_CONST = /(?:export\s+)?(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(['"`])([A-Za-z0-9_]+)\2/g;
+// `export const INTEL_FLAGS = { quickSignal: 'intel_capture_quick_signal', ... }`
+// — a flag-name MAP, and the shape the Intel surfaces use. Resolved to
+// `INTEL_FLAGS.quickSignal` member reads, because declaring three real,
+// correctly-seeded flags "unresolvable" would be recording an excuse where an
+// answer was available: the literals are right there in the object.
+const APP_CONST_OBJ = /(?:export\s+)?(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*\{([^{}]*)\}/g;
+const APP_OBJ_ENTRY = /([A-Za-z_$][\w$]*)\s*:\s*(['"`])([A-Za-z0-9_]+)\2/g;
+
+function walkApp(dir, out = []) {
+  let entries;
+  try { entries = readdirSync(dir); } catch { return out; }
+  for (const e of entries) {
+    if (e === 'node_modules' || e === '.git' || e === '.expo' || e === 'ios' || e === 'android') continue;
+    const p = join(dir, e);
+    let st;
+    try { st = statSync(p); } catch { continue; }
+    if (st.isDirectory()) walkApp(p, out);
+    else if (/\.(ts|tsx)$/.test(e)) out.push(p);
+  }
+  return out;
+}
+
+if (existsSync(APP_TREE_ROOT)) {
+  const appFiles = walkApp(APP_TREE_ROOT).filter((f) => {
+    const rel = relative(APP_TREE_ROOT, f);
+    // isTestPath's own suffix clause is `.test.ts` — the app tree is TSX, so
+    // `.test.tsx` / `.spec.tsx` are spelled out here rather than assumed.
+    return !isTestPath(rel) && !/\.(test|spec)\.tsx?$/.test(rel) && !rel.includes('__mocks__/');
+  });
+  appFileCount = appFiles.length;
+
+  // Pass 1 — every `const NAME = 'literal'` in the tree, so a flag name that
+  // travels across a module boundary is still a resolvable name.
+  const appConsts = new Map();
+  const appSources = new Map();
+  for (const f of appFiles) {
+    let src;
+    try { src = readFileSync(f, 'utf8'); } catch { continue; }
+    src = stripComments(src);
+    appSources.set(f, src);
+    for (const m of src.matchAll(APP_CONST)) {
+      if (!appConsts.has(m[1])) appConsts.set(m[1], m[3]);
+    }
+    for (const m of src.matchAll(APP_CONST_OBJ)) {
+      for (const p of m[2].matchAll(APP_OBJ_ENTRY)) {
+        const key = `${m[1]}.${p[1]}`;
+        if (!appConsts.has(key)) appConsts.set(key, p[3]);
+      }
+    }
+  }
+
+  // Pass 2 — call sites and flag-carrying properties.
+  const noteApp = (flag, f, idx, src) => {
+    const line = src.slice(0, idx).split('\n').length;
+    if (!appReads.has(flag)) appReads.set(flag, new Set());
+    appReads.get(flag).add(`${relative(APP_TREE_ROOT, f)}:${line}`);
+  };
+  for (const [f, src] of appSources) {
+    for (const m of src.matchAll(APP_READERS)) {
+      const raw = m[2].trim();
+      const lit = raw.match(STRING_ARG);
+      if (lit) { noteApp(lit[2], f, m.index, src); continue; }
+      if (/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)?$/.test(raw) && appConsts.has(raw)) { noteApp(appConsts.get(raw), f, m.index, src); continue; }
+      appUnresolved.push({
+        file: relative(APP_TREE_ROOT, f),
+        line: src.slice(0, m.index).split('\n').length,
+        expr: raw,
+        reader: m[1],
+      });
+    }
+    for (const m of src.matchAll(APP_FLAG_PROP)) noteApp(m[3], f, m.index, src);
+  }
+}
+
+// VACUITY: the app population must have a subject too. An app tree that walks
+// to zero files, or yields zero flag names, would make R9's app half report
+// clean while checking nothing — the same "most comfortable possible lie" the
+// seeded scan guards against.
+if (!existsSync(APP_TREE_ROOT)) {
+  fail(
+    `VACUOUS: no app tree at ${APP_TREE_ROOT}. R9's app-tree half has no subject, and the flag that ` +
+    `motivated R9 (MEDIA_WORLD_SHELL_ENABLED) is read ONLY there. Check out the app tree; do not skip.`,
+  );
+} else {
+  if (appFileCount === 0) fail('VACUOUS: the app-tree walk found zero .ts/.tsx files. The scan is broken, and a broken scan here reports that every app read is seeded.');
+  if (appReads.size === 0) fail('VACUOUS: zero flag names extracted from the app tree. The app reads flags (FeatureFlagsContext is imported in dozens of screens); finding none means the reader/property matchers broke.');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CLASSIFY
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1623,6 +1895,19 @@ for (const [flag, where] of seeded) {
   if (inventory.has(flag)) continue;          // read somewhere — first population covers it
   if (coveredByDeclaration.has(flag)) continue; // read through a declared unresolvable name
   if (appTreeRead.has(flag)) continue;        // read in the app tree — declared and verified by R8
+  // Read in the app tree, SEEN BY SCAN rather than taken on a declaration.
+  // Added 2026-09-05 with the app-tree population. Before it, "read by nothing
+  // under src/" was silently equated with "read by nothing", and six flags
+  // carried INERT_SEEDED_FLAGS entries saying "read by nothing... wire the
+  // reader when the corresponding surface ships" while their surfaces were
+  // already shipped and reading them: MEDIA_TAB_ENABLED (the Media tab route
+  // itself), MEDIA_UPLOAD_ENABLED / _PHOTO_ / _VIDEO_ (AddGemForm),
+  // MEDIA_VIEW_MODE_FULLSCREEN_ENABLED (the Watch mode), and
+  // ai_event_auto_suggest_enabled (the event composer). An operator reading
+  // those entries would conclude six live gates were dead. The declaration list
+  // could not have caught it — nobody writes a declaration for a flag they
+  // believe nothing reads. Only a scan closes this.
+  if (appReads.has(flag)) continue;
   if (inertByFlag.has(flag)) continue;        // declared inert, with a reason
   fail(
     `SEEDED BUT NEVER READ: "${flag}" is seeded at ${where} and is read by nothing under src/.\n` +
@@ -1658,6 +1943,15 @@ for (const e of INERT_SEEDED_FLAGS) {
     fail(
       `RESOLVED INERT ENTRY: "${e.flag}" is declared inert, but it now HAS a reader (it is in the read inventory). ` +
       `Someone did the work — delete the entry so the list keeps meaning "still inert".`,
+    );
+  }
+  if (appReads.has(e.flag)) {
+    fail(
+      `FALSE INERT DECLARATION: "${e.flag}" is declared inert — "read by nothing" — but the app tree reads it at ` +
+      `${[...appReads.get(e.flag)].slice(0, 3).join(', ')}.\n` +
+      `    This is the inverse of a phantom and it is not harmless: the entry tells the next reader that a LIVE ` +
+      `gate is dead machinery, and its stock remedy ("wire the reader when the corresponding surface ships") is ` +
+      `advice to build something that already exists. Delete the entry — the flag is read.`,
     );
   }
 }
@@ -1738,6 +2032,110 @@ for (const e of APP_TREE_READS) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// R9 — every flag the code READS is SEEDED by a migration.
+//
+// The mirror of R6, and the rule this file went 24 days without. R6 asks "does
+// this seeded row have a reader"; R9 asks "does this reader have a row". Both
+// halves of the MEDIA_SHARING/MEDIA_SHARES defect were already written down in
+// this file — one as a CLASSIFIED entry, one as an INERT_SEEDED_FLAGS entry —
+// and stayed green, because no rule ever compared the two populations in this
+// direction.
+//
+// BOTH naming conventions, deliberately. The audit that found these ran a
+// lowercase-only regex first and reported zero phantoms; every one of the eight
+// except place_provenance_stamping_enabled is SCREAMING_CASE. A sweep that only
+// matches one convention on a codebase that uses two does not find fewer
+// defects, it finds none, and reports that as a clean result. Nothing here
+// filters by case: the populations are compared as whole strings.
+// ─────────────────────────────────────────────────────────────────────────────
+const unseededByFlag = new Map();
+for (const e of UNSEEDED_READS) {
+  if (unseededByFlag.has(e.flag)) fail(`DUPLICATE: ${e.flag} appears twice in UNSEEDED_READS.`);
+  unseededByFlag.set(e.flag, e);
+}
+
+const readSites = (flag) => {
+  const src = uses.filter((u) => u.flag === flag).map((u) => `src/${u.file}:${u.line} [${u.reader}]`);
+  const app = [...(appReads.get(flag) ?? [])].map((s) => `travel-buddy-standalone/${s}`);
+  return [...new Set([...src, ...app])].slice(0, 4).join('\n        ');
+};
+
+// Every flag name that is read anywhere: the API src/ inventory, plus the app
+// tree. APP_TREE_READS is deliberately NOT folded in — it is a declaration, and
+// R8 already requires the file it names to contain the flag, so the scan below
+// sees the same read independently.
+const readEverywhere = new Set([...inventory.keys(), ...appReads.keys()]);
+
+for (const flag of readEverywhere) {
+  if (seeded.has(flag)) continue;
+  if (unseededByFlag.has(flag)) continue;
+  const inApp = appReads.has(flag);
+  const inSrc = inventory.has(flag);
+  fail(
+    `PHANTOM FLAG — READ BUT NEVER SEEDED: "${flag}" is read by code and created by no migration under\n` +
+    `    src/migrations. There is no row for it, so the read resolves to nothing:\n` +
+    `      • isFlagEnabled / FeatureFlagsContext.isEnabled → false, forever, un-flippable\n` +
+    `      • compass/flags.ts isEnabled → \`?? false\`, same\n` +
+    `      • a direct \`.in([...])\` select → the name is simply absent from the rows and keeps its default\n` +
+    `    The gate LOOKS deliberate and is not. It cannot be turned on without shipping a migration first.\n` +
+    `    read at:\n        ${readSites(flag)}\n` +
+    `    ${inSrc && inApp ? '(read in BOTH the API src/ tree and the app tree)' : inApp ? '(read ONLY in the app tree)' : '(read in the API src/ tree)'}\n` +
+    `    FIX, in order of preference:\n` +
+    `      1. It is a MISSPELLING of a seeded flag — correct the literal (see MEDIA_SHARES_ENABLED).\n` +
+    `      2. The row is genuinely missing — seed it in a migration, OFF unless there is a stated reason,\n` +
+    `         and say in the migration what changes when it starts resolving.\n` +
+    `      3. The gate was never real — delete it.\n` +
+    `      4. It must stay unseeded — add an UNSEEDED_READS entry with a disposition and a reason. That is\n` +
+    `         a judgment about why a row would be WRONG, not a way to make this message go away.`,
+  );
+}
+
+// R10 — an UNSEEDED_READS entry must still be true: still read, still unseeded.
+for (const e of UNSEEDED_READS) {
+  if (!hasReason(e)) {
+    fail(`NO REASON: UNSEEDED_READS entry for "${e.flag}" has no reason. The entry exempts a phantom flag from R9; without a reason it exempts it for nothing.`);
+    continue;
+  }
+  if (!UNSEEDED_DISPOSITIONS.has(e.disposition)) {
+    fail(
+      `BAD DISPOSITION: UNSEEDED_READS entry for "${e.flag}" has disposition "${e.disposition}". ` +
+      `Must be one of: ${[...UNSEEDED_DISPOSITIONS].join(', ')}.`,
+    );
+  }
+  if (seeded.has(e.flag)) {
+    fail(
+      `RESOLVED UNSEEDED_READS ENTRY: "${e.flag}" is declared as deliberately unseeded, but a migration now ` +
+      `seeds it at ${seeded.get(e.flag)}. Either the seed is a mistake this entry warned against — read the ` +
+      `reason before deleting it — or the entry has outlived its subject and must go.`,
+    );
+  }
+  if (!readEverywhere.has(e.flag)) {
+    fail(
+      `STALE UNSEEDED_READS ENTRY: "${e.flag}" is declared here but is read by nothing under src/ or in the ` +
+      `app tree, so R9 never asks about it and this entry exempts nothing. Remove it.`,
+    );
+  }
+}
+
+// R11 — an app-tree read argument the scanner cannot resolve must be declared.
+const appUnresolvedKeys = new Set(APP_UNRESOLVED_READS.map((e) => `${e.file}::${e.expr}`));
+for (const u of appUnresolved) {
+  if (appUnresolvedKeys.has(`${u.file}::${u.expr}`)) continue;
+  fail(
+    `UNRESOLVABLE APP-TREE FLAG ARGUMENT: travel-buddy-standalone/${u.file}:${u.line} passes \`${u.expr}\` ` +
+    `to ${u.reader}. R9 cannot tell which flag this reads, so it cannot tell whether that flag is seeded.\n` +
+    `    Make it a literal, or add an APP_UNRESOLVED_READS entry naming which flags it can produce and how ` +
+    `that was verified.`,
+  );
+}
+for (const e of APP_UNRESOLVED_READS) {
+  if (!hasReason(e)) fail(`NO REASON: APP_UNRESOLVED_READS entry for ${e.file} has no reason.`);
+  if (!appUnresolved.some((u) => u.file === e.file && u.expr === e.expr)) {
+    fail(`STALE APP_UNRESOLVED_READS ENTRY: travel-buddy-standalone/${e.file} no longer passes \`${e.expr}\` to a flag reader. Remove the entry.`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // REPORT
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1751,10 +2149,29 @@ if (problems.length > 0) {
     `  Scanned ${scanFiles.length} files (${testFiles.length} test files excluded).\n` +
     `  Inventory: ${inventory.size} flags — ${kinds.STOP} STOP, ${kinds.CAPABILITY} CAPABILITY, ${kinds.CONFIG} CONFIG.\n` +
     `  Seeded: ${seeded.size} flags across ${migrationFileCount} migrations.\n` +
+    `  App tree: ${appReads.size} flags read across ${appFileCount} files.\n` +
     `  ${problems.length} problem(s).\n`,
   );
-  process.exit(1);
+  // `process.exitCode`, NOT `process.exit(1)`.
+  //
+  // When stderr is a PIPE (CI log capture, a test harness, `| tee`) Node's
+  // writes to it are asynchronous, and process.exit() tears the process down
+  // without flushing what is still buffered. This report is ~100 KB on a bad
+  // day, and it was being truncated mid-way in roughly one run out of eight —
+  // observed while red-proofing R9 on 2026-09-05, where the run that mattered
+  // dropped the PHANTOM FLAG line and reported a shorter, different-looking
+  // failure. Non-deterministically losing the END of a failure report is a
+  // uniquely bad property for a check whose entire output is the diagnosis: the
+  // exit code stays 1, so it still "fails", and the reader is told the wrong
+  // reason. Setting exitCode lets the event loop drain and Node exit on its
+  // own with every byte written. Same below for the success path.
+  process.exitCode = 1;
 }
+
+// Guarded rather than reached by falling through, because the failure path
+// above no longer calls process.exit() and therefore no longer stops execution.
+// Without this the success banner would print underneath the failure report.
+if (problems.length === 0) {
 
 const inertCount = INERT_SEEDED_FLAGS.length;
 const seededRead = [...seeded.keys()].filter((f) => inventory.has(f)).length;
@@ -1766,7 +2183,13 @@ console.log(
   `${shadowsFound.size} shadow readers declared, ${unresolvedFound.length} unresolvable arguments declared.\n` +
   `  Seeded population: ${seeded.size} flags seeded across ${migrationFileCount} migrations ` +
   `(${seedStatementCount} INSERT statements) — ${seededRead} read, ${inertCount} declared inert with a reason.\n` +
+  `  App-tree population: ${appReads.size} flags read across ${appFileCount} files ` +
+  `(${appUnresolved.length} unresolvable argument(s) declared).\n` +
+  `  Read-but-unseeded: 0 phantoms — ${UNSEEDED_READS.length} declared deliberately unseeded with a reason.\n` +
   `  Reminder: this proves a classification EXISTS and MATCHES its reader — not that it is RIGHT,\n` +
-  `  and that every seeded flag is accounted for — not that an inert one is harmless.`,
+  `  that every seeded flag is accounted for — not that an inert one is harmless,\n` +
+  `  and that every read has a row — not that the row's VALUE is the one anyone intended.`,
 );
-process.exit(0);
+process.exitCode = 0;
+
+}

@@ -219,11 +219,23 @@ jobs:
   # which is a total order over a shrinking set, so exactly one run is eligible
   # at a time and the queue cannot deadlock.
   #
-  # Why a separate job rather than a step in each: the lock is held by the RUN
-  # (a run stays in_progress until all its jobs finish), so waiting once here
-  # covers all four DB jobs, and they keep running in parallel behind it exactly
-  # as they do today. Four waits would serialize nothing extra and cost four
-  # times the queue latency.
+  # Why a separate job AS WELL AS a step in each: the lock is held by the RUN
+  # (a run stays in_progress until all its jobs finish), so the queueing — the
+  # part that can take 45 minutes — is paid for exactly once, here, and the DB
+  # jobs keep running in parallel behind it. What this job cannot do is prove
+  # anything about a LATER ATTEMPT of the same run: `gh run rerun --failed`
+  # re-runs only failed jobs, so a succeeded slot job is carried forward and the
+  # `needs:` edge is satisfied without anybody asking the database's owner
+  # again. That is not hypothetical — it happened on 2026-09-05 and corrupted
+  # five suites across two runs; see the "SLOT RE-VERIFICATION" step in each DB
+  # job and the header of .github/scripts/live-db-acquire-slot.sh.
+  #
+  # So each DB job now re-asserts the SAME predicate through the SAME decider as
+  # its own first executing step. That costs one API call in the normal path
+  # (the predicate stays true for the life of the run once acquired, so all four
+  # satisfy it at the same instant and nothing extra is serialized) and closes
+  # the re-run bypass, because a check that lives inside a job is re-run
+  # whenever that job is.
   #
   # A timeout here exits 75 and this job FAILS, which the verdict job reports as
   # NOT EXECUTED. That is the whole point: a certification that never got the
@@ -236,6 +248,12 @@ jobs:
     outputs:
       slot: ${{ steps.acquire.outputs.live_db_slot }}
       waited: ${{ steps.acquire.outputs.live_db_slot_wait_seconds }}
+      # WHICH ATTEMPT the slot was acquired in. On a partial re-run this job is
+      # not re-executed and its outputs are carried forward, so a value that is
+      # not `github.run_attempt` is the signature of the bypass described in the
+      # verify step below. Diagnostic only — the verify step re-decides from the
+      # API and does not trust this either way.
+      attempt: ${{ steps.acquire.outputs.live_db_slot_attempt }}
     steps:
       - uses: actions/checkout@v4
       - name: Wait for the shared Supabase project
@@ -303,8 +321,34 @@ jobs:
   api-server-check-all:
     name: api-server · check:all + live_pulse gate (needs credentials)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    needs: [preflight, live-db-slot]
+    timeout-minutes: 45
+    needs: [preflight, live-db-slot, schema-drift]
+    # The schema-drift edge is ORDERING, NOT GATING. Both halves are load-bearing.
+    #
+    # WHY THE EDGE. check:write-path-columns fetches the LIVE schema and fails on
+    # any table the code references but the database lacks. Without this edge that
+    # fetch raced schema-drift's applier, and lost: on main run 33988500200 the two
+    # jobs started one second apart (20:00:06 / 20:00:07), the fetch landed at
+    # 20:01:19, and the applier did not finish until 20:02:04. So the check read a
+    # schema from BEFORE its own run's migrations and reported event_passport_shares
+    # — created by 2294, merged minutes earlier in #394 — as missing from nine call
+    # sites. Main went red on a table that its own run then created. Every commit
+    # that adds a table alongside its migration loses that race the same way, so
+    # this was a false red, not a finding.
+    #
+    # WHY NOT A SUCCESS GATE. On a PR branch schema-drift legitimately FAILS: a
+    # branch's own migration is never applied to the CI project, so the objects it
+    # claims are genuinely absent. Plain `needs:` treats that expected failure as a
+    # reason to SKIP — which is what already happens to live-db-security-suites and
+    # post-media-revocation-rehearsal below. Letting it skip check:all too would
+    # silently drop the primary code-quality gate on exactly the PRs that change the
+    # schema, and this workflow says elsewhere in its own words that a job which
+    # silently skips is indistinguishable from one that passed. `!cancelled()` keeps
+    # check:all running after schema-drift whatever schema-drift concluded.
+    #
+    # This also strictly widens coverage: a failed preflight used to skip this job,
+    # and now runs it so its own secret preflight fails out loud instead.
+    if: ${{ !cancelled() }}
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -362,6 +406,31 @@ jobs:
       - name: Preflight — Supabase target must be the sanctioned CI project
         shell: bash
         run: bash .github/scripts/assert-nonprod-supabase.sh
+
+      # ── SLOT RE-VERIFICATION — NOT A DUPLICATE OF THE live-db-slot JOB ─────
+      #
+      # `gh run rerun --failed` re-runs ONLY the jobs that failed. A succeeded
+      # `live-db-slot` job is therefore carried forward untouched, and this
+      # job's `needs: live-db-slot` edge is satisfied by a proof that belongs to
+      # a PREVIOUS ATTEMPT. Measured 2026-09-05: run 33967089832 attempt 2 had
+      # no acquire-slot job at all and reached the shared CI project at 13:17:47
+      # while run 33967153487 was mid-suite (13:17:56–13:23:28). Five suites
+      # went red across the two runs on fixtures each had deleted from under the
+      # other, with correct code under test.
+      #
+      # The fix is structural: the proof now lives in the job that USES the
+      # database, so any re-run that re-runs this job necessarily re-runs the
+      # check. Same predicate, same decider, shorter timeout — in the normal
+      # path the queue job has already drained the queue and this returns on the
+      # first poll. It FAILS CLOSED (exit 75): a job that cannot prove it holds
+      # the slot does not run.
+      - name: Verify THIS attempt holds the shared-database slot
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_DB_SLOT_ROLE: verify
+          LIVE_DB_SLOT_ACQUIRED_IN_ATTEMPT: ${{ needs['live-db-slot'].outputs.attempt }}
+        run: bash .github/scripts/live-db-acquire-slot.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -492,7 +561,7 @@ jobs:
   schema-drift:
     name: schema drift · apply migrations, certify, then audit vs live (needs credentials)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     needs: [preflight, live-db-slot]
     environment: ci-nonprod-supabase
     env:
@@ -543,6 +612,31 @@ jobs:
       - name: Preflight — Supabase target must be the sanctioned CI project
         shell: bash
         run: bash .github/scripts/assert-nonprod-supabase.sh
+
+      # ── SLOT RE-VERIFICATION — NOT A DUPLICATE OF THE live-db-slot JOB ─────
+      #
+      # `gh run rerun --failed` re-runs ONLY the jobs that failed. A succeeded
+      # `live-db-slot` job is therefore carried forward untouched, and this
+      # job's `needs: live-db-slot` edge is satisfied by a proof that belongs to
+      # a PREVIOUS ATTEMPT. Measured 2026-09-05: run 33967089832 attempt 2 had
+      # no acquire-slot job at all and reached the shared CI project at 13:17:47
+      # while run 33967153487 was mid-suite (13:17:56–13:23:28). Five suites
+      # went red across the two runs on fixtures each had deleted from under the
+      # other, with correct code under test.
+      #
+      # The fix is structural: the proof now lives in the job that USES the
+      # database, so any re-run that re-runs this job necessarily re-runs the
+      # check. Same predicate, same decider, shorter timeout — in the normal
+      # path the queue job has already drained the queue and this returns on the
+      # first poll. It FAILS CLOSED (exit 75): a job that cannot prove it holds
+      # the slot does not run.
+      - name: Verify THIS attempt holds the shared-database slot
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_DB_SLOT_ROLE: verify
+          LIVE_DB_SLOT_ACQUIRED_IN_ATTEMPT: ${{ needs['live-db-slot'].outputs.attempt }}
+        run: bash .github/scripts/live-db-acquire-slot.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -718,7 +812,7 @@ jobs:
   post-media-revocation-rehearsal:
     name: post-media revocation · before-proof, apply, after-proof
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     needs: [preflight, live-db-slot, schema-drift]
     environment: ci-nonprod-supabase
     env:
@@ -749,6 +843,31 @@ jobs:
       - name: Preflight — Supabase target must be the sanctioned CI project
         shell: bash
         run: bash .github/scripts/assert-nonprod-supabase.sh
+
+      # ── SLOT RE-VERIFICATION — NOT A DUPLICATE OF THE live-db-slot JOB ─────
+      #
+      # `gh run rerun --failed` re-runs ONLY the jobs that failed. A succeeded
+      # `live-db-slot` job is therefore carried forward untouched, and this
+      # job's `needs: live-db-slot` edge is satisfied by a proof that belongs to
+      # a PREVIOUS ATTEMPT. Measured 2026-09-05: run 33967089832 attempt 2 had
+      # no acquire-slot job at all and reached the shared CI project at 13:17:47
+      # while run 33967153487 was mid-suite (13:17:56–13:23:28). Five suites
+      # went red across the two runs on fixtures each had deleted from under the
+      # other, with correct code under test.
+      #
+      # The fix is structural: the proof now lives in the job that USES the
+      # database, so any re-run that re-runs this job necessarily re-runs the
+      # check. Same predicate, same decider, shorter timeout — in the normal
+      # path the queue job has already drained the queue and this returns on the
+      # first poll. It FAILS CLOSED (exit 75): a job that cannot prove it holds
+      # the slot does not run.
+      - name: Verify THIS attempt holds the shared-database slot
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_DB_SLOT_ROLE: verify
+          LIVE_DB_SLOT_ACQUIRED_IN_ATTEMPT: ${{ needs['live-db-slot'].outputs.attempt }}
+        run: bash .github/scripts/live-db-acquire-slot.sh
 
       - uses: actions/setup-node@v4
         with:
@@ -867,7 +986,7 @@ jobs:
   live-db-security-suites:
     name: live DB · RLS + role/is_official write boundaries (needs credentials)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     needs: [preflight, live-db-slot, schema-drift]
     environment: ci-nonprod-supabase
     env:
@@ -929,6 +1048,31 @@ jobs:
       - name: Preflight — Supabase target must be the sanctioned CI project
         shell: bash
         run: bash .github/scripts/assert-nonprod-supabase.sh
+
+      # ── SLOT RE-VERIFICATION — NOT A DUPLICATE OF THE live-db-slot JOB ─────
+      #
+      # `gh run rerun --failed` re-runs ONLY the jobs that failed. A succeeded
+      # `live-db-slot` job is therefore carried forward untouched, and this
+      # job's `needs: live-db-slot` edge is satisfied by a proof that belongs to
+      # a PREVIOUS ATTEMPT. Measured 2026-09-05: run 33967089832 attempt 2 had
+      # no acquire-slot job at all and reached the shared CI project at 13:17:47
+      # while run 33967153487 was mid-suite (13:17:56–13:23:28). Five suites
+      # went red across the two runs on fixtures each had deleted from under the
+      # other, with correct code under test.
+      #
+      # The fix is structural: the proof now lives in the job that USES the
+      # database, so any re-run that re-runs this job necessarily re-runs the
+      # check. Same predicate, same decider, shorter timeout — in the normal
+      # path the queue job has already drained the queue and this returns on the
+      # first poll. It FAILS CLOSED (exit 75): a job that cannot prove it holds
+      # the slot does not run.
+      - name: Verify THIS attempt holds the shared-database slot
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LIVE_DB_SLOT_ROLE: verify
+          LIVE_DB_SLOT_ACQUIRED_IN_ATTEMPT: ${{ needs['live-db-slot'].outputs.attempt }}
+        run: bash .github/scripts/live-db-acquire-slot.sh
 
       - uses: actions/setup-node@v4
         with:

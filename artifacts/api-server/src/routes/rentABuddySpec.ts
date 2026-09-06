@@ -2,7 +2,11 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows } from "./rentABuddy.js";
+// requireRentBuddyEnabled is the lane's ONE master-switch guard, defined in
+// rentABuddy.ts (which already gates its own 70 handlers with it). Imported
+// rather than re-implemented so this router cannot drift from the meaning of
+// `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
+import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
@@ -10,6 +14,8 @@ import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
+import { normalizeLaunchControlKey, upsertLaunchControlRow } from "../lib/rentBuddyLaunchControls.js";
+import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
 
 const router = Router();
 
@@ -109,6 +115,7 @@ router.post("/me/buddy-services", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -152,6 +159,7 @@ router.patch("/me/buddy-services/:serviceId", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -200,6 +208,7 @@ router.delete("/me/buddy-services/:serviceId", asyncHandler(async (req, res) => 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -284,6 +293,7 @@ router.post("/me/buddy-availability-exceptions", asyncHandler(async (req, res) =
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -322,6 +332,7 @@ router.patch("/me/buddy-availability-exceptions/:exceptionId", asyncHandler(asyn
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -357,6 +368,7 @@ router.delete("/me/buddy-availability-exceptions/:exceptionId", asyncHandler(asy
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
@@ -375,41 +387,21 @@ router.delete("/me/buddy-availability-exceptions/:exceptionId", asyncHandler(asy
   return res.json({ ok: true });
 }));
 
-// ── buddy_booking_events read ──────────────────────────────────────────────────
-// Also accessible at /api/buddy-bookings/:id/events via URL alias in app.ts
-
-router.get("/rent-a-buddy/bookings/:bookingId/events", asyncHandler(async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const serviceClient = sc(auth.client);
-
-  const { bookingId } = req.params;
-  const { data: booking } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("id, traveler_id, buddy_id")
-    .eq("id", bookingId)
-    .maybeSingle();
-  if (!booking) return res.status(404).json({ error: "not_found" });
-
-  const b = booking as any;
-  const { data: bp } = await serviceClient
-    .from("rent_buddy_profiles")
-    .select("id")
-    .eq("user_id", auth.user.id)
-    .maybeSingle();
-
-  const isParty = b.traveler_id === auth.user.id || (bp && b.buddy_id === (bp as any).id);
-  if (!isParty) return res.status(403).json({ error: "forbidden" });
-
-  const { data, error } = await serviceClient
-    .from("buddy_booking_events")
-    .select("*")
-    .eq("booking_id", bookingId)
-    .order("created_at", { ascending: true });
-
-  if (error) return sendError(res, "db_error", error.message);
-  return res.json({ events: data ?? [] });
-}));
+// ── buddy_booking_events read — REMOVED (dead duplicate) ──────────────────────
+//
+// A second `GET /rent-a-buddy/bookings/:bookingId/events` was declared here.
+// routes/index.ts mounts rentABuddy BEFORE rentABuddySpec, and rentABuddy.ts
+// already declares the identical method+path, so this handler was unreachable:
+// no request ever entered it.
+//
+// It was not a harmless copy. The live handler selects an explicit column list
+// and filters out events whose metadata marks them admin_only; this one did
+// `select("*")` with no such filter. Editing it — including tightening it —
+// changed nothing, which is exactly the trap a dead duplicate sets. Deleted
+// rather than merged: the reachable handler is the stricter of the two.
+//
+// src/test/rentBuddyRouteShadowing.test.ts now fails if any two of the four
+// Rent-a-Buddy routers declare the same method and path again.
 
 // ── booking request shorthand ──────────────────────────────────────────────────
 
@@ -645,6 +637,11 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
     .single();
 
   if (error) return sendError(res, "db_error", error.message);
+
+  // Estimated earnings-ledger row — the third of the three booking-creation
+  // paths that never wrote one. See lib/rentBuddyEarningsLedger.ts.
+  if (data) await createEarningsLedgerEntry(serviceClient, data, buddyId).catch(() => {});
+
   return res.status(201).json({ booking: data });
 }));
 
@@ -656,6 +653,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/check-in", asyncHandler(async (re
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { checkinType, response: checkinResponse } = req.body ?? {};
@@ -787,6 +785,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler(asy
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
   const { notes } = req.body ?? {};
@@ -1114,6 +1113,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/favorite", asyncHandler(async (req, 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { buddyId } = req.params;
 
   const { error } = await serviceClient
@@ -1131,6 +1131,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (req
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { buddyId } = req.params;
   const { error } = await serviceClient
     .from("rent_buddy_saved")
@@ -1147,6 +1148,7 @@ router.delete("/rent-a-buddy/buddies/:buddyId/unfavorite", asyncHandler(async (r
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { buddyId } = req.params;
 
   const { error } = await serviceClient
@@ -1348,6 +1350,7 @@ router.post("/rent-a-buddy/me/profile/submit", asyncHandler(async (req, res) => 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: profile } = await serviceClient
     .from("rent_buddy_profiles")
@@ -1474,6 +1477,7 @@ router.post("/rent-a-buddy/me/profile/pause", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: profile } = await serviceClient
     .from("rent_buddy_profiles")
@@ -1505,6 +1509,7 @@ router.post("/rent-a-buddy/me/profile/resume", asyncHandler(async (req, res) => 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: profile } = await serviceClient
     .from("rent_buddy_profiles")
@@ -1551,24 +1556,25 @@ router.post("/rent-a-buddy/admin/kill-switch", asyncHandler(async (req, res) => 
     return res.status(400).json({ error: "invalid_payload", message: "enabled (boolean) is required." });
   }
 
-  // Upsert the global launch control (country_code=NULL, city=NULL, category=NULL)
-  const { data, error } = await serviceClient
-    .from("rent_buddy_launch_controls")
-    .upsert(
-      {
-        country_code: null,
-        city: null,
-        category: null,
-        enabled,
-        notes: enabled ? "Kill switch lifted by admin" : "Kill switch activated by admin",
-        created_by: auth.user.id,
-      },
-      { onConflict: "country_code,city,category" }
-    )
-    .select()
-    .single();
+  // Write the GLOBAL launch control (country_code=NULL, city=NULL, category=NULL).
+  //
+  // NOT `.upsert(..., { onConflict: "country_code,city,category" })`. That is what
+  // stood here, and against this table's plain `UNIQUE (country_code, city,
+  // category)` — NULLS DISTINCT — the ON CONFLICT arbiter never matched a row
+  // whose key is all-NULL. Every press INSERTed another global row: the switch
+  // could be pressed but never lifted, and the duplicated key then made the
+  // global control unreadable to getLaunchControl. See lib/rentBuddyLaunchControls.ts.
+  const { data, error } = await upsertLaunchControlRow(
+    serviceClient,
+    normalizeLaunchControlKey({}),
+    {
+      enabled,
+      notes: enabled ? "Kill switch lifted by admin" : "Kill switch activated by admin",
+    },
+    auth.user.id,
+  );
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) return sendError(res, "db_error", (error as any).message ?? String(error));
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
@@ -1683,23 +1689,16 @@ router.patch("/rent-a-buddy/admin/category-status/:category", asyncHandler(async
     return res.status(400).json({ error: "invalid_payload", message: "enabled (boolean) is required." });
   }
 
-  const { data, error } = await serviceClient
-    .from("rent_buddy_launch_controls")
-    .upsert(
-      {
-        country_code: null,
-        city: null,
-        category,
-        enabled,
-        notes: notes ?? null,
-        created_by: auth.user.id,
-      },
-      { onConflict: "country_code,city,category" }
-    )
-    .select()
-    .single();
+  // NULL-safe write — see the kill-switch handler above and
+  // lib/rentBuddyLaunchControls.ts for why an onConflict upsert cannot work here.
+  const { data, error } = await upsertLaunchControlRow(
+    serviceClient,
+    normalizeLaunchControlKey({ category }),
+    { enabled, notes: notes ?? null },
+    auth.user.id,
+  );
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) return sendError(res, "db_error", (error as any).message ?? String(error));
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
@@ -1826,6 +1825,7 @@ router.post("/rent-a-buddy/me/profile", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const {
     displayName, tagline, bio, city, country, categories,
     languages, hourlyRateUsd, maxGroupSize, coverPhotoUrl,
@@ -1909,6 +1909,7 @@ router.patch("/me/buddy-availability", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { slots } = req.body ?? {};
   if (!Array.isArray(slots) || slots.length === 0) {
     return res.status(400).json({ error: "invalid_payload", message: "slots (array) is required." });
@@ -1946,6 +1947,7 @@ router.patch("/me/buddy-availability-exceptions", asyncHandler(async (req, res) 
   const auth = await requireUser(req, res);
   if (!auth) return;
   const serviceClient = sc(auth.client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
   const { exceptions } = req.body ?? {};
   if (!Array.isArray(exceptions) || exceptions.length === 0) {
     return res.status(400).json({ error: "invalid_payload", message: "exceptions (array) is required." });
@@ -2060,16 +2062,16 @@ router.post("/rent-a-buddy/admin/category-status", asyncHandler(async (req, res)
     return res.status(400).json({ error: "invalid_payload", message: "category and enabled (boolean) are required." });
   }
 
-  const { data, error } = await serviceClient
-    .from("rent_buddy_launch_controls")
-    .upsert(
-      { country_code: null, city: null, category, enabled, notes: notes ?? null, created_by: auth.user.id },
-      { onConflict: "country_code,city,category" }
-    )
-    .select()
-    .single();
+  // NULL-safe write — see lib/rentBuddyLaunchControls.ts. The onConflict upsert
+  // that stood here never matched (NULLS DISTINCT) and duplicated the row.
+  const { data, error } = await upsertLaunchControlRow(
+    serviceClient,
+    normalizeLaunchControlKey({ category }),
+    { enabled, notes: notes ?? null },
+    auth.user.id,
+  );
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) return sendError(res, "db_error", (error as any).message ?? String(error));
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id, target_type: "category", target_id: category,
     action: enabled ? "category_enabled" : "category_disabled", notes: notes ?? null,
@@ -2133,16 +2135,16 @@ router.post("/rent-a-buddy/admin/category-status/:category", asyncHandler(async 
     return res.status(400).json({ error: "invalid_payload", message: "enabled (boolean) is required." });
   }
 
-  const { data, error } = await serviceClient
-    .from("rent_buddy_launch_controls")
-    .upsert(
-      { country_code: null, city: null, category, enabled, notes: notes ?? null, created_by: auth.user.id },
-      { onConflict: "country_code,city,category" }
-    )
-    .select()
-    .single();
+  // NULL-safe write — see lib/rentBuddyLaunchControls.ts. The onConflict upsert
+  // that stood here never matched (NULLS DISTINCT) and duplicated the row.
+  const { data, error } = await upsertLaunchControlRow(
+    serviceClient,
+    normalizeLaunchControlKey({ category }),
+    { enabled, notes: notes ?? null },
+    auth.user.id,
+  );
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) return sendError(res, "db_error", (error as any).message ?? String(error));
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id, target_type: "category", target_id: category,
     action: enabled ? "category_enabled" : "category_disabled", notes: notes ?? null,

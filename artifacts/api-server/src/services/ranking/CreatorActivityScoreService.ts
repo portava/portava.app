@@ -7,9 +7,12 @@
  * must never be called on the hot path of a live feed request.
  *
  * Data sources used:
- *   activity_events  — primary signal store: actor_id, user_id, event_type,
- *                      category, created_at, metadata
- *   posts            — contribution count (author_id, status, created_at)
+ *   activity_events  — DESIGNED primary signal store (actor_id, user_id,
+ *                      event_type, category, created_at, metadata). It has no
+ *                      producer: see "THE ACTIVITY LANE HAS NO PRODUCER" below
+ *                      before trusting any activity_events-derived number.
+ *   posts            — contribution count (author_id, status, post_status,
+ *                      created_at)
  *   events           — contribution count (host_id, created_at)
  *   trips            — contribution count (owner_id, created_at)
  *   reviews          — contribution count (reviewer_id, created_at)
@@ -37,6 +40,58 @@
  *   - Self-actions (actor_id = userId) excluded from received-signal queries
  *   - Actions from accounts the creator has blocked/been blocked by are
  *     excluded from participation and positive-response signals
+ *
+ * ─── THE ACTIVITY LANE HAS NO PRODUCER ──────────────────────────────────────
+ *
+ * `public.activity_events` is written by exactly ONE call site in this repo:
+ * `POST /internal/activity-events` (src/routes/notifications.ts). That route
+ * is gated on the internal-service secret and NOTHING calls it — not this
+ * server, not the mobile client, not a scheduler, not a DB trigger. The table
+ * is therefore permanently empty in every environment.
+ *
+ * `activity_events.event_type` is plain TEXT with no ENUM and no CHECK
+ * (baseline/20260819_baseline_structure.sql:3548), so none of the 22
+ * event_type literals below produces an error: every one of these queries
+ * SUCCEEDS and matches nothing, silently and permanently. This is not the
+ * 22P02 dead-enum class that `check:enum-literals` guards — that check only
+ * judges columns that carry a vocabulary, and this column carries none, so
+ * the guard cannot see these literals at all.
+ *
+ * What that means for the score, per lane:
+ *   activeDays90                  — always 0  → consistencyScore always 0
+ *   participationEvents/Users     — always 0  → communityParticipation 0
+ *   receivedPositiveActions/Volume— always 0  → positiveResponse 0
+ *   maintenanceActions            — always 0  → maintenanceScore 0
+ *   burst/duplicate/follow-cycle/
+ *     rapid-same-type/create-delete— always 0 → spam + repetition penalty 0
+ * Only `contributions*` (posts/events/trips/reviews/discovery_places, all of
+ * which have real producers) can ever be non-zero. So a real score today is
+ * the NEW_USER_BASE_SCORE floor of 10, or at most 30 — the 0.30 weight on the
+ * one live lane. Nothing can score above 30 and nothing can be penalised.
+ * Do not read a low CreatorActivityScore as low activity.
+ *
+ * The underlying user actions ARE recorded — just as first-class rows, never
+ * projected into this log. If the lane is revived, these are the producers
+ * that already exist and the mapping is a product decision, not a rename:
+ *   content_shared      → post_shares      (posts.ts upserts it)
+ *   comment_received    → posts_comments   (posts.ts inserts it)
+ *   follow_received     → user_follows     (follows.ts upserts it)
+ *   profile_visited     → profile_views    (passport.ts inserts it)
+ *   event_rsvp          → event_rsvps      (events.ts upserts it)
+ *   content_impression  → post_impressions — the table exists but has no
+ *                         writer either, so it is no better a source than
+ *                         this one (profile.ts's post_impressions_7d stat is
+ *                         permanently 0 for the same reason).
+ *   helpful_response    → nothing; the concept does not exist in the schema
+ * A partial actor-side log with real producers also exists —
+ * `compass_active_user_events` (post_published, event_attended, trip_created,
+ * review_posted, …) — but it has no actor/target pair, so it can feed the
+ * by-the-creator lanes and none of the received-signal lanes.
+ *
+ * Deliberately NOT repointed: mapping a reader's literal onto the nearest
+ * plausible label of a different table would make this score move on a
+ * different population than it claims to measure. Recorded, not invented.
+ * ────────────────────────────────────────────────────────────────────────────
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -317,7 +372,9 @@ export function computeActivityScore(
  * CreatorSignalAggregator — pulls windowed counts from the DB for one creator.
  *
  * Tables used (with exact live columns accessed):
- *   activity_events  — actor_id, user_id, event_type, created_at, metadata
+ *   activity_events  — actor_id, user_id, event_type, created_at, metadata.
+ *                      NO PRODUCER — every read below returns zero rows. See
+ *                      the module header for the per-lane consequence.
  *   posts            — author_id, status, created_at
  *   events           — host_id, created_at
  *   trips            — owner_id, created_at
@@ -411,12 +468,32 @@ export class CreatorSignalAggregator {
     try {
       // Fetch content timestamps from all contribution tables in parallel.
       const [postsData, eventsData, tripsData, reviewsData, placesData] = await Promise.all([
-        // posts: author_id, status, created_at
+        // posts: author_id, status, post_status, created_at
+        //
+        // TWO columns, TWO similarly-named enums — do not conflate them:
+        //   posts.status      public.post_status
+        //                     ('active','hidden','reported','deleted')
+        //   posts.post_status public.delayed_post_status
+        //                     ('draft','private','pending_location_exit',
+        //                      'pending_delay','pending_safety_review',
+        //                      'published','canceled','expired')
+        // This lane previously sent .eq("status","published") — 'published' is
+        // NOT a post_status label, so PostgREST rejected it with 22P02 and the
+        // surrounding catch swallowed it: the posts contribution count was
+        // permanently zero for every creator.
+        //
+        // The canonical "live post" predicate used by the Wall, Pulse, the
+        // global/Following feeds and profile tabs is status='active' AND
+        // post_status='published'; a contribution score must use the same one.
+        // Deliberately excluded: hidden/reported/deleted (not visible to the
+        // community, and counting `reported` would reward flagged content) and
+        // draft/private/pending_*/canceled/expired (never published).
         (this.db as any)
           .from("posts")
           .select("created_at")
           .eq("author_id", userId)
-          .eq("status", "published")
+          .eq("status", "active")
+          .eq("post_status", "published")
           .gte("created_at", ago90d),
 
         // events: host_id, created_at
@@ -721,22 +798,57 @@ export class CreatorSignalAggregator {
 
   // ── Safety multiplier ─────────────────────────────────────────────────────
 
+  /**
+   * Safety multiplier from `trust_profiles`.
+   *
+   * THE KILL-SWITCH THAT NEVER FIRED
+   * --------------------------------
+   * This used to open with `if (level === "suspended" || level === "restricted")
+   * return 0.0;` — the documented "collapse the score on verified severe
+   * restriction" rule. `trust_profiles_public_level_check` admits exactly six
+   * labels (new_traveler, building_trust, reliable_traveler, trusted_traveler,
+   * highly_trusted, city_trusted) and `scoreToLevel` only ever produces those
+   * six, so neither label can exist in any row. Nothing caught it because the
+   * value was widened to `string` on the way in, which walked the comparison
+   * past both the CHECK constraint and the `PublicTrustLevel` union; and
+   * because `public_level` carries a CHECK rather than an ENUM, the wrong
+   * label raised no 22P02 either — the branch was simply never taken.
+   *
+   * WHY IT WAS NOT REPOINTED AT A LIVE SIGNAL
+   * -----------------------------------------
+   * The schema has no platform-suspension concept to repoint at:
+   * `profiles.account_status` is active/deactivated/pending_deletion/deleted,
+   * and `user_restrictions` is one member muting another. `trust_restrictions`
+   * is real and written (TrustRestrictionService.applyRestriction) but its four
+   * types are behavioural scopes — hosting, messaging, private_plan_access,
+   * location_plan_join. Collapsing a creator's discovery ranking to zero
+   * because they cannot start a DM, or cannot host a group trip, would de-rank
+   * a different population than "this creator's content is unsafe to boost".
+   * That is the wrong-but-plausible signal, which is worse than a missing one.
+   *
+   * The live kill-switch is the numeric rung below: overall_score < 20 → 0.0.
+   * It is authoritative (TrustScoreService writes overall_score from applied
+   * trust_events) and reachable, and the same trust events that earn a
+   * restriction drive that score down. A per-restriction de-ranking rule, if
+   * it is wanted, is a product decision about WHICH restrictions should mute a
+   * creator — not a repair to this reader.
+   *
+   * `public_level` is no longer selected: with the branch gone nothing reads
+   * it, and a column fetched for a rule that does not exist reads like a rule
+   * that does. creatorActivitySafetyMultiplier.test.ts pins both halves — the
+   * six-label vocabulary, and that no label collapses the multiplier.
+   */
   private async _fetchSafetyMultiplier(userId: string): Promise<number> {
     try {
       const { data } = await (this.db as any)
         .from("trust_profiles")
-        .select("overall_score, public_level")
+        .select("overall_score")
         .eq("user_id", userId)
         .maybeSingle();
 
       if (!data) return 1.0; // no profile → default full multiplier
 
       const d = data as any;
-      const level: string = d.public_level ?? "new_traveler";
-
-      // Severe restriction: explicitly suspended / restricted levels
-      if (level === "suspended" || level === "restricted") return 0.0;
-
       const overallScore = Number(d.overall_score) || 50;
       if (overallScore < 20) return 0.0;
       if (overallScore < 30) return 0.3;

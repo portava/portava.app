@@ -35,6 +35,7 @@ import intelCoverageRouter from "./intelCoverage.js";
 import intelApiRouter from "./intelApi.js";
 import intelReadModelsRouter from "./intelReadModels.js";
 import intelOutcomesRouter from "./intelOutcomes.js";
+import intelObservabilityRouter from "./intelObservability.js";
 import safeReturnRouter from "./safeReturn";
 import tripCrewLocationRouter from "./tripCrewLocation";
 import highlightsRouter from "./highlights";
@@ -136,6 +137,7 @@ import contentTranslationRouter from "./contentTranslation.js";
 import sharedMomentsRouter from "./sharedMoments.js";
 import placeRecapsRouter from "./placeRecaps.js";
 import wallRouter from "./wall.js";
+import wallTelemetryRouter from "./wallTelemetry.js";
 
 const router: IRouter = Router();
 
@@ -294,6 +296,13 @@ router.use(intelReadModelsRouter);
 // I4a outcome events — its own file (routes/intel.ts is owned by another unit),
 // mounted alongside the other intel routers.
 router.use(intelOutcomesRouter);
+// §24/Table-32 observability read for the four admin dashboards (admin-gated).
+router.use(intelObservabilityRouter);
 router.use(wallRouter);
+// The §32 telemetry ingest the Wall client has always POSTed to. Its own file
+// so the per-event allow-list stays unit-testable; no path overlap with
+// wallRouter, which owns /wall, /wall/live, /wall/quick-media and the
+// session-intent / impression / action mutations.
+router.use(wallTelemetryRouter);
 
 export default router;

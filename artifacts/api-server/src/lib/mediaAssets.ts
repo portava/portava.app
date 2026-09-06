@@ -13,6 +13,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { appStorageUrlInfo } from "./mediaUrl.js";
+import { exifFactsFrom } from "./exifFacts.js";
 import {
   initProvenance,
   appendEdit,
@@ -20,6 +21,67 @@ import {
   computeIntelligenceEligibility,
   type AppendEditOptions,
 } from "./media/mediaEvidenceEligibility.js";
+
+// ── Capture time (§6 / Wall §16 "two clocks") ────────────────────────────────
+
+/**
+ * `media_assets.captured_at` existed, `RecordAssetInput.capturedAt` existed, the
+ * provenance + evidence-eligibility computation read it, and the Wall's §16
+ * `experienceAt` producer (`loadCapturedAtByEntity`) joined to it — but NO
+ * production caller ever supplied a non-null value. Both `recordMediaAsset`
+ * call sites omitted the field, so the column had no writer, `experienceAt`
+ * could never differ from `publishedAt`, and every consumer took the
+ * `?? publishedAt` fallback forever.
+ *
+ * This is that writer. The upload route already holds the raw bytes and already
+ * parses their EXIF — `lib/exifFacts` is the presence-and-count parser behind
+ * `audit:storage-exif`, and it reads DateTimeOriginal/DateTime while
+ * deliberately never being able to produce a coordinate. Capture time is read
+ * from the RAW buffer, before `processImage` strips the metadata.
+ *
+ * PLAUSIBILITY IS ENFORCED, NOT ASSUMED. A camera with a dead clock, a
+ * hand-edited tag, or a container we mis-parse can all yield a date decades out.
+ * A `captured_at` that is wrong is worse than one that is absent: it feeds
+ * evidence eligibility and would put a Wall object on the wrong day. So a value
+ * outside [EARLIEST_PLAUSIBLE_CAPTURE, now + CAPTURE_CLOCK_SKEW_MS] is discarded
+ * and the column stays null — the honest "unknown".
+ */
+export const EARLIEST_PLAUSIBLE_CAPTURE_ISO = "1990-01-01T00:00:00.000Z";
+
+/**
+ * How far ahead of the server clock a capture time may sit before it is
+ * rejected. Device clocks drift and EXIF carries no timezone, so a photo taken
+ * "now" in a UTC+14 timezone legitimately reads up to 14 h in the future once
+ * exifFacts stamps the naive local time with a `Z`. 24 h covers that plus
+ * ordinary skew without admitting a wrong-decade date.
+ */
+export const CAPTURE_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Extract a plausible capture instant from an uploaded image's raw bytes.
+ * Returns an ISO string, or null when there is no EXIF, the container is one
+ * exifFacts does not scan, or the value fails the plausibility window.
+ *
+ * Never throws: a capture time is an enrichment, and an upload must never fail
+ * because its metadata was odd.
+ */
+export function capturedAtFromImageBytes(
+  buf: Buffer,
+  now: Date = new Date(),
+): string | null {
+  try {
+    const facts = exifFactsFrom(buf);
+    const raw = facts?.captureTs;
+    if (!raw) return null;
+    const ms = Date.parse(raw);
+    if (!Number.isFinite(ms)) return null;
+    if (ms < Date.parse(EARLIEST_PLAUSIBLE_CAPTURE_ISO)) return null;
+    if (ms > now.getTime() + CAPTURE_CLOCK_SKEW_MS) return null;
+    return new Date(ms).toISOString();
+  } catch {
+    return null;
+  }
+}
 
 // ── Canonical asset writes (dual-write, fail-soft) ────────────────────────────
 

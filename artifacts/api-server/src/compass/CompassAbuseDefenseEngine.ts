@@ -625,7 +625,17 @@ async function detectRefundAbuse(
     const q = db
       .from("rent_buddy_bookings")
       .select("traveler_id, status, created_at")
-      .in("status", ["cancelled", "refunded"])
+      // `refunded` is not a label of the `rent_buddy_booking_status` enum, and
+      // Postgres rejects an unknown enum literal outright (22P02) rather than
+      // matching nothing — so this read failed WHOLE, `{ data }` was undefined,
+      // and detector 8 of 8 has never flagged anyone. There is no refund status
+      // in the enum at all; the expressible half of the intent is the
+      // traveller's own cancellations, and `cancelled_by_traveler` is the label
+      // rentABuddy.ts:1636 writes for exactly that. Buddy-initiated
+      // cancellations are deliberately NOT counted here: the rows are grouped
+      // by traveler_id, so including them would flag travellers for something
+      // they did not do.
+      .in("status", ["cancelled", "cancelled_by_traveler"])
       .gte("created_at", since);
 
     if (userId) q.eq("traveler_id", userId);
