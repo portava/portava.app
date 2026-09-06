@@ -125,7 +125,61 @@ function balanced(sql: string, open: number): string | null {
  * nothing, which correctly leaves the column unmodelled rather than asserting a
  * vocabulary this parser did not understand.
  */
-export function vocabularyFromCheck(body: string): Map<string, Set<string>> {
+/**
+ * Drop SQL line comments, so a comment cannot truncate a value list.
+ *
+ * THE BUG THIS FIXES, measured 2026-09-06. The IN-list matcher below captures
+ * with `IN\s*\(([^)]*)\)`, which stops at the FIRST `)`. Migration 2250 writes:
+ *
+ *     CHECK (moderation_status IN (
+ *       -- §36 MediaModerationStatus (canonical)
+ *       'processing','active','limited','rejected','removed','owner_deleted',
+ *       -- legacy shipped values (0191), kept for existing rows
+ *       'pending','approved','flagged'
+ *     ))
+ *
+ * The `)` inside "(canonical)" closed the capture, the captured fragment held no
+ * quoted values, and the ENTIRE constraint was discarded in silence. So
+ * media_assets.moderation_status kept the baseline's `pending | approved |
+ * flagged | rejected` — a constraint 2250 had already DROPPED — and 'active',
+ * the canonical promoted state, read as dead. Proven both ways: the same text
+ * parses to nothing with the comments and to all nine values without them.
+ *
+ * This is not a write-side problem; it silently mis-scoped the FILTER side too,
+ * for every constraint written in this style. Comments are stripped before any
+ * matching rather than the regexes being made cleverer, because the failure was
+ * a comment being treated as SQL, not a parenthesis being hard to match.
+ *
+ * `--` INSIDE a string literal is not a comment: `CHECK (x IN ('a--b'))` is a
+ * legal value. The scan therefore tracks single-quoted literals, including the
+ * doubled-quote escape ('' inside a literal), and only strips outside them.
+ */
+export function stripSqlLineComments(sql: string): string {
+  let out = "";
+  let inStr = false;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i]!;
+    if (inStr) {
+      out += c;
+      if (c === "'") {
+        if (sql[i + 1] === "'") { out += "'"; i++; continue; }  // '' escape
+        inStr = false;
+      }
+      continue;
+    }
+    if (c === "'") { inStr = true; out += c; continue; }
+    if (c === "-" && sql[i + 1] === "-") {
+      while (i < sql.length && sql[i] !== "\n") i++;
+      out += "\n";
+      continue;
+    }
+    out += c;
+  }
+  return out;
+}
+
+export function vocabularyFromCheck(rawBody: string): Map<string, Set<string>> {
+  const body = stripSqlLineComments(rawBody);
   const out = new Map<string, Set<string>>();
   const add = (col: string, vals: string[]): void => {
     if (vals.length === 0) return;
@@ -287,14 +341,41 @@ function absorbCreateTables(sql: string, model: Model): void {
  * Nesting is not attempted: `$$` bodies do not nest in this repo, and a `$$`
  * that never closes is left alone rather than guessed at.
  */
-function* flattenStatements(sql: string): Generator<string> {
-  for (const stmt of splitStatements(sql)) {
+export function* flattenStatements(sql: string): Generator<string> {
+  const emit = function* (stmt: string): Generator<string> {
     yield stmt;
+    // ── AN `ALTER TABLE` GUARDED BY `IF … THEN` IS STILL AN ALTER TABLE ────────
+    // ALTER_TARGET_RE is anchored at the start of a statement, and the repo's
+    // idempotency idiom puts the DDL inside a conditional:
+    //
+    //     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE …) THEN
+    //       ALTER TABLE media_assets ADD CONSTRAINT …_canonical_check
+    //         CHECK (moderation_status IN (…));
+    //     END IF;
+    //
+    // Splitting the $$ body yields ONE statement beginning `IF NOT EXISTS`, so
+    // the anchor never matched and migration 2250's widening was invisible:
+    // media_assets.moderation_status kept the baseline's four values — from a
+    // constraint 2250 had already dropped — and 'active', the canonical promoted
+    // state, was reported dead. Re-yielding from each embedded `ALTER TABLE`
+    // gives the existing anchored parser a statement it can read, without
+    // loosening the anchor itself (which would start matching ALTER inside
+    // comments and strings).
+    //
+    // Over-yielding is safe: absorbAlters acts only on well-formed matches, and
+    // a slice that parses to nothing contributes nothing.
+    const re = /\bALTER\s+TABLE\b/gi;
+    for (let m = re.exec(stmt); m; m = re.exec(stmt)) {
+      if (m.index > 0) yield stmt.slice(m.index);
+    }
+  };
+  for (const stmt of splitStatements(sql)) {
+    yield* emit(stmt);
     let at = stmt.indexOf("$$");
     while (at !== -1) {
       const end = stmt.indexOf("$$", at + 2);
       if (end === -1) break;
-      for (const inner of splitStatements(stmt.slice(at + 2, end))) yield inner;
+      for (const inner of splitStatements(stmt.slice(at + 2, end))) yield* emit(inner);
       at = stmt.indexOf("$$", end + 2);
     }
   }

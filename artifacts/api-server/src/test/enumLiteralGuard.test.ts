@@ -59,6 +59,7 @@ import {
   SCAN_DIRS,
   BASELINE,
   MIGRATION_DIRS,
+  KNOWN_DEAD_WRITE_LITERALS,
 } from "../scripts/checkEnumLiterals.js";
 import { NON_ACTIVE_ACCOUNT_STATUSES } from "../lib/mediaEligibility.js";
 
@@ -332,11 +333,48 @@ describe("the repository is clean, and the ratchet is honest", () => {
   });
 
   it("the ratchet never grows past what this batch recorded", () => {
-    assert.ok(
-      Object.keys(KNOWN_DEAD_LITERALS).length <= 4,
+    // EXACT, not `<= 4`. The ceiling was written when the list held 4; it has
+    // since shrunk to 2, and a stale ceiling is slack — it silently permitted
+    // growing back to 4 without going red, which is the one direction a
+    // shrink-only ratchet forbids. An exact count fails in BOTH directions: add
+    // an entry and it fails, fix one without striking it off and it fails (that
+    // second half is also caught by staleRatchetKeys above).
+    //
+    // When an entry is genuinely repaired, lower this number in the same commit.
+    // That is not busywork — it is the only place the list's progress is asserted
+    // rather than described.
+    assert.equal(
+      Object.keys(KNOWN_DEAD_LITERALS).length, 2,
       "KNOWN_DEAD_LITERALS must shrink toward zero, never grow — a new dead " +
-        "literal is a defect to fix, not an entry to add",
+        "literal is a defect to fix, not an entry to add. If you repaired one, " +
+        "strike the entry AND lower this count.",
     );
+  });
+
+  it("the WRITE ratchet is exact too, and every entry is a live defect", () => {
+    // Kept separate from KNOWN_DEAD_LITERALS deliberately: merging them would
+    // bury the filter list's progress (2, heading for 0) inside a combined 15.
+    assert.equal(
+      Object.keys(KNOWN_DEAD_WRITE_LITERALS).length, 13,
+      "KNOWN_DEAD_WRITE_LITERALS is shrink-only. Every entry is a row the " +
+        "database REJECTS — 22P02 on an enum, 23514 on a text CHECK — so unlike " +
+        "the read side these are not quiet misses, they are writes that never " +
+        "landed. Fix one, strike it, and lower this count.",
+    );
+    for (const [key, entry] of Object.entries(KNOWN_DEAD_WRITE_LITERALS)) {
+      assert.match(key, /^src\/.+\.ts:[a-z0-9_]+\.[a-z0-9_]+:.+$/, `malformed key ${key}`);
+      assert.ok(entry.count >= 1, `${key} count must be >= 1`);
+      assert.ok(entry.note.length > 40, `${key} needs a real reason, not a label`);
+    }
+  });
+
+  it("the two ratchets never name the same key", () => {
+    // A key in both maps would be counted once by the merged partition and
+    // twice by the two ceilings above, so one of them could then be wrong
+    // without failing.
+    const overlap = Object.keys(KNOWN_DEAD_WRITE_LITERALS)
+      .filter((k) => k in KNOWN_DEAD_LITERALS);
+    assert.deepEqual(overlap, [], "a key may live on exactly one ratchet");
   });
 
   it("every ratchet key is well-formed and carries a reason", () => {

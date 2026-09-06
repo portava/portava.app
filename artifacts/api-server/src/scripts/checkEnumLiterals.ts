@@ -62,6 +62,7 @@
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractFilterLiterals, type LiteralSite } from "./lib/filterLiteralExtract.js";
+import { extractWriteLiterals } from "./lib/writeLiteralExtract.js";
 import {
   buildCanonicalVocabulary,
   type CanonicalVocabulary,
@@ -141,6 +142,152 @@ export const KNOWN_DEAD_LITERALS: Record<string, { count: number; note: string }
   },
 };
 
+/**
+ * WRITE-side dead literals — a SEPARATE ratchet, deliberately.
+ *
+ * These could have gone into KNOWN_DEAD_LITERALS above, and that would have been
+ * the wrong call: that list carries the invariant "must reach zero, must never
+ * grow", it is down to 2, and dropping 13 pre-existing write defects into it
+ * would destroy the one number that says how close the filter side is to done.
+ * A new check that finds pre-existing debt needs its own starting line.
+ *
+ * EVERY ENTRY HERE IS A LIVE DEFECT, not a tolerated quirk. A write literal the
+ * column cannot hold is worse than a read one: the read merely returns nothing,
+ * the write is REJECTED — 22P02 on an enum, 23514 on a text CHECK — so the row is
+ * never stored at all. In this repo the rejection is then swallowed by a
+ * fire-and-forget `catch {}` or a `logger.warn`, which is why every one of these
+ * has been shipping as a working feature.
+ *
+ * All 13 were verified against the LIVE CI schema (hwokxgbmezheskbzskfr,
+ * read-only), not merely against the baseline — the baseline alone would have
+ * mis-judged several, and did produce one false positive during development
+ * (media_assets.moderation_status:'active', legal since migration 2250).
+ *
+ * Ranked by consequence, worst first. These are FIXES, not exemptions.
+ */
+export const KNOWN_DEAD_WRITE_LITERALS: Record<string, { count: number; note: string }> = {
+  "src/routes/admin.ts:profiles.account_status:suspended": {
+    count: 2,
+    note:
+      "THE ADMIN SUSPEND ROUTE CANNOT SUCCEED. profiles_account_status_check " +
+      "permits active | deactivated | pending_deletion | deleted and no migration " +
+      "widens it. POST /admin/users/:userId/suspend surfaces the error, so the " +
+      "route always fails; the moderation path at :1134 folds it into " +
+      "sideEffects.accountState = 'error' and records the suspension only in " +
+      "user_account_states, while the access gates read profiles.account_status. " +
+      "Needs a decision: widen the CHECK, or point the gates at user_account_states.",
+  },
+  "src/routes/admin.ts:profiles.account_status:banned": {
+    count: 2,
+    note:
+      "THE ADMIN BAN ROUTE CANNOT SUCCEED — same column, same cause as 'suspended' " +
+      "above. POST /admin/users/:userId/ban returns db_error every time. Ban and " +
+      "suspend are the two strongest moderation actions and neither has ever " +
+      "written the field the access gates consult.",
+  },
+  "src/routes/rentABuddy.ts:message_threads.thread_type:rent_buddy_booking": {
+    count: 2,
+    note:
+      "RENT-A-BUDDY BOOKING CHAT CANNOT BE CREATED BY EITHER PATH. " +
+      "message_threads_thread_type_check permits circle | direct | trip. At :1917 " +
+      "the error is discarded (only `{ data: newThread }` is read) so the thread " +
+      "silently never exists; at :2542 it surfaces as 500 thread_creation_failed. " +
+      "Either add the label by migration or reuse 'direct' — a product decision.",
+  },
+  "src/routes/rentABuddySpec.ts:rent_buddy_profiles.status:draft": {
+    count: 1,
+    note:
+      "BUDDY-PROFILE CREATION VIA THIS ROUTE ALWAYS FAILS. rent_buddy_status is an " +
+      "ENUM (active | paused | pending | rejected | suspended) with no 'draft', so " +
+      "the upsert raises 22P02 and the handler returns db_error. 'pending' is the " +
+      "closest real label but means something different to the review queue, so " +
+      "this is a decision, not a rename.",
+  },
+  "src/routes/passport.ts:passport_postcards.status:removed_from_passport": {
+    count: 1,
+    note:
+      "'Remove postcard from passport' always 500s. The column is the post_status " +
+      "enum (active | deleted | hidden | reported). The intent — removed from the " +
+      "passport surface but not deleted — has no label; 'hidden' is the nearest and " +
+      "may be right, but it is a product call about whether the postcard is gone or " +
+      "merely unlisted.",
+  },
+  "src/routes/mediaFeed.ts:hidden_gems.status:deleted": {
+    count: 1,
+    note:
+      "Owner-delete of a hidden gem returns db_error. hidden_gem_status is " +
+      "active | hidden | merged | pending. Note the posts delete on the line above " +
+      "uses the same literal and IS legal, because posts.status is a different enum " +
+      "that does have 'deleted' — the two were written from one mental model.",
+  },
+  "src/services/appeals/resolveAppeal.ts:event_rsvps.status:attending": {
+    count: 1,
+    note:
+      "A GRANTED APPEAL NEVER RESTORES THE RSVP. event_rsvp_status is " +
+      "cant_go | going | interested | maybe; the intended label is 'going'. The " +
+      "event_membership branch returns { ok: false, action: 'noop' } every time, so " +
+      "an upheld appeal silently does nothing. This one looks like a plain rename, " +
+      "but it changes user-visible outcomes and belongs with the others.",
+  },
+  "src/routes/admin.ts:posts.post_status:removed": {
+    count: 1,
+    note:
+      "Admin report-resolution content removal fails for a post. The column is the " +
+      "delayed_post_status enum (canceled | draft | expired | pending_delay | " +
+      "pending_location_exit | pending_safety_review | private | published) — note " +
+      "it is NOT posts.status, which is the enum that does have removal labels. Two " +
+      "status columns on one table, and the wrong one was written.",
+  },
+  "src/routes/tripCrewLocation.ts:trip_crew_location_events.event_type:ghost_mode_on": {
+    count: 1,
+    note:
+      "Ghost-mode audit events are never recorded. The CHECK admits ghost_on, and " +
+      "NOTHING writes it — TripCrewLiveShareService.logEvent only emits " +
+      "live_share_started/stopped/expired and access_revoked. The insert failure is " +
+      "logged at warn and dropped, so the privacy-relevant audit trail for entering " +
+      "ghost mode is empty in every environment.",
+  },
+  "src/routes/tripCrewLocation.ts:trip_crew_location_events.event_type:ghost_mode_off": {
+    count: 1,
+    note:
+      "The exit half of the ghost-mode audit trail, same cause as ghost_mode_on. " +
+      "The admitted label is ghost_off.",
+  },
+  "src/routes/circle.ts:circle_audit_events.event_type:sharing_paused": {
+    count: 1,
+    note:
+      "Found only through call-site forwarding: writeAuditEvent writes " +
+      "event_type from opts.eventType and the caller at :572 supplies this. The " +
+      "CHECK's neighbour is 'presence_paused'. The audit row for a Circle privacy " +
+      "pause has never been written, and the insert logs 'circle audit insert " +
+      "failed (non-fatal)'. Note circle_presence.status = 'paused' on the SAME code " +
+      "path is legal — 2298 widened it — so this is the residue 2298 left behind.",
+  },
+  "src/routes/circle.ts:circle_audit_events.event_type:sharing_paused_on_session_end": {
+    count: 1,
+    note:
+      "The session-end half of the same audit gap, from the caller at :1867. No " +
+      "admitted label distinguishes 'paused because the session ended' from a " +
+      "manual pause, so collapsing both onto presence_paused loses a distinction " +
+      "the code is deliberately drawing. Needs a label or a decision to drop it.",
+  },
+  "src/services/hiddenGems/HiddenGemModerationService.ts:hidden_gem_reports.status:upheld": {
+    count: 1,
+    note:
+      "An UPHELD gem report is never closed and stays 'pending' forever. The CHECK " +
+      "is dismissed | pending | resolved, so only the ternary's 'upheld' VALUE " +
+      "branch is dead — the 'dismissed' branch works, and the 'upheld' on the left " +
+      "of the === is a comparison operand, not a write. The intended label is " +
+      "almost certainly 'resolved'.",
+  },
+};
+
+/** insert / upsert / update, including the ".fwd1" / ".fwd2" forwarded forms. */
+export function isWriteOp(op: string): boolean {
+  const base = op.split(".")[0]!;
+  return base === "insert" || base === "upsert" || base === "update";
+}
+
 export interface Finding extends LiteralSite {
   allowed: string[];
   origin: string;
@@ -202,7 +349,10 @@ export function partition(
 async function main(): Promise<void> {
   const verbose = process.argv.includes("--verbose");
   const vocab = buildCanonicalVocabulary(BASELINE, MIGRATION_DIRS);
-  const { sites, filesScanned } = extractFilterLiterals(SCAN_DIRS, API_ROOT);
+  const filters = extractFilterLiterals(SCAN_DIRS, API_ROOT);
+  const writes = extractWriteLiterals(SCAN_DIRS, API_ROOT);
+  const sites = [...filters.sites, ...writes.sites];
+  const filesScanned = filters.filesScanned;
   const judged = sites.filter((s) => vocab.values.has(`${s.table}.${s.column}`));
 
   console.log(
@@ -210,12 +360,53 @@ async function main(): Promise<void> {
       `(baseline + ${vocab.sources.migrationFiles} migrations).`,
   );
   console.log(
-    `Extracted ${sites.length} filter literal(s) across ${filesScanned} file(s); ` +
-      `${judged.length} sit on a column whose vocabulary is known.`,
+    `Extracted ${filters.sites.length} filter literal(s) and ${writes.sites.length} write ` +
+      `literal(s) across ${filesScanned} file(s); ${judged.length} sit on a column whose ` +
+      `vocabulary is known.`,
   );
 
+  // ── LIVENESS FLOORS — the script must not be able to pass by scanning nothing.
+  //
+  // `listTsFiles` swallows a readdir failure and returns [], so a wrong SCAN_DIRS
+  // yields sites: 0, filesScanned: 0 and NO throw. Today that is caught only
+  // because the ratchet is non-empty: its entries go stale and the run exits 1.
+  // The ratchet's stated goal is to reach zero — and at zero, a completely broken
+  // extractor would exit 0 and report success. The floors that prevent this lived
+  // only in enumLiteralGuard.test.ts, which is one curated-test-list edit away from
+  // not running. A check whose vacuity is caught only by another file is not a
+  // check, so the floors are asserted here too.
+  //
+  // The numbers are deliberately far below reality (measured: ~311 vocabularies,
+  // ~700 files, >1000 judged) so ordinary churn never trips them. They catch a
+  // COLLAPSE, not a change.
+  const floors: Array<[string, number, number]> = [
+    ["canonical vocabularies", vocab.values.size, 200],
+    ["files scanned", filesScanned, 300],
+    ["literals judged against a known vocabulary", judged.length, 500],
+  ];
+  const collapsed = floors.filter(([, actual, floor]) => actual < floor);
+  if (collapsed.length > 0) {
+    console.error("");
+    console.error("✗ check:enum-literals scanned far less than it should have — refusing to report success.");
+    for (const [what, actual, floor] of collapsed) {
+      console.error(`    ${what}: ${actual} (floor ${floor})`);
+    }
+    console.error(
+      "  A run that reaches nothing finds nothing, and with an empty ratchet that is\n" +
+      "  indistinguishable from a clean tree. Check SCAN_DIRS, the baseline path and the\n" +
+      "  migration directories before touching these floors.",
+    );
+    process.exit(1);
+  }
+
   const findings = findDeadLiterals(sites, vocab);
-  const { fresh, known, staleRatchetKeys, miscounted } = partition(findings, KNOWN_DEAD_LITERALS);
+  // One partition over BOTH ratchets. They are separate maps so the filter list's
+  // "must reach zero, must never grow" invariant stays a real number, but a
+  // finding is a finding and the exact-count mechanism is identical for both.
+  const { fresh, known, staleRatchetKeys, miscounted } = partition(findings, {
+    ...KNOWN_DEAD_LITERALS,
+    ...KNOWN_DEAD_WRITE_LITERALS,
+  });
 
   if (verbose) {
     for (const f of known) {
@@ -227,7 +418,7 @@ async function main(): Promise<void> {
 
   if (fresh.length > 0) {
     failed = true;
-    console.error(`\n✗ ${fresh.length} filter literal(s) name a value the column cannot hold:\n`);
+    console.error(`\n✗ ${fresh.length} literal(s) name a value the column cannot hold:\n`);
     for (const f of fresh) {
       console.error(`  ${f.file}:${f.line}`);
       console.error(`    ${f.table}.${f.column} (${f.origin}) ${f.op} "${f.literal}"`);
@@ -258,9 +449,18 @@ async function main(): Promise<void> {
 
   if (failed) process.exit(1);
 
+  // Report the two ratchets SEPARATELY. Summing them would hide the number that
+  // matters: the filter list is down to 2 and must reach zero, and burying it
+  // inside a combined 18 would make its progress invisible.
+  const knownFilter = known.filter((f) => !isWriteOp(f.op)).length;
+  const knownWrite = known.filter((f) => isWriteOp(f.op)).length;
   console.log(
-    `\n✓ No dead filter literals. ${known.length} known dead literal(s) remain on the ` +
-      `ratchet (expected ${Object.keys(KNOWN_DEAD_LITERALS).length}); that list must shrink.`,
+    `\n✓ No undeclared literals off the ratchets.\n` +
+      `    filter side: ${knownFilter} finding(s) across ` +
+      `${Object.keys(KNOWN_DEAD_LITERALS).length} ratcheted key(s) — must reach zero.\n` +
+      `    write side:  ${knownWrite} finding(s) across ` +
+      `${Object.keys(KNOWN_DEAD_WRITE_LITERALS).length} ratcheted key(s) — each one is a ` +
+      `rejected row, not a quiet miss.`,
   );
 }
 
