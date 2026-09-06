@@ -95,7 +95,10 @@ async function buildProfile(
       .select("city, country")
       .eq("user_id", userId)
       .maybeSingle(),
-    db.from("user_location_preferences")
+    // `location_preferences` is the table the settings route actually writes;
+    // `user_location_preferences` is its writerless duplicate. See
+    // services/location/LocationPermissionService.ts for the full note.
+    db.from("location_preferences")
       .select("location_mode, sharing_paused, safe_return_enabled")
       .eq("user_id", userId)
       .maybeSingle(),
