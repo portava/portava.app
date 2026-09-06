@@ -63,6 +63,15 @@
  * disregard it, which is what the disclaimer says.
  */
 import { lookupRequirement, ENTRY_FLAG, DISCLAIMER } from "./entryRequirements.js";
+
+/**
+ * Compile-time tie between the literal passed to isFlagEnabled above and the
+ * canonical constant. If ENTRY_FLAG is ever renamed, this assignment fails to
+ * typecheck — so the flag-polarity scanner keeps its literal and the codebase
+ * keeps its single source of truth.
+ */
+const ENTRY_FLAG_TIE: typeof ENTRY_FLAG = "passport_entry_intelligence_enabled";
+void ENTRY_FLAG_TIE;
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger as rootLogger } from "./logger.js";
 
@@ -195,7 +204,13 @@ export async function resolveEntryEligibility(
   // get a private door into curated entry data.
   let flagOn = false;
   try {
-    flagOn = await isFlagEnabled(sc, ENTRY_FLAG);
+    // The LITERAL, not the imported constant, and deliberately so:
+    // check:flag-polarity must be able to tell statically whether a flag is a
+    // kill switch, and it refuses an argument it cannot resolve rather than
+    // shrugging — "I could not tell which flag this is" and "this flag is fine"
+    // must not look the same. ENTRY_FLAG_TIE below makes the two impossible to
+    // drift apart: change the constant and this file stops compiling.
+    flagOn = await isFlagEnabled(sc, "passport_entry_intelligence_enabled");
   } catch {
     return unresolved("lookup_failed", null, destination);
   }

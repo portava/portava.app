@@ -12,7 +12,12 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BASELINE_PATH, notNullColumns } from "../scripts/parseBaselineSchema.js";
+import {
+  BASELINE_PATH,
+  notNullColumns,
+  parseNullabilityOverrides,
+  effectiveNotNullColumns,
+} from "../scripts/parseBaselineSchema.js";
 import { findNullWrites, nulledColumn } from "../scripts/checkNotNullWrites.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -81,6 +86,54 @@ describe("payload parsing — the false-positive class", () => {
   });
 });
 
+describe("post-baseline nullability overrides", () => {
+  const mig = (name: string, sql: string) => ({ name, sql });
+
+  it("a later DROP NOT NULL removes the baseline's constraint", () => {
+    const o = parseNullabilityOverrides([
+      mig("2312_x.sql", "ALTER TABLE public.alpha ALTER COLUMN a DROP NOT NULL;"),
+    ]);
+    const base = "CREATE TABLE public.alpha (\n    a text NOT NULL,\n    b text NOT NULL\n);";
+    assert.deepEqual([...effectiveNotNullColumns(base, "alpha", o)], ["b"]);
+  });
+
+  it("a later SET NOT NULL re-tightens, and ORDER decides", () => {
+    // The direction matters. Parsing only DROP would leave a re-tightened
+    // column permanently exempt — a real weakening of every caller.
+    const o = parseNullabilityOverrides([
+      mig("2400_retighten.sql", "ALTER TABLE public.alpha ALTER COLUMN a SET NOT NULL;"),
+      mig("2312_loosen.sql", "ALTER TABLE public.alpha ALTER COLUMN a DROP NOT NULL;"),
+    ]);
+    const base = "CREATE TABLE public.alpha (\n    a text NOT NULL\n);";
+    assert.deepEqual([...effectiveNotNullColumns(base, "alpha", o)], ["a"],
+      "2400 applies after 2312, so the column is NOT NULL again");
+  });
+
+  it("a column made NOT NULL after the baseline is added, not ignored", () => {
+    const o = parseNullabilityOverrides([
+      mig("2320_x.sql", "ALTER TABLE public.alpha ALTER COLUMN b SET NOT NULL;"),
+    ]);
+    const base = "CREATE TABLE public.alpha (\n    a text NOT NULL,\n    b text\n);";
+    assert.deepEqual([...effectiveNotNullColumns(base, "alpha", o)].sort(), ["a", "b"]);
+  });
+
+  it("a COMMENTED-OUT alter changes nothing", () => {
+    // This band comments heavily, and migrations routinely DESCRIBE constraints
+    // they are not touching. A described change must not register as one.
+    const o = parseNullabilityOverrides([
+      mig("2312_x.sql", "-- ALTER TABLE public.alpha ALTER COLUMN a DROP NOT NULL;\nSELECT 1;"),
+    ]);
+    assert.equal(o.dropped.size, 0);
+  });
+
+  it("reads the REAL 2312, so this guard is not merely theoretical", () => {
+    const sql = readFileSync(resolve(SRC_ROOT, "migrations/2312_layover_travel_time_unknown.sql"), "utf8");
+    const o = parseNullabilityOverrides([mig("2312_layover_travel_time_unknown.sql", sql)]);
+    assert.ok(o.dropped.get("layover_recommendations")?.has("travel_time_min"));
+    assert.ok(o.dropped.get("layover_plan_stops")?.has("travel_min"));
+  });
+});
+
 describe("the whole tree — no write nulls a NOT NULL column", () => {
   const SKIP_DIRS = new Set(["test", "node_modules"]);
   const SKIP_FILES = new Set(["database.types.ts"]);
@@ -97,14 +150,27 @@ describe("the whole tree — no write nulls a NOT NULL column", () => {
   const writes = walk(SRC_ROOT).flatMap((f) =>
     findNullWrites(readFileSync(f, "utf8"), relative(SRC_ROOT, f)));
 
+  const MIGRATIONS_DIR = resolve(SRC_ROOT, "migrations");
+  const OVERRIDES = parseNullabilityOverrides(
+    readdirSync(MIGRATIONS_DIR)
+      .filter((n) => n.endsWith(".sql"))
+      .map((n) => ({ name: n, sql: readFileSync(join(MIGRATIONS_DIR, n), "utf8") })),
+  );
+
   it("finds payloads at all — a vacuous check is worse than none", () => {
     assert.ok(writes.length > 50, `only ${writes.length} payloads found; the extractor is stale`);
   });
 
-  it("no nulled column is NOT NULL in the baseline", () => {
+  it("no nulled column is NOT NULL in the EFFECTIVE schema (baseline + migrations)", () => {
+    // The baseline is a SNAPSHOT, not the current schema. Checking a write
+    // against it alone reports a forward migration's own intent as a defect:
+    // 2312 drops NOT NULL from layover travel-time columns precisely so an
+    // unmeasured journey can be stored as unknown, and this guard called that
+    // honest write a violation. Schema truth here is the same as everywhere
+    // else in this repo — the baseline PLUS later migrations.
     const bad: string[] = [];
     for (const w of writes) {
-      const nn = notNullColumns(BASELINE_SQL, w.table);
+      const nn = effectiveNotNullColumns(BASELINE_SQL, w.table, OVERRIDES);
       for (const col of w.nulled) if (nn.has(col)) bad.push(`${w.file}:${w.line} ${w.table}.${col}`);
     }
     assert.deepEqual(bad, [], `write payload(s) null a NOT NULL column:\n  ${bad.join("\n  ")}`);

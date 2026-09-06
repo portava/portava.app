@@ -108,3 +108,75 @@ export function notNullColumns(sql: string, table: string): Set<string> {
   }
   return cols;
 }
+
+/**
+ * Post-baseline nullability changes, read from src/migrations.
+ *
+ * WHY THIS EXISTS. `notNullColumns` reads the committed baseline dump, and the
+ * baseline is a SNAPSHOT — it is not the current schema. The repo's standing
+ * rule is that schema truth is "the baseline PLUS later migrations", and every
+ * consumer of this module that skips the second half will eventually report a
+ * column as NOT NULL after a forward migration has dropped that constraint.
+ *
+ * That is not hypothetical: 2312 drops NOT NULL from
+ * layover_recommendations.travel_time_min and layover_plan_stops.travel_min so
+ * an unmeasured journey can be stored as unknown instead of as a confident
+ * zero. Without this, the guard reads the baseline, sees NOT NULL, and reports
+ * the honest write as a defect.
+ *
+ * DIRECTION MATTERS, so both are parsed and applied in filename order: a later
+ * `SET NOT NULL` re-tightens a column an earlier migration loosened. Parsing
+ * only DROP would let a re-tightened column stay permanently exempt, which
+ * would be a real weakening of every caller.
+ *
+ * Returns a map of `table` -> { dropped, set }, already reduced to the FINAL
+ * state after all migrations are applied in order.
+ */
+export interface NullabilityOverrides {
+  /** Columns whose NOT NULL a later migration removed and did not restore. */
+  dropped: Map<string, Set<string>>;
+  /** Columns a later migration made NOT NULL that the baseline did not. */
+  added: Map<string, Set<string>>;
+}
+
+const ALTER_NULLABILITY =
+  /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:public\.)?([A-Za-z0-9_]+)\s+ALTER\s+COLUMN\s+([A-Za-z0-9_]+)\s+(DROP|SET)\s+NOT\s+NULL/gi;
+
+export function parseNullabilityOverrides(files: Array<{ name: string; sql: string }>): NullabilityOverrides {
+  const dropped = new Map<string, Set<string>>();
+  const added = new Map<string, Set<string>>();
+  const add = (m: Map<string, Set<string>>, t: string, c: string) => {
+    let s = m.get(t);
+    if (!s) { s = new Set(); m.set(t, s); }
+    s.add(c);
+  };
+  const del = (m: Map<string, Set<string>>, t: string, c: string) => m.get(t)?.delete(c);
+
+  // Filename order is apply order for this band, so a later file wins.
+  for (const f of [...files].sort((a, b) => a.name.localeCompare(b.name))) {
+    // Strip line comments so a migration DOCUMENTING a constraint it is not
+    // changing (this band comments heavily) cannot register as a change.
+    const sql = f.sql.replace(/^\s*--.*$/gm, "");
+    for (const m of sql.matchAll(ALTER_NULLABILITY)) {
+      const [, table, column, verb] = m;
+      if (verb.toUpperCase() === "DROP") { add(dropped, table, column); del(added, table, column); }
+      else { add(added, table, column); del(dropped, table, column); }
+    }
+  }
+  return { dropped, added };
+}
+
+/**
+ * The effective NOT NULL set for a table: the baseline, minus what later
+ * migrations dropped, plus what they added.
+ */
+export function effectiveNotNullColumns(
+  baselineSql: string,
+  table: string,
+  overrides: NullabilityOverrides,
+): Set<string> {
+  const cols = notNullColumns(baselineSql, table);
+  for (const c of overrides.dropped.get(table) ?? []) cols.delete(c);
+  for (const c of overrides.added.get(table) ?? []) cols.add(c);
+  return cols;
+}
