@@ -119,23 +119,64 @@ async function getMemberRole(
   }
 }
 
-/** Admin default radius — returns 150 if table missing. */
-async function getAdminDefaults(db: ReturnType<typeof getServiceClient>) {
-  try {
-    const { data } = await db!
-      .from("geofence_admin_settings")
-      .select("default_radius_m, min_radius_m, max_radius_m, no_show_affects_reliability")
-      .eq("id", 1)
-      .maybeSingle();
-    return {
-      defaultRadiusM:           (data as any)?.default_radius_m             ?? 150,
-      minRadiusM:               (data as any)?.min_radius_m                 ?? 50,
-      maxRadiusM:               (data as any)?.max_radius_m                 ?? 5000,
-      noShowAffectsReliability: (data as any)?.no_show_affects_reliability  ?? false,
-    };
-  } catch {
-    return { defaultRadiusM: 150, minRadiusM: 50, maxRadiusM: 5000, noShowAffectsReliability: false };
+/**
+ * Hardcoded fallbacks, used ONLY when geofence_admin_settings does not exist as
+ * a table — i.e. an under-migrated environment, where there is no admin
+ * intention to honour in the first place.
+ */
+const GEOFENCE_FALLBACK_DEFAULTS = {
+  defaultRadiusM:           150,
+  minRadiusM:               50,
+  maxRadiusM:               5000,
+  noShowAffectsReliability: false,
+} as const;
+
+/** PostgREST/Postgres codes that mean "this table is not in the schema at all". */
+const TABLE_ABSENT_CODES = new Set(["PGRST205", "42P01"]);
+
+export class GeofenceSettingsUnavailableError extends Error {
+  constructor(public readonly detail: string) {
+    super(`geofence_admin_settings unavailable: ${detail}`);
+    this.name = "GeofenceSettingsUnavailableError";
   }
+}
+
+/**
+ * Admin-configured radius bounds.
+ *
+ * The `?? 5000` maxRadiusM was the live one: an admin who had narrowed the
+ * maximum to, say, 300 m had that ceiling silently replaced by 5 km whenever
+ * the settings read failed — a transient error quietly restoring a bound the
+ * admin had deliberately tightened, with no signal anywhere. A hardcoded
+ * default may stand in for a table that DOESN'T EXIST; it may not stand in for
+ * a table that exists and could not be read, because those rows are somebody's
+ * decision.
+ *
+ * Absent table (PGRST205 / 42P01) → documented fallbacks.
+ * Any other error → throw, so the caller fails rather than silently widening.
+ */
+async function getAdminDefaults(db: ReturnType<typeof getServiceClient>) {
+  const { data, error } = await db!
+    .from("geofence_admin_settings")
+    .select("default_radius_m, min_radius_m, max_radius_m, no_show_affects_reliability")
+    .eq("id", 1)
+    .maybeSingle();
+
+  if (error) {
+    if (TABLE_ABSENT_CODES.has((error as any).code)) {
+      return { ...GEOFENCE_FALLBACK_DEFAULTS };
+    }
+    throw new GeofenceSettingsUnavailableError(error.message);
+  }
+
+  // No row is a real, readable answer: the singleton has never been configured,
+  // so the documented defaults are the admin-set values by omission.
+  return {
+    defaultRadiusM:           (data as any)?.default_radius_m             ?? GEOFENCE_FALLBACK_DEFAULTS.defaultRadiusM,
+    minRadiusM:               (data as any)?.min_radius_m                 ?? GEOFENCE_FALLBACK_DEFAULTS.minRadiusM,
+    maxRadiusM:               (data as any)?.max_radius_m                 ?? GEOFENCE_FALLBACK_DEFAULTS.maxRadiusM,
+    noShowAffectsReliability: (data as any)?.no_show_affects_reliability  ?? GEOFENCE_FALLBACK_DEFAULTS.noShowAffectsReliability,
+  };
 }
 
 /** Write an attendance event (never auto-punishes). */
@@ -387,8 +428,21 @@ router.post("/trips/:tripId/geofence", async (req, res) => {
     return;
   }
 
-  // Validate radius against admin settings
-  const adminDefaults = await getAdminDefaults(db);
+  // Validate radius against admin settings. If the admin's bounds cannot be
+  // read we refuse the write rather than clamping against a 5 km ceiling the
+  // admin may have narrowed — a geofence saved against fabricated bounds looks
+  // exactly like one the admin permitted.
+  let adminDefaults: Awaited<ReturnType<typeof getAdminDefaults>>;
+  try {
+    adminDefaults = await getAdminDefaults(db);
+  } catch (e) {
+    req.log?.error(
+      { err: (e as Error).message, tripId },
+      "geofence create: admin settings unreadable — refusing to clamp against hardcoded bounds",
+    );
+    sendError(res, "degraded_unavailable", "Geofence settings are temporarily unavailable");
+    return;
+  }
   const radiusM = Math.max(
     adminDefaults.minRadiusM,
     Math.min(adminDefaults.maxRadiusM, parsed.data.checkInRadiusM),
@@ -725,19 +779,46 @@ router.get("/trips/:tripId/geofence/attendance", async (req, res) => {
   const geofenceId = (gf as any).id;
 
   // Accepted members
-  const { data: members } = await db
+  //
+  // This endpoint is an ATTENDANCE SHEET, and the host acts on it: the
+  // adjacent override route lets them mark a member `no_show`, which fires
+  // recordActivityEvent / endFairExposure against that person's record. With
+  // the errors unbound, an unreadable trip_members or plan_checkins resolved to
+  // `[]`, every member fell through to the `?? "not_checked_in"` default, and
+  // the totals were computed off that — a sheet stating, with no hedge, that
+  // nobody had arrived. Marking real attendees as no-shows is a consequence the
+  // host cannot see is unfounded, so the sheet is withheld instead of guessed.
+  const { data: members, error: membersErr } = await db
     .from("trip_members")
     .select("user_id")
     .eq("trip_id", tripId)
     .eq("role", "member");
 
+  if (membersErr) {
+    req.log?.error(
+      { err: membersErr.message, tripId },
+      "geofence attendance: trip_members unreadable — refusing to render an attendance sheet",
+    );
+    sendError(res, "degraded_unavailable", "Attendance is temporarily unavailable");
+    return;
+  }
+
   const memberIds: string[] = (members ?? []).map((m: any) => m.user_id);
 
   // Check-in rows
-  const { data: checkins } = await db
+  const { data: checkins, error: checkinsErr } = await db
     .from("plan_checkins")
     .select("user_id, status, checked_in_at, updated_at")
     .eq("geofence_id", geofenceId);
+
+  if (checkinsErr) {
+    req.log?.error(
+      { err: checkinsErr.message, tripId, geofenceId },
+      "geofence attendance: plan_checkins unreadable — refusing to default every member to not_checked_in",
+    );
+    sendError(res, "degraded_unavailable", "Attendance is temporarily unavailable");
+    return;
+  }
 
   const checkinMap: Record<string, any> = {};
   for (const c of checkins ?? []) checkinMap[(c as any).user_id] = c;

@@ -43,6 +43,55 @@ const router = Router();
 
 // ── Admin guard ───────────────────────────────────────────────────────────────
 
+// ── Moderation-record sections: fail LOUD, never a fabricated clean record ────
+//
+// A moderator decides whether to unban on what these endpoints render. supabase-js
+// RESOLVES `{ data, error }`, so an unreadable `moderation_actions`, `reports` or
+// `user_account_states` used to arrive as `data === undefined`, get coalesced by
+// `?? []` / `?? 0`, and be drawn as an EMPTY moderation history and `openReports: 0`
+// — indistinguishable from a user who genuinely has a clean record. That is the
+// worst possible failure mode for this surface: it does not withhold a decision,
+// it argues for one.
+//
+// Every moderation-bearing section is therefore returned as `{ status, rows }`.
+// `status: "unavailable"` carries the reason and `rows: null` — never `[]`, never
+// `0` — so the UI has nothing it could mistake for a measurement. The legacy
+// top-level keys are kept (the shape other callers already read) but mirror the
+// same values, so an unavailable section reads `null` there too.
+
+type SectionStatus = "ok" | "unavailable";
+
+interface Section<T> {
+  status: SectionStatus;
+  rows:   T | null;
+  /** Present only when status is "unavailable". */
+  error?: string;
+}
+
+/**
+ * Wrap a supabase list result as a section — `[]` only when the read succeeded.
+ * A missing result object is itself an absence of measurement, not an empty list.
+ */
+function listSection<T>(r: { data: T[] | null; error: { message: string } | null } | undefined): Section<T[]> {
+  if (!r) return { status: "unavailable", rows: null, error: "no result returned" };
+  if (r.error) return { status: "unavailable", rows: null, error: r.error.message };
+  return { status: "ok", rows: (r.data ?? []) as T[] };
+}
+
+/** Wrap a supabase head-count result as a section — `0` only when the read succeeded. */
+function countSection(r: { count: number | null; error: { message: string } | null } | undefined): Section<number> {
+  if (!r) return { status: "unavailable", rows: null, error: "no result returned" };
+  if (r.error) return { status: "unavailable", rows: null, error: r.error.message };
+  return { status: "ok", rows: r.count ?? 0 };
+}
+
+/** Names of the sections that could not be read, for the top-level degraded marker. */
+function unavailableSections(sections: Record<string, Section<unknown>>): string[] {
+  return Object.entries(sections)
+    .filter(([, s]) => s.status === "unavailable")
+    .map(([name]) => name);
+}
+
 // ── Geo zone schemas ──────────────────────────────────────────────────────────
 
 // Valid zone_type values from the migration comment
@@ -1262,11 +1311,22 @@ router.get("/admin/users", async (req, res) => {
 
   const onboardingRow: any = onboardingRes.data ?? null;
 
+  // `openReports: 0` on an unread `reports` table is the single most dangerous
+  // value this endpoint can emit — it is the number a moderator unbans on.
+  const sections = {
+    accountStates: listSection(accountStateRes as any),
+    openReports:   countSection(reportCountRes as any),
+  };
+  const degradedSections = unavailableSections(sections);
+
   void logAdminAccess(sc, admin.userId, "profile", userId, "view", accessReason(req));
   res.json({
     profile:         profileData,
-    accountStates:   accountStateRes.data ?? [],
-    openReports:     reportCountRes.count ?? 0,
+    accountStates:   sections.accountStates.rows,
+    openReports:     sections.openReports.rows,
+    sections,
+    degraded:        degradedSections.length > 0,
+    unavailableSections: degradedSections,
     onboardingStatus: onboardingRow
       ? { completed: onboardingRow.onboarding_completed === true, completedAt: onboardingRow.onboarding_completed_at ?? null }
       : null,
@@ -1333,17 +1393,32 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
 
   if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
 
+  const sections = {
+    accountStates:     listSection(accountStateRes     as any),
+    moderationActions: listSection(modActionsRes       as any),
+    reportsReceived:   listSection(reportsReceivedRes  as any),
+    reportsFiled:      listSection(reportsFiledRes     as any),
+    trustRestrictions: listSection(trustRes            as any),
+    blockCount:        countSection(blocksRes          as any),
+    muteCount:         countSection(mutesRes           as any),
+    restrictCount:     countSection(restrictsRes       as any),
+  };
+  const degradedSections = unavailableSections(sections);
+
   void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
     profile:           profileRes.data,
-    accountStates:     accountStateRes.data    ?? [],
-    moderationActions: modActionsRes.data      ?? [],
-    reportsReceived:   reportsReceivedRes.data ?? [],
-    reportsFiled:      reportsFiledRes.data    ?? [],
-    trustRestrictions: (trustRes as any).data  ?? [],
-    blockCount:        blocksRes.count          ?? 0,
-    muteCount:         mutesRes.count           ?? 0,
-    restrictCount:     restrictsRes.count       ?? 0,
+    accountStates:     sections.accountStates.rows,
+    moderationActions: sections.moderationActions.rows,
+    reportsReceived:   sections.reportsReceived.rows,
+    reportsFiled:      sections.reportsFiled.rows,
+    trustRestrictions: sections.trustRestrictions.rows,
+    blockCount:        sections.blockCount.rows,
+    muteCount:         sections.muteCount.rows,
+    restrictCount:     sections.restrictCount.rows,
+    sections,
+    degraded:          degradedSections.length > 0,
+    unavailableSections: degradedSections,
   });
 });
 
@@ -2690,13 +2765,24 @@ router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
 
   if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
 
+  const sections = {
+    accountStates:     listSection(accountStateRes    as any),
+    moderationActions: listSection(modActionsRes      as any),
+    reportsReceived:   listSection(reportsReceivedRes as any),
+    reportsFiled:      listSection(reportsFiledRes    as any),
+  };
+  const degradedSections = unavailableSections(sections);
+
   void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
     profile:           profileRes.data,
-    accountStates:     accountStateRes.data    ?? [],
-    moderationActions: modActionsRes.data      ?? [],
-    reportsReceived:   reportsReceivedRes.data ?? [],
-    reportsFiled:      reportsFiledRes.data    ?? [],
+    accountStates:     sections.accountStates.rows,
+    moderationActions: sections.moderationActions.rows,
+    reportsReceived:   sections.reportsReceived.rows,
+    reportsFiled:      sections.reportsFiled.rows,
+    sections,
+    degraded:          degradedSections.length > 0,
+    unavailableSections: degradedSections,
   });
 });
 

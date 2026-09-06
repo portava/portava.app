@@ -5006,7 +5006,20 @@ router.get("/rent-a-buddy/admin/safety/events", async (req, res) => {
 
   if (status) query = query.eq("event_status", status);
 
-  const { data, count } = await query;
+  // FAIL LOUD. This is the queue an admin works emergencies out of. With the
+  // error unbound, an unreadable rent_buddy_safety_events resolved to
+  // `data === undefined` and rendered "no open safety events" — an empty queue
+  // is exactly what a healthy queue looks like, so nobody would go looking, and
+  // triggered emergency phrases would sit unread behind a reassuring screen.
+  // An empty list must mean the table was read and is empty.
+  const { data, count, error } = await query;
+  if (error) {
+    req.log?.error(
+      { err: error.message, status },
+      "rent_buddy_safety_events queue read failed — refusing to render an empty queue",
+    );
+    return sendError(res, "db_error", "Safety event queue is unavailable", { exposeDetail: true });
+  }
   return res.json({ events: data ?? [], total: count ?? 0 });
 });
 
@@ -5882,12 +5895,38 @@ router.post("/rent-a-buddy/admin/run-risk-scan", async (req, res) => {
     { eventType: "comfort_check_distress",    threshold: 3, riskLevel: "watch",        reason: "repeated_distress_checkins" },
   ];
 
+  // Users whose current risk state could not be read. They are skipped, not
+  // defaulted, and named in the response so the scan is honest about its gaps.
+  const skipped: Array<{ userId: string; reason: string }> = [];
+
   for (const pt of PATTERN_THRESHOLDS) {
-    const { data: events } = await serviceClient
+    const { data: events, error: eventsErr } = await serviceClient
       .from("rent_buddy_safety_events")
       .select("target_user_id")
       .eq("event_type", pt.eventType)
       .gte("created_at", since);
+
+    // ABORT — do not return `{ ok: true, flagged: [] }` off an unread table.
+    // With the error unbound, an unreadable rent_buddy_safety_events produced a
+    // scan that measured nothing and reported it in the exact words of a scan
+    // that measured everything and found nobody at risk. A partial scan is also
+    // not reportable as a clean one: patterns already elevated in earlier
+    // iterations stand (they were real), but the caller is told the sweep is
+    // incomplete rather than being handed a false all-clear.
+    if (eventsErr) {
+      req.log?.error(
+        { err: eventsErr.message, eventType: pt.eventType },
+        "risk scan aborted — rent_buddy_safety_events unreadable",
+      );
+      return res.status(500).json({
+        error:      "scan_incomplete",
+        message:    `Risk scan aborted: safety events for "${pt.eventType}" could not be read. No clean result is implied.`,
+        eventType:  pt.eventType,
+        flagged,
+        skipped,
+        scannedAt:  now.toISOString(),
+      });
+    }
 
     const counts: Record<string, number> = {};
     for (const ev of (events ?? []) as any[]) {
@@ -5896,23 +5935,66 @@ router.post("/rent-a-buddy/admin/run-risk-scan", async (req, res) => {
 
     for (const [uid, cnt] of Object.entries(counts)) {
       if (cnt >= pt.threshold) {
-        const { data: profile } = await serviceClient
+        const { data: profile, error: profileErr } = await serviceClient
           .from("rent_buddy_profiles")
           .select("risk_review_status")
           .eq("user_id", uid)
           .maybeSingle();
 
-        const currentRisk = (profile as any)?.risk_review_status ?? "normal";
+        // NEVER WRITE ON AN UNREAD CURRENT STATE.
+        //
+        // `?? "normal"` used to serve two different situations with one value:
+        // "this buddy is genuinely normal" and "the read failed". Because
+        // "normal" is index 0, the ratchet `newIdx > currentIdx` was true for
+        // EVERY threshold — so an unreadable profile row let a `suspended`
+        // buddy be silently rewritten to `watch`. The comparison is a ratchet
+        // only while the left-hand side is real; with an unknown current state
+        // there is nothing to ratchet against, so the user is skipped.
+        if (profileErr) {
+          req.log?.warn(
+            { err: profileErr.message, userId: uid },
+            "risk scan: current risk state unreadable — skipping user rather than writing",
+          );
+          skipped.push({ userId: uid, reason: "current_risk_unreadable" });
+          continue;
+        }
+        // No row at all is a different fact from a failed read: this user has no
+        // rent_buddy_profiles row, so there is no status to elevate. Skip too —
+        // an update on `.eq("user_id", uid)` would match nothing anyway, and
+        // reporting them as `flagged` would claim a write that never happened.
+        if (!profile) {
+          skipped.push({ userId: uid, reason: "no_buddy_profile" });
+          continue;
+        }
+
+        const currentRisk = (profile as any).risk_review_status ?? "normal";
         const riskOrder = ["normal","watch","limited","under_review","suspended"];
         const currentIdx = riskOrder.indexOf(currentRisk);
         const newIdx = riskOrder.indexOf(pt.riskLevel);
 
+        // An unrecognised stored label (indexOf → -1) is also not a known
+        // current state; elevating off it would be the same unread-state write.
+        if (currentIdx < 0) {
+          skipped.push({ userId: uid, reason: "unknown_risk_label" });
+          continue;
+        }
+
         if (newIdx > currentIdx) {
-          await serviceClient.from("rent_buddy_profiles").update({
+          const { error: updateErr } = await serviceClient.from("rent_buddy_profiles").update({
             risk_review_status: pt.riskLevel,
             risk_review_note: `Auto-elevated: ${pt.reason} (${cnt} events in ${windowDays}d)`,
             risk_reviewed_at: new Date().toISOString(),
           }).eq("user_id", uid);
+
+          // Only report an elevation that actually landed.
+          if (updateErr) {
+            req.log?.error(
+              { err: updateErr.message, userId: uid },
+              "risk scan: elevation write failed",
+            );
+            skipped.push({ userId: uid, reason: "elevation_write_failed" });
+            continue;
+          }
 
           flagged.push({ userId: uid, reason: pt.reason, elevatedTo: pt.riskLevel });
         }
@@ -5920,7 +6002,7 @@ router.post("/rent-a-buddy/admin/run-risk-scan", async (req, res) => {
     }
   }
 
-  return res.json({ ok: true, flagged, scannedAt: now.toISOString() });
+  return res.json({ ok: true, flagged, skipped, scannedAt: now.toISOString() });
 });
 
 // ── Training checklist ─────────────────────────────────────────────────────────
