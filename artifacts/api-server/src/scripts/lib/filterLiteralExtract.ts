@@ -74,7 +74,13 @@ export function listTsFiles(dir: string): string[] {
   return out;
 }
 
-function unwrap(expr: ts.Expression): ts.Expression {
+/**
+ * Exported so the WRITE-side extractor shares this rule rather than growing a
+ * second copy of it. Two implementations of "what is a Supabase chain, and on
+ * what table" is how the two halves of a defect end up in two lists that cannot
+ * see each other.
+ */
+export function unwrap(expr: ts.Expression): ts.Expression {
   let cur = expr;
   while (
     ts.isParenthesizedExpression(cur) ||
@@ -92,7 +98,7 @@ function unwrap(expr: ts.Expression): ts.Expression {
  * Returns the table, "<dynamic>" for a non-literal `.from()`, the identifier
  * name prefixed `id:` when the chain bottoms out on a bare identifier, or null.
  */
-function chainRoot(expr: ts.Expression): string | null {
+export function chainRoot(expr: ts.Expression): string | null {
   let cur = unwrap(expr);
   for (;;) {
     if (ts.isCallExpression(cur)) {
@@ -118,7 +124,7 @@ function chainRoot(expr: ts.Expression): string | null {
 }
 
 /** identifier name -> table, or null when the binding is ambiguous. */
-function bindIdentifiers(sf: ts.SourceFile): Map<string, string | null> {
+export function bindIdentifiers(sf: ts.SourceFile): Map<string, string | null> {
   const bound = new Map<string, string | null>();
   const note = (name: string, table: string): void => {
     if (!bound.has(name)) { bound.set(name, table); return; }
@@ -184,7 +190,7 @@ export function parseLogicalTree(expr: string): Array<{ column: string; op: stri
 }
 
 /** True when a value came from a template hole rather than the source text. */
-function isInterpolated(node: ts.Expression): boolean {
+export function isInterpolated(node: ts.Expression): boolean {
   return ts.isTemplateExpression(node) || !ts.isStringLiteralLike(node);
 }
 
