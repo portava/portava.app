@@ -841,22 +841,51 @@ export async function executeAccountDeletion(
   const tombstonedCounts: Record<string, number> = {};
   const deletedCounts: Record<string, number> = {};
 
+  //
+  // BOTH READS FAIL CLOSED, and the asymmetry of the outcomes is why.
+  //
+  // supabase-js RESOLVES `{ data, error }`. Neither `error` was bound here, so
+  // an unreadable posts_comments or moderation_reports — an RLS change, a
+  // statement timeout on a hot table, a transient 5xx — arrived as
+  // `data === undefined`, coalesced to `[]`, and answered "nobody else has an
+  // interest in this post". The else-branch then HARD-DELETED it. A post under
+  // an open moderation report is evidence; destroying it is irreversible and
+  // silent, and it is the report itself that would have saved it.
+  //
+  // The two branches are not equally costly. Tombstoning a post that nobody
+  // else touched over-preserves one row. Deleting a post that somebody else
+  // did touch destroys their comments and a moderator's evidence, forever. So
+  // an unreadable answer is treated as "interest present" — the branch whose
+  // mistake is recoverable — and a warning is raised so the over-preservation
+  // is visible on the receipt rather than passing as a measured decision.
   async function hasThirdPartyInterest(postId: string): Promise<boolean> {
-    const { data: otherComments } = await sc
+    const { data: otherComments, error: commentsErr } = await sc
       .from("posts_comments")
       .select("id")
       .eq("post_id", postId)
       .not("user_id", "is", null)
       .neq("user_id", userId)
       .limit(1);
+    if (commentsErr) {
+      warnings.push(
+        `post ${postId}: third-party comment check failed (${commentsErr.message}) — tombstoned rather than deleted`,
+      );
+      return true;
+    }
     if (((otherComments as any[]) ?? []).length > 0) return true;
 
-    const { data: reports } = await sc
+    const { data: reports, error: reportsErr } = await sc
       .from("moderation_reports")
       .select("id")
       .eq("subject_type", "post")
       .eq("subject_id", postId)
       .limit(1);
+    if (reportsErr) {
+      warnings.push(
+        `post ${postId}: moderation-report check failed (${reportsErr.message}) — tombstoned rather than deleted`,
+      );
+      return true;
+    }
     return ((reports as any[]) ?? []).length > 0;
   }
 

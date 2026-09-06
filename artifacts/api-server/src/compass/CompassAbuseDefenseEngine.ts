@@ -53,6 +53,50 @@ export interface AbuseFlag {
   evidence:      Record<string, unknown>;
 }
 
+/**
+ * What one detector actually managed to determine.
+ *
+ * `flags: []` alone was the whole problem. supabase-js RESOLVES `{ data, error }`,
+ * and every detector bound only `data`, so an unreadable table — an RLS change, a
+ * statement timeout, a 22P02 on an enum label — became `data === undefined`, then
+ * `?? []`, then zero rows, then zero flags. The scan reported "ran, found no
+ * abuse" in language identical to a scan that had read every row. Seven detectors
+ * shared that shape, so a single broken table could turn the entire abuse defence
+ * into a reassuring no-op that nobody would look at twice.
+ *
+ * `failed` is the distinction that was missing: no flags because there is no
+ * abuse, versus no flags because nothing was read.
+ */
+export interface DetectorOutcome {
+  detector: AbusePatternType;
+  flags:    AbuseFlag[];
+  /** True when a read this detector depends on did not complete. */
+  failed:   boolean;
+  /** Present only when `failed` — the first read error encountered. */
+  error?:   string;
+}
+
+/** The result of a whole scan — never silently "clean" when a detector failed. */
+export interface ScanResult {
+  flagsWritten: number;
+  /** "ok" only when every detector completed its reads. */
+  status: "ok" | "incomplete";
+  /** Detectors that could not complete, so the caller can say so out loud. */
+  failedDetectors: Array<{ detector: AbusePatternType; error: string }>;
+}
+
+function ok(detector: AbusePatternType, flags: AbuseFlag[]): DetectorOutcome {
+  return { detector, flags, failed: false };
+}
+
+/**
+ * A detector gave up. Any flags it DID find before the failure are kept — they
+ * were really observed — but the outcome is still marked incomplete.
+ */
+function failed(detector: AbusePatternType, error: string, flags: AbuseFlag[] = []): DetectorOutcome {
+  return { detector, flags, failed: true, error };
+}
+
 // ── Thresholds ────────────────────────────────────────────────────────────────
 
 const RING_MIN_USERS            = 3;    // mutual review ring minimum size
@@ -211,7 +255,7 @@ async function handleFlag(
 async function detectMutualReviewRings(
   db:     SupabaseClient,
   userId: string | null,
-): Promise<AbuseFlag[]> {
+): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - RING_WINDOW_DAYS * 24 * 60 * 60 * 1_000).toISOString();
@@ -223,7 +267,8 @@ async function detectMutualReviewRings(
 
     if (userId) q.or(`reviewer_id.eq.${userId},reviewee_id.eq.${userId}`);
 
-    const { data } = await q;
+    const { data, error } = await q;
+    if (error) return failed("mutual_review_ring", error.message);
     const rows = (data as any[]) ?? [];
 
     // Build adjacency map: reviewer → set of reviewees (with 5★)
@@ -263,15 +308,17 @@ async function detectMutualReviewRings(
         break; // one flag per scan — admin reviews then re-runs
       }
     }
-  } catch { /* non-fatal */ }
-  return flags;
+  } catch (e) {
+    return failed("mutual_review_ring", (e as Error).message, flags);
+  }
+  return ok("mutual_review_ring", flags);
 }
 
 /** 2. Booking loop — same user pair with >5 completed/confirmed 5★ bookings in 30 days */
 async function detectBookingLoops(
   db:     SupabaseClient,
   userId: string | null,
-): Promise<AbuseFlag[]> {
+): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - BOOKING_LOOP_WINDOW_DAYS * 24 * 60 * 60 * 1_000).toISOString();
@@ -286,14 +333,19 @@ async function detectBookingLoops(
 
     if (userId) q.or(`traveler_id.eq.${userId},buddy_id.eq.${userId}`);
 
-    const { data } = await q;
+    const { data, error } = await q;
+    if (error) return failed("booking_loop", error.message);
     const rows = (data as any[]) ?? [];
 
-    const { data: reviewRows } = await db
+    // An unreadable reviews table would leave `fiveStarBookingIds` empty, and
+    // the `continue` below would then skip every booking — no pair could ever
+    // reach the threshold. That is a silent all-clear, not a measurement.
+    const { data: reviewRows, error: reviewErr } = await db
       .from("rent_buddy_reviews")
       .select("booking_id, rating")
       .eq("rating", 5)
       .gte("created_at", since);
+    if (reviewErr) return failed("booking_loop", reviewErr.message);
     const fiveStarBookingIds = new Set(
       ((reviewRows as any[]) ?? []).map((r) => r.booking_id as string),
     );
@@ -317,15 +369,17 @@ async function detectBookingLoops(
         });
       }
     }
-  } catch { /* non-fatal */ }
-  return flags;
+  } catch (e) {
+    return failed("booking_loop", (e as Error).message, flags);
+  }
+  return ok("booking_loop", flags);
 }
 
 /** 3. Referral farm — user whose referrals (>10) made no bookings */
 async function detectReferralFarms(
   db:     SupabaseClient,
   userId: string | null,
-): Promise<AbuseFlag[]> {
+): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
     // STUB: profiles has no referred_by column in the live schema, so referral
@@ -353,10 +407,14 @@ async function detectReferralFarms(
       const activeIds    = new Set<string>();
       for (let batchStart = 0; batchStart < referredIds.length; batchStart += BATCH_SIZE) {
         const batch = referredIds.slice(batchStart, batchStart + BATCH_SIZE);
-        const { data: batchBookings } = await db
+        const { data: batchBookings, error: batchErr } = await db
           .from("rent_buddy_bookings")
           .select("traveler_id")
           .in("traveler_id", batch);
+        // Failing OPEN here would be punitive, not permissive: a missed batch
+        // shrinks activeIds, which INFLATES inactiveCount and can manufacture a
+        // referral_farm flag against a referrer whose referrals are all active.
+        if (batchErr) return failed("referral_farm", batchErr.message, flags);
         for (const b of (batchBookings as any[] ?? [])) {
           activeIds.add(b.traveler_id as string);
         }
@@ -375,15 +433,17 @@ async function detectReferralFarms(
         });
       }
     }
-  } catch { /* non-fatal */ }
-  return flags;
+  } catch (e) {
+    return failed("referral_farm", (e as Error).message, flags);
+  }
+  return ok("referral_farm", flags);
 }
 
 /** 4. Comment pod — group of users who always comment on each other's posts */
 async function detectCommentPods(
   db:     SupabaseClient,
   userId: string | null,
-): Promise<AbuseFlag[]> {
+): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
     const since72h = new Date(Date.now() - 72 * 60 * 60 * 1_000).toISOString();
@@ -397,16 +457,21 @@ async function detectCommentPods(
 
     if (userId) q.eq("user_id", userId);
 
-    const { data: comments } = await q;
+    const { data: comments, error: commentsErr } = await q;
+    if (commentsErr) return failed("comment_pod", commentsErr.message);
     const commentRows = (comments as any[]) ?? [];
-    if (commentRows.length === 0) return flags;
+    // Now a real measurement: the table was read and there were no comments.
+    if (commentRows.length === 0) return ok("comment_pod", flags);
 
     // Get post authors for these post_ids
     const postIds = [...new Set(commentRows.map((c: any) => c.post_id as string))].slice(0, 100);
-    const { data: posts } = await db
+    const { data: posts, error: postsErr } = await db
       .from("posts")
       .select("id, author_id")
       .in("id", postIds);
+    // Without authors every comment is unattributable and the pod count is 0 —
+    // a guaranteed all-clear from a table that was never read.
+    if (postsErr) return failed("comment_pod", postsErr.message);
 
     const postAuthorMap = new Map<string, string>();
     for (const p of (posts as any[] ?? [])) {
@@ -451,27 +516,30 @@ async function detectCommentPods(
         evidence:      { mutual_pairs: mutualPairs.size, window_hours: 72 },
       });
     }
-  } catch { /* non-fatal */ }
-  return flags;
+  } catch (e) {
+    return failed("comment_pod", (e as Error).message, flags);
+  }
+  return ok("comment_pod", flags);
 }
 
 /** 5. Hashtag spam — >20 uses of the same hashtag from one account in 24 h */
 async function detectHashtagSpam(
   db:     SupabaseClient,
   userId: string | null,
-): Promise<AbuseFlag[]> {
+): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
 
     // Get recent hashtag_usage rows; if userId scoped, filter by source posts
-    const { data: usageRows } = await db
+    const { data: usageRows, error: usageErr } = await db
       .from("hashtag_usage")
       .select("hashtag_id, source_id, source_type, created_at")
       .gte("created_at", since);
+    if (usageErr) return failed("hashtag_spam", usageErr.message);
 
     const rows = (usageRows as any[]) ?? [];
-    if (rows.length === 0) return flags;
+    if (rows.length === 0) return ok("hashtag_spam", flags);
 
     // Resolve source_id → user_id via the posts table (most usage is post-sourced)
     const postSourceIds = [
@@ -484,10 +552,13 @@ async function detectHashtagSpam(
 
     const postAuthorMap = new Map<string, string>(); // source_id → user_id
     if (postSourceIds.length > 0) {
-      const { data: posts } = await db
+      const { data: posts, error: postsErr } = await db
         .from("posts")
         .select("id, author_id")
         .in("id", postSourceIds);
+      // Every usage row is skipped as unattributable when this map is empty,
+      // so a failure here is indistinguishable from "nobody spammed".
+      if (postsErr) return failed("hashtag_spam", postsErr.message);
 
       for (const p of (posts as any[] ?? [])) {
         postAuthorMap.set(p.id as string, p.author_id as string);
@@ -524,15 +595,17 @@ async function detectHashtagSpam(
         });
       }
     }
-  } catch { /* non-fatal */ }
-  return flags;
+  } catch (e) {
+    return failed("hashtag_spam", (e as Error).message, flags);
+  }
+  return ok("hashtag_spam", flags);
 }
 
 /** 6. Geotag farming — >15 location stamps from one account in 1 hour */
 async function detectGeotagFarming(
   db:     SupabaseClient,
   userId: string | null,
-): Promise<AbuseFlag[]> {
+): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - 60 * 60 * 1_000).toISOString();
@@ -543,7 +616,8 @@ async function detectGeotagFarming(
 
     if (userId) q.eq("user_id", userId);
 
-    const { data } = await q;
+    const { data, error } = await q;
+    if (error) return failed("geotag_farming", error.message);
     const rows = (data as any[]) ?? [];
 
     const countByUser = new Map<string, number>();
@@ -561,15 +635,17 @@ async function detectGeotagFarming(
         });
       }
     }
-  } catch { /* non-fatal */ }
-  return flags;
+  } catch (e) {
+    return failed("geotag_farming", (e as Error).message, flags);
+  }
+  return ok("geotag_farming", flags);
 }
 
 /** 7. Available-now abuse — status toggled >20 times in 24 h with no completed bookings */
 async function detectAvailableNowAbuse(
   db:     SupabaseClient,
   userId: string | null,
-): Promise<AbuseFlag[]> {
+): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
@@ -581,7 +657,8 @@ async function detectAvailableNowAbuse(
 
     if (userId) q.eq("user_id", userId);
 
-    const { data } = await q;
+    const { data, error } = await q;
+    if (error) return failed("available_now_abuse", error.message);
     const rows = (data as any[]) ?? [];
 
     const countByUser = new Map<string, number>();
@@ -593,12 +670,16 @@ async function detectAvailableNowAbuse(
       if (toggleCount <= AVAILABLE_TOGGLE_MIN) continue;
 
       // Check if this user has any completed bookings in the same window
-      const { data: bookings } = await db
+      const { data: bookings, error: bookingsErr } = await db
         .from("rent_buddy_bookings")
         .select("id")
         .eq("buddy_id", uid)
         .eq("status", "completed")
         .gte("created_at", since);
+      // This read EXONERATES. Coalescing a failure to `[]` reads as "no
+      // bookings", which is the flagging branch — so an unreadable table would
+      // punish a busy buddy for toggling their availability.
+      if (bookingsErr) return failed("available_now_abuse", bookingsErr.message, flags);
 
       const hasBookings = ((bookings as any[]) ?? []).length > 0;
       if (!hasBookings) {
@@ -610,15 +691,17 @@ async function detectAvailableNowAbuse(
         });
       }
     }
-  } catch { /* non-fatal */ }
-  return flags;
+  } catch (e) {
+    return failed("available_now_abuse", (e as Error).message, flags);
+  }
+  return ok("available_now_abuse", flags);
 }
 
 /** 8. Refund abuse — >3 booking cancellations/refunds in 30 days */
 async function detectRefundAbuse(
   db:     SupabaseClient,
   userId: string | null,
-): Promise<AbuseFlag[]> {
+): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000).toISOString();
@@ -640,7 +723,10 @@ async function detectRefundAbuse(
 
     if (userId) q.eq("traveler_id", userId);
 
-    const { data } = await q;
+    const { data, error } = await q;
+    // The 22P02 that silenced this detector for its whole life produced exactly
+    // this error object. It is now reported instead of being read as innocence.
+    if (error) return failed("refund_abuse", error.message);
     const rows = (data as any[]) ?? [];
 
     const countByUser = new Map<string, number>();
@@ -658,8 +744,10 @@ async function detectRefundAbuse(
         });
       }
     }
-  } catch { /* non-fatal */ }
-  return flags;
+  } catch (e) {
+    return failed("refund_abuse", (e as Error).message, flags);
+  }
+  return ok("refund_abuse", flags);
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
@@ -675,34 +763,49 @@ async function detectRefundAbuse(
 export async function runScan(
   db:     SupabaseClient | null,
   userId: string | null = null,
-): Promise<{ flagsWritten: number }> {
-  if (!db) return { flagsWritten: 0 };
+): Promise<ScanResult> {
+  // No client is not a clean scan either — nothing was looked at.
+  if (!db) {
+    return {
+      flagsWritten: 0,
+      status: "incomplete",
+      failedDetectors: [{ detector: "mutual_review_ring", error: "no service client available" }],
+    };
+  }
 
   let flagsWritten = 0;
+  const failedDetectors: Array<{ detector: AbusePatternType; error: string }> = [];
+
+  const DETECTORS: Array<[AbusePatternType, (db: SupabaseClient, u: string | null) => Promise<DetectorOutcome>]> = [
+    ["mutual_review_ring",  detectMutualReviewRings],
+    ["booking_loop",        detectBookingLoops],
+    ["referral_farm",       detectReferralFarms],
+    ["comment_pod",         detectCommentPods],
+    ["hashtag_spam",        detectHashtagSpam],
+    ["geotag_farming",      detectGeotagFarming],
+    ["available_now_abuse", detectAvailableNowAbuse],
+    ["refund_abuse",        detectRefundAbuse],
+  ];
 
   try {
-    const [rings, loops, referrals, pods, hashtags, geotags, available, refunds] =
-      await Promise.allSettled([
-        detectMutualReviewRings(db, userId),
-        detectBookingLoops(db, userId),
-        detectReferralFarms(db, userId),
-        detectCommentPods(db, userId),
-        detectHashtagSpam(db, userId),
-        detectGeotagFarming(db, userId),
-        detectAvailableNowAbuse(db, userId),
-        detectRefundAbuse(db, userId),
-      ]);
+    const settled = await Promise.allSettled(
+      DETECTORS.map(([, fn]) => fn(db, userId)),
+    );
 
-    const allFlags: AbuseFlag[] = [
-      ...(rings.status     === "fulfilled" ? rings.value     : []),
-      ...(loops.status     === "fulfilled" ? loops.value     : []),
-      ...(referrals.status === "fulfilled" ? referrals.value : []),
-      ...(pods.status      === "fulfilled" ? pods.value      : []),
-      ...(hashtags.status  === "fulfilled" ? hashtags.value  : []),
-      ...(geotags.status   === "fulfilled" ? geotags.value   : []),
-      ...(available.status === "fulfilled" ? available.value : []),
-      ...(refunds.status   === "fulfilled" ? refunds.value   : []),
-    ];
+    const allFlags: AbuseFlag[] = [];
+    settled.forEach((s, i) => {
+      const name = DETECTORS[i]![0];
+      if (s.status === "rejected") {
+        // A detector that threw past its own guard measured nothing either.
+        failedDetectors.push({ detector: name, error: String((s.reason as Error)?.message ?? s.reason) });
+        return;
+      }
+      const outcome = s.value;
+      allFlags.push(...outcome.flags);
+      if (outcome.failed) {
+        failedDetectors.push({ detector: outcome.detector, error: outcome.error ?? "unknown read failure" });
+      }
+    });
 
     await Promise.allSettled(
       allFlags.map(async (flag) => {
@@ -710,7 +813,22 @@ export async function runScan(
         flagsWritten++;
       }),
     );
-  } catch { /* non-fatal — scheduler must not crash */ }
+  } catch (e) {
+    // The scheduler must not crash — but it must also not be told this scan
+    // was clean. A blanket failure marks every detector unmeasured.
+    failedDetectors.push({ detector: "mutual_review_ring", error: `scan aborted: ${(e as Error).message}` });
+  }
 
-  return { flagsWritten };
+  if (failedDetectors.length > 0) {
+    logger.warn(
+      { failedDetectors, flagsWritten, userId },
+      "abuse scan INCOMPLETE — one or more detectors could not read; this is not a clean result",
+    );
+  }
+
+  return {
+    flagsWritten,
+    status: failedDetectors.length > 0 ? "incomplete" : "ok",
+    failedDetectors,
+  };
 }

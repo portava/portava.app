@@ -187,14 +187,25 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
   } catch { /* non-fatal */ }
 
   // Check for location caution flag via geo_zones (safety_rating = caution | avoid)
-  let hasLocationCautionFlag = false;
+  //
+  // THIS IS A SAFETY VERDICT, so it fails CLOSED. supabase-js RESOLVES
+  // `{ data, error }` — it does not throw — so `error` was never bound, the
+  // enclosing `catch` never fired, and a failed read collapsed to
+  // `zones === undefined -> false`: a plan item sitting inside a zone rated
+  // `avoid` was reported to the traveller as carrying no caution, in the exact
+  // voice of a table that had been read and found clean.
+  //
+  // `null` is the third value the verdict needs and previously did not have:
+  // not "no caution", but "we could not tell". shouldSuggest() treats it as a
+  // reason in its own right, and the response says so out loud.
+  let hasLocationCautionFlag: boolean | null = false;
   try {
     const lat = (item as any).lat as number | null;
     const lng = (item as any).lng as number | null;
     if (lat != null && lng != null) {
       // Bounding-box pre-filter (~50 km) then check safety_rating
       const delta = 0.45; // ~50 km in degrees
-      const { data: zones } = await db
+      const { data: zones, error: zonesErr } = await db
         .from("geo_zones")
         .select("safety_rating")
         .in("safety_rating", ["caution", "avoid"])
@@ -203,9 +214,25 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
         .gte("center_lng", lng - delta)
         .lte("center_lng", lng + delta)
         .limit(1);
-      hasLocationCautionFlag = !!zones && zones.length > 0;
+      if (zonesErr) {
+        req.log?.warn(
+          { err: zonesErr.message, planItemId },
+          "safe_return geo_zones caution lookup failed — reporting caution as unknown",
+        );
+        hasLocationCautionFlag = null;
+      } else {
+        hasLocationCautionFlag = (zones ?? []).length > 0;
+      }
     }
-  } catch { /* non-fatal */ }
+  } catch (e) {
+    // A genuine throw (network/transport) is the same epistemic state as an
+    // error result: unknown, never "clean".
+    req.log?.warn(
+      { err: (e as Error).message, planItemId },
+      "safe_return geo_zones caution lookup threw — reporting caution as unknown",
+    );
+    hasLocationCautionFlag = null;
+  }
 
   const planItemCtx = {
     id: (item as any).id,
@@ -223,6 +250,9 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
     suggest: result.shouldSuggest,
     reasons: result.reasons,
     confidence: result.confidence,
+    // Explicit, not inferable from `reasons` alone by a client that does not
+    // know the enum: the caution input to this assessment could not be read.
+    cautionUnknown: result.cautionUnknown,
     reasonText: result.shouldSuggest ? getSuggestionReason(result.reasons) : null,
     planItemId,
   });
