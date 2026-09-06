@@ -46,6 +46,7 @@
 import { getServiceClient } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { recalculateTrustScore } from "../services/trust/TrustScoreService.js";
+import { expireOldRestrictions } from "../services/trust/TrustRestrictionService.js";
 import { expireOldCaps } from "../services/trust/TrustCapService.js";
 import { runGamingDetectionScan } from "../services/trust/TrustGamingDetectionService.js";
 import { isTrustEnabled } from "../services/trust/TrustEventService.js";
@@ -258,6 +259,9 @@ export interface TrustMaintenanceResult {
   skipped?: boolean;
   skipReason?: string;
   capsExpired: number;
+  restrictionsExpired: number;
+  /** True when the restriction sweep could not tell — DISTINCT from 0 expired. */
+  restrictionSweepFailed: boolean;
   probationCleared: number;
   usersRecalculated: number;
   recalcFailures: number;
@@ -273,7 +277,7 @@ export interface TrustMaintenanceResult {
  */
 export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanceResult> {
   const empty: TrustMaintenanceResult = {
-    ok: true, capsExpired: 0, probationCleared: 0,
+    ok: true, capsExpired: 0, restrictionsExpired: 0, restrictionSweepFailed: false, probationCleared: 0,
     usersRecalculated: 0, recalcFailures: 0, gamingFlagged: 0, truncated: false,
   };
 
@@ -295,6 +299,31 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     capsExpired = await expireOldCaps(db);
   } catch (err) {
     logger.warn({ err }, "expireOldCaps threw (non-fatal)");
+  }
+
+  // 1b. Lift restrictions whose term has run. This sits beside expireOldCaps and
+  //     clearExpiredProbation because it is the third member of exactly the same
+  //     family — a time-based lift — and it was the one the cleanup job missed.
+  //     Until this call existed, expireOldRestrictions had NO caller anywhere in
+  //     the repo, so an expired restriction stayed active permanently.
+  let restrictionsExpired = 0;
+  let restrictionSweepFailed = false;
+  try {
+    const sweep = await expireOldRestrictions(db);
+    restrictionsExpired = sweep.expired;
+    restrictionSweepFailed = sweep.failed;
+    if (sweep.truncated) {
+      logger.warn(
+        { expired: sweep.expired },
+        "restriction expiry truncated — more due than the per-pass cap; remainder rolls to the next pass",
+      );
+    }
+    if (sweep.failed) {
+      logger.warn({}, "restriction expiry FAILED — restrictions may still be active past their term");
+    }
+  } catch (err) {
+    restrictionSweepFailed = true;
+    logger.warn({ err }, "expireOldRestrictions threw (non-fatal)");
   }
 
   // 2. End probation whose term has run.
@@ -345,6 +374,8 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
   return {
     ok: true,
     capsExpired,
+    restrictionsExpired,
+    restrictionSweepFailed,
     probationCleared,
     usersRecalculated,
     recalcFailures,
