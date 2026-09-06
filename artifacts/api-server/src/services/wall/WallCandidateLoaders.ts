@@ -73,6 +73,17 @@ export interface LoadedWallCandidates {
   candidates: WallCandidate[];
   signals: Map<string, WallRankSignals>;
   placeByObject: Map<string, PublicPlaceRef>;
+  /**
+   * True when this loader's own TRUTH read failed — as opposed to answering
+   * with no rows. §34 still holds (the caller gets an empty candidate set and
+   * the feed survives), but the caller can now tell an outage from a quiet
+   * lane and say so on the wire (WallResponse.degraded).
+   *
+   * Only the reads that DECIDE whether candidates exist set this. An enrichment
+   * read failing (a byline, a place label, a capture time) degrades the object,
+   * not the lane, and is logged rather than reported.
+   */
+  failed?: boolean;
 }
 
 /** The viewer facts the supplementary loaders need. A subset of the route's
@@ -123,6 +134,24 @@ function emptyLoaded(): LoadedWallCandidates {
   return { candidates: [], signals: new Map(), placeByObject: new Map() };
 }
 
+/** An empty result that says WHY it is empty: the lane's truth read failed. */
+function failedLoad(): LoadedWallCandidates {
+  return { ...emptyLoaded(), failed: true };
+}
+
+/**
+ * Turn a PostgREST `{ data, error }` envelope into a throw.
+ *
+ * supabase-js RESOLVES a rejected query — it does not throw — so every read
+ * written as `const { data } = await q` silently becomes `[]` and never reaches
+ * the `catch` that was written to handle exactly that failure. Routing the
+ * error through here makes those already-existing catch blocks real.
+ */
+function rowsOrThrow(res: { data?: unknown; error?: unknown } | null | undefined): any[] {
+  if (res?.error) throw res.error;
+  return (res?.data as any[]) ?? [];
+}
+
 // ── Shared batched enrichment ────────────────────────────────────────────────
 
 interface AuthorProfile {
@@ -140,11 +169,13 @@ async function batchProfiles(sc: any, ids: string[]): Promise<Map<string, Author
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return out;
   try {
-    const { data } = await sc
-      .from("profiles")
-      .select("id, display_name, username, avatar_url, account_status")
-      .in("id", unique.slice(0, 500));
-    for (const p of (data as any[]) ?? []) {
+    const rows = rowsOrThrow(
+      await sc
+        .from("profiles")
+        .select("id, display_name, username, avatar_url, account_status")
+        .in("id", unique.slice(0, 500)),
+    );
+    for (const p of rows) {
       out.set(String(p.id), {
         displayName: String(p.display_name ?? p.username ?? "Traveler"),
         handle: p.username ?? null,
@@ -165,11 +196,10 @@ async function batchPlaces(sc: any, ids: string[]): Promise<Map<string, PublicPl
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return out;
   try {
-    const { data } = await sc
-      .from("places")
-      .select("id, name, city, country_code")
-      .in("id", unique.slice(0, 500));
-    for (const pl of (data as any[]) ?? []) {
+    const rows = rowsOrThrow(
+      await sc.from("places").select("id, name, city, country_code").in("id", unique.slice(0, 500)),
+    );
+    for (const pl of rows) {
       out.set(String(pl.id), {
         placeId: String(pl.id),
         name: String(pl.name ?? "Place"),
@@ -207,15 +237,17 @@ async function loadCapturedAtByEntity(
   const unique = [...new Set(entityIds)].filter(Boolean);
   if (!sc || unique.length === 0) return out;
   try {
-    const { data } = await sc
-      .from("media_attachments")
-      .select("entity_id, is_cover, position, media_assets(captured_at)")
-      .eq("entity_type", entityType)
-      .in("entity_id", unique.slice(0, 500));
+    const rows = rowsOrThrow(
+      await sc
+        .from("media_attachments")
+        .select("entity_id, is_cover, position, media_assets(captured_at)")
+        .eq("entity_type", entityType)
+        .in("entity_id", unique.slice(0, 500)),
+    );
     // Best attachment per entity: cover wins, else lowest position. Only an
     // attachment whose asset actually carries a captured_at contributes.
     const best = new Map<string, { cover: boolean; position: number; capturedAt: string }>();
-    for (const r of (data as any[]) ?? []) {
+    for (const r of rows) {
       const eid = r?.entity_id ? String(r.entity_id) : "";
       if (!eid) continue;
       const asset = Array.isArray(r.media_assets) ? r.media_assets[0] : r.media_assets;
@@ -362,10 +394,10 @@ export async function loadPostcardCandidates(
     // newer than the cursor and contribute nothing, so we must walk back to the
     // older ones instead of re-reading the same newest set every page.
     if (horizon) dq = dq.lte("created_at", horizon);
-    const { data } = await dq;
+    const rows = rowsOrThrow(await dq);
     // Re-checked in memory (status + tombstone) so a row fed past the query
     // filter cannot resurrect a hidden/reported/deleted postcard on the Wall.
-    for (const r of (data as any[]) ?? []) {
+    for (const r of rows) {
       if (isLivePostcardRow(r) && r.post_id) {
         const pid = String(r.post_id);
         postcardPostIds.add(pid);
@@ -374,7 +406,7 @@ export async function loadPostcardCandidates(
     }
   } catch (err) {
     logger.warn({ err }, "postcard discriminator read failed — degrading to no postcards");
-    return emptyLoaded();
+    return failedLoad();
   }
   if (postcardPostIds.size === 0) return emptyLoaded();
 
@@ -396,15 +428,14 @@ export async function loadPostcardCandidates(
     // can't enter mid-pagination) OR the Following cursor slide (older postcards
     // past the newest window stay reachable). Mirrors the Post spine.
     if (horizon) q = q.lte("created_at", horizon);
-    const { data } = await q;
     // In-memory guards, independent of the query filters: the row must be one
     // a live postcard points at (the discriminator) and must be published.
-    rows = ((data as any[]) ?? []).filter(
+    rows = rowsOrThrow(await q).filter(
       (r) => r && postcardPostIds.has(String(r.id)) && isPostPublished(r),
     );
   } catch (err) {
     logger.warn({ err }, "postcard candidate read failed — degrading to no postcards");
-    return emptyLoaded();
+    return failedLoad();
   }
   if (rows.length === 0) return emptyLoaded();
 
@@ -416,14 +447,16 @@ export async function loadPostcardCandidates(
   const mediaByPost = new Map<string, DisplayMedia[]>();
   try {
     if (postIds.length > 0) {
-      const { data } = await sc
-        .from("post_media")
-        .select(
-          "id, post_id, media_type, public_url, thumbnail_url, width, height, duration_seconds, sort_order, processing_status, moderation_status",
-        )
-        .in("post_id", postIds.slice(0, 500));
+      const mediaRows = rowsOrThrow(
+        await sc
+          .from("post_media")
+          .select(
+            "id, post_id, media_type, public_url, thumbnail_url, width, height, duration_seconds, sort_order, processing_status, moderation_status",
+          )
+          .in("post_id", postIds.slice(0, 500)),
+      );
       const grouped = new Map<string, any[]>();
-      for (const m of (data as any[]) ?? []) {
+      for (const m of mediaRows) {
         const pid = String(m.post_id);
         (grouped.get(pid) ?? grouped.set(pid, []).get(pid)!).push(m);
       }
@@ -609,7 +642,7 @@ export async function loadVideoMediaCandidates(
     return out;
   } catch (err) {
     logger.warn({ err }, "video/media candidate load failed — degrading to no media objects");
-    return emptyLoaded();
+    return failedLoad();
   }
 }
 
@@ -640,17 +673,18 @@ export async function loadSharedMomentCandidates(
 
   let memberships: any[] = [];
   try {
-    const { data } = await sc
-      .from("shared_moment_memberships")
-      .select("role, status, shared_moments(*)")
-      .eq("user_id", viewerId)
-      .eq("status", "accepted")
-      .order("updated_at", { ascending: false })
-      .limit(LOADER_FETCH);
-    memberships = (data as any[]) ?? [];
+    memberships = rowsOrThrow(
+      await sc
+        .from("shared_moment_memberships")
+        .select("role, status, shared_moments(*)")
+        .eq("user_id", viewerId)
+        .eq("status", "accepted")
+        .order("updated_at", { ascending: false })
+        .limit(LOADER_FETCH),
+    );
   } catch (err) {
     logger.warn({ err }, "shared moment membership read failed — degrading to no moments");
-    return emptyLoaded();
+    return failedLoad();
   }
 
   const moments = memberships
@@ -673,12 +707,14 @@ export async function loadSharedMomentCandidates(
   const membersByMoment = new Map<string, string[]>();
   try {
     if (momentIds.length > 0) {
-      const { data } = await sc
-        .from("shared_moment_memberships")
-        .select("moment_id, user_id, status")
-        .in("moment_id", momentIds.slice(0, 500))
-        .eq("status", "accepted");
-      for (const m of (data as any[]) ?? []) {
+      const memberRows = rowsOrThrow(
+        await sc
+          .from("shared_moment_memberships")
+          .select("moment_id, user_id, status")
+          .in("moment_id", momentIds.slice(0, 500))
+          .eq("status", "accepted"),
+      );
+      for (const m of memberRows) {
         const mid = String(m.moment_id);
         const uid = String(m.user_id);
         if (uid === viewerId) continue;
@@ -959,12 +995,12 @@ export async function loadContextualOpportunityCandidates(
       .limit(OPPORTUNITY_FETCH);
     if (error) {
       logger.warn({ err: error }, "opportunity: buddy read rejected — no opportunities");
-      return emptyLoaded();
+      return failedLoad();
     }
     rows = (data as any[]) ?? [];
   } catch (err) {
     logger.warn({ err }, "opportunity: buddy read failed — no opportunities");
-    return emptyLoaded();
+    return failedLoad();
   }
   if (rows.length === 0) return emptyLoaded();
 
@@ -1165,11 +1201,39 @@ function quickMediaAssetServable(row: any, nowMs: number): boolean {
  *
  * Never a coordinate; never a signed URL (see QuickMediaItem).
  */
+export interface QuickMediaRow {
+  items: QuickMediaItem[];
+  /**
+   * True when a read this row DEPENDS ON failed. §18 still degrades to an empty
+   * row, but "nobody you follow posted in the last 24 h" and "we could not find
+   * out" are different facts, and an empty Stories row is the single most
+   * ordinary state this surface has — so without this the outage is invisible.
+   */
+  failed: boolean;
+}
+
+/**
+ * The §18 row, items only. Thin wrapper over `loadQuickMediaRow` so existing
+ * callers and tests keep their signature; the route uses the row form because
+ * it needs the degradation state.
+ */
 export async function loadQuickMediaItems(
   sc: any,
   viewerId: string,
   opts: { nowMs?: number; limit?: number } = {},
 ): Promise<QuickMediaItem[]> {
+  return (await loadQuickMediaRow(sc, viewerId, opts)).items;
+}
+
+/**
+ * The §18 row WITH its degradation state — the form the route uses, so an
+ * outage in the Stories source cannot render as "nobody posted today".
+ */
+export async function loadQuickMediaRow(
+  sc: any,
+  viewerId: string,
+  opts: { nowMs?: number; limit?: number } = {},
+): Promise<QuickMediaRow> {
   const nowMs = opts.nowMs ?? Date.now();
   const limit = Math.max(1, Math.min(opts.limit ?? MAX_QUICK_MEDIA_ITEMS, MAX_QUICK_MEDIA_ITEMS));
 
@@ -1185,18 +1249,18 @@ export async function loadQuickMediaItems(
     followed = [...new Set(((data as any[]) ?? []).map((r) => String(r.following_id)).filter(Boolean))];
   } catch (err) {
     logger.warn({ err }, "quick media: follow read failed — degrading to empty row");
-    return [];
+    return { items: [], failed: true };
   }
-  if (followed.length === 0) return [];
+  if (followed.length === 0) return { items: [], failed: false };
 
   // 2. Blocks, both directions, fail-closed.
   const blocked = await fetchBlockedSet(sc, viewerId);
   if (blocked === null) {
     logger.warn("quick media: block list unreadable — failing closed to an empty row");
-    return [];
+    return { items: [], failed: true };
   }
   const owners = followed.filter((id) => !blocked.has(id) && id !== viewerId);
-  if (owners.length === 0) return [];
+  if (owners.length === 0) return { items: [], failed: false };
 
   // 3. Recent media_assets from those owners.
   const sinceIso = new Date(nowMs - QUICK_MEDIA_WINDOW_MS).toISOString();
@@ -1219,21 +1283,23 @@ export async function loadQuickMediaItems(
     assets = ((data as any[]) ?? []).filter((r) => quickMediaAssetServable(r, nowMs) && owners.includes(String(r.owner_user_id)));
   } catch (err) {
     logger.warn({ err }, "quick media: media_assets read failed — degrading to empty row");
-    return [];
+    return { items: [], failed: true };
   }
-  if (assets.length === 0) return [];
+  if (assets.length === 0) return { items: [], failed: false };
 
   // 4. Resolve the publishing post for each asset: canonical attachment first,
   //    then the legacy post_media row at the same storage path.
   const assetIds = assets.map((a) => String(a.id));
   const postIdByAsset = new Map<string, string>();
   try {
-    const { data } = await sc
-      .from("media_attachments")
-      .select("media_asset_id, entity_type, entity_id")
-      .in("media_asset_id", assetIds.slice(0, 500))
-      .in("entity_type", ["post", "postcard"]);
-    for (const att of (data as any[]) ?? []) {
+    const attachments = rowsOrThrow(
+      await sc
+        .from("media_attachments")
+        .select("media_asset_id, entity_type, entity_id")
+        .in("media_asset_id", assetIds.slice(0, 500))
+        .in("entity_type", ["post", "postcard"]),
+    );
+    for (const att of attachments) {
       const aid = String(att.media_asset_id);
       if (!postIdByAsset.has(aid) && att.entity_id) postIdByAsset.set(aid, String(att.entity_id));
     }
@@ -1244,12 +1310,14 @@ export async function loadQuickMediaItems(
   if (unresolved.length > 0) {
     try {
       const paths = [...new Set(unresolved.map((a) => String(a.storage_path)))];
-      const { data } = await sc
-        .from("post_media")
-        .select("post_id, storage_path, moderation_status, processing_status")
-        .in("storage_path", paths.slice(0, 500));
+      const pmRows = rowsOrThrow(
+        await sc
+          .from("post_media")
+          .select("post_id, storage_path, moderation_status, processing_status")
+          .in("storage_path", paths.slice(0, 500)),
+      );
       const postByPath = new Map<string, string>();
-      for (const pm of (data as any[]) ?? []) {
+      for (const pm of pmRows) {
         if (!pm?.post_id || !pm?.storage_path) continue;
         if (pm.moderation_status === "rejected" || pm.moderation_status === "flagged") continue;
         if (pm.processing_status && pm.processing_status !== "ready") continue;
@@ -1264,7 +1332,7 @@ export async function loadQuickMediaItems(
     }
   }
   const publishedAssets = assets.filter((a) => postIdByAsset.has(String(a.id)));
-  if (publishedAssets.length === 0) return [];
+  if (publishedAssets.length === 0) return { items: [], failed: false };
 
   // 5. The publishing posts, gated by the canonical post policy (§23).
   const postIds = [...new Set([...postIdByAsset.values()])];
@@ -1278,7 +1346,7 @@ export async function loadQuickMediaItems(
     for (const p of (data as any[]) ?? []) posts.set(String(p.id), p);
   } catch (err) {
     logger.warn({ err }, "quick media: post read failed — failing closed to an empty row");
-    return [];
+    return { items: [], failed: true };
   }
   const needsTrips = [...posts.values()].some((p) => p?.visibility === "trip_only");
   const viewerTripIds = needsTrips ? await loadViewerTripIds(sc, viewerId) : new Set<string>();
@@ -1341,5 +1409,5 @@ export async function loadQuickMediaItems(
     });
     if (out.length >= limit) break;
   }
-  return out;
+  return { items: out, failed: false };
 }

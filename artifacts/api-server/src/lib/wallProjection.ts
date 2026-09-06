@@ -420,6 +420,42 @@ export interface StructuredIntent {
 
 export type WallMode = "for_you" | "following";
 
+/**
+ * A Wall read lane that can fail on its own (spec §34 graceful degradation).
+ *
+ * §34 says a failing subsystem must cost the feed that subsystem and nothing
+ * more — it does NOT say the failure may be invisible. supabase-js resolves a
+ * rejected query with `{ data: null, error }` rather than throwing, so a lane
+ * written as `const { data } = await q` degrades to `[]` with no log line and no
+ * signal on the wire: a permission error, a dropped column or an RLS change
+ * renders as a quiet feed, and in Following mode it renders as the "you're all
+ * caught up" TRUST signal (an empty spine satisfies `rows < CANDIDATE_FETCH`).
+ *
+ * These names are what a lane reports when its canonical read FAILED, as
+ * distinct from returning no rows. Empty-and-fine carries no lane at all.
+ */
+export type WallLane =
+  /** The viewer's follow graph (`user_follows`). Unreadable ≠ follows nobody. */
+  | "follow_graph"
+  /** The Post spine (`posts`) — the feed's primary candidate set. */
+  | "spine"
+  /** Postcard candidates (§10). */
+  | "postcards"
+  /** Video / media candidates (§11). */
+  | "media"
+  /** Shared Moment candidates (§12). */
+  | "moments"
+  /** RAB contextual opportunities (§19). */
+  | "opportunities"
+  /** The eligibility / block / visibility gate + projection (§23/§24). */
+  | "projection"
+  /** The Live For You strip (§4). Its own route's ENTIRE answer, where an
+   *  empty strip is the most ordinary honest result there is — which is
+   *  precisely why a failed one has to be able to say so. */
+  | "live"
+  /** The Quick Media / Stories row (§18). */
+  | "quick_media";
+
 export interface WallResponse {
   mode: WallMode;
   sessionIntent?: StructuredIntent;
@@ -427,7 +463,21 @@ export interface WallResponse {
   items: WallProjection[];
   nextCursor?: string;
   /** Following only: true when the viewer has reached the end of eligible
-   *  followed content (spec §27 caught-up / TABLE 6). */
+   *  followed content (spec §27 caught-up / TABLE 6).
+   *
+   *  NEVER true when a lane in `degraded` could have contributed followed
+   *  content: "you have seen everything" and "we could not look" are different
+   *  facts and the second one must not wear the first one's badge. */
   caughtUp?: boolean;
+  /**
+   * Lanes whose canonical read FAILED on this request (spec §34).
+   *
+   * ABSENT means every lane answered. So `items: []` with no `degraded` is an
+   * honestly empty feed, and `items: []` WITH `degraded` is an outage — the
+   * distinction a client (or an operator reading one response) previously had
+   * no way to make. Additive and optional: a client that ignores it sees
+   * exactly the §34 behaviour it saw before.
+   */
+  degraded?: WallLane[];
   generatedAt: string;
 }
