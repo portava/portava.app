@@ -8,7 +8,10 @@
  * POST   /stories/:id/react             — upsert an emoji reaction
  * POST   /stories/:id/reply             — send a private reply
  * GET    /stories/:id/viewers           — owner-only viewer list
- * POST   /stories/:id/save-to-highlight — owner-only; saves story as a Highlight
+ * POST   /stories/:id/save-to-highlight — owner-only; refuses (410) — Highlights
+ *                                         always expire, so there is no "save"
+ *                                         to grant. Still reports the highlight
+ *                                         id for stories saved before this.
  */
 
 import { Router } from "express";
@@ -585,7 +588,7 @@ router.get("/stories/:id/viewers", asyncHandler(async (req, res) => {
 router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { client, user } = auth;
+  const { user } = auth;
 
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid story id"); return; }
@@ -595,7 +598,7 @@ router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
 
   const { data: story } = await sc
     .from("stories")
-    .select("id, owner_id, media_url, media_type, caption, state, expires_at, saved_to_highlight_id")
+    .select("id, owner_id, saved_to_highlight_id")
     .eq("id", id)
     .maybeSingle();
 
@@ -603,38 +606,42 @@ router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
   if ((story as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can save this story"); return; }
   if ((story as any).saved_to_highlight_id) { res.status(200).json({ highlightId: (story as any).saved_to_highlight_id }); return; }
 
-  // Create a highlight from this story (24h highlight — saved stories get a 24h highlight window from now)
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-
-  const { data: highlight, error: hErr } = await client
-    .from("highlights")
-    .insert({
-      owner_id:    user.id,
-      media_url:   (story as any).media_url,
-      media_type:  (story as any).media_type,
-      caption:     (story as any).caption ?? null,
-      visibility:  "public",
-      expires_at:  expiresAt,
-      filter_id:   "original",
-      filter_intensity: 100,
-    })
-    .select("id")
-    .single();
-
-  if (hErr) {
-    req.log.error({ err: hErr }, "Failed to create highlight from story");
-    sendError(res, "db_error", hErr.message);
-    return;
-  }
-
-  // Link story → highlight
-  await client
-    .from("stories")
-    .update({ saved_to_highlight_id: (highlight as any).id, state: "saved" })
-    .eq("id", id)
-    .eq("owner_id", user.id);
-
-  res.status(201).json({ highlightId: (highlight as any).id });
+  // This endpoint used to write a highlight with `expires_at = now + 24h` and
+  // flip the story to state='saved'. Both halves of that were wrong:
+  //
+  //   1. `highlights.expires_at` is NOT NULL and every read path — the two RLS
+  //      SELECT policies on the table plus every `.gt("expires_at", now)` filter
+  //      in routes/highlights.ts — hides a highlight the moment it expires. So
+  //      the row survived but the highlight was gone in 24h, with no error and
+  //      no notification. A "save" that deletes the thing in a day is the exact
+  //      failure-indistinguishable-from-success shape.
+  //   2. state='saved' is terminal, and it permanently excludes the story from
+  //      sweepExpiredStories() below — the only code in this repo that deletes
+  //      story bytes out of the post-media bucket. (That sweep is exported but
+  //      currently wired to no scheduler, so nothing deletes story media today
+  //      either; state='saved' is what would keep these rows out of it even
+  //      after it is wired up.) Once the 24h highlight went dark nothing
+  //      referenced that object at all, so the media stayed publicly fetchable
+  //      at its URL forever — the leak that sweep exists to close.
+  //
+  // Highlights are ephemeral by construction here (POST /highlights offers
+  // 3/6/12/24/48h and nothing longer; the bucket is documented as "24h expiry
+  // media"). There is no permanent-highlight concept to route this into, and
+  // manufacturing one would mean relaxing a NOT NULL column and rewriting two
+  // production RLS predicates — a feature, not a correctness fix. Meanwhile the
+  // honest path already exists: POST /highlights re-publishes the same media as
+  // a highlight and makes the user pick the term explicitly.
+  //
+  // So: refuse, and say why. Nothing is written — the story stays active, keeps
+  // its remaining life, and stays inside the sweep that owns its media.
+  sendError(
+    res,
+    "gone",
+    "Saving a story to Highlights is no longer available: Highlights always expire " +
+      "(48 hours at most) and cannot be made permanent, so this would have quietly " +
+      "discarded the story after a day. Post it as a Highlight instead (POST /highlights) " +
+      "and choose how long it should last.",
+  );
 }));
 
 // ── Expiry sweeper (called by health/cleanup cron) ────────────────────────────

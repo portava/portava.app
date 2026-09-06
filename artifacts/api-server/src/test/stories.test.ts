@@ -9,7 +9,8 @@
  * - Hide-viewer setting respected in viewers endpoint
  * - Close-friends list private to owner only
  * - Story soft-delete
- * - Save to highlight
+ * - Save to highlight (refused — Highlights always expire; see the block at the
+ *   bottom of this file. This list claimed coverage that did not exist.)
  */
 import { describe, it, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -527,5 +528,126 @@ describe("DELETE /api/stories/:id", () => {
 
     const { status } = await req("DELETE", `/api/stories/${U.story2}`, undefined, other.token);
     assert.equal(status, 403);
+  });
+});
+
+// ── Save to highlight ─────────────────────────────────────────────────────────
+//
+// `highlights.expires_at` is NOT NULL and every read path gates on it (both RLS
+// SELECT policies on the table, and every `.gt("expires_at", now)` filter in
+// routes/highlights.ts). The endpoint used to insert `now + 24h` and call that a
+// save, so the "saved" highlight went dark a day later with no error anywhere —
+// and flipping the story to state='saved' also excluded it permanently from
+// sweepExpiredStories(), the only code that deletes story bytes from
+// post-media, stranding the file as publicly fetchable forever. There is no
+// permanent highlight in this product to route the save into, so the endpoint
+// refuses.
+
+describe("POST /api/stories/:id/save-to-highlight", () => {
+  it("refuses instead of granting a silent 24h term", async () => {
+    const owner = makeUser(U.owner1, "tok-s2h-refuse");
+    const client = makeFakeClient({
+      _users: { rows: [owner] },
+      stories: { rows: [baseStory({ id: U.story1, owner_id: owner.id })] },
+    });
+    _setTestClient(client, true);
+
+    const { status, json } = await req(
+      "POST", `/api/stories/${U.story1}/save-to-highlight`, {}, owner.token,
+    );
+
+    assert.equal(status, 410, JSON.stringify(json));
+    assert.equal(json.error, "gone");
+    assert.match(
+      String(json.message ?? ""),
+      /expire/i,
+      "the refusal must say WHY — a bare code leaves the caller unable to tell the user anything",
+    );
+  });
+
+  it("writes no highlight row — nothing is created that will silently vanish", async () => {
+    const owner = makeUser(U.owner2, "tok-s2h-nohighlight");
+    const client = makeFakeClient({
+      _users: { rows: [owner] },
+      stories: { rows: [baseStory({ id: U.story2, owner_id: owner.id })] },
+    });
+    _setTestClient(client, true);
+
+    await req("POST", `/api/stories/${U.story2}/save-to-highlight`, {}, owner.token);
+
+    assert.deepEqual(
+      (client as any)._db.highlights.rows,
+      [],
+      "a refused save must not leave a highlight behind",
+    );
+  });
+
+  it("leaves the story active, so the media sweep can still reach its bytes", async () => {
+    const owner = makeUser(U.owner3, "tok-s2h-story-intact");
+    const client = makeFakeClient({
+      _users: { rows: [owner] },
+      stories: { rows: [baseStory({ id: U.story3, owner_id: owner.id })] },
+    });
+    _setTestClient(client, true);
+
+    await req("POST", `/api/stories/${U.story3}/save-to-highlight`, {}, owner.token);
+
+    const story = (client as any)._db.stories.rows.find((r: any) => r.id === U.story3);
+    // sweepExpiredStories() filters state='active' AND saved_to_highlight_id IS
+    // NULL. Either write below would exclude this story from the sweep forever,
+    // and nothing else deletes story media.
+    assert.equal(story?.state, "active", "a refused save must not consume the story");
+    assert.equal(story?.saved_to_highlight_id, null, "a refused save must not link a highlight");
+  });
+
+  it("still reports the highlight id of a story saved under the old behaviour", async () => {
+    const owner = makeUser(U.owner1, "tok-s2h-legacy");
+    const client = makeFakeClient({
+      _users: { rows: [owner] },
+      stories: {
+        rows: [baseStory({
+          id: U.story4,
+          owner_id: owner.id,
+          state: "saved",
+          saved_to_highlight_id: "dddddddd-0000-0000-0000-000000000001",
+        })],
+      },
+    });
+    _setTestClient(client, true);
+
+    const { status, json } = await req(
+      "POST", `/api/stories/${U.story4}/save-to-highlight`, {}, owner.token,
+    );
+
+    // Reporting a link that already exists is a fact, not a new promise — the
+    // refusal must not swallow it.
+    assert.equal(status, 200, JSON.stringify(json));
+    assert.equal(json.highlightId, "dddddddd-0000-0000-0000-000000000001");
+  });
+
+  it("still returns 403 to a non-owner — the refusal must not run before authz", async () => {
+    const owner = makeUser(U.owner1, "tok-s2h-owner-authz");
+    const other = makeUser(U.viewer1, "tok-s2h-other-authz");
+    const client = makeFakeClient({
+      _users: { rows: [owner, other] },
+      stories: { rows: [baseStory({ id: U.story5, owner_id: owner.id })] },
+    });
+    _setTestClient(client, true);
+
+    const { status, json } = await req(
+      "POST", `/api/stories/${U.story5}/save-to-highlight`, {}, other.token,
+    );
+    assert.equal(status, 403, JSON.stringify(json));
+  });
+
+  it("still returns 404 for a story that does not exist", async () => {
+    const owner = makeUser(U.owner1, "tok-s2h-missing");
+    const client = makeFakeClient({ _users: { rows: [owner] }, stories: { rows: [] } });
+    _setTestClient(client, true);
+
+    const { status, json } = await req(
+      "POST", `/api/stories/${U.story6}/save-to-highlight`, {}, owner.token,
+    );
+    assert.equal(status, 404, JSON.stringify(json));
   });
 });
