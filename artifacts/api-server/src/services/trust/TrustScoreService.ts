@@ -229,6 +229,12 @@ export interface TrustScoreResult {
   public_level: PublicTrustLevel;
   categories: Record<TrustCategory, number>;
   capsApplied: string[];
+  /**
+   * False when the user had NO qualifying trust events, in which case nothing was
+   * persisted and the numbers above are arithmetic only — never a measurement.
+   * See the persist block for why an unscored user must have no row at all.
+   */
+  persisted: boolean;
 }
 
 /** Recalculate all scores for a user and persist to trust_profiles */
@@ -271,6 +277,66 @@ export async function recalculateTrustScore(
 
   const public_level = scoreToLevel(overall, settings);
 
+  // ── NO EVIDENCE IS NOT NEUTRAL EARNED TRUST ────────────────────────────────
+  //
+  // computeCategoryScore returns 50 for a category with no events, the loop above
+  // walks the fixed nine ALL_CATEGORIES rather than the categories actually
+  // present, and the nine weights sum to exactly 1.000 — so a user with zero
+  // events scores exactly 50.00. `level_reliable` is 50 and scoreToLevel compares
+  // with >=, so that user is promoted to `reliable_traveler`, rung 3 of 6.
+  //
+  // That is not a cosmetic badge. PassportProjectionService maps public_level
+  // through LEVEL_RANK into capability grants, so persisting this row hands
+  // canHostTrip, canUseCrewLocation and canContributeLiveIntel to a user who has
+  // done nothing. On the first enable of `trust_engine_enabled` — against a
+  // trust_events table that is empty because the ingest lane was off — that would
+  // be every user in the system at once.
+  //
+  // The canonical way to say "no earned trust" already exists and is honoured
+  // everywhere else: ABSENCE OF A ROW. getDisplayTrustScore returns null for a
+  // user with no profile (documented at its own definition), lib/trustScore
+  // types the score as `number | null` explicitly "rather than a fabricated
+  // number", TrustPrivacyGuard falls back to the `new_traveler` label, and the
+  // client already branches on that via hasScore. Writing a fabricated row is
+  // what DESTROYS that representation.
+  //
+  // So: compute, but do not persist. The result is returned with
+  // persisted:false so a caller can tell arithmetic from measurement.
+  //
+  // KNOWN LIMIT, deliberately not papered over: a user who HAS a row and whose
+  // events have since been removed keeps their last evidence-derived row. It is
+  // stale, but it is not fabricated, and clearing it would need a decision about
+  // whether an erased-evidence user should read null or a floor. Recorded as a
+  // contract gap rather than guessed at. The related per-category gap is the
+  // same shape: trust_profiles' nine category columns and overall_score are all
+  // `numeric(5,2) NOT NULL DEFAULT 50.00`, so there is no way to persist "this
+  // one category is unscored" — a user with evidence in one category still
+  // carries eight fabricated 50s into the weighted overall.
+  // SCOPE: only a user who has NEVER been scored. A user who already HAS a row
+  // and whose events have since decayed out is refreshed as before — that case
+  // is deliberately pinned by trustAsymmetryAndMaintenance.test.ts ("refreshes a
+  // stale profile even with no new events"), and it is a different problem: a
+  // stale 60 really is wrong, and leaving it would be its own defect. Narrowing
+  // here fixes the dangerous case — every user at once on first enable — without
+  // silently reversing a decision someone already made and tested.
+  if (events.length === 0) {
+    const { data: existing } = await db
+      .from("trust_profiles")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (!existing) {
+      return {
+        userId,
+        overall_score: overall,
+        public_level,
+        categories: categories as Record<TrustCategory, number>,
+        capsApplied,
+        persisted: false,
+      };
+    }
+  }
+
   // Persist (non-fatal — return computed result even if persist fails)
   {
     const { error: upsertError } = await db.from("trust_profiles").upsert({
@@ -298,6 +364,7 @@ export async function recalculateTrustScore(
     public_level,
     categories: categories as Record<TrustCategory, number>,
     capsApplied,
+    persisted: true,
   };
 }
 
@@ -341,6 +408,8 @@ export async function getTrustProfile(
       overall_score: d.overall_score,
       public_level:  d.public_level,
       capsApplied:   [],
+      // A row exists, so by definition this IS persisted state.
+      persisted:     true,
       categories: {
         plan_attendance:       d.plan_attendance,
         host_quality:          d.host_quality,
