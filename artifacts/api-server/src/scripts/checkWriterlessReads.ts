@@ -101,7 +101,109 @@ export const SQL_DIRS = [
 export const KNOWN_WRITERLESS_READS: Record<
   string,
   { readers: number; classification: "external-seed" | "human-allowlist" | "legacy-decoy" | "dead-lane"; note: string }
-> = {};
+> = {
+  // ── DEAD LANES — each of these must reach zero ────────────────────────────
+  circles: {
+    readers: 9,
+    classification: "dead-lane",
+    note:
+      "No writer in server TS, client TS or SQL, and no circle-creation UI. The product's " +
+      "actual Circle is the PAIR table circle_memberships(user_id, other_id); public.circles " +
+      "is an abandoned named-group design. Nine readers are inert, and the user-visible cost " +
+      "is a dead end in event creation: the composer offers 'Circle members' visibility, " +
+      "refuses to advance without a circleId, and points at a create screen that does not " +
+      "exist. Needs a product ruling — delete the readers, or build the create path.",
+  },
+  post_event_links: {
+    readers: 2,
+    classification: "dead-lane",
+    note:
+      "Nothing links a post to an event, so Discovery's 'Live from events' path and the event " +
+      "hero-media rail can never return a row.",
+  },
+  compass_user_profiles: {
+    readers: 1,
+    classification: "dead-lane",
+    note: "The Pulse Live rail's 'Compass picks' section never emits an item.",
+  },
+  compass_explanation_reasons: {
+    readers: 1,
+    classification: "dead-lane",
+    note:
+      "A DB-override table with no write path, so the 'Why am I seeing this?' override never " +
+      "applies and the hardcoded reasons are the only ones that can ever show.",
+  },
+  post_impressions: {
+    readers: 1,
+    classification: "dead-lane",
+    note:
+      "Writerless AND the single read filters on `viewed_at`, a column the table does not have. " +
+      "Two independent reasons it can never return a row. This is also why " +
+      "CreatorActivityScoreService could not source a reach denominator, and why its " +
+      "positiveResponse component had to become a count rather than a rate.",
+  },
+  shared_moment_suggestions: {
+    readers: 1,
+    classification: "dead-lane",
+    note: "No producer, so the shared-moment suggestions endpoint is permanently empty.",
+  },
+
+  // ── LEGACY DECOY — superseded, pending removal ────────────────────────────
+  place_profiles: {
+    readers: 1,
+    classification: "legacy-decoy",
+    note:
+      "Superseded by discovery_places. getVerifiedPlaces() always returns empty, so the " +
+      "Discovery and Compass 'verified place' lanes never fire. Same shape as the " +
+      "user_location_preferences / location_preferences split fixed in #442: two tables for " +
+      "one concept, with live readers left on the dead one.",
+  },
+
+  // ── HUMAN-CURATED ALLOWLISTS — empty ON PURPOSE, not defects ──────────────
+  protected_zones: {
+    readers: 3,
+    classification: "human-allowlist",
+    note:
+      "Migration 2217 says so outright: 'SHIPS EMPTY BY DESIGN: which places are protected is " +
+      "a policy decision with a named owner, not a schema decision, and the list of rows is " +
+      "itself a map of exactly what it protects.' service_role only. Emptiness is the correct " +
+      "fail-closed default.",
+  },
+  intel_live_promoted_scopes: {
+    readers: 1,
+    classification: "human-allowlist",
+    note:
+      "Migration 2179's per-scope Live allowlist. It starts EMPTY so that turning the global " +
+      "intel_limited_live flag on exposes nothing until a scope is explicitly promoted after a " +
+      "density gate and human review — the fix for a single-global-flag over-exposure bug. " +
+      "This is why wall_live_for_you_enabled should stay off: it would serve an empty strip.",
+  },
+  route_flow_contribution_consent: {
+    readers: 1,
+    classification: "human-allowlist",
+    note:
+      "Server-authoritative consent for contributing accepted route plans to the public Crowd " +
+      "Flow aggregate. Deliberately empty pending privacy-policy review, so no opt-in endpoint " +
+      "exists yet. Consequence to keep in view: the crowd_flow accepted_plan signal family " +
+      "cannot be satisfied while this stands, so a Map layer depends on a privacy decision.",
+  },
+
+  // ── EXTERNALLY SEEDED REFERENCE DATA ──────────────────────────────────────
+  fsq_places: {
+    readers: 2,
+    classification: "external-seed",
+    note:
+      "Foursquare venue cache. Declared in REFERENCE_LOCATION_TABLES (lib/locationPurposes.ts) " +
+      "as venue reference data, not personal location. Populated out of band.",
+  },
+  canonical_locations: {
+    readers: 3,
+    classification: "external-seed",
+    note:
+      "Canonical city/region reference rows, also in REFERENCE_LOCATION_TABLES. Populated out " +
+      "of band rather than by application code.",
+  },
+};
 
 /** file -> text, for the crude "is this route path mentioned anywhere else" test. */
 function readAllSourceText(dirs: string[], repoRoot: string): Map<string, string> {
