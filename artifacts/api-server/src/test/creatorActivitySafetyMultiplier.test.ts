@@ -26,15 +26,26 @@
  *    Vocabulary comes from the committed baseline (plus later migrations —
  *    verified: none touches public_level), never from src/lib/database.types.ts.
  *
- * 2. `activity_events` HAS NO PRODUCER
- *    The service reads it in five lanes on 22 event_type literals. The table
- *    has exactly one writer in this repo — an internal-secret-gated route that
- *    nothing calls — so every one of those reads returns zero rows, silently
- *    and permanently. `event_type` is plain TEXT with no ENUM and no CHECK, so
- *    `check:enum-literals` cannot see the literals: that guard only judges
- *    columns that carry a vocabulary. This test is the pin instead. If it goes
- *    RED because a producer appeared, that is good news — revisit the score's
- *    activity lanes and the scheduler's cold start, then update this test.
+ * 2. `activity_events` IS RETIRED AS A SIGNAL SOURCE
+ *    Until 2026-09-06 the service read it in five lanes on 22 event_type
+ *    literals. The table has exactly one writer in this repo — an internal-
+ *    secret-gated route that nothing calls — so every one of those reads
+ *    returned zero rows, silently and permanently. `event_type` is plain TEXT
+ *    with no ENUM and no CHECK, so `check:enum-literals` could not see the
+ *    literals either: that guard only judges columns carrying a vocabulary.
+ *
+ *    Every lane now reads first-class tables, so the tests below pin the
+ *    REVERSE of what they used to. The risk is no longer "a producer appears
+ *    and wakes the dead lanes"; it is "someone restores a read and the lane
+ *    silently returns to zero", which is the failure that hid here for months
+ *    and which no fixture-based test can see. Hence a source-level pin.
+ *
+ *    The table and its route are deliberately KEPT. The rewrite's honest cost
+ *    is that several new sources (post_saves, content_stamps, user_follows,
+ *    event_rsvps) are mutable state that is DELETEd on undo, so the score is no
+ *    longer reproducible from an audit trail. activity_events is the shape of
+ *    the log that would fix that. Dropping it would delete the scaffolding for
+ *    the repair while gaining nothing — the table is empty either way.
  *
  * Pattern: node:test + tsx/esm, no vitest.
  * Run: node --import tsx/esm --test src/test/creatorActivitySafetyMultiplier.test.ts
@@ -234,7 +245,41 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 }
 
-describe("activity_events — the table the creator-activity lane reads", () => {
+const READS_ACTIVITY_EVENTS = /from\(\s*["']activity_events["']\s*\)/;
+
+describe("activity_events — retired as a signal source, kept as an empty log", () => {
+  it("the ranking service does not read it in any lane", () => {
+    const src = stripComments(
+      readFileSync(resolve(SRC_ROOT, "services/ranking/CreatorActivityScoreService.ts"), "utf8"),
+    );
+
+    assert.equal(
+      READS_ACTIVITY_EVENTS.test(src),
+      false,
+      "CreatorActivityScoreService reads activity_events again. That table has no " +
+        "producer, so the lane reading it returns zero rows for every creator, " +
+        "forever — and because the fake Supabase clients answer a query against an " +
+        "empty fixture exactly the way PostgREST answers a query against an empty " +
+        "table, the suite stays GREEN while the component is dead. This is a " +
+        "source-level pin precisely because no fixture can catch it.",
+    );
+  });
+
+  it("nor does the scheduler use it to build its candidate pool", () => {
+    const src = stripComments(
+      readFileSync(resolve(SRC_ROOT, "lib/creatorActivityScoreScheduler.ts"), "utf8"),
+    );
+
+    assert.equal(
+      READS_ACTIVITY_EVENTS.test(src),
+      false,
+      "The scheduler's seed pool is reading activity_events again. Both halves of " +
+        "the old union were empty by construction — creator_activity_scores is " +
+        "written only by this job — so no creator was ever scored a first time and " +
+        "the job logged 'no stale users' forever while exiting 0.",
+    );
+  });
+
   it("still has exactly one writer, and it is the internal route", () => {
     const writers = walkTsFiles(SRC_ROOT)
       .filter((f) => !f.includes(`${"/"}test${"/"}`) && !f.endsWith("database.types.ts"))
@@ -245,12 +290,11 @@ describe("activity_events — the table the creator-activity lane reads", () => 
     assert.deepEqual(
       writers,
       ["src/routes/notifications.ts"],
-      "the set of activity_events writers changed. If a producer was added, the " +
-        "creator-activity score's five inert lanes (consistency, participation, " +
-        "positive response, maintenance, spam/repetition penalties) start moving " +
-        "ranking output for the first time — check the 22 event_type literals in " +
-        "CreatorActivityScoreService actually match what the new producer writes, " +
-        "then update this test.",
+      "the set of activity_events writers changed. A producer appearing is no " +
+        "longer a scoring emergency — no lane reads this table. It IS the moment " +
+        "to revisit the reproducibility caveat in the service header: with a real " +
+        "append-only log, the components that currently read retractable state " +
+        "could be sourced from something an audit can replay.",
     );
   });
 
@@ -265,9 +309,9 @@ describe("activity_events — the table the creator-activity lane reads", () => 
     assert.deepEqual(
       referrers,
       ["src/routes/notifications.ts"],
-      "POST /internal/activity-events gained an in-repo reference. If something " +
-        "now calls it, activity_events stops being permanently empty — see the " +
-        "note above.",
+      "POST /internal/activity-events gained an in-repo reference. The route is " +
+        "kept deliberately — see the header — but it is still the only writer, so " +
+        "a new caller means the table is becoming real.",
     );
   });
 });

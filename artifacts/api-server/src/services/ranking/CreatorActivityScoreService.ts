@@ -7,11 +7,8 @@
  * must never be called on the hot path of a live feed request.
  *
  * Data sources used:
- *   activity_events  — DESIGNED primary signal store (actor_id, user_id,
- *                      event_type, category, created_at, metadata). It has no
- *                      producer: see "THE ACTIVITY LANE HAS NO PRODUCER" below
- *                      before trusting any activity_events-derived number.
- *   posts            — contribution count (author_id, status, post_status,
+ *   posts            — contributions, received saves/shares/comments, and the
+ *                      spam signals (author_id, status, post_status,
  *                      created_at)
  *   events           — contribution count (host_id, created_at)
  *   trips            — contribution count (owner_id, created_at)
@@ -41,57 +38,64 @@
  *   - Actions from accounts the creator has blocked/been blocked by are
  *     excluded from participation and positive-response signals
  *
- * ─── THE ACTIVITY LANE HAS NO PRODUCER ──────────────────────────────────────
+ * ─── THIS LANE WAS DEAD, AND WHAT REPLACED IT ───────────────────────────────
  *
- * `public.activity_events` is written by exactly ONE call site in this repo:
- * `POST /internal/activity-events` (src/routes/notifications.ts). That route
- * is gated on the internal-service secret and NOTHING calls it — not this
- * server, not the mobile client, not a scheduler, not a DB trigger. The table
- * is therefore permanently empty in every environment.
+ * Until 2026-09-06 every component except recentContribution read
+ * `public.activity_events`, a table with exactly ONE writer — POST
+ * /internal/activity-events (routes/notifications.ts) — which is gated on the
+ * internal-service secret and called by NOTHING: not this server, not the
+ * client, not a scheduler, not a trigger. Its `event_type` is plain TEXT with
+ * no ENUM and no CHECK, so all 22 literals SUCCEEDED and matched nothing,
+ * silently and permanently. `check:enum-literals` could not see them, because
+ * that guard only judges columns that carry a vocabulary and this one carries
+ * none.
  *
- * `activity_events.event_type` is plain TEXT with no ENUM and no CHECK
- * (baseline/20260819_baseline_structure.sql:3548), so none of the 22
- * event_type literals below produces an error: every one of these queries
- * SUCCEEDS and matches nothing, silently and permanently. This is not the
- * 22P02 dead-enum class that `check:enum-literals` guards — that check only
- * judges columns that carry a vocabulary, and this column carries none, so
- * the guard cannot see these literals at all.
+ * The consequence was total: 0.70 of the weight and BOTH penalties were
+ * structurally zero, so a real score was the NEW_USER_BASE_SCORE floor of 10,
+ * or at most 30. And the scheduler could not even reach that — its candidate
+ * pool was (stale scores) UNION (activity_events actors), and since
+ * creator_activity_scores is written only by that same job, both halves were
+ * empty forever and NO CREATOR WAS EVER SCORED A FIRST TIME.
  *
- * What that means for the score, per lane:
- *   activeDays90                  — always 0  → consistencyScore always 0
- *   participationEvents/Users     — always 0  → communityParticipation 0
- *   receivedPositiveActions/Volume— always 0  → positiveResponse 0
- *   maintenanceActions            — always 0  → maintenanceScore 0
- *   burst/duplicate/follow-cycle/
- *     rapid-same-type/create-delete— always 0 → spam + repetition penalty 0
- * Only `contributions*` (posts/events/trips/reviews/discovery_places, all of
- * which have real producers) can ever be non-zero. So a real score today is
- * the NEW_USER_BASE_SCORE floor of 10, or at most 30 — the 0.30 weight on the
- * one live lane. Nothing can score above 30 and nothing can be penalised.
- * Do not read a low CreatorActivityScore as low activity.
+ * Every component now reads first-class tables that have real production
+ * writers. Per component, with the honest caveat attached:
  *
- * The underlying user actions ARE recorded — just as first-class rows, never
- * projected into this log. If the lane is revived, these are the producers
- * that already exist and the mapping is a product decision, not a rename:
- *   content_shared      → post_shares      (posts.ts upserts it)
- *   comment_received    → posts_comments   (posts.ts inserts it)
- *   follow_received     → user_follows     (follows.ts upserts it)
- *   profile_visited     → profile_views    (passport.ts inserts it)
- *   event_rsvp          → event_rsvps      (events.ts upserts it)
- *   content_impression  → post_impressions — the table exists but has no
- *                         writer either, so it is no better a source than
- *                         this one (profile.ts's post_impressions_7d stat is
- *                         permanently 0 for the same reason).
- *   helpful_response    → nothing; the concept does not exist in the schema
- * A partial actor-side log with real producers also exists —
- * `compass_active_user_events` (post_published, event_attended, trip_created,
- * review_posted, …) — but it has no actor/target pair, so it can feed the
- * by-the-creator lanes and none of the received-signal lanes.
+ *   consistency      → actor-side day-stamps unioned across 13 tables. It must
+ *                      stay ACTIONS, not publications: sourcing it from the
+ *                      contribution tables alone would make it collinear with
+ *                      recentContribution and silently turn the model into 0.50
+ *                      "did you publish".
+ *   participation    → posts_comments + event_rsvps, with the OWNER resolved so
+ *                      the distinct-user half (70% of the component) is real.
+ *                      `event_attended` and `helpful_response` are DROPPED —
+ *                      neither exists in the schema, and approximating them onto
+ *                      a neighbouring table would move the score on a different
+ *                      population than it claims to measure.
+ *   positiveResponse → a COUNT, no longer a rate. This is a product change, not
+ *                      a repair: the old denominator was reach, and no source
+ *                      for reach exists (post_impressions has no writer either).
+ *                      See _fetchPositiveResponses for why every substitute
+ *                      denominator was worse than removing it.
+ *   maintenance      → post_edits only. Four of the five original upkeep kinds
+ *                      have no producer, so this component is narrower than it
+ *                      was and will read 0 for most creators until the edit
+ *                      writer is widened. That is true of the data, and it is
+ *                      visible in the persisted signals rather than hidden.
+ *   spam/repetition  → burst, duplicate and rapid-same-type from posts. Follow-
+ *                      cycling and event create/delete cycles are NOT
+ *                      representable: user_follows and event state are current
+ *                      state, hard-deleted, so a cycle leaves no trace. They
+ *                      report 0 — the same value as before, but now a stated
+ *                      absence rather than an empty query.
  *
- * Deliberately NOT repointed: mapping a reader's literal onto the nearest
- * plausible label of a different table would make this score move on a
- * different population than it claims to measure. Recorded, not invented.
- * ────────────────────────────────────────────────────────────────────────────
+ * A PROPERTY WORTH KNOWING: several of these sources are mutable state, not an
+ * append-only log. post_saves, content_stamps, user_follows and event_rsvps rows
+ * are DELETEd on unsave / unstamp / unfollow / RSVP-cancel, and user_follows in
+ * BOTH directions on a block. So a creator's score can fall because someone else
+ * undid their engagement, and past active-days can shrink retroactively. The
+ * direction is safe — signal is only lost, never invented — but the score is no
+ * longer reproducible from an audit trail. activity_events was meant to be that
+ * log; it never had a writer, and this is the cost of not having one.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -102,7 +106,11 @@ const logger = rootLogger.child({ service: "CreatorActivityScoreService" });
 // ─── Version ──────────────────────────────────────────────────────────────────
 
 /** Bump this string to force a full recalculation of all stored scores. */
-export const ACTIVITY_SCORE_VERSION = "1.0";
+export const ACTIVITY_SCORE_VERSION = "2.0";
+// 1.0 -> 2.0: every component moved off the writerless `activity_events` table
+// onto first-class rows. Every score stored under 1.0 was computed against
+// sources that were structurally empty, so this bump exists precisely to force
+// a full recalculation rather than let stale ~10-30 values persist.
 
 // ─── Default weights & parameters ────────────────────────────────────────────
 
@@ -117,6 +125,28 @@ const COMPONENT_WEIGHTS = {
   positiveResponse:       0.20,
   maintenance:            0.10,
 } as const;
+
+/**
+ * Max ids per `.in()` ANYWHERE in this file.
+ *
+ * `.in()` is serialised into the query string. At ~37 characters per uuid an
+ * unbounded list crosses a typical 8KB URL limit at roughly 200 ids and comes
+ * back 414, which supabase-js RETURNS rather than throws — so the surrounding
+ * catch never fires and the read yields nothing.
+ *
+ * The failure has a SIZE THRESHOLD in front of it, which is what makes it so
+ * hard to see: below the threshold the code is correct, above it the result is
+ * identical to "nobody engaged". No fixture reaches the threshold, and the
+ * effect is monotonic in output volume — the more a creator posts, the more
+ * certain their engagement score is zero. That inverts the signal for exactly
+ * the accounts ranking exists to surface.
+ *
+ * This was originally applied to _ownersOf alone. The four reads in
+ * _fetchPositiveResponses kept an unbounded list and were caught later, so the
+ * rule is now: every `.in()` on a list this file builds goes through
+ * `_inChunks`.
+ */
+const IN_LIST_CHUNK = 100;
 
 /** Soft-cap for the saturating transform. */
 const SOFT_CAP_CONTRIBUTION      = 20;
@@ -272,13 +302,17 @@ function calcCommunityParticipationScore(signals: CreatorSignals): number {
 }
 
 function calcPositiveResponseScore(signals: CreatorSignals): number {
-  const { receivedPositiveActions, receivedInteractionVolume } = signals;
+  // A COUNT, NOT A RATE — see _fetchPositiveResponses for why the rate could
+  // not survive. Briefly: the denominator was reach (`content_impression`), and
+  // no first-class source for reach exists — post_impressions has no writer
+  // either. Every candidate substitute was either so much smaller that all
+  // creators saturate (making the component carry no information at all) or
+  // privacy-gated in a way that would reward restrictive settings with a higher
+  // rank. Scoring the volume directly is the honest option and is a stated
+  // product change: large accounts are no longer normalised down.
+  const { receivedPositiveActions } = signals;
   if (receivedPositiveActions <= 0) return 0;
-  // Normalise by total received interactions to prevent large-account bias.
-  const denominator = Math.max(1, receivedInteractionVolume);
-  const rate = receivedPositiveActions / denominator;
-  // rate of 0.05 (5%) → saturate at softCap 5 = ~63% of 100
-  return saturate(rate * 100, 5, 100);
+  return saturate(receivedPositiveActions, SOFT_CAP_RESPONSES, 100);
 }
 
 function calcMaintenanceScore(signals: CreatorSignals): number {
@@ -372,16 +406,26 @@ export function computeActivityScore(
  * CreatorSignalAggregator — pulls windowed counts from the DB for one creator.
  *
  * Tables used (with exact live columns accessed):
- *   activity_events  — actor_id, user_id, event_type, created_at, metadata.
- *                      NO PRODUCER — every read below returns zero rows. See
- *                      the module header for the per-lane consequence.
- *   posts            — author_id, status, created_at
- *   events           — host_id, created_at
+ *   posts            — author_id, status, id, created_at
+ *   events           — host_id, id, created_at
  *   trips            — owner_id, created_at
  *   reviews          — reviewer_id, state, created_at
  *   discovery_places — submitted_by, created_at
+ *   posts_comments   — user_id, post_id, deleted_at, created_at
+ *   post_saves       — user_id, post_id, created_at
+ *   post_shares      — user_id, post_id, created_at
+ *   content_stamps   — user_id, entity_type, entity_id, created_at
+ *   event_rsvps      — user_id, event_id, created_at
+ *   user_follows     — follower_id, following_id, created_at
+ *   post_edits       — user_id, post_id, edited_at        (NOT created_at)
+ *   profile_views    — viewer_id, viewed_at               (NOT created_at)
  *   blocks           — blocker_id, blocked_id
  *   trust_profiles   — user_id, overall_score, public_level
+ *
+ * The two odd timestamp columns are not a stylistic quirk to normalise away:
+ * reading `created_at` on post_edits or profile_views is a 42703 that supabase-js
+ * RETURNS rather than throws, so the surrounding try/catch would not fire and the
+ * component would silently read zero — the exact failure that killed this lane.
  *
  * Anti-gaming filters:
  *   - Self-actions excluded: actor_id != userId on received-signal queries
@@ -548,24 +592,105 @@ export class CreatorSignalAggregator {
 
   // ── Active days ───────────────────────────────────────────────────────────
 
-  /** Count distinct calendar days with at least one activity in the last 90 days. */
+  /**
+   * Distinct calendar days on which the creator DID SOMETHING, over 90 days.
+   *
+   * PRESENCE, NOT AUTHORSHIP — and that distinction is the whole component.
+   * The activity_events version filtered on `actor_id` with NO event_type
+   * restriction, so it counted any day the lane logged an action of any kind.
+   * recentContribution already measures publishing, with volume and decay;
+   * consistency is what separates a creator who shows up daily and publishes
+   * monthly from one who dumps ten posts and vanishes.
+   *
+   * SO THIS MUST NOT BE PUBLISH-DAYS. Sourcing it from the five contribution
+   * tables alone would make `contributions90d === 0` imply `activeDays90 === 0`
+   * for every creator, collapsing two independent 0.20/0.30 signals into one
+   * 0.50 "did you publish" term — and silently, because both components would
+   * still look populated. It would also break the new-user floor below, which
+   * ANDs four conjuncts that would no longer be four distinct predicates.
+   *
+   * The union is therefore over every table where the creator ACTED, keyed on
+   * the actor column, not the owner column.
+   *
+   * TWO TIMESTAMP COLUMNS ARE NOT `created_at`: post_edits uses `edited_at` and
+   * profile_views uses `viewed_at`. Naming them wrong yields a silent empty
+   * result rather than an error, which is exactly the failure this lane is
+   * being repaired for.
+   *
+   * KNOWN PROPERTY, deliberately accepted: five of these sources are mutable
+   * state rather than an append-only log — post_saves, content_stamps,
+   * user_follows and event_rsvps rows are DELETEd on unsave / unstamp /
+   * unfollow / RSVP-cancel, and user_follows is additionally deleted in BOTH
+   * directions on a block. So a creator's past active-days can shrink
+   * retroactively. The direction is safe (days are only lost, never invented)
+   * but the score is no longer reproducible from an audit trail. That is the
+   * price of having no append-only log at all; activity_events was that log and
+   * never had a writer.
+   */
   private async _fetchActiveDays(userId: string, ago90d: string): Promise<number> {
-    try {
-      // Use activity_events where actor_id = userId (actions performed by creator)
-      const { data } = await (this.db as any)
-        .from("activity_events")
-        .select("created_at")
-        .eq("actor_id", userId)
-        .gte("created_at", ago90d);
+    // WRITTEN OUT, ONE STATIC `.from("literal")` PER SOURCE, ON PURPOSE.
+    //
+    // The obvious shape here is a [table, actorCol, timeCol] table driven by a
+    // loop. It was that, and check:write-path-columns rejected it: a dynamic
+    // `.from(table)` is a blind spot the live-schema column checker cannot
+    // resolve, so nothing would verify that `post_edits.edited_at` and
+    // `profile_views.viewed_at` are real columns. Getting one of those wrong is
+    // a 42703, which supabase-js RETURNS rather than throws — the per-source
+    // catch below would swallow it and the source would contribute zero days,
+    // silently. That is the same failure this whole file exists to remove, so
+    // the loop is not worth its brevity: spelled out, every column name here is
+    // checked against the live schema on every CI run.
+    const q = this.db as any;
+    const src = (
+      builder: () => any,
+      timeCol: string,
+    ): Promise<{ rows: any[]; timeCol: string }> =>
+      Promise.resolve()
+        .then(builder)
+        .then((res: any) => ({ rows: (res?.data as any[]) ?? [], timeCol }))
+        // One unavailable source must not zero the whole component — that is
+        // how the previous version failed, silently and completely.
+        .catch(() => ({ rows: [] as any[], timeCol }));
 
-      const rows: any[] = (data as any[]) ?? [];
-      const days = new Set(
-        rows.map((r) => String(r.created_at ?? "").slice(0, 10)).filter((d) => d.length === 10),
-      );
-      return days.size;
-    } catch {
-      return 0;
+    const results = await Promise.all([
+      // Authored contributions — the same rows recentContribution counts.
+      src(() => q.from("posts").select("created_at")
+        .eq("author_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("events").select("created_at")
+        .eq("host_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("trips").select("created_at")
+        .eq("owner_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("reviews").select("created_at")
+        .eq("reviewer_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("discovery_places").select("created_at")
+        .eq("submitted_by", userId).gte("created_at", ago90d), "created_at"),
+      // Actions on other people's content — the half publish-days would lose.
+      src(() => q.from("posts_comments").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("post_saves").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("post_shares").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("content_stamps").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("event_rsvps").select("created_at")
+        .eq("user_id", userId).gte("created_at", ago90d), "created_at"),
+      src(() => q.from("user_follows").select("created_at")
+        .eq("follower_id", userId).gte("created_at", ago90d), "created_at"),
+      // The two that do NOT use created_at. Spelled out is the point.
+      src(() => q.from("post_edits").select("edited_at")
+        .eq("user_id", userId).gte("edited_at", ago90d), "edited_at"),
+      src(() => q.from("profile_views").select("viewed_at")
+        .eq("viewer_id", userId).gte("viewed_at", ago90d), "viewed_at"),
+    ]);
+    const days = new Set<string>();
+    for (const { rows, timeCol } of results) {
+      for (const r of rows) {
+        const d = String(r?.[timeCol] ?? "").slice(0, 10);
+        if (d.length === 10) days.add(d);
+      }
     }
+    return days.size;
   }
 
   // ── Community participation ───────────────────────────────────────────────
@@ -578,36 +703,141 @@ export class CreatorSignalAggregator {
    * blockedIds are excluded so interactions with blocked/blocking users do
    * not inflate the participation score.
    */
+  /**
+   * Resolve `ids` on `table` to their owner column, as a Map(id -> ownerId).
+   *
+   * The CALLER passes the query, already bound to a literal table and a literal
+   * select list. It used to take a table name and build `.from(table).select(
+   * `id, ${ownerCol}`)` itself, and check:write-path-columns rejected that: a
+   * dynamic table name is a blind spot the live-schema column checker cannot
+   * resolve, so nothing verified that `posts.author_id` and `events.host_id`
+   * are real columns. Naming one wrong is a 42703 that supabase-js RETURNS
+   * rather than throws, so the catch below would swallow it and participation
+   * would read zero — silently.
+   *
+   * Two-step rather than a PostgREST embedded select (`posts!inner(author_id)`)
+   * ON PURPOSE. The in-memory Supabase doubles in this repo do not model embeds;
+   * an embed against them returns rows with the joined key ABSENT, which reads
+   * downstream as "no owner" and silently zeroes the component. That is the
+   * exact failure mode this whole rewrite exists to remove, so the query shape
+   * stays one the doubles can actually answer.
+   */
+  /**
+   * Run `build(chunk)` once per IN_LIST_CHUNK slice of `ids` and concatenate the
+   * rows. A failing chunk is skipped rather than discarding the chunks that
+   * already succeeded — a partial count is a degraded signal, an empty one is a
+   * wrong signal.
+   */
+  private async _inChunks(ids: string[], build: (chunk: string[]) => any): Promise<any[]> {
+    const rows: any[] = [];
+    for (let i = 0; i < ids.length; i += IN_LIST_CHUNK) {
+      try {
+        const { data } = await build(ids.slice(i, i + IN_LIST_CHUNK));
+        for (const r of ((data as any[]) ?? [])) rows.push(r);
+      } catch {
+        continue;
+      }
+    }
+    return rows;
+  }
+
+  private async _ownersOf(
+    fetchChunk: (chunk: string[]) => any,
+    ownerCol: string,
+    ids: string[],
+  ): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) return out;
+
+    // CHUNKED, and the chunking is load-bearing. `.in()` becomes a query string,
+    // and a prolific commenter easily has several hundred distinct post_ids in
+    // 90 days; at 36 chars per UUID plus escaping, one unbounded request runs
+    // past the URL limit and comes back 414. supabase-js RETURNS that rather
+    // than throwing, so `data` would be undefined, the owner map empty, and
+    // participation silently 0 — for exactly the heaviest participants, the
+    // ones the component most needs to see. Same silent-zero signature as the
+    // defect this file exists to fix, just with a size threshold in front of it.
+    for (let i = 0; i < unique.length; i += IN_LIST_CHUNK) {
+      const chunk = unique.slice(i, i + IN_LIST_CHUNK);
+      try {
+        const { data } = await fetchChunk(chunk);
+        for (const r of ((data as any[]) ?? [])) {
+          const owner = r?.[ownerCol];
+          if (r?.id && owner) out.set(String(r.id), String(owner));
+        }
+      } catch {
+        // One bad chunk must not discard the owners already resolved.
+        continue;
+      }
+    }
+    return out;
+  }
+
   private async _fetchParticipation(
     userId: string, ago90d: string, blockedIds: Set<string>,
   ): Promise<Pick<CreatorSignals, "participationEvents"|"participationDistinctUsers">> {
+    // The distinct-USER half carries 70% of this component (see the scorer):
+    // breadth of contact with different people beats depth with one. So the
+    // owner of each touched item has to be resolved, not just the row counted.
+    //
+    // `event_attended` and `helpful_response` have NO first-class equivalent.
+    // event_attendees is a roster synced from RSVP state, not an attendance
+    // fact, and nothing in the schema represents a helpful response. They are
+    // dropped rather than approximated onto a table that means something else —
+    // repointing a signal at the nearest-looking source is how this lane came
+    // to measure a population it does not claim to.
     try {
-      const PARTICIPATION_TYPES = [
-        "comment_posted",
-        "event_attended",
-        "helpful_response",
-        "event_rsvp",
-      ];
+      const [comments, rsvps] = await Promise.all([
+        (async () => {
+          try {
+            const { data } = await (this.db as any)
+              .from("posts_comments")
+              .select("post_id")
+              .eq("user_id", userId)
+              .is("deleted_at", null)
+              .gte("created_at", ago90d);
+            return ((data as any[]) ?? []).map((r) => String(r?.post_id ?? "")).filter(Boolean);
+          } catch { return [] as string[]; }
+        })(),
+        (async () => {
+          try {
+            const { data } = await (this.db as any)
+              .from("event_rsvps")
+              .select("event_id")
+              .eq("user_id", userId)
+              .gte("created_at", ago90d);
+            return ((data as any[]) ?? []).map((r) => String(r?.event_id ?? "")).filter(Boolean);
+          } catch { return [] as string[]; }
+        })(),
+      ]);
 
-      // actor_id = userId (this user acted), user_id != userId (on someone else's content)
-      const { data } = await (this.db as any)
-        .from("activity_events")
-        .select("user_id")
-        .eq("actor_id", userId)
-        .neq("user_id", userId)
-        .in("event_type", PARTICIPATION_TYPES)
-        .gte("created_at", ago90d);
+      const [postOwners, eventOwners] = await Promise.all([
+        this._ownersOf(
+          (chunk) => (this.db as any).from("posts").select("id, author_id").in("id", chunk),
+          "author_id", comments,
+        ),
+        this._ownersOf(
+          (chunk) => (this.db as any).from("events").select("id, host_id").in("id", chunk),
+          "host_id", rsvps,
+        ),
+      ]);
 
-      // Filter out blocked accounts (content owners this user has blocked or
-      // been blocked by).
-      const rows: any[] = ((data as any[]) ?? []).filter(
-        (r: any) => !blockedIds.has(String(r.user_id)),
-      );
-      const distinctCreators = new Set(rows.map((r: any) => r.user_id).filter(Boolean));
+      // Same two exclusions the activity_events version applied: never count
+      // acting on your OWN content, and drop owners on either side of a block.
+      const owners: string[] = [];
+      for (const id of comments) {
+        const o = postOwners.get(id);
+        if (o && o !== userId && !blockedIds.has(o)) owners.push(o);
+      }
+      for (const id of rsvps) {
+        const o = eventOwners.get(id);
+        if (o && o !== userId && !blockedIds.has(o)) owners.push(o);
+      }
 
       return {
-        participationEvents:        rows.length,
-        participationDistinctUsers: distinctCreators.size,
+        participationEvents:        owners.length,
+        participationDistinctUsers: new Set(owners).size,
       };
     } catch {
       return { participationEvents: 0, participationDistinctUsers: 0 };
@@ -627,78 +857,148 @@ export class CreatorSignalAggregator {
   private async _fetchPositiveResponses(
     userId: string, ago90d: string, blockedIds: Set<string>,
   ): Promise<Pick<CreatorSignals, "receivedPositiveActions"|"receivedInteractionVolume">> {
+    // ── THIS COMPONENT IS NOW A COUNT, NOT A RATE. A PRODUCT CHANGE. ─────────
+    // The activity_events version measured CONVERSION: positive actions divided
+    // by total received interactions, where the denominator's bulk was
+    // `content_impression` — i.e. reach. There is no first-class source for
+    // reach: `post_impressions` has no writer either, exactly like the table
+    // this rewrite is retiring.
+    //
+    // Substituting profile_views as the denominator was considered and REFUSED,
+    // for two reasons that would each be worse than the defect being fixed:
+    //   1. It is one to two orders of magnitude smaller than reach, so every
+    //      creator with any engagement saturates at ~100 (softCap 5). A
+    //      component that reads 100 for everyone carries NO information — the
+    //      0.20 weight would be dead again, just less visibly.
+    //   2. profile_views is written only for authenticated non-owner viewers who
+    //      pass the privacy gate, while the numerator has no such gate. A
+    //      smaller denominator would mean a HIGHER score, coupling restrictive
+    //      privacy settings to discovery ranking. Nobody chose that.
+    // So the denominator is retired with the rate, and volume is scored directly
+    // against SOFT_CAP_RESPONSES. `receivedInteractionVolume` is still returned
+    // (it is part of the persisted signal shape) but no longer divides anything.
+    //
+    // NOTE these sources are retractable: post_saves, content_stamps and
+    // user_follows rows are DELETEd on unsave / unstamp / unfollow, and
+    // user_follows in BOTH directions on a block. So this counts followers
+    // ACQUIRED AND KEPT in the window, not follow events. That is arguably more
+    // honest than an append-only log, but it is a different measurement, and a
+    // creator's score can fall because someone else undid their engagement.
     try {
-      const POSITIVE_TYPES = [
-        "content_saved",
-        "content_shared",
-        "comment_received",
-        "follow_received",
-      ];
+      const authored = await this._fetchAuthoredPostIds(userId, ago90d);
+      const postIdSet = new Set(authored);
 
-      // All interaction types received by this creator (used as normalisation
-      // denominator so the rate stays meaningful even with blocked filtering).
-      const ALL_INTERACTION_TYPES = [
-        ...POSITIVE_TYPES,
-        "content_impression",
-        "profile_visited",
-      ];
+      // Static `.from()` and static select list per source, for the same reason
+      // as _fetchActiveDays: a dynamic table name is unverifiable against the
+      // live schema, and a wrong column here reads as "nobody engaged".
+      const countOn = async (
+        build: (chunk: string[]) => any,
+        actorCol: string,
+      ): Promise<string[]> => {
+        if (postIdSet.size === 0) return [];
+        const rows = await this._inChunks(authored, build);
+        return rows
+          .map((r) => String(r?.[actorCol] ?? ""))
+          .filter((a) => a && a !== userId && !blockedIds.has(a));
+      };
+      const qq = this.db as any;
 
-      // Fetch both in parallel — they share the same base filter.
-      const [{ data: positiveData }, { data: allData }] = await Promise.all([
-        // Positive actions: user_id = userId (this user's content/profile),
-        //                   actor_id != userId (not self)
-        (this.db as any)
-          .from("activity_events")
-          .select("actor_id")
-          .eq("user_id", userId)
-          .neq("actor_id", userId)
-          .in("event_type", POSITIVE_TYPES)
-          .gte("created_at", ago90d),
-
-        // All interactions (wider set) for the normalisation denominator.
-        (this.db as any)
-          .from("activity_events")
-          .select("actor_id")
-          .eq("user_id", userId)
-          .neq("actor_id", userId)
-          .in("event_type", ALL_INTERACTION_TYPES)
-          .gte("created_at", ago90d),
+      const [saves, shares, comments, follows, stamps] = await Promise.all([
+        countOn((chunk) => qq.from("post_saves").select("user_id, post_id")
+          .in("post_id", chunk).gte("created_at", ago90d), "user_id"),
+        countOn((chunk) => qq.from("post_shares").select("user_id, post_id")
+          .in("post_id", chunk).gte("created_at", ago90d), "user_id"),
+        countOn((chunk) => qq.from("posts_comments").select("user_id, post_id")
+          .in("post_id", chunk).gte("created_at", ago90d), "user_id"),
+        (async () => {
+          try {
+            const { data } = await (this.db as any)
+              .from("user_follows")
+              .select("follower_id")
+              .eq("following_id", userId)
+              .gte("created_at", ago90d);
+            return ((data as any[]) ?? [])
+              .map((r) => String(r?.follower_id ?? ""))
+              .filter((a) => a && a !== userId && !blockedIds.has(a));
+          } catch { return [] as string[]; }
+        })(),
+        (async () => {
+          // content_stamps is polymorphic with NO owner column and NO FK, and
+          // one user can hold TWO rows for the same post — routes/posts.ts
+          // stamps entity_type='post' while routes/mediaFeed.ts stamps
+          // entity_type='media' with a post id, and the unique index is
+          // (user_id, entity_type, entity_id). So both types are read against
+          // this creator's post ids and then DEDUPED on (user_id, entity_id),
+          // or a single like would count twice.
+          if (postIdSet.size === 0) return [] as string[];
+          try {
+            const rows = await this._inChunks(authored, (chunk) =>
+              (this.db as any)
+                .from("content_stamps")
+                .select("user_id, entity_id, entity_type")
+                .in("entity_id", chunk)
+                .in("entity_type", ["post", "media"])
+                .gte("created_at", ago90d),
+            );
+            const seen = new Set<string>();
+            const out: string[] = [];
+            for (const r of rows) {
+              const actor = String(r?.user_id ?? "");
+              const key = `${actor}:${String(r?.entity_id ?? "")}`;
+              if (!actor || actor === userId || blockedIds.has(actor)) continue;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              out.push(actor);
+            }
+            return out;
+          } catch { return [] as string[]; }
+        })(),
       ]);
 
-      // Apply blocked-account exclusion: discard rows from blocked/blocking
-      // actors so engagement-baiting with block-toggling cannot inflate scores.
-      const isAllowed = (r: any) => !blockedIds.has(String(r.actor_id));
-      const positiveRows: any[] = ((positiveData as any[]) ?? []).filter(isAllowed);
-      const allRows: any[]      = ((allData as any[]) ?? []).filter(isAllowed);
-
-      return {
-        receivedPositiveActions:  positiveRows.length,
-        receivedInteractionVolume: allRows.length,
-      };
+      const positive = saves.length + shares.length + comments.length + follows.length + stamps.length;
+      return { receivedPositiveActions: positive, receivedInteractionVolume: positive };
     } catch {
       return { receivedPositiveActions: 0, receivedInteractionVolume: 0 };
+    }
+  }
+
+  /** This creator's live post ids in the window — the join key for received signals. */
+  private async _fetchAuthoredPostIds(userId: string, ago90d: string): Promise<string[]> {
+    try {
+      const { data } = await (this.db as any)
+        .from("posts")
+        .select("id")
+        .eq("author_id", userId)
+        .eq("status", "active")
+        .gte("created_at", ago90d);
+      return ((data as any[]) ?? []).map((r) => String(r?.id ?? "")).filter(Boolean);
+    } catch {
+      return [];
     }
   }
 
   // ── Maintenance actions ───────────────────────────────────────────────────
 
   private async _fetchMaintenance(userId: string, ago90d: string): Promise<number> {
+    // NARROWER THAN IT WAS, and the narrowing is stated rather than hidden. The
+    // activity_events version counted five kinds of upkeep: content_updated,
+    // place_corrected, event_details_completed, trip_details_completed,
+    // review_updated. Only the first has a first-class producer — post_edits,
+    // written by PATCH /posts/:postId and ONLY when the body text actually
+    // changes. Place corrections, event/trip completion and review edits leave
+    // no row anywhere.
+    //
+    // The weight stays 0.10 rather than being redistributed, because the source
+    // is real and will broaden if the edit-logging writer is widened. If it is
+    // not widened, this component will read 0 for most creators — which is TRUE
+    // of the data, not a defect in the scorer, and is visible in the persisted
+    // signals rather than silently folded into another lane.
     try {
-      const MAINTENANCE_TYPES = [
-        "content_updated",
-        "place_corrected",
-        "event_details_completed",
-        "trip_details_completed",
-        "review_updated",
-      ];
-
       const { data } = await (this.db as any)
-        .from("activity_events")
+        .from("post_edits")
         .select("id")
-        .eq("actor_id", userId)
-        .in("event_type", MAINTENANCE_TYPES)
-        .gte("created_at", ago90d);
-
+        .eq("user_id", userId)
+        .gte("edited_at", ago90d);   // NB: edited_at, not created_at
       return ((data as any[]) ?? []).length;
     } catch {
       return 0;
@@ -710,88 +1010,70 @@ export class CreatorSignalAggregator {
   private async _fetchSpamSignals(
     userId: string, ago90d: string,
   ): Promise<Pick<CreatorSignals, "burstEpisodes"|"duplicateContentCount"|"followUnfollowCycles"|"rapidSameTypeCount"|"eventCreateDeleteCycles">> {
+    // TWO OF THE FIVE SIGNALS ARE NOT REPRESENTABLE, and are reported as 0
+    // rather than approximated:
+    //   followUnfollowCycles  — user_follows is CURRENT STATE, hard-deleted on
+    //                           unfollow. A cycle leaves no trace at all, so
+    //                           there is nothing to count. Detecting it needs an
+    //                           append-only follow log, which is a build.
+    //   eventCreateDeleteCycles — events are soft-deleted via state, but nothing
+    //                           records a create→delete pair, and `events` is
+    //                           behind the unseeded `events_enabled` flag.
+    // Reporting them as 0 is the same value the dead lane produced, so no
+    // creator's penalty changes because of them — but now the zero is a stated
+    // absence rather than a silently empty query.
+    //
+    // Burst and rapid-same-type ARE representable from posts.created_at, which
+    // has a real writer and an index (idx_posts_created).
     try {
-      // Fetch all activity events for this user (as actor) in 90-day window
       const { data } = await (this.db as any)
-        .from("activity_events")
-        .select("event_type, created_at, metadata")
-        .eq("actor_id", userId)
+        .from("posts")
+        .select("created_at, content")
+        .eq("author_id", userId)
         .gte("created_at", ago90d)
         .order("created_at", { ascending: true });
 
       const rows: any[] = (data as any[]) ?? [];
+      const times = rows
+        .map((r) => new Date(String(r?.created_at ?? "")).getTime())
+        .filter((t) => Number.isFinite(t))
+        .sort((a, b) => a - b);
 
-      // Detect burst episodes: >10 identical event_type rows within 60 seconds
+      // Burst: more than 10 posts inside any 60-second window.
       let burstEpisodes = 0;
-      {
-        const byType = new Map<string, number[]>();
-        for (const r of rows) {
-          const t = new Date(r.created_at).getTime();
-          if (!byType.has(r.event_type)) byType.set(r.event_type, []);
-          byType.get(r.event_type)!.push(t);
-        }
-        for (const times of byType.values()) {
-          for (let i = 0; i < times.length; i++) {
-            let count = 1;
-            for (let j = i + 1; j < times.length && times[j]! - times[i]! <= 60_000; j++) {
-              count++;
-            }
-            if (count > 10) {
-              burstEpisodes++;
-              break; // one episode per type per scan
-            }
-          }
-        }
+      for (let i = 0; i < times.length; i++) {
+        let count = 1;
+        for (let j = i + 1; j < times.length && times[j]! - times[i]! <= 60_000; j++) count++;
+        if (count > 10) { burstEpisodes++; break; }
       }
 
-      // Follow-unfollow cycling: approximate from event pairs
-      const followRows   = rows.filter((r) => r.event_type === "follow_action");
-      const unfollowRows = rows.filter((r) => r.event_type === "unfollow_action");
-      const followUnfollowCycles = Math.floor(
-        Math.min(followRows.length, unfollowRows.length) / 3,
-      );
-
-      // Rapid same-type posting: same content event_type within 5 minutes
-      const CONTENT_TYPES = [
-        "post_published", "story_published", "event_created", "trip_created",
-      ];
-      const contentRows = rows.filter((r) => CONTENT_TYPES.includes(r.event_type));
+      // Rapid same-type: consecutive posts less than 5 minutes apart.
       let rapidSameTypeCount = 0;
-      for (let i = 1; i < contentRows.length; i++) {
-        const prev = new Date(contentRows[i - 1]!.created_at).getTime();
-        const cur  = new Date(contentRows[i]!.created_at).getTime();
-        if (contentRows[i]!.event_type === contentRows[i - 1]!.event_type && cur - prev < 5 * 60_000) {
-          rapidSameTypeCount++;
-        }
+      for (let i = 1; i < times.length; i++) {
+        if (times[i]! - times[i - 1]! < 5 * 60_000) rapidSameTypeCount++;
       }
 
-      // Event create/delete cycles
-      const eventCreateDeleteCycles = Math.floor(
-        Math.min(
-          rows.filter((r) => r.event_type === "event_created").length,
-          rows.filter((r) => r.event_type === "event_deleted").length,
-        ) / 2,
-      );
-
-      // Near-duplicate content flagged in metadata
-      const duplicateContentCount = rows.filter(
-        (r) => (r.metadata as any)?.duplicate_flag === true,
-      ).length;
+      // Duplicate content: identical non-empty bodies published more than once.
+      const seen = new Map<string, number>();
+      for (const r of rows) {
+        const body = String(r?.content ?? "").trim().toLowerCase();
+        if (body.length === 0) continue;
+        seen.set(body, (seen.get(body) ?? 0) + 1);
+      }
+      let duplicateContentCount = 0;
+      for (const n of seen.values()) if (n > 1) duplicateContentCount += n - 1;
 
       return {
         burstEpisodes,
         duplicateContentCount,
-        followUnfollowCycles,
+        followUnfollowCycles: 0,
         rapidSameTypeCount,
-        eventCreateDeleteCycles,
+        eventCreateDeleteCycles: 0,
       };
     } catch {
       return {
-        burstEpisodes:           0,
-        duplicateContentCount:   0,
-        followUnfollowCycles:    0,
-        rapidSameTypeCount:      0,
-        eventCreateDeleteCycles: 0,
+        burstEpisodes: 0, duplicateContentCount: 0, followUnfollowCycles: 0,
+        rapidSameTypeCount: 0, eventCreateDeleteCycles: 0,
       };
     }
   }
