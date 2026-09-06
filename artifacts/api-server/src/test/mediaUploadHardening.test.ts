@@ -557,7 +557,25 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
 });
 
 describe("sweepExpiredStories — expired files are actually deleted", () => {
-  it("removes the storage objects of expired (non-highlighted) stories", async () => {
+  it("KEEPS the storage objects of expired stories, so the archive can re-post them", async () => {
+    // THIS ASSERTION INVERTED, and the reason matters.
+    //
+    // It used to require that the sweep DELETE the bucket objects of expired
+    // stories, and that was right when it was written: post-media was public,
+    // so an "ephemeral" story stayed fetchable at its URL forever and deletion
+    // was the only thing closing that hole.
+    //
+    // Two things changed. Migration 20260806 set post-media public=false and
+    // 2089 revoked the unauthenticated read grant, so every render now goes
+    // through the signed-URL relay and lib/mediaAccess branch 3d already denies
+    // an expired story\u2019s media to every viewer. And the owner ruled that an
+    // expired story is ARCHIVED, not gone — the owner can open it and re-post
+    // it, which is impossible once the bytes are deleted.
+    //
+    // So the boundary deletion was reaching for is now enforced by
+    // authorization instead of by destruction — and that pairing is asserted
+    // directly, not assumed: src/test/mediaAccess.test.ts pins BOTH halves, that
+    // a viewer is denied an expired story's media and that its owner is not.
     const removed: Array<{ bucket: string; paths: string[] }> = [];
     const fake: any = {
       from() {
@@ -567,7 +585,7 @@ describe("sweepExpiredStories — expired files are actually deleted", () => {
             return Promise.resolve({
               data: [
                 { id: "s1", media_url: `${SB}/storage/v1/object/public/post-media/stories/u1/a.jpg` },
-                { id: "s2", media_url: "https://elsewhere.example.com/x.jpg" }, // foreign → skipped
+                { id: "s2", media_url: "https://elsewhere.example.com/x.jpg" },
               ],
               error: null,
             });
@@ -578,8 +596,8 @@ describe("sweepExpiredStories — expired files are actually deleted", () => {
       storage: { from: (bucket: string) => ({ remove: async (paths: string[]) => { removed.push({ bucket, paths }); return { data: paths, error: null }; } }) },
     };
     const n = await sweepExpiredStories(fake);
-    assert.equal(n, 2);
-    assert.equal(removed.length, 1);
-    assert.deepEqual(removed[0], { bucket: "post-media", paths: ["stories/u1/a.jpg"] });
+    assert.equal(n, 2, "both stories are still marked expired — only the deletion changed");
+    assert.deepEqual(removed, [],
+      "the sweep must not destroy media the owner can still re-post from their archive");
   });
 });

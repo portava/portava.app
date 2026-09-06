@@ -9,7 +9,8 @@
  * - Hide-viewer setting respected in viewers endpoint
  * - Close-friends list private to owner only
  * - Story soft-delete
- * - Save to highlight
+ * - Save to highlight — now a real save with an EXPLICIT term, including
+ *   permanent. See the block at the bottom for why this contract changed twice.
  */
 import { describe, it, afterEach, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -527,5 +528,143 @@ describe("DELETE /api/stories/:id", () => {
 
     const { status } = await req("DELETE", `/api/stories/${U.story2}`, undefined, other.token);
     assert.equal(status, 403);
+  });
+});
+
+// ── Save to highlight ─────────────────────────────────────────────────────────
+//
+// `highlights.expires_at` is NOT NULL and every read path gates on it (both RLS
+// SELECT policies on the table, and every `.gt("expires_at", now)` filter in
+// routes/highlights.ts). The endpoint used to insert `now + 24h` and call that a
+// save, so the "saved" highlight went dark a day later with no error anywhere —
+// and flipping the story to state='saved' also excluded it permanently from
+// sweepExpiredStories(), the only code that deletes story bytes from
+// post-media, stranding the file as publicly fetchable forever. There is no
+// permanent highlight in this product to route the save into, so the endpoint
+// refuses.
+
+describe("POST /api/stories/:id/save-to-highlight", () => {
+  // THIS CONTRACT CHANGED TWICE, and the reason is worth recording.
+  //
+  // Originally the endpoint wrote a highlight with `expires_at = now + 24h` — a
+  // "save" that discarded the thing in a day, silently. These tests were then
+  // written to pin a REFUSAL, on the reasoning that Highlights were ephemeral by
+  // construction and there was no permanent term to route a save into.
+  //
+  // Owner ruling 2026-09-06 removed that premise: a Highlight may be permanent.
+  // So the save is real again — but the term is now EXPLICIT and has no default,
+  // which is what stops the original defect from returning. The assertions below
+  // moved from "it refuses" to "it saves only what the user actually chose".
+
+  it("saves permanently when the user chooses permanent", async () => {
+    const owner = makeUser(U.owner1, "tok-s2h-permanent");
+    const client = makeFakeClient({
+      _users: { rows: [owner] },
+      stories: { rows: [baseStory({ id: U.story1, owner_id: owner.id })] },
+    });
+    _setTestClient(client, true);
+
+    const { status, json } = await req(
+      "POST", `/api/stories/${U.story1}/save-to-highlight`, { expiresInHours: null }, owner.token,
+    );
+    assert.equal(status, 201, JSON.stringify(json));
+    assert.equal(json.permanent, true);
+    assert.equal(json.expiresAt, null);
+
+    const hl = (client as any)._db.highlights.rows.at(-1);
+    assert.ok(hl, "a highlight row is written");
+    assert.equal(hl.expires_at, null,
+      "permanent is stored as NULL — never as a date the user did not pick");
+  });
+
+  it("saves for a bounded term when the user chooses one", async () => {
+    const owner = makeUser(U.owner2, "tok-s2h-bounded");
+    const client = makeFakeClient({
+      _users: { rows: [owner] },
+      stories: { rows: [baseStory({ id: U.story2, owner_id: owner.id })] },
+    });
+    _setTestClient(client, true);
+
+    const { status, json } = await req(
+      "POST", `/api/stories/${U.story2}/save-to-highlight`, { expiresInHours: 48 }, owner.token,
+    );
+    assert.equal(status, 201, JSON.stringify(json));
+    assert.equal(json.permanent, false);
+    const hours = (new Date(json.expiresAt).getTime() - Date.now()) / 3600000;
+    assert.ok(hours > 47 && hours < 49, `expected ~48h, got ${hours}`);
+  });
+
+  it("REQUIRES an explicit term — an omitted one is refused, not defaulted", async () => {
+    // The original defect in one assertion. A save with no stated term must not
+    // silently pick 24 hours on the user\u2019s behalf; that is precisely how a
+    // "save" came to mean "discard tomorrow".
+    const owner = makeUser(U.owner3, "tok-s2h-noterm");
+    const client = makeFakeClient({
+      _users: { rows: [owner] },
+      stories: { rows: [baseStory({ id: U.story3, owner_id: owner.id })] },
+    });
+    _setTestClient(client, true);
+
+    const { status } = await req(
+      "POST", `/api/stories/${U.story3}/save-to-highlight`, {}, owner.token,
+    );
+    assert.equal(status, 400);
+    assert.deepEqual((client as any)._db.highlights.rows, [],
+      "a refused save must not leave a highlight behind");
+    const story = (client as any)._db.stories.rows.find((r: any) => r.id === U.story3);
+    assert.equal(story?.saved_to_highlight_id, null, "and must not consume the story");
+  });
+
+  it("still reports the highlight id of a story saved under the old behaviour", async () => {
+    const owner = makeUser(U.owner1, "tok-s2h-legacy");
+    const client = makeFakeClient({
+      _users: { rows: [owner] },
+      stories: {
+        rows: [baseStory({
+          id: U.story4,
+          owner_id: owner.id,
+          state: "saved",
+          saved_to_highlight_id: "dddddddd-0000-0000-0000-000000000001",
+        })],
+      },
+    });
+    _setTestClient(client, true);
+
+    const { status, json } = await req(
+      "POST", `/api/stories/${U.story4}/save-to-highlight`, { expiresInHours: 24 }, owner.token,
+    );
+    assert.equal(status, 200, JSON.stringify(json));
+    assert.equal(json.highlightId, "dddddddd-0000-0000-0000-000000000001");
+  });
+
+  it("returns 403 to a non-owner", async () => {
+    // Sent WITH a valid term on purpose: payload validation runs before the row
+    // is looked up, so an invalid body would 400 here and this test would prove
+    // nothing about authorization.
+    const owner = makeUser(U.owner1, "tok-s2h-owner-authz");
+    const other = makeUser(U.viewer1, "tok-s2h-other-authz");
+    const client = makeFakeClient({
+      _users: { rows: [owner, other] },
+      stories: { rows: [baseStory({ id: U.story5, owner_id: owner.id })] },
+    });
+    _setTestClient(client, true);
+
+    const { status, json } = await req(
+      "POST", `/api/stories/${U.story5}/save-to-highlight`, { expiresInHours: 24 }, other.token,
+    );
+    assert.equal(status, 403, JSON.stringify(json));
+    assert.deepEqual((client as any)._db.highlights.rows, [],
+      "a rejected caller must not leave a highlight behind");
+  });
+
+  it("returns 404 for a story that does not exist", async () => {
+    const owner = makeUser(U.owner1, "tok-s2h-missing");
+    const client = makeFakeClient({ _users: { rows: [owner] }, stories: { rows: [] } });
+    _setTestClient(client, true);
+
+    const { status, json } = await req(
+      "POST", `/api/stories/${U.story6}/save-to-highlight`, { expiresInHours: 24 }, owner.token,
+    );
+    assert.equal(status, 404, JSON.stringify(json));
   });
 });

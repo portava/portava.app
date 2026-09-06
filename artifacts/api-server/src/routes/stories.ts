@@ -8,7 +8,12 @@
  * POST   /stories/:id/react             — upsert an emoji reaction
  * POST   /stories/:id/reply             — send a private reply
  * GET    /stories/:id/viewers           — owner-only viewer list
- * POST   /stories/:id/save-to-highlight — owner-only; saves story as a Highlight
+ * POST   /stories/:id/save-to-highlight — owner-only; saves the story's media as
+ *                                         a Highlight with an EXPLICIT term,
+ *                                         including permanent (null). No default:
+ *                                         the user must choose.
+ * GET    /stories/archive               — owner-only; expired/saved stories.
+ * POST   /stories/:id/repost            — owner-only; re-activates for 24h.
  */
 
 import { Router } from "express";
@@ -359,6 +364,44 @@ router.get("/stories/feed", asyncHandler(async (req, res) => {
   res.status(200).json({ users });
 }));
 
+// ── GET /stories/archive — the owner's expired stories ───────────────────────
+//
+// Owner ruling 2026-09-06: an expired story is ARCHIVED, not gone. `story_state`
+// already had 'expired' and the sweep already set it rather than deleting the
+// row, so the record was always there — nothing ever listed it, and until the
+// sweep stopped deleting the storage object the media behind it was gone
+// anyway. Both halves are now true, so the archive is real.
+//
+// Owner-only by construction: it filters on owner_id = the caller and never
+// takes a target user.
+router.get("/stories/archive", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const limit = Math.min(Number(req.query.limit ?? 50) || 50, 100);
+
+  const { data: rows, error } = await sc
+    .from("stories")
+    .select(STORY_COLS)
+    .eq("owner_id", user.id)
+    .in("state", ["expired", "saved"])
+    .order("expires_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    // A failed read is not an empty archive.
+    req.log.error({ err: error }, "Failed to load story archive");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({ ok: true, stories: rows ?? [] });
+}));
+
 // ── GET /stories/:id — get single story ──────────────────────────────────────
 
 router.get("/stories/:id", asyncHandler(async (req, res) => {
@@ -580,12 +623,17 @@ router.get("/stories/:id/viewers", asyncHandler(async (req, res) => {
   res.status(200).json({ viewers, hidden: false });
 }));
 
-// ── POST /stories/:id/save-to-highlight — owner-only ─────────────────────────
-
-router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
+// ── POST /stories/:id/repost — put an archived story back up ─────────────────
+//
+// Owner-only. A story's term is fixed at 24 hours — that is what a story IS, and
+// the permanent option belongs to Highlights, which is what save-to-highlight is
+// for. So this takes no term argument: it re-activates the SAME row with a fresh
+// 24-hour window rather than inserting a copy, keeping the media, caption, place
+// and view history attached to the story they belong to.
+router.post("/stories/:id/repost", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const { client, user } = auth;
+  const { user } = auth;
 
   const { id } = req.params;
   if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid story id"); return; }
@@ -593,48 +641,152 @@ router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: story } = await sc
+  const { data: story, error: readErr } = await sc
     .from("stories")
-    .select("id, owner_id, media_url, media_type, caption, state, expires_at, saved_to_highlight_id")
+    .select("id, owner_id, state")
     .eq("id", id)
     .maybeSingle();
 
+  if (readErr) { sendError(res, "db_error", readErr.message); return; }
+  if (!story) { sendError(res, "not_found", "Story not found"); return; }
+  if ((story as any).owner_id !== user.id) {
+    sendError(res, "forbidden", "Only the owner can repost this story"); return;
+  }
+  // 'deleted' and 'removed' are terminal on purpose: a deleted story and a
+  // moderator-removed one are not archive entries, and re-posting either would
+  // undo a decision.
+  const state = (story as any).state;
+  if (state !== "expired" && state !== "saved") {
+    sendError(res, "invalid_payload", `A story in state '${state}' cannot be reposted.`);
+    return;
+  }
+
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const { data: updated, error } = await sc
+    .from("stories")
+    .update({ state: "active", expires_at: expiresAt })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .select(STORY_COLS)
+    .maybeSingle();
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to repost story");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!updated) { sendError(res, "not_found", "Story not found"); return; }
+
+  res.status(200).json({ story: updated, expiresAt });
+}));
+
+// ── POST /stories/:id/save-to-highlight — owner-only ─────────────────────────
+//
+// HISTORY, because this endpoint has now been wrong in two different ways.
+// Originally it wrote a highlight with `expires_at = now + 24h` and flipped the
+// story to state='saved' — a "save" that discarded the thing in a day, with no
+// error and no notification. It was then made to REFUSE, on the reasoning that
+// Highlights were ephemeral by construction and there was no permanent term to
+// route a save into.
+//
+// Owner ruling 2026-09-06 removed that premise: a Highlight may be permanent,
+// and the user chooses. So the save is real again, and the term is explicit —
+// including `null` for permanent. Migration 2313 makes the column and both RLS
+// policies able to hold that answer.
+
+const saveToHighlightSchema = z.object({
+  // Same vocabulary as POST /highlights. `null` is permanent. There is NO
+  // default here, unlike creation: a save is a deliberate act about something
+  // that already exists, and silently picking 24 hours for the user is exactly
+  // what made the original version a trap.
+  expiresInHours: z.union([z.number().int(), z.null()]),
+});
+
+const HIGHLIGHT_EXPIRY_HOURS = [3, 6, 12, 24, 48];
+
+router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!isUuid(id)) { sendError(res, "invalid_payload", "Invalid story id"); return; }
+
+  const parsed = saveToHighlightSchema.safeParse(req.body ?? {});
+  if (!parsed.success || (parsed.data.expiresInHours !== null &&
+      !HIGHLIGHT_EXPIRY_HOURS.includes(parsed.data.expiresInHours))) {
+    sendError(
+      res,
+      "invalid_payload",
+      `expiresInHours must be null (keep permanently) or one of: ${HIGHLIGHT_EXPIRY_HOURS.join(", ")}`,
+    );
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: story, error: storyErr } = await sc
+    .from("stories")
+    .select("id, owner_id, saved_to_highlight_id, media_url, media_type, caption, place_id, visibility")
+    .eq("id", id)
+    .maybeSingle();
+
+  // A failed read is not a missing story.
+  if (storyErr) { sendError(res, "db_error", storyErr.message); return; }
   if (!story) { sendError(res, "not_found", "Story not found"); return; }
   if ((story as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can save this story"); return; }
   if ((story as any).saved_to_highlight_id) { res.status(200).json({ highlightId: (story as any).saved_to_highlight_id }); return; }
 
-  // Create a highlight from this story (24h highlight — saved stories get a 24h highlight window from now)
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt =
+    parsed.data.expiresInHours === null
+      ? null
+      : new Date(Date.now() + parsed.data.expiresInHours * 60 * 60 * 1000).toISOString();
 
-  const { data: highlight, error: hErr } = await client
+  // Story visibility does not map onto the highlight vocabulary
+  // (public|travelers_nearby|circle_only|trip_only|private), and guessing a
+  // wider one would publish the media further than the story ever was. Anything
+  // that is not plainly public becomes `private`, and the owner can widen it.
+  const highlightVisibility = (story as any).visibility === "public" ? "public" : "private";
+
+  const { data: created, error: createErr } = await sc
     .from("highlights")
     .insert({
-      owner_id:    user.id,
-      media_url:   (story as any).media_url,
-      media_type:  (story as any).media_type,
-      caption:     (story as any).caption ?? null,
-      visibility:  "public",
-      expires_at:  expiresAt,
-      filter_id:   "original",
-      filter_intensity: 100,
+      owner_id: user.id,
+      media_url: (story as any).media_url,
+      media_type: (story as any).media_type,
+      caption: (story as any).caption ?? null,
+      visibility: highlightVisibility,
+      expires_at: expiresAt,
     })
-    .select("id")
+    .select("id, expires_at")
     .single();
 
-  if (hErr) {
-    req.log.error({ err: hErr }, "Failed to create highlight from story");
-    sendError(res, "db_error", hErr.message);
+  if (createErr || !created) {
+    sendError(res, "db_error", createErr?.message ?? "Could not create the highlight");
     return;
   }
 
-  // Link story → highlight
-  await client
+  const { error: linkErr } = await sc
     .from("stories")
-    .update({ saved_to_highlight_id: (highlight as any).id, state: "saved" })
+    .update({ saved_to_highlight_id: (created as any).id, state: "saved" })
     .eq("id", id)
     .eq("owner_id", user.id);
 
-  res.status(201).json({ highlightId: (highlight as any).id });
+  if (linkErr) {
+    // The highlight exists but the story does not point at it. Say so rather
+    // than reporting a clean save — a silent half-write here is how the same
+    // media ends up saved twice.
+    req.log.error({ err: linkErr, highlightId: (created as any).id }, "save-to-highlight: link write failed");
+    sendError(res, "db_error", "The highlight was created but the story could not be linked to it.");
+    return;
+  }
+
+  res.status(201).json({
+    highlightId: (created as any).id,
+    permanent: expiresAt === null,
+    expiresAt,
+  });
 }));
 
 // ── Expiry sweeper (called by health/cleanup cron) ────────────────────────────
@@ -656,23 +808,37 @@ export async function sweepExpiredStories(sc: any): Promise<number> {
   if (error) throw error;
   const rows: any[] = data ?? [];
 
-  // Audit privacy fix: "ephemeral" 24h stories previously expired in STATE only
-  // — the file stayed publicly fetchable at its URL forever. Delete the storage
-  // objects for the stories just expired. Safe: the saved_to_highlight_id IS
-  // NULL filter above guarantees no highlight references this media. Best-effort
-  // (a storage failure never breaks the sweep; rows are already expired).
-  const paths: string[] = [];
-  for (const r of rows) {
-    const ref = appStorageUrlInfo(String(r.media_url ?? ""));
-    if (ref && ref.bucket === "post-media") paths.push(ref.path);
-  }
-  if (paths.length > 0) {
-    try {
-      await sc.storage.from("post-media").remove(paths);
-    } catch {
-      /* best-effort */
-    }
-  }
+  // WHY THIS NO LONGER DELETES THE BYTES.
+  //
+  // It used to. The reasoning was sound at the time: "ephemeral" 24h stories
+  // expired in STATE only and the file stayed publicly fetchable at its URL
+  // forever, so the sweep removed the storage objects.
+  //
+  // Two things have since changed, and together they invert the answer.
+  //
+  //   1. `post-media` is no longer public. Migration 20260806 set
+  //      public=false and 2089 revoked the unauthenticated read grant; every
+  //      render now goes through the signed-URL relay, which asks
+  //      lib/mediaAccess.canAccessMediaPath. Its story branch (3d) requires
+  //      state ∈ (active, saved) AND an unexpired row, so an expired story's
+  //      media is already denied to every viewer. The bytes are not reachable
+  //      by URL; deletion is no longer what protects them.
+  //
+  //   2. Owner ruling 2026-09-06: an expired story is ARCHIVED, not gone — the
+  //      owner can open it and re-post it. Deleting the object makes that
+  //      impossible, and would make the archive a list of dead thumbnails: the
+  //      row survives, the picture 404s, and nothing says why.
+  //
+  // The owner keeps access because canAccessMediaPath short-circuits on
+  // ownership before branch 3d ("Owner always sees their own bytes"), so the
+  // archive works for its owner and nobody else — which is the same boundary
+  // the deletion was reaching for, enforced by authorization instead of by
+  // destruction.
+  //
+  // NOT A LICENCE TO KEEP THEM FOREVER. This removes expiry-time deletion, not
+  // retention. A retention sweep over the ARCHIVE (delete objects for stories
+  // expired longer than the retention window, after warning the owner) is a
+  // separate, deliberate job and does not exist yet.
   return rows.length;
 }
 

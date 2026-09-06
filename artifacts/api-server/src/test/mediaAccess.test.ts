@@ -498,6 +498,29 @@ describe("authorizeMediaAccess — the matrix", () => {
       mkStory({ state: "expired", expires_at: new Date(Date.now() - 1000).toISOString() }), VIEWER, "post-media", path), false);
   });
 
+  it("an EXPIRED story\u2019s media stays reachable by its OWNER — the archive rests on this", async () => {
+    // The story sweep no longer deletes bucket objects on expiry, because an
+    // expired story is now ARCHIVED and its owner can re-post it. That is only
+    // safe because authorization, not destruction, is what withholds the bytes:
+    // a viewer is denied by branch 3d (asserted in the test above) while the
+    // owner passes the ownership short-circuit that runs before it.
+    //
+    // If this ever inverts, keeping the bytes becomes a leak rather than an
+    // archive — so it is pinned here next to the denial it pairs with.
+    const path = `stories/${OWNER}/archived.jpg`;
+    const sc = makeClient({
+      stories: [{
+        owner_id: OWNER, state: "expired", visibility: "public", close_friends_only: false,
+        expires_at: new Date(Date.now() - 1000).toISOString(), media_url: pub(path),
+      }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true,
+      "the owner can still see the media behind their own archived story");
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false,
+      "and nobody else can — keeping the bytes must not widen who may read them");
+  });
+
   it("orphan/unknown object → DENY by default", async () => {
     const sc = makeClient();
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", `${OWNER}/nothing-references-this.jpg`), false);

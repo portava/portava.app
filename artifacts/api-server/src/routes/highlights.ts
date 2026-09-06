@@ -82,7 +82,30 @@ async function resolveViewAccess(
   return { h: record };
 }
 
+/**
+ * Terms a Highlight may be given. `null` is PERMANENT — the owner chose "never".
+ *
+ * Owner ruling 2026-09-06. Before it, 48 hours was the ceiling and there was no
+ * way to say "keep this", which is why "save to Highlight" quietly meant
+ * "re-publish this for 24 more hours and then lose it".
+ */
 const EXPIRY_HOURS = [3, 6, 12, 24, 48] as const;
+export const PERMANENT: null = null;
+
+/**
+ * The visibility filter for a NON-OWNER read: live, or permanent.
+ *
+ * Written once because a bare `.gt("expires_at", …)` is invisibly wrong now —
+ * `NULL > now()` is NULL, so every permanent Highlight would silently vanish
+ * from any reader that forgets the NULL arm. Migration 2313 enforces the same
+ * rule inside the RLS policies; this is its query-layer twin.
+ *
+ * NOT for owner-scoped reads. An owner sees their own Highlights whatever the
+ * expiry says — an expired one is ARCHIVED, not gone.
+ */
+export function liveOrPermanent(nowIso = new Date().toISOString()): string {
+  return `expires_at.is.null,expires_at.gt.${nowIso}`;
+}
 const MAX_VIDEO_DURATION_SECONDS = 10;
 
 const KNOWN_FILTER_IDS = [
@@ -101,9 +124,15 @@ const createHighlightSchema = z.object({
   visibility: z
     .enum(["public", "travelers_nearby", "circle_only", "trip_only", "private"])
     .default("public"),
-  expiresInHours: z.number().int().refine((h) => EXPIRY_HOURS.includes(h as any), {
-    message: `expiresInHours must be one of: ${EXPIRY_HOURS.join(", ")}`,
-  }).default(24),
+  // `null` means PERMANENT. It is spelled explicitly rather than by omission:
+  // a caller that simply leaves the field out still gets the 24h default, so a
+  // forgetful client can never create a permanent Highlight by accident.
+  expiresInHours: z
+    .union([z.number().int(), z.null()])
+    .refine((h) => h === null || EXPIRY_HOURS.includes(h as any), {
+      message: `expiresInHours must be null (permanent) or one of: ${EXPIRY_HOURS.join(", ")}`,
+    })
+    .default(24),
   filterId: z.enum(KNOWN_FILTER_IDS).optional().default('original'),
   filterIntensity: z.number().int().min(0).max(100).optional().default(100),
   mediaThumbnailUrl: z.string().min(1).nullable().optional(),
@@ -137,7 +166,12 @@ router.post("/highlights", async (req, res) => {
     }
   }
 
-  const expiresAt = new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
+  // NULL is the stored form of "permanent" (migration 2313). Never coalesce it
+  // to a date: that is the silent-truncation defect this feature removes.
+  const expiresAt =
+    d.expiresInHours === null
+      ? null
+      : new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
 
   const { data, error } = await client
     .from("highlights")
@@ -207,7 +241,7 @@ router.get("/users/:userId/highlights", async (req, res) => {
     .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .eq("owner_id", targetId)
     .is("deleted_at", null)
-    .gt("expires_at", new Date().toISOString())
+    .or(liveOrPermanent())
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -355,7 +389,7 @@ router.get("/highlights/active", async (req, res) => {
     .from("highlights")
     .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .is("deleted_at", null)
-    .gt("expires_at", new Date().toISOString())
+    .or(liveOrPermanent())
     .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"])
     .order("created_at", { ascending: false })
     .limit(limit * 5); // over-fetch to account for permission filtering
@@ -458,6 +492,136 @@ router.get("/highlights/active", async (req, res) => {
   }));
 
   res.status(200).json({ highlights: result });
+});
+
+/* ============================================================================
+ * GET /highlights/archive — the owner's expired Highlights
+ *
+ * Owner ruling 2026-09-06: an expired Highlight is ARCHIVED, not gone. Before
+ * it, expiry was terminal in the hardest possible way — the predicate lived in
+ * both RLS SELECT policies OUTSIDE the owner branch, so an expired Highlight
+ * became invisible to the person who made it, with no route able to see around
+ * it. Migration 2313 moves that predicate inside the non-owner arm; this is the
+ * surface that ruling was for.
+ *
+ * Deliberately NOT part of /highlights/active: the live strip is what other
+ * people can see, and mixing the archive into it would put expired media back
+ * in front of viewers. This is owner-only, always.
+ * ============================================================================ */
+router.get("/highlights/archive", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const limit = Math.min(Number(req.query.limit ?? 50) || 50, 100);
+
+  // Expired only: a permanent Highlight (expires_at IS NULL) is live, not
+  // archived, and a live-dated one has not expired yet.
+  const { data: rows, error } = await client
+    .from("highlights")
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .not("expires_at", "is", null)
+    .lte("expires_at", new Date().toISOString())
+    .order("expires_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    // A failed read is not an empty archive. Saying "you have nothing archived"
+    // to someone whose archive we could not read is the exact defect this
+    // codebase spent the day removing.
+    req.log.error({ err: error }, "Failed to load highlight archive");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  res.json({
+    highlights: (rows ?? []).map((h: any) => ({ ...h, archived: true })),
+    // Stated so a client never has to infer it from an empty list.
+    ok: true,
+  });
+});
+
+/* ============================================================================
+ * POST /highlights/:id/repost — put an archived Highlight back up
+ *
+ * Owner-only. Takes the same term vocabulary as creation, including `null` for
+ * permanent, so re-posting is the same decision as posting.
+ *
+ * It re-dates the EXISTING row rather than inserting a copy: the media, the
+ * caption, the place and the view history all belong to this Highlight, and a
+ * duplicate row would fork them. `created_at` is left alone — this is the same
+ * Highlight, posted again, not a new one pretending to be old.
+ * ============================================================================ */
+const repostSchema = z.object({
+  expiresInHours: z
+    .union([z.number().int(), z.null()])
+    .refine((h) => h === null || EXPIRY_HOURS.includes(h as any), {
+      message: `expiresInHours must be null (permanent) or one of: ${EXPIRY_HOURS.join(", ")}`,
+    })
+    .default(24),
+});
+
+router.post("/highlights/:id/repost", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const parsed = repostSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const { data: existing, error: readErr } = await client
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  // The read is checked before the row: `{data: null, error}` and "no such
+  // highlight" are different answers, and only the second is a 404.
+  if (readErr) {
+    req.log.error({ err: readErr }, "Failed to read highlight for repost");
+    sendError(res, "db_error", readErr.message);
+    return;
+  }
+  if (!existing) { sendError(res, "not_found", "Highlight not found"); return; }
+  if ((existing as any).owner_id !== user.id) {
+    sendError(res, "forbidden", "Only the owner can repost this highlight");
+    return;
+  }
+
+  const expiresAt =
+    parsed.data.expiresInHours === null
+      ? null
+      : new Date(Date.now() + parsed.data.expiresInHours * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await client
+    .from("highlights")
+    .update({ expires_at: expiresAt, archived_at: null })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .maybeSingle();
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to repost highlight");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!data) {
+    // The row moved between the ownership check and the write.
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+
+  res.json({ highlight: data, permanent: expiresAt === null });
 });
 
 /* ============================================================================
@@ -890,7 +1054,7 @@ router.get("/highlights/following-feed", async (req, res) => {
     .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .in("owner_id", eligibleIds)
     .is("deleted_at", null)
-    .gt("expires_at", new Date().toISOString())
+    .or(liveOrPermanent())
     .neq("visibility", "private")
     .order("created_at", { ascending: true });
 
