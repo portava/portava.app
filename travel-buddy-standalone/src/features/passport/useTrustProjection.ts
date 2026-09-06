@@ -46,6 +46,14 @@ export interface TrustProjection {
   /** Evidence-aware band: an 82 with high evidence ≠ an 82 with little (§10). */
   confidence: TrustConfidence;
   strengths: string[];
+  /**
+   * Ordered recovery advice — present ONLY on the owner's own view, because the
+   * server emits it only for `context === "self"` (its presence would otherwise
+   * disclose to another viewer that this user is in recovery). Absent is the
+   * server's decision, never something the client fills in: no default hints, no
+   * client-side derivation from the score or the categories.
+   */
+  recoveryHints?: string[];
 }
 
 export interface CredentialProjection {
@@ -139,6 +147,14 @@ export interface TrustView {
   domains: TrustDomainRow[];
   credentials: CredentialProjection[];
   capabilityChips: CapabilityChip[];
+  /**
+   * Server-authored recovery advice, verbatim and in server order. Empty when
+   * the server did not send any — either because this is not the owner's view
+   * (the field is absent) or because the owner has nothing to recover (an empty
+   * array). The screen renders the section only when this is non-empty; it never
+   * substitutes copy of its own for an absent read.
+   */
+  recoveryHints: string[];
 }
 
 /** Sentinel standing for out-of-scope domains — deliberately neutral (§10). */
@@ -219,6 +235,13 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
     { key: 'buddy', domain: 'Buddy', applicable: caps.canBecomeBuddy, standing: specific(caps.canBecomeBuddy) },
   ];
 
+  // Owner-only, server-gated (§9/§10). The client passes the strings through
+  // untouched — it must not invent, reorder, translate or top up hints, because
+  // an absent field means "the server did not send this", not "none exist".
+  const recoveryHints: string[] = Array.isArray(trust?.recoveryHints)
+    ? trust!.recoveryHints.filter((h): h is string => typeof h === 'string' && h.trim().length > 0)
+    : [];
+
   const capabilityChips: CapabilityChip[] = CAPABILITY_LABELS
     .filter((c) => caps[c.key])
     .map((c) => ({ key: c.key, label: c.label }));
@@ -234,6 +257,7 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
     domains,
     credentials: Array.isArray(p.credentials) ? p.credentials : [],
     capabilityChips,
+    recoveryHints,
   };
 }
 
