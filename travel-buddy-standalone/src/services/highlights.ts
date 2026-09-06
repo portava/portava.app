@@ -37,10 +37,15 @@ export interface Highlight {
   createdAt: string;
   deletedAt: string | null;
   author: HighlightAuthor | null;
-  viewCount: number;
-  likeCount: number;
+  /**
+   * NULL when the server could not read the metrics — distinct from 0, which
+   * means nobody looked. `GET /highlights/archive` sends null with
+   * `countsAvailable: false` rather than inventing a zero.
+   */
+  viewCount: number | null;
+  likeCount: number | null;
   viewedByMe: boolean;
-  likedByMe: boolean;
+  likedByMe: boolean | null;
   filterId: string;
   filterIntensity: number;
   mediaThumbnailUrl?: string | null;
@@ -119,10 +124,13 @@ function mapHighlight(r: any): Highlight {
     author: r.author
       ? { id: r.author.id, handle: r.author.handle, name: r.author.name, avatarUrl: r.author.avatarUrl ?? null }
       : null,
-    viewCount: r.viewCount ?? 0,
-    likeCount: r.likeCount ?? 0,
+    // NOT `?? 0`. A null here is the server saying it could not read the
+    // metrics, and coercing it to 0 turns "we don't know" into "nobody looked" —
+    // the same coercion that turned a deliberate permanent term back into 24h.
+    viewCount: typeof r.viewCount === "number" ? r.viewCount : null,
+    likeCount: typeof r.likeCount === "number" ? r.likeCount : null,
     viewedByMe: r.viewedByMe ?? false,
-    likedByMe: r.likedByMe ?? false,
+    likedByMe: typeof r.likedByMe === "boolean" ? r.likedByMe : null,
     filterId: r.filter_id ?? 'original',
     filterIntensity: r.filter_intensity ?? 100,
     mediaThumbnailUrl: r.media_thumbnail_url ?? null,

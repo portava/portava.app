@@ -536,8 +536,58 @@ router.get("/highlights/archive", async (req, res) => {
     return;
   }
 
+  const list = (rows ?? []) as any[];
+  if (list.length === 0) { res.json({ highlights: [], ok: true }); return; }
+
+  // ENRICHED TO THE SAME SHAPE AS /highlights/active, on purpose.
+  //
+  // The archive first returned raw rows. The client maps both endpoints through
+  // one `mapHighlight`, so a raw row arrived as `author: null` with `viewCount`
+  // and `likeCount` of 0 — and a zero that means "we did not ask" is
+  // indistinguishable from a zero that means "nobody looked". Nothing renders
+  // those on the archive screen today, which is exactly what would have made it
+  // a trap for the next surface to reuse this endpoint.
+  //
+  // The owner is the only possible author here (the query is owner-scoped), but
+  // the profile is looked up rather than assumed so the shape is produced by the
+  // same rules as the live strip rather than by a shortcut.
+  const ids = list.map((h) => h.id as string);
+  const [viewRows, likeRows, likedRows, profileRows] = await Promise.all([
+    client.from("highlight_views").select("highlight_id").in("highlight_id", ids),
+    client.from("highlight_likes").select("highlight_id").in("highlight_id", ids),
+    client.from("highlight_likes").select("highlight_id").eq("user_id", user.id).in("highlight_id", ids),
+    client.from("profiles").select("id, handle, name, avatar_url").eq("id", user.id),
+  ]);
+
+  // A failed metric read must not become a confident zero either. The archive
+  // still lists — losing a view count is not worth withholding someone's own
+  // media — but the counts go NULL and `countsAvailable` says why.
+  const countsAvailable = !viewRows.error && !likeRows.error && !likedRows.error;
+  const viewCount: Record<string, number> = {};
+  const likeCount: Record<string, number> = {};
+  for (const r of (viewRows.data ?? []) as any[]) viewCount[r.highlight_id] = (viewCount[r.highlight_id] ?? 0) + 1;
+  for (const r of (likeRows.data ?? []) as any[]) likeCount[r.highlight_id] = (likeCount[r.highlight_id] ?? 0) + 1;
+  const likedSet = new Set<string>(((likedRows.data ?? []) as any[]).map((r) => r.highlight_id as string));
+
+  const me = ((profileRows.data ?? []) as any[])[0] ?? null;
+  // `true` without a lookup, and deliberately: this list is owner-scoped, so the
+  // author IS the caller, and a person always sees their own real name. Asking
+  // nameVisibilitySet here would be a query whose answer is already known.
+  const author = me
+    ? { id: me.id, handle: me.handle, name: presentedName(me, true), avatarUrl: me.avatar_url ?? null }
+    : null;
+
   res.json({
-    highlights: (rows ?? []).map((h: any) => ({ ...h, archived: true })),
+    highlights: list.map((h) => ({
+      ...h,
+      archived: true,
+      author,
+      viewCount: countsAvailable ? (viewCount[h.id] ?? 0) : null,
+      likeCount: countsAvailable ? (likeCount[h.id] ?? 0) : null,
+      likedByMe: countsAvailable ? likedSet.has(h.id) : null,
+      viewedByMe: true, // it is the owner's own Highlight
+    })),
+    countsAvailable,
     // Stated so a client never has to infer it from an empty list.
     ok: true,
   });

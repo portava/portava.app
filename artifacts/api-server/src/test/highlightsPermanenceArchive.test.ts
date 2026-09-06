@@ -264,6 +264,47 @@ describe("Highlights — the archive", () => {
       "stated explicitly, so a client never has to infer success from an empty list");
   });
 
+  it("returns the SAME shape as the live strip, so the shared client mapper is right", async () => {
+    // The archive first returned raw rows. The client maps both endpoints through
+    // one mapHighlight, so a raw row arrived as author: null with zeroed counts —
+    // and a zero meaning "we did not ask" is indistinguishable from a zero
+    // meaning "nobody looked". Invisible on the archive screen today, which is
+    // exactly what makes it a trap for the next surface to reuse the endpoint.
+    const c = makeFakeClient({
+      _users: { rows: [owner] },
+      profiles: { rows: [{ id: U.owner, handle: "wanderer", name: "W", avatar_url: "https://x/a.png" }] },
+      highlights: { rows: [baseHighlight({ expires_at: past() })] },
+      highlight_views: { rows: [{ highlight_id: U.hl1 }, { highlight_id: U.hl1 }] },
+      highlight_likes: { rows: [{ highlight_id: U.hl1, user_id: U.owner }] },
+    });
+    _setTestClient(c, true);
+    const r = await req("GET", "/api/highlights/archive", undefined, owner.token);
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const h = r.json.highlights[0];
+    assert.equal(h.author?.handle, "wanderer", "the author is resolved, not left null");
+    assert.equal(h.viewCount, 2);
+    assert.equal(h.likeCount, 1);
+    assert.equal(r.json.countsAvailable, true);
+  });
+
+  it("a failed METRIC read nulls the counts rather than reporting zero", async () => {
+    // Losing a view count is not worth withholding someone\u2019s own media, so the
+    // archive still lists — but "0 views" must not be invented from a failure.
+    const c = makeFakeClient({
+      _users: { rows: [owner] },
+      profiles: { rows: [{ id: U.owner, handle: "wanderer", name: "W", avatar_url: null }] },
+      highlights: { rows: [baseHighlight({ expires_at: past() })] },
+      highlight_views: { rows: [], error: "metrics down" },
+    });
+    _setTestClient(c, true);
+    const r = await req("GET", "/api/highlights/archive", undefined, owner.token);
+    assert.equal(r.status, 200);
+    assert.equal(r.json.countsAvailable, false);
+    assert.equal(r.json.highlights[0].viewCount, null,
+      "a zero that means \u2018we could not ask\u2019 is not a zero");
+    assert.equal(r.json.highlights.length, 1, "the Highlight itself is still listed");
+  });
+
   it("a failed archive read is an ERROR, never an empty archive", async () => {
     // Telling someone their archive is empty when we could not read it is the
     // defect this whole campaign exists to remove.
