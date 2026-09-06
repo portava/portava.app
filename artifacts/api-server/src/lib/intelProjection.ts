@@ -54,9 +54,14 @@ import {
   type ConfidencePenalties,
   type ConfidenceResult,
 } from "./confidenceScore.js";
-import { evaluatePrivacy, type PrivacyDecision, type SuppressionReason } from "./privacyGate.js";
+import { evaluatePrivacy, type PrivacyDecision, type PrivacyThreshold, type SuppressionReason } from "./privacyGate.js";
 import { expiresAt as policyExpiresAt, FRESHNESS_CURVE_VERSION } from "./freshnessPolicy.js";
-import { LIVE_ELIGIBLE_CLAIM_STATUSES, SOURCE_CLASSES, type SourceClass } from "./intelContracts.js";
+import { LIVE_ELIGIBLE_CLAIM_STATUSES, PRIVACY_THRESHOLD_V1, SOURCE_CLASSES, type SourceClass } from "./intelContracts.js";
+import {
+  evaluateSafetyPublication,
+  isSafetyAssertion,
+  type SafetyAuthority,
+} from "./safetyPolicy.js";
 import { toStoredConflictState, type ConflictState, type StoredConflictState } from "./intelConflict.js";
 
 /**
@@ -160,6 +165,32 @@ export interface ProjectionInput {
    * Absent ⇒ supported (hand-built inputs are unaffected).
    */
   cohortSupportsValue?: boolean;
+  /**
+   * The claim's lifecycle status, carried through so the SAFETY lane can apply
+   * SAFETY_SERVABLE_CLAIM_STATUSES.
+   *
+   * The projection selects claims with `.in("status", LIVE_ELIGIBLE_CLAIM_STATUSES)`
+   * — 'active' AND 'conflicting'. For ordinary intel that is right: a disputed
+   * vibe still projects, and the read path lowers its band. For a safety
+   * assertion it is not, and S1a says so: SAFETY_SERVABLE_CLAIM_STATUSES is
+   * ['active'] alone. Without the status here that rule had nowhere to be
+   * applied — a snapshot carries no status, so by the time the Map producer sees
+   * a row the distinction is already gone.
+   *
+   * Absent ⇒ unknown ⇒ a safety assertion is refused (fail-closed). Ordinary
+   * claims never consult it.
+   */
+  claimStatus?: string | null;
+  /**
+   * How a SAFETY assertion earned publication, established by the caller from
+   * the audit trail — never inferred from the claim's value or status.
+   *
+   * This is the field that separates "an authorized reviewer approved this
+   * hazard" from "an unsafe_density row exists". Only the first may publish on
+   * the reviewed threshold; the second stays subject to the ordinary community
+   * gate and, at k=1, never publishes at all. Absent/null ⇒ no authority.
+   */
+  safetyAuthority?: SafetyAuthority | null;
 }
 
 /**
@@ -209,7 +240,9 @@ export interface ProjectionResult {
   snapshot: ProjectedSnapshot | null;
   /** Why it is not publishable, when it is not. */
   privacy: PrivacyDecision;
-  skippedReason?: "no_ttl_policy" | "invalid_input" | "value_not_supported";
+  skippedReason?: "no_ttl_policy" | "invalid_input" | "value_not_supported" | "safety_policy_refused";
+  /** For a safety assertion the safety policy refused: which clause refused it. */
+  safetyRefusal?: string;
   /** The full scored record, for callers that want it without re-reading the snapshot. */
   scored?: ConfidenceResult;
 }
@@ -280,18 +313,85 @@ export async function projectClaim(
     }
   }
 
+  // ── THE SAFETY LANE ─────────────────────────────────────────────────────────
+  //
+  // A safety assertion is not an aggregate of people, and the ordinary gate
+  // treats it as one. This is the defect S2 found by trying to prove the path
+  // end to end: an admin-approved `crowd.level = unsafe_density` claim projected
+  // with privacy_eligible = FALSE, because evaluatePrivacy ran on
+  // PRIVACY_THRESHOLD_V1 — fifteen distinct actors in five independent groups —
+  // and a reviewed assertion has ONE authorized principal behind it. The read
+  // path filters `privacy_eligible = true`, so the entire safety lane (S1a's
+  // policy, S1b's review service, the Map producer, the gateway) could never
+  // serve a single notice. Everything was built; nothing could publish.
+  //
+  // The fix is NOT a bypass. The assertion still goes through evaluatePrivacy —
+  // only the threshold differs, and S1a already declared which one and why
+  // (SAFETY_REVIEWED_THRESHOLD: "requiring fifteen strangers to corroborate an
+  // evacuation before it may be shown would be a privacy control doing safety
+  // harm"). evaluateSafetyPublication is the single place that chooses, so the
+  // choice lives with the policy rather than being restated here.
+  //
+  // WHAT MAKES IT SAFE. The authority comes from `input.safetyAuthority`, which
+  // the caller establishes from the intel_claim_reviews audit trail — never from
+  // the claim's value. An `unsafe_density` row that reached 'active' by any other
+  // route (a direct database write, IntelCaptureService.approveClaim, a future
+  // bug) carries no authority, gets no reviewed threshold, and is refused. And
+  // because SAFETY_SERVABLE_CLAIM_STATUSES is ['active'] alone, a CONFLICTING
+  // safety claim is refused HERE, at the writer — the projection never gives it
+  // a snapshot, which is the enforcement point S1a's rule was missing.
+  //
+  // A refusal withholds the snapshot entirely rather than writing a suppressed
+  // one, matching the cohortSupportsValue precedent above: there is no honest
+  // safety state to record, and no row is better than an ineligible row a later
+  // reader might learn to serve.
+  let safetyThreshold: PrivacyThreshold | undefined;
+  let reviewerBackstop = false;
+  if (isSafetyAssertion(input.claimType, input.value)) {
+    const decision = evaluateSafetyPublication({
+      claimType: input.claimType,
+      value: input.value,
+      status: input.claimStatus,
+      authority: input.safetyAuthority ?? null,
+      subjectPlaceId: subjectId,
+      distinctActors: input.distinctActors,
+      distinctGroups: input.distinctGroups,
+      maxGroupShare: input.maxGroupShare,
+    });
+    if (!decision.publishable) {
+      return {
+        snapshot: null,
+        privacy: { publishable: false, reason: "invalid_input" },
+        skippedReason: "safety_policy_refused",
+        safetyRefusal: decision.reason,
+      };
+    }
+    safetyThreshold = decision.threshold;
+    // The REVIEWER is the principal, and the reviewed threshold's numbers (1
+    // actor, 1 group) are written for exactly that. Contributor observations are
+    // corroboration here, not the basis, so the gate is asked about a cohort of
+    // at least the one authorized principal — otherwise a reviewed assertion
+    // backed by an observation with no `group_key` scores distinctGroups = 0 and
+    // SAFETY_REVIEWED_THRESHOLD becomes unsatisfiable in the ordinary case, i.e.
+    // dead policy. This adjusts what the GATE is asked, never what the snapshot
+    // RECORDS: distinct_actors below stays the honest observation count, so no
+    // contributor number is inflated by a review.
+    reviewerBackstop =
+      decision.authority === "admin_review" || decision.authority === "authenticated_official";
+  }
+
   const scored = scoreConfidence(input.components, input.penalties);
   const privacy = evaluatePrivacy({
-    distinctActors: input.distinctActors,
-    distinctGroups: input.distinctGroups,
-    maxGroupShare: input.maxGroupShare,
+    distinctActors: reviewerBackstop ? Math.max(input.distinctActors || 0, 1) : input.distinctActors,
+    distinctGroups: reviewerBackstop ? Math.max(input.distinctGroups ?? 0, 1) : input.distinctGroups,
+    maxGroupShare: reviewerBackstop ? Math.min(input.maxGroupShare ?? 1, 1) : input.maxGroupShare,
     // Publication-delay clock keyed to the STABLE anchor (earliest qualifying
     // observation), NOT the newest-observation freshness clock — otherwise a
     // venue with continuous fresh signals resets the delay forever (H3).
     observedAt: input.publicationAnchorAt ?? input.observedAt,
     now,
     sensitiveSubject: input.sensitiveSubject,
-  });
+  }, safetyThreshold ?? PRIVACY_THRESHOLD_V1);
 
   return {
     snapshot: {
