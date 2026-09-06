@@ -123,60 +123,27 @@ const UNDECLARED_LIVE_COLUMNS = new Set<string>([
  * fails. This list must reach zero.
  */
 const KNOWN_DEAD_REFERENCES: Record<string, { count: number; note: string }> = {
-  // src/lib/inputAssistance/duplicateDetection.ts (places.country, the founding
-  // defect's THIRD recurrence) was struck off: 9e82e8450 moved the read to
-  // `country_code` the same day this ratchet landed, and the two met on main
-  // with the entry still counting 1 — which is exactly the "fixed; delete the
-  // entry" direction of this check firing, on main itself.
-  // src/lib/mediaAccess.ts (close_friends.friend_id, user_follows.id) was
-  // struck off by the dead-literals batch: isCloseFriend now reads
-  // (owner_id, friend_user_id) as routes/stories.ts always has, and the avatar
-  // follow check selects `follower_id` as lib/profileVisibility does. Both were
-  // media AUTHORIZATION reads that failed 42703 into a `false` verdict, so a
-  // close-friends story denied its own close friends.
-  "src/lib/places/placeCollectionsWorker.ts": {
-    count: 2,
-    note: "posts.view_count / posts.qualified_view_count — no such columns; the " +
-      "collections worker's ranking read has never returned a row.",
-  },
-  // ── The four Memory / Compass entries below were STRUCK OFF by the
-  // ── memory-compass-lane batch. Each is recorded here rather than deleted
-  // ── outright so the next reader can see which real column carried the
-  // ── intent — the judgement was the work, exactly as the header says.
+  // EMPTY, and that is the point. Every reference this ratchet recorded has been
+  // repaired; the last two went with this change:
   //
-  // src/compass/CompassAbuseDefenseEngine.ts (compass_visibility_cooldowns
-  //   .updated_at on an UPSERT): struck off. The table is
-  //   (id, author_id, cooldown_type, started_at, ends_at, reason); the two
-  //   sibling writers in CompassFairExposureEngine.ts:112,218 already write
-  //   `started_at` and no `updated_at`, so the intent ("when this cooldown
-  //   began", restated when ON CONFLICT extends it) had a correct in-repo
-  //   precedent. Every confirmed medium/high/severe abuse pattern had been
-  //   logging a warning and leaving the offender's reach untouched.
+  //   src/lib/places/placeCollectionsWorker.ts (posts.view_count,
+  //     posts.qualified_view_count): struck off. `posts` has no view counters —
+  //     verified against the live CI schema, which carries post_buckets,
+  //     like_count, save_count, share_count and no others. PostgREST fails the
+  //     WHOLE select on an unknown column, so the collections worker's ranking
+  //     read returned 42703 every run and has never seen a row. Neither value
+  //     was ever consumed, so the repair is to stop asking for them.
   //
-  // src/compass/CompassSearchDecayService.ts (feature_flags.numeric_value):
-  //   struck off. feature_flags is (flag, enabled, description, updated_at,
-  //   metadata); the non-boolean payload convention is the `metadata` jsonb,
-  //   which lib/featureFlags.ts getFlagRow already selects. Now reads
-  //   `enabled, metadata` and takes the half-life from
-  //   metadata->>'half_life_days'; migration 2306 seeds the row, which had
-  //   also never existed.
+  //   src/scripts/seed-demo-social.ts (passport_postcards.media_type): struck
+  //     off. That table carries media_url and no media_type; the `posts` insert
+  //     a few lines above legitimately sets media_type because `posts` does have
+  //     it. One mental model was being written to two different tables, and the
+  //     postcard insert was rejected outright every time.
   //
-  // src/compass/CompassStructuredContext.ts (rent_buddy_bookings.date_from /
-  //   date_to): struck off. The table carries booking_date + start_time +
-  //   duration_h, and routes/rentABuddy.ts:4625 already proved the mapping by
-  //   translating its own ?dateFrom/?dateTo params onto `booking_date`. The
-  //   Compass chat prompt had never once known the caller had a booking.
-  //
-  // src/compass/PassportRemembersService.ts (shared_moments.visibility):
-  //   struck off. The table's audience control is `join_policy`
-  //   (invite_only | approval_required) — a shared moment is never public —
-  //   and its lifecycle control is `status`. The shared-moment group of "What
-  //   Portava Remembers" had never rendered a row.
-  "src/scripts/seed-demo-social.ts": {
-    count: 1,
-    note: "passport_postcards.media_type on an INSERT — the demo seeder's postcard " +
-      "insert is rejected outright.",
-  },
+  // An empty ratchet is self-certifying: any surviving dead reference is now a
+  // hard failure rather than a silently-tolerated entry. Do not add to it to make
+  // a build pass — fix the reference, or the guard stops meaning anything.
+
 };
 
 /** Non-`public` or non-table sources the column model does not cover. */
