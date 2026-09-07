@@ -136,6 +136,7 @@ DECLARE
   v_using text;
   v_check text;
   v_state text;
+  v_accepted boolean := false;
 BEGIN
   SELECT cmd, qual, with_check INTO v_cmd, v_using, v_check FROM pg_policies
    WHERE schemaname = 'public' AND tablename = 'meetup_time_votes' AND policyname = 'mtv_own';
@@ -199,8 +200,11 @@ BEGIN
     BEGIN
       INSERT INTO public.meetup_time_votes (option_id, user_id, vote)
       VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000000', 'yes');
-      EXECUTE 'RESET ROLE';
-      RAISE EXCEPTION 'POSTCONDITION FAILED: an unadmitted vote INSERT was ACCEPTED.';
+      -- Reaching here means RLS did NOT refuse the write. Record it and report
+      -- it OUTSIDE this block: raising here would be caught by the WHEN OTHERS
+      -- handler below and re-labelled as a probe malfunction, which is the
+      -- opposite of what happened.
+      v_accepted := true;
     EXCEPTION
       WHEN insufficient_privilege THEN NULL;   -- 42501: the boundary
     END;
@@ -210,6 +214,17 @@ BEGIN
     EXECUTE 'RESET ROLE';
     RAISE EXCEPTION 'POSTCONDITION FAILED: non-service probe of meetup_time_votes failed with % (expected 42501 on the insert, no error on the read): %', v_state, SQLERRM;
   END;
+
+  -- Guarded deliberately, and not only to satisfy the deployability guard: the
+  -- previous shape put an unconditional-looking RAISE in the statement stream,
+  -- so a reader had to trace control flow through a nested handler to see that
+  -- it fires only on failure. src/test/migrationDeployability.test.ts flags that
+  -- shape because 2195 shipped a "proof" that aborted the very transaction it
+  -- claimed to have verified. The rule is right; the fix is to make the
+  -- condition explicit, not to exempt the file.
+  IF v_accepted THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: an unadmitted vote INSERT was ACCEPTED — RLS did not refuse a vote on an option the caller is not admitted to.';
+  END IF;
 END $$;
 
 COMMIT;
