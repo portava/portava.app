@@ -1714,10 +1714,18 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       replyToBody: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.body ?? null) : null,
       replyToSenderName: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.senderName ?? null) : null,
       // Media fields (migration 0152_messages_media.sql)
-      mediaUrl: (m as any).media_url ?? null,
-      mediaType: (m as any).media_type ?? null,
-      mediaThumbnailUrl: (m as any).media_thumbnail_url ?? null,
-      mediaDurationSeconds: (m as any).media_duration_seconds ?? null,
+      //
+      // Telegraph §7.4 / §29: a deleted or unsent message must be "removed from
+      // normal retrieval", and there must be "no source-object revocation bypass
+      // via cached Telegraph card". These were previously returned
+      // UNCONDITIONALLY — the body was nulled for a deleted message but its
+      // media_url, thumbnail and duration were still handed to every reader, so
+      // deleting or unsending a photo or video redacted the caption and left the
+      // asset itself addressable. Suppressed on the same predicate as the body.
+      mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),
+      mediaType: isDeleted ? null : ((m as any).media_type ?? null),
+      mediaThumbnailUrl: isDeleted ? null : ((m as any).media_thumbnail_url ?? null),
+      mediaDurationSeconds: isDeleted ? null : ((m as any).media_duration_seconds ?? null),
     };
   });
 
@@ -1779,12 +1787,29 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // isBlockedBetween (a blocks-table error is treated as blocked).
   {
     const blockSc = getServiceClient() ?? client;
-    const { data: otherMembers } = await client
+    const { data: otherMembers, error: otherMembersErr } = await client
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .is('left_at', null)
       .neq('user_id', user.id);
+
+    // FAIL CLOSED. supabase-js RESOLVES {data, error} rather than throwing, so
+    // this error was previously never inspected: `data` came back null, the
+    // `?? []` turned an unreadable membership table into "this thread has no
+    // other members", `others.length === 1` was false, and the entire pairwise
+    // block guard was SKIPPED — a blocked sender's message went through on any
+    // transient read failure. isBlockedBetween below is already fail-closed on
+    // its own read; this is the same posture for the read that decides whether
+    // to consult it at all. (§26 "Blocked sender sends DM → DENY";
+    // §28 "blocked direct deliveries: 0"; §29 blocked relationships never
+    // reappear.)
+    if (otherMembersErr) {
+      req.log.error({ err: otherMembersErr }, 'thread member lookup failed for block guard');
+      sendError(res, 'db_error', otherMembersErr.message);
+      return;
+    }
+
     const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
     if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
       sendError(res, 'forbidden', 'You cannot message this user'); return;
@@ -2134,12 +2159,29 @@ router.post('/threads/:threadId/media', async (req, res) => {
   // Fail-closed via isBlockedBetween.
   {
     const blockSc = getServiceClient() ?? client;
-    const { data: otherMembers } = await client
+    const { data: otherMembers, error: otherMembersErr } = await client
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .is('left_at', null)
       .neq('user_id', user.id);
+
+    // FAIL CLOSED. supabase-js RESOLVES {data, error} rather than throwing, so
+    // this error was previously never inspected: `data` came back null, the
+    // `?? []` turned an unreadable membership table into "this thread has no
+    // other members", `others.length === 1` was false, and the entire pairwise
+    // block guard was SKIPPED — a blocked sender's message went through on any
+    // transient read failure. isBlockedBetween below is already fail-closed on
+    // its own read; this is the same posture for the read that decides whether
+    // to consult it at all. (§26 "Blocked sender sends DM → DENY";
+    // §28 "blocked direct deliveries: 0"; §29 blocked relationships never
+    // reappear.)
+    if (otherMembersErr) {
+      req.log.error({ err: otherMembersErr }, 'thread member lookup failed for block guard');
+      sendError(res, 'db_error', otherMembersErr.message);
+      return;
+    }
+
     const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
     if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
       sendError(res, 'forbidden', 'You cannot message this user'); return;
@@ -2412,6 +2454,104 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
     senderPreferredLanguage: senderLanguage,
     logger: req.log,
   }).catch(() => {});
+});
+
+/* ---------------------------------------------------------------------------
+ * POST /api/threads/:threadId/messages/:messageId/unsend
+ * ---------------------------------------------------------------------------
+ * Telegraph §7.4 — UNSEND_MESSAGE (§13.1), distinct from DELETE_MESSAGE.
+ *
+ * "A sender may unsend only while no eligible recipient has seen the message.
+ *  In a group, one recipient seeing the message closes the unseen-unsend window
+ *  for everyone. The server resolves read-vs-unsend races transactionally."
+ *
+ * THE DECISION IS NOT MADE HERE. It is made inside
+ * telegraph_unsend_message_before_seen (migration 2325), which locks the
+ * recipient receipt rows before reading them. Deciding in Node would mean a
+ * SELECT of the receipts, a decision, then an UPDATE — three separate implicit
+ * transactions, with a recipient's mark-as-read free to land in the middle. That
+ * is the §28 "unsend-after-seen violations: 0" SLO lost to a race, so this route
+ * deliberately owns none of the predicate.
+ *
+ * A message that HAS been seen is not unsendable. The sender may still delete it
+ * (that is the other operation); this endpoint refuses with 409 rather than
+ * quietly degrading into a delete, because the two have different meanings to
+ * the recipient and §13.1 keeps them apart.
+ */
+router.post('/threads/:threadId/messages/:messageId/unsend', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { threadId, messageId } = req.params;
+  if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
+  if (!isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid message id'); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const { data, error } = await sc.rpc('telegraph_unsend_message_before_seen', {
+    p_message_id: messageId,
+    p_actor_id: user.id,
+    p_thread_id: threadId,
+  });
+
+  // supabase-js RESOLVES {data, error} — it does not throw. An unreadable
+  // receipt table must never be mistaken for "nobody has seen it".
+  if (error) {
+    req.log.error({ err: error }, 'unsend failed');
+    sendError(res, 'db_error', error.message);
+    return;
+  }
+
+  // A null/absent outcome is a FAILURE, not a success and not a refusal. If the
+  // function ever returns a shape this route does not understand, the message
+  // stays sent and the caller is told the truth.
+  const outcome = (data as any)?.outcome ?? null;
+  if (outcome === null) {
+    req.log.error({ data }, 'unsend returned no outcome');
+    sendError(res, 'db_error', 'Unsend did not report an outcome');
+    return;
+  }
+
+  switch (outcome) {
+    case 'unsent':
+      break;
+    case 'not_found':
+      sendError(res, 'not_found', 'Message not found');
+      return;
+    case 'not_sender':
+      sendError(res, 'forbidden', 'Only the sender can unsend this message');
+      return;
+    case 'not_member':
+      sendError(res, 'forbidden', 'You no longer have access to this thread');
+      return;
+    case 'already_gone':
+      sendError(res, 'invalid_payload', 'Message is already deleted or unsent');
+      return;
+    case 'seen':
+      // 409: the window closed. Not a 403 — the caller is allowed to unsend in
+      // principle, the state no longer permits it.
+      res.status(409).json({
+        error: 'already_seen',
+        message: 'This message has already been seen and can no longer be unsent',
+      });
+      return;
+    default:
+      req.log.error({ outcome }, 'unsend returned an unknown outcome');
+      sendError(res, 'db_error', 'Unsend reported an unrecognised outcome');
+      return;
+  }
+
+  const unsentAt = (data as any)?.unsentAt ?? null;
+  res.status(200).json({ id: messageId, threadId, unsent: true, unsentAt });
+
+  // Realtime: recipients drop the message from their rendered thread.
+  void publishToThread(
+    sc,
+    threadId,
+    { type: 'message.unsent', payload: { messageId, unsentAt } },
+    { excludeUserId: user.id },
+  );
 });
 
 /* ---------------------------------------------------------------------------

@@ -23,6 +23,12 @@ export type TelegraphEventType =
   | "thread.updated"
   | "message.created"
   | "message.updated"
+  /**
+   * Telegraph §13.2: the sender unsent the message before any eligible recipient
+   * had seen it. Distinct from a delete — recipients drop the message from the
+   * rendered thread. Carries only { messageId, unsentAt }, never a body.
+   */
+  | "message.unsent"
   | "message.translated"
   | "member.left"
   | "typing.started"
