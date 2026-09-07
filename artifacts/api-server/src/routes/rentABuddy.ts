@@ -6646,6 +6646,10 @@ export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date 
   };
 }
 
+/** The columns the earnings fold reads. */
+const EARNINGS_BOOKING_COLUMNS =
+  "id, total_usd, deposit_usd, cash_balance_usd, payment_mode, status, completed_at, booking_date, category";
+
 /**
  * Read EVERY earnings-bearing booking for a buddy, in pages.
  *
@@ -6660,10 +6664,6 @@ export async function fetchAllBuddyEarningsRows(client: any, buddyProfileId: str
     statuses: EARNINGS_STATUSES as unknown as string[],
   });
 }
-
-/** The columns the earnings fold reads. */
-const EARNINGS_BOOKING_COLUMNS =
-  "id, total_usd, deposit_usd, cash_balance_usd, payment_mode, status, completed_at, booking_date, category";
 
 /**
  * The exhaustive pager the three earnings readers share.

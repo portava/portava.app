@@ -99,6 +99,9 @@ interface FakeState {
   launchControls?:     any[];
   globalControls?:     any;
   cityRollouts?:       any[];
+  /** rent_buddy_fee_rules, keyed by buddy_level. The schedule of record for the
+   *  platform take rate; a level with no entry here is refused, not defaulted. */
+  feeRules?:           Record<string, any>;
   /** Map of table name → error object. When set the fake client returns this
    *  error (and no data) for the next insert on that table, then clears it. */
   insertErrorOverrides?: Record<string, any>;
@@ -669,6 +672,18 @@ function makeClient(userId: string, role = "user") {
             if (op === "in") rows = rows.filter((r: any) => (val as any[]).includes(r[col]));
           }
           if (this._maybeSingle) return { data: rows[0] ?? null, error: null };
+          return { data: rows, count: rows.length, error: null };
+        }
+
+        // The schedule of record for the platform take rate. Seeded through
+        // `state.feeRules` keyed by buddy_level; the earnings-summary route
+        // resolves the buddy's rate from it and REFUSES when there is no row
+        // (M1 — there is deliberately no numeric fallback).
+        if (t === "rent_buddy_fee_rules") {
+          const rules = (state as any).feeRules ?? {};
+          const eqLevel = this._filters.find(([op, col]) => op === "eq" && col === "buddy_level");
+          if (eqLevel && this._maybeSingle) return { data: rules[eqLevel[2] as string] ?? null, error: null };
+          const rows = Object.values(rules);
           return { data: rows, count: rows.length, error: null };
         }
 
@@ -1939,7 +1954,14 @@ describe("Rent a Buddy — compliance: posting defaults & earnings summary", () 
       featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
       profiles: { [USER_ID]: { id: USER_ID, trust_score: 80 } },
       buddyProfiles: {
+        // buddy_level is unset, which the resolver treats as the column
+        // default 'new' — the level that DOES have a schedule row.
         "bp-u1": { id: "bp-u1", user_id: USER_ID },
+      },
+      // M1: the route reads its take rate from rent_buddy_fee_rules and
+      // refuses when the level has no row, so the schedule must be seeded.
+      feeRules: {
+        new: { buddy_level: "new", platform_fee_percent: 25, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
       },
       bookings: {},
     };
@@ -1948,6 +1970,7 @@ describe("Rent a Buddy — compliance: posting defaults & earnings summary", () 
     assert.ok(r.body.taxNote?.length > 10);
     assert.ok(typeof r.body.totalNetUsd === "number");
     assert.ok(Array.isArray(r.body.monthlyBreakdown));
+    assert.equal(r.body.platformFeePct, 25, "the rate comes from the seeded schedule row");
   });
 });
 
