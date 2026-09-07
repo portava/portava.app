@@ -178,6 +178,23 @@ Everything else is independent and may be applied in any order.
 - **POST-CHECK** same query — expect **no `anon` rows and no `authenticated` rows**, and `service_role` narrowed per table.
 - **Rollback** `db/rollback/2026-09-07-2333-grant-boundary-rollback.sql`. Section 1 is **commented out on purpose** because it re-grants `anon` write access to user data.
 
+### B3-note. `2510_layover_write_boundary_postconditions.sql` — **apply strictly AFTER B3**
+
+- **Why it is a separate file.** 2335 has no postcondition block. It cannot gain
+  one in place: 2335 is applied on portava-ci and ledgered there by sha256, and
+  `src/scripts/checkMigrationLedger.ts` reports an edited applied migration as a
+  finding. The verification therefore lives in its own verify-only migration.
+- **It changes nothing.** No DDL, no grant, no policy, no row. It reads and raises.
+- **It is proven to discriminate, not assumed to.** Run read-only today:
+  production has `layover_recs_owner` at `polcmd='*'` (FOR ALL) with
+  `authenticated` holding `DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE`
+  → it raises. portava-ci has `polcmd='r'` (FOR SELECT) with `SELECT` only and
+  `service_role` at `DELETE,INSERT,SELECT,UPDATE` → it passes.
+- **So applying it before B3 is a guaranteed failure**, by design. That is the
+  point: it is the check that B3 actually landed.
+- It also asserts exactly one policy on the table, so a later PERMISSIVE policy
+  cannot silently OR-dominate `layover_recs_owner`.
+
 ### B3. `2335_layover_recommendation_write_boundary.sql`
 - **Purpose** `layover_recs_owner` becomes `FOR SELECT`; grants narrowed; TRUNCATE revoked from `anon`/`authenticated` on four sibling layover tables.
 - **Measured now** `PERMISSIVE / ALL, with_check = NULL` — a `FOR ALL` policy with no `WITH CHECK` reuses `USING` as the write check, so an authenticated user can write their own `safety_rating` and `hard_return_time`.

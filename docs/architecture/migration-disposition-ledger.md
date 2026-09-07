@@ -152,3 +152,43 @@ one row where it actually binds.
 3. **`2335` and `2410` are applied on CI**, so the Layover surface's live CI
    behaviour already differs from production's. Read the Layover lane's report
    before applying either.
+
+---
+
+## Extension — migrations 2500-2550, written during the parallel lane pass
+
+All were authored 2026-09-07 by lanes running under "apply nothing". **Every
+marker below was verified ABSENT on portava-ci**, and production is behind CI on
+every migration in the band, so none is applied anywhere.
+
+| Mig | Prod marker | CI marker | Ledger | Dependency | Status | Reason |
+|---|---|---|---|---|---|---|
+| 2500 | `trip_kernel_execute` body contains `JOIN_VIA_LINK` — absent | absent | not ledgered | **2334 → 2337 → 2420 → 2450** | `blocked_by_dependency` | Adds `JOIN_VIA_LINK` and widens two commands from `owner` to `host`. A 2450 database refuses the new type as `TRIP_COMMAND_UNKNOWN_TYPE` — tested, not assumed. Production has none of the chain. |
+| 2510 | verify-only; would RAISE today | would pass | not ledgered | **strictly after 2335** | `ready_for_manual_apply` | The postcondition block 2335 lacks, as a separate file because 2335 is ledgered on CI by sha256 and `checkMigrationLedger` reports an edited applied migration as a finding. Proven to discriminate: on production `layover_recs_owner` is `polcmd='*'` with `authenticated` holding all eight privileges, so it raises; on CI `polcmd='r'` with SELECT only, so it passes. |
+| 2520 | `trip_map_projection_drain` — absent | absent | not ledgered | **2334 → 2337 → 2420** | `blocked_by_dependency` | Outbox projection worker. Its own precondition RAISEs until the kernel chain lands. Flag `trip_map_projection_worker_enabled` seeded FALSE. |
+| 2530 | `highlights_select_active` qual contains `shares_accepted_trip` — absent | absent | not ledgered | **2337** (creates `authz.shares_accepted_trip`) | `ready_for_manual_apply` | Rewrites one branch of one policy, shape-agnostic, refuses any shape it does not recognise. **Ordering hazard: PR #461's 2313 restores the `trip_members` self-join byte-for-byte.** If 2313 is applied after 2530 on production the defect returns — see runbook. |
+| 2531 | `crew_session_owner_select` qual free of `allowed_member_ids` — absent | absent | not ledgered | none | `ready_for_manual_apply` | Removes the branch admitting any stranger listed in `allowed_member_ids`. This is the policy 2337 deferred to reconciliation-staging/2118. |
+| 2532 | `pg_policies_snapshot_v2` — absent | absent | not ledgered | none | `ready_for_manual_apply` | Diagnostic snapshot keeping USING and WITH CHECK apart. 2199's fuses them, so no consumer of it can distinguish a `FOR ALL` that wrote `WITH CHECK` from one that did not — the distinction this whole pass turns on. |
+| 2540 | index `trust_events_one_shot_uniq` — absent | absent | not ledgered | none | `ready_for_manual_apply` | Partial unique index scoped to the five event types whose emitters were wired. Every other type deliberately excluded for its owner to extend. Rehearsed on CI inside a rolled-back transaction. |
+| 2550 | *(Discovery consumer lane in flight)* | — | — | — | *pending* | Will seed the Discovery-consumer flag FALSE. Recorded here so the band is not silently incomplete. |
+
+### Why 2500 and 2520 are `blocked_by_dependency` rather than `ready`
+
+Both are correct files. Neither can be applied to production today because
+`trips.version` does not exist there (measured 2026-09-07: `trips.version`
+absent, `trip_events` absent, 43 trips, 12 discoverable). They are not blocked on
+a decision or on more engineering — only on 2334 → 2337 → 2420 → 2450 being
+applied, in that order.
+
+### The meetup cycle, re-swept after the RLS lane landed
+
+A recursive policy-graph sweep run against **both** databases today returns
+exactly one cycle, identically on each:
+
+```
+meetups -> meetup_invites -> meetups
+```
+
+No new cycle was introduced by 2530/2531/2532. The cycle is repaired **in code**
+by 2460 → 2461 and remains **live in both databases** because neither is applied.
+It is `ready_for_manual_apply`, blocked only on manual SQL.
