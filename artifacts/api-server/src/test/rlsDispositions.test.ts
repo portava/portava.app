@@ -142,3 +142,59 @@ describe("rlsDispositions — FOLLOW_UPS survives", () => {
     assert.deepEqual(bad, [], `empty note: ${bad.join(", ")}`);
   });
 });
+
+/* ── Policy-shape allowlists (lane B5, 2026-09-07) ─────────────────────────── */
+import {
+  ARRAY_GRANT_KNOWN_OPEN,
+  FOR_ALL_WITHOUT_WITH_CHECK_BASELINE,
+  TRIP_MEMBERS_KNOWN_OPEN,
+  TRIP_MEMBERS_REVIEWED_ALLOWLIST,
+} from "../scripts/rlsDispositions.js";
+
+describe("rlsDispositions — policy-shape allowlists are explicit, reviewed and well-formed", () => {
+  const KEY = /^[a-z0-9_]+::[^\s].*$/;
+  const allKeys = [
+    ...TRIP_MEMBERS_REVIEWED_ALLOWLIST.map((e) => e.key),
+    ...TRIP_MEMBERS_KNOWN_OPEN.map((e) => e.key),
+    ...ARRAY_GRANT_KNOWN_OPEN.map((e) => e.key),
+    ...FOR_ALL_WITHOUT_WITH_CHECK_BASELINE,
+  ];
+
+  it("every key is table::policy", () => {
+    const bad = allKeys.filter((k) => !KEY.test(k));
+    assert.deepEqual(bad, [], `malformed keys: ${bad.join(", ")}`);
+  });
+
+  it("no key appears twice within a list", () => {
+    for (const [name, list] of [
+      ["TRIP_MEMBERS_REVIEWED_ALLOWLIST", TRIP_MEMBERS_REVIEWED_ALLOWLIST.map((e) => e.key)],
+      ["TRIP_MEMBERS_KNOWN_OPEN", TRIP_MEMBERS_KNOWN_OPEN.map((e) => e.key)],
+      ["ARRAY_GRANT_KNOWN_OPEN", ARRAY_GRANT_KNOWN_OPEN.map((e) => e.key)],
+      ["FOR_ALL_WITHOUT_WITH_CHECK_BASELINE", [...FOR_ALL_WITHOUT_WITH_CHECK_BASELINE]],
+    ] as const) {
+      assert.equal(new Set(list).size, list.length, `${name} has duplicate keys`);
+    }
+  });
+
+  it("a policy is never both reviewed-correct and known-open", () => {
+    const reviewed = new Set(TRIP_MEMBERS_REVIEWED_ALLOWLIST.map((e) => e.key));
+    const both = TRIP_MEMBERS_KNOWN_OPEN.filter((e) => reviewed.has(e.key)).map((e) => e.key);
+    assert.deepEqual(both, []);
+  });
+
+  it("every reviewed entry carries reason, reviewer and date; every known-open entry carries reason, since, kind and removeWhen", () => {
+    for (const e of TRIP_MEMBERS_REVIEWED_ALLOWLIST) {
+      assert.ok(e.reason.trim() && e.reviewedBy.trim() && /^\d{4}-\d{2}-\d{2}$/.test(e.date), `reviewed entry ${e.key} is incomplete`);
+    }
+    for (const e of [...TRIP_MEMBERS_KNOWN_OPEN, ...ARRAY_GRANT_KNOWN_OPEN]) {
+      assert.ok(e.reason.trim() && e.removeWhen.trim() && /^\d{4}-\d{2}-\d{2}$/.test(e.since), `known-open entry ${e.key} is incomplete`);
+      assert.ok(["ungated_direct", "ungated_via_function", "array_grant_ungated"].includes(e.kind), `known-open entry ${e.key} claims an unknown kind ${e.kind}`);
+    }
+  });
+
+  it("MUTATION-PROOF: a known-open entry without removeWhen fails the completeness check", () => {
+    const fake = [{ key: "t::p", kind: "ungated_direct", reason: "x", since: "2026-09-07", removeWhen: "" }];
+    const bad = fake.filter((e) => !e.removeWhen.trim()).map((e) => e.key);
+    assert.deepEqual(bad, ["t::p"]);
+  });
+});
