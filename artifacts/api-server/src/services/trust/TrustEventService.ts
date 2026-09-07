@@ -68,7 +68,13 @@ export interface RecordEventResult {
   ok: boolean;
   eventId?: string;
   skipped?: boolean;
-  skipReason?: "dedup" | "daily_cap" | "flag_off";
+  /**
+   * `dedup_unverifiable` — the dedup read itself failed, so whether this event
+   * is a repeat could not be established. The event is NOT written: with the
+   * flag on, an unverifiable dedup that inserted anyway would turn every
+   * transient trust_events read failure into a double award (see isDuplicate).
+   */
+  skipReason?: "dedup" | "daily_cap" | "flag_off" | "dedup_unverifiable";
   pendingReview?: boolean;
 }
 
@@ -82,13 +88,22 @@ export interface RecordEventResult {
  */
 export async function isTrustEnabled(db: SupabaseClient): Promise<boolean> {
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "trust_engine_enabled")
       .maybeSingle();
+    if (error) {
+      // Fail closed — but never silently. supabase-js resolves on a database
+      // error, and an unread `error` here made a broken feature_flags read
+      // indistinguishable from the flag being off: every emitter returned
+      // `flag_off` and the ledger went quiet with nothing in the logs.
+      logger.warn({ err: error }, "trust_engine_enabled read failed — treating the engine as OFF for this call");
+      return false;
+    }
     return Boolean((data as any)?.enabled);
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "trust_engine_enabled read threw — treating the engine as OFF for this call");
     return false;
   }
 }
@@ -204,7 +219,18 @@ async function getEarningCaps(
   }
 }
 
-/** Check deduplication window */
+/**
+ * Check the deduplication window.
+ *
+ * Returns `"duplicate"`, `"new"`, or `"unverifiable"`. The third answer is the
+ * one that used to be missing: this read `const { data }` and ignored `error`,
+ * and supabase-js RESOLVES on a database error — so a failed read looked like
+ * "no prior event" and the insert went ahead. That is the idempotency key
+ * failing open: a transient trust_events outage during a retry, a re-delivered
+ * webhook, or a re-bridged intel row would have written the same event twice
+ * and scored it twice. `countInWindow` already fails closed (Infinity = at
+ * cap) for the same reason; dedup now does too.
+ */
 async function isDuplicate(
   db: SupabaseClient,
   userId: string,
@@ -212,11 +238,11 @@ async function isDuplicate(
   sourceType: string,
   sourceId: string | undefined,
   windowHours: number,
-): Promise<boolean> {
-  if (!sourceId) return false;
+): Promise<"duplicate" | "new" | "unverifiable"> {
+  if (!sourceId) return "new";
   try {
     const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
-    const { data } = await db
+    const { data, error } = await db
       .from("trust_events")
       .select("id")
       .eq("user_id", userId)
@@ -225,9 +251,14 @@ async function isDuplicate(
       .eq("source_id", sourceId)
       .gt("created_at", since)
       .maybeSingle();
-    return Boolean(data);
-  } catch {
-    return false;
+    if (error) {
+      logger.warn({ err: error, userId, eventType, sourceType, sourceId }, "dedup read failed — event NOT recorded (fail-closed)");
+      return "unverifiable";
+    }
+    return data ? "duplicate" : "new";
+  } catch (err) {
+    logger.warn({ err, userId, eventType, sourceType, sourceId }, "dedup read threw — event NOT recorded (fail-closed)");
+    return "unverifiable";
   }
 }
 
@@ -253,9 +284,10 @@ export async function recordTrustEvent(
   // Normalize to lowercase so "PLAN_ATTENDED" and "plan_attended" are the same bucket
   const eventType = input.eventType.toLowerCase();
 
-  // Deduplication check
+  // Deduplication check — fails CLOSED when it cannot be performed.
   const dup = await isDuplicate(db, userId, eventType, sourceType, sourceId, dedupWindowHours);
-  if (dup) return { ok: false, skipped: true, skipReason: "dedup" };
+  if (dup === "duplicate")    return { ok: false, skipped: true, skipReason: "dedup" };
+  if (dup === "unverifiable") return { ok: false, skipped: true, skipReason: "dedup_unverifiable" };
 
   // Daily and weekly cap checks (only for positive events)
   if (delta > 0) {
@@ -452,6 +484,96 @@ export async function recordAdjudicatedTrustEvent(
   } catch {
     // Degrades to the queue rather than losing the event.
     return { ...result, confirmed: false };
+  }
+}
+
+
+/**
+ * The Trust-owned half of STAMP_VERIFIED.
+ *
+ * ── WHAT WAS MEASURED ────────────────────────────────────────────────────────
+ * `STAMP_VERIFIED` (+3 passport_authenticity) has been declared below since the
+ * vocabulary was written and emitted by nothing. In production, every
+ * `user_stamps` row awarded since `trust_engine_enabled` went TRUE on
+ * 2026-07-17 (18 rows by earned_at, 23 stamp_award_events by created_at, read
+ * 2026-09-07) produced ZERO trust events. The live award path is
+ * `services/passport/StampAwardEngine.awardStamp`, which already classifies
+ * every award by provenance tier (`stampVerificationTier`: everything
+ * server-derived is "verified"; only self_reported/self/decorative is
+ * "reported") and emits the §32 `stamp_verified` TELEMETRY event on that tier —
+ * but never the trust event. `passport_authenticity` can therefore only go DOWN
+ * on the live pipeline (`stamp_disputed`, StampAwardEngine.revokeStamp).
+ *
+ * ── WHY THE CALL IS NOT MADE HERE ────────────────────────────────────────────
+ * The triggering action — a fresh, non-recovery stamp award — happens inside
+ * StampAwardEngine, which is Passport-owned (services/passport/**, §12/§32 of
+ * the Passport spec, `recordPassportEvent` telemetry). Trust does not reach
+ * into another surface's award path. This function is the exact one-line call
+ * that path needs to make, on its `awarded: true` return only, so the delta,
+ * severity, category, provenance and idempotency key are fixed HERE, in the
+ * vocabulary's own file, and the Passport change is a call, not a decision.
+ *
+ * ── PROVENANCE AND IDEMPOTENCY ───────────────────────────────────────────────
+ *   user_id     — the stamp OWNER (the actor whose travel fact was verified);
+ *                 an admin-awarded stamp still credits the owner, and the admin
+ *                 is recorded in metadata, never as the subject.
+ *   source_type — 'passport'; source_id — the user_stamps row id. One stamp can
+ *                 pay once, ever (365-day dedup window; recordTrustEvent's
+ *                 dedup fails closed).
+ *   tier        — only 'verified' provenance emits. A 'reported' (self-declared)
+ *                 stamp is a decoration, not evidence; nothing is written and
+ *                 `{ ok: false, skipped: true, skipReason: "not_verified" }` is
+ *                 returned so the caller can tell "skipped by rule" from
+ *                 "skipped by the engine".
+ *   recovery    — awardStamp's recovery path (`skipToStampInsert`) re-inserts a
+ *                 user_stamps row for an award event that already exists; the
+ *                 caller must pass the SAME userStampId semantics it uses for
+ *                 the §32 telemetry (fresh award only), and the dedup key
+ *                 catches the rest.
+ *
+ * Never throws: an award must not fail because trust bookkeeping did.
+ */
+export async function recordStampVerifiedTrustEvent(
+  db: SupabaseClient,
+  input: {
+    /** The stamp owner — the subject of the evidence. */
+    userId: string;
+    /** user_stamps.id of the FRESH award (never a recovery/no-op result). */
+    userStampId: string;
+    /** StampAwardEngine's provenance tier for this award. */
+    tier: "verified" | "reported";
+    /** user_stamps.source_type — trips | events | posts | admin | … */
+    stampSourceType: string;
+    stampDefinitionId?: string | null;
+    /** Present only for admin-awarded stamps; recorded, never made the subject. */
+    awardedByAdminId?: string | null;
+  },
+): Promise<Omit<RecordEventResult, "skipReason"> & { skipReason?: NonNullable<RecordEventResult["skipReason"]> | "not_verified" }> {
+  if (input.tier !== "verified") {
+    return { ok: false, skipped: true, skipReason: "not_verified" };
+  }
+  const t = TRUST_EVENT_TYPES.STAMP_VERIFIED;
+  try {
+    return await recordTrustEvent(db, {
+      userId: input.userId,
+      eventType: "stamp_verified",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "passport",
+      sourceId: input.userStampId,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        userStampId:       input.userStampId,
+        stampSourceType:   input.stampSourceType,
+        stampDefinitionId: input.stampDefinitionId ?? null,
+        awardedByAdminId:  input.awardedByAdminId ?? null,
+        tier:              input.tier,
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, userId: input.userId, userStampId: input.userStampId }, "stamp_verified trust event failed (non-fatal to the award)");
+    return { ok: false };
   }
 }
 

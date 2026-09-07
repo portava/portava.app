@@ -60,10 +60,17 @@ export async function confirmEvent(
   if (e.status !== "pending_review") throw new Error("Event is not pending review");
 
   const nowMs = Date.now();
-  // Mark confirmed
-  await db.from("trust_events")
+  // Mark confirmed — and make sure it happened. supabase-js resolves on a
+  // database error; unread, a failed update left the event pending_review while
+  // the code below still applied the cap, set probation, and logged the admin
+  // action. The next confirm of the same (still pending) event would then apply
+  // the cap AGAIN. The status transition is the idempotency guard for
+  // everything that follows, so a failure here stops here.
+  const { error: confirmErr } = await db.from("trust_events")
     .update({ status: "confirmed", reviewed_by: adminId, reviewed_at: new Date(nowMs).toISOString() })
-    .eq("id", eventId);
+    .eq("id", eventId)
+    .eq("status", "pending_review");
+  if (confirmErr) throw new Error(`confirmEvent: status update failed — ${confirmErr.message ?? confirmErr.code ?? "db_error"}`);
 
   // Apply standard caps for this event type
   const { applyEventCaps } = await import("./TrustCapService.js");
@@ -78,11 +85,15 @@ export async function confirmEvent(
   // Recalculate score
   await recalculateTrustScore(db, e.user_id).catch(() => {});
 
-  // Close any review for this event
-  await db.from("trust_reviews")
-    .update({ status: "resolved", resolved_by: adminId, resolved_at: new Date(nowMs).toISOString() })
-    .eq("source_event_id", eventId)
-    .eq("status", "open");
+  // Close any review for this event (non-fatal: the event is confirmed and
+  // scored; an open review row left behind is visible in the queue, not lost).
+  {
+    const { error: reviewErr } = await db.from("trust_reviews")
+      .update({ status: "resolved", resolved_by: adminId, resolved_at: new Date(nowMs).toISOString() })
+      .eq("source_event_id", eventId)
+      .eq("status", "open");
+    if (reviewErr) logger.warn({ err: reviewErr, eventId }, "confirmEvent: trust_reviews close failed (non-fatal)");
+  }
 
   await logAdminAction(db, adminId, e.user_id, "confirm_event", reason, { eventType: e.event_type }, eventId);
   return { ok: true };
@@ -161,24 +172,32 @@ export async function dismissEvent(
   eventId: string,
   reason: string,
 ): Promise<{ ok: boolean }> {
-  const { data: evt } = await db
+  const { data: evt, error: fetchErr } = await db
     .from("trust_events")
     .select("id, user_id, status")
     .eq("id", eventId)
     .maybeSingle();
 
+  if (fetchErr) throw new Error(`dismissEvent: event read failed — ${fetchErr.message ?? fetchErr.code ?? "db_error"}`);
   if (!evt) throw new Error("Event not found");
   const e = evt as any;
   if (e.status !== "pending_review") throw new Error("Event is not pending review");
 
-  await db.from("trust_events")
+  // Same rule as confirmEvent: the status transition must be known to have
+  // happened before the dismissal is recalculated and audited as done.
+  const { error: dismissErr } = await db.from("trust_events")
     .update({ status: "dismissed", reviewed_by: adminId, reviewed_at: new Date().toISOString() })
-    .eq("id", eventId);
+    .eq("id", eventId)
+    .eq("status", "pending_review");
+  if (dismissErr) throw new Error(`dismissEvent: status update failed — ${dismissErr.message ?? dismissErr.code ?? "db_error"}`);
 
-  await db.from("trust_reviews")
-    .update({ status: "dismissed", resolved_by: adminId, resolved_at: new Date().toISOString() })
-    .eq("source_event_id", eventId)
-    .eq("status", "open");
+  {
+    const { error: reviewErr } = await db.from("trust_reviews")
+      .update({ status: "dismissed", resolved_by: adminId, resolved_at: new Date().toISOString() })
+      .eq("source_event_id", eventId)
+      .eq("status", "open");
+    if (reviewErr) logger.warn({ err: reviewErr, eventId }, "dismissEvent: trust_reviews close failed (non-fatal)");
+  }
 
   await recalculateTrustScore(db, e.user_id).catch(() => {});
   await logAdminAction(db, adminId, e.user_id, "dismiss_event", reason, {}, eventId);
@@ -261,14 +280,16 @@ export async function adminRemoveOverride(
   category: TrustCategory,
   reason: string,
 ): Promise<{ ok: boolean }> {
-  // Find the active admin_override cap for this user+category
-  const { data: caps } = await db
+  // Find the active admin_override cap for this user+category. A failed read
+  // must not be audited as "override removed" — nothing was lifted.
+  const { data: caps, error: capsErr } = await db
     .from("trust_caps")
     .select("id")
     .eq("user_id", targetUserId)
     .eq("category", category)
     .eq("reason_code", "admin_override")
     .is("lifted_at", null);
+  if (capsErr) throw new Error(`adminRemoveOverride: trust_caps read failed — ${capsErr.message ?? capsErr.code ?? "db_error"}`);
 
   if (caps && Array.isArray(caps)) {
     await Promise.all((caps as any[]).map(cap =>
@@ -313,38 +334,40 @@ export async function adminResolveReview(
   return { ok: true };
 }
 
-/** Get pending events queue for admin */
+/**
+ * Get pending events queue for admin.
+ *
+ * THROWS on a read failure. These two queue reads used to swallow both the
+ * resolved `error` and any throw and return `[]` — so an unreachable ledger
+ * rendered as an EMPTY queue, "nothing to review", to the one person whose job
+ * is to notice. An empty queue and a broken queue are different answers; the
+ * route turns the throw into a db_error.
+ */
 export async function getPendingEvents(
   db: SupabaseClient,
   limit = 50,
 ): Promise<any[]> {
-  try {
-    const { data } = await db
-      .from("trust_events")
-      .select("id, user_id, event_type, category, delta, severity, source_type, metadata, created_at")
-      .eq("status", "pending_review")
-      .order("created_at", { ascending: true })
-      .limit(limit);
-    return (data as any[]) ?? [];
-  } catch {
-    return [];
-  }
+  const { data, error } = await db
+    .from("trust_events")
+    .select("id, user_id, event_type, category, delta, severity, source_type, metadata, created_at")
+    .eq("status", "pending_review")
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`getPendingEvents: trust_events read failed — ${error.message ?? error.code ?? "db_error"}`);
+  return (data as any[]) ?? [];
 }
 
-/** Get open reviews queue */
+/** Get open reviews queue. Throws on a read failure — see getPendingEvents. */
 export async function getOpenReviews(
   db: SupabaseClient,
   limit = 50,
 ): Promise<any[]> {
-  try {
-    const { data } = await db
-      .from("trust_reviews")
-      .select("id, user_id, review_type, source_event_id, metadata, created_at")
-      .in("status", ["open", "in_progress"])
-      .order("created_at", { ascending: true })
-      .limit(limit);
-    return (data as any[]) ?? [];
-  } catch {
-    return [];
-  }
+  const { data, error } = await db
+    .from("trust_reviews")
+    .select("id, user_id, review_type, source_event_id, metadata, created_at")
+    .in("status", ["open", "in_progress"])
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`getOpenReviews: trust_reviews read failed — ${error.message ?? error.code ?? "db_error"}`);
+  return (data as any[]) ?? [];
 }

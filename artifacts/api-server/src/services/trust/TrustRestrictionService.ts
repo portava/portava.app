@@ -151,12 +151,15 @@ export async function liftRestrictionsByType(
   restrictionType: RestrictionType,
   liftedBy: string,
 ): Promise<void> {
-  await db
+  const { error } = await db
     .from("trust_restrictions")
     .update({ lifted_at: new Date().toISOString(), lifted_by: liftedBy })
     .eq("user_id", userId)
     .eq("restriction_type", restrictionType)
     .is("lifted_at", null);
+  // supabase-js resolves on a database error; unread, a failed lift was a
+  // silent no-op that left the restriction enforced.
+  if (error) throw new Error(`liftRestrictionsByType DB error: ${error.message}`);
 }
 
 /**

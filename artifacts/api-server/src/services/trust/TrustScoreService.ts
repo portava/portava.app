@@ -8,6 +8,13 @@
  * Derives public trust level and persists to trust_profiles.
  *
  * Triggered after new events are applied or caps change.
+ *
+ * FAIL-CLOSED ON READ: if trust_settings, trust_events or trust_caps cannot be
+ * read, `recalculateTrustScore` THROWS and writes nothing. Every caller already
+ * treats a rejection as "this recalculation did not happen" (the scheduler
+ * counts it in recalcFailures; the admin paths `.catch(() => {})`). The
+ * alternative — score against empty inputs — persists a neutral, uncapped,
+ * "measured and empty" profile over a real one.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TrustCategory } from "./TrustEventService.js";
@@ -69,9 +76,14 @@ async function loadSettings(db: SupabaseClient): Promise<Settings> {
   {
     const { data, error } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
     if (error) {
-      logger.warn({ err: error }, "loadSettings failed — using defaults");
-      return DEFAULT_SETTINGS;
+      // A failed read is NOT "use the defaults". The defaults are what the
+      // engine ships with; the row is what an admin has set. Scoring against
+      // the wrong weights and persisting the result is a wrong score written
+      // silently — so the recalculation aborts and the existing profile stands.
+      throw new Error(`recalculateTrustScore: trust_settings read failed — ${error.message ?? error.code ?? "db_error"}`);
     }
+    // No row at all is a legitimate state (the seed migration not yet run):
+    // there is nothing to disagree with, so the defaults apply.
     if (!data) return DEFAULT_SETTINGS;
     const d = data as any;
     // Fall back to the default ONLY when the stored value is null/absent/NaN —
@@ -118,8 +130,14 @@ async function loadEvents(db: SupabaseClient, userId: string): Promise<any[]> {
     .in("status", ["applied", "confirmed"])
     .gt("created_at", since);
   if (error) {
-    logger.warn({ err: error, userId }, "loadEvents failed — treating as no events");
-    return [];
+    // Vacuity is failure. supabase-js resolves on a database error, and this
+    // used to turn that into "no events": recalculateTrustScore then wrote
+    // every category back to the neutral 50 and — since 2371 — recorded
+    // evidence_count = 0, which means MEASURED AND EMPTY. A transient read
+    // failure would have erased a user's standing and stamped it as measured.
+    // The recalculation now aborts; the previous profile stays as it was, and
+    // the scheduler counts the failure and retries next pass.
+    throw new Error(`recalculateTrustScore: trust_events read failed for ${userId} — ${error.message ?? error.code ?? "db_error"}`);
   }
   return (data as any[]) ?? [];
 }
@@ -137,8 +155,11 @@ async function loadCaps(
     .is("lifted_at", null)
     .or(`expires_at.is.null,expires_at.gt.${now}`);
   if (error) {
-    logger.warn({ err: error, userId }, "loadCaps failed — treating as no caps");
-    return {};
+    // Same rule as loadEvents. "No caps" on a failed read would persist an
+    // UNCAPPED score for a user who has a live ceiling — the one mechanism
+    // that makes a confirmed serious finding survive a good record, removed by
+    // a transient error. Abort instead; the capped profile stands.
+    throw new Error(`recalculateTrustScore: trust_caps read failed for ${userId} — ${error.message ?? error.code ?? "db_error"}`);
   }
   const caps: Record<string, number> = {};
   for (const row of (data as any[]) ?? []) {

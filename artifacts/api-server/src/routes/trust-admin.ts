@@ -141,7 +141,15 @@ router.get("/admin/trust/events/pending", async (req, res) => {
   const { sc } = admin;
 
   const limit = Math.min(100, Number(req.query.limit) || 50);
-  const events = await getPendingEvents(sc, limit);
+  // getPendingEvents THROWS on a read failure (it used to return []): an
+  // unreachable ledger is reported as an error, never as an empty queue.
+  let events: any[];
+  try {
+    events = await getPendingEvents(sc, limit);
+  } catch (err: any) {
+    sendError(res, "db_error", err?.message ?? "Could not read pending events");
+    return;
+  }
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ events, total: events.length });
 });

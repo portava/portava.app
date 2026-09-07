@@ -51,7 +51,7 @@ import { logger as rootLogger } from "./logger.js";
 import { recalculateTrustScore } from "../services/trust/TrustScoreService.js";
 import { expireOldCaps } from "../services/trust/TrustCapService.js";
 import { expireOldRestrictions } from "../services/trust/TrustRestrictionService.js";
-import { runGamingDetectionScan } from "../services/trust/TrustGamingDetectionService.js";
+import { runGamingDetectionScan, type GamingScanInputs } from "../services/trust/TrustGamingDetectionService.js";
 import { isTrustEnabled } from "../services/trust/TrustEventService.js";
 
 const logger = rootLogger.child({ service: "TrustMaintenanceScheduler" });
@@ -96,6 +96,17 @@ export interface TrustMaintenanceStatus {
   lastProbationCleared: number;
   lastUsersRecalculated: number;
   lastGamingFlagged: number;
+  /**
+   * Scoreable events inside the dirty-user lookback window at the last pass.
+   * THE STARVATION SIGNAL. Production read 2026-09-07: the engine has been ON
+   * since 2026-07-17 and the ledger holds 5 events in 52 days — a pass that
+   * recalculates 0 users because nobody is dirty is indistinguishable, in the
+   * old log line, from a pass that recalculates 0 users because the emitters
+   * are silent. This number is the difference. `null` = the read failed.
+   */
+  lastEventsSeen: number | null;
+  /** What the gaming scan examined last pass — see GamingScanInputs. */
+  lastGamingInputs: GamingScanInputs | null;
   lastSkippedReason: string | null;
   consecutiveFailures: number;
 }
@@ -107,6 +118,8 @@ const _status: TrustMaintenanceStatus = {
   lastProbationCleared: 0,
   lastUsersRecalculated: 0,
   lastGamingFlagged: 0,
+  lastEventsSeen: null,
+  lastGamingInputs: null,
   lastSkippedReason: null,
   consecutiveFailures: 0,
 };
@@ -123,6 +136,8 @@ export function _resetStatus(): void {
   _status.lastProbationCleared = 0;
   _status.lastUsersRecalculated = 0;
   _status.lastGamingFlagged = 0;
+  _status.lastEventsSeen = null;
+  _status.lastGamingInputs = null;
   _status.lastSkippedReason = null;
   _status.consecutiveFailures = 0;
 }
@@ -165,7 +180,7 @@ async function clearExpiredProbation(db: any): Promise<number> {
  * Counting `pending_review` here would schedule recalculations that cannot change
  * the score, and would let an unconfirmed (possibly malicious) report generate load.
  */
-async function findDirtyUsers(db: any, now: number): Promise<Set<string>> {
+async function findDirtyUsers(db: any, now: number): Promise<{ dirty: Set<string>; eventsSeen: number | null }> {
   const dirty = new Set<string>();
   const since = new Date(now - EVENT_LOOKBACK_DAYS * DAY_MS).toISOString();
 
@@ -180,13 +195,14 @@ async function findDirtyUsers(db: any, now: number): Promise<Set<string>> {
       .limit(MAX_USERS_PER_PASS * 20);
     if (error) {
       logger.warn({ err: error }, "findDirtyUsers: trust_events fetch failed (non-fatal)");
-      return dirty;
+      return { dirty, eventsSeen: null };
     }
     events = (data as any[]) ?? [];
   } catch (err) {
     logger.warn({ err }, "findDirtyUsers: trust_events fetch threw (non-fatal)");
-    return dirty;
+    return { dirty, eventsSeen: null };
   }
+  const eventsSeen = events.length;
 
   // Newest event timestamp per user.
   const newestByUser = new Map<string, string>();
@@ -196,7 +212,7 @@ async function findDirtyUsers(db: any, now: number): Promise<Set<string>> {
     const prev = newestByUser.get(uid);
     if (!prev || String(e.created_at) > prev) newestByUser.set(uid, String(e.created_at));
   }
-  if (newestByUser.size === 0) return dirty;
+  if (newestByUser.size === 0) return { dirty, eventsSeen };
 
   // Compare against each user's last recalculation.
   const ids = [...newestByUser.keys()];
@@ -229,7 +245,7 @@ async function findDirtyUsers(db: any, now: number): Promise<Set<string>> {
     if (!lastRecalc || lastRecalc < newestEventAt) dirty.add(uid);
   }
 
-  return dirty;
+  return { dirty, eventsSeen };
 }
 
 /**
@@ -270,6 +286,12 @@ export interface TrustMaintenanceResult {
   usersRecalculated: number;
   recalcFailures: number;
   gamingFlagged: number;
+  /** Scoreable events in the lookback window this pass; null = read failed. */
+  eventsSeen: number | null;
+  /** What the gaming scan examined; null = scan skipped (flag off) or threw. */
+  gamingInputs: GamingScanInputs | null;
+  /** True when the gaming scan ran and every detector examined zero rows. */
+  gamingVacuous: boolean;
   truncated: boolean;
 }
 
@@ -282,7 +304,8 @@ export interface TrustMaintenanceResult {
 export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanceResult> {
   const empty: TrustMaintenanceResult = {
     ok: true, capsExpired: 0, restrictionsExpired: 0, probationCleared: 0,
-    usersRecalculated: 0, recalcFailures: 0, gamingFlagged: 0, truncated: false,
+    usersRecalculated: 0, recalcFailures: 0, gamingFlagged: 0,
+    eventsSeen: null, gamingInputs: null, gamingVacuous: false, truncated: false,
   };
 
   const db = client ?? getServiceClient();
@@ -321,7 +344,7 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
 
   // 3. Recalculate. Dirty users first — they have new information; stale users
   //    only need a decay refresh and can wait for a later pass.
-  const dirty = await findDirtyUsers(db, now);
+  const { dirty, eventsSeen } = await findDirtyUsers(db, now);
   let targets = [...dirty].slice(0, MAX_USERS_PER_PASS);
   const truncated = dirty.size > MAX_USERS_PER_PASS;
 
@@ -354,9 +377,13 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
   // 4. Gaming detection. Runs last: it reads the scores this pass just wrote,
   //    and it self-skips when `trust_gaming_detection_enabled` is off.
   let gamingFlagged = 0;
+  let gamingInputs: GamingScanInputs | null = null;
+  let gamingVacuous = false;
   try {
     const scan = await runGamingDetectionScan(db);
     gamingFlagged = scan?.flaggedUsers ?? 0;
+    gamingInputs = scan?.inputs ?? null;
+    gamingVacuous = Boolean(scan?.vacuous) && !scan?.skipped;
   } catch (err) {
     logger.warn({ err }, "runGamingDetectionScan threw (non-fatal)");
   }
@@ -369,6 +396,9 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     usersRecalculated,
     recalcFailures,
     gamingFlagged,
+    eventsSeen,
+    gamingInputs,
+    gamingVacuous,
     truncated,
   };
 }
@@ -388,6 +418,8 @@ async function tickOnce(): Promise<void> {
       _status.lastProbationCleared = r.probationCleared;
       _status.lastUsersRecalculated = r.usersRecalculated;
       _status.lastGamingFlagged = r.gamingFlagged;
+      _status.lastEventsSeen = r.eventsSeen;
+      _status.lastGamingInputs = r.gamingInputs;
       logger.info(
         {
           capsExpired: r.capsExpired,
@@ -396,10 +428,22 @@ async function tickOnce(): Promise<void> {
           usersRecalculated: r.usersRecalculated,
           recalcFailures: r.recalcFailures,
           gamingFlagged: r.gamingFlagged,
+          eventsSeen: r.eventsSeen,
+          gamingInputs: r.gamingInputs,
+          gamingVacuous: r.gamingVacuous,
           truncated: r.truncated,
         },
         "trust maintenance pass complete",
       );
+      // The engine being ON and the ledger being empty is the production
+      // state this line exists to make visible: 0 users recalculated is only
+      // "everyone is current" when there were events to be current with.
+      if (r.eventsSeen === 0) {
+        logger.warn(
+          { lookbackDays: EVENT_LOOKBACK_DAYS },
+          "trust maintenance: engine ON but ZERO scoreable events in the lookback window — the emitters are silent, not the scheduler",
+        );
+      }
     }
     _status.consecutiveFailures = 0;
   } catch (err) {

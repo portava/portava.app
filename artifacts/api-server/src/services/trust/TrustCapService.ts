@@ -6,6 +6,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TrustCategory } from "./TrustEventService.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "TrustCapService" });
 
 export interface CreateCapInput {
   userId: string;
@@ -83,9 +86,13 @@ export async function expireOldCaps(db: SupabaseClient): Promise<number> {
       .lt("expires_at", new Date().toISOString())
       .is("lifted_at", null)
       .select("id");
-    if (error) return 0;
+    if (error) {
+      logger.warn({ err: error }, "expireOldCaps failed (non-fatal) — expired ceilings stay in force until the next pass");
+      return 0;
+    }
     return (data as any[])?.length ?? 0;
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "expireOldCaps threw (non-fatal)");
     return 0;
   }
 }
@@ -134,12 +141,20 @@ export async function getActiveCaps(
 ): Promise<TrustCap[]> {
   try {
     const now = new Date().toISOString();
-    const { data } = await db
+    const { data, error } = await db
       .from("trust_caps")
       .select("id, user_id, category, ceiling_score, reason_code, source_event_id, expires_at, created_at")
       .eq("user_id", userId)
       .is("lifted_at", null)
       .or(`expires_at.is.null,expires_at.gt.${now}`);
+    // Read-side view (recovery status, admin user page): stays fail-soft so a
+    // Passport projection is not taken down by a caps read, but it is logged —
+    // an empty list from a failed read must leave evidence. The SCORING read of
+    // the same table (TrustScoreService.loadCaps) fails closed.
+    if (error) {
+      logger.warn({ err: error, userId }, "getActiveCaps read failed — returning no caps to a display path (degraded)");
+      return [];
+    }
     return ((data as any[]) ?? []).map((d) => ({
       id:            d.id,
       userId:        d.user_id,
