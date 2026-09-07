@@ -94,7 +94,7 @@ Everything else is independent and may be applied in any order.
   -- expect blanket_policies_left = 0, kernel_helper = true
   ```
 - **Rollback** `db/rollback/2026-09-07-2337-trip-crew-rls-membership-convergence-rollback.sql`.
-- **Known limitation** it deliberately does **not** touch `highlights_select_active`, the one policy where CI and production disagree (CI carries a restructured version present in no migration). That policy remains defective and is a separate, one-line change.
+- **Known limitation — CORRECTED 2026-09-07** it deliberately does **not** touch `highlights_select_active`, the one policy where CI and production disagree. The CI shape is `2313_highlights_permanent` from **PR #461** (commit `3babd722`, applied to CI 2026-09-07, not merged into this branch); production carries 0026's shape. The earlier claim here — that the CI version was "present in no migration" — was true when 2337 was written and is now false; it was found by opening PR #461, not by re-reading this branch. Migration **2530** repairs the defective `trip_only` branch on either shape without choosing between them. **Apply 2530 after 2337, and apply PR #461's 2313 only after it has been rebased with `docs/architecture/pr461-2313-rebase-onto-2530.patch`** — unpatched, 2313 reintroduces the `trip_members` self-join wherever it runs after 2530, and that regression was demonstrated on a harness rather than predicted.
 
 ### A3. `2217_protected_locations.sql` — *prerequisite only for the Map chain*
 - **Purpose** creates `protected_zones`, the §24 protection policy the map gateway reads.
