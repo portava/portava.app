@@ -26,6 +26,9 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logger as rootLogger } from './logger.js';
+
+const log = rootLogger.child({ lib: 'messagingPermissions' });
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
 
@@ -34,7 +37,18 @@ export type MessageDeniedReason =
   | 'blocked'
   | 'no_one'
   | 'privacy_setting'
-  | 'no_requests_allowed';
+  | 'no_requests_allowed'
+  /**
+   * A read this decision depends on FAILED, so permission is unknown.
+   *
+   * Deliberately distinct from 'blocked': saying "blocked" when the blocks
+   * table was merely unreadable would be a fabrication, and a caller that
+   * surfaces the reason to a user would show something untrue. 'unavailable'
+   * says what actually happened -- we could not decide -- and the answer is
+   * still a denial, because the alternative is delivering a message to someone
+   * who may have blocked the sender.
+   */
+  | 'unavailable';
 
 export interface RelationshipContext {
   isFriend: boolean;
@@ -97,12 +111,20 @@ export async function canMessage(
 
   // Block check — sc is the service-role client so it bypasses RLS and can
   // read blocks rows regardless of which user is blocker_id.
-  const { data: blockRow } = await sc
+  const { data: blockRow, error: blockError } = await sc
     .from('blocks')
     .select('blocker_id')
     .or(`and(blocker_id.eq.${senderId},blocked_id.eq.${recipientId}),and(blocker_id.eq.${recipientId},blocked_id.eq.${senderId})`)
     .limit(1)
     .maybeSingle();
+  // `blocks` is an EXCLUSION table: a row means DENY. supabase-js resolves on a
+  // database error, so an unreadable table returns `data: null` -- identical to
+  // "no block exists" -- and this check would wave the sender straight through
+  // to someone who blocked them. Unknown is not permission.
+  if (blockError) {
+    log.error({ err: blockError, senderId, recipientId }, 'canMessage: blocks read failed; denying rather than assuming no block');
+    return deny('unavailable', emptyCtx);
+  }
   if (blockRow) return deny('blocked', emptyCtx);
 
   // Fetch all relationship data in parallel.
@@ -173,6 +195,20 @@ export async function canMessage(
       .limit(1)
       .maybeSingle(),
   ]);
+
+  // The recipient's own privacy setting decides this. An unreadable
+  // user_message_settings row previously fell back to DEFAULT_SETTINGS, whose
+  // message_privacy is 'everyone' -- so a recipient who had deliberately
+  // restricted their DMs became messageable by anyone, precisely while the
+  // database was unhealthy. That default is only safe for a recipient who has
+  // never set a preference; it is not safe as an error fallback.
+  if ((settingsRes as any).error) {
+    log.error(
+      { err: (settingsRes as any).error, recipientId },
+      'canMessage: user_message_settings read failed; denying rather than defaulting to message_privacy=everyone',
+    );
+    return deny('unavailable', emptyCtx);
+  }
 
   const settings: MessageSettings =
     settingsRes.data

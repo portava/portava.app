@@ -21,6 +21,9 @@
 
 import { isKillSwitchEngaged } from "./featureFlags.js";
 import { isBlockedBetween } from "./blockGuard.js";
+import { logger as rootLogger } from "./logger.js";
+
+const log = rootLogger.child({ lib: "circleAccessGuard" });
 
 export const CURRENT_CONSENT_VERSION = "v1";
 
@@ -384,6 +387,50 @@ export async function canBeSeenByViewersBatch(
       .eq("context_id", contextId)
       .maybeSingle(),
   ]);
+
+  // Fail-CLOSED on ANY of the five target-side reads, matching the rule order
+  // and the posture of the single-target canViewCirclePresence above.
+  //
+  // supabase-js resolves on a database error, so each of these returns
+  // `data: null` (or an empty array) in two different situations, and for three
+  // of the five the empty reading is the PERMISSIVE one:
+  //
+  //   circle_context_settings  an unreadable per-context row means the override
+  //                            is ignored and the GLOBAL default applies -- so a
+  //                            trip or event the target explicitly paused is
+  //                            shown anyway.
+  //   blocks                   an EXCLUSION table: a row means deny. Unreadable
+  //                            reads as "no rows", so nobody is blocked.
+  //   user_account_states      likewise: nobody is banned, suspended or deleted.
+  //
+  // (circle_visibility_settings already denies via `!settings` below, and
+  // circle_presence denies by having nothing to show; both are included so the
+  // failure is reported rather than inferred from a downstream symptom.)
+  //
+  // One target, one verdict: if we cannot establish the target's exclusions we
+  // cannot safely show them to ANY viewer in this batch.
+  const failedTargetReads = (
+    [
+      ["circle_visibility_settings", (settingsRes as any).error],
+      ["circle_context_settings", (ctxRes as any).error],
+      ["blocks", (blocksRes as any).error],
+      ["user_account_states", (statesRes as any).error],
+      ["circle_presence", (presenceRes as any).error],
+    ] as Array<[string, unknown]>
+  )
+    .filter(([, e]) => Boolean(e))
+    .map(([name]) => name);
+
+  if (failedTargetReads.length > 0) {
+    log.error(
+      { failed: failedTargetReads, targetUserId, contextType, contextId },
+      "canBeSeenByViewersBatch: target-side read failed; denying every viewer rather than showing presence with unknown exclusions",
+    );
+    for (const id of viewers) {
+      out.set(id, { allowed: false, reason: "unavailable" });
+    }
+    return out;
+  }
 
   // Target-side evaluation (once) — identical rule order to canViewCirclePresence.
   let targetDenyReason: string | null = null;
