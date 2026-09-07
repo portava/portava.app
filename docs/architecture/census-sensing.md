@@ -1,5 +1,78 @@
 # Census — Sensing + World / Experience Intelligence (v1.0, Sept 2026)
 
+> ## CORRECTION HEADER — added 2026-09-07 after independent re-measurement
+>
+> A later pass queried both databases and re-derived this census. 127 is
+> internally consistent (per-section counts sum to 127 and every S-id range
+> matches its section) and there is no section miscount. Several other things
+> below are wrong; the body is unedited and these take precedence.
+>
+> **This census was already STALE when it was committed.** It records
+> `lib/sensingAnonStore.ts` as "absent from the worktree". The store landed at
+> 06:55:03 (`e7769a45`); this census was committed at 06:57:22 — two minutes
+> later, and its own commit amended that store's tripwire test. S18 was BUILT,
+> not NOT-BUILT.
+>
+> **Production readings that are wrong.** This census says "Database: not
+> queried" and inherited its facts from a brief.
+> - There is no flag named `intel_retention`. `intel_retention_sweep_enabled`
+>   is **TRUE in production**; `intel_contribution_retention_enabled` is FALSE
+>   but PRESENT; `intel_coverage` is present-and-false, not absent.
+> - Not three intel flags are TRUE in production but **eight**:
+>   capture_quick_signal, claim_projection_crowd, limited_live,
+>   live_label_crowd, missions, retention_sweep_enabled, rewards,
+>   trail_followup.
+> - Because `intel_limited_live` and `intel_live_label_crowd` are ON while
+>   `intel_live_promoted_scopes` has 0 rows and no writer, `liveClaimRead.ts:317`
+>   returns `[]` for every subject in production.
+> - Production has **no `schema_migration_ledger` table at all**.
+>
+> **S39 cites the wrong object.** `presence/domain/types.ts:88
+> PresenceObservation` is one device's *identifiable* raw observation
+> (sessionId, subjectEphemeralId, point) — the opposite of §19's aggregate. A
+> name collision, not evidence.
+>
+> **Attribution: 0.0 % is right for the store and wrong for the tree.** By
+> dating, PR #475 landed at 01:32 UTC, five hours BEFORE the spec entered the
+> tree at 06:34 UTC, so the store implements an owner ruling rather than the
+> document. But `LiveForYouService.ts:117` and
+> `wallProjection.ts:136-164,214,307-314,502-508` cite "Sensing §108 / §5.1 /
+> §2" and were committed at 08:15 UTC — spec-attributable work this census
+> predates.
+>
+> **CORRECTION TO A CLAIM MADE FROM THIS CENSUS, not to the census itself.**
+> On its strength I told the owner that Sensing cannot reach 100 % because S17
+> (TLS in transit / at rest) is a deployment fact no code can close. The
+> conclusion holds; the reason was wrong and it was the least important cap.
+> S17 is HALF code-answerable — `app.ts:26` `helmet()` sets HSTS, and the
+> store's at-rest control is application-level (peppered HMAC tokens, the
+> device secret never stored). What actually caps Sensing is
+> **`intel_observations.actor_id NOT NULL REFERENCES profiles(id)`**
+> (`2130:142`), which is what S19/S118/S125 run into.
+>
+> I also said 11 steps need owner decisions. **Eight do.** Pepper provisioning
+> is no longer a decision — `e7769a45` made a dedicated pepper mandatory in
+> code, so it is an ops task. "Enabling any flag" has no object: no sensing flag
+> exists, and the tripwire asserts none was invented. The abuse budget is half
+> engineering — per-credential replay is code (§4.3 names it) and is now built;
+> only the per-device rate budget and its key remain a decision.
+>
+> **`sensing-s0-reuse-map.md` does not summarise itself correctly.** Its own
+> table marks **five** contracts truly missing, not four — the summary omits
+> `ExperienceSession` — so the split is 5 missing / 6 reusable / 1 blocked, not
+> 4 / 5 / 3. Two of its mappings are also wrong: `PresenceObservation → EXTEND
+> intel_observations` points at the very table whose `actor_id` FK is the
+> blocker, and `CrowdState → REUSE crowdFlowProducer` contradicts this census's
+> own S40.
+>
+> **Recomputed after the completion pass: CORRECT 78/127 = 61.4 %** (was
+> 51.2 %), CONSTRUCTED 110/127 = 86.6 %, spec-attributable 12/127 = **9.4 %**
+> (was 0.0 %). Under a strict reading where callerless contracts do not count:
+> 74/127 = 58.3 %. **Realised in production: still 0.0 %** — there is no sensing
+> table, no route, and the pepper without which every write refuses is optional
+> at boot.
+
+
 *Measured against the repository at branch `claude/portava-continuation-uqta94`, HEAD `0177f0be`,
 on 2026-09-07. Specification: `docs/specs/Portava_Sensing_World_Experience_Intelligence_Upgrade_Architecture_v1.txt`.*
 
