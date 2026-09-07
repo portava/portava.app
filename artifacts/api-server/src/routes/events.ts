@@ -4565,7 +4565,12 @@ router.post("/events/:id/complete", async (req, res) => {
     sendError(res, "invalid_payload", `Event cannot be completed from state '${(ev as any).state}' — it must be active (started) first`); return;
   }
 
-  await sc.from("events").update({ state: "completed", updated_at: new Date().toISOString() }).eq("id", id);
+  // supabase-js resolves rather than throws — unchecked, a failed write returned
+  // {ok:true} and fired trust events, stamps and review pushes for a completion
+  // that never happened. (Reachable at all only once lib/eventLifecycle.ts, or
+  // a future host-initiated route, has written `started`.)
+  const { error: completeErr } = await sc.from("events").update({ state: "completed", updated_at: new Date().toISOString() }).eq("id", id);
+  if (completeErr) { sendError(res, "db_error", completeErr.message); return; }
   await logEventActivity(sc, id, user.id, "completed", {});
 
   // Fire-and-forget: award trust signals + send review-prompt push notifications + stamps

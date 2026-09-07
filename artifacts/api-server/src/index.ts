@@ -18,6 +18,7 @@ import { startDiscoveryCacheWarmer } from "./lib/discoveryWarmup";
 import { startPushRetryWorker, queryPushRetryHealth } from "./lib/pushRetryWorker";
 import { startZombieTokenSweeper } from "./lib/zombieTokenSweeper";
 import { startEventWaitlistSweeper } from "./lib/eventWaitlistSweeper";
+import { startEventLifecycleScheduler } from "./lib/eventLifecycle.js";
 import { startCallSweepScheduler } from "./lib/callSweepScheduler";
 import { startTripReminderScheduler } from "./lib/tripReminderScheduler";
 import { startIntelligenceGraphScheduler } from "./lib/intelligenceGraphScheduler";
@@ -121,6 +122,7 @@ app.listen(port, (err) => {
   startPushRetryWorker();
   startZombieTokenSweeper();
   startEventWaitlistSweeper();
+  startEventLifecycleScheduler(); // open|full|waitlist -> started once now >= starts_at; flag-gated (event_start_transition_enabled, seeded FALSE by 2600), fail-closed
   startCallSweepScheduler();
   startTripReminderScheduler();
   startIntelligenceGraphScheduler();
