@@ -68,6 +68,7 @@ export type ApiErrorCode =
   | "invalid_state_transition"
   | "reversal_failed"
   | "collection_create_failed"
+  | "collection_lookup_failed"
   | "duplicate_event"
   | "conflict"
   | "gone"
@@ -97,6 +98,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   invalid_state_transition: 409,
   reversal_failed: 422,
   collection_create_failed: 503,
+  collection_lookup_failed: 503,
   duplicate_event: 409,
   conflict: 409,
   gone: 410,
@@ -114,6 +116,14 @@ const STATUS: Record<ApiErrorCode, number> = {
  */
 const RETRYABLE_CODES: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
   "degraded_unavailable",
+  // A default-collection LOOKUP that failed is transient by definition: the row
+  // may well exist and the read could not see it. Retrying is the correct
+  // recovery and is safe, because the caller now refuses to create on an
+  // unreadable lookup (routes/collections.ts) -- which is precisely what used
+  // to turn a transient read failure into a permanent duplicate default.
+  // collection_create_failed is deliberately NOT here: an insert that failed
+  // for a reason other than the race is not known to be retry-safe.
+  "collection_lookup_failed",
 ]);
 
 /**

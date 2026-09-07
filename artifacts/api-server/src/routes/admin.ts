@@ -1363,6 +1363,24 @@ router.get("/admin/users", async (req, res) => {
       .maybeSingle(),
   ]);
 
+  const failedDetailReads = failedModerationReads([
+    ["accountStates", accountStateRes],
+    ["openReports", reportCountRes],
+  ]);
+  if (failedDetailReads.length > 0) {
+    req.log.error({ failed: failedDetailReads, userId }, "admin user detail: moderation read failed; refusing to render a partial record");
+    sendError(
+      res,
+      "db_error",
+      `Moderation record incomplete: ${failedDetailReads.join(", ")} could not be read. This is NOT a clean account -- retry before acting.`,
+      { exposeDetail: true },
+    );
+    return;
+  }
+
+  // onboardingStatus is contextual, not a moderation fact: an unreadable
+  // onboarding row cannot make a sanctioned account look clean, so it is
+  // allowed to degrade to null rather than failing the whole record.
   const onboardingRow: any = onboardingRes.data ?? null;
 
   void logAdminAccess(sc, admin.userId, "profile", userId, "view", accessReason(req));
@@ -1436,6 +1454,27 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
 
   if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
 
+  const failedSummaryReads = failedModerationReads([
+    ["accountStates", accountStateRes],
+    ["moderationActions", modActionsRes],
+    ["reportsReceived", reportsReceivedRes],
+    ["reportsFiled", reportsFiledRes],
+    ["trustRestrictions", trustRes as any],
+    ["blockCount", blocksRes],
+    ["muteCount", mutesRes],
+    ["restrictCount", restrictsRes],
+  ]);
+  if (failedSummaryReads.length > 0) {
+    req.log.error({ failed: failedSummaryReads, userId }, "admin user summary: moderation read failed; refusing to render a partial record");
+    sendError(
+      res,
+      "db_error",
+      `Moderation record incomplete: ${failedSummaryReads.join(", ")} could not be read. This is NOT a clean account -- retry before acting.`,
+      { exposeDetail: true },
+    );
+    return;
+  }
+
   void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
     profile:           profileRes.data,
@@ -1449,6 +1488,29 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
     restrictCount:     restrictsRes.count       ?? 0,
   });
 });
+
+/**
+ * A moderation record must never degrade to "clean" because a read failed.
+ *
+ * supabase-js RESOLVES on a database error rather than throwing, so every one
+ * of these reads returns `data: null` in two completely different situations:
+ * the user genuinely has no bans, restrictions, blocks or mutes, and the table
+ * could not be read. `data ?? []` collapses those into the same empty array,
+ * and an operator looking at a banned user is then shown a clean account and
+ * may act on it -- lifting nothing, or approving someone already sanctioned.
+ *
+ * Three states must stay distinguishable: no record, read failed, record
+ * exists. This returns the names of the sections in the middle state so the
+ * caller can refuse to render the record at all rather than render a partial
+ * one that reads as exculpatory.
+ */
+function failedModerationReads(
+  reads: ReadonlyArray<readonly [string, { error?: unknown } | null | undefined]>,
+): string[] {
+  return reads
+    .filter(([, r]) => Boolean(r && (r as { error?: unknown }).error))
+    .map(([name]) => name);
+}
 
 /** POST /admin/users/:userId/verify */
 router.post("/admin/users/:userId/verify", async (req, res) => {
@@ -2957,6 +3019,23 @@ router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
   ]);
 
   if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
+
+  const failedModSummaryReads = failedModerationReads([
+    ["accountStates", accountStateRes],
+    ["moderationActions", modActionsRes],
+    ["reportsReceived", reportsReceivedRes],
+    ["reportsFiled", reportsFiledRes],
+  ]);
+  if (failedModSummaryReads.length > 0) {
+    req.log.error({ failed: failedModSummaryReads, userId }, "admin moderation-summary: read failed; refusing to render a partial record");
+    sendError(
+      res,
+      "db_error",
+      `Moderation record incomplete: ${failedModSummaryReads.join(", ")} could not be read. This is NOT a clean account -- retry before acting.`,
+      { exposeDetail: true },
+    );
+    return;
+  }
 
   void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({

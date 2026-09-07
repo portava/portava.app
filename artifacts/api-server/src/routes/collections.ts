@@ -41,16 +41,31 @@ function isValidUuid(v: unknown): v is string {
 
 type EnsureDefaultResult =
   | { id: string }
-  | { code: "collection_create_failed"; detail: string };
+  | { code: "collection_create_failed"; detail: string }
+  | { code: "collection_lookup_failed"; detail: string };
 
 /** Ensure a default "Saved" collection exists and return its id. */
 async function ensureDefaultCollection(sc: any, userId: string): Promise<EnsureDefaultResult> {
-  const { data: existing } = await sc
+  const { data: existing, error: lookupError } = await sc
     .from("collections")
     .select("id")
     .eq("owner_id", userId)
     .eq("is_default", true)
     .maybeSingle();
+
+  // This read's error was previously unchecked, and that is the whole bug.
+  // supabase-js RESOLVES on a database error, so `existing` is null both when
+  // the user genuinely has no default collection AND when the table could not
+  // be read. This function is a get-or-create, so the second case fell straight
+  // through to the INSERT below and produced a SECOND default collection for a
+  // user who already had one -- a duplicate created BECAUSE the database was
+  // briefly unavailable, and one that then persists forever.
+  if (lookupError) {
+    return {
+      code: "collection_lookup_failed",
+      detail: (lookupError as any).message ?? "Default collection lookup failed",
+    };
+  }
 
   if (existing) return { id: (existing as any).id as string };
 
@@ -60,10 +75,32 @@ async function ensureDefaultCollection(sc: any, userId: string): Promise<EnsureD
     .select("id")
     .single();
 
-  if (error || !created) {
+  if (error) {
+    // 23505 unique_violation: a concurrent request created the default between
+    // our read and our insert. That is a race this function cannot prevent by
+    // checking harder -- only the database can arbitrate it, which is what the
+    // partial unique index in migration 2640 is for. Losing the race is a
+    // SUCCESS for the caller: the default now exists, so re-read and return it
+    // rather than reporting a failure the user cannot act on.
+    if ((error as any).code === "23505") {
+      const { data: raced, error: reReadError } = await sc
+        .from("collections")
+        .select("id")
+        .eq("owner_id", userId)
+        .eq("is_default", true)
+        .maybeSingle();
+      if (!reReadError && raced) return { id: (raced as any).id as string };
+    }
     return {
       code: "collection_create_failed",
-      detail: error?.message ?? "Default collection insert returned no data",
+      detail: (error as any).message ?? "Default collection insert failed",
+    };
+  }
+
+  if (!created) {
+    return {
+      code: "collection_create_failed",
+      detail: "Default collection insert returned no data",
     };
   }
   return { id: (created as any).id as string };

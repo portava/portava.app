@@ -276,6 +276,24 @@ router.get("/users/:userId/block-status", async (req, res) => {
     client.from("blocks").select("blocked_id").eq("blocker_id", target).eq("blocked_id", user.id).maybeSingle(),
   ]);
 
+  // FAIL CLOSED. supabase-js RESOLVES on a database error rather than throwing,
+  // so `data` is null both when there is genuinely no block row AND when the
+  // read failed. `Boolean(data)` collapses those two into `false` -- and on this
+  // endpoint `false` means "you are not blocked", the permissive answer, handed
+  // out because the database was unreachable.
+  //
+  // There is no honest way to answer this question from a failed read: we cannot
+  // say "not blocked" (that may be untrue and leaks contact) and saying "blocked"
+  // would be a fabrication. So the endpoint reports that it does not know.
+  if (iBlocked.error || theyBlocked.error) {
+    sendError(
+      res,
+      "db_error",
+      "Block status is temporarily unavailable",
+    );
+    return;
+  }
+
   res.status(200).json({
     userId: target,
     iBlocked: Boolean(iBlocked.data),
