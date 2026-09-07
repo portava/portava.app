@@ -5,6 +5,7 @@
     "2. client column INSERT/UPDATE grants must EQUAL the approved allowlist — a server-derived verification/provenance column must never become client-writable.",
     "3. the RLS policy set (name+cmd+roles+permissive) must EQUAL the approved set — a new permissive policy fails until added here."
   ],
+  "$pinnedAsMeasured": "layover_sessions, layover_plan_stops, layover_events and airport_profiles (census L199, 2026-09-07) are entered at the state MEASURED on the CI database, which is broader than invariant 1's SELECT-only ideal: anon/authenticated still hold 0127's default DELETE/INSERT/REFERENCES/TRIGGER/UPDATE grants. They are here so that drift on them — a policy added or dropped, a WITH CHECK removed, TRUNCATE restored — fails CI, which it could not while they were absent. This is a pin, not an approval: RLS (owner-scoped WITH CHECK policies; no anon policy) is what denies the client writes today, and every application writer is the service client. Narrowing the grants to SELECT-only is a separate migration and an owner decision; when it lands, shrink these entries in the same PR.",
   "tables": {
     "local_guide_profiles": {
       "note": "2144 — guide self-promotion. bio/city_expertise client-editable; guide_level/accuracy_score/status/verified server-owned.",
@@ -209,6 +210,42 @@
       "updateCols": {},
       "policies": [
         { "name": "layover_recs_owner", "cmd": "SELECT", "permissive": true, "roles": ["authenticated"] }
+      ]
+    },
+    "layover_sessions": {
+      "note": "PINNED AS MEASURED on portava-ci 2026-09-07, NOT approved as a SELECT-only boundary (see $pinnedAsMeasured). The grants are 0127's untouched ALTER DEFAULT PRIVILEGES residue (2335 section 2 revoked only TRUNCATE). Every writer in the tree is service-role (routes/airport.ts via getServiceClient; services/airport/LayoverSessionService.ts takes an injected client); the owner FOR ALL policy carries WITH CHECK (user_id = auth.uid()) and anon has no policy, so RLS denies anon every row. Narrowing the client grants is owner decision L199-b.",
+      "tableGrants": { "anon": ["DELETE","INSERT","REFERENCES","SELECT","TRIGGER","UPDATE"], "authenticated": ["DELETE","INSERT","REFERENCES","SELECT","TRIGGER","UPDATE"] },
+      "insertCols": { "anon": ["airport_id","arrival_time","boarding_time","canonical_city_id","checked_bags","comfort_level","created_at","departure_time","flight_type","id","immigration_required","layover_minutes","lounge_access","manual_airport_name","manual_city","manual_country","manual_iata","return_reminder_at","share_city_status","status","trip_id","updated_at","user_id","vibe_chips","wants_to_leave"], "authenticated": ["airport_id","arrival_time","boarding_time","canonical_city_id","checked_bags","comfort_level","created_at","departure_time","flight_type","id","immigration_required","layover_minutes","lounge_access","manual_airport_name","manual_city","manual_country","manual_iata","return_reminder_at","share_city_status","status","trip_id","updated_at","user_id","vibe_chips","wants_to_leave"] },
+      "updateCols": { "anon": ["airport_id","arrival_time","boarding_time","canonical_city_id","checked_bags","comfort_level","created_at","departure_time","flight_type","id","immigration_required","layover_minutes","lounge_access","manual_airport_name","manual_city","manual_country","manual_iata","return_reminder_at","share_city_status","status","trip_id","updated_at","user_id","vibe_chips","wants_to_leave"], "authenticated": ["airport_id","arrival_time","boarding_time","canonical_city_id","checked_bags","comfort_level","created_at","departure_time","flight_type","id","immigration_required","layover_minutes","lounge_access","manual_airport_name","manual_city","manual_country","manual_iata","return_reminder_at","share_city_status","status","trip_id","updated_at","user_id","vibe_chips","wants_to_leave"] },
+      "policies": [
+        { "name": "layover_sessions_owner", "cmd": "ALL", "permissive": true, "roles": ["authenticated"] }
+      ]
+    },
+    "layover_plan_stops": {
+      "note": "PINNED AS MEASURED on portava-ci 2026-09-07, NOT approved as a SELECT-only boundary (see $pinnedAsMeasured). The grants are 0127's untouched ALTER DEFAULT PRIVILEGES residue (2335 section 2 revoked only TRUNCATE). Every writer is service-role (routes/airport.ts stops endpoints); the owner FOR ALL policy carries WITH CHECK on the session owner; anon has no policy. Narrowing is owner decision L199-b.",
+      "tableGrants": { "anon": ["DELETE","INSERT","REFERENCES","SELECT","TRIGGER","UPDATE"], "authenticated": ["DELETE","INSERT","REFERENCES","SELECT","TRIGGER","UPDATE"] },
+      "insertCols": { "anon": ["created_at","description","duration_min","id","inside_airport","lat","lng","location_label","place_id","recommendation_id","session_id","source","stop_order","title","travel_min","updated_at"], "authenticated": ["created_at","description","duration_min","id","inside_airport","lat","lng","location_label","place_id","recommendation_id","session_id","source","stop_order","title","travel_min","updated_at"] },
+      "updateCols": { "anon": ["created_at","description","duration_min","id","inside_airport","lat","lng","location_label","place_id","recommendation_id","session_id","source","stop_order","title","travel_min","updated_at"], "authenticated": ["created_at","description","duration_min","id","inside_airport","lat","lng","location_label","place_id","recommendation_id","session_id","source","stop_order","title","travel_min","updated_at"] },
+      "policies": [
+        { "name": "layover_plan_stops_owner", "cmd": "ALL", "permissive": true, "roles": ["authenticated"] }
+      ]
+    },
+    "layover_events": {
+      "note": "PINNED AS MEASURED on portava-ci 2026-09-07, NOT approved as a SELECT-only boundary (see $pinnedAsMeasured). The grants are 0127's untouched ALTER DEFAULT PRIVILEGES residue (2335 section 2 revoked only TRUNCATE). Audit trail: the only policy is SELECT (own rows), so RLS already denies every client INSERT/UPDATE/DELETE despite the grant; every writer is service-role (LayoverSessionService, LayoverNotificationService, LayoverRecommendationService). Narrowing is owner decision L199-b.",
+      "tableGrants": { "anon": ["DELETE","INSERT","REFERENCES","SELECT","TRIGGER","UPDATE"], "authenticated": ["DELETE","INSERT","REFERENCES","SELECT","TRIGGER","UPDATE"] },
+      "insertCols": { "anon": ["created_at","event_type","id","metadata","session_id","user_id"], "authenticated": ["created_at","event_type","id","metadata","session_id","user_id"] },
+      "updateCols": { "anon": ["created_at","event_type","id","metadata","session_id","user_id"], "authenticated": ["created_at","event_type","id","metadata","session_id","user_id"] },
+      "policies": [
+        { "name": "layover_events_owner", "cmd": "SELECT", "permissive": true, "roles": ["authenticated"] }
+      ]
+    },
+    "airport_profiles": {
+      "note": "PINNED AS MEASURED on portava-ci 2026-09-07, NOT approved as a SELECT-only boundary (see $pinnedAsMeasured). The grants are 0127's untouched ALTER DEFAULT PRIVILEGES residue (2335 section 2 revoked only TRUNCATE). Curated airport intelligence (3,206 rows in production, 0 verified). The only policy is SELECT USING (true) to authenticated, so RLS denies every client write despite the grant; writers are admin routes on the service client. `verified` and the buffer columns are server-owned facts a traveller's return deadline is computed from. Narrowing is owner decision L199-b.",
+      "tableGrants": { "anon": ["DELETE","INSERT","REFERENCES","SELECT","TRIGGER","UPDATE"], "authenticated": ["DELETE","INSERT","REFERENCES","SELECT","TRIGGER","UPDATE"] },
+      "insertCols": { "anon": ["canonical_location_id","checked_bags_extra_min","city","country","country_code","created_at","created_by","domestic_buffer_max","domestic_buffer_min","iata_code","id","immigration_extra_min","international_buffer_max","international_buffer_min","lat","lng","name","terminal_info","timezone","traffic_extra_min","updated_at","verified"], "authenticated": ["canonical_location_id","checked_bags_extra_min","city","country","country_code","created_at","created_by","domestic_buffer_max","domestic_buffer_min","iata_code","id","immigration_extra_min","international_buffer_max","international_buffer_min","lat","lng","name","terminal_info","timezone","traffic_extra_min","updated_at","verified"] },
+      "updateCols": { "anon": ["canonical_location_id","checked_bags_extra_min","city","country","country_code","created_at","created_by","domestic_buffer_max","domestic_buffer_min","iata_code","id","immigration_extra_min","international_buffer_max","international_buffer_min","lat","lng","name","terminal_info","timezone","traffic_extra_min","updated_at","verified"], "authenticated": ["canonical_location_id","checked_bags_extra_min","city","country","country_code","created_at","created_by","domestic_buffer_max","domestic_buffer_min","iata_code","id","immigration_extra_min","international_buffer_max","international_buffer_min","lat","lng","name","terminal_info","timezone","traffic_extra_min","updated_at","verified"] },
+      "policies": [
+        { "name": "airport_profiles_read", "cmd": "SELECT", "permissive": true, "roles": ["authenticated"] }
       ]
     }
   }
