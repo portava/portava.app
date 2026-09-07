@@ -345,6 +345,13 @@ export async function evaluateNotification(
   payload: NotificationPayload,
   opts:    { nowMinutes?: number } = {},
 ): Promise<NotificationDecision> {
+  // ONE clock read for the whole evaluation. src/test/splitClockGuard.test.ts
+  // forbids a function taking two independent reads (Date.now() plus a no-arg
+  // new Date()), because two instants can straddle a boundary and make one
+  // decision internally inconsistent — here, a suspension that expires between
+  // the account-state comparison below and the profile's computedAt stamp.
+  // Derive every date from this value (the pushRetryQueue.ts pattern).
+  const nowMs = Date.now();
   const level = PRIORITY_LEVELS[payload.type];
 
   // Strip private location from body/data regardless of outcome
@@ -469,9 +476,8 @@ export async function evaluateNotification(
             { userId, senderId, code: (acctErr as any)?.code, message: (acctErr as any)?.message },
           );
         } else {
-          const now = Date.now();
           senderSuspended = ((acctRows ?? []) as Array<{ state: string; expires_at: string | null }>)
-            .some((r) => r.expires_at == null || Date.parse(r.expires_at) > now);
+            .some((r) => r.expires_at == null || Date.parse(r.expires_at) > nowMs);
         }
       } catch (err) {
         console.warn(
@@ -537,7 +543,7 @@ export async function evaluateNotification(
       categoryWeights:        {},
       ignoredItemIds:         [],
       mutedHashtags:          [],
-      computedAt:             new Date().toISOString(),
+      computedAt:             new Date(nowMs).toISOString(),
     };
 
     const filterResult = runSafetyFilter(syntheticItem, minimalProfile, null);
