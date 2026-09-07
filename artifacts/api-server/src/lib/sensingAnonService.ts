@@ -101,7 +101,6 @@
  * secret in a log line IS the credential, and a log is a place a contributor
  * never agreed their proof would be kept.
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import {
@@ -196,7 +195,7 @@ export function _resetSensingStorePresence(): void {
  * those means "do not run an irreversible DELETE or an INSERT against this
  * database". Fail-closed in the only direction that is safe.
  */
-export async function sensingStorePresent(db: SupabaseClient | any): Promise<boolean> {
+export async function sensingStorePresent(db: any): Promise<boolean> {
   if (!db) return false;
   if (_storePresent) return true;
   try {
@@ -328,7 +327,7 @@ export type SensingRevokeServiceResult =
  * anyone's contributions. The credential is the PREIMAGE, which only the holder
  * of the device secret can produce.
  *
- * THE PEPPER GATE IS LOad-BEARING HERE, not just on the write. Re-derivation has
+ * THE PEPPER GATE IS LOAD-BEARING HERE, not just on the write. Re-derivation has
  * to happen under the same pepper the row was written under. Requiring the
  * dedicated pepper on both sides is what makes that true across a SESSION_SECRET
  * rotation — the failure mode the store's header calls out, where prior rows
