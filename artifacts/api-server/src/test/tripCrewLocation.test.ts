@@ -665,22 +665,83 @@ describe("Trip Crew Location — lib unit tests (buildCrewCard)", () => {
 
   it("33. Live-share + lat/lng + no hotel blur → exactCoords returned", () => {
     const expiresAt = new Date(Date.now() + 900_000).toISOString();
+    // A FRESH position. This test previously passed updatedAt: null and still
+    // expected coordinates — which is precisely the §10.2 defect: an exact
+    // pin published for a position of unknown age. A live share is about a
+    // position the member is updating now, so the fixture now says so.
     const card = buildCrewCard({
       userId: "u1",
       name: "Grace",
       handle: "grace",
       avatarUrl: null,
       prefs: { defaultVisibility: "nearby", ghostModeEnabled: false, shareArrivalStatus: false, shareSafeReturnStatus: false },
-      locationState: { city: "Cebu City", district: "IT Park", country: "PH", updatedAt: null, lat: 10.3157, lng: 123.8854 },
+      locationState: { city: "Cebu City", district: "IT Park", country: "PH", updatedAt: new Date(Date.now() - 60_000).toISOString(), lat: 10.3157, lng: 123.8854 },
       hotelBlurEnabled: false,
       checkInStatus: null,
       hasSafeReturnActive: false,
       liveShare: { id: "share-coords", visibilityLevel: "nearby", expiresAt },
     });
     assert.equal(card.statusLabel, "live_sharing_active");
+    assert.equal(card.freshness, "live");
     assert.ok(card.exactCoords, "exactCoords must be present during live-share");
     assert.equal(card.exactCoords!.lat, 10.3157);
     assert.equal(card.exactCoords!.lng, 123.8854);
+  });
+
+  // ── §10.2 freshness — "The Trip Map must never draw a stale location as if
+  //    it were current. ... Last-known data may remain useful but is not live
+  //    truth." Bounds come from lib/mapTravelers' freshnessBucket.
+  const FRESH_LOC = (ageMs: number | null) => ({
+    city: "Cebu City",
+    district: "IT Park",
+    country: "PH",
+    updatedAt: ageMs === null ? null : new Date(Date.now() - ageMs).toISOString(),
+    lat: 10.3157,
+    lng: 123.8854,
+  });
+  const liveShareCard = (ageMs: number | null) =>
+    buildCrewCard({
+      userId: "u1",
+      name: "Grace",
+      handle: "grace",
+      avatarUrl: null,
+      prefs: { defaultVisibility: "nearby", ghostModeEnabled: false, shareArrivalStatus: false, shareSafeReturnStatus: false },
+      locationState: FRESH_LOC(ageMs),
+      hotelBlurEnabled: false,
+      checkInStatus: null,
+      hasSafeReturnActive: false,
+      liveShare: { id: "s", visibilityLevel: "nearby", expiresAt: new Date(Date.now() + 900_000).toISOString() },
+    });
+
+  it("33a. §10.2 freshness buckets follow lib/mapTravelers, not a second model", () => {
+    assert.equal(liveShareCard(5 * 60_000).freshness, "live");
+    assert.equal(liveShareCard(30 * 60_000).freshness, "recent");
+    assert.equal(liveShareCard(90 * 60_000).freshness, "stale");
+    assert.equal(liveShareCard(null).freshness, null, "unknown age is not a bucket");
+  });
+
+  it("33b. §10.2 a STALE position publishes no exact coordinate, even under an active live share", () => {
+    const card = liveShareCard(3 * 24 * 60 * 60_000); // three days old
+    assert.equal(card.freshness, "stale");
+    assert.equal(card.exactCoords, null, "a three-day-old pin must not be drawn as current");
+    // The GRANT is still active and still reported as such — what is stale is
+    // the position. Those are different facts and the card keeps both.
+    assert.equal(card.liveShareActive, true);
+    assert.equal(card.statusLabel, "live_sharing_active");
+    // "Last-known data may remain useful": the area label survives.
+    assert.ok(card.areaLabel, "last-known area must remain available");
+  });
+
+  it("33c. §10.2 an UNKNOWN-age position publishes no exact coordinate either", () => {
+    const card = liveShareCard(null);
+    assert.equal(card.freshness, null);
+    assert.equal(card.exactCoords, null, "currency cannot be claimed for an unknown age");
+  });
+
+  it("33d. §10.2 a RECENT position still publishes coordinates (the rule does not over-reach)", () => {
+    const card = liveShareCard(45 * 60_000);
+    assert.equal(card.freshness, "recent");
+    assert.ok(card.exactCoords, "within the 60-minute bound coords remain live truth");
   });
 
   it("34. Live-share + hotel blur enabled → exactCoords is null", () => {
