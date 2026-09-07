@@ -21,6 +21,7 @@
     "check:schema-references": "node --import tsx/esm src/scripts/checkSchemaReferences.ts",
     "check:enum-literals": "node --import tsx/esm src/scripts/checkEnumLiterals.ts",
     "check:writerless-reads": "node --import tsx/esm src/scripts/checkWriterlessReads.ts",
+    "check:production-drift": "node --import tsx/esm src/scripts/checkProductionDrift.ts",
     "check:missing-live-columns": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkMissingLiveColumns.ts",
     "check:media-objects": "node --env-file-if-exists=.env --import tsx/esm src/scripts/checkMediaObjects.ts",
     "audit:storage-exif": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditStorageExif.ts",
