@@ -41,16 +41,59 @@ export interface SafetyAssessment {
 }
 
 /**
- * Time-of-day adjustment: night layovers (22:00–06:00 airport-local) or early
+ * Raw time-of-day band: night layovers (22:00–06:00 airport-local) or early
  * morning add extra buffer due to reduced transport and higher caution.
- * When a timezone is provided the hour is computed in the airport's timezone;
- * otherwise UTC is used as a fallback.
+ * This is a STEP function of the local hour — do not call it directly when the
+ * result feeds a deadline; use `timeOfDayExtra`, which ramps it. See below.
  */
-function timeOfDayExtra(departureTime: Date, timezone?: string): number {
-  const hour = timezone ? localHour(timezone, departureTime) : departureTime.getUTCHours();
+function timeOfDayBand(hour: number): number {
   if (hour >= 22 || hour < 6) return 20;
   if (hour >= 20 || hour < 8) return 10;
   return 0;
+}
+
+/**
+ * The largest value `timeOfDayBand` can return, and therefore the look-ahead
+ * window (in minutes) the ramp below needs in order to be 1-Lipschitz. Keeping
+ * these equal is what makes the monotonicity proof independent of how the
+ * bands themselves are drawn: over any window of `RAMP + 1` minutes the band
+ * can rise by at most `RAMP`, which is <= `RAMP + 1`.
+ */
+const TOD_RAMP_MIN = 20;
+
+/**
+ * Time-of-day buffer adjustment, ramped so it can never rise faster than one
+ * minute per minute of clock time.
+ *
+ * WHY THIS IS NOT THE RAW STEP FUNCTION. The hard return deadline is
+ * `cutoff − buffer(cutoff)`. With a raw step, a cutoff of 20:00 airport-local
+ * carried a 10-minute-larger buffer than a cutoff of 19:59, so moving a flight
+ * one minute LATER moved the traveller's "you must head back now" deadline
+ * NINE MINUTES EARLIER — equivalently, a departure one minute EARLIER bought
+ * nine extra minutes in the city. That is a safety defect: the deadline must be
+ * monotonically non-decreasing in the flight cutoff.
+ *
+ * The fix takes the running maximum of `band(t + d) − d` over a look-ahead
+ * window. Where the band is about to step up, the extra is phased in one minute
+ * at a time beforehand, so `cutoff − buffer(cutoff)` is flat across the
+ * transition instead of jumping backwards. Because the `d = 0` term is always
+ * included, the ramped value is never BELOW the raw band — the correction only
+ * ever moves the deadline earlier (more conservative), never later.
+ *
+ * Sampling real instants rather than clock arithmetic keeps this correct across
+ * DST transitions, where local minutes-of-day do not advance uniformly.
+ */
+function timeOfDayExtra(at: Date, timezone?: string): number {
+  const bandAt = (offsetMin: number): number => {
+    const t = offsetMin === 0 ? at : new Date(at.getTime() + offsetMin * 60_000);
+    return timeOfDayBand(timezone ? localHour(timezone, t) : t.getUTCHours());
+  };
+  let extra = bandAt(0);
+  for (let d = 1; d <= TOD_RAMP_MIN; d++) {
+    const ramped = bandAt(d) - d;
+    if (ramped > extra) extra = ramped;
+  }
+  return extra;
 }
 
 export function computeBuffer(
@@ -59,7 +102,8 @@ export function computeBuffer(
     "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin"
   >,
   session: Pick<LayoverSession, "flightType" | "immigrationRequired" | "checkedBags">,
-  departureTime: Date,
+  /** Instant the buffer is required to be complete by — the flight cutoff. */
+  at: Date,
   timezone?: string,
 ): SafetyAssessment["breakdown"] {
   const baseBuffer       = session.flightType === "international"
@@ -68,9 +112,50 @@ export function computeBuffer(
   const immigrationExtra = session.immigrationRequired ? airport.immigrationExtraMin : 0;
   const bagsExtra        = session.checkedBags         ? airport.checkedBagsExtraMin  : 0;
   const trafficExtra     = airport.trafficExtraMin;
-  const timeOfDayExtraMin = timeOfDayExtra(departureTime, timezone);
+  const timeOfDayExtraMin = timeOfDayExtra(at, timezone);
   const totalBuffer       = baseBuffer + immigrationExtra + bagsExtra + trafficExtra + timeOfDayExtraMin;
   return { baseBuffer, immigrationExtra, bagsExtra, trafficExtra, timeOfDayExtra: timeOfDayExtraMin, totalBuffer };
+}
+
+/**
+ * The instant the traveller's flight stops waiting for them: boarding time when
+ * the session carries one, departure time otherwise. Every buffer and every
+ * deadline in this module is anchored here — having some call sites anchor the
+ * buffer to `departureTime` while anchoring the deadline to the cutoff is what
+ * made `GET /sessions/:id/safety` publish a `returnBufferMin` that did not match
+ * its own `hardReturnTime`.
+ */
+export function layoverCutoffMs(
+  session: Pick<LayoverSession, "departureTime" | "boardingTime">,
+): number {
+  const boardingMs = session.boardingTime ? new Date(session.boardingTime).getTime() : null;
+  return boardingMs ?? new Date(session.departureTime).getTime();
+}
+
+/**
+ * The single source of truth for "when must the traveller start heading back".
+ *
+ * Guarantees, both covered by property tests in `src/test/layoverDeadlineMonotonicity.test.ts`:
+ *  1. `hardReturnTime` is monotonically non-decreasing in the flight cutoff.
+ *  2. `hardReturnTime === cutoff − breakdown.totalBuffer`, always — so a caller
+ *     may publish the two together without them contradicting each other.
+ */
+export function computeReturnDeadline(
+  airport: Pick<AirportProfile,
+    "domesticBufferMin" | "internationalBufferMin" |
+    "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin" | "timezone"
+  >,
+  session: Pick<LayoverSession,
+    "flightType" | "immigrationRequired" | "checkedBags" | "departureTime" | "boardingTime"
+  >,
+): { cutoffMs: number; breakdown: SafetyAssessment["breakdown"]; hardReturnTime: Date } {
+  const cutoffMs  = layoverCutoffMs(session);
+  const breakdown = computeBuffer(airport, session, new Date(cutoffMs), airport.timezone);
+  return {
+    cutoffMs,
+    breakdown,
+    hardReturnTime: new Date(cutoffMs - breakdown.totalBuffer * 60_000),
+  };
 }
 
 /**
@@ -82,12 +167,9 @@ export function assess(
   candidate: ActivityCandidate,
   nowMs = Date.now(),
 ): SafetyAssessment {
-  const departureMs    = new Date(session.departureTime).getTime();
-  const boardingMs     = session.boardingTime ? new Date(session.boardingTime).getTime() : null;
-  const cutoffMs       = boardingMs ?? departureMs;
+  const { cutoffMs, breakdown, hardReturnTime } = computeReturnDeadline(airport, session);
   const availableMin   = Math.max(0, Math.round((cutoffMs - nowMs) / 60000));
 
-  const breakdown      = computeBuffer(airport, session, new Date(session.departureTime), airport.timezone);
   const bufferMin      = breakdown.totalBuffer;
   const usableMin      = Math.max(0, availableMin - bufferMin);
 
@@ -97,7 +179,6 @@ export function assess(
     : candidate.travelTimeMin * 2; // round trip
 
   const requiredMin    = tripTimeMin + candidate.activityTimeMin + bufferMin;
-  const hardReturnTime = new Date(cutoffMs - bufferMin * 60000);
 
   let rating: SafetyRating;
   let warningReason: string | null = null;
@@ -234,17 +315,15 @@ export function computeWindow(
   session: LayoverSession,
   nowMs = Date.now(),
 ): LayoverWindow {
-  const arrivalMs   = new Date(session.arrivalTime).getTime();
-  const departureMs = new Date(session.departureTime).getTime();
-  const boardingMs  = session.boardingTime ? new Date(session.boardingTime).getTime() : null;
-  const cutoffMs    = boardingMs ?? departureMs;
-  const tz          = airport.timezone;
+  const arrivalMs = new Date(session.arrivalTime).getTime();
+  const tz        = airport.timezone;
+
+  const { cutoffMs, breakdown: breakdownBase, hardReturnTime } = computeReturnDeadline(airport, session);
 
   const totalMinutes  = Math.max(0, Math.round((cutoffMs - arrivalMs) / 60000));
-  const breakdownBase = computeBuffer(airport, session, new Date(cutoffMs), tz);
   const exitDelayMin  = estimateExitDelay(session);
 
-  const hardReturnMs   = cutoffMs - breakdownBase.totalBuffer * 60000;
+  const hardReturnMs   = hardReturnTime.getTime();
   const earliestOutMs  = arrivalMs + exitDelayMin * 60000;
   // Usable window from the later of "now" and "earliest landside".
   const windowStartMs  = Math.max(nowMs, earliestOutMs);
@@ -268,7 +347,7 @@ export function computeWindow(
     exitDelayMin,
     returnBufferMin: breakdownBase.totalBuffer,
     usableMinutes,
-    hardReturnTime: new Date(hardReturnMs),
+    hardReturnTime,
     earliestOutTime: new Date(earliestOutMs),
     breakdown: { ...breakdownBase, exitDelay: exitDelayMin },
     tier,

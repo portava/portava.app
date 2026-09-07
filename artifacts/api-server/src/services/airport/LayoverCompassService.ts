@@ -8,7 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { openai } from "../../lib/openai.js";
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
-import { computeBuffer, safetyLabel } from "./LayoverSafetyEngine.js";
+import { computeReturnDeadline, safetyLabel } from "./LayoverSafetyEngine.js";
 import { sanitizeCompassAnswer } from "./LayoverPrivacyGuard.js";
 
 export interface CompassLayoverInput {
@@ -44,14 +44,13 @@ export async function answerLayoverQuestion(
 ): Promise<CompassLayoverAnswer> {
   const { question, session, airport, maxLength = 400 } = input;
 
-  const now    = new Date();
-  const cutoff = session.boardingTime ?? session.departureTime;
-  const availMin = Math.max(0, Math.round((new Date(cutoff).getTime() - now.getTime()) / 60000));
-
-  const breakdown = computeBuffer(airport, session, new Date(session.departureTime), airport.timezone);
+  const now = new Date();
+  // Buffer and deadline both anchored to the flight cutoff by the shared
+  // helper, so the figures fed to the model cannot contradict each other.
+  const { cutoffMs, breakdown, hardReturnTime } = computeReturnDeadline(airport, session);
+  const availMin  = Math.max(0, Math.round((cutoffMs - now.getTime()) / 60000));
   const bufferMin = breakdown.totalBuffer;
   const usableMin = Math.max(0, availMin - bufferMin);
-  const hardReturnTime = new Date(new Date(cutoff).getTime() - bufferMin * 60000);
 
   const involvesLeaving = detectLeavingIntent(question);
 

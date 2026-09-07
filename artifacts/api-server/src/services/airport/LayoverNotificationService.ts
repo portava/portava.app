@@ -10,7 +10,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 const logger = rootLogger.child({ service: "LayoverNotificationService" });
 import type { LayoverSession } from "./LayoverSessionService.js";
 import type { AirportProfile } from "./AirportProfileService.js";
-import { computeBuffer } from "./LayoverSafetyEngine.js";
+import { computeReturnDeadline } from "./LayoverSafetyEngine.js";
 
 export interface RiskyLayoverContext {
   isNightLayover: boolean;
@@ -72,10 +72,7 @@ export async function sendReturnDeadlineReminder(
     const token = (profile as any)?.expo_push_token;
     if (!token) return { ok: true, skipped: true };
 
-    const breakdown = computeBuffer(airport, session, new Date(session.departureTime), airport.timezone);
-    const bufferMin = breakdown.totalBuffer;
-    const cutoffTime = session.boardingTime ?? session.departureTime;
-    const hardReturn = new Date(new Date(cutoffTime).getTime() - bufferMin * 60000);
+    const { hardReturnTime: hardReturn } = computeReturnDeadline(airport, session);
     const returnStr  = hardReturn.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
     const title = minutesBefore <= 15

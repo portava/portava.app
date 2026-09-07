@@ -45,10 +45,28 @@ export function wallTimeToUtc(tz: string, wall: string): Date | null {
   return Number.isFinite(out.getTime()) ? out : null;
 }
 
+/**
+ * Hour-formatter cache. `localHour` is called in tight loops by the safety
+ * engine's ramped time-of-day buffer (it samples a look-ahead window one
+ * minute at a time), and constructing an `Intl.DateTimeFormat` per sample
+ * dominates the cost. Formatters are immutable and keyed only by timezone,
+ * so one per tz is safe to reuse.
+ */
+const hourFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function hourFormatter(tz: string): Intl.DateTimeFormat {
+  let f = hourFormatterCache.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hour12: false });
+    hourFormatterCache.set(tz, f);
+  }
+  return f;
+}
+
 /** Local hour-of-day (0–23) at the airport for a UTC instant. */
 export function localHour(tz: string, at: Date): number {
   try {
-    const s = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hour12: false }).format(at);
+    const s = hourFormatter(tz).format(at);
     const h = Number(s);
     return h === 24 ? 0 : h;
   } catch {
