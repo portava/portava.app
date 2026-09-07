@@ -26,6 +26,7 @@ import {
   toAuthorizedTripView,
 } from "../lib/privacy/tripSerializers.js";
 import { computeTripStatus } from "../lib/tripStatus.js";
+import { executeTripCommand } from "../lib/tripKernel/index.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -491,6 +492,27 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
 });
 
 // POST /api/trips/:tripId/complete
+//
+// THE FIRST ROUTE BEHIND THE TRIP KERNEL.
+// =======================================
+// The owner's ruling is that consequential trip state mutations must ultimately
+// pass through the canonical Trip Kernel. This is the reference: the read, the
+// authorization, the state-machine invariant, the compare-and-set and the event
+// append all live in src/lib/tripKernel, and what remains here is transport —
+// parse the request, map the kernel's outcome onto the SAME responses this
+// endpoint has always produced.
+//
+// WHY THIS COMMAND WENT FIRST. It is the simplest consequential mutation in the
+// trips routers: one column on the aggregate root, owner-only, no child tables,
+// no push fan-out, and a state machine with exactly three outcomes. Nothing else
+// had to change for it to move.
+//
+// RESPONSE PARITY IS THE CONSTRAINT, INCLUDING ON THE WARTS. The pre-kernel code
+// destructured only `data` from its read, so a FAILED read produced the same 404
+// as a missing trip. `read_failed` is mapped to that same 404 deliberately — the
+// endpoint's observable behaviour is unchanged — but the kernel now logs the
+// underlying error at error level, so the failure is observable to an operator
+// for the first time instead of vanishing.
 router.post("/trips/:tripId/complete", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -502,18 +524,44 @@ router.post("/trips/:tripId/complete", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
-  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can complete a trip"); return; }
-  if ((trip as any).status === "completed") { res.json({ status: "completed", idempotent: true }); return; }
+  const result = await executeTripCommand(sc, {
+    type: "trip.complete",
+    tripId,
+    actorId: user.id,
+  });
 
-  const terminal = ["cancelled", "archived"];
-  if (terminal.includes((trip as any).status)) {
-    sendError(res, "invalid_state_transition", `Cannot complete a ${(trip as any).status} trip`);
+  if (!result.ok) {
+    switch (result.error.code) {
+      // Pre-kernel parity: a failed read and a missing trip both 404 here.
+      case "read_failed":
+      case "not_found":
+        sendError(res, "not_found", "Trip not found");
+        return;
+      case "forbidden":
+        sendError(res, "forbidden", "Only the owner can complete a trip");
+        return;
+      case "already_in_target_state":
+        res.json({ status: "completed", idempotent: true });
+        return;
+      case "invalid_state_transition":
+        sendError(res, "invalid_state_transition", `Cannot complete a ${result.error.status} trip`);
+        return;
+      // Paths the pre-kernel code could not reach because it never checked:
+      // a concurrent writer moved the aggregate, or the write itself failed
+      // (the old code ignored the update's error entirely and returned 200).
+      case "version_conflict":
+        sendError(res, "conflict", "Trip was modified concurrently; retry");
+        return;
+      case "write_failed":
+        sendError(res, "db_error", result.error.detail);
+        return;
+    }
     return;
   }
 
-  await sc.from("trips").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // trip_activity_log is the pre-kernel audit trail and stays exactly as it was.
+  // It is NOT the event log: trip_events is. Collapsing the two is part of the
+  // migration the direct-trip-write ratchet measures, not part of this change.
   await logActivity(sc, tripId, user.id, "trip_completed");
   res.json({ status: "completed", tripId });
 });

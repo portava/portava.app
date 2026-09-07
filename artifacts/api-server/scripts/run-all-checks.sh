@@ -141,6 +141,7 @@ run_check "check:migration-prefixes" pnpm run check:migration-prefixes
 run_check "check:compiler-authentic" pnpm run check:compiler-authentic
 run_check "check:not-null-writes" pnpm run check:not-null-writes
 run_check "check:silent-supabase-writes" pnpm run check:silent-supabase-writes
+run_check "check:direct-trip-writes" pnpm run check:direct-trip-writes
 run_check "check:test-runner-flags" pnpm run check:test-runner-flags
 run_check "check:write-path-columns" pnpm run check:write-path-columns
 run_check "check:missing-live-columns" pnpm run check:missing-live-columns

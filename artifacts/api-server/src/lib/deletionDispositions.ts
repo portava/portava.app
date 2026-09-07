@@ -213,6 +213,17 @@ export const ANONYMISED_FK_NULLED: readonly string[] = [
   // the column's ON DELETE SET NULL declared, which the tombstone otherwise
   // silently defeats. UPDATE granted to service_role by 2167 and reaffirmed by 2211.
   "intel_mission_candidates",
+  // trip_events.actor_id (migration 2316) names who issued a Trip Kernel command.
+  // The event log is APPEND-ONLY and is the trip's history, shared with everyone
+  // on the trip — deleting the rows would erase the other members' record of what
+  // happened to their trip, so the row is kept and only the identifier goes. The
+  // column is `uuid REFERENCES profiles(id) ON DELETE SET NULL`, which is the
+  // declared intent, but that SET NULL never fires for the same reason
+  // intel_mission_candidates' does not: deletion keeps an anonymised TOMBSTONE
+  // profile rather than deleting profiles(id). So AccountDeletionService performs
+  // it by hand in the `null_trip_event_actor` step. 2316's row-level append-only
+  // trigger permits exactly this one UPDATE shape and refuses every other.
+  "trip_events",
 ];
 
 /**
@@ -534,6 +545,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // Wall §32 telemetry sink, added by migration 2308 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
   "wall_telemetry_events",
+  // Trips v4 kernel event log, added by migration 2316 (post-baseline).
+  // Classified in ANONYMISED_FK_NULLED (actor_id is NULLed, the event is kept).
+  "trip_events",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",

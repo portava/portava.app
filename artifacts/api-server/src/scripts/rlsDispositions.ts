@@ -125,6 +125,17 @@ export const POST_BASELINE_RLS_DISPOSITIONS: Record<string, RlsDisposition & { m
       "anon and authenticated hold nothing (REVOKE ALL, no grant). Readers reach live state through intel_state_snapshots " +
       "via the server projection, never this table. UPDATE/DELETE refused by trigger AND by grant.",
   },
+  "trip_events": {
+    class: "RLS_REQUIRED",
+    policyCount: 1,
+    migration: "2316_trip_kernel_foundation.sql",
+    reason:
+      "Trips v4 kernel append-only command log. RLS enabled with exactly one policy (trip_events_service_all, FOR ALL TO service_role). " +
+      "REVOKE-first: anon and authenticated hold NO grant at all, so no PostgREST client can read or write it — deliberately unlike its " +
+      "pre-cutover sibling trip_activity_log, which still carries a legacy blanket GRANT ALL TO anon. service_role holds " +
+      "INSERT/SELECT/DELETE plus UPDATE, the last solely so AccountDeletionService can null actor_id for right-to-erasure; the row-level " +
+      "trip_events_append_only trigger refuses every other UPDATE and refuses DELETE while the parent trip still exists.",
+  },
 };
 
 export const RLS_DISPOSITIONS: Record<string, RlsDisposition> = {

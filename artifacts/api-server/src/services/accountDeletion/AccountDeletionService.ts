@@ -1181,6 +1181,31 @@ export async function executeAccountDeletion(
   });
   if (!missionOk) warnings.push("intel_mission_candidates.accepted_by may still name the deleted user");
 
+  // trip_events.actor_id (migration 2316) names who issued a Trip Kernel command.
+  // Same shape, same reason as the step above: the column is `uuid REFERENCES
+  // profiles(id) ON DELETE SET NULL`, and that SET NULL never fires because this
+  // service keeps an anonymised TOMBSTONE profile instead of deleting
+  // profiles(id). Without this step the departed user's uuid would survive as a
+  // residual identifier in the trip's history, joinable to that uuid elsewhere.
+  //
+  // A SET NULL, NOT a delete, and deliberately so: trip_events is the trip's
+  // append-only history, shared with every member of that trip. Deleting the rows
+  // would erase THEIR record of what happened to their trip. 2316's row-level
+  // append-only trigger permits exactly this one UPDATE shape — actor_id going
+  // non-NULL to NULL with every other column unchanged — and refuses any other,
+  // and 2316 grants service_role the UPDATE this needs. Non-fatal, matching the
+  // step above.
+  const tripEventsOk = await step(steps, "null_trip_event_actor", async () => {
+    // trip-kernel-bypass-ok: a right-to-erasure anonymisation, not a trip state
+    // mutation. It changes no trip's status and moves no aggregate version, so it
+    // is not a TripCommand; 2316's append-only trigger permits exactly this shape.
+    must(
+      await sc.from("trip_events").update({ actor_id: null }).eq("actor_id", userId),
+      "null trip_events.actor_id",
+    );
+  });
+  if (!tripEventsOk) warnings.push("trip_events.actor_id may still name the deleted user");
+
   // ── Derived memory (FATAL on failure) ─────────────────────────────────────
   // memory_projections / memory_events / memory_feedback hold derived facts about
   // the user (places visited, people followed, inferred preferences). They are
